@@ -2,8 +2,8 @@ name: Build IPA
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   workflow_dispatch:
-  tags: [ 'v*' ]
 
 concurrency:
   group: build-${{ github.ref }}
