@@ -1,0 +1,55 @@
+name: Build IPA
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  tags: [ 'v*' ]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned app
+        run: |
+          xcodebuild -project Aurora.xcodeproj \
+            -scheme Aurora \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath derived \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Package unsigned IPA
+        run: |
+          APP="derived/Build/Products/Release-iphoneos/Aurora.app"
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry Aurora-unsigned.ipa Payload
+          ls -lh Aurora-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aurora-unsigned-ipa
+          path: Aurora-unsigned.ipa
+
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Aurora-unsigned.ipa
+          generate_release_notes: true
