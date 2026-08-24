@@ -20,6 +20,7 @@ final class SpectrumAnalyzer: ObservableObject {
 
     private init() {
         fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
+
         window = (0..<fftSize).map { i in
             let angle = 2.0 * Float.pi * Float(i) / Float(fftSize - 1)
             return 0.5 * (1 - cos(angle))
@@ -47,7 +48,8 @@ final class SpectrumAnalyzer: ObservableObject {
                         vDSP_ctoz(complexPtr, 2, &split, 1, vDSP_Length(fftSize / 2))
                     }
                 }
-                vDSP_fft_zrip(setup, &split, 1, log2n, FFTRadix(kFFTRadixForward))
+                vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
+
 
                 var mags = [Float](repeating: 0, count: fftSize / 2)
                 mags.withUnsafeMutableBufferPointer { magsPtr in

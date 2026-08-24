@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Foundation
 
+@MainActor
 final class PlayerCore: ObservableObject {
     static let shared = PlayerCore()
     static let bandFrequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]

@@ -53,7 +53,7 @@ final class LibraryStore: ObservableObject {
                 artist: meta.artist,
                 album: meta.album,
                 duration: meta.duration,
-                artworkSeed: stableSeed(url.lastPathComponent),
+                artworkSeed: Self.stableSeed(url.lastPathComponent),
                 colorsHex: meta.colors
             )
             added.append(t)
@@ -104,7 +104,7 @@ final class LibraryStore: ObservableObject {
             let dest = musicDirectoryURL().appendingPathComponent(name)
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: tmpUrl, to: dest)
-            await addFile(at: dest)
+            try await addFile(at: dest)
         } catch {
             lastError = "Скачивание не удалось: \(error.localizedDescription)"
         }
@@ -120,7 +120,7 @@ final class LibraryStore: ObservableObject {
             artist: meta.artist,
             album: meta.album,
             duration: meta.duration,
-            artworkSeed: stableSeed(dest.lastPathComponent),
+            artworkSeed: Self.stableSeed(dest.lastPathComponent),
             colorsHex: meta.colors
         )
         if !tracks.contains(where: { $0.fileName == track.fileName }) {
@@ -165,8 +165,7 @@ final class LibraryStore: ObservableObject {
                 AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: id).first?.stringValue
             }
             title = first(.commonIdentifierTitle) ?? title
-            artist = first(.commonIdentifierArtist) ?? first(.commonIdentifierAlbumArtist) ?? artist
-            album = first(.commonIdentifierAlbumName) ?? album
+            artist = first(.commonIdentifierArtist) ?? artist            album = first(.commonIdentifierAlbumName) ?? album
             if let item = AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: .commonIdentifierArtwork).first,
                let data = item.dataValue, let image = UIImage(data: data) {
                 colors = artworkPalette(from: image)
