@@ -27,6 +27,7 @@ final class PlayerCore: ObservableObject {
     private var anchorDate: Date?
     private var anchorOffset: Double = 0
     private var pausedProgress: Double = 0
+    private var needsReschedule = false
     private var progressTimer: Timer?
 
     var duration: Double { max(currentTrack?.duration ?? 0, 0.001) }
@@ -124,7 +125,7 @@ final class PlayerCore: ObservableObject {
 
     func resume() {
         guard !isPlaying, currentTrack != nil else { return }
-        if file == nil { start(at: pausedProgress); return }
+        if file == nil || needsReschedule { start(at: pausedProgress); needsReschedule = false; return }
         if !engine.isRunning { try? engine.start() }
         player.play()
         isPlaying = true
@@ -157,6 +158,7 @@ final class PlayerCore: ObservableObject {
             pausedProgress = clamped
             progress = clamped
             anchorOffset = clamped
+            needsReschedule = true
         }
     }
 

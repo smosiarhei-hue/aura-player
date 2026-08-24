@@ -44,14 +44,14 @@ final class SpectrumAnalyzer: ObservableObject {
                 var split = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
                 input.withUnsafeBufferPointer { inPtr in
                     inPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
-                        vDSP_ctoz(complexPtr, 2, &split, 1, vDSPLength(fftSize / 2))
+                        vDSP_ctoz(complexPtr, 2, &split, 1, vDSP_Length(fftSize / 2))
                     }
                 }
                 vDSP_fft_zrip(setup, &split, 1, log2n, FFTRadix(kFFTRadixForward))
 
                 var mags = [Float](repeating: 0, count: fftSize / 2)
                 mags.withUnsafeMutableBufferPointer { magsPtr in
-                    vDSP_zvabs(&split, 1, magsPtr.baseAddress!, 1, vDSPLength(fftSize / 2))
+                    vDSP_zvabs(&split, 1, magsPtr.baseAddress!, 1, vDSP_Length(fftSize / 2))
                 }
 
                 // Map 512 bins → 32 log bands (30 Hz … 16 kHz)
