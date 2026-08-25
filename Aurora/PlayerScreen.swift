@@ -648,3 +648,39 @@ struct PlayerEQSheetView: View {
         .presentationDetents([.medium, .large])
     }
 }
+
+// MARK: - Band Slider Component
+
+struct BandSlider: View {
+    let label: String
+    @Binding var value: Float
+
+    var body: some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            VStack(spacing: 6) {
+                ZStack(alignment: .bottom) {
+                    Capsule().fill(Color.primary.opacity(0.12)).frame(width: 6)
+                    let fraction = CGFloat((value + 12) / 24)
+                    Capsule()
+                        .fill(LinearGradient(colors: SettingsStore.shared.accent.colors, startPoint: .bottom, endPoint: .top))
+                        .frame(width: 6, height: max(6, fraction * h))
+                }
+                .frame(height: h).frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { v in
+                            let f = 1 - Float(min(max(v.location.y / h, 0), 1))
+                            value = f * 24 - 12
+                        }
+                )
+
+                Text(label)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(height: 160)
+    }
+}

@@ -359,7 +359,7 @@ struct RadioStationsView: View {
                         ForEach(JamendoService.stations) { station in
                             Button {
                                 Task {
-                                    if let tracks = try? await JamendoService.tracksForStation(station), let first = tracks.first {
+                                    if let tracks = try? await JamendoService.tracksForStation(station), !tracks.isEmpty {
                                         let queue = tracks.map { JamendoService.convertToTrack($0) }
                                         player.play(queue[0], newQueue: queue)
                                     }
