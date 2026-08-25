@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import CoreMedia
 import MediaPlayer
 import SwiftUI
 
@@ -14,6 +15,7 @@ final class PlayerCore: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTrack: Track?
     @Published private(set) var progress: Double = 0
+    @Published private(set) var streamDuration: Double = 0
     @Published private(set) var playError: String?
     @Published var volume: Float = 0.85 {
         didSet {
@@ -34,7 +36,7 @@ final class PlayerCore: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
-    // Instant Streaming Engine (AVPlayer starts playing in ~150ms without waiting for full download!)
+    // Instant Streaming Engine (AVPlayer progressive playback in ~150ms)
     private let streamingPlayer = AVPlayer()
     private var timeObserverToken: Any?
     private var isUsingStreamPlayer = false
@@ -63,7 +65,17 @@ final class PlayerCore: ObservableObject {
     private var transitionTimer: Timer?
     private var currentAutoMixStyle: AutoMixStyle = .bassSwapBlend(duration: 3.5)
 
-    var duration: Double { max(currentTrack?.duration ?? 0, 0.001) }
+    var duration: Double {
+        if isUsingStreamPlayer {
+            if streamDuration > 0 { return streamDuration }
+            if let item = streamingPlayer.currentItem {
+                let d = CMTimeGetSeconds(item.duration)
+                if d.isFinite && d > 0 { return d }
+            }
+        }
+        let trackDur = currentTrack?.duration ?? 0
+        return max(trackDur > 0 ? trackDur : streamDuration, 0.001)
+    }
 
     // MARK: - Init
     private init() {
@@ -89,13 +101,21 @@ final class PlayerCore: ObservableObject {
         streamingPlayer.automaticallyWaitsToMinimizeStalling = false
         streamingPlayer.volume = volume
 
-        // Observe periodic time on streaming player
-        let interval = CMTime(seconds: 0.25, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserverToken = streamingPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
             let sec = CMTimeGetSeconds(time)
             if sec.isFinite && sec >= 0 {
                 self.progress = sec
+
+                // Update duration dynamically if not set
+                if let item = self.streamingPlayer.currentItem {
+                    let d = CMTimeGetSeconds(item.duration)
+                    if d.isFinite && d > 0 && self.streamDuration != d {
+                        self.streamDuration = d
+                    }
+                }
+
                 self.scheduleTransitionIfNeeded()
                 self.updateNowPlayingInfo()
             }
@@ -177,7 +197,7 @@ final class PlayerCore: ObservableObject {
     private var idleEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeB : eqNodeA }
     private var idlePlayer: AVAudioPlayerNode { (activePlayer === playerA) ? playerB : playerA }
 
-    // MARK: - Lockscreen & Now Playing Remote Command Center
+    // MARK: - Lockscreen & Remote Commands
 
     private func setupRemoteCommandCenter() {
         let commandCenter = MPRemoteCommandCenter.shared()
@@ -246,6 +266,7 @@ final class PlayerCore: ObservableObject {
         if let q = newQueue, q != queue { queue = q }
         currentTrack = track
         playError = nil
+        streamDuration = track.duration
         cancelTransition()
         start(at: 0)
     }
@@ -288,6 +309,7 @@ final class PlayerCore: ObservableObject {
         cancelTransition()
         if let nextTrack = peekNext(auto: false) {
             currentTrack = nextTrack
+            streamDuration = nextTrack.duration
             start(at: 0)
         } else if let cur = currentTrack {
             start(at: 0)
@@ -310,23 +332,25 @@ final class PlayerCore: ObservableObject {
             return
         }
         currentTrack = q[idx - 1]
+        streamDuration = q[idx - 1].duration
         start(at: 0)
     }
 
+    // Accurate instant seeking with zero tolerance
     func seek(to seconds: Double) {
         cancelTransition()
-        let clamped = max(0, min(seconds, duration))
+        let d = duration
+        let clamped = max(0, min(seconds, d))
+        progress = clamped
+
         if isUsingStreamPlayer {
             let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
-            streamingPlayer.seek(to: targetTime)
-            progress = clamped
+            streamingPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
         } else {
+            pausedProgress = clamped
+            anchorOffset = clamped
             if isPlaying {
                 start(at: clamped)
-            } else {
-                pausedProgress = clamped
-                progress = clamped
-                anchorOffset = clamped
             }
         }
         updateNowPlayingInfo()
@@ -344,6 +368,7 @@ final class PlayerCore: ObservableObject {
         isPlaying = false
         progress = 0
         pausedProgress = 0
+        streamDuration = 0
         anchorDate = nil
         cancelTransition()
         SpectrumAnalyzer.shared.reset()
@@ -370,7 +395,7 @@ final class PlayerCore: ObservableObject {
             streamingPlayer.replaceCurrentItem(with: playerItem)
 
             if seconds > 0 {
-                streamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
+                streamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             }
 
             streamingPlayer.play()
@@ -380,7 +405,7 @@ final class PlayerCore: ObservableObject {
             return
         }
 
-        // 2. Local File Playback (AVAudioEngine with 10-band EQ)
+        // 2. Local File Playback with Segment Scheduling for Accurate Offset Seeking
         isUsingStreamPlayer = false
         streamingPlayer.pause()
         playerA.stop()
@@ -402,9 +427,10 @@ final class PlayerCore: ObservableObject {
 
                 let sr = audioFile.processingFormat.sampleRate
                 let offsetFrames = AVAudioFramePosition(seconds * sr)
-                audioFile.framePosition = max(0, min(offsetFrames, audioFile.length - 1))
+                let validOffset = max(0, min(offsetFrames, audioFile.length - 1))
+                let frameCount = AVAudioFrameCount(audioFile.length - validOffset)
 
-                self.playerA.scheduleFile(audioFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                self.playerA.scheduleSegment(audioFile, startingFrame: validOffset, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     DispatchQueue.main.async {
                         Task { @MainActor in
                             guard let self, self.generation == token, !self.isUsingStreamPlayer else { return }
@@ -429,7 +455,7 @@ final class PlayerCore: ObservableObject {
         }
     }
 
-    // MARK: - Apple Music Style AutoMix & Transitions
+    // MARK: - AutoMix Transitions
 
     private func scheduleTransitionIfNeeded() {
         guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying else { return }
@@ -462,7 +488,7 @@ final class PlayerCore: ObservableObject {
         guard remaining <= targetDuration, remaining > 0 else { return }
         guard let nextTrack = peekNext(auto: true) else { return }
 
-        // If next is online or current is online, trigger instant switch
+        // Progressive stream transitions
         if isUsingStreamPlayer || nextTrack.isStream {
             transitionScheduled = true
             DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
@@ -485,7 +511,8 @@ final class PlayerCore: ObservableObject {
                 let nextFile = try AVAudioFile(forReading: nextTrack.url)
                 self.incomingAudioFile = nextFile
 
-                targetIdlePlayer.scheduleFile(nextFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                let frameCount = AVAudioFrameCount(nextFile.length)
+                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     DispatchQueue.main.async {
                         Task { @MainActor in
                             guard let self, self.generation == token else { return }

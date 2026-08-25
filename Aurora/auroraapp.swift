@@ -93,58 +93,61 @@ struct RootView: View {
     }
 }
 
-// MARK: - Floating Mini Player
+// MARK: - Floating Mini Player with Tap and Swipe-Up Support
 
 struct FloatingMiniPlayer: View {
     @StateObject private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
 
     var body: some View {
-        Button {
-            showPlayer = true
-        } label: {
-            HStack(spacing: 12) {
-                SmallArtwork(track: player.currentTrack, size: 42)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        HStack(spacing: 12) {
+            // Square Artwork
+            SmallArtwork(track: player.currentTrack, size: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(player.currentTrack?.title ?? "")
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .foregroundStyle(.white)
+            // Track Title & Artist (Tappable / Swipeable)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.currentTrack?.title ?? "")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(.white)
 
-                    Text(player.currentTrack?.artist ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.65))
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                Button {
-                    player.togglePlay()
-                } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    player.next()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.plain)
+                Text(player.currentTrack?.artist ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.65))
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                showPlayer = true
+            }
+
+            Spacer()
+
+            // Play / Pause Button
+            Button {
+                player.togglePlay()
+            } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+            }
+            .buttonStyle(.plain)
+
+            // Next Track Button
+            Button {
+                player.next()
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.92))
@@ -154,6 +157,15 @@ struct FloatingMiniPlayer: View {
                 )
         )
         .shadow(color: .black.opacity(0.35), radius: 14, x: 0, y: 6)
+        .gesture(
+            DragGesture(minimumDistance: 15)
+                .onEnded { value in
+                    // Swipe up to expand player
+                    if value.translation.height < -20 {
+                        showPlayer = true
+                    }
+                }
+        )
     }
 }
 
