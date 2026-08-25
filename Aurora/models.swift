@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - Track
+// MARK: - Track Model
 
 struct Track: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
@@ -18,6 +18,7 @@ struct Track: Identifiable, Codable, Equatable {
     var addedAt: Date = Date()
     var isStream: Bool = false
     var streamUrlString: String? = nil
+    var lyricsText: String? = nil
 
     var url: URL {
         if isStream, let str = streamUrlString, let u = URL(string: str) {
@@ -34,7 +35,19 @@ struct Track: Identifiable, Codable, Equatable {
         return parsed.isEmpty ? Palette.seeded(artworkSeed).colors : parsed
     }
 
-    static func == (lhs: Track, rhs: Track) -> Bool { lhs.id == rhs.id }
+    static func == (lhs: Track, rhs: Track) -> Bool {
+        lhs.id == rhs.id || (lhs.fileName == rhs.fileName && !lhs.fileName.isEmpty)
+    }
+}
+
+// MARK: - Playlist Model
+
+struct Playlist: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var title: String
+    var createdAt: Date = Date()
+    var trackIds: [UUID] = []
+    var coverGradient: [String] = ["#FF455B", "#9333EA"]
 }
 
 // MARK: - Repeat / Shuffle
@@ -83,7 +96,7 @@ enum EQPresets {
     ]
 }
 
-// MARK: - Palette (vibrant artwork colors)
+// MARK: - Palette
 
 struct Palette {
     let colors: [Color]

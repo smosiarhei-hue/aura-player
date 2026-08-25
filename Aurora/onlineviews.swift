@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Tab 1: Home (Главная) — Полноценный интерфейс в стиле Apple Music & Liquid Glass
+// MARK: - Tab 1: Home (Главная) with Full Queues & Instant Streaming
 
 struct HomeView: View {
     @StateObject private var player = PlayerCore.shared
@@ -17,19 +17,19 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    // 1. Главные баннеры (Слушать сейчас)
+                    // 1. Главные баннеры
                     heroBannerCarousel
 
-                    // 2. Карточка «Моя волна» (Интерактивная персональная станция)
+                    // 2. Карточка «Моя волна»
                     myWaveHeroCard
 
-                    // 3. Топ-чарт (10 лучших треков с порядковыми номерами)
+                    // 3. Топ-чарт (10 лучших треков)
                     topChartSection
 
-                    // 4. Свежие альбомы и синглы (Горизонтальные карточки)
+                    // 4. Свежие релизы
                     featuredAlbumsSection
 
-                    // 5. Мировые треки и хиты
+                    // 5. Мировые треки
                     globalHitsSection
                 }
                 .padding(.top, 12)
@@ -56,12 +56,9 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Hero Banners Carousel
-
     private var heroBannerCarousel: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 16) {
-                // Banner 1: My Wave
                 bannerCard(
                     category: "ПЕРСОНАЛЬНЫЙ ПОТОК",
                     title: "Моя волна",
@@ -72,7 +69,6 @@ struct HomeView: View {
                     playRotor(YandexMusicService.rotorStations[0])
                 }
 
-                // Banner 2: Top Chart
                 bannerCard(
                     category: "ГЛАВНЫЙ ЧАРТ",
                     title: "Топ 100 треков",
@@ -83,7 +79,6 @@ struct HomeView: View {
                     if let first = ymChart.first { playYM(first) }
                 }
 
-                // Banner 3: DJ AutoMix
                 bannerCard(
                     category: "SMART TRANSITIONS",
                     title: "DJ AutoMix",
@@ -92,8 +87,8 @@ struct HomeView: View {
                     icon: "sparkles"
                 ) {
                     if let first = jamendoTrending.first {
-                        let t = JamendoService.convertToTrack(first)
-                        player.play(t)
+                        let q = jamendoTrending.map { JamendoService.convertToTrack($0) }
+                        player.play(q[0], newQueue: q)
                     }
                 }
             }
@@ -137,17 +132,12 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - «Моя волна» Hero Card
-
     private var myWaveHeroCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Моя волна", systemImage: "waveform.badge.sparkles")
                     .font(.title3.weight(.bold))
                 Spacer()
-                Text("Все станции")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(settings.accentColor)
             }
             .padding(.horizontal, 16)
 
@@ -193,8 +183,6 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Top Chart Ranked List (Топовые треки с номерами 1, 2, 3...)
-
     private var topChartSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -213,13 +201,11 @@ struct HomeView: View {
                             playYM(item)
                         } label: {
                             HStack(spacing: 14) {
-                                // Номер в чарте
                                 Text("\(index + 1)")
                                     .font(.headline.weight(.bold).monospacedDigit())
                                     .foregroundStyle(index < 3 ? settings.accentColor : Color.secondary)
                                     .frame(width: 24, alignment: .center)
 
-                                // Обложка
                                 AsyncImage(url: URL(string: item.coverUrlString ?? "")) { phase in
                                     if let img = phase.image {
                                         img.resizable().aspectRatio(contentMode: .fill)
@@ -233,7 +219,6 @@ struct HomeView: View {
                                 .frame(width: 48, height: 48)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                                // Название и артист
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.title)
                                         .font(.body.weight(.medium))
@@ -248,7 +233,6 @@ struct HomeView: View {
 
                                 Spacer()
 
-                                // Кнопка меню / Скачать
                                 Menu {
                                     Button {
                                         Task {
@@ -277,8 +261,6 @@ struct HomeView: View {
             }
         }
     }
-
-    // MARK: - Featured Albums & Singles (Карточки)
 
     private var featuredAlbumsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -324,8 +306,6 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Global Hits (Jamendo)
-
     private var globalHitsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Мировые треки и новинки")
@@ -335,8 +315,10 @@ struct HomeView: View {
             LazyVStack(spacing: 4) {
                 ForEach(jamendoTrending.prefix(15)) { item in
                     Button {
-                        let t = JamendoService.convertToTrack(item)
-                        player.play(t)
+                        let queue = jamendoTrending.map { JamendoService.convertToTrack($0) }
+                        if let selected = queue.first(where: { $0.fileName.contains(item.id) }) {
+                            player.play(selected, newQueue: queue)
+                        }
                     } label: {
                         HStack(spacing: 12) {
                             AsyncImage(url: URL(string: item.coverUrl ?? "")) { phase in
@@ -380,7 +362,8 @@ struct HomeView: View {
             if let streamURL = try? await ym.getDirectStreamURL(for: item.id) {
                 var t = ym.convertToTrack(item)
                 t.streamUrlString = streamURL.absoluteString
-                player.play(t)
+                let queue = ymChart.map { ym.convertToTrack($0) }
+                player.play(t, newQueue: queue)
             }
         }
     }
@@ -391,7 +374,8 @@ struct HomeView: View {
                 if let streamURL = try? await ym.getDirectStreamURL(for: first.id) {
                     var t = ym.convertToTrack(first)
                     t.streamUrlString = streamURL.absoluteString
-                    player.play(t)
+                    let queue = tracks.map { ym.convertToTrack($0) }
+                    player.play(t, newQueue: queue)
                 }
             }
         }
@@ -407,457 +391,5 @@ struct HomeView: View {
     private func formatTime(_ s: Double) -> String {
         let m = Int(s) / 60; let sec = Int(s) % 60
         return String(format: "%d:%02d", m, sec)
-    }
-}
-
-// MARK: - Tab 2: New (Новинки) — Альбомы, Синглы и Свежие релизы
-
-struct NewReleasesView: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var ym = YandexMusicService.shared
-    @State private var newTracks: [YandexMusicService.YMTrackItem] = []
-    @State private var isLoading = false
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    // 2-Column Album Grid
-                    Text("Свежие альбомы и синглы")
-                        .font(.title3.weight(.bold))
-                        .padding(.horizontal, 16)
-
-                    if isLoading && newTracks.isEmpty {
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 180)
-                    } else {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 20) {
-                            ForEach(newTracks) { item in
-                                Button {
-                                    Task {
-                                        if let streamURL = try? await ym.getDirectStreamURL(for: item.id) {
-                                            var t = ym.convertToTrack(item)
-                                            t.streamUrlString = streamURL.absoluteString
-                                            player.play(t)
-                                        }
-                                    }
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        AsyncImage(url: URL(string: item.coverUrlString ?? "")) { phase in
-                                            if let img = phase.image {
-                                                img.resizable().aspectRatio(contentMode: .fill)
-                                            } else {
-                                                ZStack {
-                                                    LinearGradient(colors: [.purple, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
-                                                    Image(systemName: "music.note").foregroundStyle(.white.opacity(0.8))
-                                                }
-                                            }
-                                        }
-                                        .frame(height: 165)
-                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
-
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(item.title)
-                                                .font(.headline.weight(.semibold))
-                                                .lineLimit(1)
-                                                .foregroundStyle(.primary)
-
-                                            Text(item.artistName)
-                                                .font(.subheadline)
-                                                .lineLimit(1)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-                .padding(.top, 10)
-                .padding(.bottom, 130)
-            }
-            .navigationTitle("Новинки")
-            .task {
-                isLoading = true
-                newTracks = (try? await ym.getChart()) ?? []
-                isLoading = false
-            }
-        }
-    }
-}
-
-// MARK: - Tab 3: Radio (Радио) — «Моя волна» и Жанровые эфиры
-
-struct RadioStationsView: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var ym = YandexMusicService.shared
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    // Big Interactive «Моя волна» Header
-                    Button {
-                        playYMRadio(YandexMusicService.rotorStations[0])
-                    } label: {
-                        ZStack(alignment: .bottomLeading) {
-                            LinearGradient(
-                                colors: [Color(hex: "#FF455B")!, Color(hex: "#9333EA")!],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Label("ПЕРСОНАЛЬНОЕ РАДИО", systemImage: "sparkles")
-                                        .font(.system(size: 11, weight: .heavy))
-                                        .foregroundStyle(.white.opacity(0.85))
-                                    Spacer()
-                                    Image(systemName: "play.circle.fill")
-                                        .font(.system(size: 36, weight: .bold))
-                                        .foregroundStyle(.white)
-                                }
-
-                                Spacer()
-
-                                Text("Моя волна")
-                                    .font(.title.weight(.heavy))
-                                    .foregroundStyle(.white)
-
-                                Text("Нажмите, чтобы включить непрерывный поток любимой музыки")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.white.opacity(0.85))
-                                    .lineLimit(2)
-                            }
-                            .padding(20)
-                        }
-                        .frame(height: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .shadow(color: .black.opacity(0.25), radius: 10, y: 5)
-                        .padding(.horizontal, 16)
-                    }
-                    .buttonStyle(.plain)
-
-                    // Thematic Stations Grid
-                    Text("Тематические станции")
-                        .font(.title3.weight(.bold))
-                        .padding(.horizontal, 16)
-
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 16) {
-                        ForEach(YandexMusicService.rotorStations.dropFirst()) { station in
-                            Button {
-                                playYMRadio(station)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ZStack {
-                                        LinearGradient(
-                                            colors: station.gradient.compactMap { Color(hex: $0) },
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-
-                                        Image(systemName: station.icon)
-                                            .font(.system(size: 36, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.9))
-                                    }
-                                    .frame(height: 115)
-                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(station.title)
-                                            .font(.headline.weight(.semibold))
-                                            .lineLimit(1)
-                                            .foregroundStyle(.primary)
-
-                                        Text(station.subtitle)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        // Genre Radio Stations
-                        ForEach(JamendoService.stations) { station in
-                            Button {
-                                Task {
-                                    if let tracks = try? await JamendoService.tracksForStation(station), !tracks.isEmpty {
-                                        let queue = tracks.map { JamendoService.convertToTrack($0) }
-                                        player.play(queue[0], newQueue: queue)
-                                    }
-                                }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ZStack {
-                                        LinearGradient(
-                                            colors: station.coverGradient.compactMap { Color(hex: $0) },
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-
-                                        Image(systemName: station.iconName)
-                                            .font(.system(size: 36, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.9))
-                                    }
-                                    .frame(height: 115)
-                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(station.title)
-                                            .font(.headline.weight(.semibold))
-                                            .lineLimit(1)
-                                            .foregroundStyle(.primary)
-
-                                        Text(station.subtitle)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                .padding(.top, 10)
-                .padding(.bottom, 130)
-            }
-            .navigationTitle("Радио")
-        }
-    }
-
-    private func playYMRadio(_ station: YandexMusicService.StationOption) {
-        Task {
-            if let tracks = try? await ym.getStationTracks(stationId: station.stationId), let first = tracks.first {
-                if let streamURL = try? await ym.getDirectStreamURL(for: first.id) {
-                    var t = ym.convertToTrack(first)
-                    t.streamUrlString = streamURL.absoluteString
-                    player.play(t)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Tab 5: Search (Поиск) Across Yandex Music, Jamendo & Local Media
-
-struct SearchCatalogView: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var library = LibraryStore.shared
-    @StateObject private var ym = YandexMusicService.shared
-    @StateObject private var settings = SettingsStore.shared
-
-    @State private var searchText = ""
-    @State private var ymResults: [YandexMusicService.YMTrackItem] = []
-    @State private var jamendoResults: [JamendoService.JTrack] = []
-    @State private var isSearching = false
-
-    var localResults: [Track] {
-        guard !searchText.isEmpty else { return [] }
-        return library.tracks.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText) ||
-            $0.artist.localizedCaseInsensitiveContains(searchText)
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    // Category Chips when search is empty
-                    if searchText.isEmpty {
-                        searchCategoriesView
-                    }
-
-                    // Local Matches
-                    if !localResults.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("В вашей медиатеке")
-                                .font(.headline.weight(.semibold))
-                                .padding(.horizontal, 16)
-
-                            ForEach(localResults) { track in
-                                Button {
-                                    player.play(track)
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        SmallArtwork(track: track, size: 44)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(track.title).font(.body.weight(.medium)).foregroundStyle(.primary)
-                                            Text(track.artist).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 16)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-
-                    // Yandex Music Matches
-                    if !ymResults.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Image(systemName: "music.note")
-                                    .foregroundStyle(Color(hex: "#FF455B") ?? .pink)
-                                Text("Яндекс Музыка")
-                                    .font(.headline.weight(.bold))
-                            }
-                            .padding(.horizontal, 16)
-
-                            LazyVStack(spacing: 4) {
-                                ForEach(ymResults) { item in
-                                    Button {
-                                        Task {
-                                            if let streamURL = try? await ym.getDirectStreamURL(for: item.id) {
-                                                var t = ym.convertToTrack(item)
-                                                t.streamUrlString = streamURL.absoluteString
-                                                player.play(t)
-                                            }
-                                        }
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            AsyncImage(url: URL(string: item.coverUrlString ?? "")) { phase in
-                                                if let img = phase.image {
-                                                    img.resizable().aspectRatio(contentMode: .fill)
-                                                } else {
-                                                    Color.gray.opacity(0.3)
-                                                }
-                                            }
-                                            .frame(width: 48, height: 48)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(item.title).font(.body.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
-                                                Text(item.artistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                            }
-                                            Spacer()
-                                            Image(systemName: "play.circle.fill")
-                                                .font(.title3)
-                                                .foregroundStyle(Color(hex: "#FF455B") ?? .pink)
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 6)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-
-                    // Jamendo Matches
-                    if !jamendoResults.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Мировой каталог (Jamendo)")
-                                .font(.headline.weight(.semibold))
-                                .padding(.horizontal, 16)
-
-                            LazyVStack(spacing: 4) {
-                                ForEach(jamendoResults) { item in
-                                    Button {
-                                        let t = JamendoService.convertToTrack(item)
-                                        player.play(t)
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            AsyncImage(url: URL(string: item.coverUrl ?? "")) { phase in
-                                                if let img = phase.image {
-                                                    img.resizable().aspectRatio(contentMode: .fill)
-                                                } else {
-                                                    Color.gray.opacity(0.3)
-                                                }
-                                            }
-                                            .frame(width: 48, height: 48)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(item.title).font(.body.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
-                                                Text(item.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                            }
-                                            Spacer()
-                                            Image(systemName: "play.fill")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 6)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-
-                    if isSearching {
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 100)
-                    }
-                }
-                .padding(.top, 10)
-                .padding(.bottom, 130)
-            }
-            .navigationTitle("Поиск")
-            .searchable(text: $searchText, prompt: "Поиск в Яндекс Музыке и медиатеке")
-            .onSubmit(of: .search) {
-                Task { await performSearch() }
-            }
-            .onChange(of: searchText) { _ in
-                if searchText.isEmpty {
-                    ymResults = []
-                    jamendoResults = []
-                }
-            }
-        }
-    }
-
-    private var searchCategoriesView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Жанры и категории")
-                .font(.headline.weight(.semibold))
-                .padding(.horizontal, 16)
-
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                let cats = [
-                    ("Поп", [Color.pink, Color.orange]),
-                    ("Хип-хоп", [Color.orange, Color.red]),
-                    ("Электроника", [Color.blue, Color.cyan]),
-                    ("Рок", [Color.red, Color.purple]),
-                    ("Lo-Fi & Chill", [Color.teal, Color.indigo]),
-                    ("Джаз", [Color.yellow, Color.brown])
-                ]
-                ForEach(cats, id: \.0) { cat in
-                    Button {
-                        searchText = cat.0
-                        Task { await performSearch() }
-                    } label: {
-                        ZStack(alignment: .bottomLeading) {
-                            LinearGradient(colors: cat.1, startPoint: .topLeading, endPoint: .bottomTrailing)
-                            Text(cat.0)
-                                .font(.headline.weight(.bold))
-                                .foregroundStyle(.white)
-                                .padding(14)
-                        }
-                        .frame(height: 75)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private func performSearch() async {
-        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        isSearching = true
-        ymResults = (try? await ym.search(query: searchText)) ?? []
-        jamendoResults = (try? await JamendoService.search(query: searchText)) ?? []
-        isSearching = false
     }
 }

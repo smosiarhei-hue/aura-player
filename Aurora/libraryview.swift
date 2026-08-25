@@ -1,27 +1,30 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - Library View (Apple Music Style with Media Scanning & Settings)
+// MARK: - Library View (Медиатека — Плейлисты, Избранное, Полноценное управление)
 
 struct LibraryView: View {
     @StateObject private var library = LibraryStore.shared
     @StateObject private var player = PlayerCore.shared
     @StateObject private var settings = SettingsStore.shared
+
     @State private var searchText = ""
     @State private var filter: LibraryFilter = .all
     @State private var showSettings = false
     @State private var showFilePicker = false
+    @State private var showNewPlaylistAlert = false
+    @State private var newPlaylistTitle = ""
 
     enum LibraryFilter: String, CaseIterable, Identifiable {
-        case all = "Все песни", favorites = "Избранное", recent = "Недавние"
+        case all = "Все песни", favorites = "Избранное", playlists = "Плейлисты", recent = "Недавние"
         var id: String { rawValue }
     }
 
     var filteredTracks: [Track] {
         var list = library.tracks
         switch filter {
-        case .all: break
-        case .favorites: list = list.filter(\.isFavorite)
+        case .all, .playlists: break
+        case .favorites: list = list.filter { $0.isFavorite || library.isTrackFavorite($0) }
         case .recent: list = Array(list.sorted { $0.addedAt > $1.addedAt }.prefix(30))
         }
         if !searchText.isEmpty {
@@ -37,14 +40,14 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if library.tracks.isEmpty {
+                if library.tracks.isEmpty && library.playlists.isEmpty {
                     emptyStateView
                 } else {
                     mainLibraryContent
                 }
             }
             .navigationTitle("Медиатека")
-            .searchable(text: $searchText, prompt: "Поиск по песням и артистам")
+            .searchable(text: $searchText, prompt: "Поиск по песням и плейлистам")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -57,6 +60,12 @@ struct LibraryView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button {
+                            showNewPlaylistAlert = true
+                        } label: {
+                            Label("Создать плейлист", systemImage: "plus.rectangle.on.rectangle")
+                        }
+
                         Button {
                             Task { await library.scanSystemMediaLibrary() }
                         } label: {
@@ -79,6 +88,14 @@ struct LibraryView: View {
                             .font(.system(size: 18, weight: .semibold))
                     }
                 }
+            }
+            .alert("Новый плейлист", isPresented: $showNewPlaylistAlert) {
+                TextField("Название плейлиста", text: $newPlaylistTitle)
+                Button("Создать") {
+                    library.createPlaylist(title: newPlaylistTitle)
+                    newPlaylistTitle = ""
+                }
+                Button("Отмена", role: .cancel) { newPlaylistTitle = "" }
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
@@ -103,18 +120,23 @@ struct LibraryView: View {
                 // Quick Media Scan Bar
                 mediaScanActionCard
 
-                // Recently Added Albums / Tracks Grid
-                if filter == .all && searchText.isEmpty && library.tracks.count >= 2 {
-                    recentlyAddedSection
-                }
-
-                // Filter Tabs
+                // Filter Tabs (Все песни, Избранное, Плейлисты, Недавние)
                 filterChips
 
-                // Songs List
-                VStack(spacing: 2) {
-                    ForEach(filteredTracks) { track in
-                        trackRow(track)
+                // Playlists Section (if selected)
+                if filter == .playlists {
+                    playlistsSection
+                } else {
+                    // Recently Added Albums / Tracks Grid
+                    if filter == .all && searchText.isEmpty && library.tracks.count >= 2 {
+                        recentlyAddedSection
+                    }
+
+                    // Songs List
+                    VStack(spacing: 2) {
+                        ForEach(filteredTracks) { track in
+                            trackRow(track)
+                        }
                     }
                 }
             }
@@ -131,9 +153,9 @@ struct LibraryView: View {
                 .foregroundStyle(settings.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Импорт сохраненной музыки")
+                Text("Импорт музыки с телефона")
                     .font(.subheadline.weight(.semibold))
-                Text("Сканируйте медиатеку iPhone или выберите файлы")
+                Text("Сканируйте Apple Music или выберите файлы")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -153,6 +175,69 @@ struct LibraryView: View {
         }
         .liquidGlass(corner: 16, padding: 12)
         .padding(.horizontal, 16)
+    }
+
+    // MARK: - Playlists Section
+
+    private var playlistsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Ваши плейлисты")
+                    .font(.title3.weight(.bold))
+                Spacer()
+                Button("+ Создать") {
+                    showNewPlaylistAlert = true
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(settings.accentColor)
+            }
+            .padding(.horizontal, 16)
+
+            if library.playlists.isEmpty {
+                Text("Плейлистов пока нет. Нажмите «Создать», чтобы собрать подборку.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(16)
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 16) {
+                    ForEach(library.playlists) { playlist in
+                        VStack(alignment: .leading, spacing: 8) {
+                            ZStack {
+                                LinearGradient(
+                                    colors: playlist.coverGradient.compactMap { Color(hex: $0) },
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+
+                                Image(systemName: "music.note.list")
+                                    .font(.system(size: 36, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+                            .frame(height: 140)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+
+                            Text(playlist.title)
+                                .font(.headline.weight(.semibold))
+                                .lineLimit(1)
+                                .foregroundStyle(.primary)
+
+                            Text("\(playlist.trackIds.count) треков")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                library.deletePlaylist(playlist)
+                            } label: {
+                                Label("Удалить плейлист", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
     }
 
     // MARK: - Recently Added Section
@@ -243,10 +328,10 @@ struct LibraryView: View {
                             .lineLimit(1)
                             .foregroundStyle(.primary)
 
-                        if track.isFavorite {
-                            Image(systemName: "heart.fill")
+                        if library.isTrackFavorite(track) {
+                            Image(systemName: "star.fill")
                                 .font(.caption2)
-                                .foregroundStyle(.pink)
+                                .foregroundStyle(.yellow)
                         }
                     }
 
@@ -268,11 +353,22 @@ struct LibraryView: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button {
-                library.toggleFavorite(track.id)
+                library.toggleFavorite(track)
             } label: {
-                Label(track.isFavorite ? "Убрать из избранного" : "В избранное",
-                      systemImage: track.isFavorite ? "heart.slash" : "heart")
+                Label(library.isTrackFavorite(track) ? "Убрать из избранного" : "В избранное",
+                      systemImage: library.isTrackFavorite(track) ? "star.slash" : "star")
             }
+
+            if !library.playlists.isEmpty {
+                Menu("Добавить в плейлист") {
+                    ForEach(library.playlists) { p in
+                        Button(p.title) {
+                            library.addTrackToPlaylist(track: track, playlistId: p.id)
+                        }
+                    }
+                }
+            }
+
             Divider()
             Button(role: .destructive) {
                 library.delete(track)

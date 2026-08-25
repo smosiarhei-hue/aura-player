@@ -7,18 +7,23 @@ import UniformTypeIdentifiers
 final class LibraryStore: ObservableObject {
     static let shared = LibraryStore()
 
-    @Published private(set) var tracks: [Track] = [] { didSet { persist() } }
+    @Published private(set) var tracks: [Track] = [] { didSet { persistTracks() } }
+    @Published private(set) var playlists: [Playlist] = [] { didSet { persistPlaylists() } }
     @Published private(set) var isScanning = false
     @Published var importProgress: Double? = nil
     @Published var lastError: String? = nil
     @Published var hasMediaLibraryPermission = false
 
-    static let indexURL: URL = {
-        documentsDirectoryURL().appendingPathComponent("library.json")
+    static let tracksIndexURL: URL = {
+        documentsDirectoryURL().appendingPathComponent("library_tracks.json")
+    }()
+
+    static let playlistsIndexURL: URL = {
+        documentsDirectoryURL().appendingPathComponent("library_playlists.json")
     }()
 
     private init() {
-        load()
+        loadData()
         Task {
             await rescan()
             await checkMediaLibraryAccess()
@@ -27,16 +32,83 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - Persistence
 
-    private func persist() {
+    private func persistTracks() {
         if let data = try? JSONEncoder().encode(tracks) {
-            try? data.write(to: Self.indexURL, options: .atomic)
+            try? data.write(to: Self.tracksIndexURL, options: .atomic)
         }
     }
 
-    private func load() {
-        guard let data = try? Data(contentsOf: Self.indexURL),
-              let saved = try? JSONDecoder().decode([Track].self, from: data) else { return }
-        tracks = saved
+    private func persistPlaylists() {
+        if let data = try? JSONEncoder().encode(playlists) {
+            try? data.write(to: Self.playlistsIndexURL, options: .atomic)
+        }
+    }
+
+    private func loadData() {
+        if let data = try? Data(contentsOf: Self.tracksIndexURL),
+           let saved = try? JSONDecoder().decode([Track].self, from: data) {
+            tracks = saved
+        }
+        if let pData = try? Data(contentsOf: Self.playlistsIndexURL),
+           let savedPlaylists = try? JSONDecoder().decode([Playlist].self, from: pData) {
+            playlists = savedPlaylists
+        }
+    }
+
+    // MARK: - Playlists Management
+
+    func createPlaylist(title: String) {
+        guard !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let gradients = [
+            ["#FF455B", "#9333EA"],
+            ["#F97316", "#E11D48"],
+            ["#06B6D4", "#3B82F6"],
+            ["#10B981", "#6366F1"],
+            ["#EC4899", "#F59E0B"]
+        ]
+        let p = Playlist(title: title, coverGradient: gradients.randomElement() ?? ["#FF455B", "#9333EA"])
+        playlists.insert(p, at: 0)
+    }
+
+    func addTrackToPlaylist(track: Track, playlistId: UUID) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
+        // Ensure track is in library
+        if !tracks.contains(where: { $0.id == track.id }) {
+            tracks.append(track)
+        }
+        if !playlists[idx].trackIds.contains(track.id) {
+            playlists[idx].trackIds.append(track.id)
+            persistPlaylists()
+        }
+    }
+
+    func deletePlaylist(_ playlist: Playlist) {
+        playlists.removeAll { $0.id == playlist.id }
+    }
+
+    func tracks(for playlist: Playlist) -> [Track] {
+        let set = Set(playlist.trackIds)
+        return tracks.filter { set.contains($0.id) }
+    }
+
+    // MARK: - Favorites (Works for BOTH local and online tracks!)
+
+    func toggleFavorite(_ track: Track) {
+        if let i = tracks.firstIndex(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
+            tracks[i].isFavorite.toggle()
+        } else {
+            // Track is an online stream or not yet saved -> add to library as favorite!
+            var newFavorite = track
+            newFavorite.isFavorite = true
+            tracks.insert(newFavorite, at: 0)
+        }
+    }
+
+    func isTrackFavorite(_ track: Track) -> Bool {
+        if let found = tracks.first(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
+            return found.isFavorite
+        }
+        return track.isFavorite
     }
 
     // MARK: - Scan local storage (Documents, Music, and Media Library)
@@ -51,7 +123,6 @@ final class LibraryStore: ObservableObject {
 
         var discoveredURLs: [URL] = []
 
-        // 1. Scan Documents root (where Finder / iTunes / Files app puts files)
         if let rootFiles = try? FileManager.default.contentsOfDirectory(at: docURL, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey]) {
             for file in rootFiles {
                 let isDir = (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
@@ -61,7 +132,6 @@ final class LibraryStore: ObservableObject {
             }
         }
 
-        // 2. Scan Documents/Music subdirectory
         if let musicFiles = try? FileManager.default.contentsOfDirectory(at: musicURL, includingPropertiesForKeys: [.fileSizeKey]) {
             for file in musicFiles {
                 if exts.contains(file.pathExtension.lowercased()) && !discoveredURLs.contains(where: { $0.lastPathComponent == file.lastPathComponent }) {
@@ -97,7 +167,7 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    // MARK: - Scan System Music Library (MPMediaLibrary / iPhone Music)
+    // MARK: - Scan System Apple Music Library (MPMediaLibrary)
 
     func checkMediaLibraryAccess() async {
         let status = MPMediaLibrary.authorizationStatus()
@@ -181,9 +251,7 @@ final class LibraryStore: ObservableObject {
 
         for url in urls {
             let isScoped = url.startAccessingSecurityScopedResource()
-            defer {
-                if isScoped { url.stopAccessingSecurityScopedResource() }
-            }
+            defer { if isScoped { url.stopAccessingSecurityScopedResource() } }
 
             do {
                 let dest = targetDir.appendingPathComponent(url.lastPathComponent)
@@ -223,40 +291,6 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    // MARK: - Import from URL (Direct Download)
-
-    func importFromURL(_ link: String) async {
-        lastError = nil
-        guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme) else {
-            lastError = "Некорректная ссылка на аудиофайл"
-            return
-        }
-
-        importProgress = -1
-        defer { importProgress = nil }
-
-        do {
-            let (tmpUrl, response) = try await URLSession.shared.download(from: url)
-            var filename = url.lastPathComponent
-            if filename.isEmpty || !filename.contains(".") {
-                let mime = (response as? HTTPURLResponse)?.mimeType ?? ""
-                let ext = mime.contains("mp4") || mime.contains("m4a") ? "m4a" : (mime.contains("flac") ? "flac" : "mp3")
-                filename = "track_\(Int(Date().timeIntervalSince1970)).\(ext)"
-            }
-
-            let dest = musicDirectoryURL().appendingPathComponent(filename)
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try? FileManager.default.removeItem(at: dest)
-            }
-            try FileManager.default.moveItem(at: tmpUrl, to: dest)
-            try await addLocalFile(at: dest)
-        } catch {
-            lastError = "Ошибка скачивания: \(error.localizedDescription)"
-        }
-    }
-
     // MARK: - Add Local File
 
     func addLocalFile(at dest: URL) async throws {
@@ -280,13 +314,6 @@ final class LibraryStore: ObservableObject {
         tracks.insert(track, at: 0)
     }
 
-    // MARK: - Favorites & Deletion
-
-    func toggleFavorite(_ id: UUID) {
-        guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
-        tracks[i].isFavorite.toggle()
-    }
-
     func delete(_ track: Track) {
         if PlayerCore.shared.currentTrack?.id == track.id {
             PlayerCore.shared.stopAndClear()
@@ -295,18 +322,19 @@ final class LibraryStore: ObservableObject {
             try? FileManager.default.removeItem(at: track.url)
         }
         tracks.removeAll { $0.id == track.id }
+        for i in playlists.indices {
+            playlists[i].trackIds.removeAll { $0 == track.id }
+        }
     }
 
     func resetIndex() {
         tracks.removeAll()
-        try? FileManager.default.removeItem(at: Self.indexURL)
+        playlists.removeAll()
+        try? FileManager.default.removeItem(at: Self.tracksIndexURL)
+        try? FileManager.default.removeItem(at: Self.playlistsIndexURL)
     }
 
     // MARK: - Artwork Cache
-
-    static func artworkURL(for trackId: UUID) -> URL {
-        artworkCacheDirectoryURL().appendingPathComponent("\(trackId.uuidString).jpg")
-    }
 
     static func cachedArtworkImage(for track: Track) -> UIImage? {
         let tempSeed = stableSeed(track.fileName)
@@ -314,8 +342,6 @@ final class LibraryStore: ObservableObject {
         guard FileManager.default.fileExists(atPath: artPath.path) else { return nil }
         return UIImage(contentsOfFile: artPath.path)
     }
-
-    // MARK: - Metadata Extraction
 
     nonisolated private static func readMetadata(url: URL) async -> (
         title: String, artist: String, album: String, duration: Double, colors: [String], hasArtwork: Bool

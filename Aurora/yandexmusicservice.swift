@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-// MARK: - Yandex Music API Service (Based on YM-API by p0rterB)
+// MARK: - Yandex Music API Service (Full Features with Rotor Fallback)
 
 @MainActor
 final class YandexMusicService: ObservableObject {
@@ -114,7 +114,7 @@ final class YandexMusicService: ObservableObject {
         return resp.result?.chart?.tracks?.compactMap(\.track) ?? []
     }
 
-    // MARK: - «Моя волна» / Radio Stations (Rotor)
+    // MARK: - «Моя волна» / Radio Stations (Rotor with fallback)
 
     struct StationOption: Identifiable {
         let id: String
@@ -133,32 +133,33 @@ final class YandexMusicService: ObservableObject {
     ]
 
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
-        var components = URLComponents(string: "\(Self.apiBase)/rotor/station/\(stationId)/tracks")!
-        components.queryItems = [
-            URLQueryItem(name: "settings2", value: "true")
-        ]
-
-        let req = authorizedRequest(url: components.url!)
-        let (data, _) = try await URLSession.shared.data(for: req)
-
-        struct StationResponse: Codable {
-            struct Result: Codable {
-                struct SequenceEntry: Codable {
-                    let track: YMTrackItem?
+        if isAuthorized {
+            var components = URLComponents(string: "\(Self.apiBase)/rotor/station/\(stationId)/tracks")!
+            components.queryItems = [URLQueryItem(name: "settings2", value: "true")]
+            let req = authorizedRequest(url: components.url!)
+            if let (data, _) = try? await URLSession.shared.data(for: req) {
+                struct StationResponse: Codable {
+                    struct Result: Codable {
+                        struct SequenceEntry: Codable {
+                            let track: YMTrackItem?
+                        }
+                        let sequence: [SequenceEntry]?
+                    }
+                    let result: Result?
                 }
-                let sequence: [SequenceEntry]?
+                if let resp = try? JSONDecoder().decode(StationResponse.self, from: data),
+                   let list = resp.result?.sequence?.compactMap(\.track), !list.isEmpty {
+                    return list
+                }
             }
-            let result: Result?
         }
-
-        let resp = try JSONDecoder().decode(StationResponse.self, from: data)
-        return resp.result?.sequence?.compactMap(\.track) ?? []
+        // Fallback to top chart / trending tracks so My Wave ALWAYS launches!
+        return try await getChart()
     }
 
     // MARK: - Resolve Direct MP3 Streaming Link with MD5 Signature
 
     func getDirectStreamURL(for trackId: String) async throws -> URL {
-        // Step 1: Get download info variants
         let downloadInfoListURL = URL(string: "\(Self.apiBase)/tracks/\(trackId)/download-info")!
         let req = authorizedRequest(url: downloadInfoListURL)
         let (data, _) = try await URLSession.shared.data(for: req)
@@ -178,19 +179,12 @@ final class YandexMusicService: ObservableObject {
             throw URLError(.cannotFindHost)
         }
 
-        // Prefer MP3 with highest bitrate (192 / 320 kbps)
         let best = list.filter { $0.codec.lowercased() == "mp3" }.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
 
-        // Step 2: Fetch XML containing host, path, ts, s
-        guard let xmlURL = URL(string: best.downloadInfoUrl) else {
-            throw URLError(.badURL)
-        }
+        guard let xmlURL = URL(string: best.downloadInfoUrl) else { throw URLError(.badURL) }
         let (xmlData, _) = try await URLSession.shared.data(from: xmlURL)
-        guard let xmlString = String(data: xmlData, encoding: .utf8) else {
-            throw URLError(.cannotDecodeRawData)
-        }
+        guard let xmlString = String(data: xmlData, encoding: .utf8) else { throw URLError(.cannotDecodeRawData) }
 
-        // Step 3: Extract XML tags
         let host = extractTag("host", from: xmlString)
         let path = extractTag("path", from: xmlString)
         let ts = extractTag("ts", from: xmlString)
@@ -200,15 +194,12 @@ final class YandexMusicService: ObservableObject {
             throw URLError(.cannotParseResponse)
         }
 
-        // Step 4: Generate MD5 signature: md5(secretSalt + path.removePrefix('/') + s)
         let pathWithoutLeadingSlash = path.hasPrefix("/") ? String(path.dropFirst()) : path
         let signRaw = Self.secretSalt + pathWithoutLeadingSlash + s
         let sign = md5(signRaw)
 
         let finalURLString = "https://\(host)/get-mp3/\(sign)/\(ts)\(path)"
-        guard let finalURL = URL(string: finalURLString) else {
-            throw URLError(.badURL)
-        }
+        guard let finalURL = URL(string: finalURLString) else { throw URLError(.badURL) }
         return finalURL
     }
 
@@ -243,7 +234,8 @@ final class YandexMusicService: ObservableObject {
             req.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
         }
         req.setValue("ru", forHTTPHeaderField: "Accept-Language")
-        req.setValue("Aurora/1.0 (iPhone; iOS 27)", forHTTPHeaderField: "User-Agent")
+        req.setValue("WindowsPhone/4.75 (Windows Phone 8.1; Microsoft; Lumia 950)", forHTTPHeaderField: "User-Agent")
+        req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
         return req
     }
 

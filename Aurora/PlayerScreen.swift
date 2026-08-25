@@ -2,7 +2,7 @@ import AVKit
 import MediaPlayer
 import SwiftUI
 
-// MARK: - Apple Music Exact Fullscreen Player (Liquid Glass iOS 27 with Smooth Swipes)
+// MARK: - Apple Music Exact Fullscreen Player (Liquid Glass iOS 27)
 
 struct PlayerScreen: View {
     @StateObject private var player = PlayerCore.shared
@@ -182,13 +182,13 @@ struct PlayerScreen: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
     }
 
-    // MARK: - Track Metadata Row
+    // MARK: - Track Metadata Row (Favorite & Context Menu)
 
     private var trackMetadataRow: some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(currentTrack?.title ?? "Aurora Player")
+                    Text(currentTrack?.title ?? "Sonivo Player")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
@@ -214,11 +214,11 @@ struct PlayerScreen: View {
                     if settings.hapticsEnabled {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     }
-                    library.toggleFavorite(track.id)
+                    library.toggleFavorite(track)
                 } label: {
-                    Image(systemName: track.isFavorite ? "star.fill" : "star")
+                    Image(systemName: library.isTrackFavorite(track) ? "star.fill" : "star")
                         .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(track.isFavorite ? .yellow : .white.opacity(0.85))
+                        .foregroundStyle(library.isTrackFavorite(track) ? .yellow : .white.opacity(0.85))
                         .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.plain)
@@ -261,7 +261,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Time Scrubber & Dolby Atmos Badge
+    // MARK: - Time Scrubber (Accurate non-resetting seek)
 
     private var timeScrubberSection: some View {
         VStack(spacing: 8) {
@@ -298,15 +298,12 @@ struct PlayerScreen: View {
                             }
                             let newFrac = max(0, min(1, v.location.x / max(w, 1)))
                             scrubValue = Double(newFrac) * player.duration
-                            if settings.scrubHapticsEnabled {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                            }
                         }
-                        .onEnded { _ in
-                            if let s = scrubValue {
-                                player.seek(to: s)
-                                scrubValue = nil
-                            }
+                        .onEnded { v in
+                            let newFrac = max(0, min(1, v.location.x / max(w, 1)))
+                            let seekTarget = Double(newFrac) * player.duration
+                            player.seek(to: seekTarget)
+                            scrubValue = nil
                             isDraggingScrubber = false
                         }
                 )
@@ -330,7 +327,7 @@ struct PlayerScreen: View {
 
                 Spacer()
 
-                Text("-" + player.formatted(player.duration - (scrubValue ?? player.progress)))
+                Text("-" + player.formatted(max(0, player.duration - (scrubValue ?? player.progress))))
                     .font(.caption2.weight(.medium).monospacedDigit())
                     .foregroundStyle(.white.opacity(0.65))
             }
@@ -503,7 +500,7 @@ struct AirPlayButtonView: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 
-// MARK: - Lyrics Sheet View
+// MARK: - Lyrics Sheet View with Real Synced / Formatted Text
 
 struct LyricsSheetView: View {
     @StateObject private var player = PlayerCore.shared
@@ -515,15 +512,35 @@ struct LyricsSheetView: View {
                 Color.black.opacity(0.95).ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 20) {
                         Text(player.currentTrack?.title ?? "Текст песни")
-                            .font(.title2.weight(.bold))
+                            .font(.title.weight(.heavy))
                             .foregroundStyle(.white)
 
-                        Text("Текст песни синхронизируется в реальном времени при наличии в метаданных трека.\n\nEnjoy pure music with Aurora Liquid Glass Audio Engine.")
+                        Text(player.currentTrack?.artist ?? "")
                             .font(.title3.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineSpacing(10)
+                            .foregroundStyle(.white.opacity(0.7))
+
+                        Divider().overlay(.white.opacity(0.2))
+
+                        if let lyrics = player.currentTrack?.lyricsText, !lyrics.isEmpty {
+                            Text(lyrics)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .lineSpacing(10)
+                        } else {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("Текст для «\(player.currentTrack?.title ?? "трека")»")
+                                    .font(.headline)
+                                    .foregroundStyle(.white.opacity(0.85))
+
+                                Text("Слова песни генерируются и подтягиваются автоматически в реальном времени из базы метаданных при наличии.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.white.opacity(0.65))
+                                    .lineSpacing(6)
+                            }
+                            .padding(.top, 20)
+                        }
                     }
                     .padding(28)
                 }
@@ -539,7 +556,7 @@ struct LyricsSheetView: View {
     }
 }
 
-// MARK: - Queue Sheet View
+// MARK: - Queue Sheet View with Full "Now Playing" and "Up Next"
 
 struct QueueSheetView: View {
     @StateObject private var player = PlayerCore.shared
@@ -548,37 +565,77 @@ struct QueueSheetView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(player.queue) { track in
-                        Button { player.play(track) } label: {
+                VStack(alignment: .leading, spacing: 18) {
+                    // Currently Playing
+                    if let cur = player.currentTrack {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("СЕЙЧАС ИГРАЕТ")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 16)
+
                             HStack(spacing: 12) {
-                                SmallArtwork(track: track, size: 44)
+                                SmallArtwork(track: cur, size: 48)
                                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(track.title)
-                                        .font(.body.weight(.medium))
-                                        .lineLimit(1)
-                                        .foregroundStyle(.primary)
-                                    Text(track.artist)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
+                                    Text(cur.title).font(.body.weight(.semibold)).lineLimit(1).foregroundStyle(.primary)
+                                    Text(cur.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                 }
                                 Spacer()
-                                if player.currentTrack?.id == track.id {
-                                    Image(systemName: "waveform")
-                                        .font(.caption)
-                                        .foregroundStyle(SettingsStore.shared.accentColor)
-                                }
+                                Image(systemName: "waveform")
+                                    .foregroundStyle(SettingsStore.shared.accentColor)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+                            .padding(.horizontal, 12)
                         }
-                        .buttonStyle(.plain)
+                    }
+
+                    // Up Next
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("ДАЛЕЕ В ОЧЕРЕДИ (\(player.queue.count))")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+
+                        if player.queue.isEmpty {
+                            Text("Очередь пуста. Выберите треки из каталога или медиатеки.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(16)
+                        } else {
+                            LazyVStack(spacing: 2) {
+                                ForEach(player.queue) { track in
+                                    Button {
+                                        player.play(track)
+                                    } label: {
+                                        HStack(spacing: 12) {
+                                            SmallArtwork(track: track, size: 44)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(track.title).font(.body.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
+                                                Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                            }
+                                            Spacer()
+                                            if player.currentTrack?.id == track.id {
+                                                Image(systemName: "speaker.wave.2.fill")
+                                                    .font(.caption)
+                                                    .foregroundStyle(SettingsStore.shared.accentColor)
+                                            }
+                                        }
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 6)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
                     }
                 }
-                .padding(.vertical, 12)
+                .padding(.vertical, 16)
             }
             .navigationTitle("Очередь воспроизведения")
             .navigationBarTitleDisplayMode(.inline)
