@@ -19,29 +19,32 @@ struct RootView: View {
     @StateObject private var player = PlayerCore.shared
     @State private var selectedTab: MainTab = .library
     @State private var showPlayer = false
-    @State private var previousTab: MainTab = .library
 
-    enum MainTab: String {
-        case library, explore, equalizer, settings
+    enum MainTab: String, CaseIterable {
+        case library, explore, settings
         var icon: String {
             switch self {
-            case .library:   return "music.note.list"
-            case .explore:   return "compass"
-            case .equalizer: return "slider.horizontal.3"
-            case .settings:  return "gearshape"
+            case .library:  return "music.note.list"
+            case .explore:  return "compass"
+            case .settings: return "gearshape"
+            }
+        }
+        var label: String {
+            switch self {
+            case .library:  return "Библиотека"
+            case .explore:  return "Обзор"
+            case .settings: return "Настройки"
             }
         }
     }
 
     var body: some View {
         ZStack {
-            // Tab content
             Group {
                 switch selectedTab {
-                case .library:   LibraryView()
-                case .explore:   ExploreView()
-                case .equalizer: EqualizerView()
-                case .settings:  SettingsView()
+                case .library:  LibraryView()
+                case .explore:  ExploreView()
+                case .settings: SettingsView()
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: selectedTab)
@@ -51,8 +54,8 @@ struct RootView: View {
                 Spacer()
                 if player.currentTrack != nil {
                     MiniPlayerBar(showPlayer: $showPlayer)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 80)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 88)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -61,9 +64,9 @@ struct RootView: View {
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreen()
         }
-        // Floating glass tab bar (iOS 27 style)
+        // Standard iOS tab bar (Liquid Glass on iOS 18+)
         .overlay(alignment: .bottom) {
-            if !(showPlayer) {
+            if !showPlayer {
                 LiquidTabBar(selected: $selectedTab)
                     .padding(.bottom, 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -73,15 +76,14 @@ struct RootView: View {
     }
 }
 
-// MARK: - Liquid Glass Tab Bar (iOS 27)
+// MARK: - Liquid Glass Tab Bar
 
 struct LiquidTabBar: View {
     @Binding var selected: RootView.MainTab
-    @State private var previousTab: RootView.MainTab?
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach([RootView.MainTab.library, .explore, .equalizer, .settings], id: \.rawValue) { tab in
+            ForEach(RootView.MainTab.allCases, id: \.rawValue) { tab in
                 tabButton(tab)
             }
         }
@@ -99,7 +101,6 @@ struct LiquidTabBar: View {
         } label: {
             VStack(spacing: 4) {
                 ZStack {
-                    // Active indicator pill
                     if isActive {
                         Capsule()
                             .fill(SettingsStore.shared.accentGradient)
@@ -127,11 +128,11 @@ struct MiniPlayerBar: View {
     var body: some View {
         Button { showPlayer = true } label: {
             HStack(spacing: 12) {
-                SmallArtwork(palette: player.currentTrack?.palette ?? Palette.seeded(1).colors, size: 42)
+                SmallArtwork(palette: player.currentTrack?.palette ?? Palette.seeded(1).colors, size: 44)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.currentTrack?.title ?? "")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
                         .lineLimit(1).foregroundStyle(.primary)
                     Text(player.currentTrack?.artist ?? "")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -142,9 +143,9 @@ struct MiniPlayerBar: View {
                     Circle().trim(from: 0, to: player.duration > 0 ? player.progress / player.duration : 0)
                         .stroke(SettingsStore.shared.accentGradient, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                        .frame(width: 32, height: 32)
-                    Circle().stroke(.primary.opacity(0.1), lineWidth: 2)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 34, height: 34)
+                    Circle().stroke(.primary.opacity(0.08), lineWidth: 2)
+                        .frame(width: 34, height: 34)
                     Button { player.togglePlay() } label: {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 10, weight: .bold))
@@ -153,8 +154,9 @@ struct MiniPlayerBar: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 10)
+            .padding(.leading, 14)
+            .padding(.trailing, 12)
+            .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
         .liquidGlass(corner: 22, padding: 0)
