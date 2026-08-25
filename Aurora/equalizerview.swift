@@ -68,7 +68,7 @@ struct EqualizerView: View {
                             }
                         } label: {
                             Text(preset.name)
-                                .font(.footnote(weight: active ? .semibold : .regular))
+                                .font(Font.system(size: 13, weight: active ? .semibold : .regular))
                                 .padding(.horizontal, 14).padding(.vertical, 8)
                                 .background(Capsule().fill(
                                     active
