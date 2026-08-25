@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Blob position helper (extracted to avoid Canvas type-check timeout)
+// MARK: - Blob position helper
 
 private func blobGeometry(index: Int, t: Double, w: Double, h: Double) -> (cx: Double, cy: Double, radius: Double) {
     let fi = Double(index)
@@ -25,16 +25,10 @@ struct AnimatedArtworkView: View {
                 for i in 0..<6 {
                     let geo = blobGeometry(index: i, t: t, w: w, h: h)
                     let color = palette[i % max(palette.count, 1)]
-                    let center = CGPoint(x: geo.cx, y: geo.cy)
                     let rect = CGRect(x: geo.cx - geo.radius, y: geo.cy - geo.radius,
                                       width: geo.radius * 2, height: geo.radius * 2)
-                    let grad = GraphicsContext.RadialGradient(
-                        colors: [color],
-                        center: center,
-                        startRadius: 0,
-                        endRadius: geo.radius
-                    )
-                    ctx.fill(Path(ellipseIn: rect), with: .radialGradient(grad, center: center, startRadius: 0, endRadius: geo.radius))
+                    ctx.opacity = 0.8
+                    ctx.fill(Path(ellipseIn: rect), with: .color(color))
                 }
             }
         }
