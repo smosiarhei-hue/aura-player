@@ -165,7 +165,8 @@ final class LibraryStore: ObservableObject {
                 AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: id).first?.stringValue
             }
             title = first(.commonIdentifierTitle) ?? title
-            artist = first(.commonIdentifierArtist) ?? artist            album = first(.commonIdentifierAlbumName) ?? album
+            artist = first(.commonIdentifierArtist) ?? artist
+            album = first(.commonIdentifierAlbumName) ?? album
             if let item = AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: .commonIdentifierArtwork).first,
                let data = item.dataValue, let image = UIImage(data: data) {
                 colors = artworkPalette(from: image)

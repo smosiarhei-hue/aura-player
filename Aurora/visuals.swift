@@ -1,5 +1,17 @@
 import SwiftUI
 
+// MARK: - Blob position helper (extracted to avoid Canvas type-check timeout)
+
+private func blobGeometry(index: Int, t: Double, w: Double, h: Double) -> (cx: Double, cy: Double, radius: Double) {
+    let fi = Double(index)
+    let speed = 0.12 + 0.05 * (fi.truncatingRemainder(dividingBy: 3))
+    let phase = fi * 1.047 + t * speed
+    let cx = w * (0.5 + 0.34 * sin(phase + fi * 0.7))
+    let cy = h * (0.5 + 0.32 * cos(phase * 0.83 + fi * 1.3))
+    let r = min(w, h) * (0.22 + 0.06 * sin(t * 0.6 + fi * 2.1))
+    return (cx, cy, r)
+}
+
 // MARK: - Animated artwork (видеошот-подобная анимация)
 
 struct AnimatedArtworkView: View {
@@ -10,24 +22,19 @@ struct AnimatedArtworkView: View {
                 let t = timeline.date.timeIntervalSinceReferenceDate
                 let w = Double(size.width)
                 let h = Double(size.height)
-                let count = max(palette.count, 1)
                 for i in 0..<6 {
-                    let fi = Double(i)
-                    let speed = 0.12 + 0.05 * (fi.truncatingRemainder(dividingBy: 3))
-                    let phase = fi * 1.047 + t * speed
-                    let cx = w * (0.5 + 0.34 * sin(phase + fi * 0.7))
-                    let cy = h * (0.5 + 0.32 * cos(phase * 0.83 + fi * 1.3))
-                    let r = min(w, h) * (0.22 + 0.06 * sin(t * 0.6 + fi * 2.1))
-                    let color = palette[i % count]
-                    let center = CGPoint(x: cx, y: cy)
-                    let rect = CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
+                    let geo = blobGeometry(index: i, t: t, w: w, h: h)
+                    let color = palette[i % max(palette.count, 1)]
+                    let center = CGPoint(x: geo.cx, y: geo.cy)
+                    let rect = CGRect(x: geo.cx - geo.radius, y: geo.cy - geo.radius,
+                                      width: geo.radius * 2, height: geo.radius * 2)
                     let grad = GraphicsContext.RadialGradient(
-                        colors: [palette[i % count].opacity(0.85)],
+                        colors: [color],
                         center: center,
                         startRadius: 0,
-                        endRadius: r
+                        endRadius: geo.radius
                     )
-                    ctx.fill(Path(ellipseIn: rect), with: .radialGradient(grad, center: center, startRadius: 0, endRadius: r))
+                    ctx.fill(Path(ellipseIn: rect), with: .radialGradient(grad, center: center, startRadius: 0, endRadius: geo.radius))
                 }
             }
         }
