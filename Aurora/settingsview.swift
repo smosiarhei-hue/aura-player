@@ -30,7 +30,7 @@ struct SettingsView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(Color(hex: "#FF455B")!)
+                        .tint(Color(hex: "#FF455B") ?? .pink)
 
                         Text("Токен позволяет слушать музыку в максимальном качестве 320 kbps и запускать персональную «Мою волну». Поиск и чарты работают и без токена.")
                             .font(.caption2)
@@ -105,7 +105,8 @@ struct SettingsView: View {
                 }
 
                 Section("О приложении") {
-                    LabeledContent("Версия", value: "1.0.0")
+                    LabeledContent("Версия", value: appVersion)
+                    LabeledContent("Сборка", value: "Build #\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")")
                     LabeledContent("Дизайн", value: "iOS 27 Liquid Glass")
                     Text("Aurora Player — нативный плеер со спектральным анализом, 10-полосным эквалайзером, DJ AutoMix, Яндекс Музыкой (YM-API) и динамическими обложками.")
                         .font(.footnote)
@@ -114,5 +115,10 @@ struct SettingsView: View {
             }
             .navigationTitle("Настройки")
         }
+    }
+
+    private var appVersion: String {
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        return ver.contains("Beta") ? ver : "\(ver) Beta"
     }
 }
