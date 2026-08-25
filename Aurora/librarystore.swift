@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class LibraryStore: ObservableObject {
@@ -11,9 +12,13 @@ final class LibraryStore: ObservableObject {
     @Published var lastError: String? = nil
 
     static let indexURL: URL = {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent("library.json")
+        documentsDirectoryURL().appendingPathComponent("library.json")
     }()
+
+    private init() {
+        load()
+        Task { await rescan() }
+    }
 
     // MARK: - Persistence
 
@@ -23,46 +28,71 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    private init() {
-        load()
-        Task { await rescan() }
-    }
-
     private func load() {
         guard let data = try? Data(contentsOf: Self.indexURL),
               let saved = try? JSONDecoder().decode([Track].self, from: data) else { return }
         tracks = saved
     }
 
-    // MARK: - Scan existing files in Music directory
+    // MARK: - Scan local storage (Documents and Documents/Music)
 
     func rescan() async {
         isScanning = true
         defer { isScanning = false }
-        let exts: Set<String> = ["mp3", "m4a", "aac", "wav", "flac", "aiff", "alac", "ogg"]
-        let files = (try? FileManager.default.contentsOfDirectory(at: musicDirectoryURL(), includingPropertiesForKeys: [.fileSizeKey]))?
-            .filter { exts.contains($0.pathExtension.lowercased()) } ?? []
 
-        let known = Set(tracks.map(\.fileName))
-        var added: [Track] = []
-        for url in files where !known.contains(url.lastPathComponent) {
+        let exts: Set<String> = ["mp3", "m4a", "aac", "wav", "flac", "aiff", "alac", "ogg", "caf"]
+        let docURL = documentsDirectoryURL()
+        let musicURL = musicDirectoryURL()
+
+        var discoveredURLs: [URL] = []
+
+        // 1. Scan Documents root (where Finder / iTunes / Files app puts files)
+        if let rootFiles = try? FileManager.default.contentsOfDirectory(at: docURL, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey]) {
+            for file in rootFiles {
+                let isDir = (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if !isDir && exts.contains(file.pathExtension.lowercased()) {
+                    discoveredURLs.append(file)
+                }
+            }
+        }
+
+        // 2. Scan Documents/Music subdirectory
+        if let musicFiles = try? FileManager.default.contentsOfDirectory(at: musicURL, includingPropertiesForKeys: [.fileSizeKey]) {
+            for file in musicFiles {
+                if exts.contains(file.pathExtension.lowercased()) && !discoveredURLs.contains(where: { $0.lastPathComponent == file.lastPathComponent }) {
+                    discoveredURLs.append(file)
+                }
+            }
+        }
+
+        let knownNames = Set(tracks.filter { !$0.isStream }.map(\.fileName))
+        var addedTracks: [Track] = []
+
+        for url in discoveredURLs where !knownNames.contains(url.lastPathComponent) {
             let meta = await Self.readMetadata(url: url)
-            let t = Track(
+            let seed = Self.stableSeed(url.lastPathComponent)
+            let relative = url.path.replacingOccurrences(of: docURL.path, with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+            let track = Track(
                 fileName: url.lastPathComponent,
+                relativePath: relative,
                 title: meta.title,
                 artist: meta.artist,
                 album: meta.album,
                 duration: meta.duration,
-                artworkSeed: Self.stableSeed(url.lastPathComponent),
-                colorsHex: meta.colors
+                artworkSeed: seed,
+                colorsHex: meta.colors,
+                hasEmbeddedArtwork: meta.hasArtwork
             )
-            added.append(t)
+            addedTracks.append(track)
         }
-        guard !added.isEmpty else { return }
-        tracks.append(contentsOf: added)
+
+        if !addedTracks.isEmpty {
+            tracks.append(contentsOf: addedTracks)
+        }
     }
 
-    // MARK: - Import from file picker (security-scoped URLs)
+    // MARK: - Import from File Picker (Security-Scoped URLs)
 
     func importFromPicker(urls: [URL]) {
         Task { await importFiles(from: urls) }
@@ -70,65 +100,85 @@ final class LibraryStore: ObservableObject {
 
     func importFiles(from urls: [URL]) async {
         lastError = nil
+        let targetDir = musicDirectoryURL()
+
         for url in urls {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let isScoped = url.startAccessingSecurityScopedResource()
+            defer {
+                if isScoped { url.stopAccessingSecurityScopedResource() }
+            }
+
             do {
-                let dest = musicDirectoryURL().appendingPathComponent(url.lastPathComponent)
+                let dest = targetDir.appendingPathComponent(url.lastPathComponent)
                 if FileManager.default.fileExists(atPath: dest.path) {
                     try? FileManager.default.removeItem(at: dest)
                 }
                 try FileManager.default.copyItem(at: url, to: dest)
-                try await addFile(at: dest)
+                try await addLocalFile(at: dest)
             } catch {
-                lastError = "Импорт не удался: \(url.lastPathComponent)"
+                lastError = "Не удалось импортировать: \(url.lastPathComponent)"
             }
         }
     }
 
-    // MARK: - Import from URL (direct download)
+    // MARK: - Import from URL (Direct Download)
 
     func importFromURL(_ link: String) async {
         lastError = nil
         guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme) else {
-            lastError = "Некорректная ссылка"
+            lastError = "Некорректная ссылка на аудиофайл"
             return
         }
-        importProgress = -1  // indeterminate
+
+        importProgress = -1
         defer { importProgress = nil }
+
         do {
-            let (tmpUrl, _) = try await URLSession.shared.download(from: url)
-            let name = url.lastPathComponent.isEmpty ? "track-\(Int(Date().timeIntervalSince1970)).mp3" : url.lastPathComponent
-            let dest = musicDirectoryURL().appendingPathComponent(name)
-            try? FileManager.default.removeItem(at: dest)
+            let (tmpUrl, response) = try await URLSession.shared.download(from: url)
+            var filename = url.lastPathComponent
+            if filename.isEmpty || !filename.contains(".") {
+                let mime = (response as? HTTPURLResponse)?.mimeType ?? ""
+                let ext = mime.contains("mp4") || mime.contains("m4a") ? "m4a" : (mime.contains("flac") ? "flac" : "mp3")
+                filename = "track_\(Int(Date().timeIntervalSince1970)).\(ext)"
+            }
+
+            let dest = musicDirectoryURL().appendingPathComponent(filename)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try? FileManager.default.removeItem(at: dest)
+            }
             try FileManager.default.moveItem(at: tmpUrl, to: dest)
-            try await addFile(at: dest)
+            try await addLocalFile(at: dest)
         } catch {
-            lastError = "Скачивание не удалось: \(error.localizedDescription)"
+            lastError = "Ошибка скачивания: \(error.localizedDescription)"
         }
     }
 
-    // MARK: - Add single file to library
+    // MARK: - Add Local File
 
-    func addFile(at dest: URL) async throws {
+    func addLocalFile(at dest: URL) async throws {
         let meta = await Self.readMetadata(url: dest)
+        let docURL = documentsDirectoryURL()
+        let relative = dest.path.replacingOccurrences(of: docURL.path, with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
         let track = Track(
             fileName: dest.lastPathComponent,
+            relativePath: relative,
             title: meta.title,
             artist: meta.artist,
             album: meta.album,
             duration: meta.duration,
             artworkSeed: Self.stableSeed(dest.lastPathComponent),
-            colorsHex: meta.colors
+            colorsHex: meta.colors,
+            hasEmbeddedArtwork: meta.hasArtwork
         )
-        if !tracks.contains(where: { $0.fileName == track.fileName }) {
-            tracks.append(track)
-        }
+
+        tracks.removeAll { $0.fileName == track.fileName }
+        tracks.insert(track, at: 0)
     }
 
-    // MARK: - Favorites / Delete / Reset
+    // MARK: - Favorites & Deletion
 
     func toggleFavorite(_ id: UUID) {
         guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
@@ -139,7 +189,11 @@ final class LibraryStore: ObservableObject {
         if PlayerCore.shared.currentTrack?.id == track.id {
             PlayerCore.shared.stopAndClear()
         }
-        try? FileManager.default.removeItem(at: track.url)
+        if !track.isStream {
+            try? FileManager.default.removeItem(at: track.url)
+            let cacheArt = Self.artworkURL(for: track.id)
+            try? FileManager.default.removeItem(at: cacheArt)
+        }
         tracks.removeAll { $0.id == track.id }
     }
 
@@ -148,10 +202,23 @@ final class LibraryStore: ObservableObject {
         try? FileManager.default.removeItem(at: Self.indexURL)
     }
 
-    // MARK: - Metadata extraction (nonisolated)
+    // MARK: - Artwork Cache
+
+    static func artworkURL(for trackId: UUID) -> URL {
+        artworkCacheDirectoryURL().appendingPathComponent("\(trackId.uuidString).jpg")
+    }
+
+    static func cachedArtworkImage(for track: Track) -> UIImage? {
+        let tempSeed = stableSeed(track.fileName)
+        let artPath = artworkCacheDirectoryURL().appendingPathComponent("seed_\(tempSeed).jpg")
+        guard FileManager.default.fileExists(atPath: artPath.path) else { return nil }
+        return UIImage(contentsOfFile: artPath.path)
+    }
+
+    // MARK: - Metadata Extraction
 
     nonisolated private static func readMetadata(url: URL) async -> (
-        title: String, artist: String, album: String, duration: Double, colors: [String]
+        title: String, artist: String, album: String, duration: Double, colors: [String], hasArtwork: Bool
     ) {
         let asset = AVURLAsset(url: url)
         var title = url.deletingPathExtension().lastPathComponent
@@ -159,31 +226,51 @@ final class LibraryStore: ObservableObject {
         var album = ""
         var duration = 0.0
         var colors: [String] = []
+        var hasArtwork = false
 
         if let meta = try? await asset.load(.commonMetadata) {
             func first(_ id: AVMetadataIdentifier) -> String? {
                 AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: id).first?.stringValue
             }
-            title = first(.commonIdentifierTitle) ?? title
-            artist = first(.commonIdentifierArtist) ?? artist
-            album = first(.commonIdentifierAlbumName) ?? album
+            if let t = first(.commonIdentifierTitle), !t.trimmingCharacters(in: .whitespaces).isEmpty {
+                title = t
+            }
+            if let a = first(.commonIdentifierArtist), !a.trimmingCharacters(in: .whitespaces).isEmpty {
+                artist = a
+            }
+            if let alb = first(.commonIdentifierAlbumName), !alb.trimmingCharacters(in: .whitespaces).isEmpty {
+                album = alb
+            }
+
             if let item = AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: .commonIdentifierArtwork).first,
                let data = item.dataValue, let image = UIImage(data: data) {
+                hasArtwork = true
                 colors = artworkPalette(from: image)
+
+                // Cache the image to disk
+                let tempSeed = stableSeed(url.lastPathComponent)
+                let artPath = artworkCacheDirectoryURL().appendingPathComponent("seed_\(tempSeed).jpg")
+                if let jpg = image.jpegData(compressionQuality: 0.85) {
+                    try? jpg.write(to: artPath)
+                }
             }
         }
+
         if let dur = try? await asset.load(.duration) {
-            duration = CMTimeGetSeconds(dur)
+            let s = CMTimeGetSeconds(dur)
+            if s.isFinite && s > 0 { duration = s }
         }
-        return (title, artist, album, duration, colors)
+
+        return (title, artist, album, duration, colors, hasArtwork)
     }
 
-    // MARK: - Artwork color palette extraction
+    // MARK: - Vibrant Palette Extraction
 
     nonisolated private static func artworkPalette(from image: UIImage) -> [String] {
-        let size = 12
+        let size = 16
         guard let cg = image.cgImage else { return [] }
         var pixels = [UInt8](repeating: 0, count: size * size * 4)
+
         let drawn = pixels.withUnsafeMutableBytes { ptr -> Bool in
             guard let ctx = CGContext(
                 data: ptr.baseAddress,
@@ -217,7 +304,7 @@ final class LibraryStore: ObservableObject {
                 h *= 60; if h < 0 { h += 360 }
             }
             let bucket = min(11, max(0, Int(h / 30)))
-            let w = Int(s * s * 8) + 1
+            let w = Int(s * s * 10) + 1
             buckets[bucket] += w
             hueSum[bucket] += Double(w) * h
             satSum[bucket] += Double(w) * s
@@ -226,16 +313,17 @@ final class LibraryStore: ObservableObject {
 
         let top = buckets.enumerated()
             .sorted { $0.element > $1.element }
-            .prefix(3)
+            .prefix(4)
+
         var hexes: [String] = []
         for (idx, _) in top where buckets[idx] > 0 {
             let cnt = Double(buckets[idx])
             let hh = hueSum[idx] / cnt
-            let ss = min(1, satSum[idx] / cnt + 0.15)
-            let vv = max(0.35, min(0.8, briSum[idx] / cnt))
+            let ss = min(1.0, max(0.5, satSum[idx] / cnt + 0.2))
+            let vv = min(0.85, max(0.4, briSum[idx] / cnt))
             let rgb = hsvToRGB(h: hh, s: ss, v: vv)
             hexes.append(String(format: "#%02X%02X%02X",
-                                 Int(rgb.0 * 255), Int(rgb.1 * 255), Int(rgb.2 * 255)))
+                                Int(rgb.0 * 255), Int(rgb.1 * 255), Int(rgb.2 * 255)))
         }
         return hexes
     }
@@ -257,9 +345,7 @@ final class LibraryStore: ObservableObject {
         return (rgb.0 + m, rgb.1 + m, rgb.2 + m)
     }
 
-    // MARK: - Stable seed for deterministic palettes
-
-    nonisolated private static func stableSeed(_ s: String) -> Int {
+    nonisolated static func stableSeed(_ s: String) -> Int {
         var hash: UInt64 = 5381
         for b in s.utf8 { hash = (hash << 5) &+ hash &+ UInt64(b) }
         return Int(hash % 1000000)

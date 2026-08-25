@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Settings
+// MARK: - Settings & Appearance Store
 
 enum AppTheme: String, CaseIterable, Codable, Identifiable {
     case system, dark, light
@@ -22,24 +22,24 @@ enum AppTheme: String, CaseIterable, Codable, Identifiable {
 }
 
 enum AccentChoice: String, CaseIterable, Codable, Identifiable {
-    case aurora, violet, sunset, mint, rose
+    case aurora, neon, sunset, emerald, cyber
     var id: String { rawValue }
     var name: String {
         switch self {
-        case .aurora: return "Аврора"
-        case .violet: return "Фиалка"
-        case .sunset: return "Закат"
-        case .mint:   return "Мята"
-        case .rose:   return "Роза"
+        case .aurora:  return "Aurora"
+        case .neon:    return "Neon Glow"
+        case .sunset:  return "Sunset"
+        case .emerald: return "Emerald"
+        case .cyber:   return "Cyber"
         }
     }
     var colors: [Color] {
         switch self {
-        case .aurora: return [Color(hex: "#2DD4BF")!, Color(hex: "#6366F1")!]
-        case .violet: return [Color(hex: "#8B5CF6")!, Color(hex: "#D946EF")!]
-        case .sunset: return [Color(hex: "#F97316")!, Color(hex: "#EC4899")!]
-        case .mint:   return [Color(hex: "#34D399")!, Color(hex: "#0EA5E9")!]
-        case .rose:   return [Color(hex: "#FB7185")!, Color(hex: "#F59E0B")!]
+        case .aurora:  return [Color(hex: "#2DD4BF")!, Color(hex: "#6366F1")!]
+        case .neon:    return [Color(hex: "#EC4899")!, Color(hex: "#8B5CF6")!]
+        case .sunset:  return [Color(hex: "#F97316")!, Color(hex: "#E11D48")!]
+        case .emerald: return [Color(hex: "#10B981")!, Color(hex: "#06B6D4")!]
+        case .cyber:   return [Color(hex: "#3B82F6")!, Color(hex: "#A855F7")!]
         }
     }
     var main: Color { colors[0] }
@@ -51,13 +51,8 @@ final class SettingsStore: ObservableObject {
 
     @Published var theme: AppTheme { didSet { defaults.set(theme.rawValue, forKey: "settings.theme") } }
     @Published var accent: AccentChoice { didSet { defaults.set(accent.rawValue, forKey: "settings.accent") } }
-
-    @Published var hapticsEnabled: Bool {
-        didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") }
-    }
-    @Published var scrubHapticsEnabled: Bool {
-        didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") }
-    }
+    @Published var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
+    @Published var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
 
     var colorScheme: ColorScheme? { theme.colorScheme }
     var accentColor: Color { accent.main }
@@ -66,86 +61,49 @@ final class SettingsStore: ObservableObject {
     }
 
     private init() {
-        theme = AppTheme(rawValue: defaults.string(forKey: "settings.theme") ?? "") ?? .system
+        theme = AppTheme(rawValue: defaults.string(forKey: "settings.theme") ?? "") ?? .dark
         accent = AccentChoice(rawValue: defaults.string(forKey: "settings.accent") ?? "") ?? .aurora
         hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
     }
 }
 
-// MARK: - iOS 27 Liquid Glass
+// MARK: - iOS 27 Liquid Glass Modifiers & Cards
 
 struct LiquidGlassModifier: ViewModifier {
-    var corner: CGFloat = 28
+    var corner: CGFloat = 24
     var padding: CGFloat = 0
+    var opacity: CGFloat = 0.85
+
     func body(content: Content) -> some View {
         content
             .padding(padding)
             .background(
-                .regularMaterial,
-                in: RoundedRectangle(cornerRadius: corner, style: .continuous)
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(opacity)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                .white.opacity(0.45),
-                                .white.opacity(0.08),
+                                .white.opacity(0.35),
+                                .white.opacity(0.10),
                                 .white.opacity(0.02)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1.5
+                        lineWidth: 1.0
                     )
             )
-            .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 4)
-            .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
+            .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)
     }
 }
 
 extension View {
-    func liquidGlass(corner: CGFloat = 28, padding: CGFloat = 0) -> some View {
-        modifier(LiquidGlassModifier(corner: corner, padding: padding))
+    func liquidGlass(corner: CGFloat = 24, padding: CGFloat = 0, opacity: CGFloat = 0.85) -> some View {
+        modifier(LiquidGlassModifier(corner: corner, padding: padding, opacity: opacity))
     }
-}
-
-// MARK: - Dynamic backdrop (player screen background)
-
-struct BackdropView: View {
-    var palette: [Color]
-    var body: some View {
-        ZStack {
-            Color(red: 0.04, green: 0.04, blue: 0.06)
-            ForEach(0..<3, id: \.self) { i in
-                let c = palette.indices.contains(i) ? palette[i] : (i == 0 ? Color.teal : Color.indigo)
-                Circle()
-                    .fill(c.opacity(0.7))
-                    .frame(width: CGFloat(380 + i * 40), height: CGFloat(380 + i * 40))
-                    .blur(radius: CGFloat(80 + i * 20))
-                    .offset(x: CGFloat(-120 + i * 130), y: CGFloat(-200 + i * 180))
-            }
-        }
-        .ignoresSafeArea()
-        .animation(.easeInOut(duration: 2.5), value: palette)
-    }
-}
-
-// MARK: - Old glassCard alias for backward compat
-
-struct GlassCard: ViewModifier {
-    var corner: CGFloat = 22
-    func body(content: Content) -> some View {
-        content
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [.white.opacity(0.14), .white.opacity(0.02)], startPoint: .top, endPoint: .bottom), lineWidth: 1)
-            )
-    }
-}
-
-extension View {
-    func glassCard(corner: CGFloat = 22) -> some View { modifier(GlassCard(corner: corner)) }
 }

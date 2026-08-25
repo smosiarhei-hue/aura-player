@@ -1,20 +1,34 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Track
 
 struct Track: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var fileName: String
+    var relativePath: String = ""
     var title: String
     var artist: String
     var album: String
     var duration: Double = 0
     var artworkSeed: Int = 0
     var colorsHex: [String] = []
+    var hasEmbeddedArtwork: Bool = false
     var isFavorite: Bool = false
     var addedAt: Date = Date()
+    var isStream: Bool = false
+    var streamUrlString: String? = nil
 
-    var url: URL { musicDirectoryURL().appendingPathComponent(fileName) }
+    var url: URL {
+        if isStream, let str = streamUrlString, let u = URL(string: str) {
+            return u
+        }
+        if !relativePath.isEmpty {
+            return documentsDirectoryURL().appendingPathComponent(relativePath)
+        }
+        return documentsDirectoryURL().appendingPathComponent(fileName)
+    }
+
     var palette: [Color] {
         let parsed = colorsHex.compactMap { Color(hex: $0) }
         return parsed.isEmpty ? Palette.seeded(artworkSeed).colors : parsed
@@ -35,11 +49,20 @@ enum RepeatMode: Int, Codable, CaseIterable {
         case .one: return "repeat.1"
         }
     }
+
+    var title: String {
+        switch self {
+        case .off: return "Выкл"
+        case .all: return "Все"
+        case .one: return "Один"
+        }
+    }
 }
 
 // MARK: - EQ Presets
 
-struct EQPreset {
+struct EQPreset: Identifiable, Equatable {
+    var id: String { name }
     let name: String
     let gains: [Float]
 }
@@ -51,16 +74,16 @@ enum EQPresets {
         flat,
         EQPreset(name: "Rock",       gains: [ 5,  4,  2, -1, -2,  0,  2,  4,  5,  5]),
         EQPreset(name: "Pop",        gains: [-1,  1,  3,  4,  3,  0, -1, -1,  1,  2]),
+        EQPreset(name: "Bass Boost", gains: [ 8,  7,  5,  2,  0,  0,  0,  0,  1,  2]),
+        EQPreset(name: "Electronic", gains: [ 5,  4,  1,  0, -2,  1,  0,  1,  4,  5]),
         EQPreset(name: "Jazz",       gains: [ 3,  2,  1,  2, -1, -1,  0,  1,  3,  4]),
         EQPreset(name: "Classical",  gains: [ 4,  3,  2,  0, -1, -1,  0,  2,  3,  4]),
-        EQPreset(name: "Electronic", gains: [ 5,  4,  1,  0, -2,  1,  0,  1,  4,  5]),
-        EQPreset(name: "Bass",       gains: [ 8,  7,  5,  2,  0,  0,  0,  0,  1,  2]),
         EQPreset(name: "Vocal",      gains: [-2, -1,  0,  2,  4,  4,  3,  1,  0, -1]),
-        EQPreset(name: "Late Night", gains: [ 3,  2,  1,  1, -1, -1, -2, -2, -1,  0])
+        EQPreset(name: "Acoustic",   gains: [ 3,  2,  1,  1, -1, -1, -2, -2, -1,  0])
     ]
 }
 
-// MARK: - Palette (seeded artwork colors)
+// MARK: - Palette (vibrant artwork colors)
 
 struct Palette {
     let colors: [Color]
@@ -69,12 +92,12 @@ struct Palette {
         var gen = SeededGenerator(seed: UInt64(truncatingIfNeeded: Int64(seed &+ 7331)))
         let base = Double.random(in: 0...1, using: &gen)
         var result: [Color] = []
-        let offsets: [Double] = [0.0, 0.09, -0.14, 0.48, -0.32]
+        let offsets: [Double] = [0.0, 0.08, -0.12, 0.45, -0.28]
         for offset in offsets {
             let hue = (base + offset).truncatingRemainder(dividingBy: 1.0)
-            let sat = Double.random(in: 0.55...0.85, using: &gen)
-            let bri = Double.random(in: 0.45...0.68, using: &gen)
-            result.append(Color(hue: hue, saturation: sat, brightness: bri))
+            let sat = Double.random(in: 0.65...0.90, using: &gen)
+            let bri = Double.random(in: 0.50...0.80, using: &gen)
+            result.append(Color(hue: hue < 0 ? hue + 1.0 : hue, saturation: sat, brightness: bri))
         }
         return Palette(colors: result)
     }
@@ -92,16 +115,26 @@ struct SeededGenerator: RandomNumberGenerator {
     }
 }
 
-// MARK: - Global helpers
+// MARK: - Global Directory Helpers
+
+func documentsDirectoryURL() -> URL {
+    FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+}
 
 func musicDirectoryURL() -> URL {
-    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let dir = docs.appendingPathComponent("Music", isDirectory: true)
+    let dir = documentsDirectoryURL().appendingPathComponent("Music", isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir
 }
 
-// MARK: - Color hex conversion
+func artworkCacheDirectoryURL() -> URL {
+    let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    let dir = caches.appendingPathComponent("ArtworkCache", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+}
+
+// MARK: - Color Hex Conversion
 
 extension Color {
     init?(hex: String) {

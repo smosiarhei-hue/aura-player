@@ -1,75 +1,148 @@
 import SwiftUI
 
-// MARK: - Blob position helper
+// MARK: - Fullscreen Animated Liquid Mesh Background (Apple Music Style)
 
-private func blobGeometry(index: Int, t: Double, w: Double, h: Double) -> (cx: Double, cy: Double, radius: Double) {
-    let fi = Double(index)
-    let speed = 0.12 + 0.05 * (fi.truncatingRemainder(dividingBy: 3))
-    let phase = fi * 1.047 + t * speed
-    let cx = w * (0.5 + 0.34 * sin(phase + fi * 0.7))
-    let cy = h * (0.5 + 0.32 * cos(phase * 0.83 + fi * 1.3))
-    let r = min(w, h) * (0.22 + 0.06 * sin(t * 0.6 + fi * 2.1))
-    return (cx, cy, r)
-}
-
-// MARK: - Animated artwork (видеошот-подобная анимация)
-
-struct AnimatedArtworkView: View {
+struct AnimatedMeshBackground: View {
     let palette: [Color]
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             Canvas { ctx, size in
                 let t = timeline.date.timeIntervalSinceReferenceDate
                 let w = Double(size.width)
                 let h = Double(size.height)
+
+                let colors = palette.isEmpty ? [Color.teal, Color.indigo, Color.purple] : palette
+
                 for i in 0..<6 {
-                    let geo = blobGeometry(index: i, t: t, w: w, h: h)
-                    let color = palette[i % max(palette.count, 1)]
-                    let rect = CGRect(x: geo.cx - geo.radius, y: geo.cy - geo.radius,
-                                      width: geo.radius * 2, height: geo.radius * 2)
-                    ctx.opacity = 0.8
+                    let fi = Double(i)
+                    let speed = 0.08 + 0.03 * (fi.truncatingRemainder(dividingBy: 3))
+                    let phase = fi * 1.05 + t * speed
+                    let cx = w * (0.5 + 0.38 * sin(phase + fi * 0.7))
+                    let cy = h * (0.5 + 0.35 * cos(phase * 0.8 + fi * 1.2))
+                    let r = min(w, h) * (0.35 + 0.08 * sin(t * 0.5 + fi * 1.8))
+
+                    let color = colors[i % colors.count]
+                    let rect = CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
+
+                    ctx.opacity = 0.75
                     ctx.fill(Path(ellipseIn: rect), with: .color(color))
                 }
             }
         }
-        .overlay(LinearGradient(colors: [.black.opacity(0.22), .clear, .black.opacity(0.30)], startPoint: .top, endPoint: .bottom))
-        .clipped()
+        .blur(radius: 65)
+        .scaleEffect(1.3)
+        .overlay(
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.15),
+                    Color.black.opacity(0.40),
+                    Color.black.opacity(0.75)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .ignoresSafeArea()
     }
 }
 
-// MARK: - Static small artwork thumbnail
+// MARK: - Track Artwork View with Play/Pause Spring Scaling
+
+struct TrackArtworkView: View {
+    let track: Track?
+    let isPlaying: Bool
+    var size: CGFloat = 300
+
+    var body: some View {
+        Group {
+            if let track = track, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    LinearGradient(
+                        colors: track?.palette ?? Palette.seeded(42).colors,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    Image(systemName: "music.note")
+                        .font(.system(size: size * 0.35, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(.white.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.35), radius: isPlaying ? 24 : 12, x: 0, y: isPlaying ? 16 : 8)
+        .scaleEffect(isPlaying ? 1.0 : 0.88)
+        .animation(.spring(response: 0.45, dampingFraction: 0.7), value: isPlaying)
+    }
+}
+
+// MARK: - Small Artwork Thumbnail
 
 struct SmallArtwork: View {
+    let track: Track?
     let palette: [Color]
     var size: CGFloat = 48
+
+    init(track: Track? = nil, palette: [Color]? = nil, size: CGFloat = 48) {
+        self.track = track
+        self.palette = palette ?? track?.palette ?? Palette.seeded(1).colors
+        self.size = size
+    }
+
     var body: some View {
-        ZStack {
-            LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
-            Image(systemName: "music.note")
-                .font(.system(size: size * 0.34, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
+        Group {
+            if let track = track, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Image(systemName: "music.note")
+                        .font(.system(size: size * 0.35, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+            }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
     }
 }
 
-// MARK: - Spectrum bars
+// MARK: - 32-Band Live Spectrum Analyzer Bars
 
 struct SpectrumView: View {
     @StateObject private var analyzer = SpectrumAnalyzer.shared
     var barWidth: CGFloat = 4
-    var maxHeight: CGFloat = 56
+    var maxHeight: CGFloat = 48
 
     var body: some View {
         GeometryReader { geo in
-            HStack(alignment: .bottom, spacing: max(2, (geo.size.width - CGFloat(SpectrumAnalyzer.bandCount) * barWidth) / CGFloat(max(SpectrumAnalyzer.bandCount - 1, 1)))) {
-                ForEach(0..<SpectrumAnalyzer.bandCount, id: \.self) { i in
+            let count = SpectrumAnalyzer.bandCount
+            let spacing = max(2, (geo.size.width - CGFloat(count) * barWidth) / CGFloat(max(count - 1, 1)))
+
+            HStack(alignment: .bottom, spacing: spacing) {
+                ForEach(0..<count, id: \.self) { i in
                     Capsule()
-                        .fill(LinearGradient(
-                            colors: [SettingsStore.shared.accentColor, SettingsStore.shared.accent.colors.last ?? .teal],
-                            startPoint: .bottom, endPoint: .top
-                        ))
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    SettingsStore.shared.accentColor,
+                                    SettingsStore.shared.accent.colors.last ?? .teal
+                                ],
+                                startPoint: .bottom,
+                                endPoint: .top
+                            )
+                        )
                         .frame(width: barWidth, height: max(3, CGFloat(analyzer.bands[i]) * maxHeight))
                 }
             }
