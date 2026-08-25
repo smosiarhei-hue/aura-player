@@ -6,10 +6,39 @@ struct SettingsView: View {
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var library = LibraryStore.shared
     @StateObject private var player = PlayerCore.shared
+    @StateObject private var ym = YandexMusicService.shared
+    @State private var tokenInput = ""
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Яндекс Музыка (YM-API)") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("OAuth токен аккаунта")
+                            .font(.subheadline.weight(.medium))
+
+                        SecureField("Вставьте токен Яндекс Музыки", text: $tokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .onAppear {
+                                tokenInput = ym.token
+                            }
+
+                        Button {
+                            ym.token = tokenInput
+                        } label: {
+                            Text(ym.isAuthorized ? "Токен сохранен ✓" : "Сохранить токен")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color(hex: "#FF455B")!)
+
+                        Text("Токен позволяет слушать музыку в максимальном качестве 320 kbps и запускать персональную «Мою волну». Поиск и чарты работают и без токена.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 Section("Оформление") {
                     Picker("Тема", selection: $settings.theme) {
                         ForEach(AppTheme.allCases) { t in Text(t.name).tag(t) }
@@ -78,7 +107,7 @@ struct SettingsView: View {
                 Section("О приложении") {
                     LabeledContent("Версия", value: "1.0.0")
                     LabeledContent("Дизайн", value: "iOS 27 Liquid Glass")
-                    Text("Aurora Player — нативный плеер со спектральным анализом, 10-полосным эквалайзером, DJ AutoMix и динамическими обложками.")
+                    Text("Aurora Player — нативный плеер со спектральным анализом, 10-полосным эквалайзером, DJ AutoMix, Яндекс Музыкой (YM-API) и динамическими обложками.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
