@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -10,6 +11,7 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var isScanning = false
     @Published var importProgress: Double? = nil
     @Published var lastError: String? = nil
+    @Published var hasMediaLibraryPermission = false
 
     static let indexURL: URL = {
         documentsDirectoryURL().appendingPathComponent("library.json")
@@ -17,7 +19,10 @@ final class LibraryStore: ObservableObject {
 
     private init() {
         load()
-        Task { await rescan() }
+        Task {
+            await rescan()
+            await checkMediaLibraryAccess()
+        }
     }
 
     // MARK: - Persistence
@@ -34,7 +39,7 @@ final class LibraryStore: ObservableObject {
         tracks = saved
     }
 
-    // MARK: - Scan local storage (Documents and Documents/Music)
+    // MARK: - Scan local storage (Documents, Music, and Media Library)
 
     func rescan() async {
         isScanning = true
@@ -92,6 +97,75 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    // MARK: - Scan System Music Library (MPMediaLibrary / iPhone Music)
+
+    func checkMediaLibraryAccess() async {
+        let status = MPMediaLibrary.authorizationStatus()
+        hasMediaLibraryPermission = (status == .authorized)
+    }
+
+    func scanSystemMediaLibrary() async {
+        isScanning = true
+        defer { isScanning = false }
+
+        let status = await MPMediaLibrary.requestAuthorization()
+        hasMediaLibraryPermission = (status == .authorized)
+        guard status == .authorized else {
+            lastError = "Доступ к медиатеке Apple Music не предоставлен"
+            return
+        }
+
+        let query = MPMediaQuery.songs()
+        guard let items = query.items, !items.isEmpty else { return }
+
+        var importedCount = 0
+        for item in items {
+            guard let assetURL = item.assetURL else { continue }
+            let idString = String(item.persistentID)
+            let fileName = "ipod_\(idString).m4a"
+
+            if tracks.contains(where: { $0.fileName == fileName }) { continue }
+
+            let title = item.title ?? "Без названия"
+            let artist = item.artist ?? "Неизвестный исполнитель"
+            let album = item.albumTitle ?? "Медиатека iPhone"
+            let duration = item.playbackDuration
+            let seed = Self.stableSeed(title + artist)
+
+            var colorsHex = ["#FF455B", "#6366F1"]
+            var hasArtwork = false
+
+            if let artwork = item.artwork, let image = artwork.image(at: CGSize(width: 300, height: 300)) {
+                hasArtwork = true
+                colorsHex = Self.artworkPalette(from: image)
+                let artPath = artworkCacheDirectoryURL().appendingPathComponent("seed_\(seed).jpg")
+                if let jpg = image.jpegData(compressionQuality: 0.85) {
+                    try? jpg.write(to: artPath)
+                }
+            }
+
+            let track = Track(
+                id: UUID(),
+                fileName: fileName,
+                relativePath: "",
+                title: title,
+                artist: artist,
+                album: album,
+                duration: duration,
+                artworkSeed: seed,
+                colorsHex: colorsHex,
+                hasEmbeddedArtwork: hasArtwork,
+                isFavorite: false,
+                addedAt: Date(),
+                isStream: true,
+                streamUrlString: assetURL.absoluteString
+            )
+
+            tracks.append(track)
+            importedCount += 1
+        }
+    }
+
     // MARK: - Import from File Picker (Security-Scoped URLs)
 
     func importFromPicker(urls: [URL]) {
@@ -118,6 +192,31 @@ final class LibraryStore: ObservableObject {
             } catch {
                 lastError = "Не удалось импортировать: \(url.lastPathComponent)"
             }
+        }
+    }
+
+    // MARK: - Save Online Track for Offline Playback
+
+    func saveOnlineTrackLocally(track: Track) async {
+        guard track.isStream, let urlString = track.streamUrlString, let url = URL(string: urlString) else { return }
+        lastError = nil
+        importProgress = -1
+        defer { importProgress = nil }
+
+        do {
+            let (tmpUrl, _) = try await URLSession.shared.download(from: url)
+            let safeTitle = track.title.replacingOccurrences(of: "/", with: "-")
+            let safeArtist = track.artist.replacingOccurrences(of: "/", with: "-")
+            let destName = "\(safeArtist) - \(safeTitle).mp3"
+            let dest = musicDirectoryURL().appendingPathComponent(destName)
+
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try? FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.moveItem(at: tmpUrl, to: dest)
+            try await addLocalFile(at: dest)
+        } catch {
+            lastError = "Не удалось сохранить трек: \(error.localizedDescription)"
         }
     }
 
@@ -191,8 +290,6 @@ final class LibraryStore: ObservableObject {
         }
         if !track.isStream {
             try? FileManager.default.removeItem(at: track.url)
-            let cacheArt = Self.artworkURL(for: track.id)
-            try? FileManager.default.removeItem(at: cacheArt)
         }
         tracks.removeAll { $0.id == track.id }
     }
@@ -232,22 +329,14 @@ final class LibraryStore: ObservableObject {
             func first(_ id: AVMetadataIdentifier) -> String? {
                 AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: id).first?.stringValue
             }
-            if let t = first(.commonIdentifierTitle), !t.trimmingCharacters(in: .whitespaces).isEmpty {
-                title = t
-            }
-            if let a = first(.commonIdentifierArtist), !a.trimmingCharacters(in: .whitespaces).isEmpty {
-                artist = a
-            }
-            if let alb = first(.commonIdentifierAlbumName), !alb.trimmingCharacters(in: .whitespaces).isEmpty {
-                album = alb
-            }
+            if let t = first(.commonIdentifierTitle), !t.trimmingCharacters(in: .whitespaces).isEmpty { title = t }
+            if let a = first(.commonIdentifierArtist), !a.trimmingCharacters(in: .whitespaces).isEmpty { artist = a }
+            if let alb = first(.commonIdentifierAlbumName), !alb.trimmingCharacters(in: .whitespaces).isEmpty { album = alb }
 
             if let item = AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: .commonIdentifierArtwork).first,
                let data = item.dataValue, let image = UIImage(data: data) {
                 hasArtwork = true
                 colors = artworkPalette(from: image)
-
-                // Cache the image to disk
                 let tempSeed = stableSeed(url.lastPathComponent)
                 let artPath = artworkCacheDirectoryURL().appendingPathComponent("seed_\(tempSeed).jpg")
                 if let jpg = image.jpegData(compressionQuality: 0.85) {
@@ -264,9 +353,7 @@ final class LibraryStore: ObservableObject {
         return (title, artist, album, duration, colors, hasArtwork)
     }
 
-    // MARK: - Vibrant Palette Extraction
-
-    nonisolated private static func artworkPalette(from image: UIImage) -> [String] {
+    nonisolated static func artworkPalette(from image: UIImage) -> [String] {
         let size = 16
         guard let cg = image.cgImage else { return [] }
         var pixels = [UInt8](repeating: 0, count: size * size * 4)
@@ -311,10 +398,7 @@ final class LibraryStore: ObservableObject {
             briSum[bucket] += Double(w) * v
         }
 
-        let top = buckets.enumerated()
-            .sorted { $0.element > $1.element }
-            .prefix(4)
-
+        let top = buckets.enumerated().sorted { $0.element > $1.element }.prefix(4)
         var hexes: [String] = []
         for (idx, _) in top where buckets[idx] > 0 {
             let cnt = Double(buckets[idx])
@@ -322,8 +406,7 @@ final class LibraryStore: ObservableObject {
             let ss = min(1.0, max(0.5, satSum[idx] / cnt + 0.2))
             let vv = min(0.85, max(0.4, briSum[idx] / cnt))
             let rgb = hsvToRGB(h: hh, s: ss, v: vv)
-            hexes.append(String(format: "#%02X%02X%02X",
-                                Int(rgb.0 * 255), Int(rgb.1 * 255), Int(rgb.2 * 255)))
+            hexes.append(String(format: "#%02X%02X%02X", Int(rgb.0 * 255), Int(rgb.1 * 255), Int(rgb.2 * 255)))
         }
         return hexes
     }

@@ -1,6 +1,7 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-// MARK: - Library View (Apple Music Style)
+// MARK: - Library View (Apple Music Style with Media Scanning & Settings)
 
 struct LibraryView: View {
     @StateObject private var library = LibraryStore.shared
@@ -8,6 +9,8 @@ struct LibraryView: View {
     @StateObject private var settings = SettingsStore.shared
     @State private var searchText = ""
     @State private var filter: LibraryFilter = .all
+    @State private var showSettings = false
+    @State private var showFilePicker = false
 
     enum LibraryFilter: String, CaseIterable, Identifiable {
         case all = "Все песни", favorites = "Избранное", recent = "Недавние"
@@ -43,13 +46,50 @@ struct LibraryView: View {
             .navigationTitle("Медиатека")
             .searchable(text: $searchText, prompt: "Поиск по песням и артистам")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        Task { await library.rescan() }
+                        showSettings = true
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 16, weight: .semibold))
                     }
-                    .disabled(library.isScanning)
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            Task { await library.scanSystemMediaLibrary() }
+                        } label: {
+                            Label("Сканировать Apple Music на iPhone", systemImage: "music.note.house")
+                        }
+
+                        Button {
+                            showFilePicker = true
+                        } label: {
+                            Label("Выбрать из «Файлов»", systemImage: "folder.badge.plus")
+                        }
+
+                        Button {
+                            Task { await library.rescan() }
+                        } label: {
+                            Label("Пересканировать память", systemImage: "arrow.clockwise")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                    }
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
+            .fileImporter(
+                isPresented: $showFilePicker,
+                allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav, .aiff],
+                allowsMultipleSelection: true
+            ) { result in
+                if case .success(let urls) = result {
+                    library.importFromPicker(urls: urls)
                 }
             }
         }
@@ -60,6 +100,9 @@ struct LibraryView: View {
     private var mainLibraryContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // Quick Media Scan Bar
+                mediaScanActionCard
+
                 // Recently Added Albums / Tracks Grid
                 if filter == .all && searchText.isEmpty && library.tracks.count >= 2 {
                     recentlyAddedSection
@@ -75,11 +118,44 @@ struct LibraryView: View {
                     }
                 }
             }
-            .padding(.bottom, 96)
+            .padding(.bottom, 130)
         }
     }
 
-    // MARK: - Recently Added Section (Apple Music Cards)
+    // MARK: - Media Scan Card
+
+    private var mediaScanActionCard: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "iphone.and.arrow.forward")
+                .font(.title2)
+                .foregroundStyle(settings.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Импорт сохраненной музыки")
+                    .font(.subheadline.weight(.semibold))
+                Text("Сканируйте медиатеку iPhone или выберите файлы")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                Task { await library.scanSystemMediaLibrary() }
+            } label: {
+                Text("Сканировать")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(settings.accentColor)
+        }
+        .liquidGlass(corner: 16, padding: 12)
+        .padding(.horizontal, 16)
+    }
+
+    // MARK: - Recently Added Section
 
     private var recentlyAddedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -217,11 +293,22 @@ struct LibraryView: View {
             Text("Ваша медиатека пуста")
                 .font(.title2.weight(.bold))
 
-            Text("Загрузите любимую музыку через приложение «Файлы», выберите файлы в разделе «Обзор и импорт» или перенесите треки с компьютера через Finder.")
+            Text("Нажмите кнопку ниже, чтобы импортировать треки из медиатеки Apple Music на вашем iPhone или загрузите файлы через приложение «Файлы».")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
+
+            Button {
+                Task { await library.scanSystemMediaLibrary() }
+            } label: {
+                Label("Сканировать медиатеку iPhone", systemImage: "iphone.and.arrow.forward")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(settings.accentColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

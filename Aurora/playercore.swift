@@ -3,37 +3,7 @@ import Combine
 import MediaPlayer
 import SwiftUI
 
-// MARK: - Transition Mode
-
-enum TransitionMode: String, CaseIterable, Codable, Identifiable {
-    case automix = "AutoMix (DJ-сведение)"
-    case crossfade = "Кроссфейд"
-    case gapless = "Gapless (Без пауз)"
-    case off = "Выключено"
-
-    var id: String { rawValue }
-
-    var description: String {
-        switch self {
-        case .automix:
-            return "Умный анализ концовки, срез басов уходящего трека (Bass-Swap), обрезка тишины и адаптивный тайминг как в Apple Music."
-        case .crossfade:
-            return "Классическое плавное наложение звука по фиксированному времени."
-        case .gapless:
-            return "Мгновенное переключение следующего трека без пауз и задержек."
-        case .off:
-            return "Стандартное раздельное воспроизведение треков."
-        }
-    }
-}
-
-// MARK: - AutoMix Transition Style
-
-enum AutoMixStyle {
-    case bassSwapBlend(duration: Double)  // Плавный переход со срезом низких частот
-    case quickDrop(duration: Double)      // Быстрый бит-стык для резких концовок
-    case fadeOut(duration: Double)        // Затухание естественного аутро
-}
+// MARK: - Fast Progressive Audio & Local Playback Engine (PlayerCore)
 
 @MainActor
 final class PlayerCore: ObservableObject {
@@ -47,6 +17,7 @@ final class PlayerCore: ObservableObject {
     @Published private(set) var playError: String?
     @Published var volume: Float = 0.85 {
         didSet {
+            streamingPlayer.volume = volume
             engine.mainMixerNode.outputVolume = volume
             defaults.set(volume, forKey: "player.volume")
         }
@@ -62,14 +33,17 @@ final class PlayerCore: ObservableObject {
     @Published var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
 
     private let defaults = UserDefaults.standard
-    private let engine = AVAudioEngine()
 
-    // Dual players for AutoMix / Crossfade
+    // Instant Streaming Engine (AVPlayer starts playing in ~150ms without waiting for full download!)
+    private let streamingPlayer = AVPlayer()
+    private var timeObserverToken: Any?
+    private var isUsingStreamPlayer = false
+
+    // Local Audio Engine (AVAudioEngine + 10-band EQ)
+    private let engine = AVAudioEngine()
     private let playerA = AVAudioPlayerNode()
     private let playerB = AVAudioPlayerNode()
     private var activePlayer: AVAudioPlayerNode
-
-    // Independent EQ / Filters for Bass-Swap on outgoing track
     private let eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
     private let eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
 
@@ -81,7 +55,7 @@ final class PlayerCore: ObservableObject {
     private var pausedProgress: Double = 0
     private var progressTimer: Timer?
 
-    // AutoMix & Transition State
+    // AutoMix State
     private var isTransitioning = false
     private var transitionScheduled = false
     private var transitionStartTime: Date?
@@ -96,6 +70,7 @@ final class PlayerCore: ObservableObject {
         activePlayer = playerA
         configureSession()
         setupAudioEngine()
+        setupStreamingPlayer()
         loadSettings()
         setupRemoteCommandCenter()
     }
@@ -107,6 +82,28 @@ final class PlayerCore: ObservableObject {
             try session.setActive(true)
         } catch {
             print("AVAudioSession error: \(error)")
+        }
+    }
+
+    private func setupStreamingPlayer() {
+        streamingPlayer.automaticallyWaitsToMinimizeStalling = false
+        streamingPlayer.volume = volume
+
+        // Observe periodic time on streaming player
+        let interval = CMTime(seconds: 0.25, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserverToken = streamingPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
+            let sec = CMTimeGetSeconds(time)
+            if sec.isFinite && sec >= 0 {
+                self.progress = sec
+                self.scheduleTransitionIfNeeded()
+                self.updateNowPlayingInfo()
+            }
+        }
+
+        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.isUsingStreamPlayer else { return }
+            self.handleTrackFinish()
         }
     }
 
@@ -155,6 +152,7 @@ final class PlayerCore: ObservableObject {
         let savedVol = defaults.float(forKey: "player.volume")
         volume = savedVol > 0 ? savedVol : 0.85
         engine.mainMixerNode.outputVolume = volume
+        streamingPlayer.volume = volume
 
         if let data = defaults.data(forKey: "eq.gains"),
            let gains = try? JSONDecoder().decode([Float].self, from: data),
@@ -171,12 +169,8 @@ final class PlayerCore: ObservableObject {
     }
 
     private func applyEQ() {
-        for (i, band) in eqNodeA.bands.enumerated() {
-            band.gain = eqEnabled ? eqGains[i] : 0
-        }
-        for (i, band) in eqNodeB.bands.enumerated() {
-            band.gain = eqEnabled ? eqGains[i] : 0
-        }
+        for (i, band) in eqNodeA.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
+        for (i, band) in eqNodeB.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
     }
 
     private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
@@ -258,26 +252,35 @@ final class PlayerCore: ObservableObject {
 
     func pause() {
         guard isPlaying else { return }
-        pausedProgress = liveProgress()
-        activePlayer.pause()
+        if isUsingStreamPlayer {
+            streamingPlayer.pause()
+        } else {
+            pausedProgress = liveProgress()
+            activePlayer.pause()
+            anchorDate = nil
+            progress = pausedProgress
+        }
         isPlaying = false
-        anchorDate = nil
-        progress = pausedProgress
         updateNowPlayingInfo()
     }
 
     func resume() {
         guard !isPlaying, currentTrack != nil else { return }
-        if activeAudioFile == nil {
-            start(at: pausedProgress)
-            return
+        if isUsingStreamPlayer {
+            streamingPlayer.play()
+            isPlaying = true
+        } else {
+            if activeAudioFile == nil {
+                start(at: pausedProgress)
+                return
+            }
+            if !engine.isRunning { try? engine.start() }
+            activePlayer.play()
+            isPlaying = true
+            anchorDate = Date()
+            anchorOffset = pausedProgress
+            startTimer()
         }
-        if !engine.isRunning { try? engine.start() }
-        activePlayer.play()
-        isPlaying = true
-        anchorDate = Date()
-        anchorOffset = pausedProgress
-        startTimer()
         updateNowPlayingInfo()
     }
 
@@ -294,7 +297,7 @@ final class PlayerCore: ObservableObject {
 
     func previous() {
         cancelTransition()
-        let currentPos = liveProgress()
+        let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         if currentPos > 3.0 {
             seek(to: 0)
             return
@@ -313,18 +316,26 @@ final class PlayerCore: ObservableObject {
     func seek(to seconds: Double) {
         cancelTransition()
         let clamped = max(0, min(seconds, duration))
-        if isPlaying {
-            start(at: clamped)
-        } else {
-            pausedProgress = clamped
+        if isUsingStreamPlayer {
+            let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
+            streamingPlayer.seek(to: targetTime)
             progress = clamped
-            anchorOffset = clamped
-            updateNowPlayingInfo()
+        } else {
+            if isPlaying {
+                start(at: clamped)
+            } else {
+                pausedProgress = clamped
+                progress = clamped
+                anchorOffset = clamped
+            }
         }
+        updateNowPlayingInfo()
     }
 
     func stopAndClear() {
         generation += 1
+        streamingPlayer.pause()
+        streamingPlayer.replaceCurrentItem(with: nil)
         playerA.stop()
         playerB.stop()
         activeAudioFile = nil
@@ -339,7 +350,7 @@ final class PlayerCore: ObservableObject {
         updateNowPlayingInfo()
     }
 
-    // MARK: - Internal Playback Setup
+    // MARK: - Start Playback (Local Engine or Instant Progressive Streaming)
 
     private func start(at seconds: Double) {
         guard let track = currentTrack else { return }
@@ -347,6 +358,31 @@ final class PlayerCore: ObservableObject {
         let token = generation
 
         cancelTransition()
+
+        // 1. Instant Progressive Online Stream (AVPlayer progressive playback in ~150ms)
+        if track.isStream {
+            isUsingStreamPlayer = true
+            playerA.stop()
+            playerB.stop()
+
+            let streamURL = track.url
+            let playerItem = AVPlayerItem(url: streamURL)
+            streamingPlayer.replaceCurrentItem(with: playerItem)
+
+            if seconds > 0 {
+                streamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
+            }
+
+            streamingPlayer.play()
+            self.isPlaying = true
+            self.progress = seconds
+            self.updateNowPlayingInfo()
+            return
+        }
+
+        // 2. Local File Playback (AVAudioEngine with 10-band EQ)
+        isUsingStreamPlayer = false
+        streamingPlayer.pause()
         playerA.stop()
         playerB.stop()
         playerA.volume = 1.0
@@ -356,15 +392,7 @@ final class PlayerCore: ObservableObject {
 
         Task {
             do {
-                let fileURL: URL
-                if track.isStream {
-                    let (tmpUrl, _) = try await URLSession.shared.download(from: track.url)
-                    fileURL = tmpUrl
-                } else {
-                    fileURL = track.url
-                }
-
-                let audioFile = try AVAudioFile(forReading: fileURL)
+                let audioFile = try AVAudioFile(forReading: track.url)
                 self.activeAudioFile = audioFile
                 self.incomingAudioFile = nil
 
@@ -379,7 +407,7 @@ final class PlayerCore: ObservableObject {
                 self.playerA.scheduleFile(audioFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     DispatchQueue.main.async {
                         Task { @MainActor in
-                            guard let self, self.generation == token else { return }
+                            guard let self, self.generation == token, !self.isUsingStreamPlayer else { return }
                             self.handleTrackFinish()
                         }
                     }
@@ -405,14 +433,12 @@ final class PlayerCore: ObservableObject {
 
     private func scheduleTransitionIfNeeded() {
         guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying else { return }
-        let currentPos = liveProgress()
+        let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let remaining = duration - currentPos
 
-        // Determine transition duration & trigger point
         let targetDuration: Double
         switch transitionMode {
         case .automix:
-            // AutoMix dynamically analyzes track length & ending
             if duration > 120 {
                 targetDuration = 4.5
                 currentAutoMixStyle = .bassSwapBlend(duration: 4.5)
@@ -435,6 +461,17 @@ final class PlayerCore: ObservableObject {
 
         guard remaining <= targetDuration, remaining > 0 else { return }
         guard let nextTrack = peekNext(auto: true) else { return }
+
+        // If next is online or current is online, trigger instant switch
+        if isUsingStreamPlayer || nextTrack.isStream {
+            transitionScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
+                guard let self, self.isPlaying else { return }
+                self.currentTrack = nextTrack
+                self.start(at: 0)
+            }
+            return
+        }
 
         transitionScheduled = true
         isTransitioning = true
@@ -484,22 +521,18 @@ final class PlayerCore: ObservableObject {
         let elapsed = -start.timeIntervalSinceNow
         let p = min(elapsed / transitionDuration, 1.0)
 
-        // Equal power volume curves
         let outVol = Float(cos(p * .pi / 2))
         let inVol = Float(sin(p * .pi / 2))
 
         activePlayer.volume = outVol
         idlePlayer.volume = inVol
 
-        // AutoMix: DJ Bass-Swap (High-pass filter on outgoing track)
         if case .bassSwapBlend = currentAutoMixStyle {
-            // Cut low frequencies on outgoing player so incoming track's bass hits cleanly
-            let bassCut = Float(p) * -16.0 // reduce 31Hz, 62Hz, 125Hz by up to -16dB
+            let bassCut = Float(p) * -16.0
             activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + bassCut) : bassCut
             activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + bassCut) : bassCut
             activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + bassCut * 0.7) : (bassCut * 0.7)
 
-            // Idle player has full clean EQ
             idleEQ.bands[0].gain = eqEnabled ? eqGains[0] : 0
             idleEQ.bands[1].gain = eqEnabled ? eqGains[1] : 0
             idleEQ.bands[2].gain = eqEnabled ? eqGains[2] : 0
@@ -601,7 +634,7 @@ final class PlayerCore: ObservableObject {
     }
 
     private func tickProgress() {
-        guard isPlaying else { return }
+        guard isPlaying, !isUsingStreamPlayer else { return }
         progress = liveProgress()
         scheduleTransitionIfNeeded()
     }

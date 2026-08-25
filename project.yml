@@ -32,6 +32,7 @@ targets:
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        NSAppleMusicUsageDescription: "Aurora использует доступ к медиатеке Apple Music для поиска и воспроизведения ваших сохраненных треков на iPhone."
         UIBackgroundModes:
           - audio
         UISupportedInterfaceOrientations:

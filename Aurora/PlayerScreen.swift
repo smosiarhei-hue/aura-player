@@ -2,7 +2,7 @@ import AVKit
 import MediaPlayer
 import SwiftUI
 
-// MARK: - Apple Music Exact Fullscreen Player (Liquid Glass iOS 27)
+// MARK: - Apple Music Exact Fullscreen Player (Liquid Glass iOS 27 with Smooth Swipes)
 
 struct PlayerScreen: View {
     @StateObject private var player = PlayerCore.shared
@@ -15,7 +15,9 @@ struct PlayerScreen: View {
     @State private var showLyrics = false
     @State private var showQueue = false
     @State private var showEQ = false
+    @State private var showSettings = false
     @State private var dragOffset: CGFloat = 0
+    @State private var horizontalDragOffset: CGFloat = 0
 
     private var currentTrack: Track? { player.currentTrack }
     private var palette: [Color] {
@@ -25,19 +27,20 @@ struct PlayerScreen: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Immersive full-bleed album artwork with seamless downward gradient blur
+                // Immersive full-bleed album artwork wallpaper (Screenshot 1)
                 artworkBackground(geo: geo)
 
                 VStack(spacing: 0) {
-                    // Top Drag Indicator (Chevron / Grabber)
+                    // Top Drag Indicator & Settings Quick Access
                     topGrabber
                         .padding(.top, max(geo.safeAreaInsets.top, 8))
 
                     Spacer(minLength: 10)
 
-                    // Hero Album Artwork
+                    // Hero Album Artwork with Play/Pause Scale + Horizontal Swipe Slide
                     let artSize = min(geo.size.width - 64, geo.size.height * 0.42)
                     artworkHero(size: max(240, artSize))
+                        .offset(x: horizontalDragOffset)
                         .padding(.vertical, 8)
 
                     Spacer(minLength: 10)
@@ -69,13 +72,14 @@ struct PlayerScreen: View {
                 }
             }
             .offset(y: max(0, dragOffset))
-            .gesture(dismissGesture)
+            .gesture(interactiveGestures)
         }
         .colorScheme(.dark)
         .statusBarHidden()
         .sheet(isPresented: $showLyrics) { LyricsSheetView() }
         .sheet(isPresented: $showQueue) { QueueSheetView() }
         .sheet(isPresented: $showEQ) { PlayerEQSheetView() }
+        .sheet(isPresented: $showSettings) { SettingsView() }
     }
 
     // MARK: - Artwork Background (Exact Apple Music Wallpaper)
@@ -83,10 +87,8 @@ struct PlayerScreen: View {
     @ViewBuilder
     private func artworkBackground(geo: GeometryProxy) -> some View {
         ZStack {
-            // Base background
             Color(red: 0.05, green: 0.08, blue: 0.10).ignoresSafeArea()
 
-            // Large scaled artwork in top half
             if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
                 Image(uiImage: img)
                     .resizable()
@@ -98,7 +100,6 @@ struct PlayerScreen: View {
                 AnimatedMeshBackground(palette: palette)
             }
 
-            // Downward smooth gradient & liquid blur
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.0),
@@ -111,7 +112,6 @@ struct PlayerScreen: View {
             )
             .ignoresSafeArea()
 
-            // Frosted ambient overlay
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .opacity(0.40)
@@ -139,8 +139,8 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            Button { showEQ = true } label: {
-                Image(systemName: "slider.horizontal.3")
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.80))
                     .frame(width: 44, height: 44)
@@ -182,7 +182,7 @@ struct PlayerScreen: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
     }
 
-    // MARK: - Track Metadata Row (Title, Explicit badge, Star, Dots)
+    // MARK: - Track Metadata Row
 
     private var trackMetadataRow: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -193,7 +193,6 @@ struct PlayerScreen: View {
                         .foregroundStyle(.white)
                         .lineLimit(1)
 
-                    // Explicit [E] Badge
                     Text("E")
                         .font(.system(size: 10, weight: .heavy))
                         .foregroundStyle(.black)
@@ -210,7 +209,6 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            // Star Favorite Button
             if let track = currentTrack {
                 Button {
                     if settings.hapticsEnabled {
@@ -226,8 +224,15 @@ struct PlayerScreen: View {
                 .buttonStyle(.plain)
             }
 
-            // Three Dots Context Menu
             Menu {
+                if let track = currentTrack, track.isStream {
+                    Button {
+                        Task { await library.saveOnlineTrackLocally(track: track) }
+                    } label: {
+                        Label("Скачать на iPhone", systemImage: "arrow.down.circle")
+                    }
+                }
+
                 Button {
                     showEQ = true
                 } label: {
@@ -256,7 +261,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Apple Music Time Scrubber & Dolby Atmos Badge
+    // MARK: - Time Scrubber & Dolby Atmos Badge
 
     private var timeScrubberSection: some View {
         VStack(spacing: 8) {
@@ -332,7 +337,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Playback Controls (Previous, Play/Pause, Next)
+    // MARK: - Playback Controls
 
     private var playbackControlsRow: some View {
         HStack(spacing: 0) {
@@ -375,7 +380,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Volume Slider (Apple Music Capsule)
+    // MARK: - Volume Slider
 
     private var volumeSliderSection: some View {
         HStack(spacing: 14) {
@@ -414,7 +419,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Bottom Utility Icons (Lyrics, AirPlay, Queue)
+    // MARK: - Bottom Utility Icons
 
     private var bottomUtilityIconsRow: some View {
         HStack {
@@ -447,16 +452,40 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Dismiss Gesture
+    // MARK: - Interactive Gestures (Swipe down to dismiss, Swipe left/right for tracks)
 
-    private var dismissGesture: some Gesture {
-        DragGesture(minimumDistance: 20)
+    private var interactiveGestures: some Gesture {
+        DragGesture(minimumDistance: 25)
             .onChanged { v in
-                if v.translation.height > 0 { dragOffset = v.translation.height }
+                if abs(v.translation.width) > abs(v.translation.height) {
+                    horizontalDragOffset = v.translation.width * 0.4
+                } else if v.translation.height > 0 {
+                    dragOffset = v.translation.height
+                }
             }
             .onEnded { v in
-                if v.translation.height > 100 { dismiss() }
-                dragOffset = 0
+                // Horizontal Swipe (Next / Previous Track)
+                if v.translation.width < -60 {
+                    if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        player.next()
+                    }
+                } else if v.translation.width > 60 {
+                    if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        player.previous()
+                    }
+                }
+
+                // Vertical Dismiss
+                if v.translation.height > 120 {
+                    dismiss()
+                }
+
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    dragOffset = 0
+                    horizontalDragOffset = 0
+                }
             }
     }
 }
