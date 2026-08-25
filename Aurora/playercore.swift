@@ -147,11 +147,11 @@ final class PlayerCore: ObservableObject {
 
     // MARK: - Jamendo / URL streaming
 
-    func playJamendoStream(_ track: Track, streamURL: URL) {
+    func playJamendoStream(_ track: Track, streamURL url: URL) {
         queue = []
         currentTrack = track
         playError = nil
-        streamURL = streamURL
+        streamURL = url
         startStream(at: 0)
     }
 

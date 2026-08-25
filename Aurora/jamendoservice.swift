@@ -29,7 +29,7 @@ enum JamendoService {
     struct JamendoMusicInfo: Codable {
         let tags: Tags?
         struct Tags: Codable {
-            genres: [String]?
+            let genres: [String]?
             let instrumentations: [String]?
             let moods: [String]?
         }
