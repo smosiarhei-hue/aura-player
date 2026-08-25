@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct AuroraApp: App {
+struct SonivoApp: App {
     @StateObject private var settings = SettingsStore.shared
 
     var body: some Scene {
@@ -13,7 +13,7 @@ struct AuroraApp: App {
     }
 }
 
-// MARK: - Root View (Exact 5 Tabs Dock & Floating Mini-Player as in Screenshot 2)
+// MARK: - Root View (Sonivo 5 Tabs Dock & Floating Mini-Player)
 
 enum AppTab: String, CaseIterable, Identifiable {
     case home = "Home"
@@ -70,7 +70,7 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Bottom Stack: Floating Mini Player + Floating Liquid Glass Dock (Screenshot 2)
+            // Bottom Stack: Floating Mini Player + Floating Liquid Glass Dock
             VStack(spacing: 8) {
                 if player.currentTrack != nil && !showPlayer {
                     FloatingMiniPlayer(showPlayer: $showPlayer)
@@ -93,7 +93,7 @@ struct RootView: View {
     }
 }
 
-// MARK: - Floating Mini Player (Exact Screenshot 2)
+// MARK: - Floating Mini Player
 
 struct FloatingMiniPlayer: View {
     @StateObject private var player = PlayerCore.shared
@@ -104,11 +104,9 @@ struct FloatingMiniPlayer: View {
             showPlayer = true
         } label: {
             HStack(spacing: 12) {
-                // Square Artwork
                 SmallArtwork(track: player.currentTrack, size: 42)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                // Track Title & Artist
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.currentTrack?.title ?? "")
                         .font(.subheadline.weight(.semibold))
@@ -123,7 +121,6 @@ struct FloatingMiniPlayer: View {
 
                 Spacer()
 
-                // Play / Pause Button (Screenshot 2)
                 Button {
                     player.togglePlay()
                 } label: {
@@ -134,7 +131,6 @@ struct FloatingMiniPlayer: View {
                 }
                 .buttonStyle(.plain)
 
-                // Next Track Button (Screenshot 2)
                 Button {
                     player.next()
                 } label: {
@@ -161,7 +157,7 @@ struct FloatingMiniPlayer: View {
     }
 }
 
-// MARK: - Floating Liquid Glass Tab Bar (Exact Screenshot 2)
+// MARK: - Floating Liquid Glass Tab Bar
 
 struct FloatingLiquidGlassTabBar: View {
     @Binding var selectedTab: AppTab
@@ -180,12 +176,12 @@ struct FloatingLiquidGlassTabBar: View {
                     VStack(spacing: 3) {
                         Image(systemName: tab.icon)
                             .font(.system(size: 20, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? Color(hex: "#FF455B")! : .white.opacity(0.65))
+                            .foregroundStyle(isSelected ? (Color(hex: "#FF455B") ?? .pink) : .white.opacity(0.65))
                             .frame(height: 24)
 
                         Text(tab.label)
                             .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
-                            .foregroundStyle(isSelected ? Color(hex: "#FF455B")! : .white.opacity(0.65))
+                            .foregroundStyle(isSelected ? (Color(hex: "#FF455B") ?? .pink) : .white.opacity(0.65))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)

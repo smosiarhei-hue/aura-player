@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Settings View
+// MARK: - Settings View (Sonivo Settings)
 
 struct SettingsView: View {
     @StateObject private var settings = SettingsStore.shared
@@ -94,6 +94,9 @@ struct SettingsView: View {
 
                 Section("Медиатека") {
                     LabeledContent("Всего треков в приложении", value: "\(library.tracks.count)")
+                    Button("Сканировать медиатеку iPhone") {
+                        Task { await library.scanSystemMediaLibrary() }
+                    }
                     Button("Пересканировать память") {
                         Task { await library.rescan() }
                     }
@@ -105,10 +108,11 @@ struct SettingsView: View {
                 }
 
                 Section("О приложении") {
+                    LabeledContent("Название", value: "Sonivo")
                     LabeledContent("Версия", value: appVersion)
                     LabeledContent("Сборка", value: "Build #\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")")
                     LabeledContent("Дизайн", value: "iOS 27 Liquid Glass")
-                    Text("Aurora Player — нативный плеер со спектральным анализом, 10-полосным эквалайзером, DJ AutoMix, Яндекс Музыкой (YM-API) и динамическими обложками.")
+                    Text("Sonivo — премиальный плеер со спектральным анализом, 10-полосным эквалайзером, DJ AutoMix, Яндекс Музыкой (YM-API) и динамическими обложками.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

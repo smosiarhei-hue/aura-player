@@ -108,7 +108,12 @@ final class LibraryStore: ObservableObject {
         isScanning = true
         defer { isScanning = false }
 
-        let status = await MPMediaLibrary.requestAuthorization()
+        let status: MPMediaLibraryAuthorizationStatus = await withCheckedContinuation { continuation in
+            MPMediaLibrary.requestAuthorization { authStatus in
+                continuation.resume(returning: authStatus)
+            }
+        }
+
         hasMediaLibraryPermission = (status == .authorized)
         guard status == .authorized else {
             lastError = "Доступ к медиатеке Apple Music не предоставлен"
@@ -118,7 +123,6 @@ final class LibraryStore: ObservableObject {
         let query = MPMediaQuery.songs()
         guard let items = query.items, !items.isEmpty else { return }
 
-        var importedCount = 0
         for item in items {
             guard let assetURL = item.assetURL else { continue }
             let idString = String(item.persistentID)
@@ -162,7 +166,6 @@ final class LibraryStore: ObservableObject {
             )
 
             tracks.append(track)
-            importedCount += 1
         }
     }
 
