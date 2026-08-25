@@ -4,6 +4,7 @@ struct SettingsView: View {
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var library = LibraryStore.shared
     @StateObject private var player = PlayerCore.shared
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -25,14 +26,18 @@ struct SettingsView: View {
                         }
                     }
                 }
-
                 Section("Воспроизведение") {
                     Toggle("Automix (плавный переход)", isOn: $player.automixEnabled)
                         .tint(settings.accentColor)
-                    LabeledContent("Переход", value: "2.0 сек")
+                    LabeledContent("Длительность перехода", value: "2.0 сек")
                         .foregroundStyle(.secondary)
                 }
-
+                Section("Тактильная отдача") {
+                    Toggle("Вибрация при управлении", isOn: $settings.hapticsEnabled)
+                        .tint(settings.accentColor)
+                    Toggle("Вибрация при перемотке", isOn: $settings.scrubHapticsEnabled)
+                        .tint(settings.accentColor)
+                }
                 Section("Медиатека") {
                     LabeledContent("Треков", value: "\(library.tracks.count)")
                     Button(role: .destructive) { library.resetIndex() } label: {

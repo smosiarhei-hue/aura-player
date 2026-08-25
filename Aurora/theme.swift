@@ -52,6 +52,13 @@ final class SettingsStore: ObservableObject {
     @Published var theme: AppTheme { didSet { defaults.set(theme.rawValue, forKey: "settings.theme") } }
     @Published var accent: AccentChoice { didSet { defaults.set(accent.rawValue, forKey: "settings.accent") } }
 
+    @Published var hapticsEnabled: Bool {
+        didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") }
+    }
+    @Published var scrubHapticsEnabled: Bool {
+        didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") }
+    }
+
     var colorScheme: ColorScheme? { theme.colorScheme }
     var accentColor: Color { accent.main }
     var accentGradient: LinearGradient {
@@ -61,6 +68,8 @@ final class SettingsStore: ObservableObject {
     private init() {
         theme = AppTheme(rawValue: defaults.string(forKey: "settings.theme") ?? "") ?? .system
         accent = AccentChoice(rawValue: defaults.string(forKey: "settings.accent") ?? "") ?? .aurora
+        hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
+        scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
     }
 }
 

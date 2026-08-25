@@ -10,7 +10,7 @@ struct ExploreView: View {
     @State private var linkText = ""
     @State private var searchText = ""
     @State private var selectedTab: ExploreTab = .browse
-
+    
     enum ExploreTab: String, CaseIterable {
         case browse, local, link
         var label: String {
@@ -28,14 +28,14 @@ struct ExploreView: View {
             }
         }
     }
-
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 tabPicker
                 Group {
                     switch selectedTab {
-                    case .browse: JamendoBrowseView()
+                    case .browse: DeezerBrowseView()
                     case .local:  localImport
                     case .link:   linkImport
                     }
@@ -48,9 +48,7 @@ struct ExploreView: View {
             }
         }
     }
-
-    // MARK: - Tab picker
-
+    
     private var tabPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
@@ -71,9 +69,7 @@ struct ExploreView: View {
             .padding(.horizontal, 16).padding(.vertical, 10)
         }
     }
-
-    // MARK: - Local files
-
+    
     private var localImport: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -83,7 +79,7 @@ struct ExploreView: View {
             .padding(16)
         }
     }
-
+    
     private var filesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Локальные файлы", systemImage: "folder.fill")
@@ -97,7 +93,7 @@ struct ExploreView: View {
         }
         .liquidGlass(corner: 24, padding: 16)
     }
-
+    
     private var finderCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Через «Файлы»", systemImage: "desktopcomputer")
@@ -114,9 +110,7 @@ struct ExploreView: View {
         }
         .liquidGlass(corner: 24, padding: 16)
     }
-
-    // MARK: - Link import
-
+    
     private var linkImport: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -125,7 +119,7 @@ struct ExploreView: View {
             .padding(16)
         }
     }
-
+    
     private var linkCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Импорт по ссылке", systemImage: "link")
@@ -154,18 +148,18 @@ struct ExploreView: View {
     }
 }
 
-// MARK: - Jamendo Browse
+// MARK: - Deezer Browse
 
-struct JamendoBrowseView: View {
+struct DeezerBrowseView: View {
     @StateObject private var player = PlayerCore.shared
-    @State private var tracks: [JamendoService.JamendoTrack] = []
-    @State private var genres: [JamendoService.Genre] = []
-    @State private var selectedGenre: String? = nil
+    @State private var tracks: [DeezerService.DzTrack] = []
+    @State private var genres: [DeezerService.DzGenre] = []
+    @State private var selectedGenre: Int? = nil
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var error: String? = nil
-    @State private var isStreaming = false
-
+    @State private var isChart = true
+    
     var body: some View {
         VStack(spacing: 0) {
             if !genres.isEmpty {
@@ -173,7 +167,10 @@ struct JamendoBrowseView: View {
             }
             Group {
                 if isLoading && tracks.isEmpty {
-                    VStack(spacing: 12) { ProgressView(); Text("Загрузка…").font(.caption).foregroundStyle(.secondary) }
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Загрузка…").font(.caption).foregroundStyle(.secondary)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let error {
                     VStack(spacing: 10) {
@@ -187,35 +184,35 @@ struct JamendoBrowseView: View {
                 }
             }
         }
-        .searchable(text: $searchText, prompt: "Поиск по каталогу Jamendo")
+        .searchable(text: $searchText, prompt: "Поиск треков, артистов")
             .onSubmit(of: .search) { Task { await search() } }
             .onChange(of: searchText) { _ in
                 if searchText.isEmpty { Task { await load() } }
             }
             .task { await load() }
     }
-
+    
     private var genreScroller: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                FilterChip(label: "Все", isActive: selectedGenre == nil) {
-                    selectedGenre = nil; Task { await load() }
+                FilterChip(label: "Чарт", isActive: selectedGenre == nil && isChart) {
+                    selectedGenre = nil; isChart = true; Task { await load() }
                 }
-                ForEach(genres.prefix(15)) { g in
-                    FilterChip(label: g.displayName, isActive: selectedGenre == g.id) {
-                        selectedGenre = g.id; Task { await load() }
+                ForEach(genres) { g in
+                    FilterChip(label: g.name, isActive: selectedGenre == g.id) {
+                        selectedGenre = g.id; isChart = false; Task { await loadGenre() }
                     }
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 8)
         }
     }
-
+    
     private var trackList: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(tracks) { track in
-                    jamendoRow(track)
+                    deezerRow(track)
                 }
                 if tracks.isEmpty && !isLoading {
                     Text("Ничего не найдено").font(.subheadline).foregroundStyle(.secondary).padding(.top, 40)
@@ -225,13 +222,14 @@ struct JamendoBrowseView: View {
             .padding(.bottom, 80)
         }
     }
-
-    private func jamendoRow(_ track: JamendoService.JamendoTrack) -> some View {
+    
+    private func deezerRow(_ track: DeezerService.DzTrack) -> some View {
         Button {
-            playJamendo(track)
+            playDeezer(track)
         } label: {
             HStack(spacing: 12) {
-                AsyncImage(url: URL(string: track.image ?? "")) { phase in
+                // Album art
+                AsyncImage(url: URL(string: track.coverUrl)) { phase in
                     if let img = phase.image {
                         img.resizable().aspectRatio(contentMode: .fill)
                     } else {
@@ -242,21 +240,25 @@ struct JamendoBrowseView: View {
                     }
                 }
                 .frame(width: 52, height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(track.name)
+                    Text(track.title)
                         .font(.body.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
                     HStack(spacing: 6) {
-                        Text(track.artist_name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        if track.musicinfo?.tags?.genres?.first != nil {
-                            Text("·").foregroundStyle(.quaternary)
-                            Text(track.musicinfo!.tags!.genres!.first!).font(.caption).foregroundStyle(.quaternary).lineLimit(1)
-                        }
+                        Text(track.artistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text("·").foregroundStyle(.quaternary)
+                        Text(track.albumName).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
                     }
                 }
                 Spacer()
-                Text(formatDuration(track.duration))
+                // Preview badge
+                Text("30с")
+                    .font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(.primary.opacity(0.06)))
+                    .foregroundStyle(.quaternary)
+                Text(formatDuration(Double(track.duration)))
                     .font(.caption).monospacedDigit().foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
@@ -264,57 +266,50 @@ struct JamendoBrowseView: View {
         }
         .buttonStyle(.plain)
     }
-
-    private func playJamendo(_ track: JamendoService.JamendoTrack) {
-        let streamURL = JamendoService.streamURL(trackId: track.id)
-        // Play via URL directly without downloading
+    
+    private func playDeezer(_ track: DeezerService.DzTrack) {
+        guard let previewUrl = URL(string: track.preview) else { return }
         let fakeTrack = Track(
-            fileName: "jamendo_\(track.id).mp3",
-            title: track.name,
-            artist: track.artist_name,
-            album: track.album_name,
-            duration: track.duration,
-            artworkSeed: Int(track.id.prefix(7).hashValue ^ track.name.hashValue)
+            fileName: "deezer_\(track.id).mp3",
+            title: track.title,
+            artist: track.artistName,
+            album: track.albumName,
+            duration: 30.0,
+            artworkSeed: track.id
         )
-        // Override URL to point to stream
-        player.playJamendoStream(fakeTrack, streamURL: streamURL)
+        player.playJamendoStream(fakeTrack, streamURL: previewUrl)
     }
-
-    // MARK: - Loading
-
+    
     private func load() async {
-        isLoading = true
-        error = nil
+        isLoading = true; error = nil
         do {
-            if genres.isEmpty {
-                genres = try await JamendoService.genres()
-            }
-            if let gid = selectedGenre {
-                tracks = try await JamendoService.tracksByGenre(gid)
-            } else {
-                tracks = try await JamendoService.popular()
-            }
-        } catch {
-            self.error = "Не удалось загрузить каталог. Проверьте подключение к интернету."
-        }
+            if genres.isEmpty { genres = try await DeezerService.genres() }
+            tracks = try await DeezerService.charts()
+            isChart = true; selectedGenre = nil
+        } catch { self.error = "Не удалось загрузить каталог. Проверьте интернет." }
         isLoading = false
     }
-
+    
+    private func loadGenre() async {
+        guard let gid = selectedGenre else { return }
+        isLoading = true; error = nil
+        do {
+            tracks = try await DeezerService.genreChart(gid)
+        } catch { self.error = "Ошибка загрузки жанра." }
+        isLoading = false
+    }
+    
     private func search() async {
         guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { await load(); return }
-        isLoading = true
-        error = nil
+        isLoading = true; error = nil
         do {
-            tracks = try await JamendoService.search(query: searchText)
-        } catch {
-            self.error = "Ошибка поиска."
-        }
+            tracks = try await DeezerService.search(query: searchText)
+        } catch { self.error = "Ошибка поиска." }
         isLoading = false
     }
-
+    
     private func formatDuration(_ seconds: Double) -> String {
-        let m = Int(seconds) / 60
-        let s = Int(seconds) % 60
+        let m = Int(seconds) / 60; let s = Int(seconds) % 60
         return String(format: "%d:%02d", m, s)
     }
 }
@@ -322,9 +317,7 @@ struct JamendoBrowseView: View {
 // MARK: - Filter chip
 
 private struct FilterChip: View {
-    let label: String
-    let isActive: Bool
-    let action: () -> Void
+    let label: String; let isActive: Bool; let action: () -> Void
     var body: some View {
         Button(action: action) {
             Text(label)
