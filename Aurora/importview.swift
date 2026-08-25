@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - Explore (обзор + импорт)
 
@@ -10,7 +9,8 @@ struct ExploreView: View {
     @State private var linkText = ""
     @State private var searchText = ""
     @State private var selectedTab: ExploreTab = .browse
-    
+    @StateObject private var settings = SettingsStore.shared
+
     enum ExploreTab: String, CaseIterable {
         case browse, local, link
         var label: String {
@@ -28,14 +28,14 @@ struct ExploreView: View {
             }
         }
     }
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 tabPicker
                 Group {
                     switch selectedTab {
-                    case .browse: DeezerBrowseView()
+                    case .browse: JamendoBrowseView()
                     case .local:  localImport
                     case .link:   linkImport
                     }
@@ -48,7 +48,7 @@ struct ExploreView: View {
             }
         }
     }
-    
+
     private var tabPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
@@ -59,9 +59,8 @@ struct ExploreView: View {
                             .padding(.horizontal, 16).padding(.vertical, 8)
                             .background(
                                 Capsule().fill(selectedTab == tab
-                                    ? AnyShapeStyle(SettingsStore.shared.accentGradient)
-                                    : AnyShapeStyle(.primary.opacity(0.06)))
-                            )
+                                    ? AnyShapeStyle(settings.accentGradient)
+                                    : AnyShapeStyle(.primary.opacity(0.06))))
                             .foregroundStyle(selectedTab == tab ? .white : .primary)
                     }.buttonStyle(.plain)
                 }
@@ -69,17 +68,16 @@ struct ExploreView: View {
             .padding(.horizontal, 16).padding(.vertical, 10)
         }
     }
-    
+
     private var localImport: some View {
         ScrollView {
             VStack(spacing: 16) {
                 filesCard
                 finderCard
-            }
-            .padding(16)
+            }.padding(16)
         }
     }
-    
+
     private var filesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Локальные файлы", systemImage: "folder.fill")
@@ -89,11 +87,11 @@ struct ExploreView: View {
             Button { showPicker = true } label: {
                 Label("Выбрать файлы", systemImage: "plus.circle.fill")
                     .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 10)
-            }.buttonStyle(.borderedProminent).tint(SettingsStore.shared.accentColor)
+            }.buttonStyle(.borderedProminent).tint(settings.accentColor)
         }
         .liquidGlass(corner: 24, padding: 16)
     }
-    
+
     private var finderCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Через «Файлы»", systemImage: "desktopcomputer")
@@ -105,21 +103,17 @@ struct ExploreView: View {
             } label: {
                 Label(library.isScanning ? "Поиск…" : "Обновить", systemImage: "arrow.clockwise")
                     .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 10)
-            }
-            .buttonStyle(.bordered).disabled(library.isScanning)
+            }.buttonStyle(.bordered).disabled(library.isScanning)
         }
         .liquidGlass(corner: 24, padding: 16)
     }
-    
+
     private var linkImport: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                linkCard
-            }
-            .padding(16)
+            VStack(spacing: 16) { linkCard }.padding(16)
         }
     }
-    
+
     private var linkCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Импорт по ссылке", systemImage: "link")
@@ -140,26 +134,24 @@ struct ExploreView: View {
             } label: {
                 Label("Скачать", systemImage: "arrow.down.circle.fill")
                     .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent).tint(SettingsStore.shared.accentColor)
+            }.buttonStyle(.borderedProminent).tint(settings.accentColor)
             .disabled(library.importProgress != nil || linkText.isEmpty)
         }
         .liquidGlass(corner: 24, padding: 16)
     }
 }
 
-// MARK: - Deezer Browse
+// MARK: - Jamendo Browse
 
-struct DeezerBrowseView: View {
+struct JamendoBrowseView: View {
     @StateObject private var player = PlayerCore.shared
-    @State private var tracks: [DeezerService.DzTrack] = []
-    @State private var genres: [DeezerService.DzGenre] = []
-    @State private var selectedGenre: Int? = nil
+    @State private var tracks: [JamendoService.JTrack] = []
+    @State private var genres: [JamendoService.JGenre] = []
+    @State private var selectedGenre: String? = nil
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var error: String? = nil
-    @State private var isChart = true
-    
+
     var body: some View {
         VStack(spacing: 0) {
             if !genres.isEmpty {
@@ -170,15 +162,13 @@ struct DeezerBrowseView: View {
                     VStack(spacing: 12) {
                         ProgressView()
                         Text("Загрузка…").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let error {
                     VStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle").font(.title2).foregroundStyle(.orange)
                         Text(error).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 32)
                         Button("Повторить") { Task { await load() } }.buttonStyle(.borderedProminent).tint(SettingsStore.shared.accentColor)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     trackList
                 }
@@ -191,28 +181,28 @@ struct DeezerBrowseView: View {
             }
             .task { await load() }
     }
-    
+
     private var genreScroller: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                FilterChip(label: "Чарт", isActive: selectedGenre == nil && isChart) {
-                    selectedGenre = nil; isChart = true; Task { await load() }
+                FilterChip(label: "Популярное", isActive: selectedGenre == nil) {
+                    selectedGenre = nil; Task { await load() }
                 }
                 ForEach(genres) { g in
-                    FilterChip(label: g.name, isActive: selectedGenre == g.id) {
-                        selectedGenre = g.id; isChart = false; Task { await loadGenre() }
+                    FilterChip(label: g.displayName, isActive: selectedGenre == g.id) {
+                        selectedGenre = g.id; Task { await loadGenre() }
                     }
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 8)
         }
     }
-    
+
     private var trackList: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(tracks) { track in
-                    deezerRow(track)
+                    jamendoRow(track)
                 }
                 if tracks.isEmpty && !isLoading {
                     Text("Ничего не найдено").font(.subheadline).foregroundStyle(.secondary).padding(.top, 40)
@@ -222,14 +212,13 @@ struct DeezerBrowseView: View {
             .padding(.bottom, 80)
         }
     }
-    
-    private func deezerRow(_ track: DeezerService.DzTrack) -> some View {
+
+    private func jamendoRow(_ track: JamendoService.JTrack) -> some View {
         Button {
-            playDeezer(track)
+            playJamendo(track)
         } label: {
             HStack(spacing: 12) {
-                // Album art
-                AsyncImage(url: URL(string: track.coverUrl)) { phase in
+                AsyncImage(url: URL(string: track.coverUrl ?? "")) { phase in
                     if let img = phase.image {
                         img.resizable().aspectRatio(contentMode: .fill)
                     } else {
@@ -241,73 +230,66 @@ struct DeezerBrowseView: View {
                 }
                 .frame(width: 52, height: 52)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                
+
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title)
                         .font(.body.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
                     HStack(spacing: 6) {
-                        Text(track.artistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         Text("·").foregroundStyle(.quaternary)
-                        Text(track.albumName).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                        Text(track.album).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
                     }
                 }
                 Spacer()
-                // Preview badge
-                Text("30с")
-                    .font(.system(size: 10, weight: .medium))
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(.primary.opacity(0.06)))
-                    .foregroundStyle(.quaternary)
-                Text(formatDuration(Double(track.duration)))
+                Text(formatDuration(track.duration))
                     .font(.caption).monospacedDigit().foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        }.buttonStyle(.plain)
     }
-    
-    private func playDeezer(_ track: DeezerService.DzTrack) {
-        guard let previewUrl = URL(string: track.preview) else { return }
-        let fakeTrack = Track(
-            fileName: "deezer_\(track.id).mp3",
+
+    private func playJamendo(_ track: JamendoService.JTrack) {
+        guard let url = URL(string: track.audio) else { return }
+        let t = Track(
+            fileName: "jamendo_\(track.id).mp3",
             title: track.title,
-            artist: track.artistName,
-            album: track.albumName,
-            duration: 30.0,
-            artworkSeed: track.id
+            artist: track.artist,
+            album: track.album,
+            duration: track.duration,
+            artworkSeed: Int(track.id) ?? 42
         )
-        player.playJamendoStream(fakeTrack, streamURL: previewUrl)
+        player.playJamendoStream(t, streamURL: url)
     }
-    
+
     private func load() async {
         isLoading = true; error = nil
         do {
-            if genres.isEmpty { genres = try await DeezerService.genres() }
-            tracks = try await DeezerService.charts()
-            isChart = true; selectedGenre = nil
+            if genres.isEmpty { genres = try await JamendoService.genres() }
+            tracks = try await JamendoService.popular()
+            selectedGenre = nil
         } catch { self.error = "Не удалось загрузить каталог. Проверьте интернет." }
         isLoading = false
     }
-    
+
     private func loadGenre() async {
         guard let gid = selectedGenre else { return }
         isLoading = true; error = nil
         do {
-            tracks = try await DeezerService.genreChart(gid)
+            tracks = try await JamendoService.tracksByGenre(gid)
         } catch { self.error = "Ошибка загрузки жанра." }
         isLoading = false
     }
-    
+
     private func search() async {
         guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { await load(); return }
         isLoading = true; error = nil
         do {
-            tracks = try await DeezerService.search(query: searchText)
+            tracks = try await JamendoService.search(query: searchText)
         } catch { self.error = "Ошибка поиска." }
         isLoading = false
     }
-    
+
     private func formatDuration(_ seconds: Double) -> String {
         let m = Int(seconds) / 60; let s = Int(seconds) % 60
         return String(format: "%d:%02d", m, s)
@@ -326,8 +308,7 @@ private struct FilterChip: View {
                 .background(
                     Capsule().fill(isActive
                         ? AnyShapeStyle(SettingsStore.shared.accentGradient)
-                        : AnyShapeStyle(.primary.opacity(0.06)))
-                )
+                        : AnyShapeStyle(.primary.opacity(0.06))))
                 .foregroundStyle(isActive ? .white : .secondary)
         }.buttonStyle(.plain)
     }
