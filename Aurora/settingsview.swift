@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var library = LibraryStore.shared
+    @StateObject private var player = PlayerCore.shared
 
     var body: some View {
         NavigationStack {
@@ -24,6 +25,14 @@ struct SettingsView: View {
                         }
                     }
                 }
+
+                Section("Воспроизведение") {
+                    Toggle("Automix (плавный переход)", isOn: $player.automixEnabled)
+                        .tint(settings.accentColor)
+                    LabeledContent("Переход", value: "2.0 сек")
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Медиатека") {
                     LabeledContent("Треков", value: "\(library.tracks.count)")
                     Button(role: .destructive) { library.resetIndex() } label: {

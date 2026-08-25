@@ -17,13 +17,20 @@ final class PlayerCore: ObservableObject {
     @Published var repeatMode: RepeatMode = .off { didSet { defaults.set(repeatMode.rawValue, forKey: "player.repeat") } }
     @Published var eqEnabled: Bool = true { didSet { applyEQ(); defaults.set(eqEnabled, forKey: "eq.enabled") } }
     @Published var eqGains: [Float] = EQPresets.flat.gains { didSet { applyEQ(); saveEQ() } }
+    @Published var automixEnabled: Bool = true { didSet { defaults.set(automixEnabled, forKey: "player.automix") } }
 
     private let defaults = UserDefaults.standard
     private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+
+    // Dual players for crossfade
+    private let outgoingPlayer = AVAudioPlayerNode()
+    private let incomingPlayer = AVAudioPlayerNode()
+    private var activePlayerRef: AVAudioPlayerNode  // points to the currently-heard player
+
     private let eqNode = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
 
     private var file: AVAudioFile?
+    private var incomingFile: AVAudioFile?
     private var generation = 0
     private var anchorDate: Date?
     private var anchorOffset: Double = 0
@@ -31,14 +38,21 @@ final class PlayerCore: ObservableObject {
     private var needsReschedule = false
     private var progressTimer: Timer?
 
+    // Automix / crossfade state
+    private var isCrossfading = false
+    private var crossfadeScheduled = false
+    private let crossfadeDuration: Double = 2.0
+
     var duration: Double { max(currentTrack?.duration ?? 0, 0.001) }
 
     // MARK: - Init
     private init() {
+        activePlayerRef = outgoingPlayer
         configureBands()
-        engine.attach(player)
+        engine.attach(outgoingPlayer)
+        engine.attach(incomingPlayer)
         engine.attach(eqNode)
-        wire(fileFormat: nil)
+        wire(format: nil)
         configureSession()
         observeInterruptions()
         loadSettings()
@@ -60,17 +74,20 @@ final class PlayerCore: ObservableObject {
         }
     }
 
-    private func wire(fileFormat: AVAudioFormat?) {
-        engine.disconnectNodeOutput(player)
+    private func wire(format: AVAudioFormat?) {
+        engine.disconnectNodeOutput(outgoingPlayer)
+        engine.disconnectNodeOutput(incomingPlayer)
         engine.disconnectNodeOutput(eqNode)
-        engine.connect(player, to: eqNode, format: fileFormat)
-        engine.connect(eqNode, to: engine.mainMixerNode, format: fileFormat)
+        engine.connect(outgoingPlayer, to: eqNode, format: format)
+        engine.connect(incomingPlayer, to: eqNode, format: format)
+        engine.connect(eqNode, to: engine.mainMixerNode, format: format)
     }
 
     private func loadSettings() {
         shuffle = defaults.bool(forKey: "player.shuffle")
         repeatMode = RepeatMode(rawValue: defaults.integer(forKey: "player.repeat")) ?? .off
         eqEnabled = defaults.object(forKey: "eq.enabled") as? Bool ?? true
+        automixEnabled = defaults.object(forKey: "player.automix") as? Bool ?? true
         if let data = defaults.data(forKey: "eq.gains"),
            let gains = try? JSONDecoder().decode([Float].self, from: data),
            gains.count == PlayerCore.bandFrequencies.count {
@@ -97,6 +114,32 @@ final class PlayerCore: ObservableObject {
         }
     }
 
+    // MARK: - Player helpers
+
+    private var outgoingVol: Float {
+        get { outgoingPlayer.volume }
+        set { outgoingPlayer.volume = newValue }
+    }
+    private var incomingVol: Float {
+        get { incomingPlayer.volume }
+        set { incomingPlayer.volume = newValue }
+    }
+    private var activeVolume: Float {
+        get { activePlayerRef.volume }
+        set { activePlayerRef.volume = newValue }
+    }
+
+    /// The player node currently producing audible output.
+    private var activeNode: AVAudioPlayerNode { activePlayerRef }
+    /// The idle player node (used as the next crossfade target).
+    private var idleNode: AVAudioPlayerNode {
+        activePlayerRef === outgoingPlayer ? incomingPlayer : outgoingPlayer
+    }
+
+    private func swapPlayers() {
+        activePlayerRef = (activePlayerRef === outgoingPlayer) ? incomingPlayer : outgoingPlayer
+    }
+
     // MARK: - Public controls
 
     func togglePlay() {
@@ -112,13 +155,15 @@ final class PlayerCore: ObservableObject {
         if let q = newQueue, q != queue { queue = q }
         currentTrack = track
         playError = nil
+        crossfadeScheduled = false
+        isCrossfading = false
         start(at: 0)
     }
 
     func pause() {
         guard isPlaying else { return }
         pausedProgress = liveProgress()
-        player.pause()
+        activeNode.pause()
         isPlaying = false
         anchorDate = nil
         progress = pausedProgress
@@ -126,9 +171,13 @@ final class PlayerCore: ObservableObject {
 
     func resume() {
         guard !isPlaying, currentTrack != nil else { return }
-        if file == nil || needsReschedule { start(at: pausedProgress); needsReschedule = false; return }
+        if file == nil || needsReschedule {
+            start(at: pausedProgress)
+            needsReschedule = false
+            return
+        }
         if !engine.isRunning { try? engine.start() }
-        player.play()
+        activeNode.play()
         isPlaying = true
         anchorDate = Date()
         anchorOffset = pausedProgress
@@ -136,11 +185,18 @@ final class PlayerCore: ObservableObject {
     }
 
     func next() {
-        if let n = peekNext(auto: false) { currentTrack = n; start(at: 0) }
-        else if let cur = currentTrack { start(at: 0); currentTrack = cur }
+        cancelCrossfade()
+        if let n = peekNext(auto: false) {
+            currentTrack = n
+            start(at: 0)
+        } else if let cur = currentTrack {
+            start(at: 0)
+            currentTrack = cur
+        }
     }
 
     func previous() {
+        cancelCrossfade()
         let p = liveProgress()
         if p > 3 { seek(to: 0); return }
         let q = effectiveQueue()
@@ -152,6 +208,7 @@ final class PlayerCore: ObservableObject {
     }
 
     func seek(to seconds: Double) {
+        cancelCrossfade()
         let clamped = max(0, min(seconds, duration))
         if isPlaying {
             start(at: clamped)
@@ -165,13 +222,17 @@ final class PlayerCore: ObservableObject {
 
     func stopAndClear() {
         generation += 1
-        player.stop()
+        outgoingPlayer.stop()
+        incomingPlayer.stop()
         file = nil
+        incomingFile = nil
         currentTrack = nil
         isPlaying = false
         progress = 0
         pausedProgress = 0
         anchorDate = nil
+        crossfadeScheduled = false
+        isCrossfading = false
         SpectrumAnalyzer.shared.reset()
     }
 
@@ -181,17 +242,27 @@ final class PlayerCore: ObservableObject {
         guard let track = currentTrack else { return }
         generation += 1
         let token = generation
-        player.stop()
+
+        // Stop both players, reset volumes
+        outgoingPlayer.stop()
+        incomingPlayer.stop()
+        outgoingVol = 1.0
+        incomingVol = 0.0
+        activePlayerRef = outgoingPlayer
+        isCrossfading = false
+        crossfadeScheduled = false
+
         do {
             let audioFile = try AVAudioFile(forReading: track.url)
             file = audioFile
+            incomingFile = nil
             engine.stop()
-            wire(fileFormat: audioFile.processingFormat)
+            wire(format: audioFile.processingFormat)
             try engine.start()
             let sr = audioFile.processingFormat.sampleRate
             let offsetFrames = AVAudioFramePosition(seconds * sr)
             audioFile.framePosition = max(0, min(offsetFrames, audioFile.length - 1))
-            player.scheduleFile(audioFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            outgoingPlayer.scheduleFile(audioFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 DispatchQueue.main.async {
                     Task { @MainActor in
                         guard let self, self.generation == token else { return }
@@ -199,7 +270,7 @@ final class PlayerCore: ObservableObject {
                     }
                 }
             }
-            player.play()
+            outgoingPlayer.play()
             isPlaying = true
             anchorDate = Date()
             anchorOffset = seconds
@@ -213,12 +284,98 @@ final class PlayerCore: ObservableObject {
         }
     }
 
+    // MARK: - Automix / Crossfade
+
+    /// Called from tickProgress() when the track is near its end.
+    private func scheduleCrossfadeIfNeeded() {
+        guard automixEnabled, !isCrossfading, !crossfadeScheduled, isPlaying else { return }
+        let remaining = duration - liveProgress()
+        guard remaining <= crossfadeDuration, remaining > 0 else { return }
+        guard let nextTrack = peekNext(auto: true) else { return }
+        crossfadeScheduled = true
+        isCrossfading = true
+
+        let idle = idleNode
+        let token = generation
+
+        do {
+            let nextFile = try AVAudioFile(forReading: nextTrack.url)
+            incomingFile = nextFile
+
+            // Reconnect idle node with new file's format if needed
+            if idle.outputFormat(forBus: 0) != nextFile.processingFormat {
+                engine.disconnectNodeOutput(idle)
+                engine.connect(idle, to: eqNode, format: nextFile.processingFormat)
+            }
+
+            idle.scheduleFile(nextFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                DispatchQueue.main.async {
+                    Task { @MainActor in
+                        guard let self, self.generation == token else { return }
+                        self.completeCrossfade(to: nextTrack)
+                    }
+                }
+            }
+
+            // Start incoming at volume 0, then ramp both
+            idle.volume = 0
+            if !engine.isRunning { try? engine.start() }
+            idle.play()
+
+            let fadeTime = AVAudioTime(seconds: crossfadeDuration, sampleRate: nextFile.processingFormat.sampleRate)
+            activeNode.volumeRamp(to: 0, duration: fadeTime)
+            idle.volumeRamp(to: 1, duration: fadeTime)
+
+        } catch {
+            isCrossfading = false
+            crossfadeScheduled = false
+        }
+    }
+
+    /// Called when the incoming player finishes playing (crossfade complete).
+    private func completeCrossfade(to nextTrack: Track) {
+        let oldActive = activeNode
+
+        // Stop the old player
+        oldActive.stop()
+        oldActive.volume = 1
+
+        // Swap: the incoming becomes the new active
+        swapPlayers()
+        file = incomingFile
+        incomingFile = nil
+        currentTrack = nextTrack
+        anchorDate = Date()
+        anchorOffset = 0
+        pausedProgress = 0
+        progress = 0
+        isCrossfading = false
+        crossfadeScheduled = false
+    }
+
+    private func cancelCrossfade() {
+        guard isCrossfading else { return }
+        let idle = idleNode
+        idle.stop()
+        idle.volume = 0
+        activeNode.volume = 1
+        activeNode.volumeRamp(to: 1, duration: AVAudioTime(seconds: 0.1, sampleRate: 44100))
+        incomingFile = nil
+        isCrossfading = false
+        crossfadeScheduled = false
+    }
+
+    // MARK: - Track finish (non-crossfade path)
+
     private func handleFinish() {
         progress = duration
         anchorDate = nil
         isPlaying = false
         if repeatMode == .one { start(at: 0); return }
-        if let next = peekNext(auto: true) { currentTrack = next; start(at: 0) }
+        if let next = peekNext(auto: true) {
+            currentTrack = next
+            start(at: 0)
+        }
     }
 
     private func effectiveQueue() -> [Track] {
@@ -262,6 +419,7 @@ final class PlayerCore: ObservableObject {
     private func tickProgress() {
         guard isPlaying else { return }
         progress = liveProgress()
+        scheduleCrossfadeIfNeeded()
     }
 
     // MARK: - Helpers
