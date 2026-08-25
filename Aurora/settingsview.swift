@@ -123,6 +123,6 @@ struct SettingsView: View {
 
     private var appVersion: String {
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        return ver.contains("Beta") ? ver : "\(ver) Beta"
+        return "\(ver) Beta"
     }
 }
