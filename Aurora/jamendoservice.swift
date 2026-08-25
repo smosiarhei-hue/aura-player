@@ -130,7 +130,8 @@ enum JamendoService {
     // MARK: - Convert Jamendo track to App Track Model
 
     static func convertToTrack(_ item: JTrack) -> Track {
-        Track(
+        let seed = Int(String(item.id.prefix(6))) ?? 42
+        return Track(
             id: UUID(),
             fileName: "online_\(item.id).mp3",
             relativePath: "",
@@ -138,7 +139,7 @@ enum JamendoService {
             artist: item.artist,
             album: item.album,
             duration: item.duration,
-            artworkSeed: Int(item.id.prefix(6)) ?? 42,
+            artworkSeed: seed,
             colorsHex: ["#2DD4BF", "#6366F1"],
             hasEmbeddedArtwork: false,
             isFavorite: false,

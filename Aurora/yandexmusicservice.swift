@@ -201,8 +201,9 @@ final class YandexMusicService: ObservableObject {
         }
 
         // Step 4: Generate MD5 signature: md5(secretSalt + path.removePrefix('/') + s)
-        let signRaw = Self.secretSalt + path.dropFirst() + s
-        let sign = md5(String(signRaw))
+        let pathWithoutLeadingSlash = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let signRaw = Self.secretSalt + pathWithoutLeadingSlash + s
+        let sign = md5(signRaw)
 
         let finalURLString = "https://\(host)/get-mp3/\(sign)/\(ts)\(path)"
         guard let finalURL = URL(string: finalURLString) else {
@@ -214,7 +215,8 @@ final class YandexMusicService: ObservableObject {
     // MARK: - Convert YMTrackItem to App Track Model
 
     func convertToTrack(_ ym: YMTrackItem) -> Track {
-        Track(
+        let numericSeed = Int(String(ym.id.prefix(6))) ?? 777
+        return Track(
             id: UUID(),
             fileName: "ym_\(ym.id).mp3",
             relativePath: "",
@@ -222,13 +224,13 @@ final class YandexMusicService: ObservableObject {
             artist: ym.artistName,
             album: ym.albumName,
             duration: ym.duration,
-            artworkSeed: Int(ym.id.prefix(6)) ?? 777,
+            artworkSeed: numericSeed,
             colorsHex: ["#FF455B", "#6366F1"],
             hasEmbeddedArtwork: false,
             isFavorite: false,
             addedAt: Date(),
             isStream: true,
-            streamUrlString: ym.id // Track ID stored here, resolved dynamically or pre-fetched
+            streamUrlString: ym.id
         )
     }
 

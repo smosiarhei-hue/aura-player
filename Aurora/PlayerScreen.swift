@@ -25,7 +25,7 @@ struct PlayerScreen: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Immersive full-bleed album artwork with seamless downward gradient blur (Screenshot 1)
+                // Immersive full-bleed album artwork with seamless downward gradient blur
                 artworkBackground(geo: geo)
 
                 VStack(spacing: 0) {
@@ -98,7 +98,7 @@ struct PlayerScreen: View {
                 AnimatedMeshBackground(palette: palette)
             }
 
-            // Downward smooth gradient & liquid blur (Screenshot 1)
+            // Downward smooth gradient & liquid blur
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.0),
@@ -210,7 +210,7 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            // Star Favorite Button (Screenshot 1: ☆ / ★)
+            // Star Favorite Button
             if let track = currentTrack {
                 Button {
                     if settings.hapticsEnabled {
@@ -266,17 +266,14 @@ struct PlayerScreen: View {
                 let fraction = player.duration > 0 ? min(max(currentVal / player.duration, 0), 1) : 0
 
                 ZStack(alignment: .leading) {
-                    // Track Unfilled Background
                     Capsule()
                         .fill(.white.opacity(0.20))
                         .frame(height: 5)
 
-                    // Track Filled Progress
                     Capsule()
                         .fill(.white.opacity(0.95))
                         .frame(width: max(5, w * CGFloat(fraction)), height: 5)
 
-                    // Scrubber Knob (Apple Music style)
                     Circle()
                         .fill(.white)
                         .frame(width: isDraggingScrubber ? 16 : 8, height: isDraggingScrubber ? 16 : 8)
@@ -311,7 +308,6 @@ struct PlayerScreen: View {
             }
             .frame(height: 20)
 
-            // Times + Dolby Atmos / Lossless Badge (Screenshot 1)
             HStack {
                 Text(player.formatted(scrubValue ?? player.progress))
                     .font(.caption2.weight(.medium).monospacedDigit())
@@ -319,10 +315,9 @@ struct PlayerScreen: View {
 
                 Spacer()
 
-                // Center Audio Badge (Dolby Atmos / Hi-Res Lossless)
                 HStack(spacing: 4) {
-                    Image(systemName: "dolby.audio.badge")
-                        .font(.system(size: 11, weight: .bold))
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .bold))
                     Text("Dolby Atmos")
                         .font(.system(size: 11, weight: .bold))
                 }
@@ -341,7 +336,6 @@ struct PlayerScreen: View {
 
     private var playbackControlsRow: some View {
         HStack(spacing: 0) {
-            // Previous Track
             Button {
                 if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                 player.previous()
@@ -355,7 +349,6 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            // Big Bold Pause/Play Button (Screenshot 1)
             Button {
                 if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
                 player.togglePlay()
@@ -369,7 +362,6 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            // Next Track
             Button {
                 if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                 player.next()
@@ -422,11 +414,10 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Bottom Utility Icons (Lyrics, AirPlay, Queue - Screenshot 1)
+    // MARK: - Bottom Utility Icons (Lyrics, AirPlay, Queue)
 
     private var bottomUtilityIconsRow: some View {
         HStack {
-            // Lyrics Button
             Button {
                 showLyrics = true
             } label: {
@@ -439,13 +430,11 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            // AirPlay Route Picker
             AirPlayButtonView()
                 .frame(width: 44, height: 44)
 
             Spacer()
 
-            // Queue List Button
             Button {
                 showQueue = true
             } label: {
