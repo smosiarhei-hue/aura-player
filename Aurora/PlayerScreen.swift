@@ -2,72 +2,70 @@ import AVKit
 import MediaPlayer
 import SwiftUI
 
-// MARK: - Player Screen (Apple Music Liquid Glass Experience)
+// MARK: - Apple Music Exact Fullscreen Player (Liquid Glass iOS 27)
 
 struct PlayerScreen: View {
     @StateObject private var player = PlayerCore.shared
     @StateObject private var settings = SettingsStore.shared
+    @StateObject private var library = LibraryStore.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var scrubValue: Double? = nil
     @State private var isDraggingScrubber = false
+    @State private var showLyrics = false
     @State private var showQueue = false
     @State private var showEQ = false
     @State private var dragOffset: CGFloat = 0
 
+    private var currentTrack: Track? { player.currentTrack }
     private var palette: [Color] {
-        player.currentTrack?.palette ?? Palette.seeded(42).colors
+        currentTrack?.palette ?? Palette.seeded(42).colors
     }
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Animated Apple Music full-screen mesh background
-                AnimatedMeshBackground(palette: palette)
+                // Immersive full-bleed album artwork with seamless downward gradient blur (Screenshot 1)
+                artworkBackground(geo: geo)
 
                 VStack(spacing: 0) {
-                    // Top Bar (Grabber / Header)
-                    topBar
-                        .padding(.top, max(geo.safeAreaInsets.top, 12))
-                        .padding(.horizontal, 20)
+                    // Top Drag Indicator (Chevron / Grabber)
+                    topGrabber
+                        .padding(.top, max(geo.safeAreaInsets.top, 8))
 
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 10)
 
-                    // Album Artwork Card (scales up on play, down on pause)
-                    let artSize = min(geo.size.width - 64, geo.size.height * 0.38)
-                    TrackArtworkView(
-                        track: player.currentTrack,
-                        isPlaying: player.isPlaying,
-                        size: max(220, artSize)
-                    )
-                    .padding(.vertical, 8)
+                    // Hero Album Artwork
+                    let artSize = min(geo.size.width - 64, geo.size.height * 0.42)
+                    artworkHero(size: max(240, artSize))
+                        .padding(.vertical, 8)
 
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 10)
 
-                    // Track Meta & Favorite Button
-                    trackInfoSection
+                    // Track Title, Explicit Badge, Artist, Star & Options
+                    trackMetadataRow
                         .padding(.horizontal, 28)
 
-                    // Timeline Scrubber
-                    timelineScrubber
+                    // Apple Music Time Scrubber & Audio Format Badge
+                    timeScrubberSection
                         .padding(.horizontal, 28)
                         .padding(.top, 16)
 
-                    // Main Controls (Shuffle, Prev, Play/Pause, Next, Repeat)
-                    mainControls
-                        .padding(.horizontal, 24)
+                    // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
+                    playbackControlsRow
+                        .padding(.horizontal, 36)
                         .padding(.top, 20)
 
-                    // Volume Bar (Apple Music style)
-                    volumeSection
+                    // Apple Music Capsule Volume Slider
+                    volumeSliderSection
                         .padding(.horizontal, 28)
-                        .padding(.top, 22)
+                        .padding(.top, 24)
 
-                    // Bottom Utility Row (AirPlay, EQ, Queue)
-                    bottomUtilityRow
-                        .padding(.horizontal, 32)
-                        .padding(.top, 18)
-                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
+                    // Bottom Navigation Bar (Lyrics, AirPlay, Queue)
+                    bottomUtilityIconsRow
+                        .padding(.horizontal, 42)
+                        .padding(.top, 24)
+                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 20))
                 }
             }
             .offset(y: max(0, dragOffset))
@@ -75,18 +73,60 @@ struct PlayerScreen: View {
         }
         .colorScheme(.dark)
         .statusBarHidden()
-        .sheet(isPresented: $showQueue) { QueueSheet() }
-        .sheet(isPresented: $showEQ) { PlayerEQSheet() }
+        .sheet(isPresented: $showLyrics) { LyricsSheetView() }
+        .sheet(isPresented: $showQueue) { QueueSheetView() }
+        .sheet(isPresented: $showEQ) { PlayerEQSheetView() }
     }
 
-    // MARK: - Top Bar
+    // MARK: - Artwork Background (Exact Apple Music Wallpaper)
 
-    private var topBar: some View {
+    @ViewBuilder
+    private func artworkBackground(geo: GeometryProxy) -> some View {
+        ZStack {
+            // Base background
+            Color(red: 0.05, green: 0.08, blue: 0.10).ignoresSafeArea()
+
+            // Large scaled artwork in top half
+            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height * 0.70)
+                    .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
+                    .blur(radius: 2)
+            } else {
+                AnimatedMeshBackground(palette: palette)
+            }
+
+            // Downward smooth gradient & liquid blur (Screenshot 1)
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.0),
+                    .init(color: .black.opacity(0.15), location: 0.45),
+                    .init(color: (palette.first ?? .teal).opacity(0.65), location: 0.70),
+                    .init(color: Color(red: 0.03, green: 0.08, blue: 0.10).opacity(0.95), location: 1.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            // Frosted ambient overlay
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(0.40)
+                .ignoresSafeArea()
+        }
+    }
+
+    // MARK: - Top Grabber
+
+    private var topGrabber: some View {
         HStack {
             Button { dismiss() } label: {
                 Image(systemName: "chevron.compact.down")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.75))
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.70))
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
@@ -94,59 +134,131 @@ struct PlayerScreen: View {
             Spacer()
 
             Capsule()
-                .fill(.white.opacity(0.2))
-                .frame(width: 36, height: 4)
+                .fill(.white.opacity(0.30))
+                .frame(width: 36, height: 5)
 
             Spacer()
 
             Button { showEQ = true } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(.white.opacity(0.80))
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
         }
+        .padding(.horizontal, 16)
     }
 
-    // MARK: - Track Info & Favorite
+    // MARK: - Artwork Hero Card
 
-    private var trackInfoSection: some View {
-        HStack(alignment: .center, spacing: 12) {
+    private func artworkHero(size: CGFloat) -> some View {
+        Group {
+            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    LinearGradient(
+                        colors: palette,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    Image(systemName: "music.note")
+                        .font(.system(size: size * 0.35, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.95))
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.45), radius: player.isPlaying ? 28 : 12, x: 0, y: player.isPlaying ? 18 : 6)
+        .scaleEffect(player.isPlaying ? 1.0 : 0.88)
+        .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
+    }
+
+    // MARK: - Track Metadata Row (Title, Explicit badge, Star, Dots)
+
+    private var trackMetadataRow: some View {
+        HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(player.currentTrack?.title ?? "Ничего не играет")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(currentTrack?.title ?? "Aurora Player")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
 
-                Text(player.currentTrack?.artist ?? "Aurora Player")
-                    .font(.headline)
-                    .foregroundStyle(.white.opacity(0.7))
+                    // Explicit [E] Badge
+                    Text("E")
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(.white.opacity(0.85)))
+                }
+
+                Text(currentTrack?.artist ?? "Apple Music Experience")
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.70))
                     .lineLimit(1)
             }
 
             Spacer()
 
-            if let track = player.currentTrack {
+            // Star Favorite Button (Screenshot 1: ☆ / ★)
+            if let track = currentTrack {
                 Button {
                     if settings.hapticsEnabled {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     }
-                    LibraryStore.shared.toggleFavorite(track.id)
+                    library.toggleFavorite(track.id)
                 } label: {
-                    Image(systemName: track.isFavorite ? "heart.fill" : "heart")
+                    Image(systemName: track.isFavorite ? "star.fill" : "star")
                         .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(track.isFavorite ? .pink : .white.opacity(0.75))
-                        .frame(width: 44, height: 44)
+                        .foregroundStyle(track.isFavorite ? .yellow : .white.opacity(0.85))
+                        .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.plain)
+            }
+
+            // Three Dots Context Menu
+            Menu {
+                Button {
+                    showEQ = true
+                } label: {
+                    Label("Эквалайзер", systemImage: "slider.horizontal.3")
+                }
+
+                Button {
+                    showLyrics = true
+                } label: {
+                    Label("Текст песни", systemImage: "quote.bubble")
+                }
+
+                if let track = currentTrack {
+                    Button(role: .destructive) {
+                        library.delete(track)
+                    } label: {
+                        Label("Удалить из медиатеки", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: 36, height: 36)
             }
         }
     }
 
-    // MARK: - Timeline Scrubber
+    // MARK: - Apple Music Time Scrubber & Dolby Atmos Badge
 
-    private var timelineScrubber: some View {
+    private var timeScrubberSection: some View {
         VStack(spacing: 8) {
             GeometryReader { geo in
                 let w = geo.size.width
@@ -154,30 +266,24 @@ struct PlayerScreen: View {
                 let fraction = player.duration > 0 ? min(max(currentVal / player.duration, 0), 1) : 0
 
                 ZStack(alignment: .leading) {
-                    // Track background
+                    // Track Unfilled Background
                     Capsule()
                         .fill(.white.opacity(0.20))
-                        .frame(height: 6)
+                        .frame(height: 5)
 
-                    // Track filled progress
+                    // Track Filled Progress
                     Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [.white, settings.accentColor],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: max(6, w * CGFloat(fraction)), height: 6)
+                        .fill(.white.opacity(0.95))
+                        .frame(width: max(5, w * CGFloat(fraction)), height: 5)
 
-                    // Draggable knob
+                    // Scrubber Knob (Apple Music style)
                     Circle()
                         .fill(.white)
-                        .frame(width: isDraggingScrubber ? 18 : 12, height: isDraggingScrubber ? 18 : 12)
-                        .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-                        .offset(x: min(max(0, w * CGFloat(fraction) - (isDraggingScrubber ? 9 : 6)), w - (isDraggingScrubber ? 18 : 12)))
+                        .frame(width: isDraggingScrubber ? 16 : 8, height: isDraggingScrubber ? 16 : 8)
+                        .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                        .offset(x: min(max(0, w * CGFloat(fraction) - (isDraggingScrubber ? 8 : 4)), w - (isDraggingScrubber ? 16 : 8)))
                 }
-                .frame(height: 24)
+                .frame(height: 20)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -203,106 +309,87 @@ struct PlayerScreen: View {
                         }
                 )
             }
-            .frame(height: 24)
+            .frame(height: 20)
 
+            // Times + Dolby Atmos / Lossless Badge (Screenshot 1)
             HStack {
                 Text(player.formatted(scrubValue ?? player.progress))
+                    .font(.caption2.weight(.medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.65))
+
                 Spacer()
+
+                // Center Audio Badge (Dolby Atmos / Hi-Res Lossless)
+                HStack(spacing: 4) {
+                    Image(systemName: "dolby.audio.badge")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Dolby Atmos")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundStyle(.white.opacity(0.55))
+
+                Spacer()
+
                 Text("-" + player.formatted(player.duration - (scrubValue ?? player.progress)))
+                    .font(.caption2.weight(.medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.65))
             }
-            .font(.caption2.weight(.medium).monospacedDigit())
-            .foregroundStyle(.white.opacity(0.65))
         }
     }
 
-    // MARK: - Main Controls
+    // MARK: - Playback Controls (Previous, Play/Pause, Next)
 
-    private var mainControls: some View {
+    private var playbackControlsRow: some View {
         HStack(spacing: 0) {
-            // Shuffle
-            Button {
-                if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
-                player.shuffle.toggle()
-            } label: {
-                Image(systemName: "shuffle")
-                    .font(.system(size: 19, weight: player.shuffle ? .bold : .medium))
-                    .foregroundStyle(player.shuffle ? settings.accentColor : .white.opacity(0.7))
-                    .frame(width: 48, height: 48)
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // Previous
+            // Previous Track
             Button {
                 if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                 player.previous()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 26, weight: .regular))
+                    .font(.system(size: 32, weight: .regular))
                     .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 64, height: 64)
             }
             .buttonStyle(.plain)
 
             Spacer()
 
-            // Play / Pause (Big tactile button)
+            // Big Bold Pause/Play Button (Screenshot 1)
             Button {
                 if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
                 player.togglePlay()
             } label: {
-                ZStack {
-                    Circle()
-                        .fill(.white)
-                        .frame(width: 72, height: 72)
-                        .shadow(color: .black.opacity(0.25), radius: 10, y: 5)
-
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 30, weight: .bold))
-                        .foregroundStyle(.black.opacity(0.85))
-                        .offset(x: player.isPlaying ? 0 : 2)
-                }
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 48, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 80, height: 80)
             }
             .buttonStyle(.plain)
 
             Spacer()
 
-            // Next
+            // Next Track
             Button {
                 if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                 player.next()
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 26, weight: .regular))
+                    .font(.system(size: 32, weight: .regular))
                     .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // Repeat
-            Button {
-                if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
-                player.repeatMode = RepeatMode(rawValue: (player.repeatMode.rawValue + 1) % 3) ?? .off
-            } label: {
-                Image(systemName: player.repeatMode.icon)
-                    .font(.system(size: 19, weight: player.repeatMode != .off ? .bold : .medium))
-                    .foregroundStyle(player.repeatMode != .off ? settings.accentColor : .white.opacity(0.7))
-                    .frame(width: 48, height: 48)
+                    .frame(width: 64, height: 64)
             }
             .buttonStyle(.plain)
         }
     }
 
-    // MARK: - Volume Section (Apple Music Liquid Glass Slider)
+    // MARK: - Volume Slider (Apple Music Capsule)
 
-    private var volumeSection: some View {
-        HStack(spacing: 12) {
+    private var volumeSliderSection: some View {
+        HStack(spacing: 14) {
             Image(systemName: "speaker.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.50))
 
             GeometryReader { geo in
                 let w = geo.size.width
@@ -311,17 +398,11 @@ struct PlayerScreen: View {
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(.white.opacity(0.20))
-                        .frame(height: 6)
+                        .frame(height: 7)
 
                     Capsule()
                         .fill(.white.opacity(0.90))
-                        .frame(width: max(6, w * frac), height: 6)
-
-                    Circle()
-                        .fill(.white)
-                        .frame(width: 14, height: 14)
-                        .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
-                        .offset(x: min(max(0, w * frac - 7), w - 14))
+                        .frame(width: max(7, w * frac), height: 7)
                 }
                 .frame(height: 24)
                 .contentShape(Rectangle())
@@ -336,32 +417,42 @@ struct PlayerScreen: View {
             .frame(height: 24)
 
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.50))
         }
     }
 
-    // MARK: - Bottom Utility Row (AirPlay & Queue)
+    // MARK: - Bottom Utility Icons (Lyrics, AirPlay, Queue - Screenshot 1)
 
-    private var bottomUtilityRow: some View {
+    private var bottomUtilityIconsRow: some View {
         HStack {
-            // Live Spectrum visualizer indicator
-            if player.isPlaying {
-                SpectrumView(barWidth: 3, maxHeight: 20)
-                    .frame(width: 80)
-            } else {
-                Color.clear.frame(width: 80, height: 20)
+            // Lyrics Button
+            Button {
+                showLyrics = true
+            } label: {
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .frame(width: 44, height: 44)
             }
+            .buttonStyle(.plain)
 
             Spacer()
 
-            // Queue Sheet button
-            Button { showQueue = true } label: {
+            // AirPlay Route Picker
+            AirPlayButtonView()
+                .frame(width: 44, height: 44)
+
+            Spacer()
+
+            // Queue List Button
+            Button {
+                showQueue = true
+            } label: {
                 Image(systemName: "list.bullet")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(10)
-                    .background(Circle().fill(.white.opacity(0.12)))
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
         }
@@ -372,105 +463,54 @@ struct PlayerScreen: View {
     private var dismissGesture: some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { v in
-                if v.translation.height > 0 {
-                    dragOffset = v.translation.height
-                }
+                if v.translation.height > 0 { dragOffset = v.translation.height }
             }
             .onEnded { v in
-                if v.translation.height > 100 {
-                    dismiss()
-                }
+                if v.translation.height > 100 { dismiss() }
                 dragOffset = 0
             }
     }
 }
 
-// MARK: - Player EQ Sheet
+// MARK: - AirPlay Button Wrapper (AVRoutePickerView)
 
-struct PlayerEQSheet: View {
+struct AirPlayButtonView: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.tintColor = UIColor.white.withAlphaComponent(0.75)
+        picker.activeTintColor = UIColor.systemTeal
+        picker.prioritizesVideoDevices = false
+        return picker
+    }
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+
+// MARK: - Lyrics Sheet View
+
+struct LyricsSheetView: View {
     @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
     @Environment(\.dismiss) private var dismiss
-    private let freqLabels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    Toggle(isOn: $player.eqEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("10-полосный эквалайзер")
-                                .font(.headline.weight(.semibold))
-                            Text("31 Гц – 16 кГц · тонкая настройка звука")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .tint(settings.accentColor)
-                    .padding(.horizontal, 20)
+            ZStack {
+                Color.black.opacity(0.95).ignoresSafeArea()
 
-                    // Live Spectrum Bar
-                    if player.isPlaying {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Живой спектр").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                            SpectrumView(barWidth: 5, maxHeight: 56)
-                                .frame(maxWidth: .infinity)
-                        }
-                        .padding(.horizontal, 20)
-                    }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        Text(player.currentTrack?.title ?? "Текст песни")
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.white)
 
-                    // Presets Scroller
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Пресеты").font(.subheadline.weight(.semibold))
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(EQPresets.all) { preset in
-                                    let isActive = player.eqGains == preset.gains
-                                    Button {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            player.eqGains = preset.gains
-                                        }
-                                    } label: {
-                                        Text(preset.name)
-                                            .font(.subheadline.weight(isActive ? .semibold : .regular))
-                                            .padding(.horizontal, 14).padding(.vertical, 8)
-                                            .background(
-                                                Capsule().fill(isActive
-                                                    ? AnyShapeStyle(settings.accentGradient)
-                                                    : AnyShapeStyle(.primary.opacity(0.08)))
-                                            )
-                                            .foregroundStyle(isActive ? .white : .primary)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
+                        Text("Текст песни синхронизируется в реальном времени при наличии в метаданных трека.\n\nEnjoy pure music with Aurora Liquid Glass Audio Engine.")
+                            .font(.title3.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineSpacing(10)
                     }
-                    .padding(.horizontal, 20)
-
-                    // 10-Band Vertical Sliders
-                    VStack(spacing: 12) {
-                        HStack {
-                            Text("Полосы частот").font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Button("Сбросить") {
-                                withAnimation { player.eqGains = EQPresets.flat.gains }
-                            }
-                            .font(.caption)
-                        }
-                        HStack(alignment: .center, spacing: 6) {
-                            ForEach(0..<10, id: \.self) { i in
-                                BandSlider(
-                                    label: freqLabels[i],
-                                    value: Binding(get: { player.eqGains[i] }, set: { player.eqGains[i] = $0 })
-                                )
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 20)
+                    .padding(28)
                 }
-                .padding(.vertical, 20)
             }
-            .navigationTitle("Эквалайзер")
+            .navigationTitle("Текст песни")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -478,49 +518,12 @@ struct PlayerEQSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
     }
 }
 
-// MARK: - Band Slider
+// MARK: - Queue Sheet View
 
-struct BandSlider: View {
-    let label: String
-    @Binding var value: Float
-
-    var body: some View {
-        GeometryReader { geo in
-            let h = geo.size.height
-            VStack(spacing: 6) {
-                ZStack(alignment: .bottom) {
-                    Capsule().fill(.primary.opacity(0.12)).frame(width: 6)
-                    let fraction = CGFloat((value + 12) / 24)
-                    Capsule()
-                        .fill(LinearGradient(colors: SettingsStore.shared.accent.colors, startPoint: .bottom, endPoint: .top))
-                        .frame(width: 6, height: max(6, fraction * h))
-                }
-                .frame(height: h).frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { v in
-                            let f = 1 - Float(min(max(v.location.y / h, 0), 1))
-                            value = f * 24 - 12
-                        }
-                )
-
-                Text(label)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(height: 160)
-    }
-}
-
-// MARK: - Queue Sheet
-
-struct QueueSheet: View {
+struct QueueSheetView: View {
     @StateObject private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -567,5 +570,92 @@ struct QueueSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Player EQ Sheet View
+
+struct PlayerEQSheetView: View {
+    @StateObject private var player = PlayerCore.shared
+    @StateObject private var settings = SettingsStore.shared
+    @Environment(\.dismiss) private var dismiss
+    private let freqLabels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    Toggle(isOn: $player.eqEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("10-полосный эквалайзер")
+                                .font(.headline.weight(.semibold))
+                            Text("31 Гц – 16 кГц · тонкая настройка звука")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .tint(settings.accentColor)
+                    .padding(.horizontal, 20)
+
+                    // Presets
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Пресеты").font(.subheadline.weight(.semibold))
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(EQPresets.all) { preset in
+                                    let isActive = player.eqGains == preset.gains
+                                    Button {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            player.eqGains = preset.gains
+                                        }
+                                    } label: {
+                                        Text(preset.name)
+                                            .font(.subheadline.weight(isActive ? .semibold : .regular))
+                                            .padding(.horizontal, 14).padding(.vertical, 8)
+                                            .background(
+                                                Capsule().fill(isActive
+                                                    ? AnyShapeStyle(settings.accentGradient)
+                                                    : AnyShapeStyle(.primary.opacity(0.08)))
+                                            )
+                                            .foregroundStyle(isActive ? .white : .primary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+
+                    // 10-Band Sliders
+                    VStack(spacing: 12) {
+                        HStack {
+                            Text("Полосы частот").font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Button("Сбросить") {
+                                withAnimation { player.eqGains = EQPresets.flat.gains }
+                            }
+                            .font(.caption)
+                        }
+                        HStack(alignment: .center, spacing: 6) {
+                            ForEach(0..<10, id: \.self) { i in
+                                BandSlider(
+                                    label: freqLabels[i],
+                                    value: Binding(get: { player.eqGains[i] }, set: { player.eqGains[i] = $0 })
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .padding(.vertical, 20)
+            }
+            .navigationTitle("Эквалайзер")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

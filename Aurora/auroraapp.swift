@@ -13,56 +13,77 @@ struct AuroraApp: App {
     }
 }
 
-// MARK: - Root View
+// MARK: - Root View (Exact 5 Tabs Dock & Floating Mini-Player as in Screenshot 2)
 
-struct RootView: View {
-    @StateObject private var player = PlayerCore.shared
-    @State private var showPlayer = false
-    @State private var selectedTab: MainTab = .library
+enum AppTab: String, CaseIterable, Identifiable {
+    case home = "Home"
+    case new = "New"
+    case radio = "Radio"
+    case library = "Library"
+    case search = "Search"
 
-    enum MainTab: String, CaseIterable {
-        case library, explore, settings
-        var icon: String {
-            switch self {
-            case .library:  return "music.note.house.fill"
-            case .explore:  return "sparkles.rectangle.stack.fill"
-            case .settings: return "gearshape.fill"
-            }
-        }
-        var label: String {
-            switch self {
-            case .library:  return "Медиатека"
-            case .explore:  return "Импорт"
-            case .settings: return "Настройки"
-            }
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .home:    return "Home"
+        case .new:     return "New"
+        case .radio:   return "Radio"
+        case .library: return "Library"
+        case .search:  return "Search"
         }
     }
 
+    var icon: String {
+        switch self {
+        case .home:    return "house.fill"
+        case .new:     return "square.grid.2x2.fill"
+        case .radio:   return "dot.radiowaves.left.and.right"
+        case .library: return "music.note.list"
+        case .search:  return "magnifyingglass"
+        }
+    }
+}
+
+struct RootView: View {
+    @StateObject private var player = PlayerCore.shared
+    @StateObject private var settings = SettingsStore.shared
+    @State private var selectedTab: AppTab = .home
+    @State private var showPlayer = false
+
     var body: some View {
         ZStack(alignment: .bottom) {
-            TabView(selection: $selectedTab) {
-                LibraryView()
-                    .tabItem { Label(MainTab.library.label, systemImage: MainTab.library.icon) }
-                    .tag(MainTab.library)
-
-                ExploreView()
-                    .tabItem { Label(MainTab.explore.label, systemImage: MainTab.explore.icon) }
-                    .tag(MainTab.explore)
-
-                SettingsView()
-                    .tabItem { Label(MainTab.settings.label, systemImage: MainTab.settings.icon) }
-                    .tag(MainTab.settings)
+            // Tab Content
+            Group {
+                switch selectedTab {
+                case .home:
+                    HomeView()
+                case .new:
+                    NewReleasesView()
+                case .radio:
+                    RadioStationsView()
+                case .library:
+                    LibraryView()
+                case .search:
+                    SearchCatalogView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Floating Liquid Glass Mini Player (Apple Music style)
-            if player.currentTrack != nil && !showPlayer {
-                FloatingMiniPlayer(showPlayer: $showPlayer)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 54)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Bottom Stack: Floating Mini Player + Floating Liquid Glass Dock (Screenshot 2)
+            VStack(spacing: 8) {
+                if player.currentTrack != nil && !showPlayer {
+                    FloatingMiniPlayer(showPlayer: $showPlayer)
+                        .padding(.horizontal, 16)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
+                FloatingLiquidGlassTabBar(selectedTab: $selectedTab)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.currentTrack != nil)
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.currentTrack != nil)
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreen()
         }
@@ -72,11 +93,10 @@ struct RootView: View {
     }
 }
 
-// MARK: - Floating Liquid Glass Mini Player
+// MARK: - Floating Mini Player (Exact Screenshot 2)
 
 struct FloatingMiniPlayer: View {
     @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
     @Binding var showPlayer: Bool
 
     var body: some View {
@@ -84,49 +104,118 @@ struct FloatingMiniPlayer: View {
             showPlayer = true
         } label: {
             HStack(spacing: 12) {
-                SmallArtwork(track: player.currentTrack, size: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // Square Artwork
+                SmallArtwork(track: player.currentTrack, size: 42)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
+                // Track Title & Artist
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.currentTrack?.title ?? "")
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.white)
 
                     Text(player.currentTrack?.artist ?? "")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.65))
                         .lineLimit(1)
                 }
 
                 Spacer()
 
-                // Play / Pause Action
+                // Play / Pause Button (Screenshot 2)
                 Button {
                     player.togglePlay()
                 } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.primary)
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.plain)
 
-                // Next Track Action
+                // Next Track Button (Screenshot 2)
                 Button {
                     player.next()
                 } label: {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
-        .liquidGlass(corner: 16, padding: 0, opacity: 0.95)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+                )
+        )
+        .shadow(color: .black.opacity(0.35), radius: 14, x: 0, y: 6)
+    }
+}
+
+// MARK: - Floating Liquid Glass Tab Bar (Exact Screenshot 2)
+
+struct FloatingLiquidGlassTabBar: View {
+    @Binding var selectedTab: AppTab
+    @Namespace private var tabNamespace
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(AppTab.allCases) { tab in
+                let isSelected = selectedTab == tab
+
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 20, weight: isSelected ? .bold : .medium))
+                            .foregroundStyle(isSelected ? Color(hex: "#FF455B")! : .white.opacity(0.65))
+                            .frame(height: 24)
+
+                        Text(tab.label)
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? Color(hex: "#FF455B")! : .white.opacity(0.65))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(Color.white.opacity(0.12))
+                                .matchedGeometryEffect(id: "activeTabPill", in: tabNamespace)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(
+            Capsule()
+                .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.88))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.25), .white.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.75
+                        )
+                )
+        )
+        .shadow(color: .black.opacity(0.35), radius: 16, x: 0, y: 8)
     }
 }
