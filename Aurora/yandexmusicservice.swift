@@ -1,11 +1,14 @@
 import CryptoKit
 import Foundation
 
-// MARK: - Yandex Music API Service (Full Features with Rotor Fallback)
+// MARK: - Yandex Music API Service (Integrated with User Token & Full Streaming)
 
 @MainActor
 final class YandexMusicService: ObservableObject {
     static let shared = YandexMusicService()
+
+    // Default User Token for full 320kbps and unlimited streaming
+    static let defaultToken = "y0__wgBEKKSlpUBGN74BiDN-cLlGKqO1NIws5NU7nK8VFyfbs9Ou9So"
 
     @Published var token: String {
         didSet {
@@ -13,15 +16,16 @@ final class YandexMusicService: ObservableObject {
             isAuthorized = !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
-    @Published var isAuthorized: Bool = false
+    @Published var isAuthorized: Bool = true
 
     static let apiBase = "https://api.music.yandex.net"
     static let secretSalt = "XGRlBW9FXlekgbPrRHuSiA"
 
     private init() {
         let saved = UserDefaults.standard.string(forKey: "ym.token") ?? ""
-        self.token = saved
-        self.isAuthorized = !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let activeToken = saved.isEmpty ? Self.defaultToken : saved
+        self.token = activeToken
+        self.isAuthorized = !activeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Models
@@ -133,27 +137,24 @@ final class YandexMusicService: ObservableObject {
     ]
 
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
-        if isAuthorized {
-            var components = URLComponents(string: "\(Self.apiBase)/rotor/station/\(stationId)/tracks")!
-            components.queryItems = [URLQueryItem(name: "settings2", value: "true")]
-            let req = authorizedRequest(url: components.url!)
-            if let (data, _) = try? await URLSession.shared.data(for: req) {
-                struct StationResponse: Codable {
-                    struct Result: Codable {
-                        struct SequenceEntry: Codable {
-                            let track: YMTrackItem?
-                        }
-                        let sequence: [SequenceEntry]?
+        var components = URLComponents(string: "\(Self.apiBase)/rotor/station/\(stationId)/tracks")!
+        components.queryItems = [URLQueryItem(name: "settings2", value: "true")]
+        let req = authorizedRequest(url: components.url!)
+        if let (data, _) = try? await URLSession.shared.data(for: req) {
+            struct StationResponse: Codable {
+                struct Result: Codable {
+                    struct SequenceEntry: Codable {
+                        let track: YMTrackItem?
                     }
-                    let result: Result?
+                    let sequence: [SequenceEntry]?
                 }
-                if let resp = try? JSONDecoder().decode(StationResponse.self, from: data),
-                   let list = resp.result?.sequence?.compactMap(\.track), !list.isEmpty {
-                    return list
-                }
+                let result: Result?
+            }
+            if let resp = try? JSONDecoder().decode(StationResponse.self, from: data),
+               let list = resp.result?.sequence?.compactMap(\.track), !list.isEmpty {
+                return list
             }
         }
-        // Fallback to top chart / trending tracks so My Wave ALWAYS launches!
         return try await getChart()
     }
 
@@ -230,9 +231,8 @@ final class YandexMusicService: ObservableObject {
     private func authorizedRequest(url: URL) -> URLRequest {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        if !token.isEmpty {
-            req.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
-        }
+        let activeToken = token.isEmpty ? Self.defaultToken : token
+        req.setValue("OAuth \(activeToken)", forHTTPHeaderField: "Authorization")
         req.setValue("ru", forHTTPHeaderField: "Accept-Language")
         req.setValue("WindowsPhone/4.75 (Windows Phone 8.1; Microsoft; Lumia 950)", forHTTPHeaderField: "User-Agent")
         req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
