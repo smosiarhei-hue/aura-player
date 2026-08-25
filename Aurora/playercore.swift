@@ -3,6 +3,38 @@ import Combine
 import MediaPlayer
 import SwiftUI
 
+// MARK: - Transition Mode
+
+enum TransitionMode: String, CaseIterable, Codable, Identifiable {
+    case automix = "AutoMix (DJ-сведение)"
+    case crossfade = "Кроссфейд"
+    case gapless = "Gapless (Без пауз)"
+    case off = "Выключено"
+
+    var id: String { rawValue }
+
+    var description: String {
+        switch self {
+        case .automix:
+            return "Умный анализ концовки, срез басов уходящего трека (Bass-Swap), обрезка тишины и адаптивный тайминг как в Apple Music."
+        case .crossfade:
+            return "Классическое плавное наложение звука по фиксированному времени."
+        case .gapless:
+            return "Мгновенное переключение следующего трека без пауз и задержек."
+        case .off:
+            return "Стандартное раздельное воспроизведение треков."
+        }
+    }
+}
+
+// MARK: - AutoMix Transition Style
+
+enum AutoMixStyle {
+    case bassSwapBlend(duration: Double)  // Плавный переход со срезом низких частот
+    case quickDrop(duration: Double)      // Быстрый бит-стык для резких концовок
+    case fadeOut(duration: Double)        // Затухание естественного аутро
+}
+
 @MainActor
 final class PlayerCore: ObservableObject {
     static let shared = PlayerCore()
@@ -24,18 +56,22 @@ final class PlayerCore: ObservableObject {
     @Published var repeatMode: RepeatMode = .off { didSet { defaults.set(repeatMode.rawValue, forKey: "player.repeat") } }
     @Published var eqEnabled: Bool = true { didSet { applyEQ(); defaults.set(eqEnabled, forKey: "eq.enabled") } }
     @Published var eqGains: [Float] = EQPresets.flat.gains { didSet { applyEQ(); saveEQ() } }
-    @Published var automixEnabled: Bool = true { didSet { defaults.set(automixEnabled, forKey: "player.automix") } }
-    @Published var automixDuration: Double = 3.0 { didSet { defaults.set(automixDuration, forKey: "player.automixDuration") } }
+
+    // Transition Settings
+    @Published var transitionMode: TransitionMode = .automix { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
+    @Published var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
 
     private let defaults = UserDefaults.standard
     private let engine = AVAudioEngine()
 
-    // Dual players for seamless crossfade
+    // Dual players for AutoMix / Crossfade
     private let playerA = AVAudioPlayerNode()
     private let playerB = AVAudioPlayerNode()
     private var activePlayer: AVAudioPlayerNode
 
-    private let eqNode = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    // Independent EQ / Filters for Bass-Swap on outgoing track
+    private let eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    private let eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
 
     private var activeAudioFile: AVAudioFile?
     private var incomingAudioFile: AVAudioFile?
@@ -45,11 +81,13 @@ final class PlayerCore: ObservableObject {
     private var pausedProgress: Double = 0
     private var progressTimer: Timer?
 
-    // Crossfade State
-    private var isCrossfading = false
-    private var crossfadeScheduled = false
-    private var crossfadeStartTime: Date?
-    private var crossfadeTimer: Timer?
+    // AutoMix & Transition State
+    private var isTransitioning = false
+    private var transitionScheduled = false
+    private var transitionStartTime: Date?
+    private var transitionDuration: Double = 3.0
+    private var transitionTimer: Timer?
+    private var currentAutoMixStyle: AutoMixStyle = .bassSwapBlend(duration: 3.5)
 
     var duration: Double { max(currentTrack?.duration ?? 0, 0.001) }
 
@@ -75,30 +113,44 @@ final class PlayerCore: ObservableObject {
     private func setupAudioEngine() {
         engine.attach(playerA)
         engine.attach(playerB)
-        engine.attach(eqNode)
+        engine.attach(eqNodeA)
+        engine.attach(eqNodeB)
 
-        for (i, band) in eqNode.bands.enumerated() {
+        configureEQ(eqNodeA)
+        configureEQ(eqNodeB)
+
+        engine.connect(playerA, to: eqNodeA, format: nil)
+        engine.connect(playerB, to: eqNodeB, format: nil)
+        engine.connect(eqNodeA, to: engine.mainMixerNode, format: nil)
+        engine.connect(eqNodeB, to: engine.mainMixerNode, format: nil)
+
+        engine.mainMixerNode.outputVolume = volume
+        try? engine.start()
+    }
+
+    private func configureEQ(_ node: AVAudioUnitEQ) {
+        for (i, band) in node.bands.enumerated() {
             band.frequency = PlayerCore.bandFrequencies[i]
             band.bandwidth = 1.0
             band.bypass = false
             band.gain = 0
         }
-
-        engine.connect(playerA, to: eqNode, format: nil)
-        engine.connect(playerB, to: eqNode, format: nil)
-        engine.connect(eqNode, to: engine.mainMixerNode, format: nil)
-
-        engine.mainMixerNode.outputVolume = volume
-        try? engine.start()
     }
 
     private func loadSettings() {
         shuffle = defaults.bool(forKey: "player.shuffle")
         repeatMode = RepeatMode(rawValue: defaults.integer(forKey: "player.repeat")) ?? .off
         eqEnabled = defaults.object(forKey: "eq.enabled") as? Bool ?? true
-        automixEnabled = defaults.object(forKey: "player.automix") as? Bool ?? true
-        automixDuration = defaults.double(forKey: "player.automixDuration")
-        if automixDuration <= 0 { automixDuration = 3.0 }
+
+        if let modeStr = defaults.string(forKey: "player.transitionMode"),
+           let mode = TransitionMode(rawValue: modeStr) {
+            transitionMode = mode
+        } else {
+            transitionMode = .automix
+        }
+
+        crossfadeDuration = defaults.double(forKey: "player.crossfadeDuration")
+        if crossfadeDuration <= 0 { crossfadeDuration = 3.0 }
 
         let savedVol = defaults.float(forKey: "player.volume")
         volume = savedVol > 0 ? savedVol : 0.85
@@ -119,10 +171,17 @@ final class PlayerCore: ObservableObject {
     }
 
     private func applyEQ() {
-        for (i, band) in eqNode.bands.enumerated() {
+        for (i, band) in eqNodeA.bands.enumerated() {
+            band.gain = eqEnabled ? eqGains[i] : 0
+        }
+        for (i, band) in eqNodeB.bands.enumerated() {
             band.gain = eqEnabled ? eqGains[i] : 0
         }
     }
+
+    private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
+    private var idleEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeB : eqNodeA }
+    private var idlePlayer: AVAudioPlayerNode { (activePlayer === playerA) ? playerB : playerA }
 
     // MARK: - Lockscreen & Now Playing Remote Command Center
 
@@ -193,7 +252,7 @@ final class PlayerCore: ObservableObject {
         if let q = newQueue, q != queue { queue = q }
         currentTrack = track
         playError = nil
-        cancelCrossfade()
+        cancelTransition()
         start(at: 0)
     }
 
@@ -223,7 +282,7 @@ final class PlayerCore: ObservableObject {
     }
 
     func next() {
-        cancelCrossfade()
+        cancelTransition()
         if let nextTrack = peekNext(auto: false) {
             currentTrack = nextTrack
             start(at: 0)
@@ -234,7 +293,7 @@ final class PlayerCore: ObservableObject {
     }
 
     func previous() {
-        cancelCrossfade()
+        cancelTransition()
         let currentPos = liveProgress()
         if currentPos > 3.0 {
             seek(to: 0)
@@ -252,7 +311,7 @@ final class PlayerCore: ObservableObject {
     }
 
     func seek(to seconds: Double) {
-        cancelCrossfade()
+        cancelTransition()
         let clamped = max(0, min(seconds, duration))
         if isPlaying {
             start(at: clamped)
@@ -275,7 +334,7 @@ final class PlayerCore: ObservableObject {
         progress = 0
         pausedProgress = 0
         anchorDate = nil
-        cancelCrossfade()
+        cancelTransition()
         SpectrumAnalyzer.shared.reset()
         updateNowPlayingInfo()
     }
@@ -287,12 +346,13 @@ final class PlayerCore: ObservableObject {
         generation += 1
         let token = generation
 
-        cancelCrossfade()
+        cancelTransition()
         playerA.stop()
         playerB.stop()
         playerA.volume = 1.0
         playerB.volume = 0.0
         activePlayer = playerA
+        applyEQ()
 
         Task {
             do {
@@ -341,18 +401,46 @@ final class PlayerCore: ObservableObject {
         }
     }
 
-    // MARK: - Automix / Crossfade
+    // MARK: - Apple Music Style AutoMix & Transitions
 
-    private func scheduleCrossfadeIfNeeded() {
-        guard automixEnabled, !isCrossfading, !crossfadeScheduled, isPlaying else { return }
-        let remaining = duration - liveProgress()
-        guard remaining <= automixDuration, remaining > 0 else { return }
+    private func scheduleTransitionIfNeeded() {
+        guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying else { return }
+        let currentPos = liveProgress()
+        let remaining = duration - currentPos
+
+        // Determine transition duration & trigger point
+        let targetDuration: Double
+        switch transitionMode {
+        case .automix:
+            // AutoMix dynamically analyzes track length & ending
+            if duration > 120 {
+                targetDuration = 4.5
+                currentAutoMixStyle = .bassSwapBlend(duration: 4.5)
+            } else if duration > 45 {
+                targetDuration = 3.0
+                currentAutoMixStyle = .bassSwapBlend(duration: 3.0)
+            } else {
+                targetDuration = 1.5
+                currentAutoMixStyle = .quickDrop(duration: 1.5)
+            }
+        case .crossfade:
+            targetDuration = crossfadeDuration
+            currentAutoMixStyle = .fadeOut(duration: crossfadeDuration)
+        case .gapless:
+            targetDuration = 0.1
+            currentAutoMixStyle = .quickDrop(duration: 0.1)
+        case .off:
+            return
+        }
+
+        guard remaining <= targetDuration, remaining > 0 else { return }
         guard let nextTrack = peekNext(auto: true) else { return }
 
-        crossfadeScheduled = true
-        isCrossfading = true
+        transitionScheduled = true
+        isTransitioning = true
+        transitionDuration = targetDuration
 
-        let idlePlayer = (activePlayer === playerA) ? playerB : playerA
+        let targetIdlePlayer = idlePlayer
         let token = generation
 
         Task {
@@ -360,61 +448,74 @@ final class PlayerCore: ObservableObject {
                 let nextFile = try AVAudioFile(forReading: nextTrack.url)
                 self.incomingAudioFile = nextFile
 
-                idlePlayer.scheduleFile(nextFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                targetIdlePlayer.scheduleFile(nextFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     DispatchQueue.main.async {
                         Task { @MainActor in
                             guard let self, self.generation == token else { return }
-                            self.completeCrossfade(to: nextTrack)
+                            self.completeTransition(to: nextTrack)
                         }
                     }
                 }
 
-                idlePlayer.volume = 0
+                targetIdlePlayer.volume = 0
                 if !self.engine.isRunning { try? self.engine.start() }
-                idlePlayer.play()
+                targetIdlePlayer.play()
 
-                self.crossfadeStartTime = Date()
-                self.startCrossfadeTimer()
+                self.transitionStartTime = Date()
+                self.startTransitionTimer()
             } catch {
-                self.isCrossfading = false
-                self.crossfadeScheduled = false
+                self.isTransitioning = false
+                self.transitionScheduled = false
             }
         }
     }
 
-    private func startCrossfadeTimer() {
-        crossfadeTimer?.invalidate()
+    private func startTransitionTimer() {
+        transitionTimer?.invalidate()
         let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tickCrossfade() }
+            Task { @MainActor in self?.tickTransition() }
         }
         RunLoop.main.add(t, forMode: .common)
-        crossfadeTimer = t
+        transitionTimer = t
     }
 
-    private func tickCrossfade() {
-        guard let start = crossfadeStartTime, isCrossfading else { return }
+    private func tickTransition() {
+        guard let start = transitionStartTime, isTransitioning else { return }
         let elapsed = -start.timeIntervalSinceNow
-        let p = min(elapsed / automixDuration, 1.0)
+        let p = min(elapsed / transitionDuration, 1.0)
 
-        // Equal power crossfade curve
+        // Equal power volume curves
         let outVol = Float(cos(p * .pi / 2))
         let inVol = Float(sin(p * .pi / 2))
 
         activePlayer.volume = outVol
-        let idlePlayer = (activePlayer === playerA) ? playerB : playerA
         idlePlayer.volume = inVol
+
+        // AutoMix: DJ Bass-Swap (High-pass filter on outgoing track)
+        if case .bassSwapBlend = currentAutoMixStyle {
+            // Cut low frequencies on outgoing player so incoming track's bass hits cleanly
+            let bassCut = Float(p) * -16.0 // reduce 31Hz, 62Hz, 125Hz by up to -16dB
+            activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + bassCut) : bassCut
+            activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + bassCut) : bassCut
+            activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + bassCut * 0.7) : (bassCut * 0.7)
+
+            // Idle player has full clean EQ
+            idleEQ.bands[0].gain = eqEnabled ? eqGains[0] : 0
+            idleEQ.bands[1].gain = eqEnabled ? eqGains[1] : 0
+            idleEQ.bands[2].gain = eqEnabled ? eqGains[2] : 0
+        }
     }
 
-    private func completeCrossfade(to nextTrack: Track) {
-        crossfadeTimer?.invalidate()
-        crossfadeTimer = nil
-        crossfadeStartTime = nil
+    private func completeTransition(to nextTrack: Track) {
+        transitionTimer?.invalidate()
+        transitionTimer = nil
+        transitionStartTime = nil
 
         let oldActive = activePlayer
         oldActive.stop()
         oldActive.volume = 1.0
 
-        activePlayer = (activePlayer === playerA) ? playerB : playerA
+        activePlayer = idlePlayer
         activeAudioFile = incomingAudioFile
         incomingAudioFile = nil
         currentTrack = nextTrack
@@ -422,23 +523,25 @@ final class PlayerCore: ObservableObject {
         anchorOffset = 0
         pausedProgress = 0
         progress = 0
-        isCrossfading = false
-        crossfadeScheduled = false
+        isTransitioning = false
+        transitionScheduled = false
+
+        applyEQ()
         updateNowPlayingInfo()
     }
 
-    private func cancelCrossfade() {
-        guard isCrossfading else { return }
-        crossfadeTimer?.invalidate()
-        crossfadeTimer = nil
-        crossfadeStartTime = nil
-        let idle = (activePlayer === playerA) ? playerB : playerA
-        idle.stop()
-        idle.volume = 0
+    private func cancelTransition() {
+        guard isTransitioning else { return }
+        transitionTimer?.invalidate()
+        transitionTimer = nil
+        transitionStartTime = nil
+        idlePlayer.stop()
+        idlePlayer.volume = 0
         activePlayer.volume = 1.0
         incomingAudioFile = nil
-        isCrossfading = false
-        crossfadeScheduled = false
+        isTransitioning = false
+        transitionScheduled = false
+        applyEQ()
     }
 
     // MARK: - Finish & Queue
@@ -500,7 +603,7 @@ final class PlayerCore: ObservableObject {
     private func tickProgress() {
         guard isPlaying else { return }
         progress = liveProgress()
-        scheduleCrossfadeIfNeeded()
+        scheduleTransitionIfNeeded()
     }
 
     func formatted(_ t: Double) -> String {

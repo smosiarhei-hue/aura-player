@@ -30,19 +30,27 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Воспроизведение и Automix") {
-                    Toggle("Automix (бесшовный кроссфейд)", isOn: $player.automixEnabled)
-                        .tint(settings.accentColor)
+                Section("Переходы между треками (Apple Music)") {
+                    Picker("Режим перехода", selection: $player.transitionMode) {
+                        ForEach(TransitionMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
 
-                    if player.automixEnabled {
+                    Text(player.transitionMode.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if player.transitionMode == .crossfade {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("Длительность перехода")
+                                Text("Время кроссфейда")
                                 Spacer()
-                                Text(String(format: "%.1f сек", player.automixDuration))
+                                Text(String(format: "%.1f сек", player.crossfadeDuration))
                                     .foregroundStyle(.secondary)
                             }
-                            Slider(value: $player.automixDuration, in: 1.0...5.0, step: 0.5)
+                            Slider(value: $player.crossfadeDuration, in: 1.0...12.0, step: 0.5)
                                 .tint(settings.accentColor)
                         }
                     }
@@ -70,7 +78,7 @@ struct SettingsView: View {
                 Section("О приложении") {
                     LabeledContent("Версия", value: "1.0.0")
                     LabeledContent("Дизайн", value: "iOS 27 Liquid Glass")
-                    Text("Aurora Player — премиальный музыкальный плеер со спектральным анализом, 10-полосным эквалайзером и динамическими обложками.")
+                    Text("Aurora Player — нативный плеер со спектральным анализом, 10-полосным эквалайзером, DJ AutoMix и динамическими обложками.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
