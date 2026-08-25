@@ -42,6 +42,8 @@ final class PlayerCore: ObservableObject {
     private var isCrossfading = false
     private var crossfadeScheduled = false
     private let crossfadeDuration: Double = 2.0
+    private var crossfadeStartTime: Date?
+    private var crossfadeTimer: Timer?
 
     var duration: Double { max(currentTrack?.duration ?? 0, 0.001) }
 
@@ -251,6 +253,9 @@ final class PlayerCore: ObservableObject {
         activePlayerRef = outgoingPlayer
         isCrossfading = false
         crossfadeScheduled = false
+        crossfadeTimer?.invalidate()
+        crossfadeTimer = nil
+        crossfadeStartTime = nil
 
         do {
             let audioFile = try AVAudioFile(forReading: track.url)
@@ -317,14 +322,14 @@ final class PlayerCore: ObservableObject {
                 }
             }
 
-            // Start incoming at volume 0, then ramp both
+            // Start incoming at volume 0
             idle.volume = 0
             if !engine.isRunning { try? engine.start() }
             idle.play()
 
-            let fadeTime = AVAudioTime(seconds: crossfadeDuration, sampleRate: nextFile.processingFormat.sampleRate)
-            activeNode.volumeRamp(to: 0, duration: fadeTime)
-            idle.volumeRamp(to: 1, duration: fadeTime)
+            // Manual crossfade via timer
+            crossfadeStartTime = Date()
+            startCrossfadeTimer()
 
         } catch {
             isCrossfading = false
@@ -334,9 +339,11 @@ final class PlayerCore: ObservableObject {
 
     /// Called when the incoming player finishes playing (crossfade complete).
     private func completeCrossfade(to nextTrack: Track) {
-        let oldActive = activeNode
+        crossfadeTimer?.invalidate()
+        crossfadeTimer = nil
+        crossfadeStartTime = nil
 
-        // Stop the old player
+        let oldActive = activeNode
         oldActive.stop()
         oldActive.volume = 1
 
@@ -355,14 +362,35 @@ final class PlayerCore: ObservableObject {
 
     private func cancelCrossfade() {
         guard isCrossfading else { return }
+        crossfadeTimer?.invalidate()
+        crossfadeTimer = nil
+        crossfadeStartTime = nil
         let idle = idleNode
         idle.stop()
         idle.volume = 0
         activeNode.volume = 1
-        activeNode.volumeRamp(to: 1, duration: AVAudioTime(seconds: 0.1, sampleRate: 44100))
         incomingFile = nil
         isCrossfading = false
         crossfadeScheduled = false
+    }
+
+    private func startCrossfadeTimer() {
+        crossfadeTimer?.invalidate()
+        let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickCrossfade() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        crossfadeTimer = t
+    }
+
+    private func tickCrossfade() {
+        guard let start = crossfadeStartTime, isCrossfading else { return }
+        let elapsed = -start.timeIntervalSinceNow
+        let progress = min(elapsed / crossfadeDuration, 1.0)
+        let outVol = Float(1.0 - progress)
+        let inVol = Float(progress)
+        activeNode.volume = outVol
+        idleNode.volume = inVol
     }
 
     // MARK: - Track finish (non-crossfade path)
