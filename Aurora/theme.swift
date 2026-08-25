@@ -64,7 +64,66 @@ final class SettingsStore: ObservableObject {
     }
 }
 
-// MARK: - Glass card modifier
+// MARK: - iOS 27 Liquid Glass
+
+struct LiquidGlassModifier: ViewModifier {
+    var corner: CGFloat = 28
+    var padding: CGFloat = 0
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background(
+                .regularMaterial,
+                in: RoundedRectangle(cornerRadius: corner, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(0.45),
+                                .white.opacity(0.08),
+                                .white.opacity(0.02)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.5
+                    )
+            )
+            .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 4)
+            .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
+    }
+}
+
+extension View {
+    func liquidGlass(corner: CGFloat = 28, padding: CGFloat = 0) -> some View {
+        modifier(LiquidGlassModifier(corner: corner, padding: padding))
+    }
+}
+
+// MARK: - Dynamic backdrop (player screen background)
+
+struct BackdropView: View {
+    var palette: [Color]
+    var body: some View {
+        ZStack {
+            Color(red: 0.04, green: 0.04, blue: 0.06)
+            ForEach(0..<3, id: \.self) { i in
+                let c = palette.indices.contains(i) ? palette[i] : (i == 0 ? Color.teal : Color.indigo)
+                Circle()
+                    .fill(c.opacity(0.7))
+                    .frame(width: CGFloat(380 + i * 40), height: CGFloat(380 + i * 40))
+                    .blur(radius: CGFloat(80 + i * 20))
+                    .offset(x: CGFloat(-120 + i * 130), y: CGFloat(-200 + i * 180))
+            }
+        }
+        .ignoresSafeArea()
+        .animation(.easeInOut(duration: 2.5), value: palette)
+    }
+}
+
+// MARK: - Old glassCard alias for backward compat
 
 struct GlassCard: ViewModifier {
     var corner: CGFloat = 22
@@ -80,35 +139,4 @@ struct GlassCard: ViewModifier {
 
 extension View {
     func glassCard(corner: CGFloat = 22) -> some View { modifier(GlassCard(corner: corner)) }
-}
-
-// MARK: - Dynamic backdrop (player screen background)
-
-struct BackdropView: View {
-    var palette: [Color]
-    var body: some View {
-        ZStack {
-            Color(red: 0.05, green: 0.05, blue: 0.08)
-            Circle()
-                .fill(palette.count > 0 ? palette[0] : .teal)
-                .frame(width: 420, height: 420)
-                .blur(radius: 90)
-                .offset(x: -110, y: -180)
-            Circle()
-                .fill(palette.count > 1 ? palette[1] : .indigo)
-                .frame(width: 460, height: 460)
-                .blur(radius: 100)
-                .offset(x: 130, y: 120)
-            if palette.count > 2 {
-                Circle()
-                    .fill(palette[2])
-                    .frame(width: 380, height: 380)
-                    .blur(radius: 90)
-                    .offset(x: 40, y: -40)
-                    .opacity(0.8)
-            }
-        }
-        .ignoresSafeArea()
-        .animation(.easeInOut(duration: 2.5), value: palette)
-    }
 }

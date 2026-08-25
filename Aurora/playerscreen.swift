@@ -12,152 +12,211 @@ struct PlayerScreen: View {
         ZStack {
             BackdropView(palette: currentPalette)
             content
+                .offset(y: max(0, dragOffset.height))
+                .opacity(1 - min(0.5, Double(dragOffset.height / 400)))
         }
         .statusBarHidden()
         .colorScheme(.dark)
+        .gesture(dragGesture)
         .sheet(isPresented: $showQueue) { QueueSheet() }
     }
 
     private var currentPalette: [Color] { player.currentTrack?.palette ?? Palette.seeded(42).colors }
     private var duration: Double { player.duration }
 
-    // MARK: - Content
+    // MARK: - Content (iOS 27 layout)
 
     private var content: some View {
-        VStack(spacing: 18) {
-            header
-            Spacer(minLength: 0)
-            artwork
-            Spacer(minLength: 0)
-            trackInfo
-            scrubber
-            controls
-            bottomRow
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 8)
-        .padding(.bottom, 16)
-        .offset(y: max(0, dragOffset.height))
-        .opacity(1 - min(0.5, Double(dragOffset.height / 400)))
-        .gesture(dragGesture)
-    }
+        GeometryReader { geo in
+            let safeTop = geo.safeAreaInsets.top
+            let safeBottom = geo.safeAreaInsets.bottom
+            VStack(spacing: 0) {
+                // Top bar — grabber + queue + dismiss
+                HStack {
+                    Spacer()
+                    Capsule().fill(.white.opacity(0.3)).frame(width: 40, height: 4.5)
+                    Spacer()
+                }
+                .padding(.top, safeTop + 6)
+                .padding(.bottom, 12)
 
-    // MARK: - Header (grabber + queue)
+                // Artwork — large, centered, with bass pulse
+                artwork
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(1, contentMode: .fit)
+                    .padding(.horizontal, 48)
 
-    private var header: some View {
-        VStack(spacing: 10) {
-            Capsule().fill(.white.opacity(0.3)).frame(width: 42, height: 5)
-            HStack {
-                Spacer()
-                Button { showQueue = true } label: {
-                    Image(systemName: "list.bullet")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(width: 38, height: 38)
-                        .glassCard(corner: 19)
+                Spacer(minLength: 0)
+
+                // Track info
+                trackInfo
+                    .padding(.horizontal, 32)
+
+                // Scrubber
+                scrubber
+                    .padding(.horizontal, 24)
+
+                // Controls — no buttons, just tap areas with icons
+                controls
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, safeBottom > 20 ? safeBottom : 16)
+
+                // Spectrum at bottom
+                if player.isPlaying {
+                    SpectrumView(barWidth: 4, maxHeight: 36)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
         }
     }
 
-    // MARK: - Artwork with beat pulse
+    // MARK: - Artwork
 
     private var artwork: some View {
         let bass = analyzer.bass
         return AnimatedArtworkView(palette: currentPalette)
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1))
-            .shadow(color: (currentPalette.first ?? Color.teal).opacity(0.5), radius: 40, x: 0, y: 24)
-            .scaleEffect(1 + Double(bass) * 0.045)
-            .animation(.easeOut(duration: 0.14), value: analyzer.bass)
+            .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.02)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1.2
+                    )
+            )
+            .shadow(color: (currentPalette.first ?? Color.teal).opacity(0.55), radius: 50, x: 0, y: 30)
+            .scaleEffect(1 + Double(bass) * 0.04)
+            .animation(.easeOut(duration: 0.12), value: analyzer.bass)
     }
 
     // MARK: - Track info
 
     private var trackInfo: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Text(player.currentTrack?.title ?? "Ничего не играет")
-                .font(.title2.weight(.bold)).foregroundStyle(.white).lineLimit(2).multilineTextAlignment(.center)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
             Text(player.currentTrack?.artist ?? "")
-                .font(.subheadline).foregroundStyle(.white.opacity(0.65))
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.55))
         }
+        .padding(.vertical, 10)
     }
 
-    // MARK: - Scrubber (custom progress slider)
+    // MARK: - Scrubber
 
     private var scrubber: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 7) {
             GeometryReader { geo in
                 let w = geo.size.width
                 let val = scrubValue ?? player.progress
                 let frac = duration > 0 ? min(max(val / duration, 0), 1) : 0
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.2)).frame(height: 5)
+                    Capsule().fill(.white.opacity(0.15)).frame(height: 4)
                     Capsule()
-                        .fill(LinearGradient(colors: SettingsStore.shared.accent.colors, startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(6, w * frac), height: 5)
+                        .fill(SettingsStore.shared.accentGradient)
+                        .frame(width: max(4, w * frac), height: 4)
                     Circle()
-                        .fill(.white).frame(width: 14, height: 14).shadow(radius: 3)
-                        .offset(x: min(max(0, w * frac - 7), w - 14))
+                        .fill(.white)
+                        .frame(width: 15, height: 15)
+                        .shadow(color: .white.opacity(0.3), radius: 4)
+                        .offset(x: min(max(0, w * frac - 7.5), w - 15))
                 }
-                .frame(height: 16)
+                .frame(height: 18)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { v in scrubValue = max(0, min(1, v.location.x / max(w, 1))) * duration }
-                    .onEnded { _ in if let s = scrubValue { player.seek(to: s); scrubValue = nil } })
+                    .onChanged { v in
+                        scrubValue = max(0, min(1, v.location.x / max(w, 1))) * duration
+                    }
+                    .onEnded { _ in
+                        if let s = scrubValue { player.seek(to: s); scrubValue = nil }
+                    }
+                )
             }
-            .frame(height: 16)
+            .frame(height: 18)
             HStack {
                 Text(player.formatted(scrubValue ?? player.progress))
                 Spacer()
                 Text("-" + player.formatted(duration - (scrubValue ?? player.progress)))
             }
-            .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
+            .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
         }
     }
 
-    // MARK: - Controls
+    // MARK: - Controls (gesture-based, no visible buttons)
 
     private var controls: some View {
         HStack(spacing: 0) {
-            controlButton(player.shuffle ? "shuffle" : "shuffle", isActive: player.shuffle) { player.shuffle.toggle() }
+            // Shuffle — small icon area
+            controlArea(width: 44) {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                player.shuffle.toggle()
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 17, weight: player.shuffle ? .bold : .regular))
+                    .foregroundStyle(player.shuffle ? SettingsStore.shared.accentColor : .white.opacity(0.65))
+            }
+
             Spacer()
-            controlButton("backward.fill", size: 26) { player.previous() }
+
+            // Previous
+            controlArea(width: 52) { player.previous() } label: {
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
             Spacer()
+
+            // Play/Pause — large glass circle
             Button { player.togglePlay() } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.black.opacity(0.85))
-                    .frame(width: 74, height: 74)
-                    .background(Circle().fill(
-                        LinearGradient(colors: SettingsStore.shared.accent.colors,
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)))
-                    .shadow(color: SettingsStore.shared.accent.main.opacity(0.45), radius: 18, x: 0, y: 8)
-            }.buttonStyle(.plain)
+                ZStack {
+                    Circle()
+                        .fill(SettingsStore.shared.accentGradient)
+                        .frame(width: 72, height: 72)
+                        .shadow(color: SettingsStore.shared.accent.main.opacity(0.45), radius: 20, x: 0, y: 8)
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundStyle(.white)
+                        .offset(x: player.isPlaying ? 0 : 2)
+                }
+            }
+            .buttonStyle(.plain)
+
             Spacer()
-            controlButton("forward.fill", size: 26) { player.next() }
+
+            // Next
+            controlArea(width: 52) { player.next() } label: {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
             Spacer()
-            controlButton(player.repeatMode.icon, isActive: player.repeatMode != .off) {
+
+            // Repeat
+            controlArea(width: 44) {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 player.repeatMode = RepeatMode(rawValue: (player.repeatMode.rawValue + 1) % 3) ?? .off
+            } label: {
+                Image(systemName: player.repeatMode.icon)
+                    .font(.system(size: 17, weight: player.repeatMode != .off ? .bold : .regular))
+                    .foregroundStyle(player.repeatMode != .off ? SettingsStore.shared.accentColor : .white.opacity(0.65))
             }
         }
+        .padding(.vertical, 14)
     }
 
-    private func controlButton(_ icon: String, size: CGFloat = 20, isActive: Bool = false, action: @escaping () -> Void) -> some View {
+    /// Invisible tap area that provides haptic feedback
+    private func controlArea<Content: View>(width: CGFloat, action: @escaping () -> Void, @ViewBuilder label: () -> Content) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(isActive ? SettingsStore.shared.accentColor : .white.opacity(0.85))
-                .frame(width: 44, height: 44)
+            label()
+                .frame(width: width, height: 44)
+                .contentShape(Rectangle())
         }.buttonStyle(.plain)
-    }
-
-    // MARK: - Bottom spectrum
-
-    private var bottomRow: some View {
-        HStack { SpectrumView().frame(maxWidth: .infinity) }.padding(.top, 4)
     }
 
     // MARK: - Gestures
@@ -172,7 +231,7 @@ struct PlayerScreen: View {
             .onEnded { v in
                 let dx = v.translation.width, dy = v.translation.height
                 dragOffset = .zero
-                if dy > 110 && abs(dy) > abs(dx) { dismiss() }
+                if dy > 100 && abs(dy) > abs(dx) { dismiss() }
                 else if dx < -60 { player.next() } else if dx > 60 { player.previous() }
             }
     }
@@ -185,23 +244,38 @@ struct QueueSheet: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
-            List(player.queue) { track in
-                Button { player.play(track) } label: {
-                    HStack {
-                        SmallArtwork(palette: track.palette, size: 38)
-                        VStack(alignment: .leading) {
-                            Text(track.title).lineLimit(1)
-                            Text(track.artist).font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(player.queue) { track in
+                        Button { player.play(track) } label: {
+                            HStack(spacing: 12) {
+                                SmallArtwork(palette: track.palette, size: 38)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                VStack(alignment: .leading) {
+                                    Text(track.title).lineLimit(1).font(.body.weight(.medium)).foregroundStyle(.primary)
+                                    Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                if player.currentTrack?.id == track.id {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .foregroundStyle(SettingsStore.shared.accentColor)
+                                        .font(.caption)
+                                }
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 6)
                         }
-                        Spacer()
-                        if player.currentTrack?.id == track.id {
-                            Image(systemName: "speaker.wave.2.fill").foregroundStyle(SettingsStore.shared.accentColor)
-                        }
+                        .buttonStyle(.plain)
                     }
-                }.buttonStyle(.plain)
+                }
+                .padding(.bottom, 80)
             }
-            .navigationTitle("Очередь").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
+            .navigationTitle("Очередь")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") { dismiss() }
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }

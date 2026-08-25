@@ -44,6 +44,9 @@ final class PlayerCore: ObservableObject {
     private let crossfadeDuration: Double = 2.0
     private var crossfadeStartTime: Date?
     private var crossfadeTimer: Timer?
+    // Streaming support
+    private var streamURL: URL?
+    private var streamFile: AVAudioFile?
 
     var duration: Double { max(currentTrack?.duration ?? 0, 0.001) }
 
@@ -140,6 +143,72 @@ final class PlayerCore: ObservableObject {
 
     private func swapPlayers() {
         activePlayerRef = (activePlayerRef === outgoingPlayer) ? incomingPlayer : outgoingPlayer
+    }
+
+    // MARK: - Jamendo / URL streaming
+
+    func playJamendoStream(_ track: Track, streamURL: URL) {
+        queue = []
+        currentTrack = track
+        playError = nil
+        streamURL = streamURL
+        startStream(at: 0)
+    }
+
+    private func startStream(at seconds: Double) {
+        guard let track = currentTrack, let url = streamURL else { return }
+        generation += 1
+        let token = generation
+        cancelCrossfade()
+        outgoingPlayer.stop()
+        incomingPlayer.stop()
+        outgoingVol = 1.0
+        incomingVol = 0.0
+        activePlayerRef = outgoingPlayer
+
+        // Download to temp, then play
+        Task {
+            do {
+                let (tmpUrl, _) = try await URLSession.shared.download(from: url)
+                let audioFile = try AVAudioFile(forReading: tmpUrl)
+                self.streamFile = audioFile
+                await MainActor.run {
+                    guard self.generation == token else { return }
+                    self.file = audioFile
+                    self.engine.stop()
+                    self.wire(format: audioFile.processingFormat)
+                    try? self.engine.start()
+                    if seconds > 0 {
+                        let sr = audioFile.processingFormat.sampleRate
+                        let offsetFrames = AVAudioFramePosition(seconds * sr)
+                        audioFile.framePosition = max(0, min(offsetFrames, audioFile.length - 1))
+                    }
+                    self.outgoingPlayer.scheduleFile(audioFile, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                        DispatchQueue.main.async {
+                            Task { @MainActor in
+                                guard let self, self.generation == token else { return }
+                                self.isPlaying = false
+                                self.progress = self.duration
+                                self.anchorDate = nil
+                            }
+                        }
+                    }
+                    self.outgoingPlayer.play()
+                    self.isPlaying = true
+                    self.anchorDate = Date()
+                    self.anchorOffset = seconds
+                    self.pausedProgress = seconds
+                    self.progress = seconds
+                    self.startTimer()
+                }
+            } catch {
+                await MainActor.run {
+                    self.file = nil
+                    self.isPlaying = false
+                    self.playError = "Ошибка стриминга: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     // MARK: - Public controls
@@ -242,6 +311,11 @@ final class PlayerCore: ObservableObject {
 
     private func start(at seconds: Double) {
         guard let track = currentTrack else { return }
+        // If this is a stream track, use streaming path
+        if streamURL != nil && !FileManager.default.fileExists(atPath: track.url.path) {
+            startStream(at: seconds)
+            return
+        }
         generation += 1
         let token = generation
 
