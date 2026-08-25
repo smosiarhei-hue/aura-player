@@ -34,7 +34,7 @@ enum JamendoService {
 
     struct JResponse: Codable {
         let results: [JTrack]
-        let count: Int
+        let count: Int?
     }
 
     // MARK: - Search

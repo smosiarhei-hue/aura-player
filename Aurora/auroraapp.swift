@@ -13,7 +13,7 @@ struct AuroraApp: App {
     }
 }
 
-// MARK: - Root (standard TabView)
+// MARK: - Root
 
 struct RootView: View {
     @StateObject private var player = PlayerCore.shared
@@ -52,7 +52,8 @@ struct RootView: View {
                 .tabItem { Label(MainTab.settings.label, systemImage: MainTab.settings.icon) }
                 .tag(MainTab.settings)
         }
-        // Mini player overlay above tab bar
+        .liquidGlassTabBar()
+        // Mini player sits above tab bar
         .safeAreaInset(edge: .bottom) {
             if player.currentTrack != nil && !showPlayer {
                 MiniPlayerBar(showPlayer: $showPlayer)
@@ -70,7 +71,19 @@ struct RootView: View {
     }
 }
 
-// MARK: - Mini Player (compact, sits above standard tab bar)
+// MARK: - Liquid Glass Tab Bar modifier
+
+extension View {
+    @available(iOS 16.0, *)
+    func liquidGlassTabBar() -> some View {
+        self
+            .toolbarBackground(.regularMaterial, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
+            .toolbarColorScheme(.dark, for: .tabBar)
+    }
+}
+
+// MARK: - Mini Player
 
 struct MiniPlayerBar: View {
     @StateObject private var player = PlayerCore.shared
@@ -83,8 +96,7 @@ struct MiniPlayerBar: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(player.currentTrack?.title ?? "")
-                        .font(.caption.weight(.medium))
-                        .lineLimit(1).foregroundStyle(.primary)
+                        .font(.caption.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
                     Text(player.currentTrack?.artist ?? "")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -98,8 +110,7 @@ struct MiniPlayerBar: View {
                         .frame(width: 28, height: 28)
                     Button { player.togglePlay() } label: {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.primary)
+                            .font(.system(size: 9, weight: .bold)).foregroundStyle(.primary)
                     }.buttonStyle(.plain)
                 }
             }
@@ -110,8 +121,8 @@ struct MiniPlayerBar: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5))
         )
-        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
     }
 }
