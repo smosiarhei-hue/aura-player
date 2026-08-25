@@ -103,27 +103,30 @@ final class PlayerCore: ObservableObject {
 
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserverToken = streamingPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
-            let sec = CMTimeGetSeconds(time)
-            if sec.isFinite && sec >= 0 {
-                self.progress = sec
+            Task { @MainActor [weak self] in
+                guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
+                let sec = CMTimeGetSeconds(time)
+                if sec.isFinite && sec >= 0 {
+                    self.progress = sec
 
-                // Update duration dynamically if not set
-                if let item = self.streamingPlayer.currentItem {
-                    let d = CMTimeGetSeconds(item.duration)
-                    if d.isFinite && d > 0 && self.streamDuration != d {
-                        self.streamDuration = d
+                    if let item = self.streamingPlayer.currentItem {
+                        let d = CMTimeGetSeconds(item.duration)
+                        if d.isFinite && d > 0 && self.streamDuration != d {
+                            self.streamDuration = d
+                        }
                     }
-                }
 
-                self.scheduleTransitionIfNeeded()
-                self.updateNowPlayingInfo()
+                    self.scheduleTransitionIfNeeded()
+                    self.updateNowPlayingInfo()
+                }
             }
         }
 
         NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.isUsingStreamPlayer else { return }
-            self.handleTrackFinish()
+            Task { @MainActor [weak self] in
+                guard let self, self.isUsingStreamPlayer else { return }
+                self.handleTrackFinish()
+            }
         }
     }
 
@@ -336,7 +339,6 @@ final class PlayerCore: ObservableObject {
         start(at: 0)
     }
 
-    // Accurate instant seeking with zero tolerance
     func seek(to seconds: Double) {
         cancelTransition()
         let d = duration

@@ -1,9 +1,6 @@
 import SwiftUI
 
 // MARK: - Aurora Glass / iOS 27 Design System Tokens & Storage
-// Based on the official Aurora Glass design specification:
-// - 5 layers of glass (ambient background, glass body, specular edge, sheen, refraction)
-// - Physics spring curve: response: 0.34, dampingFraction: 0.72
 
 enum AG {
     static let radius: CGFloat = 26
@@ -18,25 +15,6 @@ enum AG {
     static let ice = Color(hex: "#7CF6FF") ?? .cyan
     static let lavender = Color(hex: "#9A7CFF") ?? .purple
     static let magenta = Color(hex: "#FF8AD1") ?? .pink
-}
-
-enum AppTheme: String, CaseIterable, Codable, Identifiable {
-    case system, dark, light
-    var id: String { rawValue }
-    var name: String {
-        switch self {
-        case .system: return "Как в системе"
-        case .dark: return "Тёмная (Aurora Studio)"
-        case .light: return "Светлая"
-        }
-    }
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system: return nil
-        case .dark: return .dark
-        case .light: return .light
-        }
-    }
 }
 
 enum AccentChoice: String, CaseIterable, Codable, Identifiable {
@@ -61,6 +39,25 @@ enum AccentChoice: String, CaseIterable, Codable, Identifiable {
         }
     }
     var main: Color { colors[0] }
+}
+
+enum AppTheme: String, CaseIterable, Codable, Identifiable {
+    case system, dark, light
+    var id: String { rawValue }
+    var name: String {
+        switch self {
+        case .system: return "Как в системе"
+        case .dark: return "Тёмная (Aurora Studio)"
+        case .light: return "Светлая"
+        }
+    }
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .dark: return .dark
+        case .light: return .light
+        }
+    }
 }
 
 final class SettingsStore: ObservableObject {
@@ -92,7 +89,6 @@ struct AGGlassModifier: ViewModifier {
     var radius: CGFloat = AG.radius
     var padding: CGFloat = 0
     var opacity: CGFloat = 0.90
-    var hasPressEffect: Bool = false
 
     func body(content: Content) -> some View {
         content
@@ -103,7 +99,6 @@ struct AGGlassModifier: ViewModifier {
                     .opacity(opacity)
             )
             .overlay(
-                // Layer 3: Specular edge (Светлая кромка сверху-слева и тёмная снизу-справа с хроматической дисперсией)
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
@@ -126,9 +121,5 @@ struct AGGlassModifier: ViewModifier {
 extension View {
     func liquidGlass(corner: CGFloat = AG.radius, padding: CGFloat = 0, opacity: CGFloat = 0.90) -> some View {
         modifier(AGGlassModifier(radius: corner, padding: padding, opacity: opacity))
-    }
-
-    func auroraSpring() -> some View {
-        self.animation(AG.spring)
     }
 }

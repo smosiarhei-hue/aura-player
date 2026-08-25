@@ -1,6 +1,38 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - Transition Mode
+
+enum TransitionMode: String, CaseIterable, Codable, Identifiable {
+    case automix = "AutoMix (DJ-сведение)"
+    case crossfade = "Кроссфейд"
+    case gapless = "Gapless (Без пауз)"
+    case off = "Выключено"
+
+    var id: String { rawValue }
+
+    var description: String {
+        switch self {
+        case .automix:
+            return "Умный анализ концовки, срез басов уходящего трека (Bass-Swap), обрезка тишины и адаптивный тайминг как в Apple Music."
+        case .crossfade:
+            return "Классическое плавное наложение звука по фиксированному времени."
+        case .gapless:
+            return "Мгновенное переключение следующего трека без пауз и задержек."
+        case .off:
+            return "Стандартное раздельное воспроизведение треков."
+        }
+    }
+}
+
+// MARK: - AutoMix Transition Style
+
+enum AutoMixStyle {
+    case bassSwapBlend(duration: Double)
+    case quickDrop(duration: Double)
+    case fadeOut(duration: Double)
+}
+
 // MARK: - Track Model
 
 struct Track: Identifiable, Codable, Equatable {
