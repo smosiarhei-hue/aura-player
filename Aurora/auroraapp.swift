@@ -13,12 +13,12 @@ struct AuroraApp: App {
     }
 }
 
-// MARK: - Root
+// MARK: - Root (standard TabView)
 
 struct RootView: View {
     @StateObject private var player = PlayerCore.shared
-    @State private var selectedTab: MainTab = .library
     @State private var showPlayer = false
+    @State private var selectedTab: MainTab = .library
 
     enum MainTab: String, CaseIterable {
         case library, explore, settings
@@ -39,87 +39,38 @@ struct RootView: View {
     }
 
     var body: some View {
-        ZStack {
-            Group {
-                switch selectedTab {
-                case .library:  LibraryView()
-                case .explore:  ExploreView()
-                case .settings: SettingsView()
-                }
-            }
-            .animation(.easeInOut(duration: 0.2), value: selectedTab)
+        TabView(selection: $selectedTab) {
+            LibraryView()
+                .tabItem { Label(MainTab.library.label, systemImage: MainTab.library.icon) }
+                .tag(MainTab.library)
 
-            // Mini player overlay
-            VStack {
-                Spacer()
-                if player.currentTrack != nil {
-                    MiniPlayerBar(showPlayer: $showPlayer)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 88)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+            ExploreView()
+                .tabItem { Label(MainTab.explore.label, systemImage: MainTab.explore.icon) }
+                .tag(MainTab.explore)
+
+            SettingsView()
+                .tabItem { Label(MainTab.settings.label, systemImage: MainTab.settings.icon) }
+                .tag(MainTab.settings)
+        }
+        // Mini player overlay above tab bar
+        .safeAreaInset(edge: .bottom) {
+            if player.currentTrack != nil && !showPlayer {
+                MiniPlayerBar(showPlayer: $showPlayer)
+                    .padding(.horizontal, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                Color.clear.frame(height: 0)
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.currentTrack != nil)
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreen()
         }
-        // Standard iOS tab bar (Liquid Glass on iOS 18+)
-        .overlay(alignment: .bottom) {
-            if !showPlayer {
-                LiquidTabBar(selected: $selectedTab)
-                    .padding(.bottom, 16)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
         .onAppear { PlayerCore.shared.installSpectrumTap() }
     }
 }
 
-// MARK: - Liquid Glass Tab Bar
-
-struct LiquidTabBar: View {
-    @Binding var selected: RootView.MainTab
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(RootView.MainTab.allCases, id: \.rawValue) { tab in
-                tabButton(tab)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .liquidGlass(corner: 32, padding: 0)
-    }
-
-    private func tabButton(_ tab: RootView.MainTab) -> some View {
-        let isActive = selected == tab
-        return Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                selected = tab
-            }
-        } label: {
-            VStack(spacing: 4) {
-                ZStack {
-                    if isActive {
-                        Capsule()
-                            .fill(SettingsStore.shared.accentGradient)
-                            .frame(width: 56, height: 32)
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                    Image(systemName: tab.icon)
-                        .font(.system(size: 18, weight: isActive ? .semibold : .regular))
-                        .frame(width: 56, height: 32)
-                        .foregroundStyle(isActive ? .white : .secondary)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-    }
-}
-
-// MARK: - Mini Player (Liquid Glass)
+// MARK: - Mini Player (compact, sits above standard tab bar)
 
 struct MiniPlayerBar: View {
     @StateObject private var player = PlayerCore.shared
@@ -127,38 +78,40 @@ struct MiniPlayerBar: View {
 
     var body: some View {
         Button { showPlayer = true } label: {
-            HStack(spacing: 12) {
-                SmallArtwork(palette: player.currentTrack?.palette ?? Palette.seeded(1).colors, size: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 10) {
+                SmallArtwork(palette: player.currentTrack?.palette ?? Palette.seeded(1).colors, size: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
                     Text(player.currentTrack?.title ?? "")
-                        .font(.subheadline.weight(.medium))
+                        .font(.caption.weight(.medium))
                         .lineLimit(1).foregroundStyle(.primary)
                     Text(player.currentTrack?.artist ?? "")
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                // Progress ring
                 ZStack {
                     Circle().trim(from: 0, to: player.duration > 0 ? player.progress / player.duration : 0)
-                        .stroke(SettingsStore.shared.accentGradient, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .stroke(SettingsStore.shared.accentGradient, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                        .frame(width: 34, height: 34)
-                    Circle().stroke(.primary.opacity(0.08), lineWidth: 2)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 28, height: 28)
+                    Circle().stroke(.primary.opacity(0.08), lineWidth: 1.5)
+                        .frame(width: 28, height: 28)
                     Button { player.togglePlay() } label: {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
+                    }.buttonStyle(.plain)
                 }
             }
-            .padding(.leading, 14)
-            .padding(.trailing, 12)
-            .padding(.vertical, 10)
+            .padding(.leading, 10).padding(.trailing, 8).padding(.vertical, 6)
         }
         .buttonStyle(.plain)
-        .liquidGlass(corner: 22, padding: 0)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+        )
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
     }
 }
