@@ -53,22 +53,9 @@ struct RootView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Tab Content
-            Group {
-                switch selectedTab {
-                case .home:
-                    HomeView()
-                case .new:
-                    NewReleasesView()
-                case .radio:
-                    RadioStationsView()
-                case .library:
-                    LibraryView()
-                case .search:
-                    SearchCatalogView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Main Tab View with explicit ViewBuilder
+            tabContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Bottom Stack: Floating Mini Player + Floating Liquid Glass Dock
             VStack(spacing: 8) {
@@ -89,6 +76,22 @@ struct RootView: View {
         }
         .onAppear {
             PlayerCore.shared.installSpectrumTap()
+        }
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selectedTab {
+        case .home:
+            HomeView()
+        case .new:
+            NewReleasesView()
+        case .radio:
+            RadioStationsView()
+        case .library:
+            LibraryView()
+        case .search:
+            SearchCatalogView()
         }
     }
 }
@@ -160,7 +163,6 @@ struct FloatingMiniPlayer: View {
         .gesture(
             DragGesture(minimumDistance: 15)
                 .onEnded { value in
-                    // Swipe up to expand player
                     if value.translation.height < -20 {
                         showPlayer = true
                     }
