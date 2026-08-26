@@ -161,26 +161,18 @@ struct PlayerScreen: View {
 
     @ViewBuilder
     private func driftingArtwork(geo: GeometryProxy) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let drift: CGFloat = 1.0 + max(0, sin(t * 0.4)) * 0.04
-            let bass = effectiveBass(at: t)
-            let beatBoost: CGFloat = player.isPlaying ? 1.0 + CGFloat(bass) * 0.07 : 1.0
-            let scale = drift * beatBoost
-
-            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                radialBlurArtwork(Image(uiImage: img), geo: geo, scale: scale)
-            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        radialBlurArtwork(image, geo: geo, scale: scale)
-                    } else {
-                        AnimatedMeshBackground(palette: palette)
-                    }
+        if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+            radialBlurArtwork(Image(uiImage: img), geo: geo, scale: 1.0)
+        } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+            AsyncImage(url: url) { phase in
+                if case .success(let image) = phase {
+                    radialBlurArtwork(image, geo: geo, scale: 1.0)
+                } else {
+                    AnimatedMeshBackground(palette: palette)
                 }
-            } else {
-                AnimatedMeshBackground(palette: palette)
             }
+        } else {
+            AnimatedMeshBackground(palette: palette)
         }
     }
 

@@ -29,7 +29,7 @@ struct HomeView: View {
                     featuredAlbumsSection
                 }
                 .padding(.top, 12)
-                .padding(.bottom, 24)
+                .safeAreaPadding(.bottom, 88)
             }
             .navigationTitle("Главная")
             .toolbar {
@@ -411,7 +411,7 @@ struct NewReleasesView: View {
                     }
                 }
                 .padding(.top, 10)
-                .padding(.bottom, 24)
+                .safeAreaPadding(.bottom, 88)
             }
             .navigationTitle("Новинки")
             .task {
@@ -521,7 +521,7 @@ struct RadioStationsView: View {
                     .padding(.horizontal, 16)
                 }
                 .padding(.top, 10)
-                .padding(.bottom, 24)
+                .safeAreaPadding(.bottom, 88)
             }
             .navigationTitle("Радио")
         }
@@ -652,7 +652,7 @@ struct SearchCatalogView: View {
                     }
                 }
                 .padding(.top, 10)
-                .padding(.bottom, 24)
+                .safeAreaPadding(.bottom, 88)
             }
             .navigationTitle("Поиск")
             .searchable(text: $searchText, prompt: "Поиск в Яндекс Музыке и медиатеке")

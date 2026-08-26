@@ -53,18 +53,19 @@ struct RootView: View {
     @Namespace private var playerNamespace
 
     var body: some View {
-        ZStack {
-            // Main Tab View, inset by the floating bottom dock so nothing overlaps
+        ZStack(alignment: .bottom) {
+            // Main Tab View (each tab's ScrollView uses .safeAreaPadding(.bottom) —
+            // .safeAreaInset does not propagate through NavigationStack)
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    bottomDock
-                }
+
+            // Floating bottom dock (mini player + tab bar) as overlay
+            bottomDock
 
             // Full player overlay with matched-geometry hero transition
             if showPlayer {
                 PlayerScreen(isPresented: $showPlayer, namespace: playerNamespace)
-                    .transition(.opacity)
+                    .transition(.identity)
                     .zIndex(5)
             }
         }
@@ -121,7 +122,7 @@ struct FloatingMiniPlayer: View {
             // Left tappable/draggable area (artwork + title)
             HStack(spacing: 12) {
                 SmallArtwork(track: player.currentTrack, size: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .matchedGeometryEffect(id: "heroArtwork", in: namespace)
 
                 VStack(alignment: .leading, spacing: 2) {
