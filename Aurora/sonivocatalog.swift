@@ -136,64 +136,99 @@ struct RankedTrack: Identifiable {
     var id: String { String(rank) + "-" + item.id }
 }
 
+/// Строка трека: обложка и название запускают воспроизведение,
+/// имя артиста ведёт на страницу артиста.
 struct ChartRowView: View {
     let rank: Int?
     let item: YandexMusicService.YMTrackItem
     let onPlay: () -> Void
 
-    var body: some View {
-        Button(action: onPlay) {
-            HStack(spacing: 12) {
-                if let rank {
-                    Text(String(rank))
-                        .font(AG.display(15, .heavy).monospacedDigit())
-                        .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
-                        .frame(width: 26, alignment: .center)
-                }
+    private var firstArtistId: String? {
+        guard let a = item.artists?.first, let id = a.id else { return nil }
+        return String(id)
+    }
 
+    var body: some View {
+        HStack(spacing: 12) {
+            if let rank {
+                Text(String(rank))
+                    .font(AG.display(15, .heavy).monospacedDigit())
+                    .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
+                    .frame(width: 26, alignment: .center)
+            }
+
+            Button(action: onPlay) {
                 RemoteArtwork(urlString: item.coverUrlString, corner: 10)
                     .frame(width: 50, height: 50)
+            }
+            .buttonStyle(GlassPressStyle())
 
-                VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2) {
+                Button(action: onPlay) {
                     Text(item.title)
                         .font(AG.text(14, .semibold))
                         .foregroundStyle(AG.ink)
                         .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if let artistId = firstArtistId {
+                    NavigationLink {
+                        ArtistView(artistId: artistId)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(item.artistName)
+                                .lineLimit(1)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 7, weight: .black))
+                        }
+                        .font(AG.text(11.5, .medium))
+                        .foregroundStyle(AG.amber.opacity(0.85))
+                    }
+                    .buttonStyle(.plain)
+                } else {
                     Text(item.artistName)
                         .font(AG.text(11.5, .regular))
                         .foregroundStyle(AG.inkMuted)
                         .lineLimit(1)
                 }
-
-                Spacer(minLength: 0)
-
-                Menu {
-                    Button {
-                        SonivoPlay.download(item)
-                    } label: {
-                        Label("Скачать на iPhone", systemImage: "arrow.down.circle")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(AG.inkMuted)
-                        .frame(width: 30, height: 44)
-                }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
+
+            Spacer(minLength: 0)
+
+            Menu {
+                Button {
+                    SonivoPlay.download(item)
+                } label: {
+                    Label("Скачать на iPhone", systemImage: "arrow.down.circle")
+                }
+
+                if let artistId = firstArtistId {
+                    NavigationLink {
+                        ArtistView(artistId: artistId)
+                    } label: {
+                        Label("К артисту", systemImage: "person.crop.circle")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(AG.inkMuted)
+                    .frame(width: 30, height: 44)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
     }
 }
 
 // MARK: - Единая точка запуска воспроизведения
 //
-// Важно: ссылка на поток ЗДЕСЬ НЕ разрешается. Если подставить готовый https-URL,
-// PlayerCore идёт по ветке «direct URL» и жёстко выставляет currentBitrate = 128,
-// игнорируя выбранное качество. Передаём трек с id и плеер сам запросит
-// поток нужного битрейта и покажет реальные 320 kbps.
+// Ссылка на поток здесь НЕ разрешается: передаём трек с id, а PlayerCore сам
+// запросит поток нужного битрейта и покажет реальные 320 kbps.
 
 @MainActor
 enum SonivoPlay {
@@ -205,8 +240,8 @@ enum SonivoPlay {
         PlayerCore.shared.play(ym.convertToTrack(item), newQueue: queue)
     }
 
-    /// Запуск станции: очередь собирается из нескольких батчей ротора
-    /// и фильтруется по истории — поэтому треки больше не повторяются.
+    /// Запуск станции под настроение: очередь собирается из нескольких
+    /// батчей ротора и фильтруется по истории — треки не повторяются.
     static func wave(_ station: YandexMusicService.StationOption) {
         let ym = YandexMusicService.shared
         Task {
