@@ -21,7 +21,6 @@ struct PlayerScreen: View {
     @State private var showSleepTimer = false
     @State private var dragOffset: CGFloat = 0
     @State private var horizontalDragOffset: CGFloat = 0
-    @State private var controlsVisible = true
     @State private var lyrics: Lyrics?
     @State private var currentLyricLine: String?
 
@@ -49,19 +48,6 @@ struct PlayerScreen: View {
         return String(format: "%d:%02d", m, s)
     }
 
-    private var bassEnergy: Double { Double(analyzer.bass) }
-
-    /// Real bass energy when the local EQ tap has signal; otherwise a subtle
-    /// time-based pulse so streaming tracks (AVPlayer, no analyzer tap) still
-    /// visibly move with the beat (~96 BPM fallback).
-    private func effectiveBass(at time: TimeInterval) -> Double {
-        let raw = max(bassEnergy, Double(analyzer.streamLevel))
-        if raw > 0.03 { return raw }
-        guard player.isPlaying else { return 0 }
-        let pulse = 0.5 + 0.5 * sin(time * 2.0 * .pi * 1.6)
-        return 0.18 + 0.82 * pulse
-    }
-
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -74,47 +60,47 @@ struct PlayerScreen: View {
                         .padding(.top, max(geo.safeAreaInsets.top, 8))
                         .padding(.horizontal, 8)
 
-                    if controlsVisible {
-                        // Big full cover (aspectFit — full display, no top/bottom crop)
-                        heroArtwork
-                            .padding(.horizontal, 28)
-                            .padding(.top, 6)
+                    Spacer(minLength: 6)
 
-                        // Title + artist + star + menu
-                        trackMetadataRow
-                            .padding(.horizontal, 24)
-                            .padding(.top, 16)
+                    // Big expansive cover (aspectFit — generous sizing, no top/bottom crop)
+                    heroArtwork
+                        .padding(.horizontal, 28)
+                        .padding(.top, 4)
 
-                        // Small glow teleprompter near the time code (hideable in settings)
-                        if settings.showTeleprompterInPlayer, let line = currentLyricLine {
-                            teleprompterText(line)
-                                .padding(.horizontal, 32)
-                                .padding(.top, 14)
-                        }
+                    Spacer(minLength: 6)
 
-                        // Apple Music Time Scrubber & Audio Format Badge
-                        timeScrubberSection
-                            .padding(.horizontal, 28)
-                            .padding(.top, 14)
+                    // Title + artist + star + menu
+                    trackMetadataRow
+                        .padding(.horizontal, 24)
+                        .padding(.top, 14)
 
-                        // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
-                        playbackControlsRow
-                            .padding(.horizontal, 36)
-                            .padding(.top, 8)
-
-                        // System Volume Slider (MPVolumeView)
-                        volumeSliderSection
-                            .padding(.horizontal, 28)
-                            .padding(.top, 10)
-
-                        // Bottom Navigation Bar (Lyrics, AirPlay, Queue, Sleep Timer)
-                        bottomUtilityIconsRow
+                    // Small glow teleprompter near the time code (hideable in settings)
+                    if settings.showTeleprompterInPlayer, let line = currentLyricLine {
+                        teleprompterText(line)
                             .padding(.horizontal, 32)
                             .padding(.top, 10)
-                            .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
-                    } else {
-                        Spacer(minLength: 40)
                     }
+
+                    // Apple Music Time Scrubber & Audio Format Badge
+                    timeScrubberSection
+                        .padding(.horizontal, 28)
+                        .padding(.top, 14)
+
+                    // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
+                    playbackControlsRow
+                        .padding(.horizontal, 36)
+                        .padding(.top, 12)
+
+                    // System Volume Slider (MPVolumeView)
+                    volumeSliderSection
+                        .padding(.horizontal, 28)
+                        .padding(.top, 16)
+
+                    // Bottom Navigation Bar (Lyrics, AirPlay, Queue, Sleep Timer)
+                    bottomUtilityIconsRow
+                        .padding(.horizontal, 32)
+                        .padding(.top, 14)
+                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
                 }
             }
             .offset(y: max(0, dragOffset))
@@ -173,8 +159,7 @@ struct PlayerScreen: View {
             radialBlurArtwork(Image(uiImage: img), geo: geo, scale: 1.0)
         } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
             AsyncImage(url: url) { phase in
-                if case .success(let image) = phase {
-                    radialBlurArtwork(image, geo: geo, scale: 1.0)
+                if case .success(let image) = phase {\n                    radialBlurArtwork(image, geo: geo, scale: 1.0)
                 } else {
                     AnimatedMeshBackground(palette: palette)
                 }
@@ -223,7 +208,11 @@ struct PlayerScreen: View {
 
     private var topGrabber: some View {
         HStack {
-            Button { isPresented = false } label: {
+            Button {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    isPresented = false
+                }
+            } label: {
                 Image(systemName: "chevron.compact.down")
                     .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(.white.opacity(0.70))
@@ -265,39 +254,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Track Metadata Row (Favorite & Context Menu)
-
-    // Small thumbnail beside the title (hero-matched to the mini player cover).
-    private var smallCover: some View {
-        Group {
-            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                Image(uiImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        artworkFallback(size: 56)
-                    }
-                }
-            } else {
-                artworkFallback(size: 56)
-            }
-        }
-        .frame(width: 56, height: 56)
-        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-        )
-    }
-
-    // Big full cover (aspectFit — full display without top/bottom crop).
+    // Big full cover (generous expansive presentation).
     private var heroArtwork: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
@@ -305,6 +262,7 @@ struct PlayerScreen: View {
                 .frame(width: side, height: side)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxHeight: 350)
     }
 
     private var coverImage: some View {
@@ -325,9 +283,9 @@ struct PlayerScreen: View {
                 artworkFallback(size: 280)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 14)
@@ -650,7 +608,7 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            // Visible sleep timer (moon) — always in the player, not buried in the ••• menu
+            // Visible sleep timer (moon)
             Button {
                 showSleepTimer = true
             } label: {
@@ -673,7 +631,7 @@ struct PlayerScreen: View {
     // MARK: - Interactive Gestures (Swipe down to dismiss, Swipe left/right for tracks)
 
     private var interactiveGestures: some Gesture {
-        DragGesture(minimumDistance: 25)
+        DragGesture(minimumDistance: 15)
             .onChanged { v in
                 if abs(v.translation.width) > abs(v.translation.height) {
                     horizontalDragOffset = v.translation.width * 0.3
@@ -683,9 +641,9 @@ struct PlayerScreen: View {
             }
             .onEnded { v in
                 let screenW = UIScreen.main.bounds.width
-                let threshold = screenW * 0.45
+                let threshold = screenW * 0.35
 
-                // Horizontal Swipe (Next / Previous Track) — requires a deliberate full swipe
+                // Horizontal Swipe (Next / Previous Track)
                 if v.translation.width < -threshold {
                     if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
@@ -699,8 +657,10 @@ struct PlayerScreen: View {
                 }
 
                 // Vertical Dismiss
-                if v.translation.height > 120 {
-                    isPresented = false
+                if v.translation.height > 100 {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                        isPresented = false
+                    }
                 }
 
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -724,7 +684,7 @@ struct AirPlayButtonView: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 
-// MARK: - System Volume Slider (MPVolumeView, bound to device volume)
+// MARK: - System Volume Slider (MPVolumeView)
 
 struct SystemVolumeSlider: UIViewRepresentable {
     var tintColor: UIColor = .white
@@ -750,13 +710,11 @@ struct LyricsSheetView: View {
 
     var body: some View {
         ZStack {
-            // Immersive fullscreen backdrop: blurred artwork + dark gradient
             karaokeBackdrop
 
             LyricsView(lyrics: lyrics, isLoading: isLoading)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Floating header: close + track info
             VStack {
                 HStack(spacing: 12) {
                     Button { dismiss() } label: {
@@ -829,9 +787,7 @@ struct LyricsSheetView: View {
     }
 }
 
-// MARK: - Queue Sheet View with Full "Now Playing" and "Up Next"
-
-// MARK: - Marquee Title (auto-scroll only when the title overflows)
+// MARK: - Marquee Title
 
 private struct MarqueeWidthKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -873,7 +829,7 @@ struct MarqueeText: View {
     }
 }
 
-// MARK: - Sleep Timer Sheet (native wheel picker)
+// MARK: - Sleep Timer Sheet
 
 struct SleepTimerSheetView: View {
     @StateObject private var player = PlayerCore.shared
@@ -921,6 +877,8 @@ struct SleepTimerSheetView: View {
     }
 }
 
+// MARK: - Queue Sheet View
+
 struct QueueSheetView: View {
     @StateObject private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
@@ -929,7 +887,6 @@ struct QueueSheetView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    // Currently Playing
                     if let cur = player.currentTrack {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("СЕЙЧАС ИГРАЕТ")
@@ -956,7 +913,6 @@ struct QueueSheetView: View {
                         }
                     }
 
-                    // Up Next
                     VStack(alignment: .leading, spacing: 8) {
                         Text("ДАЛЕЕ В ОЧЕРЕДИ (\(player.queue.count))")
                             .font(.caption.weight(.bold))
@@ -1041,7 +997,6 @@ struct PlayerEQSheetView: View {
                     .tint(settings.accentColor)
                     .padding(.horizontal, 20)
 
-                    // Presets
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Пресеты").font(.subheadline.weight(.semibold))
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -1070,7 +1025,6 @@ struct PlayerEQSheetView: View {
                     }
                     .padding(.horizontal, 20)
 
-                    // 10-Band Sliders
                     VStack(spacing: 12) {
                         HStack {
                             Text("Полосы частот").font(.subheadline.weight(.semibold))
