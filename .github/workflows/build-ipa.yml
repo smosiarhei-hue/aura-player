@@ -60,17 +60,22 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build 2>&1 | tee build.log
 
-      - name: Save compiler diagnostics
-        if: failure() && steps.xcodebuild.outcome == 'failure'
+      - name: Publish build status
+        if: always() && steps.xcodebuild.outcome != 'skipped'
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILD_OUTCOME: ${{ steps.xcodebuild.outcome }}
         run: |
-          grep -nE "error:|fatal error:|BUILD FAILED|Command SwiftCompile failed" build.log | tail -n 250 > compiler-errors.txt || true
-          if [ ! -s compiler-errors.txt ]; then
-            tail -n 300 build.log > compiler-errors.txt
+          printf "Commit: %s\nRun: %s\nOutcome: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$BUILD_OUTCOME" > diagnostic.txt
+          if [ "$BUILD_OUTCOME" = "success" ]; then
+            echo "BUILD SUCCEEDED" >> diagnostic.txt
+          else
+            grep -nE "error:|fatal error:|BUILD FAILED|Command SwiftCompile failed" build.log | tail -n 250 > compiler-errors.txt || true
+            if [ ! -s compiler-errors.txt ]; then
+              tail -n 300 build.log > compiler-errors.txt
+            fi
+            cat compiler-errors.txt >> diagnostic.txt
           fi
-          printf "Commit: %s\nRun: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" > diagnostic.txt
-          cat compiler-errors.txt >> diagnostic.txt
 
           TMP=$(mktemp -d)
           cd "$TMP"
@@ -81,7 +86,7 @@ jobs:
           mkdir -p ci-logs
           cp "$GITHUB_WORKSPACE/diagnostic.txt" ci-logs/latest-build-errors.txt
           git add ci-logs/latest-build-errors.txt
-          git commit -m "Record compiler errors from run $GITHUB_RUN_ID"
+          git commit -m "Record build status from run $GITHUB_RUN_ID"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin ci-diagnostics
 
