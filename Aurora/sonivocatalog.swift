@@ -69,7 +69,12 @@ struct SonivoChip: View {
         .background(
             Capsule().fill(isActive ? AnyShapeStyle(AG.emberGradient) : AnyShapeStyle(Color.white.opacity(0.08)))
         )
-        .overlay(Capsule().strokeBorder(isActive ? Color.clear : AG.hairline, lineWidth: 0.8))
+        .overlay(
+            Capsule().strokeBorder(
+                isActive ? AnyShapeStyle(Color.clear) : AnyShapeStyle(AG.hairline),
+                lineWidth: 0.8
+            )
+        )
     }
 }
 
@@ -226,9 +231,6 @@ struct ChartRowView: View {
 }
 
 // MARK: - Единая точка запуска воспроизведения
-//
-// Ссылка на поток здесь НЕ разрешается: передаём трек с id, а PlayerCore сам
-// запросит поток нужного битрейта и покажет реальные 320 kbps.
 
 @MainActor
 enum SonivoPlay {
@@ -240,8 +242,6 @@ enum SonivoPlay {
         PlayerCore.shared.play(ym.convertToTrack(item), newQueue: queue)
     }
 
-    /// Запуск станции под настроение: очередь собирается из нескольких
-    /// батчей ротора и фильтруется по истории — треки не повторяются.
     static func wave(_ station: YandexMusicService.StationOption) {
         let ym = YandexMusicService.shared
         Task {
@@ -267,14 +267,13 @@ enum SonivoPlay {
         }
     }
 
-    /// Для скачивания ссылка нужна настоящая — здесь разрешаем её явно.
     static func download(_ item: YandexMusicService.YMTrackItem) {
         let ym = YandexMusicService.shared
         Task {
             guard let info = try? await ym.getStreamInfo(for: item.id) else { return }
-            var t = ym.convertToTrack(item)
-            t.streamUrlString = info.url.absoluteString
-            await LibraryStore.shared.saveOnlineTrackLocally(track: t)
+            var track = ym.convertToTrack(item)
+            track.streamUrlString = info.url.absoluteString
+            await LibraryStore.shared.saveOnlineTrackLocally(track: track)
         }
     }
 }
