@@ -60,17 +60,16 @@ struct TrackArtworkView: View {
                 Image(uiImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-            } else {
-                ZStack {
-                    LinearGradient(
-                        colors: track?.palette ?? Palette.seeded(42).colors,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    Image(systemName: "music.note")
-                        .font(.system(size: size * 0.35, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
+            } else if let track = track, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        artworkPlaceholder
+                    }
                 }
+            } else {
+                artworkPlaceholder
             }
         }
         .frame(width: size, height: size)
@@ -82,6 +81,19 @@ struct TrackArtworkView: View {
         .shadow(color: .black.opacity(0.35), radius: isPlaying ? 24 : 12, x: 0, y: isPlaying ? 16 : 8)
         .scaleEffect(isPlaying ? 1.0 : 0.88)
         .animation(.spring(response: 0.45, dampingFraction: 0.7), value: isPlaying)
+    }
+
+    private var artworkPlaceholder: some View {
+        ZStack {
+            LinearGradient(
+                colors: track?.palette ?? Palette.seeded(42).colors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: "music.note")
+                .font(.system(size: size * 0.35, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+        }
     }
 }
 
@@ -104,17 +116,29 @@ struct SmallArtwork: View {
                 Image(uiImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-            } else {
-                ZStack {
-                    LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
-                    Image(systemName: "music.note")
-                        .font(.system(size: size * 0.35, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
+            } else if let track = track, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        artworkPlaceholder
+                    }
                 }
+            } else {
+                artworkPlaceholder
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+    }
+
+    private var artworkPlaceholder: some View {
+        ZStack {
+            LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(.system(size: size * 0.35, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+        }
     }
 }
 
