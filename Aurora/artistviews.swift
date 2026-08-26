@@ -78,9 +78,9 @@ struct ArtistView: View {
                         .padding(.horizontal, 24)
                         .padding(.vertical, 12)
                         .background(Capsule().fill(AG.emberGradient))
-                        .shadow(color: AG.ember.opacity(0.4), radius: 12, y: 6)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(GlassPressStyle())
+                    .pulsingGlow(AG.ember)
                 }
             }
             .padding(.horizontal, 20)
@@ -105,6 +105,7 @@ struct ArtistView: View {
                         }
                     }
                 }
+                .riseIn(delay: 0.08)
             }
         }
     }
@@ -133,18 +134,21 @@ struct ArtistView: View {
                                             .foregroundStyle(AG.ink)
                                             .lineLimit(1)
 
-                                        Text(String(album.year ?? 0))
-                                            .font(AG.text(11, .regular))
-                                            .foregroundStyle(AG.inkMuted)
+                                        if let year = album.year {
+                                            Text(String(year))
+                                                .font(AG.text(11, .regular))
+                                                .foregroundStyle(AG.inkMuted)
+                                        }
                                     }
                                     .frame(width: 150, alignment: .leading)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(GlassPressStyle())
                             }
                         }
                         .padding(.horizontal, 16)
                     }
                 }
+                .riseIn(delay: 0.14)
             }
         }
     }
@@ -176,12 +180,13 @@ struct ArtistView: View {
                                     }
                                     .frame(width: 110)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(GlassPressStyle())
                             }
                         }
                         .padding(.horizontal, 16)
                     }
                 }
+                .riseIn(delay: 0.20)
             }
         }
     }
@@ -272,6 +277,7 @@ struct AlbumView: View {
                 .frame(width: 220, height: 220)
                 .shadow(color: Color.black.opacity(0.5), radius: 20, y: 10)
                 .padding(.top, 20)
+                .riseIn()
 
             VStack(spacing: 6) {
                 Text(album.displayTitle)
@@ -279,9 +285,24 @@ struct AlbumView: View {
                     .foregroundStyle(AG.ink)
                     .multilineTextAlignment(.center)
 
-                Text(album.artistName)
-                    .font(AG.text(15, .medium))
-                    .foregroundStyle(AG.inkMuted)
+                if let artist = album.artists?.first, let aid = artist.id, let name = artist.name {
+                    NavigationLink {
+                        ArtistView(artistId: String(aid))
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(name)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .black))
+                        }
+                        .font(AG.text(15, .medium))
+                        .foregroundStyle(AG.amber.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(album.artistName)
+                        .font(AG.text(15, .medium))
+                        .foregroundStyle(AG.inkMuted)
+                }
 
                 if let year = album.year {
                     Text(String(year))
@@ -305,9 +326,9 @@ struct AlbumView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
                     .background(Capsule().fill(AG.emberGradient))
-                    .shadow(color: AG.ember.opacity(0.4), radius: 12, y: 6)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(GlassPressStyle())
+                .pulsingGlow(AG.ember)
             }
         }
     }
@@ -327,6 +348,7 @@ struct AlbumView: View {
                         }
                     }
                 }
+                .riseIn(delay: 0.10)
             }
         }
     }
@@ -334,8 +356,8 @@ struct AlbumView: View {
     private func load() async {
         isLoading = true
         let albumIdInt = Int(albumId) ?? 0
+        album = try? await ym.fetchAlbums(ids: [albumIdInt]).first
         tracks = (try? await ym.getAlbumTracks(albumId: albumIdInt)) ?? []
-        // Альбом уже загружен из кэша поиска, поэтому здесь только треки
         isLoading = false
     }
 }
