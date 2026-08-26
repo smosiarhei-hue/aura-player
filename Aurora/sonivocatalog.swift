@@ -1,0 +1,319 @@
+import SwiftUI
+
+// MARK: - Общие компоненты каталога (Ember)
+
+struct SonivoBackdrop: View {
+    var body: some View {
+        ZStack {
+            AG.bg
+            RadialGradient(
+                colors: [AG.ember.opacity(0.22), Color.clear],
+                center: .topTrailing,
+                startRadius: 8,
+                endRadius: 430
+            )
+            RadialGradient(
+                colors: [AG.amber.opacity(0.13), Color.clear],
+                center: .bottomLeading,
+                startRadius: 8,
+                endRadius: 380
+            )
+        }
+        .ignoresSafeArea()
+    }
+}
+
+struct SonivoHeader: View {
+    let title: String
+    var accent: String? = nil
+    var subtitle: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(title)
+                    .font(AG.display(22, .heavy))
+                    .foregroundStyle(AG.ink)
+                if let accent {
+                    Text(accent)
+                        .font(AG.serifAccent(22))
+                        .foregroundStyle(AG.amber)
+                }
+                Spacer(minLength: 0)
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(AG.text(12, .regular))
+                    .foregroundStyle(AG.inkMuted)
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+struct SonivoChip: View {
+    let title: String
+    let icon: String
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .bold))
+            Text(title)
+                .font(AG.text(12.5, isActive ? .bold : .medium))
+        }
+        .foregroundStyle(isActive ? Color.black.opacity(0.86) : AG.ink.opacity(0.82))
+        .padding(.horizontal, 13)
+        .padding(.vertical, 8)
+        .background(
+            Capsule().fill(isActive ? AnyShapeStyle(AG.emberGradient) : AnyShapeStyle(Color.white.opacity(0.08)))
+        )
+        .overlay(Capsule().strokeBorder(isActive ? Color.clear : AG.hairline, lineWidth: 0.8))
+    }
+}
+
+struct SonivoMoreButton: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(AG.text(12, .bold))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .black))
+        }
+        .foregroundStyle(AG.amber)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Capsule().fill(AG.amber.opacity(0.14)))
+    }
+}
+
+/// Обложка из сети. Color.clear + overlay гарантирует, что картинка никогда
+/// не раздувает родительскую разметку.
+struct RemoteArtwork: View {
+    let urlString: String?
+    var corner: CGFloat = 12
+
+    var body: some View {
+        Color.clear
+            .overlay {
+                if let s = urlString, let url = URL(string: s) {
+                    AsyncImage(url: url) { phase in
+                        if let img = phase.image {
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            placeholder
+                        }
+                    }
+                } else {
+                    placeholder
+                }
+            }
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(AG.hairline, lineWidth: 0.8)
+            )
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(colors: [AG.coal, AG.card], startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(AG.inkMuted)
+        }
+    }
+}
+
+/// Обёртка для нумерованных списков — стабильный id без enumerated().
+struct RankedTrack: Identifiable {
+    let rank: Int
+    let item: YandexMusicService.YMTrackItem
+    var id: String { String(rank) + "-" + item.id }
+}
+
+struct ChartRowView: View {
+    let rank: Int?
+    let item: YandexMusicService.YMTrackItem
+    let onPlay: () -> Void
+
+    var body: some View {
+        Button(action: onPlay) {
+            HStack(spacing: 12) {
+                if let rank {
+                    Text(String(rank))
+                        .font(AG.display(15, .heavy).monospacedDigit())
+                        .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
+                        .frame(width: 26, alignment: .center)
+                }
+
+                RemoteArtwork(urlString: item.coverUrlString, corner: 10)
+                    .frame(width: 50, height: 50)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(AG.text(14, .semibold))
+                        .foregroundStyle(AG.ink)
+                        .lineLimit(1)
+                    Text(item.artistName)
+                        .font(AG.text(11.5, .regular))
+                        .foregroundStyle(AG.inkMuted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Menu {
+                    Button {
+                        SonivoPlay.download(item)
+                    } label: {
+                        Label("Скачать на iPhone", systemImage: "arrow.down.circle")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(AG.inkMuted)
+                        .frame(width: 30, height: 44)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Единая точка запуска воспроизведения
+
+@MainActor
+enum SonivoPlay {
+    static func track(_ item: YandexMusicService.YMTrackItem, in list: [YandexMusicService.YMTrackItem]) {
+        let ym = YandexMusicService.shared
+        ym.endStationSession()
+        Task {
+            guard let info = try? await ym.getStreamInfo(for: item.id) else { return }
+            var t = ym.convertToTrack(item)
+            t.streamUrlString = info.url.absoluteString
+            let source = list.isEmpty ? [item] : list
+            let queue = source.map { ym.convertToTrack($0) }
+            PlayerCore.shared.play(t, newQueue: queue)
+        }
+    }
+
+    /// Запуск станции: очередь собирается из нескольких батчей ротора
+    /// и фильтруется по истории — поэтому треки больше не повторяются.
+    static func wave(_ station: YandexMusicService.StationOption) {
+        let ym = YandexMusicService.shared
+        Task {
+            ym.beginStationSession(station.stationId)
+            var tracks = await ym.buildWaveQueue(stationId: station.stationId, target: 45)
+            if tracks.isEmpty {
+                tracks = (try? await ym.getChart()) ?? []
+            }
+            guard let first = tracks.first,
+                  let info = try? await ym.getStreamInfo(for: first.id) else { return }
+            var t = ym.convertToTrack(first)
+            t.streamUrlString = info.url.absoluteString
+            let queue = tracks.map { ym.convertToTrack($0) }
+            PlayerCore.shared.play(t, newQueue: queue)
+        }
+    }
+
+    static func album(_ album: YandexMusicService.YMAlbumItem) {
+        let ym = YandexMusicService.shared
+        ym.endStationSession()
+        Task {
+            let tracks = (try? await ym.getAlbumTracks(albumId: album.id)) ?? []
+            guard let first = tracks.first,
+                  let info = try? await ym.getStreamInfo(for: first.id) else { return }
+            var t = ym.convertToTrack(first)
+            t.streamUrlString = info.url.absoluteString
+            let queue = tracks.map { ym.convertToTrack($0) }
+            PlayerCore.shared.play(t, newQueue: queue)
+        }
+    }
+
+    static func download(_ item: YandexMusicService.YMTrackItem) {
+        let ym = YandexMusicService.shared
+        Task {
+            guard let info = try? await ym.getStreamInfo(for: item.id) else { return }
+            var t = ym.convertToTrack(item)
+            t.streamUrlString = info.url.absoluteString
+            await LibraryStore.shared.saveOnlineTrackLocally(track: t)
+        }
+    }
+}
+
+// MARK: - Топ-100
+
+struct Top100ChartView: View {
+    let title: String
+    let tracks: [YandexMusicService.YMTrackItem]
+
+    private var ranked: [RankedTrack] {
+        tracks.enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
+    }
+
+    var body: some View {
+        ZStack {
+            SonivoBackdrop()
+
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    SonivoHeader(
+                        title: "Топ",
+                        accent: "100",
+                        subtitle: "Самые популярные треки прямо сейчас · " + String(tracks.count) + " треков"
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                    ForEach(ranked) { row in
+                        ChartRowView(rank: row.rank, item: row.item) {
+                            SonivoPlay.track(row.item, in: tracks)
+                        }
+                    }
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 28)
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+    }
+}
+
+// MARK: - Секции вкладки «Новое»
+
+enum NewSection: String, CaseIterable, Identifiable {
+    case fresh
+    case popular
+    case listening
+    case top100
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .fresh:     return "Новинки"
+        case .popular:   return "Популярное"
+        case .listening: return "Сейчас слушают"
+        case .top100:    return "Топ 100"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .fresh:     return "sparkles"
+        case .popular:   return "flame.fill"
+        case .listening: return "headphones"
+        case .top100:    return "chart.bar.fill"
+        }
+    }
+}
