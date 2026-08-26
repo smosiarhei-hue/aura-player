@@ -102,11 +102,12 @@ private struct LyricsLineView: View {
             .foregroundStyle(isActive ? highlight.opacity(0.45) : Color.secondary.opacity(0.55))
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
+            .shadow(color: isActive ? highlight.opacity(0.6) : .clear, radius: isActive ? 12 : 0)
             .overlay {
                 if isActive {
                     Text(line.text)
                         .font(.system(size: fontSize, weight: .bold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
                         .mask(alignment: .leading) {

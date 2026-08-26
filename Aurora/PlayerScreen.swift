@@ -25,6 +25,11 @@ struct PlayerScreen: View {
         currentTrack?.palette ?? Palette.seeded(42).colors
     }
 
+    private var qualityLabel: String {
+        if let br = player.currentBitrate { return "\(br) kbps" }
+        return "HQ"
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -328,12 +333,24 @@ struct PlayerScreen: View {
                 Spacer()
 
                 HStack(spacing: 4) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Dolby Atmos")
-                        .font(.system(size: 11, weight: .bold))
+                    Menu {
+                        ForEach(AudioQuality.allCases) { q in
+                            Button {
+                                player.selectQuality(q)
+                            } label: {
+                                Label(q.label, systemImage: player.audioQuality == q ? "checkmark" : "waveform")
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "waveform")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(qualityLabel)
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(.white.opacity(0.70))
+                    }
                 }
-                .foregroundStyle(.white.opacity(0.55))
 
                 Spacer()
 

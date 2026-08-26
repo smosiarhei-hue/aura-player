@@ -4,6 +4,27 @@ import CoreMedia
 import MediaPlayer
 import SwiftUI
 
+// MARK: - Audio Quality Selection
+
+enum AudioQuality: Int, CaseIterable, Identifiable {
+    case auto = 0, high = 1, medium = 2
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .auto: return "Авто"
+        case .high: return "Высокое (320 kbps)"
+        case .medium: return "Среднее (128 kbps)"
+        }
+    }
+    var targetBitrate: Int? {
+        switch self {
+        case .auto: return nil
+        case .high: return 320
+        case .medium: return 128
+        }
+    }
+}
+
 // MARK: - Fast Progressive Audio & Local Playback Engine (PlayerCore)
 
 @MainActor
@@ -33,6 +54,11 @@ final class PlayerCore: ObservableObject {
     // Transition Settings
     @Published var transitionMode: TransitionMode = .automix { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
     @Published var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
+
+    // Audio Quality
+    @Published private(set) var currentBitrate: Int?
+    @Published private(set) var currentCodec: String?
+    @Published var audioQuality: AudioQuality = .auto { didSet { defaults.set(audioQuality.rawValue, forKey: "player.quality") } }
 
     private let defaults = UserDefaults.standard
 
@@ -188,6 +214,8 @@ final class PlayerCore: ObservableObject {
 
         crossfadeDuration = defaults.double(forKey: "player.crossfadeDuration")
         if crossfadeDuration <= 0 { crossfadeDuration = 3.0 }
+
+        audioQuality = AudioQuality(rawValue: defaults.integer(forKey: "player.quality")) ?? .auto
 
         let savedVol = defaults.float(forKey: "player.volume")
         volume = savedVol > 0 ? savedVol : 1.0
@@ -469,25 +497,56 @@ final class PlayerCore: ObservableObject {
         let url = track.url
         // Jamendo already stores a full https stream URL; Yandex stores only the track id until resolved.
         if url.scheme == "http" || url.scheme == "https" {
+            currentBitrate = 128   // Jamendo mp32
+            currentCodec = "mp3"
             beginStream(url, at: seconds)
             return
         }
 
-        let rawID = track.streamUrlString ?? ""
-        let ymID = rawID
-            .replacingOccurrences(of: "ym_", with: "")
-            .replacingOccurrences(of: ".mp3", with: "")
-
+        let ymID = Self.yandexTrackID(from: track)
         Task {
             do {
-                let resolved = try await YandexMusicService.shared.getDirectStreamURL(for: ymID)
+                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: audioQuality.targetBitrate)
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
-                self.beginStream(resolved, at: seconds)
+                self.currentBitrate = info.bitrate
+                self.currentCodec = info.codec
+                self.beginStream(info.url, at: seconds)
             } catch {
                 guard self.generation == token else { return }
                 self.isPlaying = false
                 self.playError = "Не удалось открыть поток трека"
             }
+        }
+    }
+
+    static func yandexTrackID(from track: Track) -> String {
+        let raw = track.streamUrlString ?? ""
+        return raw
+            .replacingOccurrences(of: "ym_", with: "")
+            .replacingOccurrences(of: ".mp3", with: "")
+    }
+
+    func selectQuality(_ q: AudioQuality) {
+        guard q != audioQuality else { return }
+        audioQuality = q
+        reapplyStreamQuality()
+    }
+
+    private func reapplyStreamQuality() {
+        guard let track = currentTrack, track.isStream else { return }
+        let url = track.url
+        guard !(url.scheme == "http" || url.scheme == "https") else { return } // Jamendo fixed, no-op
+        let ymID = Self.yandexTrackID(from: track)
+        let pos = progress
+        let token = generation
+        Task {
+            do {
+                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: audioQuality.targetBitrate)
+                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                self.currentBitrate = info.bitrate
+                self.currentCodec = info.codec
+                self.beginStream(info.url, at: pos)
+            } catch { }
         }
     }
 

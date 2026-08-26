@@ -160,7 +160,17 @@ final class YandexMusicService: ObservableObject {
 
     // MARK: - Resolve Direct MP3 Streaming Link with MD5 Signature
 
+    struct StreamInfo {
+        let url: URL
+        let bitrate: Int
+        let codec: String
+    }
+
     func getDirectStreamURL(for trackId: String) async throws -> URL {
+        try await getStreamInfo(for: trackId).url
+    }
+
+    func getStreamInfo(for trackId: String, preferredBitrate: Int? = nil) async throws -> StreamInfo {
         let downloadInfoListURL = URL(string: "\(Self.apiBase)/tracks/\(trackId)/download-info")!
         let req = authorizedRequest(url: downloadInfoListURL)
         let (data, _) = try await URLSession.shared.data(for: req)
@@ -180,7 +190,13 @@ final class YandexMusicService: ObservableObject {
             throw URLError(.cannotFindHost)
         }
 
-        let best = list.filter { $0.codec.lowercased() == "mp3" }.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+        let mp3 = list.filter { $0.codec.lowercased() == "mp3" }
+        let best: DownloadInfoEntry
+        if let preferred = preferredBitrate {
+            best = mp3.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
+        } else {
+            best = mp3.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+        }
 
         guard let xmlURL = URL(string: best.downloadInfoUrl) else { throw URLError(.badURL) }
         let (xmlData, _) = try await URLSession.shared.data(from: xmlURL)
@@ -201,7 +217,7 @@ final class YandexMusicService: ObservableObject {
 
         let finalURLString = "https://\(host)/get-mp3/\(sign)/\(ts)\(path)"
         guard let finalURL = URL(string: finalURLString) else { throw URLError(.badURL) }
-        return finalURL
+        return StreamInfo(url: finalURL, bitrate: best.bitrateInKbps, codec: best.codec)
     }
 
     // MARK: - Convert YMTrackItem to App Track Model
