@@ -5,6 +5,9 @@ on:
     tags: [ 'v*' ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -19,7 +22,6 @@ jobs:
         id: version
         run: |
           RUN=${{ github.run_number }}
-          # Baseline: run #50 == 1.0.1. Each subsequent run increments the patch.
           BASE_RUN=50
           BASE_PATCH=1
           PATCH=$((BASE_PATCH + RUN - BASE_RUN))
@@ -42,7 +44,10 @@ jobs:
         run: xcodegen generate
 
       - name: Build unsigned app
+        id: xcodebuild
+        shell: bash
         run: |
+          set -o pipefail
           xcodebuild \
             -project Sonivo.xcodeproj \
             -scheme Sonivo \
@@ -53,7 +58,32 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee build.log
+
+      - name: Save compiler diagnostics
+        if: failure() && steps.xcodebuild.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          grep -nE "error:|fatal error:|BUILD FAILED|Command SwiftCompile failed" build.log | tail -n 250 > compiler-errors.txt || true
+          if [ ! -s compiler-errors.txt ]; then
+            tail -n 300 build.log > compiler-errors.txt
+          fi
+          printf "Commit: %s\nRun: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" > diagnostic.txt
+          cat compiler-errors.txt >> diagnostic.txt
+
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b ci-diagnostics
+          mkdir -p ci-logs
+          cp "$GITHUB_WORKSPACE/diagnostic.txt" ci-logs/latest-build-errors.txt
+          git add ci-logs/latest-build-errors.txt
+          git commit -m "Record compiler errors from run $GITHUB_RUN_ID"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin ci-diagnostics
 
       - name: Package unsigned IPA
         run: |
