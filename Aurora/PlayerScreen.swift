@@ -41,6 +41,13 @@ struct PlayerScreen: View {
         return String(format: "Таймер сна • %d:%02d", m, s)
     }
 
+    private var sleepTimerShortLabel: String {
+        guard let remaining = player.sleepTimerRemaining else { return "" }
+        let m = Int(remaining) / 60
+        let s = Int(remaining) % 60
+        return String(format: "%d:%02d", m, s)
+    }
+
     private var bassEnergy: Double { Double(analyzer.bass) }
 
     /// Real bass energy when the local EQ tap has signal; otherwise a subtle
@@ -64,47 +71,56 @@ struct PlayerScreen: View {
                     // Top Drag Indicator & Settings Quick Access
                     topGrabber
                         .padding(.top, max(geo.safeAreaInsets.top, 8))
+                        .padding(.horizontal, 8)
 
-                    Spacer(minLength: 6)
+                    Spacer(minLength: 8)
 
-                    // Top panel: small cover beside title/artist + star/more
-                    trackMetadataRow
-                        .padding(.horizontal, 20)
+                    // Big centered hero cover (standard play/pause animation + hero transition)
+                    let artSize = min(geo.size.width - 72, geo.size.height * 0.30)
+                    artworkHero(size: max(150, artSize))
                         .offset(x: horizontalDragOffset)
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                controlsVisible.toggle()
+                            }
+                        }
 
-                    Spacer(minLength: 6)
-
-                    // Subtle blurry karaoke teleprompter line
-                    if let line = currentLyricLine {
-                        teleprompterText(line)
-                            .padding(.horizontal, 32)
-                    }
-
-                    Spacer(minLength: 6)
+                    Spacer(minLength: 14)
 
                     if controlsVisible {
+                        // Title + small cover + artist + star + menu (back below the cover)
+                        trackMetadataRow
+                            .padding(.horizontal, 24)
+
+                        // Subtle blurry karaoke teleprompter line
+                        if let line = currentLyricLine {
+                            teleprompterText(line)
+                                .padding(.horizontal, 32)
+                                .padding(.top, 14)
+                        }
+
                         // Apple Music Time Scrubber & Audio Format Badge
                         timeScrubberSection
                             .padding(.horizontal, 28)
-                            .padding(.top, 10)
+                            .padding(.top, 14)
 
                         // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
                         playbackControlsRow
                             .padding(.horizontal, 36)
-                            .padding(.top, 10)
+                            .padding(.top, 8)
 
                         // System Volume Slider (MPVolumeView)
                         volumeSliderSection
                             .padding(.horizontal, 28)
-                            .padding(.top, 12)
+                            .padding(.top, 10)
 
-                        // Bottom Navigation Bar (Lyrics, AirPlay, Queue)
+                        // Bottom Navigation Bar (Lyrics, AirPlay, Queue, Sleep Timer)
                         bottomUtilityIconsRow
-                            .padding(.horizontal, 42)
-                            .padding(.top, 12)
+                            .padding(.horizontal, 32)
+                            .padding(.top, 10)
                             .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
                     } else {
-                        Spacer(minLength: 60)
+                        Spacer(minLength: 40)
                     }
                 }
             }
@@ -157,30 +173,17 @@ struct PlayerScreen: View {
     private func driftingArtwork(geo: GeometryProxy) -> some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
-            let drift: CGFloat = 1.0 + CGFloat(sin(t * 0.4)) * 0.04
+            let drift: CGFloat = 1.0 + max(0, sin(t * 0.4)) * 0.04
             let bass = effectiveBass(at: t)
             let beatBoost: CGFloat = player.isPlaying ? 1.0 + CGFloat(bass) * 0.07 : 1.0
+            let scale = drift * beatBoost
 
             if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                Image(uiImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width * 1.6, height: geo.size.height * 1.1)
-                    .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
-                    .scaleEffect(drift * beatBoost)
-                    .blur(radius: 42)
-                    .saturation(1.15)
+                radialBlurArtwork(Image(uiImage: img), geo: geo, scale: scale)
             } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
                 AsyncImage(url: url) { phase in
                     if case .success(let image) = phase {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: geo.size.width * 1.6, height: geo.size.height * 1.1)
-                            .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
-                            .scaleEffect(drift * beatBoost)
-                            .blur(radius: 42)
-                            .saturation(1.15)
+                        radialBlurArtwork(image, geo: geo, scale: scale)
                     } else {
                         AnimatedMeshBackground(palette: palette)
                     }
@@ -189,6 +192,41 @@ struct PlayerScreen: View {
                 AnimatedMeshBackground(palette: palette)
             }
         }
+    }
+
+    // Sharp artwork in the center, blurred only toward the edges (radial mask).
+    @ViewBuilder
+    private func radialBlurArtwork(_ image: Image, geo: GeometryProxy, scale: CGFloat) -> some View {
+        let dim = max(geo.size.width, geo.size.height)
+        ZStack {
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: geo.size.width, height: geo.size.height)
+                .scaleEffect(scale)
+                .saturation(1.12)
+                .clipped()
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: geo.size.width, height: geo.size.height)
+                .scaleEffect(scale)
+                .saturation(1.12)
+                .blur(radius: 34)
+                .mask(
+                    RadialGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .clear, location: 0.45),
+                            .init(color: .black, location: 1.0)
+                        ]),
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: dim * 0.55
+                    )
+                )
+        }
+        .clipped()
     }
 
     // MARK: - Top Grabber
@@ -213,7 +251,7 @@ struct PlayerScreen: View {
 
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.80))
                     .frame(width: 44, height: 44)
             }
@@ -239,52 +277,73 @@ struct PlayerScreen: View {
 
     // MARK: - Track Metadata Row (Favorite & Context Menu)
 
-    private var beatGlowArtwork: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let bass = effectiveBass(at: timeline.date.timeIntervalSinceReferenceDate)
-
-            Group {
-                if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                    Image(uiImage: img)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
-                    AsyncImage(url: url) { phase in
-                        if case .success(let image) = phase {
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } else {
-                            artworkFallback(size: 72)
-                        }
+    // Big centered hero cover — standard play/pause animation (no beat jump),
+    // hero-matched to the mini player cover for a clean open/close morph.
+    private func artworkHero(size: CGFloat) -> some View {
+        Group {
+            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        artworkFallback(size: size)
                     }
-                } else {
-                    artworkFallback(size: 72)
                 }
-            }
-            .frame(width: 72, height: 72)
-            .matchedGeometryEffect(id: "heroArtwork", in: namespace)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
-            )
-            .shadow(color: (palette.first ?? .white).opacity(player.isPlaying ? 0.35 + 0.5 * bass : 0.10),
-                    radius: player.isPlaying ? 16 + 30 * bass : 8,
-                    x: 0, y: player.isPlaying ? 6 + 6 * bass : 3)
-            .scaleEffect(player.isPlaying ? 1.0 + bass * 0.08 : 0.96)
-            .onTapGesture {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    controlsVisible.toggle()
-                }
+            } else {
+                artworkFallback(size: size)
             }
         }
+        .frame(width: size, height: size)
+        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+        )
+        .shadow(color: (palette.first ?? .white).opacity(0.28), radius: 24, x: 0, y: 12)
+        .scaleEffect(player.isPlaying ? 1.0 : 0.90)
+        .animation(.spring(response: 0.5, dampingFraction: 0.78), value: player.isPlaying)
+    }
+
+    // Small thumbnail beside the title (no hero transition, no beat pulse).
+    private var smallCover: some View {
+        Group {
+            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        artworkFallback(size: 56)
+                    }
+                }
+            } else {
+                artworkFallback(size: 56)
+            }
+        }
+        .frame(width: 56, height: 56)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+        )
     }
 
     private var trackMetadataRow: some View {
         HStack(alignment: .center, spacing: 14) {
-            // Small artwork (matched-geometry hero) with beat glow
-            beatGlowArtwork
+            // Small artwork thumbnail beside the title
+            smallCover
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -597,6 +656,42 @@ struct PlayerScreen: View {
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
+
+            Spacer()
+
+            // Visible sleep timer (moon) — always in the player, not buried in the ••• menu
+            Menu {
+                ForEach([5, 10, 15, 30, 45, 60, 90, 120], id: \.self) { m in
+                    Button {
+                        if settings.hapticsEnabled {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                        player.setSleepTimer(minutes: m)
+                    } label: {
+                        Label("\(m) минут", systemImage: player.sleepTimerMinutes == m ? "checkmark" : "clock")
+                    }
+                }
+                if player.sleepTimerMinutes != nil {
+                    Divider()
+                    Button(role: .destructive) {
+                        player.setSleepTimer(minutes: nil)
+                    } label: {
+                        Label("Выключить таймер сна", systemImage: "moon.zzz")
+                    }
+                }
+            } label: {
+                VStack(spacing: 2) {
+                    Image(systemName: player.sleepTimerMinutes != nil ? "moon.zzz.fill" : "moon.zzz")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(player.sleepTimerMinutes != nil ? .yellow : .white.opacity(0.75))
+                    if player.sleepTimerMinutes != nil {
+                        Text(sleepTimerShortLabel)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.yellow.opacity(0.9))
+                    }
+                }
+                .frame(width: 44, height: 44)
+            }
         }
     }
 

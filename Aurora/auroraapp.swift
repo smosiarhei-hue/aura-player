@@ -64,7 +64,7 @@ struct RootView: View {
             // Full player overlay with matched-geometry hero transition
             if showPlayer {
                 PlayerScreen(isPresented: $showPlayer, namespace: playerNamespace)
-                    .transition(.move(edge: .bottom))
+                    .transition(.opacity)
                     .zIndex(5)
             }
         }
@@ -78,7 +78,7 @@ struct RootView: View {
 
     private var bottomDock: some View {
         VStack(spacing: 8) {
-            if player.currentTrack != nil {
+            if player.currentTrack != nil && !showPlayer {
                 FloatingMiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
                     .padding(.horizontal, 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
