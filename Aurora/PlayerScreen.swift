@@ -47,7 +47,7 @@ struct PlayerScreen: View {
     /// time-based pulse so streaming tracks (AVPlayer, no analyzer tap) still
     /// visibly move with the beat (~96 BPM fallback).
     private func effectiveBass(at time: TimeInterval) -> Double {
-        let raw = bassEnergy
+        let raw = max(bassEnergy, Double(analyzer.streamLevel))
         if raw > 0.03 { return raw }
         guard player.isPlaying else { return 0 }
         let pulse = 0.5 + 0.5 * sin(time * 2.0 * .pi * 1.6)

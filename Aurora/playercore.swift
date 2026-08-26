@@ -589,6 +589,7 @@ final class PlayerCore: ObservableObject {
 
     private func beginStream(_ url: URL, at seconds: Double) {
         let item = AVPlayerItem(url: url)
+        StreamBeatTap.shared.attach(to: item)
         streamingPlayer.replaceCurrentItem(with: item)
         if seconds > 0 {
             streamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)

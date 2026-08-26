@@ -10,6 +10,7 @@ final class SpectrumAnalyzer: ObservableObject {
     @Published private(set) var bands: [Float] = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
     @Published private(set) var bass: Float = 0
     @Published private(set) var level: Float = 0
+    @Published private(set) var streamLevel: Float = 0
 
     private let fftSize = 1024
     private let log2n: vDSP_Length = 10
@@ -17,6 +18,7 @@ final class SpectrumAnalyzer: ObservableObject {
     private var window: [Float] = []
     private var displayValues = [Float](repeating: 0, count: SpectrumAnalyzer.bandCount)
     private var lastPublish = Date.distantPast
+    private var streamLastPublish = Date.distantPast
 
     private init() {
         fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
@@ -101,6 +103,18 @@ final class SpectrumAnalyzer: ObservableObject {
             self?.bands = zeros
             self?.bass = 0
             self?.level = 0
+            self?.streamLevel = 0
+        }
+    }
+
+    /// Fed from StreamBeatTap on the real-time audio thread; throttled to ~30 Hz.
+    func feedStreamLevel(_ level: Float) {
+        let now = Date()
+        guard now.timeIntervalSince(streamLastPublish) > 0.033 else { return }
+        streamLastPublish = now
+        let v = max(0, min(1, level * 6))
+        DispatchQueue.main.async { [weak self] in
+            self?.streamLevel = v
         }
     }
 }
