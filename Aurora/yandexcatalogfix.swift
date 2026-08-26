@@ -1,15 +1,73 @@
 import Foundation
 
-// MARK: - Safe catalog decoding fixes
-// Отдельный небольшой слой вместо повторной перезаписи большого сервиса.
-// Принимает реальные формы ответов Яндекс.Музыки: массивы popularTracks,
-// albums и similarArtists, а также обложку артиста в cover.uri.
+// MARK: - Catalog compatibility types
+// GlobalSearchResults использует короткое имя YMArtistBrief. Объявление на
+// уровне модуля надёжно разрешается компилятором независимо от порядка файлов.
+
+typealias YMArtistBrief = YandexMusicService.YMArtistItem.YMArtistBrief
+
+private struct YMCatalogArtistCover: Decodable {
+    let uri: String?
+}
+
+private struct YMCatalogSearchArtist: Decodable {
+    let id: Int?
+    let name: String?
+    let coverUri: String?
+    let cover: YMCatalogArtistCover?
+}
+
+private struct YMCatalogSearchResponse: Decodable {
+    struct Result: Decodable {
+        struct TracksBlock: Decodable {
+            let results: [YandexMusicService.YMTrackItem]?
+        }
+        struct ArtistsBlock: Decodable {
+            let results: [YMCatalogSearchArtist]?
+        }
+        struct AlbumsBlock: Decodable {
+            let results: [YandexMusicService.YMAlbumItem]?
+        }
+        let tracks: TracksBlock?
+        let artists: ArtistsBlock?
+        let albums: AlbumsBlock?
+    }
+    let result: Result?
+}
+
+private struct YMCatalogArtistDetails: Decodable {
+    struct Counts: Decodable {
+        let tracks: Int?
+        let directAlbums: Int?
+    }
+    let id: Int?
+    let name: String?
+    let coverUri: String?
+    let cover: YMCatalogArtistCover?
+    let genres: [String]?
+    let counts: Counts?
+}
+
+private struct YMCatalogSimilarArtist: Decodable {
+    let id: Int?
+    let name: String?
+    let coverUri: String?
+    let cover: YMCatalogArtistCover?
+}
+
+private struct YMCatalogArtistResponse: Decodable {
+    struct Result: Decodable {
+        let artist: YMCatalogArtistDetails?
+        let popularTracks: [YandexMusicService.YMTrackItem]?
+        let albums: [YandexMusicService.YMAlbumItem]?
+        let similarArtists: [YMCatalogSimilarArtist]?
+    }
+    let result: Result?
+}
+
+// MARK: - Safe global catalog decoding
 
 extension YandexMusicService {
-    /// Нужен для GlobalSearchResults: краткая модель артиста вложена в YMArtistItem.
-    typealias YMArtistBrief = YMArtistItem.YMArtistBrief
-
-    /// Исправленный глобальный поиск: треки, артисты и альбомы одним запросом.
     func searchAllFixed(query: String) async -> GlobalSearchResults {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return GlobalSearchResults() }
@@ -23,48 +81,15 @@ extension YandexMusicService {
         ]
 
         guard let url = components.url,
-              let pair = try? await URLSession.shared.data(for: catalogRequest(url: url)) else {
+              let pair = try? await URLSession.shared.data(for: catalogRequest(url: url)),
+              let decoded = try? JSONDecoder().decode(YMCatalogSearchResponse.self, from: pair.0) else {
             return GlobalSearchResults()
         }
 
-        struct ArtistCover: Decodable {
-            let uri: String?
-        }
-
-        struct RawArtist: Decodable {
-            let id: Int?
-            let name: String?
-            let coverUri: String?
-            let cover: ArtistCover?
-
-            enum CodingKeys: String, CodingKey {
-                case id, name, coverUri, cover
-            }
-        }
-
-        struct Response: Decodable {
-            struct Result: Decodable {
-                struct TracksBlock: Decodable {
-                    let results: [YMTrackItem]?
-                }
-                struct ArtistsBlock: Decodable {
-                    let results: [RawArtist]?
-                }
-                struct AlbumsBlock: Decodable {
-                    let results: [YMAlbumItem]?
-                }
-                let tracks: TracksBlock?
-                let artists: ArtistsBlock?
-                let albums: AlbumsBlock?
-            }
-            let result: Result?
-        }
-
-        guard let decoded = try? JSONDecoder().decode(Response.self, from: pair.0) else {
-            return GlobalSearchResults()
-        }
-
-        let normalized = clean.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let normalized = clean.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: .current
+        )
 
         var tracks = Self.playable(decoded.result?.tracks?.results ?? [])
         tracks.sort { left, right in
@@ -125,10 +150,14 @@ extension YandexMusicService {
             return (left.year ?? 0) > (right.year ?? 0)
         }
 
-        return GlobalSearchResults(tracks: tracks, artists: artists, albums: albums, suggestions: [])
+        return GlobalSearchResults(
+            tracks: tracks,
+            artists: artists,
+            albums: albums,
+            suggestions: []
+        )
     }
 
-    /// Исправленная страница артиста. Поля каталога приходят массивами напрямую.
     func getArtistFixed(artistId: String) async throws -> YMArtistItem {
         var components = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info")!
         components.queryItems = [
@@ -137,43 +166,10 @@ extension YandexMusicService {
             URLQueryItem(name: "similarArtists", value: "true")
         ]
         guard let url = components.url else { throw URLError(.badURL) }
+
         let (data, _) = try await URLSession.shared.data(for: catalogRequest(url: url))
+        let decoded = try JSONDecoder().decode(YMCatalogArtistResponse.self, from: data)
 
-        struct ArtistCover: Decodable {
-            let uri: String?
-        }
-
-        struct RawArtist: Decodable {
-            struct Counts: Decodable {
-                let tracks: Int?
-                let directAlbums: Int?
-            }
-            let id: Int?
-            let name: String?
-            let coverUri: String?
-            let cover: ArtistCover?
-            let genres: [String]?
-            let counts: Counts?
-        }
-
-        struct RawSimilarArtist: Decodable {
-            let id: Int?
-            let name: String?
-            let coverUri: String?
-            let cover: ArtistCover?
-        }
-
-        struct Response: Decodable {
-            struct Result: Decodable {
-                let artist: RawArtist?
-                let popularTracks: [YMTrackItem]?
-                let albums: [YMAlbumItem]?
-                let similarArtists: [RawSimilarArtist]?
-            }
-            let result: Result?
-        }
-
-        let decoded = try JSONDecoder().decode(Response.self, from: data)
         guard let raw = decoded.result?.artist,
               let id = raw.id,
               let name = raw.name else {
