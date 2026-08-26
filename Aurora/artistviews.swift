@@ -37,8 +37,6 @@ struct ArtistView: View {
         .task { await load() }
     }
 
-    // MARK: Hero
-
     private func heroSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         VStack(spacing: 0) {
             RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
@@ -88,8 +86,6 @@ struct ArtistView: View {
         }
     }
 
-    // MARK: Популярные треки
-
     private func popularTracksSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         Group {
             if !artist.popularTracks.isEmpty {
@@ -109,8 +105,6 @@ struct ArtistView: View {
             }
         }
     }
-
-    // MARK: Альбомы
 
     private func albumsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         Group {
@@ -153,8 +147,6 @@ struct ArtistView: View {
         }
     }
 
-    // MARK: Похожие артисты
-
     private func similarArtistsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         Group {
             if !artist.similarArtists.isEmpty {
@@ -190,8 +182,6 @@ struct ArtistView: View {
             }
         }
     }
-
-    // MARK: Error
 
     private func errorView(_ message: String) -> some View {
         VStack(spacing: 16) {
@@ -229,7 +219,7 @@ struct ArtistView: View {
         isLoading = true
         error = nil
         do {
-            artist = try await ym.getArtist(artistId: artistId)
+            artist = try await ym.getArtistFixed(artistId: artistId)
         } catch {
             self.error = error.localizedDescription
         }
@@ -356,7 +346,8 @@ struct AlbumView: View {
     private func load() async {
         isLoading = true
         let albumIdInt = Int(albumId) ?? 0
-        album = try? await ym.fetchAlbums(ids: [albumIdInt]).first
+        let loadedAlbums = (try? await ym.fetchAlbums(ids: [albumIdInt])) ?? []
+        album = loadedAlbums.first
         tracks = (try? await ym.getAlbumTracks(albumId: albumIdInt)) ?? []
         isLoading = false
     }
