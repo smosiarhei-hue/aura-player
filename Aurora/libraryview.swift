@@ -134,7 +134,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            .padding(.bottom, 130)
+            .padding(.bottom, 12)
         }
     }
 

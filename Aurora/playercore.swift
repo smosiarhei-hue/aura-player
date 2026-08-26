@@ -60,6 +60,12 @@ final class PlayerCore: ObservableObject {
     @Published private(set) var currentCodec: String?
     @Published var audioQuality: AudioQuality = .auto { didSet { defaults.set(audioQuality.rawValue, forKey: "player.quality") } }
 
+    // Sleep Timer
+    @Published private(set) var sleepTimerMinutes: Int? = nil
+    @Published private(set) var sleepTimerRemaining: Double? = nil
+    private var sleepTimer: Timer?
+    private var sleepDeadline: Date?
+
     private let defaults = UserDefaults.standard
 
     // Instant Streaming Engine (AVPlayer progressive playback in ~150ms)
@@ -82,6 +88,9 @@ final class PlayerCore: ObservableObject {
     private var anchorOffset: Double = 0
     private var pausedProgress: Double = 0
     private var progressTimer: Timer?
+
+    // Remote artwork cache for Now Playing (prevents Control Center flicker)
+    private var remoteArtworkCache: [UUID: UIImage] = [:]
 
     // AutoMix State
     private var isTransitioning = false
@@ -294,17 +303,21 @@ final class PlayerCore: ObservableObject {
 
         if let image = LibraryStore.cachedArtworkImage(for: track) {
             info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        } else if let image = remoteArtworkCache[track.id] {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
 
-        // Remote artwork for streaming tracks (Control Center / Dynamic Island / Lock Screen)
+        // Fetch remote artwork once per track, then cache (prevents flicker)
         if let cover = track.coverURL, let url = URL(string: cover),
-           LibraryStore.cachedArtworkImage(for: track) == nil {
+           LibraryStore.cachedArtworkImage(for: track) == nil,
+           remoteArtworkCache[track.id] == nil {
             Task { [weak self] in
                 guard let (data, _) = try? await URLSession.shared.data(from: url),
                       let image = UIImage(data: data) else { return }
-                guard self?.currentTrack?.id == track.id else { return }
+                guard let self, self.currentTrack?.id == track.id else { return }
+                self.remoteArtworkCache[track.id] = image
                 var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 current[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = current
@@ -417,6 +430,7 @@ final class PlayerCore: ObservableObject {
     }
 
     func stopAndClear() {
+        cancelSleepTimer()
         generation += 1
         streamingPlayer.pause()
         streamingPlayer.replaceCurrentItem(with: nil)
@@ -798,6 +812,44 @@ final class PlayerCore: ObservableObject {
         let m = Int(t) / 60
         let s = Int(t) % 60
         return String(format: "%d:%02d", m, s)
+    }
+
+    // MARK: - Sleep Timer
+
+    func setSleepTimer(minutes: Int?) {
+        sleepTimer?.invalidate()
+        sleepTimer = nil
+        sleepDeadline = nil
+        sleepTimerRemaining = nil
+        sleepTimerMinutes = nil
+        guard let minutes, minutes > 0 else { return }
+        sleepDeadline = Date().addingTimeInterval(Double(minutes) * 60)
+        sleepTimerRemaining = Double(minutes) * 60
+        sleepTimerMinutes = minutes
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickSleepTimer() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        sleepTimer = timer
+    }
+
+    private func tickSleepTimer() {
+        guard let deadline = sleepDeadline else { return }
+        let remaining = deadline.timeIntervalSinceNow
+        if remaining <= 0 {
+            pause()
+            cancelSleepTimer()
+        } else {
+            sleepTimerRemaining = remaining
+        }
+    }
+
+    private func cancelSleepTimer() {
+        sleepTimer?.invalidate()
+        sleepTimer = nil
+        sleepDeadline = nil
+        sleepTimerRemaining = nil
+        sleepTimerMinutes = nil
     }
 
     // MARK: - Spectrum tap

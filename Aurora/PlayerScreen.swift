@@ -21,6 +21,8 @@ struct PlayerScreen: View {
     @State private var dragOffset: CGFloat = 0
     @State private var horizontalDragOffset: CGFloat = 0
     @State private var controlsVisible = true
+    @State private var lyrics: Lyrics?
+    @State private var currentLyricLine: String?
 
     private var currentTrack: Track? { player.currentTrack }
     private var palette: [Color] {
@@ -45,46 +47,44 @@ struct PlayerScreen: View {
                     topGrabber
                         .padding(.top, max(geo.safeAreaInsets.top, 8))
 
-                    Spacer(minLength: 10)
+                    Spacer(minLength: 6)
 
-                    // Hero Album Artwork with Play/Pause Scale + Horizontal Swipe Slide
-                    let artSize = min(geo.size.width - 64, geo.size.height * 0.34)
-                    artworkHero(size: max(150, artSize))
+                    // Top panel: small cover beside title/artist + star/more
+                    trackMetadataRow
+                        .padding(.horizontal, 20)
                         .offset(x: horizontalDragOffset)
-                        .padding(.vertical, 6)
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                controlsVisible.toggle()
-                            }
-                        }
 
-                    Spacer(minLength: 10)
+                    Spacer(minLength: 6)
+
+                    // Subtle blurry karaoke teleprompter line
+                    if let line = currentLyricLine {
+                        teleprompterText(line)
+                            .padding(.horizontal, 32)
+                    }
+
+                    Spacer(minLength: 6)
 
                     if controlsVisible {
-                        // Track Title, Explicit Badge, Artist, Star & Options
-                        trackMetadataRow
-                            .padding(.horizontal, 28)
-
                         // Apple Music Time Scrubber & Audio Format Badge
                         timeScrubberSection
                             .padding(.horizontal, 28)
-                            .padding(.top, 16)
+                            .padding(.top, 10)
 
                         // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
                         playbackControlsRow
                             .padding(.horizontal, 36)
-                            .padding(.top, 20)
+                            .padding(.top, 10)
 
                         // System Volume Slider (MPVolumeView)
                         volumeSliderSection
                             .padding(.horizontal, 28)
-                            .padding(.top, 24)
+                            .padding(.top, 12)
 
                         // Bottom Navigation Bar (Lyrics, AirPlay, Queue)
                         bottomUtilityIconsRow
                             .padding(.horizontal, 42)
-                            .padding(.top, 24)
-                            .padding(.bottom, max(geo.safeAreaInsets.bottom, 20))
+                            .padding(.top, 12)
+                            .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
                     } else {
                         Spacer(minLength: 60)
                     }
@@ -95,6 +95,12 @@ struct PlayerScreen: View {
         }
         .colorScheme(.dark)
         .statusBarHidden()
+        .task(id: player.currentTrack?.id) {
+            await loadLyrics()
+        }
+        .onReceive(player.$progress) { _ in
+            updateCurrentLyricLine()
+        }
         .sheet(isPresented: $showLyrics) { LyricsSheetView() }
         .sheet(isPresented: $showQueue) { QueueSheetView() }
         .sheet(isPresented: $showEQ) { PlayerEQSheetView() }
@@ -134,25 +140,28 @@ struct PlayerScreen: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             let drift: CGFloat = 1.0 + CGFloat(sin(t * 0.4)) * 0.04
+            let beatBoost: CGFloat = player.isPlaying ? 1.0 + bassEnergy * 0.07 : 1.0
 
             if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
                 Image(uiImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height * 0.70)
+                    .frame(width: geo.size.width * 1.6, height: geo.size.height * 1.1)
                     .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
-                    .scaleEffect(drift)
-                    .blur(radius: 2)
+                    .scaleEffect(drift * beatBoost)
+                    .blur(radius: 42)
+                    .saturation(1.15)
             } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
                 AsyncImage(url: url) { phase in
                     if case .success(let image) = phase {
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            .frame(width: geo.size.width, height: geo.size.height * 0.70)
+                            .frame(width: geo.size.width * 1.6, height: geo.size.height * 1.1)
                             .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
-                            .scaleEffect(drift)
-                            .blur(radius: 2)
+                            .scaleEffect(drift * beatBoost)
+                            .blur(radius: 42)
+                            .saturation(1.15)
                     } else {
                         AnimatedMeshBackground(palette: palette)
                     }
@@ -194,42 +203,7 @@ struct PlayerScreen: View {
         .padding(.horizontal, 16)
     }
 
-    // MARK: - Artwork Hero Card
-
-    private func artworkHero(size: CGFloat) -> some View {
-        Group {
-            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                Image(uiImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        artworkFallback(size: size)
-                    }
-                }
-            } else {
-                artworkFallback(size: size)
-            }
-        }
-        .frame(width: size, height: size)
-        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
-        )
-        .shadow(color: (palette.first ?? .white).opacity(player.isPlaying ? 0.40 + 0.45 * bassEnergy : 0.10),
-                radius: player.isPlaying ? 24 + 40 * bassEnergy : 12,
-                x: 0, y: player.isPlaying ? 14 + 8 * bassEnergy : 6)
-        .scaleEffect(player.isPlaying ? 1.0 + bassEnergy * 0.06 : 0.88)
-        .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
-        .animation(.easeOut(duration: 0.10), value: analyzer.bass)
-    }
+    // MARK: - Artwork Fallback
 
     private func artworkFallback(size: CGFloat) -> some View {
         ZStack {
@@ -248,6 +222,44 @@ struct PlayerScreen: View {
 
     private var trackMetadataRow: some View {
         HStack(alignment: .center, spacing: 14) {
+            // Small artwork (matched-geometry hero) with beat glow
+            Group {
+                if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                    AsyncImage(url: url) { phase in
+                        if case .success(let image) = phase {
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } else {
+                            artworkFallback(size: 72)
+                        }
+                    }
+                } else {
+                    artworkFallback(size: 72)
+                }
+            }
+            .frame(width: 72, height: 72)
+            .matchedGeometryEffect(id: "heroArtwork", in: namespace)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            )
+            .shadow(color: (palette.first ?? .white).opacity(player.isPlaying ? 0.35 + 0.5 * bassEnergy : 0.10),
+                    radius: player.isPlaying ? 16 + 30 * bassEnergy : 8,
+                    x: 0, y: player.isPlaying ? 6 + 6 * bassEnergy : 3)
+            .scaleEffect(player.isPlaying ? 1.0 + bassEnergy * 0.08 : 0.96)
+            .animation(.easeOut(duration: 0.10), value: analyzer.bass)
+            .onTapGesture {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    controlsVisible.toggle()
+                }
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(currentTrack?.title ?? "Sonivo Player")
@@ -307,7 +319,27 @@ struct PlayerScreen: View {
                     Label("Текст песни", systemImage: "quote.bubble")
                 }
 
-                if let track = currentTrack {
+                Menu {
+                    ForEach([5, 10, 15, 30, 45, 60, 90, 120], id: \.self) { m in
+                        Button {
+                            player.setSleepTimer(minutes: m)
+                        } label: {
+                            Label("\(m) минут", systemImage: player.sleepTimerMinutes == m ? "checkmark" : "clock")
+                        }
+                    }
+                    if player.sleepTimerMinutes != nil {
+                        Divider()
+                        Button(role: .destructive) {
+                            player.setSleepTimer(minutes: nil)
+                        } label: {
+                            Label("Выключить таймер сна", systemImage: "moon.zzz")
+                        }
+                    }
+                } label: {
+                    Label("Таймер сна", systemImage: "moon.zzz")
+                }
+
+                if let track = currentTrack, library.isTrackInLibrary(track) {
                     Button(role: .destructive) {
                         library.delete(track)
                     } label: {
@@ -320,6 +352,47 @@ struct PlayerScreen: View {
                     .foregroundStyle(.white.opacity(0.85))
                     .frame(width: 36, height: 36)
             }
+        }
+    }
+
+    // MARK: - Karaoke Teleprompter (subtle blurry running text)
+
+    @ViewBuilder
+    private func teleprompterText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 30, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.28))
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .minimumScaleFactor(0.7)
+            .blur(radius: 2.5)
+            .allowsHitTesting(false)
+    }
+
+    private func loadLyrics() async {
+        guard let track = player.currentTrack else {
+            lyrics = nil
+            currentLyricLine = nil
+            return
+        }
+        do {
+            lyrics = try await LyricsService.shared.fetchLyrics(for: track)
+        } catch {
+            lyrics = nil
+        }
+        updateCurrentLyricLine()
+    }
+
+    private func updateCurrentLyricLine() {
+        guard let lyrics, lyrics.isSynchronized else {
+            currentLyricLine = nil
+            return
+        }
+        let t = player.progress + settings.lyricsOffset
+        if let idx = lyrics.lines.firstIndex(where: { t >= $0.startTime && t < ($0.endTime ?? .greatestFiniteMagnitude) }) {
+            currentLyricLine = lyrics.lines[idx].text
+        } else {
+            currentLyricLine = nil
         }
     }
 
@@ -507,19 +580,22 @@ struct PlayerScreen: View {
         DragGesture(minimumDistance: 25)
             .onChanged { v in
                 if abs(v.translation.width) > abs(v.translation.height) {
-                    horizontalDragOffset = v.translation.width * 0.4
+                    horizontalDragOffset = v.translation.width * 0.3
                 } else if v.translation.height > 0 {
                     dragOffset = v.translation.height
                 }
             }
             .onEnded { v in
-                // Horizontal Swipe (Next / Previous Track)
-                if v.translation.width < -60 {
+                let screenW = UIScreen.main.bounds.width
+                let threshold = screenW * 0.45
+
+                // Horizontal Swipe (Next / Previous Track) — requires a deliberate full swipe
+                if v.translation.width < -threshold {
                     if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         player.next()
                     }
-                } else if v.translation.width > 60 {
+                } else if v.translation.width > threshold {
                     if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         player.previous()

@@ -53,23 +53,13 @@ struct RootView: View {
     @Namespace private var playerNamespace
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Main Tab View with explicit ViewBuilder
+        ZStack {
+            // Main Tab View, inset by the floating bottom dock so nothing overlaps
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Bottom Stack: Floating Mini Player + Floating Liquid Glass Dock
-            VStack(spacing: 8) {
-                if player.currentTrack != nil {
-                    FloatingMiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
-                        .padding(.horizontal, 16)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    bottomDock
                 }
-
-                FloatingLiquidGlassTabBar(selectedTab: $selectedTab)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
 
             // Full player overlay with matched-geometry hero transition
             if showPlayer {
@@ -78,11 +68,27 @@ struct RootView: View {
                     .zIndex(5)
             }
         }
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.currentTrack != nil)
-        .animation(.spring(response: 0.42, dampingFraction: 0.85), value: showPlayer)
+        .animation(.spring(response: 0.62, dampingFraction: 0.70), value: showPlayer)
         .onAppear {
             PlayerCore.shared.installSpectrumTap()
         }
+    }
+
+    private var bottomDock: some View {
+        VStack(spacing: 8) {
+            if player.currentTrack != nil {
+                FloatingMiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            FloatingLiquidGlassTabBar(selectedTab: $selectedTab)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+        }
+        .padding(.top, 6)
     }
 
     @ViewBuilder

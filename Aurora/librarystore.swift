@@ -102,10 +102,14 @@ final class LibraryStore: ObservableObject {
     }
 
     func isTrackFavorite(_ track: Track) -> Bool {
-        if let found = tracks.first(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
+        if let found = tracks.first(where: { ($0.fileName == track.fileName && !track.fileName.isEmpty) || $0.id == track.id }) {
             return found.isFavorite
         }
-        return track.isFavorite
+        return false
+    }
+
+    func isTrackInLibrary(_ track: Track) -> Bool {
+        tracks.contains { ($0.fileName == track.fileName && !track.fileName.isEmpty) || $0.id == track.id }
     }
 
     // MARK: - Scan local storage (Documents, Music, and Media Library)

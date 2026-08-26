@@ -7,6 +7,7 @@ struct SettingsView: View {
     @StateObject private var library = LibraryStore.shared
     @StateObject private var player = PlayerCore.shared
     @StateObject private var ym = YandexMusicService.shared
+    @StateObject private var socialAuth = SocialAuthStore.shared
     @State private var tokenInput = ""
 
     var body: some View {
@@ -37,6 +38,34 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
+                }
+
+                Section("Аккаунт") {
+                    if socialAuth.isSignedIn {
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.title2)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(socialAuth.displayName ?? "Пользователь Apple")
+                                    .font(.subheadline.weight(.medium))
+                                Text("Избранное привязано к этому аккаунту")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Button(role: .destructive) {
+                            socialAuth.signOut()
+                        } label: {
+                            Text("Выйти")
+                        }
+                    } else {
+                        SignInWithAppleView { userID, name in
+                            socialAuth.handleSuccess(userID: userID, name: name)
+                        }
+                        Text("Вход через Apple привязывает избранное к вашему аккаунту. Полная синхронизация между устройствами потребует серверной части.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Оформление") {

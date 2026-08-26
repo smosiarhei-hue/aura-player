@@ -66,7 +66,7 @@ private struct SyncedLyrics: View {
             }
             .onChange(of: activeIndex) { newIndex in
                 guard let newIndex else { return }
-                withAnimation(.easeInOut(duration: 0.4)) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
@@ -112,10 +112,33 @@ private struct LyricsLineView: View {
     private func wordAttributed(words: [LyricsWord]) -> AttributedString {
         var result = AttributedString()
         for w in words {
-            var piece = AttributedString(w.text)
-            let played = currentTime >= w.startTime
-            piece.foregroundColor = .white.opacity(played ? 1.0 : 0.45)
-            result += piece
+            if currentTime < w.startTime {
+                var piece = AttributedString(w.text)
+                piece.foregroundColor = .white.opacity(0.45)
+                result += piece
+            } else if currentTime < w.endTime {
+                // active word — smooth left-to-right fill
+                let span = max(w.endTime - w.startTime, 0.001)
+                let fraction = min(1.0, (currentTime - w.startTime) / span)
+                let chars = Array(w.text)
+                let split = Int(Double(chars.count) * fraction)
+                let sung = String(chars.prefix(split))
+                let unsung = String(chars.suffix(max(0, chars.count - split)))
+                if !sung.isEmpty {
+                    var s = AttributedString(sung)
+                    s.foregroundColor = .white.opacity(1.0)
+                    result += s
+                }
+                if !unsung.isEmpty {
+                    var u = AttributedString(unsung)
+                    u.foregroundColor = .white.opacity(0.45)
+                    result += u
+                }
+            } else {
+                var piece = AttributedString(w.text)
+                piece.foregroundColor = .white.opacity(1.0)
+                result += piece
+            }
         }
         return result
     }
