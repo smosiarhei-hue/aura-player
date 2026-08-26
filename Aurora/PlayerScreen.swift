@@ -8,6 +8,7 @@ struct PlayerScreen: View {
     @StateObject private var player = PlayerCore.shared
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var library = LibraryStore.shared
+    @StateObject private var analyzer = SpectrumAnalyzer.shared
     @Binding var isPresented: Bool
     let namespace: Namespace.ID
 
@@ -30,6 +31,8 @@ struct PlayerScreen: View {
         if let br = player.currentBitrate { return "\(br) kbps" }
         return "HQ"
     }
+
+    private var bassEnergy: Double { Double(analyzer.bass) }
 
     var body: some View {
         GeometryReader { geo in
@@ -105,29 +108,7 @@ struct PlayerScreen: View {
         ZStack {
             Color(red: 0.05, green: 0.08, blue: 0.10).ignoresSafeArea()
 
-            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                Image(uiImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height * 0.70)
-                    .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
-                    .blur(radius: 2)
-            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: geo.size.width, height: geo.size.height * 0.70)
-                            .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
-                            .blur(radius: 2)
-                    } else {
-                        AnimatedMeshBackground(palette: palette)
-                    }
-                }
-            } else {
-                AnimatedMeshBackground(palette: palette)
-            }
+            driftingArtwork(geo: geo)
 
             LinearGradient(
                 stops: [
@@ -145,6 +126,40 @@ struct PlayerScreen: View {
                 .fill(.ultraThinMaterial)
                 .opacity(0.40)
                 .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private func driftingArtwork(geo: GeometryProxy) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let drift: CGFloat = 1.0 + CGFloat(sin(t * 0.4)) * 0.04
+
+            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height * 0.70)
+                    .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
+                    .scaleEffect(drift)
+                    .blur(radius: 2)
+            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: geo.size.width, height: geo.size.height * 0.70)
+                            .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
+                            .scaleEffect(drift)
+                            .blur(radius: 2)
+                    } else {
+                        AnimatedMeshBackground(palette: palette)
+                    }
+                }
+            } else {
+                AnimatedMeshBackground(palette: palette)
+            }
         }
     }
 
@@ -208,9 +223,12 @@ struct PlayerScreen: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.45), radius: player.isPlaying ? 28 : 12, x: 0, y: player.isPlaying ? 18 : 6)
-        .scaleEffect(player.isPlaying ? 1.0 : 0.88)
+        .shadow(color: (palette.first ?? .white).opacity(player.isPlaying ? 0.40 + 0.45 * bassEnergy : 0.10),
+                radius: player.isPlaying ? 24 + 40 * bassEnergy : 12,
+                x: 0, y: player.isPlaying ? 14 + 8 * bassEnergy : 6)
+        .scaleEffect(player.isPlaying ? 1.0 + bassEnergy * 0.06 : 0.88)
         .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
+        .animation(.easeOut(duration: 0.10), value: analyzer.bass)
     }
 
     private func artworkFallback(size: CGFloat) -> some View {

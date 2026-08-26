@@ -59,7 +59,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Переходы между треками (Apple Music)") {
+                Section("Переходы между треками") {
                     Picker("Режим перехода", selection: $player.transitionMode) {
                         ForEach(TransitionMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
@@ -100,7 +100,7 @@ struct SettingsView: View {
                             Text("\(Int(settings.lyricsFontSize)) pt")
                                 .foregroundStyle(.secondary)
                         }
-                        Slider(value: $settings.lyricsFontSize, in: 16...36, step: 1)
+                        Slider(value: $settings.lyricsFontSize, in: 36...60, step: 1)
                             .tint(settings.accentColor)
                     }
 
@@ -144,9 +144,6 @@ struct SettingsView: View {
 
                 Section("Медиатека") {
                     LabeledContent("Всего треков в приложении", value: "\(library.tracks.count)")
-                    Button("Сканировать медиатеку iPhone") {
-                        Task { await library.scanSystemMediaLibrary() }
-                    }
                     Button("Пересканировать память") {
                         Task { await library.rescan() }
                     }

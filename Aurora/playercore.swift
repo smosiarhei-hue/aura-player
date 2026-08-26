@@ -297,6 +297,19 @@ final class PlayerCore: ObservableObject {
         }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+
+        // Remote artwork for streaming tracks (Control Center / Dynamic Island / Lock Screen)
+        if let cover = track.coverURL, let url = URL(string: cover),
+           LibraryStore.cachedArtworkImage(for: track) == nil {
+            Task { [weak self] in
+                guard let (data, _) = try? await URLSession.shared.data(from: url),
+                      let image = UIImage(data: data) else { return }
+                guard self?.currentTrack?.id == track.id else { return }
+                var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                current[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = current
+            }
+        }
     }
 
     // MARK: - Playback Controls

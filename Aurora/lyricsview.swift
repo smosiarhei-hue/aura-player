@@ -52,7 +52,6 @@ private struct SyncedLyrics: View {
                             line: line,
                             isActive: idx == activeIndex,
                             currentTime: currentTime,
-                            highlight: settings.lyricsHighlightColor,
                             fontSize: settings.lyricsFontSize
                         )
                         .contentShape(Rectangle())
@@ -75,40 +74,47 @@ private struct SyncedLyrics: View {
     }
 }
 
-// MARK: - Single Line with Karaoke Fill
+// MARK: - Single Line (focused lyrics: big active line, dim surrounding)
 
 private struct LyricsLineView: View {
     let line: LyricsLine
     let isActive: Bool
     let currentTime: Double
-    let highlight: Color
     let fontSize: Double
+
+    private var lineFont: Font {
+        .system(size: isActive ? fontSize : fontSize * 0.72,
+                weight: isActive ? .heavy : .semibold)
+    }
 
     var body: some View {
         Group {
             if let words = line.words, !words.isEmpty {
                 Text(wordAttributed(words: words))
-                    .font(.system(size: fontSize, weight: isActive ? .bold : .regular))
+                    .font(lineFont)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
             } else {
                 Text(line.text)
-                    .font(.system(size: fontSize, weight: isActive ? .bold : .regular))
-                    .foregroundStyle(isActive ? highlight : Color.secondary.opacity(0.55))
+                    .font(lineFont)
+                    .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
             }
         }
-        .shadow(color: isActive ? highlight.opacity(0.55) : .clear, radius: isActive ? 10 : 0)
-        .scaleEffect(isActive ? 1.0 : 0.94)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isActive)
+        .opacity(isActive ? 1.0 : 0.28)
+        .blur(radius: isActive ? 0 : 1)
+        .shadow(color: isActive ? .white.opacity(0.35) : .clear, radius: isActive ? 14 : 0)
+        .scaleEffect(isActive ? 1.0 : 0.96)
+        .animation(.easeInOut(duration: 0.3), value: isActive)
     }
 
     private func wordAttributed(words: [LyricsWord]) -> AttributedString {
         var result = AttributedString()
         for w in words {
             var piece = AttributedString(w.text)
-            piece.foregroundColor = currentTime >= w.startTime ? highlight : Color.secondary.opacity(0.5)
+            let played = currentTime >= w.startTime
+            piece.foregroundColor = .white.opacity(played ? 1.0 : 0.45)
             result += piece
         }
         return result

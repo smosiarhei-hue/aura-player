@@ -67,12 +67,6 @@ struct LibraryView: View {
                         }
 
                         Button {
-                            Task { await library.scanSystemMediaLibrary() }
-                        } label: {
-                            Label("Сканировать Apple Music на iPhone", systemImage: "music.note.house")
-                        }
-
-                        Button {
                             showFilePicker = true
                         } label: {
                             Label("Выбрать из «Файлов»", systemImage: "folder.badge.plus")
@@ -155,7 +149,7 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Импорт музыки с телефона")
                     .font(.subheadline.weight(.semibold))
-                Text("Сканируйте Apple Music или выберите файлы")
+                Text("Выберите аудиофайлы через «Файлы»")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -163,9 +157,9 @@ struct LibraryView: View {
             Spacer()
 
             Button {
-                Task { await library.scanSystemMediaLibrary() }
+                showFilePicker = true
             } label: {
-                Text("Сканировать")
+                Text("Выбрать файлы")
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -389,16 +383,16 @@ struct LibraryView: View {
             Text("Ваша медиатека пуста")
                 .font(.title2.weight(.bold))
 
-            Text("Нажмите кнопку ниже, чтобы импортировать треки из медиатеки Apple Music на вашем iPhone или загрузите файлы через приложение «Файлы».")
+            Text("Загрузите аудиофайлы через приложение «Файлы», чтобы начать слушать музыку.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
 
             Button {
-                Task { await library.scanSystemMediaLibrary() }
+                showFilePicker = true
             } label: {
-                Label("Сканировать медиатеку iPhone", systemImage: "iphone.and.arrow.forward")
+                Label("Выбрать из «Файлов»", systemImage: "folder.badge.plus")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)

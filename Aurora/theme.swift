@@ -101,7 +101,7 @@ final class SettingsStore: ObservableObject {
         accent = AccentChoice(rawValue: defaults.string(forKey: "settings.accent") ?? "") ?? .aurora
         hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
-        lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 22
+        lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsHighlightHex = defaults.string(forKey: "lyrics.highlight") ?? "#FF455B"
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
     }

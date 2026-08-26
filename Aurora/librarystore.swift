@@ -1,5 +1,4 @@
 import AVFoundation
-import MediaPlayer
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -12,7 +11,6 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var isScanning = false
     @Published var importProgress: Double? = nil
     @Published var lastError: String? = nil
-    @Published var hasMediaLibraryPermission = false
 
     static let tracksIndexURL: URL = {
         documentsDirectoryURL().appendingPathComponent("library_tracks.json")
@@ -26,7 +24,6 @@ final class LibraryStore: ObservableObject {
         loadData()
         Task {
             await rescan()
-            await checkMediaLibraryAccess()
         }
     }
 
@@ -164,78 +161,6 @@ final class LibraryStore: ObservableObject {
 
         if !addedTracks.isEmpty {
             tracks.append(contentsOf: addedTracks)
-        }
-    }
-
-    // MARK: - Scan System Apple Music Library (MPMediaLibrary)
-
-    func checkMediaLibraryAccess() async {
-        let status = MPMediaLibrary.authorizationStatus()
-        hasMediaLibraryPermission = (status == .authorized)
-    }
-
-    func scanSystemMediaLibrary() async {
-        isScanning = true
-        defer { isScanning = false }
-
-        let status: MPMediaLibraryAuthorizationStatus = await withCheckedContinuation { continuation in
-            MPMediaLibrary.requestAuthorization { authStatus in
-                continuation.resume(returning: authStatus)
-            }
-        }
-
-        hasMediaLibraryPermission = (status == .authorized)
-        guard status == .authorized else {
-            lastError = "Доступ к медиатеке Apple Music не предоставлен"
-            return
-        }
-
-        let query = MPMediaQuery.songs()
-        guard let items = query.items, !items.isEmpty else { return }
-
-        for item in items {
-            guard let assetURL = item.assetURL else { continue }
-            let idString = String(item.persistentID)
-            let fileName = "ipod_\(idString).m4a"
-
-            if tracks.contains(where: { $0.fileName == fileName }) { continue }
-
-            let title = item.title ?? "Без названия"
-            let artist = item.artist ?? "Неизвестный исполнитель"
-            let album = item.albumTitle ?? "Медиатека iPhone"
-            let duration = item.playbackDuration
-            let seed = Self.stableSeed(title + artist)
-
-            var colorsHex = ["#FF455B", "#6366F1"]
-            var hasArtwork = false
-
-            if let artwork = item.artwork, let image = artwork.image(at: CGSize(width: 300, height: 300)) {
-                hasArtwork = true
-                colorsHex = Self.artworkPalette(from: image)
-                let artPath = artworkCacheDirectoryURL().appendingPathComponent("seed_\(seed).jpg")
-                if let jpg = image.jpegData(compressionQuality: 0.85) {
-                    try? jpg.write(to: artPath)
-                }
-            }
-
-            let track = Track(
-                id: UUID(),
-                fileName: fileName,
-                relativePath: "",
-                title: title,
-                artist: artist,
-                album: album,
-                duration: duration,
-                artworkSeed: seed,
-                colorsHex: colorsHex,
-                hasEmbeddedArtwork: hasArtwork,
-                isFavorite: false,
-                addedAt: Date(),
-                isStream: true,
-                streamUrlString: assetURL.absoluteString
-            )
-
-            tracks.append(track)
         }
     }
 
