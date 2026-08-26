@@ -69,6 +69,27 @@ final class SettingsStore: ObservableObject {
     @Published var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
     @Published var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
 
+    // Karaoke lyrics
+    @Published var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
+    @Published var lyricsHighlightHex: String { didSet { defaults.set(lyricsHighlightHex, forKey: "lyrics.highlight") } }
+    @Published var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
+
+    var lyricsHighlightColor: Color { Color(hex: lyricsHighlightHex) ?? .pink }
+
+    struct LyricsHighlightPreset: Identifiable {
+        let name: String
+        let hex: String
+        var id: String { hex }
+    }
+
+    static let lyricsHighlightPresets: [LyricsHighlightPreset] = [
+        LyricsHighlightPreset(name: "Коралл", hex: "#FF455B"),
+        LyricsHighlightPreset(name: "Неон", hex: "#7CF6FF"),
+        LyricsHighlightPreset(name: "Лаванда", hex: "#9A7CFF"),
+        LyricsHighlightPreset(name: "Магента", hex: "#EC4899"),
+        LyricsHighlightPreset(name: "Изумруд", hex: "#10B981")
+    ]
+
     var colorScheme: ColorScheme? { theme.colorScheme }
     var accentColor: Color { accent.main }
     var accentGradient: LinearGradient {
@@ -80,6 +101,9 @@ final class SettingsStore: ObservableObject {
         accent = AccentChoice(rawValue: defaults.string(forKey: "settings.accent") ?? "") ?? .aurora
         hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
+        lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 22
+        lyricsHighlightHex = defaults.string(forKey: "lyrics.highlight") ?? "#FF455B"
+        lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
     }
 }
 

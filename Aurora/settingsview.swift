@@ -92,6 +92,56 @@ struct SettingsView: View {
                         .tint(settings.accentColor)
                 }
 
+                Section("Караоке (текст песни)") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Размер шрифта")
+                            Spacer()
+                            Text("\(Int(settings.lyricsFontSize)) pt")
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $settings.lyricsFontSize, in: 16...36, step: 1)
+                            .tint(settings.accentColor)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Цвет подсветки")
+                            .font(.subheadline)
+                        HStack(spacing: 12) {
+                            ForEach(SettingsStore.lyricsHighlightPresets) { preset in
+                                Button {
+                                    settings.lyricsHighlightHex = preset.hex
+                                } label: {
+                                    Circle()
+                                        .fill(Color(hex: preset.hex) ?? .pink)
+                                        .frame(width: 28, height: 28)
+                                        .overlay(
+                                            Circle().strokeBorder(
+                                                settings.lyricsHighlightHex == preset.hex ? Color.primary : .clear,
+                                                lineWidth: 2.5
+                                            )
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Сдвиг синхронизации")
+                            Spacer()
+                            Text(String(format: "%+.1f сек", settings.lyricsOffset))
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $settings.lyricsOffset, in: -3.0...3.0, step: 0.1)
+                            .tint(settings.accentColor)
+                        Text("Сдвигает подсветку вперёд/назад, если текст не совпадает с музыкой.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Медиатека") {
                     LabeledContent("Всего треков в приложении", value: "\(library.tracks.count)")
                     Button("Сканировать медиатеку iPhone") {

@@ -500,51 +500,27 @@ struct AirPlayButtonView: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 
-// MARK: - Lyrics Sheet View with Real Synced / Formatted Text
+// MARK: - Lyrics Sheet View with Synchronized Karaoke
 
 struct LyricsSheetView: View {
     @StateObject private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var lyrics: Lyrics?
+    @State private var isLoading = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.opacity(0.95).ignoresSafeArea()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text(player.currentTrack?.title ?? "Текст песни")
-                            .font(.title.weight(.heavy))
-                            .foregroundStyle(.white)
-
-                        Text(player.currentTrack?.artist ?? "")
-                            .font(.title3.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.7))
-
-                        Divider().overlay(.white.opacity(0.2))
-
-                        if let lyrics = player.currentTrack?.lyricsText, !lyrics.isEmpty {
-                            Text(lyrics)
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.9))
-                                .lineSpacing(10)
-                        } else {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text("Текст для «\(player.currentTrack?.title ?? "трека")»")
-                                    .font(.headline)
-                                    .foregroundStyle(.white.opacity(0.85))
-
-                                Text("Слова песни генерируются и подтягиваются автоматически в реальном времени из базы метаданных при наличии.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.white.opacity(0.65))
-                                    .lineSpacing(6)
-                            }
-                            .padding(.top, 20)
-                        }
-                    }
-                    .padding(28)
+                if let track = player.currentTrack {
+                    LinearGradient(colors: track.palette.prefix(2).map { $0 },
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .opacity(0.25)
+                        .ignoresSafeArea()
                 }
+
+                LyricsView(lyrics: lyrics, isLoading: isLoading)
             }
+            .background(Color(uiColor: .systemBackground))
             .navigationTitle("Текст песни")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -552,6 +528,20 @@ struct LyricsSheetView: View {
                     Button("Готово") { dismiss() }
                 }
             }
+        }
+        .task(id: player.currentTrack?.id) {
+            await load()
+        }
+    }
+
+    private func load() async {
+        guard let track = player.currentTrack else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            lyrics = try await LyricsService.shared.fetchLyrics(for: track)
+        } catch {
+            lyrics = nil
         }
     }
 }
