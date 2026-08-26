@@ -18,6 +18,7 @@ struct PlayerScreen: View {
     @State private var showSettings = false
     @State private var dragOffset: CGFloat = 0
     @State private var horizontalDragOffset: CGFloat = 0
+    @State private var controlsVisible = true
 
     private var currentTrack: Track? { player.currentTrack }
     private var palette: [Color] {
@@ -42,33 +43,42 @@ struct PlayerScreen: View {
                     artworkHero(size: max(150, artSize))
                         .offset(x: horizontalDragOffset)
                         .padding(.vertical, 6)
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                controlsVisible.toggle()
+                            }
+                        }
 
                     Spacer(minLength: 10)
 
-                    // Track Title, Explicit Badge, Artist, Star & Options
-                    trackMetadataRow
-                        .padding(.horizontal, 28)
+                    if controlsVisible {
+                        // Track Title, Explicit Badge, Artist, Star & Options
+                        trackMetadataRow
+                            .padding(.horizontal, 28)
 
-                    // Apple Music Time Scrubber & Audio Format Badge
-                    timeScrubberSection
-                        .padding(.horizontal, 28)
-                        .padding(.top, 16)
+                        // Apple Music Time Scrubber & Audio Format Badge
+                        timeScrubberSection
+                            .padding(.horizontal, 28)
+                            .padding(.top, 16)
 
-                    // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
-                    playbackControlsRow
-                        .padding(.horizontal, 36)
-                        .padding(.top, 20)
+                        // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
+                        playbackControlsRow
+                            .padding(.horizontal, 36)
+                            .padding(.top, 20)
 
-                    // Apple Music Capsule Volume Slider
-                    volumeSliderSection
-                        .padding(.horizontal, 28)
-                        .padding(.top, 24)
+                        // System Volume Slider (MPVolumeView)
+                        volumeSliderSection
+                            .padding(.horizontal, 28)
+                            .padding(.top, 24)
 
-                    // Bottom Navigation Bar (Lyrics, AirPlay, Queue)
-                    bottomUtilityIconsRow
-                        .padding(.horizontal, 42)
-                        .padding(.top, 24)
-                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 20))
+                        // Bottom Navigation Bar (Lyrics, AirPlay, Queue)
+                        bottomUtilityIconsRow
+                            .padding(.horizontal, 42)
+                            .padding(.top, 24)
+                            .padding(.bottom, max(geo.safeAreaInsets.bottom, 20))
+                    } else {
+                        Spacer(minLength: 60)
+                    }
                 }
             }
             .offset(y: max(0, dragOffset))
@@ -385,30 +395,8 @@ struct PlayerScreen: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white.opacity(0.50))
 
-            GeometryReader { geo in
-                let w = geo.size.width
-                let frac = CGFloat(max(0, min(1, player.volume)))
-
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.white.opacity(0.20))
-                        .frame(height: 7)
-
-                    Capsule()
-                        .fill(.white.opacity(0.90))
-                        .frame(width: max(7, w * frac), height: 7)
-                }
-                .frame(height: 24)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { v in
-                            let newFrac = max(0, min(1, v.location.x / max(w, 1)))
-                            player.volume = Float(newFrac)
-                        }
-                )
-            }
-            .frame(height: 24)
+            SystemVolumeSlider(tintColor: .white)
+                .frame(height: 32)
 
             Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 13, weight: .medium))
@@ -498,6 +486,22 @@ struct AirPlayButtonView: UIViewRepresentable {
         return picker
     }
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+
+// MARK: - System Volume Slider (MPVolumeView, bound to device volume)
+
+struct SystemVolumeSlider: UIViewRepresentable {
+    var tintColor: UIColor = .white
+
+    func makeUIView(context: Context) -> MPVolumeView {
+        let view = MPVolumeView()
+        view.showsRouteButton = false
+        view.tintColor = tintColor
+        return view
+    }
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {
+        uiView.tintColor = tintColor
+    }
 }
 
 // MARK: - Lyrics Sheet View with Synchronized Karaoke
@@ -620,6 +624,13 @@ struct QueueSheetView: View {
                                         .padding(.vertical, 6)
                                     }
                                     .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            player.removeFromQueue(track)
+                                        } label: {
+                                            Label("Удалить из очереди", systemImage: "trash")
+                                        }
+                                    }
                                 }
                             }
                         }

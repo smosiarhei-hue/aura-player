@@ -17,7 +17,7 @@ final class PlayerCore: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var streamDuration: Double = 0
     @Published private(set) var playError: String?
-    @Published var volume: Float = 0.85 {
+    @Published var volume: Float = 1.0 {
         didSet {
             streamingPlayer.volume = volume
             engine.mainMixerNode.outputVolume = volume
@@ -190,7 +190,7 @@ final class PlayerCore: ObservableObject {
         if crossfadeDuration <= 0 { crossfadeDuration = 3.0 }
 
         let savedVol = defaults.float(forKey: "player.volume")
-        volume = savedVol > 0 ? savedVol : 0.85
+        volume = savedVol > 0 ? savedVol : 1.0
         engine.mainMixerNode.outputVolume = volume
         streamingPlayer.volume = volume
 
@@ -676,6 +676,10 @@ final class PlayerCore: ObservableObject {
     private func effectiveQueue() -> [Track] {
         if queue.isEmpty { queue = LibraryStore.shared.tracks }
         return queue
+    }
+
+    func removeFromQueue(_ track: Track) {
+        queue.removeAll { $0.id == track.id }
     }
 
     private func peekNext(auto: Bool) -> Track? {
