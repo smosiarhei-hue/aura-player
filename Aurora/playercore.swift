@@ -122,9 +122,14 @@ final class PlayerCore: ObservableObject {
             }
         }
 
-        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             Task { @MainActor [weak self] in
                 guard let self, self.isUsingStreamPlayer else { return }
+                // Ignore end-of-track notifications from replaced (stale) AVPlayerItems
+                // so the AutoMix asyncAfter transition and this observer don't double-advance.
+                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                    return
+                }
                 self.handleTrackFinish()
             }
         }
@@ -493,8 +498,11 @@ final class PlayerCore: ObservableObject {
         // Progressive stream transitions
         if isUsingStreamPlayer || nextTrack.isStream {
             transitionScheduled = true
+            let token = generation
             DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-                guard let self, self.isPlaying else { return }
+                guard let self, self.generation == token else { return }
+                self.transitionScheduled = false
+                self.isTransitioning = false
                 self.currentTrack = nextTrack
                 self.start(at: 0)
             }
@@ -593,6 +601,7 @@ final class PlayerCore: ObservableObject {
     }
 
     private func cancelTransition() {
+        transitionScheduled = false
         guard isTransitioning else { return }
         transitionTimer?.invalidate()
         transitionTimer = nil
@@ -602,7 +611,6 @@ final class PlayerCore: ObservableObject {
         activePlayer.volume = 1.0
         incomingAudioFile = nil
         isTransitioning = false
-        transitionScheduled = false
         applyEQ()
     }
 
