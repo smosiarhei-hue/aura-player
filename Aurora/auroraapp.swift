@@ -121,13 +121,10 @@ struct MiniPlayer: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(.primary.opacity(0.08))
-                .frame(height: 0.5)
-        }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 6)
     }
 }

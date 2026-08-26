@@ -18,6 +18,7 @@ struct PlayerScreen: View {
     @State private var showQueue = false
     @State private var showEQ = false
     @State private var showSettings = false
+    @State private var showSleepTimer = false
     @State private var dragOffset: CGFloat = 0
     @State private var horizontalDragOffset: CGFloat = 0
     @State private var controlsVisible = true
@@ -73,12 +74,16 @@ struct PlayerScreen: View {
                         .padding(.top, max(geo.safeAreaInsets.top, 8))
                         .padding(.horizontal, 8)
 
-                    Spacer(minLength: 8)
-
                     if controlsVisible {
-                        // Title + small cover + artist + star + menu (bottom, right before teleprompter)
+                        // Big full cover (aspectFit — full display, no top/bottom crop)
+                        heroArtwork
+                            .padding(.horizontal, 28)
+                            .padding(.top, 6)
+
+                        // Title + artist + star + menu
                         trackMetadataRow
                             .padding(.horizontal, 24)
+                            .padding(.top, 16)
 
                         // Small glow teleprompter near the time code (hideable in settings)
                         if settings.showTeleprompterInPlayer, let line = currentLyricLine {
@@ -127,6 +132,7 @@ struct PlayerScreen: View {
         .sheet(isPresented: $showQueue) { QueueSheetView() }
         .sheet(isPresented: $showEQ) { PlayerEQSheetView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showSleepTimer) { SleepTimerSheetView() }
         .fullScreenCover(isPresented: $showLyrics) { LyricsSheetView() }
     }
 
@@ -291,17 +297,50 @@ struct PlayerScreen: View {
         )
     }
 
+    // Big full cover (aspectFit — full display without top/bottom crop).
+    private var heroArtwork: some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            coverImage
+                .frame(width: side, height: side)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var coverImage: some View {
+        Group {
+            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().aspectRatio(contentMode: .fit)
+                    } else {
+                        artworkFallback(size: 280)
+                    }
+                }
+            } else {
+                artworkFallback(size: 280)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 14)
+        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
+    }
+
     private var trackMetadataRow: some View {
         HStack(alignment: .center, spacing: 14) {
-            // Small artwork thumbnail beside the title
-            smallCover
-
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(currentTrack?.title ?? "Sonivo Player")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
+                    MarqueeText(text: currentTrack?.title ?? "Sonivo Player",
+                                font: .title2.weight(.bold),
+                                color: .white)
 
                     Text("E")
                         .font(.system(size: 10, weight: .heavy))
@@ -612,25 +651,8 @@ struct PlayerScreen: View {
             Spacer()
 
             // Visible sleep timer (moon) — always in the player, not buried in the ••• menu
-            Menu {
-                ForEach([5, 10, 15, 30, 45, 60, 90, 120], id: \.self) { m in
-                    Button {
-                        if settings.hapticsEnabled {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        }
-                        player.setSleepTimer(minutes: m)
-                    } label: {
-                        Label("\(m) минут", systemImage: player.sleepTimerMinutes == m ? "checkmark" : "clock")
-                    }
-                }
-                if player.sleepTimerMinutes != nil {
-                    Divider()
-                    Button(role: .destructive) {
-                        player.setSleepTimer(minutes: nil)
-                    } label: {
-                        Label("Выключить таймер сна", systemImage: "moon.zzz")
-                    }
-                }
+            Button {
+                showSleepTimer = true
             } label: {
                 VStack(spacing: 2) {
                     Image(systemName: player.sleepTimerMinutes != nil ? "moon.zzz.fill" : "moon.zzz")
@@ -644,6 +666,7 @@ struct PlayerScreen: View {
                 }
                 .frame(width: 44, height: 44)
             }
+            .buttonStyle(.plain)
         }
     }
 
@@ -807,6 +830,96 @@ struct LyricsSheetView: View {
 }
 
 // MARK: - Queue Sheet View with Full "Now Playing" and "Up Next"
+
+// MARK: - Marquee Title (auto-scroll only when the title overflows)
+
+private struct MarqueeWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+struct MarqueeText: View {
+    let text: String
+    var font: Font = .title2.weight(.bold)
+    var color: Color = .white
+
+    @State private var textWidth: CGFloat = 0
+    @State private var animate = false
+
+    var body: some View {
+        GeometryReader { container in
+            let overflow = max(0, textWidth - container.size.width + 12)
+            Text(text)
+                .font(font)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize()
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: MarqueeWidthKey.self, value: geo.size.width)
+                    }
+                )
+                .offset(x: animate ? -overflow : 0)
+                .frame(width: container.size.width, alignment: .leading)
+                .clipped()
+                .animation(
+                    overflow > 0 ? .easeInOut(duration: 4).repeatForever(autoreverses: true).delay(1.2) : nil,
+                    value: animate
+                )
+                .onAppear { if overflow > 0 { animate = true } }
+        }
+        .onPreferenceChange(MarqueeWidthKey.self) { textWidth = $0 }
+        .frame(height: 34)
+    }
+}
+
+// MARK: - Sleep Timer Sheet (native wheel picker)
+
+struct SleepTimerSheetView: View {
+    @StateObject private var player = PlayerCore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var minutes: Int = 30
+
+    private let options = [5, 10, 15, 30, 45, 60, 90, 120]
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 8) {
+                Picker("Время", selection: $minutes) {
+                    ForEach(options, id: \.self) { m in
+                        Text("\(m) мин").tag(m)
+                    }
+                }
+                .pickerStyle(.wheel)
+
+                if player.sleepTimerMinutes != nil {
+                    Button(role: .destructive) {
+                        player.setSleepTimer(minutes: nil)
+                        dismiss()
+                    } label: {
+                        Label("Выключить таймер сна", systemImage: "moon.zzz")
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 12)
+                }
+            }
+            .navigationTitle("Таймер сна")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") {
+                        player.setSleepTimer(minutes: minutes)
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.height(320)])
+    }
+}
 
 struct QueueSheetView: View {
     @StateObject private var player = PlayerCore.shared
