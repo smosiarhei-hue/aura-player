@@ -189,20 +189,20 @@ struct ChartRowView: View {
 }
 
 // MARK: - Единая точка запуска воспроизведения
+//
+// Важно: ссылка на поток ЗДЕСЬ НЕ разрешается. Если подставить готовый https-URL,
+// PlayerCore идёт по ветке «direct URL» и жёстко выставляет currentBitrate = 128,
+// игнорируя выбранное качество. Передаём трек с id и плеер сам запросит
+// поток нужного битрейта и покажет реальные 320 kbps.
 
 @MainActor
 enum SonivoPlay {
     static func track(_ item: YandexMusicService.YMTrackItem, in list: [YandexMusicService.YMTrackItem]) {
         let ym = YandexMusicService.shared
         ym.endStationSession()
-        Task {
-            guard let info = try? await ym.getStreamInfo(for: item.id) else { return }
-            var t = ym.convertToTrack(item)
-            t.streamUrlString = info.url.absoluteString
-            let source = list.isEmpty ? [item] : list
-            let queue = source.map { ym.convertToTrack($0) }
-            PlayerCore.shared.play(t, newQueue: queue)
-        }
+        let source = list.isEmpty ? [item] : list
+        let queue = source.map { ym.convertToTrack($0) }
+        PlayerCore.shared.play(ym.convertToTrack(item), newQueue: queue)
     }
 
     /// Запуск станции: очередь собирается из нескольких батчей ротора
@@ -215,12 +215,9 @@ enum SonivoPlay {
             if tracks.isEmpty {
                 tracks = (try? await ym.getChart()) ?? []
             }
-            guard let first = tracks.first,
-                  let info = try? await ym.getStreamInfo(for: first.id) else { return }
-            var t = ym.convertToTrack(first)
-            t.streamUrlString = info.url.absoluteString
+            guard let first = tracks.first else { return }
             let queue = tracks.map { ym.convertToTrack($0) }
-            PlayerCore.shared.play(t, newQueue: queue)
+            PlayerCore.shared.play(ym.convertToTrack(first), newQueue: queue)
         }
     }
 
@@ -229,15 +226,13 @@ enum SonivoPlay {
         ym.endStationSession()
         Task {
             let tracks = (try? await ym.getAlbumTracks(albumId: album.id)) ?? []
-            guard let first = tracks.first,
-                  let info = try? await ym.getStreamInfo(for: first.id) else { return }
-            var t = ym.convertToTrack(first)
-            t.streamUrlString = info.url.absoluteString
+            guard let first = tracks.first else { return }
             let queue = tracks.map { ym.convertToTrack($0) }
-            PlayerCore.shared.play(t, newQueue: queue)
+            PlayerCore.shared.play(ym.convertToTrack(first), newQueue: queue)
         }
     }
 
+    /// Для скачивания ссылка нужна настоящая — здесь разрешаем её явно.
     static func download(_ item: YandexMusicService.YMTrackItem) {
         let ym = YandexMusicService.shared
         Task {
