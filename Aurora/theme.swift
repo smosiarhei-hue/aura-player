@@ -147,24 +147,13 @@ extension View {
         modifier(AGGlassModifier(radius: corner, padding: padding, opacity: opacity))
     }
 
-    /// Native iOS 26 Liquid Glass with graceful fallback to a material glass on iOS 16–25.
-    /// Uses the system's own light/dark adaptation in both paths.
-    @ViewBuilder
+    /// Native iOS 26 Liquid Glass.
     func glassOrMaterial(corner: CGFloat = AG.radius) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: .rect(cornerRadius: corner))
-        } else {
-            self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
-        }
+        self.glassEffect(.regular, in: .rect(cornerRadius: corner))
     }
 
-    /// Native iOS 26 glass capsule (for pills/docks) with material fallback.
-    @ViewBuilder
+    /// Native iOS 26 glass capsule (for pills/docks).
     func glassCapsule() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: .capsule)
-        } else {
-            self.background(.regularMaterial, in: Capsule())
-        }
+        self.glassEffect(.regular, in: .capsule)
     }
 }

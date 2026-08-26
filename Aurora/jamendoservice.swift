@@ -145,7 +145,8 @@ enum JamendoService {
             isFavorite: false,
             addedAt: Date(),
             isStream: true,
-            streamUrlString: item.streamUrl
+            streamUrlString: item.streamUrl,
+            coverURL: item.coverUrl
         )
     }
 

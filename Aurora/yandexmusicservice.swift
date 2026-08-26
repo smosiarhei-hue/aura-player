@@ -238,7 +238,8 @@ final class YandexMusicService: ObservableObject {
             isFavorite: false,
             addedAt: Date(),
             isStream: true,
-            streamUrlString: ym.id
+            streamUrlString: ym.id,
+            coverURL: ym.coverUrlString
         )
     }
 

@@ -46,7 +46,7 @@ private struct SyncedLyrics: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 18) {
+                LazyVStack(spacing: 8) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                         LyricsLineView(
                             line: line,
@@ -58,7 +58,7 @@ private struct SyncedLyrics: View {
                         .id(idx)
                     }
                 }
-                .padding(.vertical, 240)
+                .padding(.vertical, 150)
                 .frame(maxWidth: .infinity)
             }
             .onChange(of: activeIndex) { newIndex in

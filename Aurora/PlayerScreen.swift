@@ -111,6 +111,19 @@ struct PlayerScreen: View {
                     .frame(width: geo.size.width, height: geo.size.height * 0.70)
                     .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
                     .blur(radius: 2)
+            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: geo.size.width, height: geo.size.height * 0.70)
+                            .position(x: geo.size.width / 2, y: geo.size.height * 0.28)
+                            .blur(radius: 2)
+                    } else {
+                        AnimatedMeshBackground(palette: palette)
+                    }
+                }
             } else {
                 AnimatedMeshBackground(palette: palette)
             }
@@ -173,17 +186,18 @@ struct PlayerScreen: View {
                 Image(uiImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-            } else {
-                ZStack {
-                    LinearGradient(
-                        colors: palette,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    Image(systemName: "music.note")
-                        .font(.system(size: size * 0.35, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.95))
+            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        artworkFallback(size: size)
+                    }
                 }
+            } else {
+                artworkFallback(size: size)
             }
         }
         .frame(width: size, height: size)
@@ -195,6 +209,19 @@ struct PlayerScreen: View {
         .shadow(color: .black.opacity(0.45), radius: player.isPlaying ? 28 : 12, x: 0, y: player.isPlaying ? 18 : 6)
         .scaleEffect(player.isPlaying ? 1.0 : 0.88)
         .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
+    }
+
+    private func artworkFallback(size: CGFloat) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: palette,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: "music.note")
+                .font(.system(size: size * 0.35, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.95))
+        }
     }
 
     // MARK: - Track Metadata Row (Favorite & Context Menu)

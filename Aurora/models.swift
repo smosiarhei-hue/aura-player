@@ -50,6 +50,7 @@ struct Track: Identifiable, Codable, Equatable {
     var addedAt: Date = Date()
     var isStream: Bool = false
     var streamUrlString: String? = nil
+    var coverURL: String? = nil
     var lyricsText: String? = nil
 
     var url: URL {
