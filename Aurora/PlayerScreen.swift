@@ -38,10 +38,10 @@ struct PlayerScreen: View {
                     Spacer(minLength: 10)
 
                     // Hero Album Artwork with Play/Pause Scale + Horizontal Swipe Slide
-                    let artSize = min(geo.size.width - 64, geo.size.height * 0.42)
-                    artworkHero(size: max(240, artSize))
+                    let artSize = min(geo.size.width - 64, geo.size.height * 0.34)
+                    artworkHero(size: max(150, artSize))
                         .offset(x: horizontalDragOffset)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 6)
 
                     Spacer(minLength: 10)
 

@@ -113,11 +113,11 @@ struct FloatingMiniPlayer: View {
                 Text(player.currentTrack?.title ?? "")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
 
                 Text(player.currentTrack?.artist ?? "")
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .contentShape(Rectangle())
@@ -133,7 +133,7 @@ struct FloatingMiniPlayer: View {
             } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                     .frame(width: 40, height: 40)
             }
             .buttonStyle(.plain)
@@ -144,22 +144,19 @@ struct FloatingMiniPlayer: View {
             } label: {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                     .frame(width: 40, height: 40)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(
+        .glassOrMaterial(corner: 18)
+        .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.92))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-                )
+                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.35), radius: 14, x: 0, y: 6)
+        .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
         .gesture(
             DragGesture(minimumDistance: 15)
                 .onEnded { value in
@@ -177,6 +174,8 @@ struct FloatingLiquidGlassTabBar: View {
     @Binding var selectedTab: AppTab
     @Namespace private var tabNamespace
 
+    private var accent: Color { Color(hex: "#FF455B") ?? .pink }
+
     var body: some View {
         HStack(spacing: 0) {
             ForEach(AppTab.allCases) { tab in
@@ -190,19 +189,19 @@ struct FloatingLiquidGlassTabBar: View {
                     VStack(spacing: 3) {
                         Image(systemName: tab.icon)
                             .font(.system(size: 20, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? (Color(hex: "#FF455B") ?? .pink) : .white.opacity(0.65))
+                            .foregroundStyle(isSelected ? AnyShapeStyle(accent) : AnyShapeStyle(.secondary))
                             .frame(height: 24)
 
                         Text(tab.label)
                             .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
-                            .foregroundStyle(isSelected ? (Color(hex: "#FF455B") ?? .pink) : .white.opacity(0.65))
+                            .foregroundStyle(isSelected ? AnyShapeStyle(accent) : AnyShapeStyle(.secondary))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                     .background {
                         if isSelected {
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(Color.white.opacity(0.12))
+                                .fill(Color.primary.opacity(0.10))
                                 .matchedGeometryEffect(id: "activeTabPill", in: tabNamespace)
                         }
                     }
@@ -211,21 +210,18 @@ struct FloatingLiquidGlassTabBar: View {
             }
         }
         .padding(4)
-        .background(
+        .glassCapsule()
+        .overlay(
             Capsule()
-                .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.88))
-                .overlay(
-                    Capsule()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [.white.opacity(0.25), .white.opacity(0.05)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.75
-                        )
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [.white.opacity(0.25), .white.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.75
                 )
         )
-        .shadow(color: .black.opacity(0.35), radius: 16, x: 0, y: 8)
+        .shadow(color: .black.opacity(0.18), radius: 16, x: 0, y: 8)
     }
 }

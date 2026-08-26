@@ -133,6 +133,18 @@ final class PlayerCore: ObservableObject {
                 self.handleTrackFinish()
             }
         }
+
+        NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                guard let self, self.isUsingStreamPlayer else { return }
+                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                    return
+                }
+                let message = (notification.object as? AVPlayerItem)?.error?.localizedDescription
+                self.isPlaying = false
+                self.playError = message.map { "Ошибка потока: \($0)" } ?? "Не удалось воспроизвести трек"
+            }
+        }
     }
 
     private func setupAudioEngine() {
@@ -393,22 +405,7 @@ final class PlayerCore: ObservableObject {
 
         // 1. Instant Progressive Online Stream (AVPlayer progressive playback in ~150ms)
         if track.isStream {
-            isUsingStreamPlayer = true
-            playerA.stop()
-            playerB.stop()
-
-            let streamURL = track.url
-            let playerItem = AVPlayerItem(url: streamURL)
-            streamingPlayer.replaceCurrentItem(with: playerItem)
-
-            if seconds > 0 {
-                streamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
-            }
-
-            streamingPlayer.play()
-            self.isPlaying = true
-            self.progress = seconds
-            self.updateNowPlayingInfo()
+            startStream(track, at: seconds, token: token)
             return
         }
 
@@ -460,6 +457,50 @@ final class PlayerCore: ObservableObject {
                 self.playError = "Не удалось открыть аудио: \(error.localizedDescription)"
             }
         }
+    }
+
+    // MARK: - Stream Resolution (Jamendo direct URL vs Yandex on-demand id)
+
+    private func startStream(_ track: Track, at seconds: Double, token: Int) {
+        isUsingStreamPlayer = true
+        playerA.stop()
+        playerB.stop()
+
+        let url = track.url
+        // Jamendo already stores a full https stream URL; Yandex stores only the track id until resolved.
+        if url.scheme == "http" || url.scheme == "https" {
+            beginStream(url, at: seconds)
+            return
+        }
+
+        let rawID = track.streamUrlString ?? ""
+        let ymID = rawID
+            .replacingOccurrences(of: "ym_", with: "")
+            .replacingOccurrences(of: ".mp3", with: "")
+
+        Task {
+            do {
+                let resolved = try await YandexMusicService.shared.getDirectStreamURL(for: ymID)
+                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                self.beginStream(resolved, at: seconds)
+            } catch {
+                guard self.generation == token else { return }
+                self.isPlaying = false
+                self.playError = "Не удалось открыть поток трека"
+            }
+        }
+    }
+
+    private func beginStream(_ url: URL, at seconds: Double) {
+        let item = AVPlayerItem(url: url)
+        streamingPlayer.replaceCurrentItem(with: item)
+        if seconds > 0 {
+            streamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        streamingPlayer.play()
+        self.isPlaying = true
+        self.progress = seconds
+        self.updateNowPlayingInfo()
     }
 
     // MARK: - AutoMix Transitions
