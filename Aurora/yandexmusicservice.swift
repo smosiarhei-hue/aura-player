@@ -2,7 +2,8 @@ import CryptoKit
 import Foundation
 
 // MARK: - Yandex Music API Service
-// Каталог, Топ-100 чарт, новые релизы, персональная «Моя волна» без повторов
+// Глобальный поиск, страницы артистов и альбомов, Топ-100 чарт, новые релизы,
+// персональная «Моя волна» без повторов под выбранное настроение
 // и память прослушиваний (сервис понимает, что именно слушает пользователь).
 
 @MainActor
@@ -27,6 +28,11 @@ final class YandexMusicService: ObservableObject {
     private(set) var activeStationId: String?
     private var lastBatchId: String?
 
+    /// Выбранное настроение волны (stationId ротора).
+    @Published var waveMoodStationId: String = "user:onyourwave" {
+        didSet { UserDefaults.standard.set(waveMoodStationId, forKey: "ym.waveMood") }
+    }
+
     static let apiBase = "https://api.music.yandex.net"
     static let secretSalt = "XGRlBW9FXlekgbPrRHuSiA"
 
@@ -41,6 +47,8 @@ final class YandexMusicService: ObservableObject {
     private var newAlbumsCache: [YMAlbumItem] = []
     private var newAlbumsCacheAt: Date?
     private var newTracksCache: [YMTrackItem] = []
+    private var artistCache: [String: YMArtistItem] = [:]
+    private var artistTracksCache: [String: [YMTrackItem]] = [:]
 
     private init() {
         let defaults = UserDefaults.standard
@@ -51,6 +59,7 @@ final class YandexMusicService: ObservableObject {
         self.recentKeys = defaults.stringArray(forKey: Self.keyRecent) ?? []
         self.artistCounts = (defaults.dictionary(forKey: Self.keyArtists) as? [String: Int]) ?? [:]
         self.totalPlays = defaults.integer(forKey: Self.keyPlays)
+        self.waveMoodStationId = defaults.string(forKey: "ym.waveMood") ?? "user:onyourwave"
     }
 
     // MARK: - Models
@@ -80,7 +89,6 @@ final class YandexMusicService: ObservableObject {
             case id, title, available, durationMs, coverUri, artists, albums
         }
 
-        // Яндекс отдаёт id трека то строкой, то числом — принимаем оба варианта.
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             if let s = try? c.decode(String.self, forKey: .id) {
@@ -161,33 +169,258 @@ final class YandexMusicService: ObservableObject {
         static func == (lhs: YMAlbumItem, rhs: YMAlbumItem) -> Bool { lhs.id == rhs.id }
     }
 
-    // MARK: - Search
+    /// Полная карточка артиста с популярными треками и альбомами.
+    struct YMArtistItem: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let coverUri: String?
+        let genres: [String]
+        let counts: ArtistCounts?
+        var popularTracks: [YMTrackItem] = []
+        var albums: [YMAlbumItem] = []
+        var similarArtists: [YMArtistBrief] = []
 
-    func search(query: String, page: Int = 0) async throws -> [YMTrackItem] {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        var components = URLComponents(string: Self.apiBase + "/search")!
-        components.queryItems = [
+        struct ArtistCounts: Equatable {
+            let tracks: Int?
+            let directAlbums: Int?
+        }
+
+        struct YMArtistBrief: Identifiable, Equatable {
+            let id: String
+            let name: String
+            let coverUri: String?
+            var coverUrlString: String? {
+                guard let uri = coverUri, !uri.isEmpty else { return nil }
+                return "https://" + uri.replacingOccurrences(of: "%%", with: "400x400")
+            }
+        }
+
+        var coverUrlString: String? {
+            guard let uri = coverUri, !uri.isEmpty else { return nil }
+            return "https://" + uri.replacingOccurrences(of: "%%", with: "400x400")
+        }
+
+        var subtitle: String {
+            var parts: [String] = []
+            if let c = counts?.tracks { parts.append(String(c) + " треков") }
+            if let g = genres.first { parts.append(g.capitalized) }
+            return parts.joined(separator: " · ")
+        }
+    }
+
+    /// Результат глобального поиска.
+    struct GlobalSearchResults {
+        var tracks: [YMTrackItem] = []
+        var artists: [YMArtistBrief] = []
+        var albums: [YMAlbumItem] = []
+        var suggestions: [String] = []
+    }
+
+    // MARK: - Global Search (треки + артисты + альбомы + подсказки)
+
+    /// Глобальный поиск по всей базе Яндекс.Музыки.
+    func searchAll(query: String) async -> GlobalSearchResults {
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return GlobalSearchResults() }
+        var comps = URLComponents(string: Self.apiBase + "/search")!
+        comps.queryItems = [
             URLQueryItem(name: "text", value: query),
-            URLQueryItem(name: "type", value: "track"),
-            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "type", value: "all"),
+            URLQueryItem(name: "page", value: "0"),
             URLQueryItem(name: "nocorrect", value: "false")
         ]
+        guard let url = comps.url,
+              let pair = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else {
+            return GlobalSearchResults()
+        }
 
-        let req = authorizedRequest(url: components.url!)
-        let (data, _) = try await URLSession.shared.data(for: req)
-
-        struct SearchResponse: Decodable {
+        struct Response: Decodable {
             struct Result: Decodable {
-                struct TracksBlock: Decodable {
-                    let results: [YMTrackItem]?
+                struct TracksBlock: Decodable { let results: [YMTrackItem]? }
+                struct ArtistsBlock: Decodable {
+                    struct Raw: Decodable {
+                        let id: Int?
+                        let name: String?
+                        let coverUri: String?
+                        enum CodingKeys: String, CodingKey { case id, name, coverUri }
+                    }
+                    let results: [Raw]?
                 }
+                struct AlbumsBlock: Decodable { let results: [YMAlbumItem]? }
                 let tracks: TracksBlock?
+                let artists: ArtistsBlock?
+                let albums: AlbumsBlock?
+                let best: BestBlock?
+                struct BestBlock: Decodable {
+                    let type: String?
+                    let result: BestResult?
+                    struct BestResult: Decodable {
+                        let id: Int?
+                        let name: String?
+                    }
+                }
             }
             let result: Result?
         }
 
-        let resp = try JSONDecoder().decode(SearchResponse.self, from: data)
-        return Self.playable(resp.result?.tracks?.results ?? [])
+        guard let resp = try? JSONDecoder().decode(Response.self, from: pair.0) else {
+            return GlobalSearchResults()
+        }
+
+        var out = GlobalSearchResults()
+        let q = query.lowercased().trimmingCharacters(in: .whitespaces)
+
+        // Треки — точный ранкер
+        var tracks = Self.playable(resp.result?.tracks?.results ?? [])
+        tracks.sort { a, b in
+            let aArtistExact = a.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
+            let bArtistExact = b.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
+            if aArtistExact != bArtistExact { return aArtistExact }
+            let aTitleExact = a.title.lowercased() == q
+            let bTitleExact = b.title.lowercased() == q
+            if aTitleExact != bTitleExact { return aTitleExact }
+            let aTitleHas = a.title.lowercased().contains(q)
+            let bTitleHas = b.title.lowercased().contains(q)
+            if aTitleHas != bTitleHas { return aTitleHas }
+            return a.title.count < b.title.count
+        }
+        out.tracks = tracks
+
+        // Артисты
+        let rawArtists = resp.result?.artists?.results ?? []
+        var artists = rawArtists.compactMap { raw -> YMArtistItem.YMArtistBrief? in
+            guard let id = raw.id, let name = raw.name else { return nil }
+            return YMArtistItem.YMArtistBrief(id: String(id), name: name, coverUri: raw.coverUri)
+        }
+        artists.sort { a, b in
+            let aExact = a.name.lowercased() == q
+            let bExact = b.name.lowercased() == q
+            if aExact != bExact { return aExact }
+            return a.name.count < b.name.count
+        }
+        out.artists = artists
+
+        // Альбомы
+        var albums = (resp.result?.albums?.results ?? []).filter { $0.id != 0 }
+        albums.sort { a, b in
+            let aArtistExact = a.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
+            let bArtistExact = b.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
+            if aArtistExact != bArtistExact { return aArtistExact }
+            let aTitleExact = a.displayTitle.lowercased() == q
+            let bTitleExact = b.displayTitle.lowercased() == q
+            if aTitleExact != bTitleExact { return aTitleExact }
+            return (b.year ?? 0) > (a.year ?? 0)
+        }
+        out.albums = albums
+
+        return out
+    }
+
+    /// Подсказки для поиска (точность ввода).
+    func searchSuggestions(query: String) async -> [String] {
+        guard query.count >= 2 else { return [] }
+        var comps = URLComponents(string: Self.apiBase + "/search/suggest")!
+        comps.queryItems = [URLQueryItem(name: "part", value: query)]
+        guard let url = comps.url,
+              let pair = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return [] }
+        struct Response: Decodable {
+            struct Result: Decodable { let suggestions: [String]? }
+            let result: Result?
+        }
+        return (try? JSONDecoder().decode(Response.self, from: pair.0))?.result?.suggestions ?? []
+    }
+
+    /// Легаси-метод для обратной совместимости — теперь использует глобальный ранкер.
+    func search(query: String, page: Int = 0) async throws -> [YMTrackItem] {
+        let all = await searchAll(query: query)
+        return all.tracks
+    }
+
+    // MARK: - Страница артиста
+
+    func getArtist(artistId: String) async throws -> YMArtistItem {
+        if let cached = artistCache[artistId] { return cached }
+        var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info")!
+        comps.queryItems = [
+            URLQueryItem(name: "popularTracks", value: "true"),
+            URLQueryItem(name: "discography", value: "true"),
+            URLQueryItem(name: "similarArtists", value: "true")
+        ]
+        guard let url = comps.url else { throw URLError(.badURL) }
+        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
+
+        struct Response: Decodable {
+            struct Result: Decodable {
+                struct ArtistBlock: Decodable {
+                    let id: Int?
+                    let name: String?
+                    let coverUri: String?
+                    let genres: [String]?
+                    let counts: Counts?
+                    struct Counts: Decodable {
+                        let tracks: Int?
+                        let directAlbums: Int?
+                    }
+                }
+                let artist: ArtistBlock?
+                struct TracksBlock: Decodable { let tracks: [YMTrackItem]? }
+                struct AlbumsBlock: Decodable { let albums: [YMAlbumItem]? }
+                struct SimilarBlock: Decodable {
+                    struct Raw: Decodable {
+                        let id: Int?
+                        let name: String?
+                        let coverUri: String?
+                    }
+                    let similarArtists: [Raw]?
+                }
+                let popularTracks: TracksBlock?
+                let discography: AlbumsBlock?
+                let similarArtists: SimilarBlock?
+            }
+            let result: Result?
+        }
+
+        let resp = try JSONDecoder().decode(Response.self, from: data)
+        guard let raw = resp.result?.artist,
+              let id = raw.id,
+              let name = raw.name else { throw URLError(.cannotParseResponse) }
+
+        var item = YMArtistItem(
+            id: String(id),
+            name: name,
+            coverUri: raw.coverUri,
+            genres: raw.genres ?? [],
+            counts: YMArtistItem.ArtistCounts(tracks: raw.counts?.tracks, directAlbums: raw.counts?.directAlbums)
+        )
+        item.popularTracks = Self.playable(resp.result?.popularTracks?.tracks ?? [])
+        item.albums = (resp.result?.discography?.albums ?? []).filter { $0.id != 0 }
+        item.similarArtists = (resp.result?.similarArtists?.similarArtists ?? []).compactMap { raw in
+            guard let id = raw.id, let name = raw.name else { return nil }
+            return YMArtistItem.YMArtistBrief(id: String(id), name: name, coverUri: raw.coverUri)
+        }
+
+        artistCache[artistId] = item
+        return item
+    }
+
+    /// Популярные треки артиста (отдельно, если нужно больше).
+    func getArtistTracks(artistId: String, page: Int = 0, pageSize: Int = 30) async throws -> [YMTrackItem] {
+        let key = artistId + ":" + String(page)
+        if let cached = artistTracksCache[key] { return cached }
+        var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/tracks")!
+        comps.queryItems = [
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "page-size", value: String(pageSize)),
+            URLQueryItem(name: "sort", value: "plays")
+        ]
+        guard let url = comps.url else { throw URLError(.badURL) }
+        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
+        struct Response: Decodable {
+            struct Result: Decodable { let tracks: [YMTrackItem]? }
+            let result: Result?
+        }
+        let list = Self.playable((try JSONDecoder().decode(Response.self, from: data)).result?.tracks ?? [])
+        artistTracksCache[key] = list
+        return list
     }
 
     // MARK: - Топ-100 чарт
@@ -338,7 +571,7 @@ final class YandexMusicService: ObservableObject {
         return out
     }
 
-    // MARK: - Радиостанции / «Моя волна»
+    // MARK: - Радиостанции / «Моя волна» под настроение
 
     struct StationOption: Identifiable {
         let id: String
@@ -355,8 +588,15 @@ final class YandexMusicService: ObservableObject {
         StationOption(id: "relax", title: "Релакс", subtitle: "Спокойное на фон", stationId: "mood:calm", gradient: ["#FCD34D", "#B45309"], icon: "leaf.fill"),
         StationOption(id: "hits", title: "Главные хиты", subtitle: "Топовое прямо сейчас", stationId: "genre:pop", gradient: ["#FB923C", "#9A3412"], icon: "flame.fill"),
         StationOption(id: "rap", title: "Рэп и хип-хоп", subtitle: "Свежие биты", stationId: "genre:rap", gradient: ["#F59E0B", "#7C2D12"], icon: "mic.fill"),
-        StationOption(id: "electronic", title: "Электроника", subtitle: "Клубный настрой", stationId: "genre:electronics", gradient: ["#FDE68A", "#EA580C"], icon: "waveform.path.ecg")
+        StationOption(id: "electronic", title: "Электроника", subtitle: "Клубный настрой", stationId: "genre:electronics", gradient: ["#FDE68A", "#EA580C"], icon: "waveform.path.ecg"),
+        StationOption(id: "rock", title: "Рок", subtitle: "Гитары и драйв", stationId: "genre:rock", gradient: ["#F97316", "#450A0A"], icon: "guitars.fill"),
+        StationOption(id: "party", title: "Вечеринка", subtitle: "Танцевальное", stationId: "activity:party", gradient: ["#FBBF24", "#9A3412"], icon: "party.popper.fill")
     ]
+
+    /// Станция текущего настроения волны.
+    var waveMoodStation: StationOption {
+        Self.rotorStations.first { $0.stationId == waveMoodStationId } ?? Self.rotorStations[0]
+    }
 
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
         let batch = await fetchRotorBatch(stationId: stationId, queueSeed: nil)
@@ -364,14 +604,13 @@ final class YandexMusicService: ObservableObject {
         return try await getChart()
     }
 
-    /// Собирает длинную очередь волны без повторов: несколько батчей ротора
-    /// подряд, с фильтрацией по истории прослушиваний.
+    /// Собирает длинную очередь волны без повторов под выбранное настроение.
     func buildWaveQueue(stationId: String = "user:onyourwave", target: Int = 45) async -> [YMTrackItem] {
         var collected: [YMTrackItem] = []
         var seen = Set<String>()
         var seed: String?
 
-        for _ in 0..<6 {
+        for _ in 0..<7 {
             let batch = await fetchRotorBatch(stationId: stationId, queueSeed: seed)
             if batch.isEmpty { break }
             for item in batch {
@@ -400,7 +639,7 @@ final class YandexMusicService: ObservableObject {
 
         for artist in topArtists.shuffled().prefix(8) {
             if out.count >= limit { break }
-            let found = (try? await search(query: artist)) ?? []
+            let found = await searchAll(query: artist).tracks
             for item in found.prefix(6) {
                 if out.count >= limit { break }
                 if used.contains(item.id) { continue }
