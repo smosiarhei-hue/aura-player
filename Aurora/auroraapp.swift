@@ -13,54 +13,38 @@ struct SonivoApp: App {
     }
 }
 
-// MARK: - Root View (Sonivo 5 Tabs Dock & Floating Mini-Player)
-
-enum AppTab: String, CaseIterable, Identifiable {
-    case home = "Home"
-    case new = "New"
-    case radio = "Radio"
-    case library = "Library"
-    case search = "Search"
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .home:    return "Главная"
-        case .new:     return "Новости"
-        case .radio:   return "Радио"
-        case .library: return "Библиотека"
-        case .search:  return "Поиск"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .home:    return "house.fill"
-        case .new:     return "square.grid.2x2.fill"
-        case .radio:   return "dot.radiowaves.left.and.right"
-        case .library: return "music.note.list"
-        case .search:  return "magnifyingglass"
-        }
-    }
-}
+// MARK: - Root View (Native iOS 27 TabView + System Mini-Player Layer)
 
 struct RootView: View {
     @StateObject private var player = PlayerCore.shared
     @StateObject private var settings = SettingsStore.shared
-    @State private var selectedTab: AppTab = .home
     @State private var showPlayer = false
     @Namespace private var playerNamespace
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Main Tab View (each tab's ScrollView uses .safeAreaPadding(.bottom) —
-            // .safeAreaInset does not propagate through NavigationStack)
-            tabContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Floating bottom dock (mini player + tab bar) as overlay
-            bottomDock
+        ZStack {
+            // Native system TabView — Liquid Glass material, standard geometry,
+            // Safe Area handling and native hit-testing all provided by the system.
+            TabView {
+                HomeView()
+                    .tabItem { Label("Главная", systemImage: "house.fill") }
+                NewReleasesView()
+                    .tabItem { Label("Новости", systemImage: "square.grid.2x2.fill") }
+                RadioStationsView()
+                    .tabItem { Label("Радио", systemImage: "dot.radiowaves.left.and.right") }
+                LibraryView()
+                    .tabItem { Label("Библиотека", systemImage: "music.note.list") }
+                SearchCatalogView()
+                    .tabItem { Label("Поиск", systemImage: "magnifyingglass") }
+            }
+            // Mini player as a dedicated system layer directly above the tab bar.
+            // The system auto-insets every tab's content by this layer's height.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if player.currentTrack != nil && !showPlayer {
+                    MiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
 
             // Full player overlay with matched-geometry hero transition
             if showPlayer {
@@ -76,175 +60,74 @@ struct RootView: View {
             PlayerCore.shared.installSpectrumTap()
         }
     }
-
-    private var bottomDock: some View {
-        VStack(spacing: 8) {
-            if player.currentTrack != nil && !showPlayer {
-                FloatingMiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
-                    .padding(.horizontal, 16)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
-            FloatingLiquidGlassTabBar(selectedTab: $selectedTab)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-        }
-        .padding(.top, 6)
-    }
-
-    @ViewBuilder
-    private var tabContent: some View {
-        switch selectedTab {
-        case .home:
-            HomeView()
-        case .new:
-            NewReleasesView()
-        case .radio:
-            RadioStationsView()
-        case .library:
-            LibraryView()
-        case .search:
-            SearchCatalogView()
-        }
-    }
 }
 
-// MARK: - Floating Mini Player with Tap and Swipe-Up Support
+// MARK: - Mini Player (system material bar directly above the tab bar)
 
-struct FloatingMiniPlayer: View {
+struct MiniPlayer: View {
     @StateObject private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
     let namespace: Namespace.ID
-    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Left tappable/draggable area (artwork + title)
-            HStack(spacing: 12) {
-                SmallArtwork(track: player.currentTrack, size: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .matchedGeometryEffect(id: "heroArtwork", in: namespace)
+        HStack(spacing: 8) {
+            // Left: artwork + title (tap to open the full player)
+            Button {
+                showPlayer = true
+            } label: {
+                HStack(spacing: 12) {
+                    SmallArtwork(track: player.currentTrack, size: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(player.currentTrack?.title ?? "")
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(player.currentTrack?.title ?? "")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(player.currentTrack?.artist ?? "")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
 
-                    Text(player.currentTrack?.artist ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Spacer(minLength: 0)
                 }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        dragOffset = min(0, value.translation.height)
-                    }
-                    .onEnded { value in
-                        let isTap = abs(value.translation.height) < 8 && abs(value.translation.width) < 8
-                        if isTap || value.translation.height < -60 {
-                            showPlayer = true
-                        }
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            dragOffset = 0
-                        }
-                    }
-            )
+            .buttonStyle(.plain)
 
-            Spacer()
-
-            // Play / Pause Button
+            // Play / Pause
             Button {
                 player.togglePlay()
             } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.primary)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            // Next Track Button
+            // Next track
             Button {
                 player.next()
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.primary)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .glassOrMaterial(corner: 18)
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
-        .offset(y: dragOffset)
-    }
-}
-
-// MARK: - Floating Liquid Glass Tab Bar
-
-struct FloatingLiquidGlassTabBar: View {
-    @Binding var selectedTab: AppTab
-    @Namespace private var tabNamespace
-
-    private var accent: Color { Color(hex: "#FF455B") ?? .pink }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(AppTab.allCases) { tab in
-                let isSelected = selectedTab == tab
-
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                        selectedTab = tab
-                    }
-                } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: tab.icon)
-                            .font(.system(size: 20, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? AnyShapeStyle(accent) : AnyShapeStyle(.secondary))
-                            .frame(height: 24)
-
-                        Text(tab.label)
-                            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
-                            .foregroundStyle(isSelected ? AnyShapeStyle(accent) : AnyShapeStyle(.secondary))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background {
-                        if isSelected {
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(Color.primary.opacity(0.10))
-                                .matchedGeometryEffect(id: "activeTabPill", in: tabNamespace)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(.primary.opacity(0.08))
+                .frame(height: 0.5)
         }
-        .padding(4)
-        .glassCapsule()
-        .overlay(
-            Capsule()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.25), .white.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 0.75
-                )
-        )
-        .shadow(color: .black.opacity(0.18), radius: 16, x: 0, y: 8)
     }
 }

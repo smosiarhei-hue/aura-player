@@ -134,7 +134,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            .safeAreaPadding(.bottom, 88)
+            .padding(.bottom, 24)
         }
     }
 
