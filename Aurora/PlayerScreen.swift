@@ -73,30 +73,20 @@ struct PlayerScreen: View {
                         .padding(.top, max(geo.safeAreaInsets.top, 8))
                         .padding(.horizontal, 8)
 
-                    Spacer(minLength: 8)
-
-                    // Big centered hero cover (standard play/pause animation + hero transition)
-                    let artSize = min(geo.size.width - 72, geo.size.height * 0.30)
-                    artworkHero(size: max(150, artSize))
-                        .offset(x: horizontalDragOffset)
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                controlsVisible.toggle()
-                            }
-                        }
-
-                    Spacer(minLength: 14)
+                    Spacer(minLength: 10)
 
                     if controlsVisible {
-                        // Title + small cover + artist + star + menu (back below the cover)
+                        // Title + small cover + artist + star + menu
                         trackMetadataRow
                             .padding(.horizontal, 24)
 
-                        // Subtle blurry karaoke teleprompter line
-                        if let line = currentLyricLine {
+                        Spacer(minLength: 18)
+
+                        // Small glow teleprompter near the time code (hideable in settings)
+                        if settings.showTeleprompterInPlayer, let line = currentLyricLine {
                             teleprompterText(line)
                                 .padding(.horizontal, 32)
-                                .padding(.top, 14)
+                                .padding(.bottom, 12)
                         }
 
                         // Apple Music Time Scrubber & Audio Format Badge
@@ -277,41 +267,7 @@ struct PlayerScreen: View {
 
     // MARK: - Track Metadata Row (Favorite & Context Menu)
 
-    // Big centered hero cover — standard play/pause animation (no beat jump),
-    // hero-matched to the mini player cover for a clean open/close morph.
-    private func artworkHero(size: CGFloat) -> some View {
-        Group {
-            if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                Image(uiImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        artworkFallback(size: size)
-                    }
-                }
-            } else {
-                artworkFallback(size: size)
-            }
-        }
-        .frame(width: size, height: size)
-        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-        )
-        .shadow(color: (palette.first ?? .white).opacity(0.28), radius: 24, x: 0, y: 12)
-        .scaleEffect(player.isPlaying ? 1.0 : 0.90)
-        .animation(.spring(response: 0.5, dampingFraction: 0.78), value: player.isPlaying)
-    }
-
-    // Small thumbnail beside the title (no hero transition, no beat pulse).
+    // Small thumbnail beside the title (hero-matched to the mini player cover).
     private var smallCover: some View {
         Group {
             if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
@@ -333,6 +289,7 @@ struct PlayerScreen: View {
             }
         }
         .frame(width: 56, height: 56)
+        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -445,12 +402,13 @@ struct PlayerScreen: View {
     @ViewBuilder
     private func teleprompterText(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 30, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.28))
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
             .multilineTextAlignment(.center)
-            .lineLimit(2)
-            .minimumScaleFactor(0.7)
-            .blur(radius: 2.5)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .shadow(color: (palette.first ?? .white).opacity(0.9), radius: 10)
+            .shadow(color: (palette.first ?? .white).opacity(0.55), radius: 22)
             .allowsHitTesting(false)
     }
 

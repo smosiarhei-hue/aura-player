@@ -93,6 +93,7 @@ final class PlayerCore: ObservableObject {
 
     private var activeAudioFile: AVAudioFile?
     private var incomingAudioFile: AVAudioFile?
+    private var incomingTrack: Track?
     private var generation = 0
     private var anchorDate: Date?
     private var anchorOffset: Double = 0
@@ -551,6 +552,7 @@ final class PlayerCore: ObservableObject {
             } catch {
                 guard self.generation == token else { return }
                 self.isPlaying = false
+                self.transitionScheduled = false
                 self.playError = "Не удалось открыть поток трека"
             }
         }
@@ -597,6 +599,7 @@ final class PlayerCore: ObservableObject {
         streamingPlayer.play()
         self.isPlaying = true
         self.progress = seconds
+        self.transitionScheduled = false
         self.updateNowPlayingInfo()
     }
 
@@ -639,10 +642,9 @@ final class PlayerCore: ObservableObject {
             let token = generation
             DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
                 guard let self, self.generation == token else { return }
-                self.transitionScheduled = false
                 self.isTransitioning = false
                 self.currentTrack = nextTrack
-                self.start(at: 0)
+                self.start(at: 0) // transitionScheduled cleared in beginStream
             }
             return
         }
@@ -650,9 +652,9 @@ final class PlayerCore: ObservableObject {
         transitionScheduled = true
         isTransitioning = true
         transitionDuration = targetDuration
+        incomingTrack = nextTrack
 
         let targetIdlePlayer = idlePlayer
-        let token = generation
 
         Task {
             do {
@@ -663,8 +665,8 @@ final class PlayerCore: ObservableObject {
                 targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     DispatchQueue.main.async {
                         Task { @MainActor in
-                            guard let self, self.generation == token else { return }
-                            self.completeTransition(to: nextTrack)
+                            guard let self, self.activePlayer === targetIdlePlayer else { return }
+                            self.handleTrackFinish()
                         }
                     }
                 }
@@ -712,6 +714,10 @@ final class PlayerCore: ObservableObject {
             idleEQ.bands[1].gain = eqEnabled ? eqGains[1] : 0
             idleEQ.bands[2].gain = eqEnabled ? eqGains[2] : 0
         }
+
+        if p >= 1.0, let incomingTrack {
+            completeTransition(to: incomingTrack)
+        }
     }
 
     private func completeTransition(to nextTrack: Track) {
@@ -723,9 +729,11 @@ final class PlayerCore: ObservableObject {
         oldActive.stop()
         oldActive.volume = 1.0
 
+        generation += 1
         activePlayer = idlePlayer
         activeAudioFile = incomingAudioFile
         incomingAudioFile = nil
+        incomingTrack = nil
         currentTrack = nextTrack
         anchorDate = Date()
         anchorOffset = 0
@@ -755,6 +763,9 @@ final class PlayerCore: ObservableObject {
     // MARK: - Finish & Queue
 
     private func handleTrackFinish() {
+        // If an automix/crossfade is already handling the transition, ignore this
+        // (the outgoing track's segment also fires its completion mid-crossfade).
+        guard !isTransitioning, !transitionScheduled else { return }
         progress = duration
         anchorDate = nil
         isPlaying = false

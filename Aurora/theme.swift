@@ -73,6 +73,7 @@ final class SettingsStore: ObservableObject {
     @Published var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
     @Published var lyricsHighlightHex: String { didSet { defaults.set(lyricsHighlightHex, forKey: "lyrics.highlight") } }
     @Published var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
+    @Published var showTeleprompterInPlayer: Bool { didSet { defaults.set(showTeleprompterInPlayer, forKey: "lyrics.showInPlayer") } }
 
     var lyricsHighlightColor: Color { Color(hex: lyricsHighlightHex) ?? .pink }
 
@@ -104,6 +105,7 @@ final class SettingsStore: ObservableObject {
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsHighlightHex = defaults.string(forKey: "lyrics.highlight") ?? "#FF455B"
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
+        showTeleprompterInPlayer = defaults.object(forKey: "lyrics.showInPlayer") as? Bool ?? true
     }
 }
 

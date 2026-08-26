@@ -149,6 +149,9 @@ struct SettingsView: View {
                 }
 
                 Section("Караоке (текст песни)") {
+                    Toggle("Строка текста в плеере", isOn: $settings.showTeleprompterInPlayer)
+                        .tint(settings.accentColor)
+
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Размер шрифта")
