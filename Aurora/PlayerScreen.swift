@@ -36,6 +36,17 @@ struct PlayerScreen: View {
 
     private var bassEnergy: Double { Double(analyzer.bass) }
 
+    /// Real bass energy when the local EQ tap has signal; otherwise a subtle
+    /// time-based pulse so streaming tracks (AVPlayer, no analyzer tap) still
+    /// visibly move with the beat (~96 BPM fallback).
+    private func effectiveBass(at time: TimeInterval) -> Double {
+        let raw = bassEnergy
+        if raw > 0.03 { return raw }
+        guard player.isPlaying else { return 0 }
+        let pulse = 0.5 + 0.5 * sin(time * 2.0 * .pi * 1.6)
+        return 0.18 + 0.82 * pulse
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -140,7 +151,8 @@ struct PlayerScreen: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             let drift: CGFloat = 1.0 + CGFloat(sin(t * 0.4)) * 0.04
-            let beatBoost: CGFloat = player.isPlaying ? 1.0 + bassEnergy * 0.07 : 1.0
+            let bass = effectiveBass(at: t)
+            let beatBoost: CGFloat = player.isPlaying ? 1.0 + CGFloat(bass) * 0.07 : 1.0
 
             if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
                 Image(uiImage: img)
@@ -220,9 +232,10 @@ struct PlayerScreen: View {
 
     // MARK: - Track Metadata Row (Favorite & Context Menu)
 
-    private var trackMetadataRow: some View {
-        HStack(alignment: .center, spacing: 14) {
-            // Small artwork (matched-geometry hero) with beat glow
+    private var beatGlowArtwork: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let bass = effectiveBass(at: timeline.date.timeIntervalSinceReferenceDate)
+
             Group {
                 if let track = currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
                     Image(uiImage: img)
@@ -249,16 +262,22 @@ struct PlayerScreen: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
             )
-            .shadow(color: (palette.first ?? .white).opacity(player.isPlaying ? 0.35 + 0.5 * bassEnergy : 0.10),
-                    radius: player.isPlaying ? 16 + 30 * bassEnergy : 8,
-                    x: 0, y: player.isPlaying ? 6 + 6 * bassEnergy : 3)
-            .scaleEffect(player.isPlaying ? 1.0 + bassEnergy * 0.08 : 0.96)
-            .animation(.easeOut(duration: 0.10), value: analyzer.bass)
+            .shadow(color: (palette.first ?? .white).opacity(player.isPlaying ? 0.35 + 0.5 * bass : 0.10),
+                    radius: player.isPlaying ? 16 + 30 * bass : 8,
+                    x: 0, y: player.isPlaying ? 6 + 6 * bass : 3)
+            .scaleEffect(player.isPlaying ? 1.0 + bass * 0.08 : 0.96)
             .onTapGesture {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     controlsVisible.toggle()
                 }
             }
+        }
+    }
+
+    private var trackMetadataRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            // Small artwork (matched-geometry hero) with beat glow
+            beatGlowArtwork
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
