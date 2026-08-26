@@ -117,16 +117,17 @@ struct PlayerScreen: View {
         }
         .colorScheme(.dark)
         .statusBarHidden()
+        .animation(.easeInOut(duration: 0.5), value: player.currentTrack?.id)
         .task(id: player.currentTrack?.id) {
             await loadLyrics()
         }
         .onReceive(player.$progress) { _ in
             updateCurrentLyricLine()
         }
-        .sheet(isPresented: $showLyrics) { LyricsSheetView() }
         .sheet(isPresented: $showQueue) { QueueSheetView() }
         .sheet(isPresented: $showEQ) { PlayerEQSheetView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .fullScreenCover(isPresented: $showLyrics) { LyricsSheetView() }
     }
 
     // MARK: - Artwork Background (Exact Apple Music Wallpaper)
@@ -137,6 +138,9 @@ struct PlayerScreen: View {
             Color(red: 0.05, green: 0.08, blue: 0.10).ignoresSafeArea()
 
             driftingArtwork(geo: geo)
+                .ignoresSafeArea()
+                .id(currentTrack?.id)
+                .transition(.opacity)
 
             LinearGradient(
                 stops: [
@@ -182,14 +186,12 @@ struct PlayerScreen: View {
             image
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: geo.size.width, height: geo.size.height)
                 .scaleEffect(scale)
                 .saturation(1.12)
                 .clipped()
             image
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: geo.size.width, height: geo.size.height)
                 .scaleEffect(scale)
                 .saturation(1.12)
                 .blur(radius: 34)
@@ -206,6 +208,8 @@ struct PlayerScreen: View {
                     )
                 )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
         .clipped()
     }
 
@@ -722,29 +726,72 @@ struct LyricsSheetView: View {
     @State private var isLoading = false
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                if let track = player.currentTrack {
-                    LinearGradient(colors: track.palette.prefix(2).map { $0 },
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .opacity(0.25)
-                        .ignoresSafeArea()
-                }
+        ZStack {
+            // Immersive fullscreen backdrop: blurred artwork + dark gradient
+            karaokeBackdrop
 
-                LyricsView(lyrics: lyrics, isLoading: isLoading)
-            }
-            .background(Color(uiColor: .systemBackground))
-            .navigationTitle("Текст песни")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { dismiss() }
+            LyricsView(lyrics: lyrics, isLoading: isLoading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Floating header: close + track info
+            VStack {
+                HStack(spacing: 12) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(player.currentTrack?.title ?? "Текст песни")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(player.currentTrack?.artist ?? "")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    Spacer()
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                Spacer()
             }
         }
+        .colorScheme(.dark)
         .task(id: player.currentTrack?.id) {
             await load()
         }
+    }
+
+    @ViewBuilder
+    private var karaokeBackdrop: some View {
+        ZStack {
+            Color.black
+            if let track = player.currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .blur(radius: 60)
+                    .opacity(0.45)
+            } else if let track = player.currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().aspectRatio(contentMode: .fill).blur(radius: 60).opacity(0.45)
+                    } else {
+                        LinearGradient(colors: track.palette, startPoint: .top, endPoint: .bottom)
+                    }
+                }
+            } else {
+                LinearGradient(colors: [Color(red: 0.08, green: 0.10, blue: 0.14), .black],
+                               startPoint: .top, endPoint: .bottom)
+            }
+        }
+        .ignoresSafeArea()
     }
 
     private func load() async {

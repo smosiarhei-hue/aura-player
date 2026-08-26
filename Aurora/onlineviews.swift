@@ -552,6 +552,8 @@ struct SearchCatalogView: View {
     @State private var searchText = ""
     @State private var ymResults: [YandexMusicService.YMTrackItem] = []
     @State private var isSearching = false
+    @State private var searchError: String? = nil
+    @State private var searchTask: Task<Void, Never>? = nil
 
     var localResults: [Track] {
         guard !searchText.isEmpty else { return [] }
@@ -649,6 +651,34 @@ struct SearchCatalogView: View {
 
                     if isSearching {
                         ProgressView().frame(maxWidth: .infinity, minHeight: 100)
+                    } else if let error = searchError {
+                        VStack(spacing: 12) {
+                            Image(systemName: "wifi.exclamationmark")
+                                .font(.system(size: 36, weight: .light))
+                                .foregroundStyle(.secondary)
+                            Text(error)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            Button("Повторить") { performSearch() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    } else if !searchText.isEmpty && ymResults.isEmpty && localResults.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 36, weight: .light))
+                                .foregroundStyle(.secondary)
+                            Text("Ничего не найдено")
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            Text("Проверьте название или имя исполнителя.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
                     }
                 }
                 .padding(.top, 10)
@@ -657,17 +687,19 @@ struct SearchCatalogView: View {
             .navigationTitle("Поиск")
             .searchable(text: $searchText, prompt: "Поиск в Яндекс Музыке и медиатеке")
             .onSubmit(of: .search) {
-                Task { await performSearch() }
+                performSearch()
             }
             .onChange(of: searchText) { newValue in
                 if newValue.isEmpty {
+                    searchTask?.cancel()
                     ymResults = []
+                    searchError = nil
                 } else {
                     let query = newValue
                     Task {
                         try? await Task.sleep(nanoseconds: 450_000_000)
                         guard searchText == query else { return }
-                        await performSearch()
+                        performSearch()
                     }
                 }
             }
@@ -692,7 +724,7 @@ struct SearchCatalogView: View {
                 ForEach(cats, id: \.0) { cat in
                     Button {
                         searchText = cat.0
-                        Task { await performSearch() }
+                        performSearch()
                     } label: {
                         ZStack(alignment: .bottomLeading) {
                             LinearGradient(colors: cat.1, startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -711,11 +743,25 @@ struct SearchCatalogView: View {
         }
     }
 
-    private func performSearch() async {
+    private func performSearch() {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
-        isSearching = true
-        ymResults = (try? await ym.search(query: query)) ?? []
-        isSearching = false
+        searchTask?.cancel()
+        searchTask = Task { @MainActor in
+            isSearching = true
+            searchError = nil
+            do {
+                let results = try await ym.search(query: query)
+                guard !Task.isCancelled else { return }
+                ymResults = results
+            } catch {
+                guard !Task.isCancelled else { return }
+                ymResults = []
+                searchError = "Не удалось выполнить поиск"
+            }
+            if !Task.isCancelled {
+                isSearching = false
+            }
+        }
     }
 }
