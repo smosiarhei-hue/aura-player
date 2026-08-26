@@ -8,7 +8,6 @@ struct PlayerScreen: View {
     @StateObject private var player = PlayerCore.shared
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var library = LibraryStore.shared
-    @StateObject private var analyzer = SpectrumAnalyzer.shared
     @Binding var isPresented: Bool
     let namespace: Namespace.ID
 
@@ -51,7 +50,7 @@ struct PlayerScreen: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Immersive full-bleed album artwork wallpaper (Screenshot 1)
+                // Immersive full-bleed album artwork wallpaper
                 artworkBackground(geo: geo)
 
                 VStack(spacing: 0) {
@@ -62,7 +61,7 @@ struct PlayerScreen: View {
 
                     Spacer(minLength: 6)
 
-                    // Big expansive cover (aspectFit — generous sizing, no top/bottom crop)
+                    // Big expansive cover (aspectFit, no top/bottom crop)
                     heroArtwork
                         .padding(.horizontal, 28)
                         .padding(.top, 4)
@@ -74,7 +73,7 @@ struct PlayerScreen: View {
                         .padding(.horizontal, 24)
                         .padding(.top, 14)
 
-                    // Small glow teleprompter near the time code (hideable in settings)
+                    // Small glow teleprompter near the time code
                     if settings.showTeleprompterInPlayer, let line = currentLyricLine {
                         teleprompterText(line)
                             .padding(.horizontal, 32)
@@ -86,7 +85,7 @@ struct PlayerScreen: View {
                         .padding(.horizontal, 28)
                         .padding(.top, 14)
 
-                    // Iconic Huge Playback Controls (Prev, Play/Pause, Next)
+                    // Iconic Huge Playback Controls
                     playbackControlsRow
                         .padding(.horizontal, 36)
                         .padding(.top, 12)
@@ -96,7 +95,7 @@ struct PlayerScreen: View {
                         .padding(.horizontal, 28)
                         .padding(.top, 16)
 
-                    // Bottom Navigation Bar (Lyrics, AirPlay, Queue, Sleep Timer)
+                    // Bottom Navigation Bar
                     bottomUtilityIconsRow
                         .padding(.horizontal, 32)
                         .padding(.top, 14)
@@ -122,7 +121,7 @@ struct PlayerScreen: View {
         .fullScreenCover(isPresented: $showLyrics) { LyricsSheetView() }
     }
 
-    // MARK: - Artwork Background (Exact Apple Music Wallpaper)
+    // MARK: - Artwork Background
 
     @ViewBuilder
     private func artworkBackground(geo: GeometryProxy) -> some View {
@@ -159,7 +158,8 @@ struct PlayerScreen: View {
             radialBlurArtwork(Image(uiImage: img), geo: geo, scale: 1.0)
         } else if let track = currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
             AsyncImage(url: url) { phase in
-                if case .success(let image) = phase {\n                    radialBlurArtwork(image, geo: geo, scale: 1.0)
+                if case .success(let image) = phase {
+                    radialBlurArtwork(image, geo: geo, scale: 1.0)
                 } else {
                     AnimatedMeshBackground(palette: palette)
                 }
@@ -388,7 +388,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Karaoke Teleprompter (subtle blurry running text)
+    // MARK: - Karaoke Teleprompter
 
     @ViewBuilder
     private func teleprompterText(_ text: String) -> some View {
@@ -430,7 +430,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Time Scrubber (Accurate non-resetting seek)
+    // MARK: - Time Scrubber
 
     private var timeScrubberSection: some View {
         VStack(spacing: 8) {
@@ -486,24 +486,22 @@ struct PlayerScreen: View {
 
                 Spacer()
 
-                HStack(spacing: 4) {
-                    Menu {
-                        ForEach(AudioQuality.allCases) { q in
-                            Button {
-                                player.selectQuality(q)
-                            } label: {
-                                Label(q.label, systemImage: player.audioQuality == q ? "checkmark" : "waveform")
-                            }
+                Menu {
+                    ForEach(AudioQuality.allCases) { q in
+                        Button {
+                            player.selectQuality(q)
+                        } label: {
+                            Label(q.label, systemImage: player.audioQuality == q ? "checkmark" : "waveform")
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "waveform")
-                                .font(.system(size: 10, weight: .bold))
-                            Text(qualityLabel)
-                                .font(.system(size: 11, weight: .bold))
-                        }
-                        .foregroundStyle(.white.opacity(0.70))
                     }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(qualityLabel)
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundStyle(.white.opacity(0.70))
                 }
 
                 Spacer()
@@ -608,7 +606,6 @@ struct PlayerScreen: View {
 
             Spacer()
 
-            // Visible sleep timer (moon)
             Button {
                 showSleepTimer = true
             } label: {
@@ -628,7 +625,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Interactive Gestures (Swipe down to dismiss, Swipe left/right for tracks)
+    // MARK: - Interactive Gestures
 
     private var interactiveGestures: some Gesture {
         DragGesture(minimumDistance: 15)
@@ -643,7 +640,6 @@ struct PlayerScreen: View {
                 let screenW = UIScreen.main.bounds.width
                 let threshold = screenW * 0.35
 
-                // Horizontal Swipe (Next / Previous Track)
                 if v.translation.width < -threshold {
                     if settings.hapticsEnabled { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
@@ -656,7 +652,6 @@ struct PlayerScreen: View {
                     }
                 }
 
-                // Vertical Dismiss
                 if v.translation.height > 100 {
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                         isPresented = false
