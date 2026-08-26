@@ -73,20 +73,18 @@ struct PlayerScreen: View {
                         .padding(.top, max(geo.safeAreaInsets.top, 8))
                         .padding(.horizontal, 8)
 
-                    Spacer(minLength: 10)
+                    Spacer(minLength: 8)
 
                     if controlsVisible {
-                        // Title + small cover + artist + star + menu
+                        // Title + small cover + artist + star + menu (bottom, right before teleprompter)
                         trackMetadataRow
                             .padding(.horizontal, 24)
-
-                        Spacer(minLength: 18)
 
                         // Small glow teleprompter near the time code (hideable in settings)
                         if settings.showTeleprompterInPlayer, let line = currentLyricLine {
                             teleprompterText(line)
                                 .padding(.horizontal, 32)
-                                .padding(.bottom, 12)
+                                .padding(.top, 14)
                         }
 
                         // Apple Music Time Scrubber & Audio Format Badge
