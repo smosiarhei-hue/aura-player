@@ -76,9 +76,9 @@ struct SearchCatalogView: View {
             .searchable(text: $searchText, prompt: "Треки, исполнители, альбомы")
             .onSubmit(of: .search) { performSearch(immediate: true) }
             .onChange(of: searchText) { newValue in
-                let q = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                let query = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 searchTask?.cancel()
-                if q.isEmpty {
+                if query.isEmpty {
                     results = YandexMusicService.GlobalSearchResults()
                     suggestions = []
                     didSearch = false
@@ -90,17 +90,15 @@ struct SearchCatalogView: View {
         }
     }
 
-    // MARK: Подсказки
-
     private var suggestionsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(suggestions, id: \.self) { s in
+                ForEach(suggestions, id: \.self) { suggestion in
                     Button {
-                        searchText = s
+                        searchText = suggestion
                         performSearch(immediate: true)
                     } label: {
-                        Text(s)
+                        Text(suggestion)
                             .font(AG.text(12, .medium))
                             .foregroundStyle(AG.ink)
                             .padding(.horizontal, 12)
@@ -115,8 +113,6 @@ struct SearchCatalogView: View {
         }
         .riseIn()
     }
-
-    // MARK: Артисты
 
     private var artistsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -149,8 +145,6 @@ struct SearchCatalogView: View {
         }
         .riseIn()
     }
-
-    // MARK: Альбомы
 
     private var albumsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -188,8 +182,6 @@ struct SearchCatalogView: View {
         .riseIn(delay: 0.05)
     }
 
-    // MARK: Треки
-
     private var tracksSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SonivoHeader(title: "Треки")
@@ -205,8 +197,6 @@ struct SearchCatalogView: View {
         }
         .riseIn(delay: 0.08)
     }
-
-    // MARK: Локальная медиатека
 
     private var localSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -243,8 +233,6 @@ struct SearchCatalogView: View {
         .riseIn(delay: 0.10)
     }
 
-    // MARK: Пустой результат
-
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
@@ -273,8 +261,6 @@ struct SearchCatalogView: View {
         .padding(.horizontal, 32)
         .padding(.vertical, 40)
     }
-
-    // MARK: Жанры (пустой запрос)
 
     private var genresGrid: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -312,21 +298,21 @@ struct SearchCatalogView: View {
         .riseIn()
     }
 
-    // MARK: Поиск с дебаунсом
-
     private func performSearch(immediate: Bool) {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
         searchTask?.cancel()
+
         searchTask = Task { @MainActor in
             if !immediate {
                 try? await Task.sleep(nanoseconds: 350_000_000)
                 guard !Task.isCancelled else { return }
                 guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
             }
+
             isSearching = true
             suggestions = await ym.searchSuggestions(query: query)
-            let found = await ym.searchAll(query: query)
+            let found = await ym.searchAllFixed(query: query)
             guard !Task.isCancelled else { return }
             results = found
             didSearch = true
