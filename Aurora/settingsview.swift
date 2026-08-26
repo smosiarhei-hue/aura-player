@@ -68,6 +68,33 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Качество звука") {
+                    ForEach(AudioQuality.allCases) { q in
+                        Button {
+                            player.selectQuality(q)
+                        } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(q.label)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.primary)
+                                    Text(q.detail)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                if player.audioQuality == q {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(settings.accentColor)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 Section("Оформление") {
                     Picker("Тема", selection: $settings.theme) {
                         ForEach(AppTheme.allCases) { t in Text(t.name).tag(t) }

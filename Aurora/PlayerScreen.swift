@@ -34,6 +34,13 @@ struct PlayerScreen: View {
         return "HQ"
     }
 
+    private var sleepTimerLabel: String {
+        guard let remaining = player.sleepTimerRemaining else { return "Таймер сна" }
+        let m = Int(remaining) / 60
+        let s = Int(remaining) % 60
+        return String(format: "Таймер сна • %d:%02d", m, s)
+    }
+
     private var bassEnergy: Double { Double(analyzer.bass) }
 
     /// Real bass energy when the local EQ tap has signal; otherwise a subtle
@@ -355,7 +362,7 @@ struct PlayerScreen: View {
                         }
                     }
                 } label: {
-                    Label("Таймер сна", systemImage: "moon.zzz")
+                    Label(sleepTimerLabel, systemImage: "moon.zzz")
                 }
 
                 if let track = currentTrack, library.isTrackInLibrary(track) {

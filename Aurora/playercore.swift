@@ -7,20 +7,30 @@ import SwiftUI
 // MARK: - Audio Quality Selection
 
 enum AudioQuality: Int, CaseIterable, Identifiable {
-    case auto = 0, high = 1, medium = 2
+    case auto = 0, excellent = 1, optimal = 2, economical = 3
     var id: Int { rawValue }
     var label: String {
         switch self {
-        case .auto: return "Авто"
-        case .high: return "Высокое (320 kbps)"
-        case .medium: return "Среднее (128 kbps)"
+        case .auto: return "Автоматическое"
+        case .excellent: return "Превосходное"
+        case .optimal: return "Оптимальное"
+        case .economical: return "Экономичное"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .auto: return "Звук автоматически подстраивается под текущее качество вашей сети"
+        case .excellent: return "Музыка в lossless и других высококачественных форматах — для безлимитного интернета и хорошей акустики"
+        case .optimal: return "Сбалансированный звук для большинства устройств, со средним расходом трафика"
+        case .economical: return "Для медленного интернета, с минимальным расходом трафика"
         }
     }
     var targetBitrate: Int? {
         switch self {
         case .auto: return nil
-        case .high: return 320
-        case .medium: return 128
+        case .excellent: return 320
+        case .optimal: return 192
+        case .economical: return 64
         }
     }
 }
