@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Aurora Glass / iOS 27 Design System Tokens & Storage
+// MARK: - Sonivo Ember Design System (dark canvas + amber gradients + rounded display type)
 
 enum AG {
     static let radius: CGFloat = 26
@@ -9,153 +9,126 @@ enum AG {
     static let fastSpring = Animation.spring(response: 0.18, dampingFraction: 0.75)
     static let slowSpring = Animation.spring(response: 0.62, dampingFraction: 0.70)
 
-    // Palette tokens
-    static let bg = Color(hex: "#070A18") ?? .black
-    static let ink = Color(hex: "#F2F5FF") ?? .white
-    static let ice = Color(hex: "#7CF6FF") ?? .cyan
+    // MARK: - Ember palette
+    static let bg       = Color(hex: "#08070A") ?? .black
+    static let bgRaised = Color(hex: "#100E13") ?? .black
+    static let card     = Color(hex: "#17151A") ?? .black
+    static let coal     = Color(hex: "#1E1B21") ?? .black
+    static let ink      = Color(hex: "#F8F5F1") ?? .white
+    static let inkMuted = Color(hex: "#A29A92") ?? .gray
+    static let amber    = Color(hex: "#FBBF24") ?? .yellow
+    static let ember    = Color(hex: "#F97316") ?? .orange
+    static let flame    = Color(hex: "#EA580C") ?? .orange
+
+    // Legacy tokens kept so older screens keep compiling
+    static let ice      = Color(hex: "#7CF6FF") ?? .cyan
     static let lavender = Color(hex: "#9A7CFF") ?? .purple
-    static let magenta = Color(hex: "#FF8AD1") ?? .pink
-}
+    static let magenta  = Color(hex: "#FF8AD1") ?? .pink
 
-enum AccentChoice: String, CaseIterable, Codable, Identifiable {
-    case aurora, neon, sunset, emerald, cyber
-    var id: String { rawValue }
-    var name: String {
-        switch self {
-        case .aurora:  return "Aurora (Лёд & Лаванда)"
-        case .neon:    return "Neon (Магента)"
-        case .sunset:  return "Sunset (Закат)"
-        case .emerald: return "Emerald (Изумруд)"
-        case .cyber:   return "Cyber (Неон)"
-        }
+    static var emberGradient: LinearGradient {
+        LinearGradient(colors: [amber, ember, flame], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
-    var colors: [Color] {
-        switch self {
-        case .aurora:  return [AG.ice, AG.lavender, AG.magenta]
-        case .neon:    return [Color(hex: "#EC4899")!, Color(hex: "#8B5CF6")!]
-        case .sunset:  return [Color(hex: "#F97316")!, Color(hex: "#E11D48")!]
-        case .emerald: return [Color(hex: "#10B981")!, Color(hex: "#06B6D4")!]
-        case .cyber:   return [Color(hex: "#3B82F6")!, Color(hex: "#A855F7")!]
-        }
-    }
-    var main: Color { colors[0] }
-}
 
-enum AppTheme: String, CaseIterable, Codable, Identifiable {
-    case system, dark, light
-    var id: String { rawValue }
-    var name: String {
-        switch self {
-        case .system: return "Как в системе"
-        case .dark: return "Тёмная (Aurora Studio)"
-        case .light: return "Светлая"
-        }
+    static var emberWarm: LinearGradient {
+        LinearGradient(colors: [flame, ember, amber], startPoint: .bottomLeading, endPoint: .topTrailing)
     }
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system: return nil
-        case .dark: return .dark
-        case .light: return .light
-        }
+
+    static var hairline: LinearGradient {
+        LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0.04), Color.black.opacity(0.22)],
+                       startPoint: .topLeading,
+                       endPoint: .bottomTrailing)
+    }
+
+    // MARK: - Typography
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .heavy) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
+    }
+
+    static func text(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
+    }
+
+    static func serifAccent(_ size: CGFloat) -> Font {
+        .system(size: size, weight: .semibold, design: .serif)
     }
 }
 
-final class SettingsStore: ObservableObject {
-    static let shared = SettingsStore()
-    private let defaults = UserDefaults.standard
+// MARK: - Ember Backdrop (warm glow on near-black canvas)
 
-    @Published var theme: AppTheme { didSet { defaults.set(theme.rawValue, forKey: "settings.theme") } }
-    @Published var accent: AccentChoice { didSet { defaults.set(accent.rawValue, forKey: "settings.accent") } }
-    @Published var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
-    @Published var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
-
-    // Karaoke lyrics
-    @Published var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
-    @Published var lyricsHighlightHex: String { didSet { defaults.set(lyricsHighlightHex, forKey: "lyrics.highlight") } }
-    @Published var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
-    @Published var showTeleprompterInPlayer: Bool { didSet { defaults.set(showTeleprompterInPlayer, forKey: "lyrics.showInPlayer") } }
-
-    var lyricsHighlightColor: Color { Color(hex: lyricsHighlightHex) ?? .pink }
-
-    struct LyricsHighlightPreset: Identifiable {
-        let name: String
-        let hex: String
-        var id: String { hex }
-    }
-
-    static let lyricsHighlightPresets: [LyricsHighlightPreset] = [
-        LyricsHighlightPreset(name: "Коралл", hex: "#FF455B"),
-        LyricsHighlightPreset(name: "Неон", hex: "#7CF6FF"),
-        LyricsHighlightPreset(name: "Лаванда", hex: "#9A7CFF"),
-        LyricsHighlightPreset(name: "Магента", hex: "#EC4899"),
-        LyricsHighlightPreset(name: "Изумруд", hex: "#10B981")
-    ]
-
-    var colorScheme: ColorScheme? { theme.colorScheme }
-    var accentColor: Color { accent.main }
-    var accentGradient: LinearGradient {
-        LinearGradient(colors: accent.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    private init() {
-        theme = AppTheme(rawValue: defaults.string(forKey: "settings.theme") ?? "") ?? .dark
-        accent = AccentChoice(rawValue: defaults.string(forKey: "settings.accent") ?? "") ?? .aurora
-        hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
-        scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
-        lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
-        lyricsHighlightHex = defaults.string(forKey: "lyrics.highlight") ?? "#FF455B"
-        lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
-        showTeleprompterInPlayer = defaults.object(forKey: "lyrics.showInPlayer") as? Bool ?? true
+struct EmberBackdrop: View {
+    var body: some View {
+        ZStack {
+            AG.bg
+            RadialGradient(gradient: Gradient(colors: [AG.flame.opacity(0.34), AG.ember.opacity(0.10), Color.clear]),
+                           center: UnitPoint(x: 0.5, y: -0.03),
+                           startRadius: 0,
+                           endRadius: 500)
+            RadialGradient(gradient: Gradient(colors: [AG.amber.opacity(0.10), Color.clear]),
+                           center: UnitPoint(x: 0.04, y: 0.34),
+                           startRadius: 0,
+                           endRadius: 320)
+        }
+        .ignoresSafeArea()
     }
 }
 
-// MARK: - Official Aurora Glass Modifier (5-Layer Specular Liquid Glass)
+// MARK: - Ember surfaces
 
-struct AGGlassModifier: ViewModifier {
-    var radius: CGFloat = AG.radius
+struct EmberCardModifier: ViewModifier {
+    var corner: CGFloat = 20
     var padding: CGFloat = 0
-    var opacity: CGFloat = 0.90
 
     func body(content: Content) -> some View {
         content
             .padding(padding)
             .background(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .opacity(opacity)
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(AG.card.opacity(0.92))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .white.opacity(0.55), location: 0.0),
-                                .init(color: AG.ice.opacity(0.35), location: 0.25),
-                                .init(color: .clear, location: 0.55),
-                                .init(color: Color.black.opacity(0.45), location: 1.0)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.0
-                    )
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(AG.hairline, lineWidth: 0.8)
             )
-            .shadow(color: Color.black.opacity(0.30), radius: 20, x: 0, y: 10)
+            .shadow(color: Color.black.opacity(0.35), radius: 14, x: 0, y: 8)
+    }
+}
+
+struct EmberGlassModifier: ViewModifier {
+    var corner: CGFloat = 22
+    var padding: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .fill(Color.black.opacity(0.42))
+                }
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(AG.hairline, lineWidth: 0.8)
+            )
+            .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 9)
     }
 }
 
 extension View {
-    func liquidGlass(corner: CGFloat = AG.radius, padding: CGFloat = 0, opacity: CGFloat = 0.90) -> some View {
-        modifier(AGGlassModifier(radius: corner, padding: padding, opacity: opacity))
+    func emberCard(corner: CGFloat = 20, padding: CGFloat = 0) -> some View {
+        modifier(EmberCardModifier(corner: corner, padding: padding))
     }
 
-    /// Native iOS 26 Liquid Glass.
-    func glassOrMaterial(corner: CGFloat = AG.radius) -> some View {
-        self.glassEffect(.regular, in: .rect(cornerRadius: corner))
-    }
-
-    /// Native iOS 26 glass capsule (for pills/docks).
-    func glassCapsule() -> some View {
-        self.glassEffect(.regular, in: .capsule)
+    func emberGlass(corner: CGFloat = 22, padding: CGFloat = 0) -> some View {
+        modifier(EmberGlassModifier(corner: corner, padding: padding))
     }
 }
+
+// MARK: - Small reusable Ember controls
+
+struct EmberSectionTitle: View {
+    let title: String
+    var subtitle: String? = nil
+    var size: CGFloat = 22
