@@ -51,10 +51,14 @@ private struct SyncedLyrics: View {
                         LyricsLineView(
                             line: line,
                             isActive: idx == activeIndex,
-                            progress: progress(for: line),
+                            currentTime: currentTime,
                             highlight: settings.lyricsHighlightColor,
                             fontSize: settings.lyricsFontSize
                         )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            player.seek(to: line.startTime)
+                        }
                         .id(idx)
                     }
                 }
@@ -63,27 +67,11 @@ private struct SyncedLyrics: View {
             }
             .onChange(of: activeIndex) { newIndex in
                 guard let newIndex else { return }
-                withAnimation(.easeInOut(duration: 0.45)) {
+                withAnimation(.easeInOut(duration: 0.4)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
         }
-    }
-
-    private func progress(for line: LyricsLine) -> Double {
-        let t = currentTime
-        if let words = line.words, !words.isEmpty {
-            if t < (words.first?.startTime ?? 0) { return 0 }
-            for (i, w) in words.enumerated() {
-                if t >= w.startTime && t < w.endTime {
-                    let wordProgress = (t - w.startTime) / max(w.endTime - w.startTime, 0.001)
-                    return min(1, (Double(i) + wordProgress) / Double(words.count))
-                }
-            }
-            return 1
-        }
-        guard let end = line.endTime, end > line.startTime else { return 0 }
-        return min(max((t - line.startTime) / (end - line.startTime), 0), 1)
     }
 }
 
@@ -92,34 +80,38 @@ private struct SyncedLyrics: View {
 private struct LyricsLineView: View {
     let line: LyricsLine
     let isActive: Bool
-    let progress: Double
+    let currentTime: Double
     let highlight: Color
     let fontSize: Double
 
     var body: some View {
-        Text(line.text)
-            .font(.system(size: fontSize, weight: isActive ? .bold : .regular))
-            .foregroundStyle(isActive ? highlight.opacity(0.45) : Color.secondary.opacity(0.55))
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .shadow(color: isActive ? highlight.opacity(0.6) : .clear, radius: isActive ? 12 : 0)
-            .overlay {
-                if isActive {
-                    Text(line.text)
-                        .font(.system(size: fontSize, weight: .bold))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .mask(alignment: .leading) {
-                            GeometryReader { geo in
-                                Rectangle()
-                                    .frame(width: max(0, geo.size.width * progress))
-                            }
-                        }
-                }
+        Group {
+            if let words = line.words, !words.isEmpty {
+                Text(wordAttributed(words: words))
+                    .font(.system(size: fontSize, weight: isActive ? .bold : .regular))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            } else {
+                Text(line.text)
+                    .font(.system(size: fontSize, weight: isActive ? .bold : .regular))
+                    .foregroundStyle(isActive ? highlight : Color.secondary.opacity(0.55))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
             }
-            .scaleEffect(isActive ? 1.0 : 0.92)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isActive)
+        }
+        .shadow(color: isActive ? highlight.opacity(0.55) : .clear, radius: isActive ? 10 : 0)
+        .scaleEffect(isActive ? 1.0 : 0.94)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isActive)
+    }
+
+    private func wordAttributed(words: [LyricsWord]) -> AttributedString {
+        var result = AttributedString()
+        for w in words {
+            var piece = AttributedString(w.text)
+            piece.foregroundColor = currentTime >= w.startTime ? highlight : Color.secondary.opacity(0.5)
+            result += piece
+        }
+        return result
     }
 }
 

@@ -8,7 +8,8 @@ struct PlayerScreen: View {
     @StateObject private var player = PlayerCore.shared
     @StateObject private var settings = SettingsStore.shared
     @StateObject private var library = LibraryStore.shared
-    @Environment(\.dismiss) private var dismiss
+    @Binding var isPresented: Bool
+    let namespace: Namespace.ID
 
     @State private var scrubValue: Double? = nil
     @State private var isDraggingScrubber = false
@@ -151,7 +152,7 @@ struct PlayerScreen: View {
 
     private var topGrabber: some View {
         HStack {
-            Button { dismiss() } label: {
+            Button { isPresented = false } label: {
                 Image(systemName: "chevron.compact.down")
                     .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(.white.opacity(0.70))
@@ -201,6 +202,7 @@ struct PlayerScreen: View {
             }
         }
         .frame(width: size, height: size)
+        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -508,7 +510,7 @@ struct PlayerScreen: View {
 
                 // Vertical Dismiss
                 if v.translation.height > 120 {
-                    dismiss()
+                    isPresented = false
                 }
 
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {

@@ -26,11 +26,11 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .home:    return "Home"
-        case .new:     return "New"
-        case .radio:   return "Radio"
-        case .library: return "Library"
-        case .search:  return "Search"
+        case .home:    return "Главная"
+        case .new:     return "Новости"
+        case .radio:   return "Радио"
+        case .library: return "Библиотека"
+        case .search:  return "Поиск"
         }
     }
 
@@ -50,6 +50,7 @@ struct RootView: View {
     @StateObject private var settings = SettingsStore.shared
     @State private var selectedTab: AppTab = .home
     @State private var showPlayer = false
+    @Namespace private var playerNamespace
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -59,8 +60,8 @@ struct RootView: View {
 
             // Bottom Stack: Floating Mini Player + Floating Liquid Glass Dock
             VStack(spacing: 8) {
-                if player.currentTrack != nil && !showPlayer {
-                    FloatingMiniPlayer(showPlayer: $showPlayer)
+                if player.currentTrack != nil {
+                    FloatingMiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
                         .padding(.horizontal, 16)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -69,11 +70,16 @@ struct RootView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
+
+            // Full player overlay with matched-geometry hero transition
+            if showPlayer {
+                PlayerScreen(isPresented: $showPlayer, namespace: playerNamespace)
+                    .transition(.move(edge: .bottom))
+                    .zIndex(5)
+            }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.currentTrack != nil)
-        .fullScreenCover(isPresented: $showPlayer) {
-            PlayerScreen()
-        }
+        .animation(.spring(response: 0.42, dampingFraction: 0.85), value: showPlayer)
         .onAppear {
             PlayerCore.shared.installSpectrumTap()
         }
@@ -101,29 +107,45 @@ struct RootView: View {
 struct FloatingMiniPlayer: View {
     @StateObject private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
+    let namespace: Namespace.ID
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 12) {
-            // Square Artwork
-            SmallArtwork(track: player.currentTrack, size: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            // Left tappable/draggable area (artwork + title)
+            HStack(spacing: 12) {
+                SmallArtwork(track: player.currentTrack, size: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .matchedGeometryEffect(id: "heroArtwork", in: namespace)
 
-            // Track Title & Artist (Tappable / Swipeable)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.currentTrack?.title ?? "")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.currentTrack?.title ?? "")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
 
-                Text(player.currentTrack?.artist ?? "")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    Text(player.currentTrack?.artist ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             .contentShape(Rectangle())
-            .onTapGesture {
-                showPlayer = true
-            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        dragOffset = min(0, value.translation.height)
+                    }
+                    .onEnded { value in
+                        let isTap = abs(value.translation.height) < 8 && abs(value.translation.width) < 8
+                        if isTap || value.translation.height < -60 {
+                            showPlayer = true
+                        }
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            dragOffset = 0
+                        }
+                    }
+            )
 
             Spacer()
 
@@ -151,20 +173,14 @@ struct FloatingMiniPlayer: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        .contentShape(Rectangle())
         .glassOrMaterial(corner: 18)
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
-        .gesture(
-            DragGesture(minimumDistance: 15)
-                .onEnded { value in
-                    if value.translation.height < -20 {
-                        showPlayer = true
-                    }
-                }
-        )
+        .offset(y: dragOffset)
     }
 }
 

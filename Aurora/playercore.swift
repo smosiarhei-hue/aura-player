@@ -487,7 +487,7 @@ final class PlayerCore: ObservableObject {
         }
     }
 
-    // MARK: - Stream Resolution (Jamendo direct URL vs Yandex on-demand id)
+    // MARK: - Stream Resolution (direct URL vs Yandex on-demand id)
 
     private func startStream(_ track: Track, at seconds: Double, token: Int) {
         isUsingStreamPlayer = true
@@ -495,9 +495,9 @@ final class PlayerCore: ObservableObject {
         playerB.stop()
 
         let url = track.url
-        // Jamendo already stores a full https stream URL; Yandex stores only the track id until resolved.
+        // Resolved direct stream URL; unresolved Yandex tracks keep only the track id.
         if url.scheme == "http" || url.scheme == "https" {
-            currentBitrate = 128   // Jamendo mp32
+            currentBitrate = 128   // fallback for direct URL streams
             currentCodec = "mp3"
             beginStream(url, at: seconds)
             return
@@ -535,7 +535,7 @@ final class PlayerCore: ObservableObject {
     private func reapplyStreamQuality() {
         guard let track = currentTrack, track.isStream else { return }
         let url = track.url
-        guard !(url.scheme == "http" || url.scheme == "https") else { return } // Jamendo fixed, no-op
+        guard !(url.scheme == "http" || url.scheme == "https") else { return } // direct URL, no-op
         let ymID = Self.yandexTrackID(from: track)
         let pos = progress
         let token = generation

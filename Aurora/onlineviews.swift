@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Tab 1: Home (Главная) with Yandex Music & Jamendo
+// MARK: - Tab 1: Home (Главная) with Yandex Music
 
 struct HomeView: View {
     @StateObject private var player = PlayerCore.shared
@@ -9,7 +9,6 @@ struct HomeView: View {
     @StateObject private var settings = SettingsStore.shared
 
     @State private var ymChart: [YandexMusicService.YMTrackItem] = []
-    @State private var jamendoTrending: [JamendoService.JTrack] = []
     @State private var isLoading = false
     @State private var showSettings = false
 
@@ -28,9 +27,6 @@ struct HomeView: View {
 
                     // 4. Свежие релизы
                     featuredAlbumsSection
-
-                    // 5. Мировые треки
-                    globalHitsSection
                 }
                 .padding(.top, 12)
                 .padding(.bottom, 130)
@@ -88,9 +84,8 @@ struct HomeView: View {
                     gradient: [Color(hex: "#06B6D4")!, Color(hex: "#3B82F6")!],
                     icon: "sparkles"
                 ) {
-                    if let first = jamendoTrending.first {
-                        let q = jamendoTrending.map { JamendoService.convertToTrack($0) }
-                        player.play(q[0], newQueue: q)
+                    if let first = ymChart.first {
+                        playYM(first)
                     }
                 }
             }
@@ -314,59 +309,6 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Global Hits
-
-    private var globalHitsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Мировые треки и новинки")
-                .font(.title3.weight(.bold))
-                .padding(.horizontal, 16)
-
-            LazyVStack(spacing: 4) {
-                ForEach(jamendoTrending.prefix(15)) { item in
-                    Button {
-                        let queue = jamendoTrending.map { JamendoService.convertToTrack($0) }
-                        if let selected = queue.first(where: { $0.fileName.contains(item.id) }) {
-                            player.play(selected, newQueue: queue)
-                        }
-                    } label: {
-                        HStack(spacing: 12) {
-                            AsyncImage(url: URL(string: item.coverUrl ?? "")) { phase in
-                                if let img = phase.image {
-                                    img.resizable().aspectRatio(contentMode: .fill)
-                                } else {
-                                    Color.gray.opacity(0.3)
-                                }
-                            }
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title)
-                                    .font(.body.weight(.medium))
-                                    .lineLimit(1)
-                                    .foregroundStyle(.primary)
-                                Text(item.artist)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer()
-
-                            Text(formatTime(item.duration))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
     private func playYM(_ item: YandexMusicService.YMTrackItem) {
         Task {
             if let streamURL = try? await ym.getDirectStreamURL(for: item.id) {
@@ -394,7 +336,6 @@ struct HomeView: View {
     private func loadData() async {
         isLoading = true
         ymChart = (try? await ym.getChart()) ?? []
-        jamendoTrending = (try? await JamendoService.trending(limit: 25)) ?? []
         isLoading = false
     }
 
@@ -576,47 +517,6 @@ struct RadioStationsView: View {
                             .buttonStyle(.plain)
                         }
 
-                        // Genre Radio Stations
-                        ForEach(JamendoService.stations) { station in
-                            Button {
-                                Task {
-                                    if let tracks = try? await JamendoService.tracksForStation(station), !tracks.isEmpty {
-                                        let queue = tracks.map { JamendoService.convertToTrack($0) }
-                                        player.play(queue[0], newQueue: queue)
-                                    }
-                                }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ZStack {
-                                        LinearGradient(
-                                            colors: station.coverGradient.compactMap { Color(hex: $0) },
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-
-                                        Image(systemName: station.iconName)
-                                            .font(.system(size: 36, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.9))
-                                    }
-                                    .frame(height: 115)
-                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(station.title)
-                                            .font(.headline.weight(.semibold))
-                                            .lineLimit(1)
-                                            .foregroundStyle(.primary)
-
-                                        Text(station.subtitle)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
                     }
                     .padding(.horizontal, 16)
                 }
@@ -641,7 +541,7 @@ struct RadioStationsView: View {
     }
 }
 
-// MARK: - Tab 5: Search (Поиск) Across Yandex Music, Jamendo & Local Media
+// MARK: - Tab 5: Search (Поиск) Across Yandex Music & Local Media
 
 struct SearchCatalogView: View {
     @StateObject private var player = PlayerCore.shared
@@ -651,7 +551,6 @@ struct SearchCatalogView: View {
 
     @State private var searchText = ""
     @State private var ymResults: [YandexMusicService.YMTrackItem] = []
-    @State private var jamendoResults: [JamendoService.JTrack] = []
     @State private var isSearching = false
 
     var localResults: [Track] {
@@ -748,50 +647,6 @@ struct SearchCatalogView: View {
                         }
                     }
 
-                    // Jamendo Matches
-                    if !jamendoResults.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Мировой каталог (Jamendo)")
-                                .font(.headline.weight(.semibold))
-                                .padding(.horizontal, 16)
-
-                            LazyVStack(spacing: 4) {
-                                ForEach(jamendoResults) { item in
-                                    Button {
-                                        let queue = jamendoResults.map { JamendoService.convertToTrack($0) }
-                                        if let selected = queue.first(where: { $0.fileName.contains(item.id) }) {
-                                            player.play(selected, newQueue: queue)
-                                        }
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            AsyncImage(url: URL(string: item.coverUrl ?? "")) { phase in
-                                                if let img = phase.image {
-                                                    img.resizable().aspectRatio(contentMode: .fill)
-                                                } else {
-                                                    Color.gray.opacity(0.3)
-                                                }
-                                            }
-                                            .frame(width: 48, height: 48)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(item.title).font(.body.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
-                                                Text(item.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                            }
-                                            Spacer()
-                                            Image(systemName: "play.fill")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 6)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-
                     if isSearching {
                         ProgressView().frame(maxWidth: .infinity, minHeight: 100)
                     }
@@ -804,10 +659,16 @@ struct SearchCatalogView: View {
             .onSubmit(of: .search) {
                 Task { await performSearch() }
             }
-            .onChange(of: searchText) { _ in
-                if searchText.isEmpty {
+            .onChange(of: searchText) { newValue in
+                if newValue.isEmpty {
                     ymResults = []
-                    jamendoResults = []
+                } else {
+                    let query = newValue
+                    Task {
+                        try? await Task.sleep(nanoseconds: 450_000_000)
+                        guard searchText == query else { return }
+                        await performSearch()
+                    }
                 }
             }
         }
@@ -851,10 +712,10 @@ struct SearchCatalogView: View {
     }
 
     private func performSearch() async {
-        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
         isSearching = true
-        ymResults = (try? await ym.search(query: searchText)) ?? []
-        jamendoResults = (try? await JamendoService.search(query: searchText)) ?? []
+        ymResults = (try? await ym.search(query: query)) ?? []
         isSearching = false
     }
 }
