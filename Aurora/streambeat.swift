@@ -11,7 +11,7 @@ import MediaToolbox
 
 final class StreamBeatTap {
     static let shared = StreamBeatTap()
-    private var tapRef: Unmanaged<MTAudioProcessingTap>?
+    private var tapRef: MTAudioProcessingTap?
 
     // Format flag captured in `prepare`, read from `process` (both are global access).
     private static var isFloat = true
@@ -51,9 +51,9 @@ final class StreamBeatTap {
             SpectrumAnalyzer.shared.feedStreamLevel(acc / Float(count))
         }
 
-        var tapOut: Unmanaged<MTAudioProcessingTap>?
+        var tapOut: MTAudioProcessingTap?
         guard MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tapOut) == noErr,
-              let created = tapOut?.takeRetainedValue() else { return }
+              let created = tapOut else { return }
         tapRef = created
 
         let params = AVMutableAudioMixInputParameters(track: track)
