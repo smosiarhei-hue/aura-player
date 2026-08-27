@@ -31,10 +31,11 @@ for path in AURORA.glob("*.swift"):
             1,
         )
         text = text.replace("@Published ", "")
+        text = text.replace("@MainActor\n@Observable\n@MainActor", "@Observable\n@MainActor")
+        text = text.replace("@Observable\n@MainActor\n@MainActor", "@Observable\n@MainActor")
 
     path.write_text(text)
 
-# Immutable/domain models used across async boundaries.
 sendable_replacements = {
     "enum TransitionMode: String, CaseIterable, Codable, Identifiable {":
         "enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {",
@@ -60,7 +61,6 @@ for filename in ("models.swift", "lyricsmodel.swift"):
         text = text.replace(old, new)
     path.write_text(text)
 
-# Modern two-argument onChange closure.
 path = AURORA / "searchviews.swift"
 text = path.read_text().replace(
     ".onChange(of: searchText) { newValue in",
@@ -68,8 +68,6 @@ text = path.read_text().replace(
 )
 path.write_text(text)
 
-# The previous fullscreen implementation is no longer referenced; do not compile
-# duplicate legacy UIKit/deprecated paths while the replacement is active.
 project = ROOT / "project.yml"
 text = project.read_text()
 if '- "PlayerScreen.swift"' not in text:
