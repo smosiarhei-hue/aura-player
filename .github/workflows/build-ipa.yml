@@ -18,6 +18,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Apply source modernization
+        if: github.ref == 'refs/heads/main'
+        run: |
+          python3 scripts/modernize_sources.py
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Aurora project.yml
+            git commit -m "Migrate state layer to Observation"
+            git push origin HEAD:main
+          fi
+
       - name: Compute version (auto-increment per build)
         id: version
         run: |
