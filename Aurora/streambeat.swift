@@ -2,82 +2,87 @@ import AVFoundation
 import Foundation
 import MediaToolbox
 
-// MARK: - Real-time beat tap for streaming (AVPlayer) via MTAudioProcessingTap
-// Also marks each AVPlayerItem as supporting stereo spatialization so compatible
-// AirPods can offer the system Spatialize Stereo / head-tracking controls.
-
+@MainActor
 final class StreamBeatTap {
     static let shared = StreamBeatTap()
-    private var tapRef: MTAudioProcessingTap?
-    private static var isFloat = true
+
+    private var tapReference: MTAudioProcessingTap?
+
+    private init() {}
 
     func attach(to item: AVPlayerItem) {
-        // Yandex delivers ordinary stereo MP3. This does not turn it into Dolby Atmos,
-        // but explicitly allows Apple's headphone spatializer to process mono/stereo.
         item.allowedAudioSpatializationFormats = .monoAndStereo
 
-        guard let track = item.asset.tracks(withMediaType: .audio).first else { return }
+        Task { @MainActor [weak self, weak item] in
+            guard let self, let item else { return }
+            guard let track = try? await item.asset.loadTracks(withMediaType: .audio).first else { return }
+            configureTap(for: item, track: track)
+        }
+    }
 
+    private func configureTap(for item: AVPlayerItem, track: AVAssetTrack) {
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0,
-            clientInfo: nil
-        ) { _, _, _ in
-            // init
-        } finalize: { _ in
-            // finalize
-        } prepare: { _, _, processingFormat in
-            StreamBeatTap.isFloat = (processingFormat.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0
-        } unprepare: { _ in
-            // unprepare
-        } process: { tap, numberFrames, _, bufferListInOut, numberFramesOut, flagsOut in
-            guard noErr == MTAudioProcessingTapGetSourceAudio(
-                tap,
-                numberFrames,
-                bufferListInOut,
-                flagsOut,
-                nil,
-                numberFramesOut
-            ) else {
-                return
-            }
+            clientInfo: nil,
+            init: { _, _, _ in },
+            finalize: { _ in },
+            prepare: { _, _, _ in },
+            unprepare: { _ in },
+            process: { tap, frameCount, _, bufferList, outputFrameCount, flags in
+                guard noErr == MTAudioProcessingTapGetSourceAudio(
+                    tap,
+                    frameCount,
+                    bufferList,
+                    flags,
+                    nil,
+                    outputFrameCount
+                ) else { return }
 
-            var acc: Float = 0
-            var count = 0
-            for buffer in UnsafeMutableAudioBufferListPointer(bufferListInOut) {
-                guard let data = buffer.mData else { continue }
-                let n = Int(buffer.mDataByteSize) / (StreamBeatTap.isFloat ? 4 : 2)
-                if StreamBeatTap.isFloat {
-                    let pointer = data.assumingMemoryBound(to: Float.self)
-                    for index in 0..<n {
-                        acc += abs(pointer[index])
-                        count += 1
-                    }
-                } else {
-                    let pointer = data.assumingMemoryBound(to: Int16.self)
-                    for index in 0..<n {
-                        acc += Float(abs(Int32(pointer[index]))) / 32768.0
-                        count += 1
+                var accumulatedLevel: Float = 0
+                var sampleCount = 0
+
+                for buffer in UnsafeMutableAudioBufferListPointer(bufferList) {
+                    guard let data = buffer.mData else { continue }
+                    let channels = max(Int(buffer.mNumberChannels), 1)
+                    let frames = max(Int(outputFrameCount.pointee), 1)
+                    let estimatedSamples = channels * frames
+                    let bytesPerSample = estimatedSamples > 0
+                        ? Int(buffer.mDataByteSize) / estimatedSamples
+                        : 0
+
+                    if bytesPerSample == MemoryLayout<Float>.size {
+                        let count = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+                        let samples = data.assumingMemoryBound(to: Float.self)
+                        for index in 0..<count {
+                            accumulatedLevel += abs(samples[index])
+                        }
+                        sampleCount += count
+                    } else if bytesPerSample == MemoryLayout<Int16>.size {
+                        let count = Int(buffer.mDataByteSize) / MemoryLayout<Int16>.size
+                        let samples = data.assumingMemoryBound(to: Int16.self)
+                        for index in 0..<count {
+                            accumulatedLevel += Float(abs(Int32(samples[index]))) / 32_768
+                        }
+                        sampleCount += count
                     }
                 }
+
+                guard sampleCount > 0 else { return }
+                SpectrumAnalyzer.ingestStreamLevel(accumulatedLevel / Float(sampleCount))
             }
+        )
 
-            guard count > 0 else { return }
-            SpectrumAnalyzer.shared.feedStreamLevel(acc / Float(count))
-        }
-
-        var tapOut: MTAudioProcessingTap?
+        var createdTap: MTAudioProcessingTap?
         guard MTAudioProcessingTapCreate(
             kCFAllocatorDefault,
             &callbacks,
             kMTAudioProcessingTapCreationFlag_PreEffects,
-            &tapOut
-        ) == noErr, let created = tapOut else {
-            return
-        }
+            &createdTap
+        ) == noErr, let createdTap else { return }
 
-        tapRef = created
+        tapReference = createdTap
         let parameters = AVMutableAudioMixInputParameters(track: track)
-        parameters.audioTapProcessor = created
+        parameters.audioTapProcessor = createdTap
         let mix = AVMutableAudioMix()
         mix.inputParameters = [parameters]
         item.audioMix = mix
