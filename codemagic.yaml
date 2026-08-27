@@ -1,0 +1,65 @@
+workflows:
+  sonivo-ios-unsigned:
+    name: Sonivo iOS — unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    environment:
+      xcode: 26.0
+      vars:
+        XCODE_PROJECT: Sonivo.xcodeproj
+        XCODE_SCHEME: Sonivo
+        DERIVED_DATA: derived
+
+    cache:
+      cache_paths:
+        - $HOME/Library/Caches/Homebrew
+
+    scripts:
+      - name: Apply Swift modernization patches
+        script: |
+          python3 scripts/modernize_sources.py
+
+      - name: Install XcodeGen
+        script: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        script: |
+          xcodegen generate
+
+      - name: Build unsigned application
+        script: |
+          set -o pipefail
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log
+
+      - name: Package unsigned IPA
+        script: |
+          APP=$(find "$DERIVED_DATA/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "Application bundle was not found"
+            exit 1
+          fi
+          rm -rf Payload Sonivo-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry Sonivo-unsigned.ipa Payload
+          ls -lh Sonivo-unsigned.ipa
+
+    artifacts:
+      - Sonivo-unsigned.ipa
+      - build.log
+      - derived/Build/Products/Release-iphoneos/*.app
