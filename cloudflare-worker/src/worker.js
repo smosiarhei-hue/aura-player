@@ -16,7 +16,7 @@ export default {
       return Response.json({
         status: "ok",
         service: "sonivo-ai",
-        model: env.GEMINI_MODEL || "gemini-2.5-flash",
+        model: env.GEMINI_MODEL || "gemini-3.7-flash",
       }, { headers });
     }
 
@@ -61,7 +61,7 @@ export default {
       "Доступные кандидаты: " + JSON.stringify(candidates),
     ].join("\n\n");
 
-    const model = env.GEMINI_MODEL || "gemini-2.5-flash";
+    const model = env.GEMINI_MODEL || "gemini-3.7-flash";
     const geminiOrigin = "https:" + "/" + "/" + "generativelanguage.googleapis.com";
     const geminiURL = geminiOrigin + "/v1beta/models/" + encodeURIComponent(model) +
       ":generateContent?key=" + encodeURIComponent(env.GEMINI_API_KEY);
@@ -72,7 +72,6 @@ export default {
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.2,
           maxOutputTokens: 2048,
           responseMimeType: "application/json",
           responseSchema: {
