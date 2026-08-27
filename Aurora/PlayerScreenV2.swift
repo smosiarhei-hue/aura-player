@@ -1,10 +1,13 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Sonivo Full Player
+
 struct PlayerScreenV2: View {
     @State private var player = PlayerCore.shared
     @State private var library = LibraryStore.shared
     @State private var analyzer = SpectrumAnalyzer.shared
+    @State private var settings = SettingsStore.shared
     @Binding var isPresented: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -15,6 +18,19 @@ struct PlayerScreenV2: View {
     @State private var resolvingArtist = false
     @State private var dismissing = false
 
+    @State private var showLyrics = false
+    @State private var showQueue = false
+    @State private var showEqualizer = false
+    @State private var showSleepTimer = false
+    @State private var showSettings = false
+
+    @State private var previewLyrics: Lyrics?
+    @State private var lyricsLoading = false
+
+    @State private var buildingTrackWave = false
+    @State private var trackWaveReady = false
+    @State private var trackWaveMessage: String?
+
     private var track: Track? { player.currentTrack }
     private var palette: [Color] { track?.palette ?? Palette.seeded(42).colors }
     private var beat: CGFloat {
@@ -24,25 +40,48 @@ struct PlayerScreenV2: View {
 
     var body: some View {
         GeometryReader { geo in
-            let coverSide = min(geo.size.width - 44, geo.size.height * 0.42)
+            let coverSide = min(geo.size.width - 44, 390)
 
             ZStack {
                 background
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer(minLength: 12)
-                    animatedCover(side: coverSide)
-                    Spacer(minLength: 18)
-                    metadata
-                    scrubber.padding(.top, 18)
-                    controls.padding(.top, 10)
-                    bottomTools.padding(.top, 14)
-                    Spacer(minLength: 10)
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        topBar
+                            .padding(.top, 8)
+
+                        animatedCover(side: coverSide)
+                            .padding(.top, 18)
+
+                        metadata
+                            .padding(.top, 24)
+
+                        if settings.showTeleprompterInPlayer {
+                            inlineLyrics
+                                .padding(.top, 14)
+                        }
+
+                        scrubber
+                            .padding(.top, 18)
+
+                        controls
+                            .padding(.top, 10)
+
+                        featureDock
+                            .padding(.top, 18)
+
+                        transitionCard
+                            .padding(.top, 12)
+
+                        trackWaveCard
+                            .padding(.top, 10)
+
+                        Spacer(minLength: max(18, geo.safeAreaInsets.bottom))
+                    }
+                    .padding(.horizontal, 22)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 8)
-                .padding(.bottom, max(10, geo.safeAreaInsets.bottom))
+                .scrollBounceBehavior(.basedOnSize)
             }
             .offset(y: max(0, dragY))
             .scaleEffect(1 - min(max(dragY, 0) / 1800, 0.035), anchor: .bottom)
@@ -62,7 +101,37 @@ struct PlayerScreenV2: View {
             NavigationStack { ArtistView(artistId: artist.id) }
                 .preferredColorScheme(.dark)
         }
+        .sheet(isPresented: $showLyrics) {
+            LyricsSheetView()
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showQueue) {
+            QueueSheetView()
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showEqualizer) {
+            PlayerEQSheetView()
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showSleepTimer) {
+            SleepTimerSheetView()
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .preferredColorScheme(.dark)
+        }
+        .task(id: track?.id) {
+            await loadLyricsPreview()
+        }
+        .onChange(of: track?.id) { _, _ in
+            buildingTrackWave = false
+            trackWaveReady = false
+            trackWaveMessage = nil
+        }
     }
+
+    // MARK: Background
 
     private var background: some View {
         let colors = palette.isEmpty ? [AG.amber, AG.ember, Color.black] : palette
@@ -90,6 +159,8 @@ struct PlayerScreenV2: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
     }
+
+    // MARK: Header
 
     private var topBar: some View {
         HStack {
@@ -121,8 +192,27 @@ struct PlayerScreenV2: View {
             Spacer()
 
             Menu {
-                Button { player.stopAndClear(); close() } label: {
-                    Label("Остановить", systemImage: "stop.fill")
+                Button { showLyrics = true } label: {
+                    Label("Караоке", systemImage: "quote.bubble")
+                }
+                Button { showQueue = true } label: {
+                    Label("Очередь", systemImage: "list.bullet")
+                }
+                Button { showEqualizer = true } label: {
+                    Label("Эквалайзер", systemImage: "slider.vertical.3")
+                }
+                Button { showSleepTimer = true } label: {
+                    Label("Таймер сна", systemImage: "timer")
+                }
+                Button { showSettings = true } label: {
+                    Label("Настройки", systemImage: "gearshape")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    player.stopAndClear()
+                    close()
+                } label: {
+                    Label("Остановить и очистить", systemImage: "stop.fill")
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -134,6 +224,8 @@ struct PlayerScreenV2: View {
             }
         }
     }
+
+    // MARK: Artwork and metadata
 
     private func animatedCover(side: CGFloat) -> some View {
         let pulse = reduceMotion ? 0 : beat
@@ -164,8 +256,11 @@ struct PlayerScreenV2: View {
             Image(uiImage: image).resizable().scaledToFill()
         } else if let cover = track?.coverURL, let url = URL(string: cover) {
             AsyncImage(url: url) { phase in
-                if let image = phase.image { image.resizable().scaledToFill() }
-                else { fallbackArtwork }
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    fallbackArtwork
+                }
             }
         } else {
             fallbackArtwork
@@ -199,7 +294,8 @@ struct PlayerScreenV2: View {
                         if resolvingArtist {
                             ProgressView().controlSize(.mini).tint(.white)
                         } else {
-                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .black))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .black))
                         }
                     }
                     .foregroundStyle(.white.opacity(0.78))
@@ -224,10 +320,98 @@ struct PlayerScreenV2: View {
         }
     }
 
+    // MARK: Inline karaoke
+
+    private var inlineLyrics: some View {
+        Button { showLyrics = true } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "quote.bubble.fill")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(AG.amber)
+                    .frame(width: 38, height: 38)
+                    .background(.white.opacity(0.09), in: Circle())
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("КАРАОКЕ")
+                        .font(AG.text(9, .heavy))
+                        .tracking(1.3)
+                        .foregroundStyle(.white.opacity(0.54))
+
+                    if lyricsLoading {
+                        Text("Загрузка текста…")
+                            .font(AG.text(14, .semibold))
+                            .foregroundStyle(.white.opacity(0.78))
+                    } else if let lines = activeLyricsLines {
+                        Text(lines.current)
+                            .font(AG.text(15, .bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                        if let next = lines.next {
+                            Text(next)
+                                .font(AG.text(12, .medium))
+                                .foregroundStyle(.white.opacity(0.44))
+                                .lineLimit(1)
+                        }
+                    } else {
+                        Text("Открыть текст песни")
+                            .font(AG.text(14, .semibold))
+                            .foregroundStyle(.white.opacity(0.78))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.48))
+            }
+            .padding(12)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.8)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(track == nil)
+    }
+
+    private var activeLyricsLines: (current: String, next: String?)? {
+        guard let previewLyrics, !previewLyrics.lines.isEmpty else { return nil }
+        if !previewLyrics.isSynchronized {
+            return (previewLyrics.lines[0].text, previewLyrics.lines.dropFirst().first?.text)
+        }
+
+        let time = player.progress + settings.lyricsOffset
+        let index = previewLyrics.lines.lastIndex(where: { $0.startTime <= time }) ?? 0
+        let nextIndex = index + 1
+        let next = nextIndex < previewLyrics.lines.count ? previewLyrics.lines[nextIndex].text : nil
+        return (previewLyrics.lines[index].text, next)
+    }
+
+    private func loadLyricsPreview() async {
+        previewLyrics = nil
+        guard let requestedTrack = track else {
+            lyricsLoading = false
+            return
+        }
+
+        lyricsLoading = true
+        let result = try? await LyricsService.shared.fetchLyrics(for: requestedTrack)
+        guard player.currentTrack?.id == requestedTrack.id else { return }
+        previewLyrics = result
+        lyricsLoading = false
+    }
+
+    // MARK: Playback controls
+
     private var scrubber: some View {
         VStack(spacing: 6) {
-            Slider(value: Binding(get: { player.progress }, set: { player.seek(to: $0) }), in: 0...max(player.duration, 0.01))
-                .tint(.white)
+            Slider(
+                value: Binding(get: { player.progress }, set: { player.seek(to: $0) }),
+                in: 0...max(player.duration, 0.01)
+            )
+            .tint(.white)
+
             HStack {
                 Text(player.formatted(player.progress))
                 Spacer()
@@ -247,7 +431,9 @@ struct PlayerScreenV2: View {
                     .frame(width: 64, height: 64)
                     .contentShape(Circle())
             }
+
             Spacer()
+
             Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 31, weight: .black))
@@ -257,7 +443,9 @@ struct PlayerScreenV2: View {
                     .shadow(color: .black.opacity(0.30), radius: 16, y: 8)
                     .contentShape(Circle())
             }
+
             Spacer()
+
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 27, weight: .bold))
@@ -270,20 +458,198 @@ struct PlayerScreenV2: View {
         .padding(.horizontal, 8)
     }
 
-    private var bottomTools: some View {
-        HStack {
-            Image(systemName: "quote.bubble")
-            Spacer()
-            AirPlayButtonView().frame(width: 44, height: 44)
-            Spacer()
-            Image(systemName: "waveform")
-            Spacer()
-            Image(systemName: "list.bullet")
+    // MARK: Feature controls
+
+    private var featureDock: some View {
+        HStack(spacing: 2) {
+            featureButton(icon: "quote.bubble", title: "Текст", active: showLyrics) {
+                showLyrics = true
+            }
+
+            VStack(spacing: 4) {
+                AirPlayButtonView()
+                    .frame(width: 44, height: 44)
+                Text("AirPlay")
+                    .font(AG.text(9, .semibold))
+                    .foregroundStyle(.white.opacity(0.58))
+            }
+            .frame(maxWidth: .infinity)
+
+            featureButton(icon: "slider.vertical.3", title: "EQ", active: player.eqEnabled) {
+                showEqualizer = true
+            }
+
+            featureButton(icon: "timer", title: "Таймер", active: player.sleepTimerMinutes != nil) {
+                showSleepTimer = true
+            }
+
+            featureButton(icon: "list.bullet", title: "Очередь", active: showQueue) {
+                showQueue = true
+            }
+
+            featureButton(icon: "gearshape", title: "Ещё", active: showSettings) {
+                showSettings = true
+            }
         }
-        .font(.system(size: 19, weight: .medium))
-        .foregroundStyle(.white.opacity(0.82))
-        .frame(height: 44)
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 8)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(0.13), lineWidth: 0.8)
+        }
+    }
+
+    private func featureButton(
+        icon: String,
+        title: String,
+        active: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(active ? AG.amber : .white.opacity(0.84))
+                    .frame(width: 44, height: 44)
+                    .background(active ? AG.amber.opacity(0.14) : .clear, in: Circle())
+                Text(title)
+                    .font(AG.text(9, .semibold))
+                    .foregroundStyle(active ? AG.amber : .white.opacity(0.58))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var transitionCard: some View {
+        Menu {
+            ForEach(TransitionMode.allCases) { mode in
+                Button {
+                    player.transitionMode = mode
+                } label: {
+                    if player.transitionMode == mode {
+                        Label(mode.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(mode.rawValue)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: player.transitionMode == .automix ? "waveform.path.ecg" : "arrow.triangle.2.circlepath")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(AG.amber)
+                    .frame(width: 40, height: 40)
+                    .background(AG.amber.opacity(0.13), in: Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("ПЕРЕХОД МЕЖДУ ТРЕКАМИ")
+                        .font(AG.text(9, .heavy))
+                        .tracking(1.2)
+                        .foregroundStyle(.white.opacity(0.48))
+                    Text(player.transitionMode.rawValue)
+                        .font(AG.text(14, .bold))
+                        .foregroundStyle(.white)
+                    Text(player.transitionMode.description)
+                        .font(AG.text(10, .medium))
+                        .foregroundStyle(.white.opacity(0.56))
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.48))
+            }
+            .padding(12)
+            .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(.white.opacity(0.10), lineWidth: 0.8)
+            }
+        }
+    }
+
+    private var trackWaveCard: some View {
+        Button(action: startTrackWave) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(.white.opacity(0.10))
+                        .frame(width: 42, height: 42)
+                    if buildingTrackWave {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(trackWaveReady ? "Волна по песне включена" : "Включить волну по этой песне")
+                        .font(AG.text(14, .bold))
+                        .foregroundStyle(.white)
+                    Text(trackWaveMessage ?? "Gemini подберёт точное продолжение без повторов")
+                        .font(AG.text(10.5, .medium))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: trackWaveReady ? "checkmark.circle.fill" : "chevron.right")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(trackWaveReady ? AG.amber : .white.opacity(0.72))
+            }
+            .padding(12)
+            .background(AG.ember.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(AG.amber.opacity(0.25), lineWidth: 0.8)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(track == nil || buildingTrackWave)
+    }
+
+    // MARK: Actions
+
+    private func startTrackWave() {
+        guard let seed = track, !buildingTrackWave else { return }
+        buildingTrackWave = true
+        trackWaveReady = false
+        trackWaveMessage = "Подбираем точное продолжение…"
+
+        Task {
+            let related = await YandexMusicService.shared.buildTrackWave(from: seed)
+            guard player.currentTrack?.id == seed.id else {
+                buildingTrackWave = false
+                trackWaveMessage = nil
+                return
+            }
+
+            guard !related.isEmpty else {
+                buildingTrackWave = false
+                trackWaveMessage = "Не удалось найти достаточно похожих песен"
+                return
+            }
+
+            var seen = Set<UUID>([seed.id])
+            let unique = related.filter { seen.insert($0.id).inserted }
+            player.queue = [seed] + unique
+
+            if let ymID = YandexMusicService.ymId(fromFileName: seed.fileName) {
+                YandexMusicService.shared.beginStationSession("track:\(ymID)")
+            }
+
+            trackWaveReady = true
+            buildingTrackWave = false
+            trackWaveMessage = "В очереди: \(unique.count) похожих треков"
+        }
     }
 
     private func togglePlayback() {
@@ -308,8 +674,11 @@ struct PlayerScreenV2: View {
             let resolved = await YandexMusicService.shared.resolvePlayerArtists(for: track)
             artistChoices = resolved
             resolvingArtist = false
-            if resolved.count == 1 { selectedArtist = resolved[0] }
-            else if resolved.count > 1 { showArtistChoice = true }
+            if resolved.count == 1 {
+                selectedArtist = resolved[0]
+            } else if resolved.count > 1 {
+                showArtistChoice = true
+            }
         }
     }
 
@@ -329,7 +698,9 @@ struct PlayerScreenV2: View {
                 if value.translation.height > 70 || value.predictedEndTranslation.height > 125 {
                     close()
                 } else {
-                    withAnimation(.smooth(duration: 0.22)) { dragY = 0 }
+                    withAnimation(.smooth(duration: 0.22)) {
+                        dragY = 0
+                    }
                 }
             }
     }
