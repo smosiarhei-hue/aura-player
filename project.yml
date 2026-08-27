@@ -6,7 +6,9 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    SWIFT_VERSION: "5.9"
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Manual
     CODE_SIGNING_ALLOWED: NO
@@ -20,7 +22,6 @@ targets:
       - path: Aurora
         excludes:
           - "Info.plist"
-          - "PlayerScreen.swift"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo
