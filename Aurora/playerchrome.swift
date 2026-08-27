@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Lyrics Sheet View with Synchronized Karaoke
+// MARK: - Lyrics
 
 struct LyricsSheetView: View {
     @StateObject private var player = PlayerCore.shared
@@ -20,23 +20,24 @@ struct LyricsSheetView: View {
                 HStack(spacing: 12) {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(AG.ink)
-                            .frame(width: 42, height: 42)
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(width: 44, height: 44)
                             .background(.ultraThinMaterial, in: Circle())
                     }
-                    .buttonStyle(.plain)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(player.currentTrack?.title ?? "Текст песни")
-                            .font(AG.text(16, .semibold))
-                            .foregroundStyle(AG.ink)
+                            .font(.headline)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         Text(player.currentTrack?.artist ?? "")
-                            .font(AG.text(11, .medium))
-                            .foregroundStyle(AG.inkMuted)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 16)
@@ -45,26 +46,26 @@ struct LyricsSheetView: View {
             }
         }
         .colorScheme(.dark)
-        .task(id: player.currentTrack?.id) {
-            await load()
-        }
+        .task(id: player.currentTrack?.id) { await load() }
     }
 
-    @ViewBuilder
     private var karaokeBackdrop: some View {
         ZStack {
             AG.bg
             Color.clear
                 .overlay {
-                    if let track = player.currentTrack, let img = LibraryStore.cachedArtworkImage(for: track) {
-                        Image(uiImage: img)
+                    if let track = player.currentTrack,
+                       let image = LibraryStore.cachedArtworkImage(for: track) {
+                        Image(uiImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                             .blur(radius: 60, opaque: true)
                             .opacity(0.45)
-                    } else if let track = player.currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
+                    } else if let track = player.currentTrack,
+                              let cover = track.coverURL,
+                              let url = URL(string: cover) {
                         AsyncImage(url: url) { phase in
-                            if case .success(let image) = phase {
+                            if let image = phase.image {
                                 image
                                     .resizable()
                                     .aspectRatio(contentMode: .fill)
@@ -87,62 +88,37 @@ struct LyricsSheetView: View {
         guard let track = player.currentTrack else { return }
         isLoading = true
         defer { isLoading = false }
-        do {
-            lyrics = try await LyricsService.shared.fetchLyrics(for: track)
-        } catch {
-            lyrics = nil
-        }
+        lyrics = try? await LyricsService.shared.fetchLyrics(for: track)
     }
 }
 
-// MARK: - Marquee Title
+// MARK: - Stable player title
 
-private struct MarqueeWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
+/// Стабильная системная строка без GeometryReader-сдвигов.
+/// Длинные названия аккуратно сокращаются, а VoiceOver получает полный текст.
 struct MarqueeText: View {
     let text: String
     var font: Font = .title2.weight(.bold)
     var color: Color = .white
 
-    @State private var textWidth: CGFloat = 0
-    @State private var animate = false
-
     var body: some View {
-        GeometryReader { container in
-            let overflow = max(0, textWidth - container.size.width + 12)
-            Text(text)
-                .font(font)
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .fixedSize()
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: MarqueeWidthKey.self, value: geo.size.width)
-                    }
-                )
-                .offset(x: animate ? -overflow : 0)
-                .frame(width: container.size.width, alignment: .leading)
-                .clipped()
-                .animation(
-                    overflow > 0 ? .easeInOut(duration: 4).repeatForever(autoreverses: true).delay(1.2) : nil,
-                    value: animate
-                )
-                .onAppear { if overflow > 0 { animate = true } }
-        }
-        .onPreferenceChange(MarqueeWidthKey.self) { textWidth = $0 }
-        .frame(height: 32)
+        Text(text)
+            .font(font)
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .minimumScaleFactor(0.82)
+            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .accessibilityLabel(text)
     }
 }
 
-// MARK: - Sleep Timer Sheet
+// MARK: - Sleep timer
 
 struct SleepTimerSheetView: View {
     @StateObject private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var minutes: Int = 30
+    @State private var minutes = 30
 
     private let options = [5, 10, 15, 30, 45, 60, 90, 120]
 
@@ -150,20 +126,17 @@ struct SleepTimerSheetView: View {
         NavigationStack {
             VStack(spacing: 8) {
                 Picker("Время", selection: $minutes) {
-                    ForEach(options, id: \.self) { m in
-                        Text(String(m) + " мин").tag(m)
+                    ForEach(options, id: \.self) { value in
+                        Text(String(value) + " мин").tag(value)
                     }
                 }
                 .pickerStyle(.wheel)
 
                 if player.sleepTimerMinutes != nil {
-                    Button(role: .destructive) {
+                    Button("Выключить таймер сна", role: .destructive) {
                         player.setSleepTimer(minutes: nil)
                         dismiss()
-                    } label: {
-                        Label("Выключить таймер сна", systemImage: "moon.zzz")
                     }
-                    .padding(.horizontal)
                     .padding(.bottom, 12)
                 }
             }
@@ -185,7 +158,7 @@ struct SleepTimerSheetView: View {
     }
 }
 
-// MARK: - Queue Sheet View
+// MARK: - Queue
 
 struct QueueSheetView: View {
     @StateObject private var player = PlayerCore.shared
@@ -194,78 +167,39 @@ struct QueueSheetView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let cur = player.currentTrack {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("СЕЙЧАС ИГРАЕТ")
-                                .font(AG.text(11, .bold))
-                                .tracking(1.2)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
-
-                            HStack(spacing: 12) {
-                                SmallArtwork(track: cur, size: 48)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(cur.title).font(AG.text(15, .semibold)).lineLimit(1).foregroundStyle(.primary)
-                                    Text(cur.artist).font(AG.text(12, .regular)).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Spacer(minLength: 0)
-                                Image(systemName: "waveform")
-                                    .foregroundStyle(AG.amber)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.06)))
-                            .padding(.horizontal, 12)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("ДАЛЕЕ В ОЧЕРЕДИ (" + String(player.queue.count) + ")")
-                            .font(AG.text(11, .bold))
-                            .tracking(1.2)
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    if let current = player.currentTrack {
+                        Text("СЕЙЧАС ИГРАЕТ")
+                            .font(.caption.weight(.bold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 16)
 
-                        if player.queue.isEmpty {
-                            Text("Очередь пуста. Выберите треки из каталога или медиатеки.")
-                                .font(AG.text(14, .regular))
-                                .foregroundStyle(.secondary)
-                                .padding(16)
-                        } else {
-                            LazyVStack(spacing: 2) {
-                                ForEach(player.queue) { track in
-                                    Button {
-                                        player.play(track)
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            SmallArtwork(track: track, size: 44)
-                                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        queueRow(current, isCurrent: true)
+                    }
 
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(track.title).font(AG.text(14, .medium)).lineLimit(1).foregroundStyle(.primary)
-                                                Text(track.artist).font(AG.text(11, .regular)).foregroundStyle(.secondary).lineLimit(1)
-                                            }
-                                            Spacer(minLength: 0)
-                                            if player.currentTrack?.id == track.id {
-                                                Image(systemName: "speaker.wave.2.fill")
-                                                    .font(.caption)
-                                                    .foregroundStyle(AG.amber)
-                                            }
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 6)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button(role: .destructive) {
-                                            player.removeFromQueue(track)
-                                        } label: {
-                                            Label("Удалить из очереди", systemImage: "trash")
-                                        }
-                                    }
+                    Text("ДАЛЕЕ В ОЧЕРЕДИ (" + String(player.queue.count) + ")")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+
+                    if player.queue.isEmpty {
+                        ContentUnavailableView(
+                            "Очередь пуста",
+                            systemImage: "music.note.list",
+                            description: Text("Выберите треки из каталога или медиатеки.")
+                        )
+                    } else {
+                        ForEach(player.queue) { track in
+                            Button {
+                                player.play(track)
+                            } label: {
+                                queueRow(track, isCurrent: player.currentTrack?.id == track.id)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Удалить из очереди", systemImage: "trash", role: .destructive) {
+                                    player.removeFromQueue(track)
                                 }
                             }
                         }
@@ -273,7 +207,7 @@ struct QueueSheetView: View {
                 }
                 .padding(.vertical, 16)
             }
-            .navigationTitle("Очередь воспроизведения")
+            .navigationTitle("Очередь")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -282,80 +216,87 @@ struct QueueSheetView: View {
             }
         }
     }
+
+    private func queueRow(_ track: Track, isCurrent: Bool) -> some View {
+        HStack(spacing: 12) {
+            SmallArtwork(track: track, size: 46)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(track.artist)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isCurrent {
+                Image(systemName: "waveform")
+                    .foregroundStyle(AG.amber)
+                    .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+    }
 }
 
-// MARK: - Player EQ Sheet View
+// MARK: - Equalizer
 
 struct PlayerEQSheetView: View {
     @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
     @Environment(\.dismiss) private var dismiss
-    private let freqLabels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
+
+    private let labels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    Toggle(isOn: $player.eqEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("10-полосный эквалайзер")
-                                .font(AG.text(16, .semibold))
-                            Text("31 Гц – 16 кГц · тонкая настройка звука")
-                                .font(AG.text(12, .regular)).foregroundStyle(.secondary)
-                        }
-                    }
-                    .tint(AG.amber)
-                    .padding(.horizontal, 20)
+                    Toggle("10-полосный эквалайзер", isOn: $player.eqEnabled)
+                        .tint(AG.amber)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Пресеты").font(AG.text(14, .semibold))
+                        Text("Пресеты").font(.headline)
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(EQPresets.all) { preset in
-                                    let isActive = player.eqGains == preset.gains
-                                    Button {
+                                    Button(preset.name) {
                                         withAnimation(.spring(response: 0.3)) {
                                             player.eqGains = preset.gains
                                         }
-                                    } label: {
-                                        Text(preset.name)
-                                            .font(AG.text(13, isActive ? .semibold : .regular))
-                                            .padding(.horizontal, 14).padding(.vertical, 8)
-                                            .background(
-                                                Capsule().fill(isActive
-                                                    ? AnyShapeStyle(AG.emberGradient)
-                                                    : AnyShapeStyle(Color.primary.opacity(0.08)))
-                                            )
-                                            .foregroundStyle(isActive ? Color.black.opacity(0.85) : Color.primary)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.bordered)
+                                    .tint(player.eqGains == preset.gains ? AG.amber : .secondary)
                                 }
                             }
                         }
                     }
-                    .padding(.horizontal, 20)
 
-                    VStack(spacing: 12) {
-                        HStack {
-                            Text("Полосы частот").font(AG.text(14, .semibold))
-                            Spacer()
-                            Button("Сбросить") {
-                                withAnimation { player.eqGains = EQPresets.flat.gains }
-                            }
-                            .font(AG.text(12, .medium))
-                        }
-                        HStack(alignment: .center, spacing: 6) {
-                            ForEach(0..<10, id: \.self) { i in
-                                BandSlider(
-                                    label: freqLabels[i],
-                                    value: Binding(get: { player.eqGains[i] }, set: { player.eqGains[i] = $0 })
+                    HStack {
+                        Text("Полосы частот").font(.headline)
+                        Spacer()
+                        Button("Сбросить") { player.eqGains = EQPresets.flat.gains }
+                    }
+
+                    HStack(alignment: .center, spacing: 6) {
+                        ForEach(0..<10, id: \.self) { index in
+                            BandSlider(
+                                label: labels[index],
+                                value: Binding(
+                                    get: { player.eqGains[index] },
+                                    set: { player.eqGains[index] = $0 }
                                 )
-                            }
+                            )
                         }
                     }
-                    .padding(.horizontal, 20)
                 }
-                .padding(.vertical, 20)
+                .padding(20)
             }
             .navigationTitle("Эквалайзер")
             .navigationBarTitleDisplayMode(.inline)
@@ -369,35 +310,34 @@ struct PlayerEQSheetView: View {
     }
 }
 
-// MARK: - Band Slider Component
-
 struct BandSlider: View {
     let label: String
     @Binding var value: Float
 
     var body: some View {
-        GeometryReader { geo in
-            let h = geo.size.height
+        GeometryReader { geometry in
+            let height = geometry.size.height
             VStack(spacing: 6) {
                 ZStack(alignment: .bottom) {
                     Capsule().fill(Color.primary.opacity(0.12)).frame(width: 6)
                     let fraction = CGFloat((value + 12) / 24)
                     Capsule()
-                        .fill(LinearGradient(colors: [AG.amber, AG.flame], startPoint: .bottom, endPoint: .top))
-                        .frame(width: 6, height: max(6, fraction * h))
+                        .fill(AG.emberGradient)
+                        .frame(width: 6, height: max(6, fraction * height))
                 }
-                .frame(height: h).frame(maxWidth: .infinity)
+                .frame(height: height)
+                .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
-                        .onChanged { v in
-                            let f = 1 - Float(min(max(v.location.y / h, 0), 1))
-                            value = f * 24 - 12
+                        .onChanged { gesture in
+                            let fraction = 1 - Float(min(max(gesture.location.y / height, 0), 1))
+                            value = fraction * 24 - 12
                         }
                 )
 
                 Text(label)
-                    .font(AG.text(10, .medium))
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
