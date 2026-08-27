@@ -5,11 +5,28 @@ import UIKit
 struct SonivoApp: App {
     @StateObject private var settings = SettingsStore.shared
 
+    init() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.stackedLayoutAppearance.normal.iconColor = UIColor.white.withAlphaComponent(0.72)
+        appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.white.withAlphaComponent(0.72)]
+        appearance.stackedLayoutAppearance.selected.iconColor = .white
+        appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.white]
+        appearance.inlineLayoutAppearance = appearance.stackedLayoutAppearance
+        appearance.compactInlineLayoutAppearance = appearance.stackedLayoutAppearance
+
+        let tabBar = UITabBar.appearance()
+        tabBar.standardAppearance = appearance
+        tabBar.scrollEdgeAppearance = appearance
+        tabBar.tintColor = .white
+        tabBar.unselectedItemTintColor = UIColor.white.withAlphaComponent(0.72)
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
                 .preferredColorScheme(settings.colorScheme)
-                .tint(AG.amber)
+                .tint(.white)
         }
     }
 }
@@ -22,6 +39,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     case search = "Search"
 
     var id: String { rawValue }
+
     var label: String {
         switch self {
         case .home: return "Главная"
@@ -31,6 +49,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .search: return "Поиск"
         }
     }
+
     var icon: String {
         switch self {
         case .home: return "house"
@@ -57,28 +76,30 @@ struct RootView: View {
             LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
             SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
         }
+        .tint(.white)
+        .toolbarColorScheme(.dark, for: .tabBar)
         .tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
             if miniVisible {
                 NativeMiniPlayer(showPlayer: $showPlayer)
             }
         }
-        .overlay {
-            if showPlayer {
-                PlayerScreenV2(isPresented: $showPlayer)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .move(edge: .bottom).combined(with: .opacity)
-                    ))
-                    .zIndex(100)
-            }
+        .fullScreenCover(isPresented: $showPlayer) {
+            PlayerScreenV2(isPresented: $showPlayer)
+                .presentationBackground(.clear)
         }
-        .animation(.spring(response: 0.40, dampingFraction: 0.90), value: showPlayer)
         .onAppear {
             PlayerCore.shared.installSpectrumTap()
             PlaybackAudioSessionCoordinator.shared.install()
         }
-        .onChange(of: player.currentTrack?.id) { _ in rememberCurrentTrack() }
+        .onChange(of: player.currentTrack?.id) { _, _ in
+            rememberCurrentTrack()
+        }
+        .onChange(of: player.isPlaying) { _, isPlaying in
+            if isPlaying {
+                PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+            }
+        }
     }
 
     private func rememberCurrentTrack() {
@@ -94,6 +115,7 @@ struct RootView: View {
 struct NativeMiniPlayer: View {
     @StateObject private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
+    @State private var opening = false
 
     private var progress: Double {
         guard player.duration > 0 else { return 0 }
@@ -102,7 +124,7 @@ struct NativeMiniPlayer: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Button(action: open) {
                     HStack(spacing: 10) {
                         MiniArtworkPulse(track: player.currentTrack, isPlaying: player.isPlaying)
@@ -110,11 +132,11 @@ struct NativeMiniPlayer: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(player.currentTrack?.title ?? "Не выбрана песня")
                                 .font(.system(.headline, design: .rounded, weight: .semibold))
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(.white)
                                 .lineLimit(1)
                             Text(player.currentTrack?.artist ?? "")
                                 .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.white.opacity(0.68))
                                 .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,68 +144,75 @@ struct NativeMiniPlayer: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(opening || showPlayer)
 
-                Button { player.togglePlay() } label: {
+                Button(action: togglePlayback) {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизвести")
 
-                Button { player.next() } label: {
+                Button(action: nextTrack) {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Следующий трек")
             }
 
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
-                .tint(AG.amber)
-                .scaleEffect(x: 1, y: 0.5)
+                .tint(.white)
+                .scaleEffect(x: 1, y: 0.45)
+                .allowsHitTesting(false)
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 18).onEnded { value in
-            if value.translation.height < -24 { open() }
-        })
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 3)
     }
 
     private func open() {
-        guard !showPlayer else { return }
-        withAnimation(.spring(response: 0.40, dampingFraction: 0.90)) { showPlayer = true }
+        guard !showPlayer, !opening else { return }
+        opening = true
+        showPlayer = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            opening = false
+        }
+    }
+
+    private func togglePlayback() {
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        player.togglePlay()
+    }
+
+    private func nextTrack() {
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        player.next()
     }
 }
 
 struct MiniArtworkPulse: View {
     let track: Track?
     let isPlaying: Bool
-    @State private var rotate = false
 
     var body: some View {
-        ZStack {
-            SmallArtwork(track: track, size: 42)
-                .frame(width: 42, height: 42)
-                .clipped()
-
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(
-                    AngularGradient(colors: [AG.amber, AG.ember, .clear, AG.amber], center: .center),
-                    lineWidth: isPlaying ? 2.2 : 0.8
-                )
-                .rotationEffect(.degrees(rotate ? 360 : 0))
-                .opacity(isPlaying ? 0.9 : 0.35)
-        }
-        .frame(width: 42, height: 42)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .compositingGroup()
-        .scaleEffect(isPlaying ? 1 : 0.96)
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isPlaying)
-        .onAppear {
-            withAnimation(.linear(duration: 7).repeatForever(autoreverses: false)) { rotate = true }
-        }
+        SmallArtwork(track: track, size: 40)
+            .frame(width: 40, height: 40)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(.white.opacity(isPlaying ? 0.38 : 0.18), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .compositingGroup()
     }
 }

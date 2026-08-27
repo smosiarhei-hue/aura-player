@@ -4,6 +4,7 @@ import UIKit
 @MainActor
 final class PlaybackAudioSessionCoordinator {
     static let shared = PlaybackAudioSessionCoordinator()
+
     private var installed = false
     private var observers: [NSObjectProtocol] = []
 
@@ -13,11 +14,20 @@ final class PlaybackAudioSessionCoordinator {
         configure()
 
         let center = NotificationCenter.default
+
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { note in
             Task { @MainActor in
                 guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                      AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
-                PlayerCore.shared.pause()
+                      let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+
+                switch type {
+                case .began:
+                    PlayerCore.shared.pause()
+                case .ended:
+                    self.configure()
+                @unknown default:
+                    break
+                }
             }
         })
 
@@ -29,7 +39,28 @@ final class PlaybackAudioSessionCoordinator {
             }
         })
 
+        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { note in
+            Task { @MainActor in
+                guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                      let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+
+                switch reason {
+                case .newDeviceAvailable, .routeConfigurationChange, .categoryChange, .override:
+                    self.configure()
+                case .oldDeviceUnavailable:
+                    PlayerCore.shared.pause()
+                    self.configure()
+                default:
+                    break
+                }
+            }
+        })
+
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in self.configure() }
+        })
+
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in self.configure() }
         })
     }

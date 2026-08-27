@@ -4,16 +4,23 @@ import UIKit
 struct PlayerScreenV2: View {
     @StateObject private var player = PlayerCore.shared
     @StateObject private var library = LibraryStore.shared
+    @StateObject private var analyzer = SpectrumAnalyzer.shared
     @Binding var isPresented: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dragY: CGFloat = 0
     @State private var artistChoices: [PlayerArtistLink] = []
     @State private var selectedArtist: PlayerArtistLink?
     @State private var showArtistChoice = false
     @State private var resolvingArtist = false
+    @State private var dismissing = false
 
     private var track: Track? { player.currentTrack }
     private var palette: [Color] { track?.palette ?? Palette.seeded(42).colors }
+    private var beat: CGFloat {
+        let source = max(analyzer.streamLevel, analyzer.bass, analyzer.level)
+        return player.isPlaying ? CGFloat(min(max(source, 0), 1)) : 0
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -44,7 +51,7 @@ struct PlayerScreenV2: View {
         .ignoresSafeArea(edges: .bottom)
         .statusBarHidden()
         .colorScheme(.dark)
-        .gesture(closeGesture)
+        .interactiveDismissDisabled(dismissing)
         .confirmationDialog("Выберите исполнителя", isPresented: $showArtistChoice, titleVisibility: .visible) {
             ForEach(artistChoices) { artist in
                 Button(artist.name) { selectedArtist = artist }
@@ -58,15 +65,30 @@ struct PlayerScreenV2: View {
     }
 
     private var background: some View {
-        ZStack {
+        let colors = palette.isEmpty ? [AG.amber, AG.ember, Color.black] : palette
+        let first = colors[0]
+        let second = colors[min(1, colors.count - 1)]
+        let third = colors[min(2, colors.count - 1)]
+        let pulse = reduceMotion ? 0 : beat
+
+        return ZStack {
             AG.bg
-            AnimatedMeshBackground(palette: palette)
-                .opacity(0.52)
-                .blur(radius: 28)
-            LinearGradient(colors: [.black.opacity(0.15), AG.bg.opacity(0.72), AG.bg], startPoint: .top, endPoint: .bottom)
-            Rectangle().fill(.ultraThinMaterial).opacity(0.20)
+
+            RadialGradient(colors: [first.opacity(0.88), .clear], center: .topLeading, startRadius: 10, endRadius: 430)
+                .scaleEffect(1 + pulse * 0.10, anchor: .topLeading)
+
+            RadialGradient(colors: [second.opacity(0.72), .clear], center: .trailing, startRadius: 20, endRadius: 390)
+                .scaleEffect(1 + pulse * 0.16, anchor: .trailing)
+                .opacity(0.58 + pulse * 0.30)
+
+            RadialGradient(colors: [third.opacity(0.58), AG.bg.opacity(0.92)], center: .bottomLeading, startRadius: 0, endRadius: 520)
+                .scaleEffect(1 + pulse * 0.08, anchor: .bottomLeading)
+
+            LinearGradient(colors: [.black.opacity(0.08), AG.bg.opacity(0.50), AG.bg.opacity(0.92)], startPoint: .top, endPoint: .bottom)
         }
+        .animation(reduceMotion ? nil : .linear(duration: 0.10), value: beat)
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     private var topBar: some View {
@@ -74,44 +96,65 @@ struct PlayerScreenV2: View {
             Button(action: close) {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 16, weight: .bold))
-                    .frame(width: 42, height: 42)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
                     .background(.thinMaterial, in: Circle())
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Свернуть плеер")
+
             Spacer()
+
             VStack(spacing: 4) {
-                Capsule().fill(.white.opacity(0.28)).frame(width: 34, height: 4)
-                Text("СЕЙЧАС ИГРАЕТ").font(AG.text(9, .heavy)).tracking(1.5).foregroundStyle(AG.inkMuted)
+                Capsule().fill(.white.opacity(0.50)).frame(width: 36, height: 5)
+                Text("СЕЙЧАС ИГРАЕТ")
+                    .font(AG.text(9, .heavy))
+                    .tracking(1.5)
+                    .foregroundStyle(.white.opacity(0.72))
             }
+            .frame(width: 150, height: 44)
+            .contentShape(Rectangle())
+            .gesture(closeGesture)
+            .accessibilityHint("Потяните вниз, чтобы свернуть")
+
             Spacer()
+
             Menu {
-                Button { player.stopAndClear(); close() } label: { Label("Остановить", systemImage: "stop.fill") }
+                Button { player.stopAndClear(); close() } label: {
+                    Label("Остановить", systemImage: "stop.fill")
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 16, weight: .bold))
-                    .frame(width: 42, height: 42)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
                     .background(.thinMaterial, in: Circle())
+                    .contentShape(Circle())
             }
         }
     }
 
     private func animatedCover(side: CGFloat) -> some View {
-        ZStack {
+        let pulse = reduceMotion ? 0 : beat
+        return ZStack {
             RoundedRectangle(cornerRadius: 34, style: .continuous)
                 .fill(AngularGradient(colors: [AG.amber, AG.ember, .clear, AG.amber], center: .center))
-                .frame(width: side + 24, height: side + 24)
-                .blur(radius: player.isPlaying ? 20 : 28)
-                .opacity(player.isPlaying ? 0.48 : 0.20)
-                .scaleEffect(player.isPlaying ? 1.02 : 0.94)
+                .frame(width: side + 18, height: side + 18)
+                .blur(radius: 18 + pulse * 8)
+                .opacity(player.isPlaying ? 0.32 + pulse * 0.28 : 0.16)
+                .scaleEffect(0.98 + pulse * 0.06)
 
             artwork
                 .frame(width: side, height: side)
                 .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(AG.hairline))
-                .shadow(color: .black.opacity(0.5), radius: 26, y: 16)
+                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(.white.opacity(0.16)))
+                .shadow(color: .black.opacity(0.48), radius: 24, y: 15)
                 .scaleEffect(player.isPlaying ? 1 : 0.975)
         }
         .frame(width: side, height: side)
-        .animation(.spring(response: 0.55, dampingFraction: 0.82), value: player.isPlaying)
+        .animation(reduceMotion ? nil : .linear(duration: 0.10), value: beat)
+        .animation(.smooth(duration: 0.28), value: player.isPlaying)
         .id(track?.id)
         .transition(.opacity)
     }
@@ -124,13 +167,17 @@ struct PlayerScreenV2: View {
                 if let image = phase.image { image.resizable().scaledToFill() }
                 else { fallbackArtwork }
             }
-        } else { fallbackArtwork }
+        } else {
+            fallbackArtwork
+        }
     }
 
     private var fallbackArtwork: some View {
         ZStack {
             LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
-            Image(systemName: "music.note").font(.system(size: 70, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+            Image(systemName: "music.note")
+                .font(.system(size: 70, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
         }
     }
 
@@ -139,7 +186,7 @@ struct PlayerScreenV2: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(track?.title ?? "Sonivo")
                     .font(AG.display(24, .heavy))
-                    .foregroundStyle(AG.ink)
+                    .foregroundStyle(.white)
                     .lineLimit(2)
                     .minimumScaleFactor(0.82)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -149,10 +196,14 @@ struct PlayerScreenV2: View {
                         Text(track?.artist ?? "")
                             .font(AG.text(15, .semibold))
                             .lineLimit(1)
-                        if resolvingArtist { ProgressView().controlSize(.mini).tint(AG.amber) }
-                        else { Image(systemName: "chevron.right").font(.system(size: 9, weight: .black)) }
+                        if resolvingArtist {
+                            ProgressView().controlSize(.mini).tint(.white)
+                        } else {
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .black))
+                        }
                     }
-                    .foregroundStyle(AG.amber)
+                    .foregroundStyle(.white.opacity(0.78))
+                    .frame(minHeight: 34)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -163,9 +214,10 @@ struct PlayerScreenV2: View {
                 Button { library.toggleFavorite(track) } label: {
                     Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(library.isTrackFavorite(track) ? AG.ember : AG.ink)
-                        .frame(width: 42, height: 42)
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
                         .background(.thinMaterial, in: Circle())
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -175,34 +227,46 @@ struct PlayerScreenV2: View {
     private var scrubber: some View {
         VStack(spacing: 6) {
             Slider(value: Binding(get: { player.progress }, set: { player.seek(to: $0) }), in: 0...max(player.duration, 0.01))
-                .tint(AG.amber)
+                .tint(.white)
             HStack {
                 Text(player.formatted(player.progress))
                 Spacer()
                 Text("-" + player.formatted(max(0, player.duration - player.progress)))
             }
             .font(AG.text(11, .medium).monospacedDigit())
-            .foregroundStyle(AG.inkMuted)
+            .foregroundStyle(.white.opacity(0.62))
         }
     }
 
     private var controls: some View {
         HStack {
-            Button { player.previous() } label: { Image(systemName: "backward.fill").font(.system(size: 27)).frame(width: 62, height: 62) }
+            Button(action: previousTrack) {
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 27, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 64, height: 64)
+                    .contentShape(Circle())
+            }
             Spacer()
-            Button { player.togglePlay() } label: {
+            Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 31, weight: .black))
                     .foregroundStyle(.black.opacity(0.86))
                     .frame(width: 76, height: 76)
-                    .background(AG.emberGradient, in: Circle())
-                    .shadow(color: AG.ember.opacity(0.45), radius: 18, y: 8)
+                    .background(.white, in: Circle())
+                    .shadow(color: .black.opacity(0.30), radius: 16, y: 8)
+                    .contentShape(Circle())
             }
             Spacer()
-            Button { player.next() } label: { Image(systemName: "forward.fill").font(.system(size: 27)).frame(width: 62, height: 62) }
+            Button(action: nextTrack) {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 27, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 64, height: 64)
+                    .contentShape(Circle())
+            }
         }
         .buttonStyle(.plain)
-        .foregroundStyle(AG.ink)
         .padding(.horizontal, 8)
     }
 
@@ -217,9 +281,24 @@ struct PlayerScreenV2: View {
             Image(systemName: "list.bullet")
         }
         .font(.system(size: 19, weight: .medium))
-        .foregroundStyle(AG.ink.opacity(0.78))
+        .foregroundStyle(.white.opacity(0.82))
         .frame(height: 44)
         .padding(.horizontal, 18)
+    }
+
+    private func togglePlayback() {
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        player.togglePlay()
+    }
+
+    private func previousTrack() {
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        player.previous()
+    }
+
+    private func nextTrack() {
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        player.next()
     }
 
     private func openArtist() {
@@ -235,19 +314,23 @@ struct PlayerScreenV2: View {
     }
 
     private func close() {
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.90)) { isPresented = false }
+        guard !dismissing else { return }
+        dismissing = true
+        isPresented = false
     }
 
     private var closeGesture: some Gesture {
-        DragGesture(minimumDistance: 20)
+        DragGesture(minimumDistance: 12)
             .onChanged { value in
-                if abs(value.translation.height) > abs(value.translation.width), value.translation.height > 0 {
-                    dragY = value.translation.height * 0.82
-                }
+                guard value.translation.height > 0 else { return }
+                dragY = min(value.translation.height * 0.78, 180)
             }
             .onEnded { value in
-                if value.translation.height > 105 || value.predictedEndTranslation.height > 190 { close() }
-                else { withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { dragY = 0 } }
+                if value.translation.height > 70 || value.predictedEndTranslation.height > 125 {
+                    close()
+                } else {
+                    withAnimation(.smooth(duration: 0.22)) { dragY = 0 }
+                }
             }
     }
 }
