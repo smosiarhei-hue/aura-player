@@ -4,7 +4,7 @@ import SwiftUI
 // (Главная переехала в homeview.swift, Поиск — в searchviews.swift)
 
 struct NewReleasesView: View {
-    @StateObject private var ym = YandexMusicService.shared
+    @State private var ym = YandexMusicService.shared
 
     @State private var section: NewSection = .fresh
     @State private var albums: [YandexMusicService.YMAlbumItem] = []
@@ -174,7 +174,7 @@ struct NewReleasesView: View {
 // MARK: - Tab 3: Радио
 
 struct RadioStationsView: View {
-    @StateObject private var ym = YandexMusicService.shared
+    @State private var ym = YandexMusicService.shared
 
     var body: some View {
         NavigationStack {

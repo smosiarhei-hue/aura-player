@@ -2,9 +2,9 @@ import SwiftUI
 import UIKit
 
 struct PlayerScreenV2: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var library = LibraryStore.shared
-    @StateObject private var analyzer = SpectrumAnalyzer.shared
+    @State private var player = PlayerCore.shared
+    @State private var library = LibraryStore.shared
+    @State private var analyzer = SpectrumAnalyzer.shared
     @Binding var isPresented: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

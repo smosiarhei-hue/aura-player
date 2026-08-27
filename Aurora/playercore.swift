@@ -1,8 +1,8 @@
 import AVFoundation
-import Combine
 import CoreMedia
 import MediaPlayer
 import SwiftUI
+import Observation
 
 // MARK: - Audio Quality Selection
 
@@ -38,41 +38,43 @@ enum AudioQuality: Int, CaseIterable, Identifiable {
 // MARK: - Fast Progressive Audio & Local Playback Engine (PlayerCore)
 
 @MainActor
-final class PlayerCore: ObservableObject {
+@Observable
+@MainActor
+final class PlayerCore {
     static let shared = PlayerCore()
     static let bandFrequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
     // MARK: - Published state
-    @Published private(set) var isPlaying = false
-    @Published private(set) var currentTrack: Track?
-    @Published private(set) var progress: Double = 0
-    @Published private(set) var streamDuration: Double = 0
-    @Published private(set) var playError: String?
-    @Published var volume: Float = 1.0 {
+    private(set) var isPlaying = false
+    private(set) var currentTrack: Track?
+    private(set) var progress: Double = 0
+    private(set) var streamDuration: Double = 0
+    private(set) var playError: String?
+    var volume: Float = 1.0 {
         didSet {
             streamingPlayer.volume = volume
             engine.mainMixerNode.outputVolume = volume
             defaults.set(volume, forKey: "player.volume")
         }
     }
-    @Published var queue: [Track] = []
-    @Published var shuffle: Bool = false { didSet { defaults.set(shuffle, forKey: "player.shuffle") } }
-    @Published var repeatMode: RepeatMode = .off { didSet { defaults.set(repeatMode.rawValue, forKey: "player.repeat") } }
-    @Published var eqEnabled: Bool = true { didSet { applyEQ(); defaults.set(eqEnabled, forKey: "eq.enabled") } }
-    @Published var eqGains: [Float] = EQPresets.flat.gains { didSet { applyEQ(); saveEQ() } }
+    var queue: [Track] = []
+    var shuffle: Bool = false { didSet { defaults.set(shuffle, forKey: "player.shuffle") } }
+    var repeatMode: RepeatMode = .off { didSet { defaults.set(repeatMode.rawValue, forKey: "player.repeat") } }
+    var eqEnabled: Bool = true { didSet { applyEQ(); defaults.set(eqEnabled, forKey: "eq.enabled") } }
+    var eqGains: [Float] = EQPresets.flat.gains { didSet { applyEQ(); saveEQ() } }
 
     // Transition Settings
-    @Published var transitionMode: TransitionMode = .automix { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
-    @Published var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
+    var transitionMode: TransitionMode = .automix { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
+    var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
 
     // Audio Quality
-    @Published private(set) var currentBitrate: Int?
-    @Published private(set) var currentCodec: String?
-    @Published var audioQuality: AudioQuality = .auto { didSet { defaults.set(audioQuality.rawValue, forKey: "player.quality") } }
+    private(set) var currentBitrate: Int?
+    private(set) var currentCodec: String?
+    var audioQuality: AudioQuality = .auto { didSet { defaults.set(audioQuality.rawValue, forKey: "player.quality") } }
 
     // Sleep Timer
-    @Published private(set) var sleepTimerMinutes: Int? = nil
-    @Published private(set) var sleepTimerRemaining: Double? = nil
+    private(set) var sleepTimerMinutes: Int? = nil
+    private(set) var sleepTimerRemaining: Double? = nil
     private var sleepTimer: Timer?
     private var sleepDeadline: Date?
 

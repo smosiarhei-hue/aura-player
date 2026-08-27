@@ -2,13 +2,13 @@ import Foundation
 
 // MARK: - Synchronized Lyrics Model (Karaoke)
 
-struct LyricsWord: Equatable {
+struct LyricsWord: Equatable, Sendable {
     let text: String
     let startTime: TimeInterval
     let endTime: TimeInterval
 }
 
-struct LyricsLine: Equatable, Identifiable {
+struct LyricsLine: Equatable, Identifiable, Sendable {
     let id = UUID()
     let text: String
     let startTime: TimeInterval
@@ -23,7 +23,7 @@ struct LyricsLine: Equatable, Identifiable {
     }
 }
 
-struct Lyrics: Equatable {
+struct Lyrics: Equatable, Sendable {
     let title: String?
     let artist: String?
     let lines: [LyricsLine]

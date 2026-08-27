@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 // MARK: - Transition Mode
 
-enum TransitionMode: String, CaseIterable, Codable, Identifiable {
+enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case automix = "AutoMix (DJ-сведение)"
     case crossfade = "Кроссфейд"
     case gapless = "Gapless (Без пауз)"
@@ -27,7 +27,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable {
 
 // MARK: - AutoMix Transition Style
 
-enum AutoMixStyle {
+enum AutoMixStyle: Sendable {
     case bassSwapBlend(duration: Double)
     case quickDrop(duration: Double)
     case fadeOut(duration: Double)
@@ -35,7 +35,7 @@ enum AutoMixStyle {
 
 // MARK: - Track Model
 
-struct Track: Identifiable, Codable, Equatable {
+struct Track: Identifiable, Codable, Equatable, Sendable {
     var id: UUID = UUID()
     var fileName: String
     var relativePath: String = ""
@@ -75,7 +75,7 @@ struct Track: Identifiable, Codable, Equatable {
 
 // MARK: - Playlist Model
 
-struct Playlist: Identifiable, Codable, Equatable {
+struct Playlist: Identifiable, Codable, Equatable, Sendable {
     var id: UUID = UUID()
     var title: String
     var createdAt: Date = Date()
@@ -85,7 +85,7 @@ struct Playlist: Identifiable, Codable, Equatable {
 
 // MARK: - Repeat / Shuffle
 
-enum RepeatMode: Int, Codable, CaseIterable {
+enum RepeatMode: Int, Codable, CaseIterable, Sendable {
     case off = 0, all = 1, one = 2
 
     var icon: String {
@@ -107,7 +107,7 @@ enum RepeatMode: Int, Codable, CaseIterable {
 
 // MARK: - EQ Presets
 
-struct EQPreset: Identifiable, Equatable {
+struct EQPreset: Identifiable, Equatable, Sendable {
     var id: String { name }
     let name: String
     let gains: [Float]

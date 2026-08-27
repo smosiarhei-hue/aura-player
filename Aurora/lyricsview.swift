@@ -5,8 +5,8 @@ import SwiftUI
 struct LyricsView: View {
     let lyrics: Lyrics?
     let isLoading: Bool
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
+    @State private var player = PlayerCore.shared
+    @State private var settings = SettingsStore.shared
 
     var body: some View {
         Group {
@@ -31,8 +31,8 @@ struct LyricsView: View {
 
 private struct SyncedLyrics: View {
     let lyrics: Lyrics
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
+    @State private var player = PlayerCore.shared
+    @State private var settings = SettingsStore.shared
 
     private var currentTime: Double { player.progress + settings.lyricsOffset }
 
@@ -148,7 +148,7 @@ private struct LyricsLineView: View {
 
 private struct StaticLyricsList: View {
     let lyrics: Lyrics
-    @StateObject private var settings = SettingsStore.shared
+    @State private var settings = SettingsStore.shared
 
     var body: some View {
         ScrollView {
@@ -175,8 +175,8 @@ private struct StaticLyricsList: View {
 // MARK: - Empty / Not Found State
 
 private struct EmptyLyricsState: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
+    @State private var player = PlayerCore.shared
+    @State private var settings = SettingsStore.shared
 
     var body: some View {
         VStack(spacing: 16) {

@@ -1,16 +1,19 @@
 import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
+import Observation
 
 @MainActor
-final class LibraryStore: ObservableObject {
+@Observable
+@MainActor
+final class LibraryStore {
     static let shared = LibraryStore()
 
-    @Published private(set) var tracks: [Track] = [] { didSet { persistTracks() } }
-    @Published private(set) var playlists: [Playlist] = [] { didSet { persistPlaylists() } }
-    @Published private(set) var isScanning = false
-    @Published var importProgress: Double? = nil
-    @Published var lastError: String? = nil
+    private(set) var tracks: [Track] = [] { didSet { persistTracks() } }
+    private(set) var playlists: [Playlist] = [] { didSet { persistPlaylists() } }
+    private(set) var isScanning = false
+    var importProgress: Double? = nil
+    var lastError: String? = nil
 
     static let tracksIndexURL: URL = {
         documentsDirectoryURL().appendingPathComponent("library_tracks.json")

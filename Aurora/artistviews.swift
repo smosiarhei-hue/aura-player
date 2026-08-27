@@ -4,7 +4,7 @@ import SwiftUI
 
 struct ArtistView: View {
     let artistId: String
-    @StateObject private var ym = YandexMusicService.shared
+    @State private var ym = YandexMusicService.shared
     @State private var artist: YandexMusicService.YMArtistItem?
     @State private var isLoading = true
     @State private var error: String?
@@ -203,7 +203,7 @@ struct ArtistView: View {
 struct AlbumView: View {
     let albumId: String
     let title: String
-    @StateObject private var ym = YandexMusicService.shared
+    @State private var ym = YandexMusicService.shared
     @State private var album: YandexMusicService.YMAlbumItem?
     @State private var tracks: [YandexMusicService.YMTrackItem] = []
     @State private var isLoading = true

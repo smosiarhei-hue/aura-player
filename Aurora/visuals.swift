@@ -145,7 +145,7 @@ struct SmallArtwork: View {
 // MARK: - 32-Band Live Spectrum Analyzer Bars
 
 struct SpectrumView: View {
-    @StateObject private var analyzer = SpectrumAnalyzer.shared
+    @State private var analyzer = SpectrumAnalyzer.shared
     var barWidth: CGFloat = 4
     var maxHeight: CGFloat = 48
 

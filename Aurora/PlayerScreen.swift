@@ -8,9 +8,9 @@ import UIKit
 // фон больше не раздувает компоновку, поэтому кнопки и ползунки нигде не обрезаются.
 
 struct PlayerScreen: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
-    @StateObject private var library = LibraryStore.shared
+    @State private var player = PlayerCore.shared
+    @State private var settings = SettingsStore.shared
+    @State private var library = LibraryStore.shared
     @Binding var isPresented: Bool
     let namespace: Namespace.ID
 

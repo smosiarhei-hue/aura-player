@@ -1,9 +1,12 @@
 import Foundation
+import Observation
 
 // MARK: - Synchronized Lyrics Service (LRCLIB → LRC → cache → static fallback)
 
 @MainActor
-final class LyricsService: ObservableObject {
+@Observable
+@MainActor
+final class LyricsService {
     static let shared = LyricsService()
 
     private var cache: [String: Lyrics] = [:]

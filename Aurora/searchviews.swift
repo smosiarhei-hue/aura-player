@@ -3,9 +3,9 @@ import SwiftUI
 // MARK: - Tab 5: Поиск (глобальный, по всей базе)
 
 struct SearchCatalogView: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var library = LibraryStore.shared
-    @StateObject private var ym = YandexMusicService.shared
+    @State private var player = PlayerCore.shared
+    @State private var library = LibraryStore.shared
+    @State private var ym = YandexMusicService.shared
 
     @State private var searchText = ""
     @State private var results = YandexMusicService.GlobalSearchResults()
@@ -75,7 +75,7 @@ struct SearchCatalogView: View {
             .toolbarBackground(.hidden, for: .navigationBar)
             .searchable(text: $searchText, prompt: "Треки, исполнители, альбомы")
             .onSubmit(of: .search) { performSearch(immediate: true) }
-            .onChange(of: searchText) { newValue in
+            .onChange(of: searchText) { _, newValue in
                 let query = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 searchTask?.cancel()
                 if query.isEmpty {

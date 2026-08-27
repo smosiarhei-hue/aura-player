@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Observation
 
 // MARK: - Yandex Music API Service
 // Глобальный поиск, страницы артистов и альбомов, Топ-100 чарт, новые релизы,
@@ -7,29 +8,31 @@ import Foundation
 // и память прослушиваний (сервис понимает, что именно слушает пользователь).
 
 @MainActor
-final class YandexMusicService: ObservableObject {
+@Observable
+@MainActor
+final class YandexMusicService {
     static let shared = YandexMusicService()
 
     // Default User Token for full 320kbps and unlimited streaming
     static let defaultToken = "y0__wgBEKKSlpUBGN74BiDN-cLlGKqO1NIws5NU7nK8VFyfbs9Ou9So"
 
-    @Published var token: String {
+    var token: String {
         didSet {
             UserDefaults.standard.set(token, forKey: "ym.token")
             isAuthorized = !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
-    @Published var isAuthorized: Bool = true
+    var isAuthorized: Bool = true
 
     // MARK: - Персональная память прослушиваний
-    @Published private(set) var recentKeys: [String] = []
-    @Published private(set) var totalPlays: Int = 0
+    private(set) var recentKeys: [String] = []
+    private(set) var totalPlays: Int = 0
     private var artistCounts: [String: Int] = [:]
     private(set) var activeStationId: String?
     private var lastBatchId: String?
 
     /// Выбранное настроение волны (stationId ротора).
-    @Published var waveMoodStationId: String = "user:onyourwave" {
+    var waveMoodStationId: String = "user:onyourwave" {
         didSet { UserDefaults.standard.set(waveMoodStationId, forKey: "ym.waveMood") }
     }
 

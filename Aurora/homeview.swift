@@ -3,8 +3,8 @@ import SwiftUI
 // MARK: - Tab 1: Главная
 
 struct HomeView: View {
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var ym = YandexMusicService.shared
+    @State private var player = PlayerCore.shared
+    @State private var ym = YandexMusicService.shared
 
     @State private var chart: [YandexMusicService.YMTrackItem] = []
     @State private var albums: [YandexMusicService.YMAlbumItem] = []

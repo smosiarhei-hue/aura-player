@@ -4,9 +4,9 @@ import UniformTypeIdentifiers
 // MARK: - Library View (Медиатека — Плейлисты, Избранное, Полноценное управление)
 
 struct LibraryView: View {
-    @StateObject private var library = LibraryStore.shared
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
+    @State private var library = LibraryStore.shared
+    @State private var player = PlayerCore.shared
+    @State private var settings = SettingsStore.shared
 
     @State private var searchText = ""
     @State private var filter: LibraryFilter = .all

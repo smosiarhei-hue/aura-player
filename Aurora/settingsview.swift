@@ -3,11 +3,11 @@ import SwiftUI
 // MARK: - Settings View (Sonivo Settings)
 
 struct SettingsView: View {
-    @StateObject private var settings = SettingsStore.shared
-    @StateObject private var library = LibraryStore.shared
-    @StateObject private var player = PlayerCore.shared
-    @StateObject private var ym = YandexMusicService.shared
-    @StateObject private var socialAuth = SocialAuthStore.shared
+    @State private var settings = SettingsStore.shared
+    @State private var library = LibraryStore.shared
+    @State private var player = PlayerCore.shared
+    @State private var ym = YandexMusicService.shared
+    @State private var socialAuth = SocialAuthStore.shared
     @State private var tokenInput = ""
 
     var body: some View {

@@ -1,14 +1,17 @@
 import AuthenticationServices
 import Foundation
 import SwiftUI
+import Observation
 
 // MARK: - Social Auth (Sign in with Apple) — identity for favorites persistence
 
-final class SocialAuthStore: ObservableObject {
+@Observable
+@MainActor
+final class SocialAuthStore {
     static let shared = SocialAuthStore()
 
-    @Published var userID: String?
-    @Published var displayName: String?
+    var userID: String?
+    var displayName: String?
 
     private let d = UserDefaults.standard
 

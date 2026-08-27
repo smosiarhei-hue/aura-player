@@ -4,7 +4,7 @@ import UIKit
 // MARK: - Lyrics
 
 struct LyricsSheetView: View {
-    @StateObject private var player = PlayerCore.shared
+    @State private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var lyrics: Lyrics?
     @State private var isLoading = false
@@ -116,7 +116,7 @@ struct MarqueeText: View {
 // MARK: - Sleep timer
 
 struct SleepTimerSheetView: View {
-    @StateObject private var player = PlayerCore.shared
+    @State private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var minutes = 30
 
@@ -161,7 +161,7 @@ struct SleepTimerSheetView: View {
 // MARK: - Queue
 
 struct QueueSheetView: View {
-    @StateObject private var player = PlayerCore.shared
+    @State private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -249,7 +249,7 @@ struct QueueSheetView: View {
 // MARK: - Equalizer
 
 struct PlayerEQSheetView: View {
-    @StateObject private var player = PlayerCore.shared
+    @State private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
 
     private let labels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]

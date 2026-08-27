@@ -3,7 +3,7 @@ import UIKit
 
 @main
 struct SonivoApp: App {
-    @StateObject private var settings = SettingsStore.shared
+    @State private var settings = SettingsStore.shared
 
     init() {
         let appearance = UITabBarAppearance()
@@ -62,7 +62,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
-    @StateObject private var player = PlayerCore.shared
+    @State private var player = PlayerCore.shared
     @State private var tab: AppTab = .home
     @State private var showPlayer = false
 
@@ -113,7 +113,7 @@ struct RootView: View {
 }
 
 struct NativeMiniPlayer: View {
-    @StateObject private var player = PlayerCore.shared
+    @State private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
     @State private var opening = false
 

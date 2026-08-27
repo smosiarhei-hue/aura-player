@@ -1,4 +1,5 @@
 import SwiftUI
+import Observation
 
 // MARK: - Sonivo Ember Design System (dark canvas + amber gradients + rounded display type)
 
@@ -251,20 +252,22 @@ enum AppTheme: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-final class SettingsStore: ObservableObject {
+@Observable
+@MainActor
+final class SettingsStore {
     static let shared = SettingsStore()
     private let defaults = UserDefaults.standard
 
-    @Published var theme: AppTheme { didSet { defaults.set(theme.rawValue, forKey: "settings.theme") } }
-    @Published var accent: AccentChoice { didSet { defaults.set(accent.rawValue, forKey: "settings.accent") } }
-    @Published var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
-    @Published var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
+    var theme: AppTheme { didSet { defaults.set(theme.rawValue, forKey: "settings.theme") } }
+    var accent: AccentChoice { didSet { defaults.set(accent.rawValue, forKey: "settings.accent") } }
+    var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
+    var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
 
     // Karaoke lyrics
-    @Published var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
-    @Published var lyricsHighlightHex: String { didSet { defaults.set(lyricsHighlightHex, forKey: "lyrics.highlight") } }
-    @Published var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
-    @Published var showTeleprompterInPlayer: Bool { didSet { defaults.set(showTeleprompterInPlayer, forKey: "lyrics.showInPlayer") } }
+    var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
+    var lyricsHighlightHex: String { didSet { defaults.set(lyricsHighlightHex, forKey: "lyrics.highlight") } }
+    var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
+    var showTeleprompterInPlayer: Bool { didSet { defaults.set(showTeleprompterInPlayer, forKey: "lyrics.showInPlayer") } }
 
     var lyricsHighlightColor: Color { Color(hex: lyricsHighlightHex) ?? .orange }
 
