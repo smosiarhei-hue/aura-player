@@ -29,6 +29,7 @@ workflows:
           python3 scripts/launch_safety.py
           python3 scripts/nowplaying_isolation_fix.py
           python3 scripts/restore_nowplaying_guard.py
+          python3 scripts/nowplaying_artwork_off.py
 
       - name: Install XcodeGen
         script: |
