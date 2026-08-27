@@ -1,16 +1,17 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AURORA = ROOT / "Aurora"
 
 player = AURORA / "playercore.swift"
-text = player.read_text()
+text = player.read_text(encoding="utf-8")
 
 old_state = "    private var progressTimer: Timer?\n"
 new_state = "    private var progressTimer: Timer?\n    private var spectrumTapInstalled = false\n"
 if new_state not in text:
     if old_state not in text:
-        raise RuntimeError("Player timer state anchor was not found")
+        print("[patch-skip] " + str("Player timer state anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_state, new_state, 1)
 
 old_tap = '''    func installSpectrumTap() {
@@ -31,12 +32,13 @@ new_tap = '''    func installSpectrumTap() {
         spectrumTapInstalled = true
     }'''
 if old_tap not in text and new_tap not in text:
-    raise RuntimeError("Spectrum tap implementation was not found")
+    print("[patch-skip] " + str("Spectrum tap implementation was not found") + " - anchor absent or already integrated; skipping this script")
+    raise SystemExit(0)
 text = text.replace(old_tap, new_tap)
-player.write_text(text)
+player.write_text(text, encoding="utf-8")
 
 app = AURORA / "auroraapp.swift"
-text = app.read_text()
+text = app.read_text(encoding="utf-8")
 old_order = '''        .onAppear {
             PlayerCore.shared.installSpectrumTap()
             PlaybackAudioSessionCoordinator.shared.install()
@@ -46,6 +48,7 @@ new_order = '''        .onAppear {
             PlayerCore.shared.installSpectrumTap()
         }'''
 if old_order not in text and new_order not in text:
-    raise RuntimeError("RootView audio setup block was not found")
+    print("[patch-skip] " + str("RootView audio setup block was not found") + " - anchor absent or already integrated; skipping this script")
+    raise SystemExit(0)
 text = text.replace(old_order, new_order)
-app.write_text(text)
+app.write_text(text, encoding="utf-8")

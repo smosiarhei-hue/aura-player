@@ -6,3 +6,5 @@ xcuserdata/
 *.ipa
 *.zip
 .openclaw/
+
+scripts/__pycache__/

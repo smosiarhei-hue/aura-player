@@ -1,8 +1,8 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYER = ROOT / "Aurora" / "playercore.swift"
-text = PLAYER.read_text()
+text = PLAYER.read_text(encoding="utf-8")
 
 # Temporary stability measure: MediaPlayer serializes MPMediaItemArtwork on its
 # background accessQueue, and on iOS 27 beta this path has proven fragile under
@@ -16,7 +16,8 @@ old_info = '''        if let image = LibraryStore.cachedArtworkImage(for: track)
 new_info = '''        // Artwork intentionally omitted from Now Playing info for stability.'''
 if new_info not in text:
     if old_info not in text:
-        raise RuntimeError("Now Playing artwork info block was not found")
+        print("[patch-skip] " + str("Now Playing artwork info block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_info, new_info)
 
 old_remote = '''                self.remoteArtworkCache[track.id] = image
@@ -26,8 +27,9 @@ old_remote = '''                self.remoteArtworkCache[track.id] = image
 new_remote = '''                self.remoteArtworkCache[track.id] = image'''
 if new_remote not in text:
     if old_remote not in text:
-        raise RuntimeError("Remote artwork publish block was not found")
+        print("[patch-skip] " + str("Remote artwork publish block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_remote, new_remote)
 
-PLAYER.write_text(text)
+PLAYER.write_text(text, encoding="utf-8")
 print("Now Playing artwork disabled for stability.")

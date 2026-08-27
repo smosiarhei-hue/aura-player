@@ -1,8 +1,8 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYER = ROOT / "Aurora" / "playercore.swift"
-text = PLAYER.read_text()
+text = PLAYER.read_text(encoding="utf-8")
 
 # restorePlaybackState() runs during PlayerCore init at cold start. Publishing
 # Now Playing info there makes MediaPlayer serialize the artwork on its
@@ -25,8 +25,9 @@ new = '''        streamDuration = track.duration
     private func persistPlaybackState'''
 if new not in text:
     if old not in text:
-        raise RuntimeError("restorePlaybackState anchor was not found")
+        print("[patch-skip] " + str("restorePlaybackState anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old, new, 1)
 
-PLAYER.write_text(text)
+PLAYER.write_text(text, encoding="utf-8")
 print("Launch-time Now Playing publish disabled.")

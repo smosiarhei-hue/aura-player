@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AURORA = ROOT / "Aurora"
@@ -13,7 +13,7 @@ OBSERVABLE_FILES = {
 }
 
 for path in AURORA.glob("*.swift"):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     text = text.replace("@StateObject private var", "@State private var")
     text = text.replace("@ObservedObject private var", "@Bindable private var")
 
@@ -34,7 +34,7 @@ for path in AURORA.glob("*.swift"):
         text = text.replace("@MainActor\n@Observable\n@MainActor", "@Observable\n@MainActor")
         text = text.replace("@Observable\n@MainActor\n@MainActor", "@Observable\n@MainActor")
 
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
 
 sendable_replacements = {
     "enum TransitionMode: String, CaseIterable, Codable, Identifiable {":
@@ -56,13 +56,13 @@ sendable_replacements = {
 
 for filename in ("models.swift", "lyricsmodel.swift"):
     path = AURORA / filename
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     for old, new in sendable_replacements.items():
         text = text.replace(old, new)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
 
 models = AURORA / "models.swift"
-text = models.read_text()
+text = models.read_text(encoding="utf-8")
 for helper in (
     "documentsDirectoryURL",
     "musicDirectoryURL",
@@ -70,11 +70,11 @@ for helper in (
 ):
     text = text.replace(f"func {helper}() -> URL {{", f"nonisolated func {helper}() -> URL {{")
     text = text.replace(f"nonisolated nonisolated func {helper}", f"nonisolated func {helper}")
-models.write_text(text)
+models.write_text(text, encoding="utf-8")
 
 for filename in ("searchviews.swift", "lyricsview.swift"):
     path = AURORA / filename
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     text = text.replace(
         ".onChange(of: searchText) { newValue in",
         ".onChange(of: searchText) { _, newValue in",
@@ -83,10 +83,10 @@ for filename in ("searchviews.swift", "lyricsview.swift"):
         ".onChange(of: activeIndex) { newIndex in",
         ".onChange(of: activeIndex) { _, newIndex in",
     )
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
 
 player = AURORA / "playercore.swift"
-text = player.read_text()
+text = player.read_text(encoding="utf-8")
 text = text.replace("import AVFoundation\n", "@preconcurrency import AVFoundation\n", 1)
 text = text.replace("@preconcurrency @preconcurrency import AVFoundation", "@preconcurrency import AVFoundation")
 text = text.replace(
@@ -146,17 +146,17 @@ text = text.replace(
     "SpectrumAnalyzer.shared.process(buffer: buffer, sampleRate: buffer.format.sampleRate)",
     "SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)",
 )
-player.write_text(text)
+player.write_text(text, encoding="utf-8")
 
 stream = AURORA / "streambeat.swift"
-text = stream.read_text().replace(
+text = stream.read_text(encoding="utf-8").replace(
     "SpectrumAnalyzer.shared.feedStreamLevel(acc / Float(count))",
     "SpectrumAnalyzer.ingestStreamLevel(acc / Float(count))",
 )
-stream.write_text(text)
+stream.write_text(text, encoding="utf-8")
 
 project = ROOT / "project.yml"
-text = project.read_text()
+text = project.read_text(encoding="utf-8")
 if '- "PlayerScreen.swift"' not in text:
     text = text.replace('- "Info.plist"', '- "Info.plist"\n          - "PlayerScreen.swift"')
-project.write_text(text)
+project.write_text(text, encoding="utf-8")

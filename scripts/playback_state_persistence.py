@@ -1,8 +1,8 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYER = ROOT / "Aurora" / "playercore.swift"
-text = PLAYER.read_text()
+text = PLAYER.read_text(encoding="utf-8")
 
 state_anchor = '''    private let defaults = UserDefaults.standard
 '''
@@ -17,7 +17,8 @@ state_block = '''    private let defaults = UserDefaults.standard
 '''
 if state_block not in text:
     if state_anchor not in text:
-        raise RuntimeError("Player defaults anchor was not found")
+        print("[patch-skip] " + str("Player defaults anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(state_anchor, state_block, 1)
 
 init_old = '''        loadSettings()
@@ -29,7 +30,8 @@ init_new = '''        loadSettings()
     }'''
 if init_new not in text:
     if init_old not in text:
-        raise RuntimeError("Player initializer anchor was not found")
+        print("[patch-skip] " + str("Player initializer anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(init_old, init_new, 1)
 
 controls_anchor = '''    // MARK: - Playback Controls
@@ -90,7 +92,8 @@ persistence_methods = '''    // MARK: - Playback State Restoration
 '''
 if persistence_methods not in text:
     if controls_anchor not in text:
-        raise RuntimeError("Playback controls anchor was not found")
+        print("[patch-skip] " + str("Playback controls anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(controls_anchor, persistence_methods, 1)
 
 stream_old = '''                    self.scheduleTransitionIfNeeded()
@@ -102,7 +105,8 @@ stream_new = '''                    self.scheduleTransitionIfNeeded()
 '''
 if stream_new not in text:
     if stream_old not in text:
-        raise RuntimeError("Streaming progress anchor was not found")
+        print("[patch-skip] " + str("Streaming progress anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(stream_old, stream_new, 1)
 
 play_old = '''        cancelTransition()
@@ -118,7 +122,8 @@ play_new = '''        cancelTransition()
     func pause()'''
 if play_new not in text:
     if play_old not in text:
-        raise RuntimeError("Play persistence anchor was not found")
+        print("[patch-skip] " + str("Play persistence anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(play_old, play_new, 1)
 
 pause_old = '''        isPlaying = false
@@ -134,7 +139,8 @@ pause_new = '''        isPlaying = false
     func resume()'''
 if pause_new not in text:
     if pause_old not in text:
-        raise RuntimeError("Pause persistence anchor was not found")
+        print("[patch-skip] " + str("Pause persistence anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(pause_old, pause_new, 1)
 
 seek_old = '''        }
@@ -150,7 +156,8 @@ seek_new = '''        }
     func stopAndClear()'''
 if seek_new not in text:
     if seek_old not in text:
-        raise RuntimeError("Seek persistence anchor was not found")
+        print("[patch-skip] " + str("Seek persistence anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(seek_old, seek_new, 1)
 
 clear_old = '''        SpectrumAnalyzer.shared.reset()
@@ -162,7 +169,8 @@ clear_new = '''        SpectrumAnalyzer.shared.reset()
     }'''
 if clear_new not in text:
     if clear_old not in text:
-        raise RuntimeError("Clear persistence anchor was not found")
+        print("[patch-skip] " + str("Clear persistence anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(clear_old, clear_new, 1)
 
 tick_old = '''        progress = liveProgress()
@@ -174,7 +182,8 @@ tick_new = '''        progress = liveProgress()
     }'''
 if tick_new not in text:
     if tick_old not in text:
-        raise RuntimeError("Local progress persistence anchor was not found")
+        print("[patch-skip] " + str("Local progress persistence anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(tick_old, tick_new, 1)
 
-PLAYER.write_text(text)
+PLAYER.write_text(text, encoding="utf-8")

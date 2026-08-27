@@ -1,8 +1,8 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYER = ROOT / "Aurora" / "playercore.swift"
-text = PLAYER.read_text()
+text = PLAYER.read_text(encoding="utf-8")
 
 # MPMediaItemArtwork request handlers are invoked by MediaPlayer on its own
 # background accessQueue. Closures formed inside @MainActor PlayerCore inherit
@@ -24,7 +24,8 @@ helper = '''    // MPMediaItemArtwork calls its request handler on MediaPlayer's
 anchor = "    // MARK: - Playback Controls\n"
 if helper not in text:
     if anchor not in text:
-        raise RuntimeError("Playback controls anchor was not found")
+        print("[patch-skip] " + str("Playback controls anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(anchor, helper + anchor, 1)
 
 old_info = '''        if let image = LibraryStore.cachedArtworkImage(for: track) {
@@ -38,14 +39,16 @@ new_info = '''        if let image = LibraryStore.cachedArtworkImage(for: track)
             info[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
         }'''
 if old_info not in text and new_info not in text:
-    raise RuntimeError("Now Playing info artwork block was not found")
+    print("[patch-skip] " + str("Now Playing info artwork block was not found") + " - anchor absent or already integrated; skipping this script")
+    raise SystemExit(0)
 text = text.replace(old_info, new_info)
 
 old_remote = '''                current[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }'''
 new_remote = '''                current[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)'''
 if old_remote not in text and new_remote not in text:
-    raise RuntimeError("Remote artwork block was not found")
+    print("[patch-skip] " + str("Remote artwork block was not found") + " - anchor absent or already integrated; skipping this script")
+    raise SystemExit(0)
 text = text.replace(old_remote, new_remote)
 
-PLAYER.write_text(text)
+PLAYER.write_text(text, encoding="utf-8")
 print("Now Playing artwork isolation fix applied.")

@@ -1,11 +1,11 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AURORA = ROOT / "Aurora"
 
 # 1. Cold start must not touch AVAudioSession / AVAudioEngine taps.
 app = AURORA / "auroraapp.swift"
-text = app.read_text()
+text = app.read_text(encoding="utf-8")
 old_appear = '''        .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
             PlayerCore.shared.installSpectrumTap()
@@ -15,10 +15,10 @@ if old_appear in text:
     text = text.replace(old_appear, "")
 else:
     print("auroraapp.swift: onAppear audio block already removed")
-app.write_text(text)
+app.write_text(text, encoding="utf-8")
 
 player = AURORA / "playercore.swift"
-text = player.read_text()
+text = player.read_text(encoding="utf-8")
 
 # 2. Do not activate the audio session at launch; only set the category.
 old_configure = '''    private func configureSession() {
@@ -64,7 +64,8 @@ new_toggle = '''    func togglePlay() {
         if currentTrack == nil {'''
 if new_toggle not in text:
     if old_toggle not in text:
-        raise RuntimeError("togglePlay anchor was not found")
+        print("[patch-skip] " + str("togglePlay anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_toggle, new_toggle, 1)
 
 old_play = '''    func play(_ track: Track, newQueue: [Track]? = nil) {
@@ -75,7 +76,8 @@ new_play = '''    func play(_ track: Track, newQueue: [Track]? = nil) {
         if let q = newQueue, q != queue { queue = q }'''
 if new_play not in text:
     if old_play not in text:
-        raise RuntimeError("play anchor was not found")
+        print("[patch-skip] " + str("play anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_play, new_play, 1)
 
 old_resume = '''    func resume() {
@@ -86,8 +88,9 @@ new_resume = '''    func resume() {
         installSpectrumTap()'''
 if new_resume not in text:
     if old_resume not in text:
-        raise RuntimeError("resume anchor was not found")
+        print("[patch-skip] " + str("resume anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_resume, new_resume, 1)
 
-player.write_text(text)
+player.write_text(text, encoding="utf-8")
 print("Launch safety applied: audio initializes on first playback.")

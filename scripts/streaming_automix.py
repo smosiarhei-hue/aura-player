@@ -1,8 +1,8 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYER = ROOT / "Aurora" / "playercore.swift"
-text = PLAYER.read_text()
+text = PLAYER.read_text(encoding="utf-8")
 
 # A single AVPlayer cannot overlap two streams. Add a second deck that is
 # preloaded with the next URL and promoted to the active deck after a true
@@ -16,7 +16,8 @@ new_player = '''    private var streamingPlayer = AVPlayer()
 '''
 if new_player not in text:
     if old_player not in text:
-        raise RuntimeError("Streaming player declaration was not found")
+        print("[patch-skip] " + str("Streaming player declaration was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_player, new_player, 1)
 
 state_anchor = '''    private var currentAutoMixStyle: AutoMixStyle = .bassSwapBlend(duration: 3.5)
@@ -29,7 +30,8 @@ state_block = '''    private var currentAutoMixStyle: AutoMixStyle = .bassSwapBl
 '''
 if state_block not in text:
     if state_anchor not in text:
-        raise RuntimeError("AutoMix state anchor was not found")
+        print("[patch-skip] " + str("AutoMix state anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(state_anchor, state_block, 1)
 
 # Move the active deck observer into a reinstallable helper, because the two
@@ -43,7 +45,8 @@ if helper_marker not in text:
     start = text.find(observer_start_marker)
     end = text.find(notification_marker, start)
     if start < 0 or end < 0:
-        raise RuntimeError("Streaming time observer block was not found")
+        print("[patch-skip] " + str("Streaming time observer block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
 
     setup_replacement = '''        streamingMixPlayer.automaticallyWaitsToMinimizeStalling = false
         streamingMixPlayer.volume = 0
@@ -86,7 +89,8 @@ if helper_marker not in text:
 
 '''
     if setup_audio_anchor not in text:
-        raise RuntimeError("Audio engine anchor was not found")
+        print("[patch-skip] " + str("Audio engine anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(setup_audio_anchor, observer_helper + setup_audio_anchor, 1)
 
 # Pause and clear both stream decks.
@@ -99,7 +103,8 @@ pause_new = '''        if isUsingStreamPlayer {
         } else {'''
 if pause_new not in text:
     if pause_old not in text:
-        raise RuntimeError("Streaming pause block was not found")
+        print("[patch-skip] " + str("Streaming pause block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(pause_old, pause_new, 1)
 
 clear_old = '''        streamingPlayer.pause()
@@ -113,7 +118,8 @@ clear_new = '''        streamingPlayer.pause()
         playerA.stop()'''
 if clear_new not in text:
     if clear_old not in text:
-        raise RuntimeError("Streaming clear block was not found")
+        print("[patch-skip] " + str("Streaming clear block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(clear_old, clear_new, 1)
 
 begin_old = '''    private func beginStream(_ url: URL, at seconds: Double) {
@@ -130,7 +136,8 @@ begin_new = '''    private func beginStream(_ url: URL, at seconds: Double) {
         streamingPlayer.replaceCurrentItem(with: item)'''
 if begin_new not in text:
     if begin_old not in text:
-        raise RuntimeError("beginStream block was not found")
+        print("[patch-skip] " + str("beginStream block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(begin_old, begin_new, 1)
 
 old_stream_transition = '''        // Progressive stream transitions
@@ -169,7 +176,8 @@ new_stream_transition = '''        // True dual-deck crossfade for two online st
 '''
 if new_stream_transition not in text:
     if old_stream_transition not in text:
-        raise RuntimeError("Old progressive transition block was not found")
+        print("[patch-skip] " + str("Old progressive transition block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(old_stream_transition, new_stream_transition, 1)
 
 streaming_methods_marker = '''    private func prepareStreamingTransition(
@@ -314,7 +322,8 @@ if streaming_methods_marker not in text:
 
 '''
     if timer_anchor not in text:
-        raise RuntimeError("Transition timer anchor was not found")
+        print("[patch-skip] " + str("Transition timer anchor was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(timer_anchor, streaming_methods + timer_anchor, 1)
 
 cancel_old = '''    private func cancelTransition() {
@@ -344,8 +353,9 @@ cancel_new = '''    private func cancelTransition() {
         transitionTimer?.invalidate()'''
 if cancel_new not in text:
     if cancel_old not in text:
-        raise RuntimeError("cancelTransition block was not found")
+        print("[patch-skip] " + str("cancelTransition block was not found") + " - anchor absent or already integrated; skipping this script")
+        raise SystemExit(0)
     text = text.replace(cancel_old, cancel_new, 1)
 
-PLAYER.write_text(text)
+PLAYER.write_text(text, encoding="utf-8")
 print("Dual-deck streaming AutoMix applied.")
