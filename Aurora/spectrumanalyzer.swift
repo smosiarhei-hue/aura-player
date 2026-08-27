@@ -1,5 +1,5 @@
 import Accelerate
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import Observation
 
@@ -7,7 +7,7 @@ import Observation
 @MainActor
 final class SpectrumAnalyzer {
     static let shared = SpectrumAnalyzer()
-    static let bandCount = 32
+    nonisolated static let bandCount = 32
 
     private(set) var bands: [Float] = Array(repeating: 0, count: bandCount)
     private(set) var bass: Float = 0
@@ -36,7 +36,7 @@ final class SpectrumAnalyzer {
     }
 
     func reset() {
-        processor.reset()
+        Self.processor.reset()
         bands = Array(repeating: 0, count: Self.bandCount)
         bass = 0
         level = 0
@@ -44,13 +44,13 @@ final class SpectrumAnalyzer {
     }
 }
 
-private struct SpectrumSnapshot: Sendable {
+nonisolated private struct SpectrumSnapshot: Sendable {
     let bands: [Float]
     let bass: Float
     let level: Float
 }
 
-private final class SpectrumDSP: @unchecked Sendable {
+nonisolated private final class SpectrumDSP: @unchecked Sendable {
     private let lock = NSLock()
     private let fftSize = 1024
     private let log2n: vDSP_Length = 10
