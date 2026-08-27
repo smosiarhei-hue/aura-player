@@ -7,7 +7,6 @@ import Observation
 // персональная «Моя волна» без повторов под выбранное настроение
 // и память прослушиваний (сервис понимает, что именно слушает пользователь).
 
-@MainActor
 @Observable
 @MainActor
 final class YandexMusicService {

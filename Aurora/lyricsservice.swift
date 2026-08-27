@@ -3,7 +3,6 @@ import Observation
 
 // MARK: - Synchronized Lyrics Service (LRCLIB → LRC → cache → static fallback)
 
-@MainActor
 @Observable
 @MainActor
 final class LyricsService {

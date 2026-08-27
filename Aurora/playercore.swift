@@ -37,7 +37,6 @@ enum AudioQuality: Int, CaseIterable, Identifiable {
 
 // MARK: - Fast Progressive Audio & Local Playback Engine (PlayerCore)
 
-@MainActor
 @Observable
 @MainActor
 final class PlayerCore {

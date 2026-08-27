@@ -3,7 +3,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Observation
 
-@MainActor
 @Observable
 @MainActor
 final class LibraryStore {
