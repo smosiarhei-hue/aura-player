@@ -21,6 +21,6 @@ final class StreamBeatTap {
         // Spatial playback remains limited to formats that do not rewrite the
         // source channel layout. No MTAudioProcessingTap is installed here.
         item.allowedAudioSpatializationFormats = .monoAndStereo
-        SpectrumAnalyzer.shared.feedStreamLevel(0)
+        SpectrumAnalyzer.ingestStreamLevel(0)
     }
 }
