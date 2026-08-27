@@ -20,6 +20,7 @@ workflows:
         script: |
           python3 scripts/modernize_sources.py
           python3 scripts/swift6_build_fixes.py
+          python3 scripts/runtime_stability_fixes.py
 
       - name: Install XcodeGen
         script: |
