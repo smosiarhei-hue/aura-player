@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import UIKit
 
 @MainActor
@@ -16,15 +16,14 @@ final class PlaybackAudioSessionCoordinator {
         let center = NotificationCenter.default
 
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
             Task { @MainActor in
-                guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                      let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-
+                guard let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
                 switch type {
                 case .began:
                     PlayerCore.shared.pause()
                 case .ended:
-                    self.configure()
+                    PlaybackAudioSessionCoordinator.shared.configure()
                 @unknown default:
                     break
                 }
@@ -32,24 +31,23 @@ final class PlaybackAudioSessionCoordinator {
         })
 
         observers.append(center.addObserver(forName: AVAudioSession.silenceSecondaryAudioHintNotification, object: nil, queue: .main) { note in
+            guard let raw = note.userInfo?[AVAudioSessionSilenceSecondaryAudioHintTypeKey] as? UInt else { return }
             Task { @MainActor in
-                guard let raw = note.userInfo?[AVAudioSessionSilenceSecondaryAudioHintTypeKey] as? UInt,
-                      AVAudioSession.SilenceSecondaryAudioHintType(rawValue: raw) == .begin else { return }
+                guard AVAudioSession.SilenceSecondaryAudioHintType(rawValue: raw) == .begin else { return }
                 PlayerCore.shared.pause()
             }
         })
 
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { note in
+            guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else { return }
             Task { @MainActor in
-                guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-                      let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
-
+                guard let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
                 switch reason {
                 case .newDeviceAvailable, .routeConfigurationChange, .categoryChange, .override:
-                    self.configure()
+                    PlaybackAudioSessionCoordinator.shared.configure()
                 case .oldDeviceUnavailable:
                     PlayerCore.shared.pause()
-                    self.configure()
+                    PlaybackAudioSessionCoordinator.shared.configure()
                 default:
                     break
                 }
@@ -57,11 +55,15 @@ final class PlaybackAudioSessionCoordinator {
         })
 
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
-            Task { @MainActor in self.configure() }
+            Task { @MainActor in
+                PlaybackAudioSessionCoordinator.shared.configure()
+            }
         })
 
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            Task { @MainActor in self.configure() }
+            Task { @MainActor in
+                PlaybackAudioSessionCoordinator.shared.configure()
+            }
         })
     }
 
