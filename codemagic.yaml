@@ -22,6 +22,7 @@ workflows:
           python3 scripts/swift6_build_fixes.py
           python3 scripts/runtime_stability_fixes.py
           python3 scripts/playback_state_persistence.py
+          python3 scripts/track_wave_ui.py
 
       - name: Install XcodeGen
         script: |
