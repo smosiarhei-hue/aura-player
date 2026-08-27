@@ -68,6 +68,69 @@ text = path.read_text().replace(
 )
 path.write_text(text)
 
+player = AURORA / "playercore.swift"
+text = player.read_text()
+text = text.replace(
+'''                self.playerA.scheduleSegment(audioFile, startingFrame: validOffset, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        Task { @MainActor in
+                            guard let self, self.generation == token, !self.isUsingStreamPlayer else { return }
+                            self.handleTrackFinish()
+                        }
+                    }
+                }''',
+'''                self.playerA.scheduleSegment(audioFile, startingFrame: validOffset, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self, self.generation == token, !self.isUsingStreamPlayer else { return }
+                        self.handleTrackFinish()
+                    }
+                }'''
+)
+text = text.replace(
+'''            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
+                guard let self, self.generation == token else { return }
+                self.isTransitioning = false
+                self.currentTrack = nextTrack
+                self.start(at: 0) // transitionScheduled cleared in beginStream
+            }''',
+'''            Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(remaining)) }
+                catch { return }
+                guard let self, self.generation == token else { return }
+                self.isTransitioning = false
+                self.currentTrack = nextTrack
+                self.start(at: 0)
+            }'''
+)
+text = text.replace(
+'''                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        Task { @MainActor in
+                            guard let self, self.activePlayer === targetIdlePlayer else { return }
+                            self.handleTrackFinish()
+                        }
+                    }
+                }''',
+'''                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self, self.activePlayer === targetIdlePlayer else { return }
+                        self.handleTrackFinish()
+                    }
+                }'''
+)
+text = text.replace(
+    "SpectrumAnalyzer.shared.process(buffer: buffer, sampleRate: buffer.format.sampleRate)",
+    "SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)"
+)
+player.write_text(text)
+
+stream = AURORA / "streambeat.swift"
+text = stream.read_text().replace(
+    "SpectrumAnalyzer.shared.feedStreamLevel(acc / Float(count))",
+    "SpectrumAnalyzer.ingestStreamLevel(acc / Float(count))"
+)
+stream.write_text(text)
+
 project = ROOT / "project.yml"
 text = project.read_text()
 if '- "PlayerScreen.swift"' not in text:
