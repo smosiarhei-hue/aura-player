@@ -1,8 +1,6 @@
 import Foundation
 
 // MARK: - Catalog compatibility types
-// GlobalSearchResults использует короткое имя YMArtistBrief. Объявление на
-// уровне модуля надёжно разрешается компилятором независимо от порядка файлов.
 
 typealias YMArtistBrief = YandexMusicService.YMArtistItem.YMArtistBrief
 
@@ -158,22 +156,77 @@ extension YandexMusicService {
         )
     }
 
+    /// Загружает страницу артиста. Если нестабильный brief-info изменил формат,
+    /// экран собирается из отдельного запроса треков и их альбомов.
     func getArtistFixed(artistId: String) async throws -> YMArtistItem {
+        if let brief = await loadArtistBrief(artistId: artistId) {
+            var result = brief
+
+            if result.popularTracks.isEmpty {
+                result.popularTracks = (try? await getArtistTracks(
+                    artistId: artistId,
+                    page: 0,
+                    pageSize: 50
+                )) ?? []
+            }
+
+            if result.albums.isEmpty {
+                result.albums = await albumsFromTracks(result.popularTracks)
+            }
+
+            return result
+        }
+
+        let tracks = (try? await getArtistTracks(
+            artistId: artistId,
+            page: 0,
+            pageSize: 50
+        )) ?? []
+
+        let matchingArtist = tracks
+            .flatMap { $0.artists ?? [] }
+            .first { artist in
+                guard let id = artist.id else { return false }
+                return String(id) == artistId
+            }
+
+        let firstNamedArtist = tracks
+            .flatMap { $0.artists ?? [] }
+            .first { !($0.name ?? "").isEmpty }
+
+        let name = matchingArtist?.name ?? firstNamedArtist?.name ?? "Артист"
+        let coverUri = tracks.first?.coverUri ?? tracks.first?.albums?.first?.coverUri
+        let albums = await albumsFromTracks(tracks)
+
+        return YMArtistItem(
+            id: artistId,
+            name: name,
+            coverUri: coverUri,
+            genres: [],
+            counts: YMArtistItem.ArtistCounts(
+                tracks: tracks.count,
+                directAlbums: albums.count
+            ),
+            popularTracks: tracks,
+            albums: albums,
+            similarArtists: []
+        )
+    }
+
+    private func loadArtistBrief(artistId: String) async -> YMArtistItem? {
         var components = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info")!
         components.queryItems = [
             URLQueryItem(name: "popularTracks", value: "true"),
             URLQueryItem(name: "discography", value: "true"),
             URLQueryItem(name: "similarArtists", value: "true")
         ]
-        guard let url = components.url else { throw URLError(.badURL) }
-
-        let (data, _) = try await URLSession.shared.data(for: catalogRequest(url: url))
-        let decoded = try JSONDecoder().decode(YMCatalogArtistResponse.self, from: data)
-
-        guard let raw = decoded.result?.artist,
+        guard let url = components.url,
+              let pair = try? await URLSession.shared.data(for: catalogRequest(url: url)),
+              let decoded = try? JSONDecoder().decode(YMCatalogArtistResponse.self, from: pair.0),
+              let raw = decoded.result?.artist,
               let id = raw.id,
               let name = raw.name else {
-            throw URLError(.cannotParseResponse)
+            return nil
         }
 
         let popular = Self.playable(decoded.result?.popularTracks ?? [])
@@ -200,6 +253,24 @@ extension YandexMusicService {
             albums: albums,
             similarArtists: similar
         )
+    }
+
+    private func albumsFromTracks(_ tracks: [YMTrackItem]) async -> [YMAlbumItem] {
+        var seen = Set<Int>()
+        var ids: [Int] = []
+
+        for track in tracks {
+            for album in track.albums ?? [] {
+                guard let id = album.id, !seen.contains(id) else { continue }
+                seen.insert(id)
+                ids.append(id)
+            }
+        }
+
+        guard !ids.isEmpty else { return [] }
+        return ((try? await fetchAlbums(ids: Array(ids.prefix(40)))) ?? [])
+            .filter { $0.id != 0 }
+            .sorted { ($0.year ?? 0) > ($1.year ?? 0) }
     }
 
     private func catalogRequest(url: URL) -> URLRequest {
