@@ -8,8 +8,10 @@ private struct TrackWaveCandidate {
 @MainActor
 extension YandexMusicService {
     /// Builds a diverse queue related to the current song. The catalog remains
-    /// the source of truth; the ranker combines track radio, artist similarity,
-    /// album affinity, duration proximity and listening history.
+    /// the source of truth; a local ranker combines track radio, artist similarity,
+    /// album affinity, duration proximity and listening history. When the
+    /// Gemini proxy is configured, its semantic ordering wins and the local
+    /// score becomes the fallback for candidates Gemini skipped.
     func buildTrackWave(from seed: Track, target: Int = 45) async -> [Track] {
         let seedID = Self.ymId(fromFileName: seed.fileName)
             ?? seed.streamUrlString?.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
@@ -47,7 +49,6 @@ extension YandexMusicService {
                 score += max(0, 10 * (1 - ratio))
             }
 
-            // Stable tiny variation prevents identical queues while preserving relevance.
             let jitter = Double(item.id.utf8.reduce(0) { ($0 &* 31) &+ Int($1) } % 100) / 100
             score += jitter
 
@@ -118,9 +119,55 @@ extension YandexMusicService {
             }
         }
 
-        let sorted = candidates.values.sorted { left, right in
-            if left.score != right.score { return left.score > right.score }
-            return left.item.id < right.item.id
+        // 5. Gemini semantic rerank (optional). The worker can only reorder
+        // existing candidate IDs, so the queue always contains real tracks.
+        var aiPositions: [String: Int] = [:]
+        if AIRankerService.shared.isConfigured {
+            let aiCandidates = Array(candidates.values.prefix(60)).map {
+                AIRankerService.Candidate(
+                    id: $0.item.id,
+                    title: $0.item.title,
+                    artist: $0.item.artistName,
+                    album: $0.item.albumName,
+                    duration: $0.item.duration
+                )
+            }
+            if let ranking = await AIRankerService.shared.rank(
+                seed: .init(
+                    title: seed.title,
+                    artist: seed.artist,
+                    album: seed.album,
+                    duration: seed.duration
+                ),
+                intent: "Продолжить песню: \(seed.artist) — \(seed.title)",
+                candidates: aiCandidates
+            ), !ranking.ordered_ids.isEmpty {
+                for (position, id) in ranking.ordered_ids.enumerated() {
+                    aiPositions[id] = position
+                }
+            }
+        }
+
+        let sorted: [TrackWaveCandidate]
+        if aiPositions.isEmpty {
+            sorted = candidates.values.sorted { left, right in
+                if left.score != right.score { return left.score > right.score }
+                return left.item.id < right.item.id
+            }
+        } else {
+            sorted = candidates.values.sorted { left, right in
+                switch (aiPositions[left.item.id], aiPositions[right.item.id]) {
+                case let (leftPosition?, rightPosition?):
+                    return leftPosition < rightPosition
+                case (.some, nil):
+                    return true
+                case (nil, .some):
+                    return false
+                default:
+                    if left.score != right.score { return left.score > right.score }
+                    return left.item.id < right.item.id
+                }
+            }
         }
 
         var artistCounts: [String: Int] = [:]
