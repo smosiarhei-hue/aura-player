@@ -61,9 +61,11 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
     private var streamLastPublish = Date.distantPast
 
     init() {
-        fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
-        window = (0..<fftSize).map { index in
-            let angle = 2 * Float.pi * Float(index) / Float(fftSize - 1)
+        let size = 1024
+        let exponent: vDSP_Length = 10
+        fftSetup = vDSP_create_fftsetup(exponent, FFTRadix(kFFTRadix2))
+        window = (0..<size).map { index in
+            let angle = 2 * Float.pi * Float(index) / Float(size - 1)
             return 0.5 * (1 - cos(angle))
         }
     }
