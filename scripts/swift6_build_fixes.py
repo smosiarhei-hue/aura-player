@@ -40,3 +40,52 @@ if old_helper not in text and new_helper not in text:
     raise RuntimeError("Legacy metadata block was not found")
 text = text.replace(old_helper, new_helper)
 library.write_text(text)
+
+player = AURORA / "playercore.swift"
+text = player.read_text()
+old_finished_observer = '''        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                guard let self, self.isUsingStreamPlayer else { return }
+                // Ignore end-of-track notifications from replaced (stale) AVPlayerItems
+                // so the AutoMix asyncAfter transition and this observer don't double-advance.
+                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                    return
+                }
+                self.handleTrackFinish()
+            }
+        }'''
+new_finished_observer = '''        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated {
+                guard let self, self.isUsingStreamPlayer else { return }
+                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                    return
+                }
+                self.handleTrackFinish()
+            }
+        }'''
+text = text.replace(old_finished_observer, new_finished_observer)
+
+old_failed_observer = '''        NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                guard let self, self.isUsingStreamPlayer else { return }
+                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                    return
+                }
+                let message = (notification.object as? AVPlayerItem)?.error?.localizedDescription
+                self.isPlaying = false
+                self.playError = message.map { "Ошибка потока: \($0)" } ?? "Не удалось воспроизвести трек"
+            }
+        }'''
+new_failed_observer = '''        NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated {
+                guard let self, self.isUsingStreamPlayer else { return }
+                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                    return
+                }
+                let message = (notification.object as? AVPlayerItem)?.error?.localizedDescription
+                self.isPlaying = false
+                self.playError = message.map { "Ошибка потока: \($0)" } ?? "Не удалось воспроизвести трек"
+            }
+        }'''
+text = text.replace(old_failed_observer, new_failed_observer)
+player.write_text(text)
