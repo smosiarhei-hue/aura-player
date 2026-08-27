@@ -61,15 +61,34 @@ for filename in ("models.swift", "lyricsmodel.swift"):
         text = text.replace(old, new)
     path.write_text(text)
 
-path = AURORA / "searchviews.swift"
-text = path.read_text().replace(
-    ".onChange(of: searchText) { newValue in",
-    ".onChange(of: searchText) { _, newValue in",
-)
-path.write_text(text)
+models = AURORA / "models.swift"
+text = models.read_text()
+for helper in (
+    "documentsDirectoryURL",
+    "musicDirectoryURL",
+    "artworkCacheDirectoryURL",
+):
+    text = text.replace(f"func {helper}() -> URL {{", f"nonisolated func {helper}() -> URL {{")
+    text = text.replace(f"nonisolated nonisolated func {helper}", f"nonisolated func {helper}")
+models.write_text(text)
+
+for filename in ("searchviews.swift", "lyricsview.swift"):
+    path = AURORA / filename
+    text = path.read_text()
+    text = text.replace(
+        ".onChange(of: searchText) { newValue in",
+        ".onChange(of: searchText) { _, newValue in",
+    )
+    text = text.replace(
+        ".onChange(of: activeIndex) { newIndex in",
+        ".onChange(of: activeIndex) { _, newIndex in",
+    )
+    path.write_text(text)
 
 player = AURORA / "playercore.swift"
 text = player.read_text()
+text = text.replace("import AVFoundation\n", "@preconcurrency import AVFoundation\n", 1)
+text = text.replace("@preconcurrency @preconcurrency import AVFoundation", "@preconcurrency import AVFoundation")
 text = text.replace(
 '''                self.playerA.scheduleSegment(audioFile, startingFrame: validOffset, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     DispatchQueue.main.async {
@@ -113,21 +132,26 @@ text = text.replace(
                 }''',
 '''                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     Task { @MainActor in
-                        guard let self, self.activePlayer === targetIdlePlayer else { return }
+                        guard let self,
+                              self.activePlayer === (targetIsPlayerA ? self.playerA : self.playerB) else { return }
                         self.handleTrackFinish()
                     }
                 }'''
 )
 text = text.replace(
+    "        let targetIdlePlayer = idlePlayer\n\n        Task {",
+    "        let targetIdlePlayer = idlePlayer\n        let targetIsPlayerA = targetIdlePlayer === playerA\n\n        Task {",
+)
+text = text.replace(
     "SpectrumAnalyzer.shared.process(buffer: buffer, sampleRate: buffer.format.sampleRate)",
-    "SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)"
+    "SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)",
 )
 player.write_text(text)
 
 stream = AURORA / "streambeat.swift"
 text = stream.read_text().replace(
     "SpectrumAnalyzer.shared.feedStreamLevel(acc / Float(count))",
-    "SpectrumAnalyzer.ingestStreamLevel(acc / Float(count))"
+    "SpectrumAnalyzer.ingestStreamLevel(acc / Float(count))",
 )
 stream.write_text(text)
 
