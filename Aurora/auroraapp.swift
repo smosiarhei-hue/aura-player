@@ -14,7 +14,7 @@ struct SonivoApp: App {
     }
 }
 
-// MARK: - Tabs
+// MARK: - Native tabs
 
 enum AppTab: String, CaseIterable, Identifiable {
     case home = "Home"
@@ -37,7 +37,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .home:    return "house.fill"
+        case .home:    return "house"
         case .new:     return "sparkles"
         case .radio:   return "dot.radiowaves.left.and.right"
         case .library: return "music.note.list"
@@ -46,63 +46,52 @@ enum AppTab: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Root View
+// MARK: - Root
 
 struct RootView: View {
     @StateObject private var player = PlayerCore.shared
-    @StateObject private var settings = SettingsStore.shared
     @State private var tab: AppTab = .home
     @State private var showPlayer = false
     @Namespace private var playerNamespace
 
     private var miniVisible: Bool { player.currentTrack != nil }
 
-    /// Запас снизу под плавающий док и мини-плеер, чтобы контент никогда не уезжал под них.
-    private var bottomReserve: CGFloat { miniVisible ? 156 : 90 }
-
     var body: some View {
-        ZStack(alignment: .bottom) {
-            AG.bg.ignoresSafeArea()
+        TabView(selection: $tab) {
+            HomeView()
+                .tabItem { Label(AppTab.home.label, systemImage: AppTab.home.icon) }
+                .tag(AppTab.home)
 
-            TabView(selection: $tab) {
-                HomeView()
-                    .modifier(SonivoTabRoot(reserve: bottomReserve))
-                    .tag(AppTab.home)
-                NewReleasesView()
-                    .modifier(SonivoTabRoot(reserve: bottomReserve))
-                    .tag(AppTab.new)
-                RadioStationsView()
-                    .modifier(SonivoTabRoot(reserve: bottomReserve))
-                    .tag(AppTab.radio)
-                LibraryView()
-                    .modifier(SonivoTabRoot(reserve: bottomReserve))
-                    .tag(AppTab.library)
-                SearchCatalogView()
-                    .modifier(SonivoTabRoot(reserve: bottomReserve))
-                    .tag(AppTab.search)
-            }
+            NewReleasesView()
+                .tabItem { Label(AppTab.new.label, systemImage: AppTab.new.icon) }
+                .tag(AppTab.new)
 
-            // Мини-плеер стоит НАД доком, а не поверх него.
-            VStack(spacing: 10) {
-                if miniVisible {
-                    LiquidGlassMiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                SonivoTabBar(selection: $tab)
+            RadioStationsView()
+                .tabItem { Label(AppTab.radio.label, systemImage: AppTab.radio.icon) }
+                .tag(AppTab.radio)
+
+            LibraryView()
+                .tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }
+                .tag(AppTab.library)
+
+            SearchCatalogView()
+                .tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }
+                .tag(AppTab.search)
+        }
+        .tabBarMinimizeBehavior(.onScrollDown)
+        .tabViewBottomAccessory {
+            if miniVisible {
+                NativeMiniPlayer(showPlayer: $showPlayer, namespace: playerNamespace)
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 4)
-            .opacity(showPlayer ? 0 : 1)
-            .allowsHitTesting(!showPlayer)
         }
         .overlay {
             if showPlayer {
                 PlayerScreen(isPresented: $showPlayer, namespace: playerNamespace)
+                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .bottom)))
                     .zIndex(10)
             }
         }
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: showPlayer)
-        .animation(.spring(response: 0.35, dampingFraction: 0.80), value: miniVisible)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: showPlayer)
         .onAppear {
             PlayerCore.shared.installSpectrumTap()
         }
@@ -111,7 +100,6 @@ struct RootView: View {
         }
     }
 
-    /// Запоминаем каждый запущенный трек — на этой истории «Моя волна» больше не повторяется.
     private func rememberCurrentTrack() {
         guard let track = player.currentTrack else { return }
         YandexMusicService.shared.remember(
@@ -122,183 +110,129 @@ struct RootView: View {
     }
 }
 
-/// Прячет родной таб-бар и резервирует место под наш собственный док.
-struct SonivoTabRoot: ViewModifier {
-    let reserve: CGFloat
+// MARK: - Native TabView bottom accessory
 
-    func body(content: Content) -> some View {
-        content
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: reserve)
-            }
-            .toolbar(.hidden, for: .tabBar)
-    }
-}
-
-// MARK: - Floating Ember Dock
-
-struct SonivoTabBar: View {
-    @Binding var selection: AppTab
-    @StateObject private var settings = SettingsStore.shared
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(AppTab.allCases) { item in
-                Button {
-                    if item != selection, settings.hapticsEnabled {
-                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    }
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                        selection = item
-                    }
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: item.icon)
-                            .font(.system(size: 17, weight: selection == item ? .bold : .medium))
-                            .frame(height: 20)
-                        Text(item.label)
-                            .font(AG.text(9.5, selection == item ? .bold : .medium))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-                    .foregroundStyle(selection == item ? AnyShapeStyle(AG.emberGradient) : AnyShapeStyle(AG.inkMuted))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 4)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color.black.opacity(0.45))
-            }
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(AG.hairline, lineWidth: 0.9)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 8)
-    }
-}
-
-// MARK: - Liquid Glass Mini Player
-
-struct LiquidGlassMiniPlayer: View {
+struct NativeMiniPlayer: View {
     @StateObject private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
     let namespace: Namespace.ID
 
-    private var fraction: Double {
+    private var progress: Double {
         guard player.duration > 0 else { return 0 }
         return min(1, max(0, player.progress / player.duration))
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button {
-                open()
-            } label: {
-                HStack(spacing: 12) {
-                    SmallArtwork(track: player.currentTrack, size: 42)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .matchedGeometryEffect(id: "heroArtwork", in: namespace)
+        VStack(spacing: 3) {
+            HStack(spacing: 11) {
+                Button(action: open) {
+                    HStack(spacing: 11) {
+                        MiniArtworkPulse(
+                            track: player.currentTrack,
+                            isPlaying: player.isPlaying,
+                            namespace: namespace
+                        )
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(player.currentTrack?.title ?? "")
-                            .font(AG.text(14, .semibold))
-                            .foregroundStyle(AG.ink)
-                            .lineLimit(1)
-                        Text(player.currentTrack?.artist ?? "")
-                            .font(AG.text(11, .medium))
-                            .foregroundStyle(AG.inkMuted)
-                            .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(player.currentTrack?.title ?? "Не выбрана песня")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+
+                            Text(player.currentTrack?.artist ?? "")
+                                .font(.system(.subheadline, design: .rounded, weight: .regular))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
                     }
-
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                player.togglePlay()
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color.black.opacity(0.85))
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(AG.emberGradient))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                player.next()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AG.ink.opacity(0.85))
-                    .frame(width: 32, height: 34)
                     .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    player.togglePlay()
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 19, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизвести")
+
+                Button {
+                    player.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Следующая песня")
             }
-            .buttonStyle(.plain)
+
+            ProgressView(value: progress)
+                .progressViewStyle(.linear)
+                .tint(AG.amber)
+                .scaleEffect(x: 1, y: 0.55, anchor: .center)
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.black.opacity(0.38))
-            }
-        )
-        .overlay(alignment: .bottom) {
-            GeometryReader { geo in
-                Capsule()
-                    .fill(AG.emberGradient)
-                    .frame(width: geo.size.width * fraction, height: 2)
-            }
-            .frame(height: 2)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 4)
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.40), location: 0.0),
-                            .init(color: AG.amber.opacity(0.22), location: 0.35),
-                            .init(color: .clear, location: 0.70),
-                            .init(color: Color.black.opacity(0.30), location: 1.0)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 0.9
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .shadow(color: Color.black.opacity(0.42), radius: 16, x: 0, y: 7)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
         .gesture(
-            DragGesture(minimumDistance: 15)
+            DragGesture(minimumDistance: 18)
                 .onEnded { value in
-                    if value.translation.height < -20 { open() }
+                    if value.translation.height < -24 { open() }
                 }
         )
     }
 
     private func open() {
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
             showPlayer = true
+        }
+    }
+}
+
+// MARK: - Animated artwork in mini-player
+
+struct MiniArtworkPulse: View {
+    let track: Track?
+    let isPlaying: Bool
+    let namespace: Namespace.ID
+
+    @State private var rotate = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(
+                    AngularGradient(
+                        colors: [AG.amber, AG.ember, Color.clear, AG.amber],
+                        center: .center
+                    )
+                )
+                .frame(width: 48, height: 48)
+                .rotationEffect(.degrees(rotate ? 360 : 0))
+                .blur(radius: 5)
+                .opacity(isPlaying ? 0.72 : 0.18)
+
+            SmallArtwork(track: track, size: 42)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .matchedGeometryEffect(id: "heroArtwork", in: namespace)
+                .scaleEffect(isPlaying ? 1.0 : 0.94)
+        }
+        .frame(width: 48, height: 48)
+        .animation(.spring(response: 0.4, dampingFraction: 0.78), value: isPlaying)
+        .onAppear {
+            withAnimation(.linear(duration: 7).repeatForever(autoreverses: false)) {
+                rotate = true
+            }
         }
     }
 }
