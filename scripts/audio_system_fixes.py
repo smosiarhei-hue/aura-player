@@ -66,8 +66,7 @@ text = replace_required(
         ]''',
     '''            MPNowPlayingInfoPropertyElapsedPlaybackTime: progress,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
-            MPNowPlayingInfoPropertyExternalContentIdentifier: track.id.uuidString,
-            MPNowPlayingInfoPropertyPlaybackQueueIdentifier: "com.smoze.sonivo.playback"
+            MPNowPlayingInfoPropertyExternalContentIdentifier: track.id.uuidString
         ]''',
     "Now Playing media identity",
 )
