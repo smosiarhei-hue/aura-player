@@ -44,7 +44,7 @@ text = replace_required(text,
                 }
                 let message = (notification.object as? AVPlayerItem)?.error?.localizedDescription
                 self.isPlaying = false
-                self.playError = message.map { "Ошибка потока: \($0)" } ?? "Не удалось воспроизвести трек"
+                self.playError = message.map { "Ошибка потока: \\($0)" } ?? "Не удалось воспроизвести трек"
             }
         }''',
 '''        NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
@@ -55,7 +55,7 @@ text = replace_required(text,
                 }
                 let message = (notification.object as? AVPlayerItem)?.error?.localizedDescription
                 self.isPlaying = false
-                self.playError = message.map { "Ошибка потока: \($0)" } ?? "Не удалось воспроизвести трек"
+                self.playError = message.map { "Ошибка потока: \\($0)" } ?? "Не удалось воспроизвести трек"
             }
         }''', "failure notification isolation")
 PLAYER.write_text(text, encoding="utf-8")
