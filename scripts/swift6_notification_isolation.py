@@ -28,7 +28,6 @@ text = replace_required(text,
 '''        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             MainActor.assumeIsolated {
                 guard let self, self.isUsingStreamPlayer else { return }
-                // The observer is explicitly delivered on OperationQueue.main.
                 if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
                     return
                 }
