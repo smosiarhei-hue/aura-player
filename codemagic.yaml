@@ -21,6 +21,9 @@ workflows:
       - name: Apply and verify Swift production patches
         script: |
           set -euo pipefail
+          # AutoMix must run before modernize_sources: modernization replaces
+          # the legacy transition anchor that streaming_automix intentionally migrates.
+          python3 -W error::SyntaxWarning scripts/streaming_automix.py
           python3 -W error::SyntaxWarning scripts/modernize_sources.py
           python3 -W error::SyntaxWarning scripts/swift6_build_fixes.py
           python3 -W error::SyntaxWarning scripts/runtime_stability_fixes.py
@@ -30,7 +33,6 @@ workflows:
           python3 -W error::SyntaxWarning scripts/launch_safety.py
           python3 -W error::SyntaxWarning scripts/nowplaying_isolation_fix.py
           python3 -W error::SyntaxWarning scripts/restore_nowplaying_guard.py
-          python3 -W error::SyntaxWarning scripts/streaming_automix.py
           python3 -W error::SyntaxWarning scripts/audio_system_fixes.py
           python3 -W error::SyntaxWarning scripts/verify_build_features.py
 
