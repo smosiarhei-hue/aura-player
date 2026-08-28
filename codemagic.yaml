@@ -29,6 +29,7 @@ workflows:
           python3 -W error::SyntaxWarning scripts/audio_system_fixes.py
           python3 -W error::SyntaxWarning scripts/august2026_media_fixes.py
           python3 -W error::SyntaxWarning scripts/fullscreen_artwork_videoshot.py
+          python3 -W error::SyntaxWarning scripts/spatial_audio_stability.py
           python3 -W error::SyntaxWarning scripts/verify_build_features.py
       - name: Install XcodeGen
         script: |
