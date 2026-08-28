@@ -9,6 +9,7 @@ settings:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_OBJC_BRIDGING_HEADER: Aurora/SonivoStreamEQ.h
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Manual
     CODE_SIGNING_ALLOWED: NO
@@ -20,40 +21,36 @@ targets:
     platform: iOS
     sources:
       - path: Aurora
-        excludes:
-          - "Info.plist"
+        excludes: ["Info.plist"]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.1.1"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "1.2.0"
+        CURRENT_PROJECT_VERSION: "4"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
+    dependencies:
+      - framework: MediaToolbox.framework
     info:
       path: Aurora/Info.plist
       properties:
         CFBundleDisplayName: Sonivo
-        CFBundleShortVersionString: "1.1.1"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "1.2.0"
+        CFBundleVersion: "4"
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
-        UIBackgroundModes:
-          - audio
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
+        UIBackgroundModes: [audio]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown]
         ITSAppUsesNonExemptEncryption: false
 schemes:
   Sonivo:
     build:
       targets:
         Sonivo: all
-    run:
-      config: Debug
-    archive:
-      config: Release
+    run: {config: Debug}
+    archive: {config: Release}

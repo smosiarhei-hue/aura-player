@@ -1,26 +1,36 @@
 @preconcurrency import AVFoundation
 import Foundation
 
-// MARK: - Streaming Beat Tap
-//
-// MTAudioProcessingTap invokes its lifecycle callbacks from private
-// mediaplaybackd XPC queues. With Swift 6 default MainActor isolation on iOS 27
-// beta, those imported C callbacks can retain an executor precondition and trap
-// at runtime before audio starts. Streaming playback does not depend on this
-// analyzer, so keep attachment deliberately inert until the tap is moved into a
-// separately compiled nonisolated C/DSP target. Local-file spectrum analysis
-// continues to work through PlayerCore's AVAudioEngine tap.
-
+// The realtime DSP callback lives in C, outside Swift actor isolation. The tap
+// runs before AirPods Spatialize Stereo, so the user's EQ remains audible when
+// system spatialization is enabled.
 @MainActor
 final class StreamBeatTap {
     static let shared = StreamBeatTap()
-
     private init() {}
 
     func attach(to item: AVPlayerItem) {
-        // Spatial playback remains limited to formats that do not rewrite the
-        // source channel layout. No MTAudioProcessingTap is installed here.
         item.allowedAudioSpatializationFormats = .monoAndStereo
-        SpectrumAnalyzer.ingestStreamLevel(0)
+        Task { @MainActor [weak item] in
+            guard let item else { return }
+            do {
+                guard let track = try await item.asset.loadTracks(withMediaType: .audio).first,
+                      let tap = SonivoCreateStreamEQTap() else { return }
+                let parameters = AVMutableAudioMixInputParameters(track: track)
+                parameters.audioTapProcessor = tap
+                let mix = AVMutableAudioMix()
+                mix.inputParameters = [parameters]
+                item.audioMix = mix
+            } catch {
+                print("Stream EQ attachment failed: \(error)")
+            }
+        }
+    }
+
+    func updateEQ(enabled: Bool, gains: [Float]) {
+        SonivoStreamEQSetEnabled(enabled)
+        gains.withUnsafeBufferPointer { pointer in
+            SonivoStreamEQSetGains(pointer.baseAddress, Int32(pointer.count))
+        }
     }
 }
