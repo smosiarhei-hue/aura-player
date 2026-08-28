@@ -4,6 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAYER = (ROOT / "Aurora" / "playercore.swift").read_text(encoding="utf-8")
 SESSION = (ROOT / "Aurora" / "playbackaudiosession.swift").read_text(encoding="utf-8")
 SCREEN = (ROOT / "Aurora" / "PlayerScreenV2.swift").read_text(encoding="utf-8")
+CHROME = (ROOT / "Aurora" / "playerchrome.swift").read_text(encoding="utf-8")
 AI_CONFIG = (ROOT / "Aurora" / "ai_config.swift").read_text(encoding="utf-8")
 
 required_player = {
@@ -22,7 +23,7 @@ required_player = {
 
 required_other = {
     "route-change callback": (SESSION, "PlayerCore.shared.recoverAudioPipelineAfterRouteChange()"),
-    "full-player EQ": (SCREEN, "struct PlayerEQSheetView"),
+    "full-player EQ": (CHROME, "struct PlayerEQSheetView"),
     "track wave": (SCREEN, "private func startTrackWave()"),
     "AI config": (AI_CONFIG, "nonisolated enum SonivoAIConfig"),
 }
