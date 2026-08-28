@@ -134,15 +134,19 @@ static void TapProcess(MTAudioProcessingTapRef tap, CMItemCount requestedFrames,
 }
 
 MTAudioProcessingTapRef SonivoCreateStreamEQTap(void) {
-    MTAudioProcessingTapCallbacks callbacks = {
-        .version = kMTAudioProcessingTapCallbacksVersion_0,
-        .clientInfo = NULL,
-        .init = TapInit,
-        .finalize = TapFinalize,
-        .prepare = TapPrepare,
-        .unprepare = TapUnprepare,
-        .process = TapProcess,
-    };
+    // Xcode 26 may lower an aggregate initializer into a 4-byte-aligned
+    // constant even though this structure contains pointer fields. Build the
+    // callback table dynamically and require pointer alignment explicitly.
+    _Alignas(void *) MTAudioProcessingTapCallbacks callbacks;
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
+    callbacks.clientInfo = NULL;
+    callbacks.init = TapInit;
+    callbacks.finalize = TapFinalize;
+    callbacks.prepare = TapPrepare;
+    callbacks.unprepare = TapUnprepare;
+    callbacks.process = TapProcess;
+
     MTAudioProcessingTapRef tap = NULL;
     OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks,
         kMTAudioProcessingTapCreationFlag_PreEffects, &tap);
