@@ -14,13 +14,13 @@ AI = (ROOT / "Aurora/ai_config.swift").read_text(encoding="utf-8")
 checks = {
 "Observation": (PLAYER, "@Observable\n@MainActor\nfinal class PlayerCore"),
 "artwork": (PLAYER, "nonisolated private static func nowPlayingArtwork"),
-"media session": (PLAYER, "systemNowPlayingSession.isActive = true"),
+"media session": (PLAYER, "systemNowPlayingSession.becomeActiveIfPossible"),
+"ignored lazy media session": (PLAYER, "@ObservationIgnored private lazy var systemNowPlayingSession"),
 "single-flight seek": (PLAYER, "cancelPendingSeeks()"),
 "AutoMix": (PLAYER, "private func completeStreamingTransition()"),
 "stream EQ state": (PLAYER, "StreamBeatTap.shared.updateEQ"),
 "route recovery": (PLAYER, "recoverAudioPipelineAfterRouteChange"),
 "spatial recovery": (PLAYER, "recoverSpatialAudioAfterCapabilityChange"),
-"Now Playing candidate": (SESSION, "setIsNowPlayingCandidate(true)"),
 "spatial capability observer": (SESSION, "spatialPlaybackCapabilitiesChangedNotification"),
 "single-commit scrubber": (SCREEN, "onEditingChanged: { editing in"),
 "velocity scrub haptics": (SCREEN, "scrubHapticEngine.update"),
@@ -31,7 +31,7 @@ checks = {
 "looping video surface": (FULLSCREEN, "AVPlayerLooper"),
 "EQ UI": (CHROME, "struct PlayerEQSheetView"),
 "calm lyrics": (LYRICS, "private struct CalmSyncedLyrics"),
-"C stream tap": (STREAM, "SonivoCreateStreamEQTap"),
+"C stream tap": (STREAM, "takeRetainedValue()"),
 "AI": (AI, "nonisolated enum SonivoAIConfig"),
 }
 missing = [name for name, (content, marker) in checks.items() if marker not in content]

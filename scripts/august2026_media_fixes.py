@@ -2,7 +2,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYER = ROOT / "Aurora" / "playercore.swift"
-SESSION = ROOT / "Aurora" / "playbackaudiosession.swift"
 SCREEN = ROOT / "Aurora" / "PlayerScreenV2.swift"
 
 def replace_required(text, old, new, label):
@@ -17,13 +16,13 @@ player = replace_required(player,
     private var timeObserverToken: Any?''',
 '''    private var streamingPlayer = AVPlayer()
     private var streamingMixPlayer = AVPlayer()
-    private lazy var systemNowPlayingSession = MPNowPlayingSession(players: [streamingPlayer, streamingMixPlayer])
+    @ObservationIgnored private lazy var systemNowPlayingSession = MPNowPlayingSession(players: [streamingPlayer, streamingMixPlayer])
     private var timeObserverToken: Any?''', "MPNowPlayingSession")
 player = replace_required(player,
 '''        UIApplication.shared.beginReceivingRemoteControlEvents()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info''',
 '''        UIApplication.shared.beginReceivingRemoteControlEvents()
-        systemNowPlayingSession.isActive = true
+        systemNowPlayingSession.becomeActiveIfPossible(completion: nil)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info''', "active Now Playing session")
 player = replace_required(player,
 '''    private func applyEQ() {
@@ -79,15 +78,6 @@ player = replace_required(player,
         persistPlaybackState(force: true)''', "single-flight seeking")
 PLAYER.write_text(player, encoding="utf-8")
 
-session = SESSION.read_text(encoding="utf-8")
-session = replace_required(session,
-'''            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
-            try session.setActive(true)''',
-'''            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
-            try session.setIsNowPlayingCandidate(true)
-            try session.setActive(true)''', "iOS 26 Now Playing candidacy")
-SESSION.write_text(session, encoding="utf-8")
-
 screen = SCREEN.read_text(encoding="utf-8")
 screen = replace_required(screen, '''    @State private var trackWaveMessage: String?
 ''', '''    @State private var trackWaveMessage: String?
@@ -116,4 +106,4 @@ screen = replace_required(screen,
                 Spacer()
                 Text("-" + player.formatted(max(0, player.duration - displayedProgress)))''', "scrubber labels")
 SCREEN.write_text(screen, encoding="utf-8")
-print("iOS 26 Now Playing session, stable seeking, stream EQ, and scrubber applied.")
+print("Xcode 26 Now Playing session, stable seeking, stream EQ, and scrubber applied.")

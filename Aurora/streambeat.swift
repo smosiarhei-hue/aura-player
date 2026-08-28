@@ -15,7 +15,8 @@ final class StreamBeatTap {
             guard let item else { return }
             do {
                 guard let track = try await item.asset.loadTracks(withMediaType: .audio).first,
-                      let tap = SonivoCreateStreamEQTap() else { return }
+                      let unmanagedTap = SonivoCreateStreamEQTap() else { return }
+                let tap: MTAudioProcessingTap = unmanagedTap.takeRetainedValue()
                 let parameters = AVMutableAudioMixInputParameters(track: track)
                 parameters.audioTapProcessor = tap
                 let mix = AVMutableAudioMix()
