@@ -67,6 +67,10 @@ static void RefreshCoefficients(SonivoTapStorage *s, bool force) {
 static void TapInit(MTAudioProcessingTapRef tap, void *clientInfo, void **storageOut) {
     (void)tap; (void)clientInfo;
     SonivoTapStorage *s = calloc(1, sizeof(SonivoTapStorage));
+    if (s == NULL) {
+        *storageOut = NULL;
+        return;
+    }
     for (int i = 0; i < SONIVO_BANDS; i++) s->appliedGains[i] = NAN;
     *storageOut = s;
 }
@@ -134,21 +138,28 @@ static void TapProcess(MTAudioProcessingTapRef tap, CMItemCount requestedFrames,
 }
 
 MTAudioProcessingTapRef SonivoCreateStreamEQTap(void) {
-    // Xcode 26 may lower an aggregate initializer into a 4-byte-aligned
-    // constant even though this structure contains pointer fields. Build the
-    // callback table dynamically and require pointer alignment explicitly.
-    _Alignas(void *) MTAudioProcessingTapCallbacks callbacks;
-    memset(&callbacks, 0, sizeof(callbacks));
-    callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
-    callbacks.clientInfo = NULL;
-    callbacks.init = TapInit;
-    callbacks.finalize = TapFinalize;
-    callbacks.prepare = TapPrepare;
-    callbacks.unprepare = TapUnprepare;
-    callbacks.process = TapProcess;
+    // MTAudioProcessingTapCallbacks is packed to 4-byte ABI alignment while it
+    // contains pointer fields. Xcode 26's linker rejects a compiler-generated
+    // constant callback table because some pointer relocations are unaligned.
+    // Heap construction forces runtime stores and avoids that constant atom.
+    MTAudioProcessingTapCallbacks *callbacks = calloc(1, sizeof(*callbacks));
+    if (callbacks == NULL) return NULL;
+
+    callbacks->version = kMTAudioProcessingTapCallbacksVersion_0;
+    callbacks->clientInfo = NULL;
+    callbacks->init = TapInit;
+    callbacks->finalize = TapFinalize;
+    callbacks->prepare = TapPrepare;
+    callbacks->unprepare = TapUnprepare;
+    callbacks->process = TapProcess;
 
     MTAudioProcessingTapRef tap = NULL;
-    OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks,
-        kMTAudioProcessingTapCreationFlag_PreEffects, &tap);
+    OSStatus status = MTAudioProcessingTapCreate(
+        kCFAllocatorDefault,
+        callbacks,
+        kMTAudioProcessingTapCreationFlag_PreEffects,
+        &tap
+    );
+    free(callbacks);
     return status == noErr ? tap : NULL;
 }
