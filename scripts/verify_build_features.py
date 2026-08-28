@@ -6,6 +6,10 @@ SCREEN = (ROOT / "Aurora/PlayerScreenV2.swift").read_text(encoding="utf-8")
 CHROME = (ROOT / "Aurora/playerchrome.swift").read_text(encoding="utf-8")
 LYRICS = (ROOT / "Aurora/lyricsview.swift").read_text(encoding="utf-8")
 STREAM = (ROOT / "Aurora/streambeat.swift").read_text(encoding="utf-8")
+FULLSCREEN = (ROOT / "Aurora/fullscreenartwork.swift").read_text(encoding="utf-8")
+THEME = (ROOT / "Aurora/theme.swift").read_text(encoding="utf-8")
+MODELS = (ROOT / "Aurora/models.swift").read_text(encoding="utf-8")
+YANDEX = (ROOT / "Aurora/yandexmusicservice.swift").read_text(encoding="utf-8")
 AI = (ROOT / "Aurora/ai_config.swift").read_text(encoding="utf-8")
 checks = {
 "Observation": (PLAYER, "@Observable\n@MainActor\nfinal class PlayerCore"),
@@ -16,7 +20,13 @@ checks = {
 "stream EQ state": (PLAYER, "StreamBeatTap.shared.updateEQ"),
 "route recovery": (PLAYER, "recoverAudioPipelineAfterRouteChange"),
 "Now Playing candidate": (SESSION, "setIsNowPlayingCandidate(true)"),
-"scrubber": (SCREEN, "onEditingChanged: { editing in"),
+"single-commit scrubber": (SCREEN, "onEditingChanged: { editing in"),
+"velocity scrub haptics": (SCREEN, "scrubHapticEngine.update"),
+"immersive artwork": (SCREEN, "fullScreenMediaBackground"),
+"artwork toggle": (THEME, "fullScreenArtworkEnabled"),
+"video shot model": (MODELS, "videoShotURL"),
+"Yandex video shot": (YANDEX, "backgroundVideoUri"),
+"looping video surface": (FULLSCREEN, "AVPlayerLooper"),
 "EQ UI": (CHROME, "struct PlayerEQSheetView"),
 "calm lyrics": (LYRICS, "private struct CalmSyncedLyrics"),
 "C stream tap": (STREAM, "SonivoCreateStreamEQTap"),
