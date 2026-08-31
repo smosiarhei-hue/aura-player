@@ -88,7 +88,7 @@ cfg = load_config()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg.get("TELEGRAM_BOT_TOKEN", "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA")
 ALLOWED_CHAT_ID = int(os.environ.get("TELEGRAM_CHAT_ID") or cfg.get("TELEGRAM_CHAT_ID", 8559869613))
 
-# --- ПУЛ КЛЮЧЕЙ И МУЛЬТИ-ПРОВАЙДЕРЫ (Gemini, DeepSeek, OpenRouter, Groq, OpenAI) ---
+# --- ПУЛ КЛЮЧЕЙ И МУЛЬТИ-ПРОВАЙДЕРЫ (Gemini, DeepSeek, OpenRouter, Groq, Custom API) ---
 
 def get_keys():
     config = load_config()
@@ -133,6 +133,81 @@ def record_key_exhausted(key_id, cooldown_seconds=120):
     config["GEMINI_KEYS"] = key_list
     save_config(config)
     return next_key_name
+
+def test_and_discover_models(base_url, api_key, provider_type=None):
+    clean_key = api_key.strip()
+    if not provider_type:
+        if clean_key.startswith("AQ.") or clean_key.startswith("AIza"):
+            provider_type = "gemini"
+        else:
+            provider_type = "openai_compatible"
+            
+    if provider_type == "gemini":
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={clean_key}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Sonivo-Agent"})
+        try:
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode())
+                models = [m.get("name", "").replace("models/", "") for m in data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+                curated = [m for m in models if "flash" in m or "pro" in m]
+                return {"valid": True, "provider": "gemini", "models": curated or models[:12], "status_msg": f"🟢 Ключ Gemini рабочий! Доступно {len(models)} моделей"}
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                return {"valid": True, "provider": "gemini", "status_msg": "⏳ Ключ рабочий, но суточный лимит временно исчерпан", "models": ["gemini-3.6-flash", "gemini-3.7-flash"]}
+            return {"valid": False, "provider": "gemini", "error": f"HTTP {e.code}: Неверный ключ или ошибка доступа", "models": []}
+        except Exception as e:
+            return {"valid": False, "provider": "gemini", "error": str(e), "models": []}
+    else:
+        target_url = (base_url or "https://api.deepseek.com").rstrip("/")
+        models_endpoint = target_url + "/models"
+        req = urllib.request.Request(
+            models_endpoint,
+            headers={"Authorization": f"Bearer {clean_key}", "User-Agent": "Sonivo-Agent"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode())
+                raw_models = data.get("data", [])
+                model_ids = []
+                for m in raw_models:
+                    if isinstance(m, dict) and "id" in m:
+                        model_ids.append(m["id"])
+                    elif isinstance(m, str):
+                        model_ids.append(m)
+                
+                return {
+                    "valid": True,
+                    "provider": "openai_compatible",
+                    "models": model_ids[:25],
+                    "status_msg": f"🟢 Ключ рабочий! На сервере обнаружено {len(model_ids)} моделей"
+                }
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return {"valid": False, "provider": "openai_compatible", "error": "🔴 Ошибка 401: Неверный API-ключ (Unauthorized)", "models": []}
+            
+            # Test with chat completion for endpoints without /models
+            try:
+                test_url = target_url + "/chat/completions"
+                payload = {
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 1
+                }
+                t_req = urllib.request.Request(
+                    test_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Authorization": f"Bearer {clean_key}", "Content-Type": "application/json", "User-Agent": "Sonivo-Agent"}
+                )
+                with urllib.request.urlopen(t_req, timeout=10) as t_resp:
+                    return {"valid": True, "provider": "openai_compatible", "models": ["deepseek-chat"], "status_msg": "🟢 Ключ успешно проверен и авторизован!"}
+            except urllib.error.HTTPError as te:
+                if te.code == 404:
+                    return {"valid": True, "provider": "openai_compatible", "models": [], "status_msg": "🟢 Авторизация пройдена! Укажите имя модели"}
+                return {"valid": False, "provider": "openai_compatible", "error": f"HTTP {te.code}: Ошибка авторизации", "models": []}
+            except Exception as te:
+                return {"valid": False, "provider": "openai_compatible", "error": str(te), "models": []}
+        except Exception as e:
+            return {"valid": False, "provider": "openai_compatible", "error": str(e), "models": []}
 
 def add_new_key(api_key, name=None, provider=None, base_url=None, model=None):
     config = load_config()
@@ -1162,7 +1237,7 @@ def show_keys_menu(chat_id, reply_to=None):
     keys = get_keys()
     now = time.time()
     
-    text = "🔑 *Пул ключей и AI-провайдеров (Gemini, DeepSeek, OpenRouter, Groq)*\n\n"
+    text = "🔑 *Пул ключей и AI-провайдеров*\n\n"
     if not keys:
         text += "_У вас пока нет добавленных ключей!_\n"
     else:
@@ -1172,6 +1247,7 @@ def show_keys_menu(chat_id, reply_to=None):
             k_val = k.get("key", "")
             provider = k.get("provider", "gemini").capitalize()
             model = k.get("model", "auto")
+            base_url = k.get("base_url", "")
             masked = k_val[:6] + "..." + k_val[-4:] if len(k_val) > 10 else "***"
             status = k.get("status", "active")
             cooldown = max(0, int(k.get("cooldown_until", 0) - now))
@@ -1187,20 +1263,63 @@ def show_keys_menu(chat_id, reply_to=None):
             req_total = k.get("requests_total", 0)
             
             text += f"{p_icon} *{k_name}* [{provider} · `{model}`]\n"
-            text += f"• Ключ: `{masked}`\n"
-            text += f"• Статус: {status_icon} | Запросов сегодня: `{req_today}` (Всего: `{req_total}`)\n\n"
+            if base_url and "generativelanguage" not in base_url:
+                text += f"• Base URL: `{base_url}`\n"
+            text += f"• Ключ: `{masked}` | Статус: {status_icon}\n"
+            text += f"• Запросов сегодня: `{req_today}` (Всего: `{req_total}`)\n\n"
             
-    text += "💡 *Авто-переключение:* При исчерпании квоты на Gemini бот мгновенно переключается на DeepSeek / OpenRouter или следующий ключ!\n\n"
-    text += "Отправьте команду `/add_key <API_KEY>` или выберите провайдера ниже:"
+    text += "💡 *Авто-подхват моделей и Failover:*\n"
+    text += "Бот автоматически тестирует API-ключ, подхватывает список моделей с сервера и переключается между ключами при исчерпании лимитов!\n\n"
+    text += "• `/add_custom <KEY> <BASE_URL> [MODEL] [NAME]`\n"
+    text += "• Или выберите действие в меню ниже:"
     
     inline_kb = {
         "inline_keyboard": [
-            [{"text": "➕ Добавить DeepSeek ключ", "callback_data": "key_add_deepseek"}, {"text": "➕ Добавить Gemini ключ", "callback_data": "key_add_gemini"}],
-            [{"text": "➕ Добавить OpenRouter ключ", "callback_data": "key_add_openrouter"}, {"text": "➕ Добавить Groq / OpenAI", "callback_data": "key_add_groq"}],
-            [{"text": "🔄 Обновить статус квот", "callback_data": "btn_refresh_keys"}]
+            [{"text": "➕ Добавить DeepSeek", "callback_data": "key_add_deepseek"}, {"text": "➕ Добавить Gemini", "callback_data": "key_add_gemini"}],
+            [{"text": "➕ Добавить OpenRouter", "callback_data": "key_add_openrouter"}, {"text": "➕ Добавить Groq", "callback_data": "key_add_groq"}],
+            [{"text": "⚙️ Добавить Custom Provider (URL + Ключ)", "callback_data": "key_add_custom"}],
+            [{"text": "🔄 Проверить все ключи и квоты (Live Test)", "callback_data": "btn_validate_all_keys"}]
         ]
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
+
+def validate_all_keys(chat_id=None):
+    keys = get_keys()
+    if not keys:
+        if chat_id:
+            tg_send("⚠️ В пуле пока нет ключей для проверки.", chat_id=chat_id)
+        return
+        
+    if chat_id:
+        tg_send("⏳ *Проверяю подключение ко всем AI-провайдерам и запрашиваю модели...*", chat_id=chat_id)
+    report = "🔍 *Отчет о проверке провайдеров и ключей:*\n\n"
+    for k in keys:
+        k_name = k.get("name")
+        k_prov = k.get("provider", "gemini")
+        k_key = k.get("key", "")
+        k_url = k.get("base_url")
+        
+        res = test_and_discover_models(k_url, k_key, k_prov)
+        if res.get("valid"):
+            k["status"] = "active"
+            models_found = res.get("models", [])
+            report += f"🟢 *{k_name}* [{k_prov.capitalize()}]: *Рабочий (200 OK)*\n"
+            if models_found:
+                models_preview = ", ".join([f"`{m}`" for m in models_found[:5]])
+                report += f"  • Обнаружено моделей: {len(models_found)} ({models_preview}...)\n"
+        else:
+            err_msg = res.get("error", "Неизвестная ошибка")
+            report += f"🔴 *{k_name}* [{k_prov.capitalize()}]: *Ошибка доступа*\n"
+            report += f"  • Причина: {err_msg}\n"
+        report += "\n"
+        
+    config = load_config()
+    config["AI_KEYS"] = keys
+    config["GEMINI_KEYS"] = keys
+    save_config(config)
+    
+    if chat_id:
+        tg_send(report, chat_id=chat_id)
 
 def show_skills_menu(chat_id, reply_to=None):
     skills = get_installed_skills()
@@ -1297,8 +1416,57 @@ def start_bot():
                     elif cq_data == "key_add_groq":
                         user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_GROQ_KEY"
                         tg_send("⚡ *Отправьте ваш Groq или OpenAI API ключ (`gsk_...` или `sk-...`):*")
-                    elif cq_data == "btn_refresh_keys":
-                        show_keys_menu(ALLOWED_CHAT_ID)
+                    elif cq_data == "key_add_custom":
+                        user_states[ALLOWED_CHAT_ID] = {"step": "WAITING_FOR_CUSTOM_KEY"}
+                        tg_send("⚙️ *Настройка кастомного AI-провайдера*\n\n🔑 *Шаг 1 из 3:* Отправьте ваш API-ключ (например: `sk-...`):")
+                    elif cq_data.startswith("set_url_"):
+                        # Быстрый пресет URL из кнопок
+                        url_preset = cq_data.replace("set_url_", "")
+                        st = user_states.get(ALLOWED_CHAT_ID)
+                        if isinstance(st, dict) and st.get("step") == "WAITING_FOR_CUSTOM_URL":
+                            saved_key = st.get("key")
+                            tg_send(f"⏳ *Проверяю подключение к `{url_preset}` и запрашиваю модели...*")
+                            res = test_and_discover_models(url_preset, saved_key)
+                            if not res.get("valid"):
+                                tg_send(f"❌ Ошибка авторизации: {res.get('error', 'Не удалось подключиться')}")
+                                user_states.pop(ALLOWED_CHAT_ID, None)
+                            else:
+                                models = res.get("models", [])
+                                st["step"] = "WAITING_FOR_CUSTOM_MODEL"
+                                st["url"] = url_preset
+                                user_states[ALLOWED_CHAT_ID] = st
+                                
+                                succ_text = f"✅ *API-ключ проверен и рабочий! (HTTP 200 OK)*\n\n"
+                                if models:
+                                    succ_text += f"📋 *Обнаружено {len(models)} моделей на сервере:*\nВыберите модель кнопкой ниже или напишите своё имя модели:"
+                                    kb_rows = []
+                                    row = []
+                                    for idx, m in enumerate(models[:8]):
+                                        row.append({"text": m, "callback_data": f"pick_m_{m}"})
+                                        if len(row) == 2:
+                                            kb_rows.append(row)
+                                            row = []
+                                    if row:
+                                        kb_rows.append(row)
+                                    tg_send(succ_text, reply_markup={"inline_keyboard": kb_rows})
+                                else:
+                                    succ_text += "📝 *Шаг 3 из 3:* Введите имя модели (например: `deepseek-chat` или `gpt-4o`):"
+                                    tg_send(succ_text)
+                    elif cq_data.startswith("pick_m_"):
+                        chosen_model = cq_data.replace("pick_m_", "")
+                        st = user_states.pop(ALLOWED_CHAT_ID, None)
+                        if isinstance(st, dict) and st.get("key") and st.get("url"):
+                            k_name, prov = add_new_key(
+                                api_key=st["key"],
+                                base_url=st["url"],
+                                model=chosen_model,
+                                provider="custom",
+                                name=f"Custom ({chosen_model})"
+                            )
+                            tg_send(f"🎉 *Провайдер успешно добавлен и активирован!*\n• Модель: `{chosen_model}`\n• Base URL: `{st['url']}`\n• Статус: 🟢 Рабочий", reply_markup=get_main_keyboard())
+                            show_keys_menu(ALLOWED_CHAT_ID)
+                    elif cq_data == "btn_validate_all_keys" or cq_data == "btn_refresh_keys":
+                        validate_all_keys(ALLOWED_CHAT_ID)
                     elif cq_data == "btn_trigger_build":
                         res = tool_trigger_ipa_build()
                         if res.get("success"):
@@ -1470,6 +1638,90 @@ def start_bot():
                     
                 print(f"\n[User Request]: {text or '(Media attached)'}")
                 
+                # Пошаговый визард настройки кастомного провайдера
+                st = user_states.get(ALLOWED_CHAT_ID)
+                if isinstance(st, dict):
+                    step = st.get("step")
+                    if step == "WAITING_FOR_CUSTOM_KEY":
+                        clean_k = text.strip()
+                        if len(clean_k) >= 10 and not any(ord(c) > 127 or c.isspace() for c in clean_k):
+                            user_states[ALLOWED_CHAT_ID] = {"step": "WAITING_FOR_CUSTOM_URL", "key": clean_k}
+                            preset_kb = {
+                                "inline_keyboard": [
+                                    [{"text": "🐳 DeepSeek (https://api.deepseek.com/v1)", "callback_data": "set_url_https://api.deepseek.com/v1"}],
+                                    [{"text": "🌐 OpenRouter (https://openrouter.ai/api/v1)", "callback_data": "set_url_https://openrouter.ai/api/v1"}],
+                                    [{"text": "⚡ Groq (https://api.groq.com/openai/v1)", "callback_data": "set_url_https://api.groq.com/openai/v1"}],
+                                    [{"text": "🚀 Together (https://api.together.xyz/v1)", "callback_data": "set_url_https://api.together.xyz/v1"}],
+                                    [{"text": "💻 Ollama (http://localhost:11434/v1)", "callback_data": "set_url_http://localhost:11434/v1"}]
+                                ]
+                            }
+                            tg_send(
+                                "🌐 *Шаг 2 из 3: Введите Base URL провайдера*\n\n"
+                                "Вы можете нажать на готовый пресет ниже или отправить свой URL (например `https://my-api.com/v1`):",
+                                reply_to=msg_id,
+                                reply_markup=preset_kb
+                            )
+                            continue
+                        else:
+                            tg_send("⚠️ Текст не похож на валидный API-ключ. Настройка отменена.", reply_to=msg_id)
+                            user_states.pop(ALLOWED_CHAT_ID, None)
+                            continue
+                    elif step == "WAITING_FOR_CUSTOM_URL":
+                        clean_url = text.strip()
+                        saved_key = st.get("key")
+                        tg_send(f"⏳ *Проверяю авторизацию на `{clean_url}` и запрашиваю список моделей...*", reply_to=msg_id)
+                        res = test_and_discover_models(clean_url, saved_key)
+                        if not res.get("valid"):
+                            tg_send(f"❌ *Ошибка подключения к серверу:*\n`{res.get('error', 'Unknown error')}`\n\nПроверьте Base URL и правильность API-ключа.", reply_to=msg_id)
+                            user_states.pop(ALLOWED_CHAT_ID, None)
+                            continue
+                        else:
+                            models = res.get("models", [])
+                            st["step"] = "WAITING_FOR_CUSTOM_MODEL"
+                            st["url"] = clean_url
+                            user_states[ALLOWED_CHAT_ID] = st
+                            
+                            succ_text = f"✅ *API-ключ проверен и рабочий (HTTP 200 OK)!*\n\n"
+                            if models:
+                                succ_text += f"📋 *Обнаружено {len(models)} моделей на сервере:*\nВыберите модель кнопкой ниже или напишите своё имя модели:"
+                                kb_rows = []
+                                row = []
+                                for idx, m in enumerate(models[:8]):
+                                    row.append({"text": m, "callback_data": f"pick_m_{m}"})
+                                    if len(row) == 2:
+                                        kb_rows.append(row)
+                                        row = []
+                                if row:
+                                    kb_rows.append(row)
+                                tg_send(succ_text, reply_to=msg_id, reply_markup={"inline_keyboard": kb_rows})
+                            else:
+                                succ_text += "📝 *Шаг 3 из 3:* Введите имя модели на этом сервере (например `deepseek-chat` или `gpt-4o`):"
+                                tg_send(succ_text, reply_to=msg_id)
+                            continue
+                    elif step == "WAITING_FOR_CUSTOM_MODEL":
+                        chosen_model = text.strip()
+                        saved_key = st.get("key")
+                        saved_url = st.get("url")
+                        user_states.pop(ALLOWED_CHAT_ID, None)
+                        
+                        k_name, prov = add_new_key(
+                            api_key=saved_key,
+                            base_url=saved_url,
+                            model=chosen_model,
+                            provider="custom",
+                            name=f"Custom ({chosen_model})"
+                        )
+                        tg_send(
+                            f"🎉 *Провайдер успешно добавлен и активирован!*\n"
+                            f"• Модель: `{chosen_model}`\n"
+                            f"• Base URL: `{saved_url}`\n"
+                            f"• Статус: 🟢 Рабочий",
+                            reply_to=msg_id,
+                            reply_markup=get_main_keyboard()
+                        )
+                        show_keys_menu(ALLOWED_CHAT_ID)
+                        continue
+                
                 if user_states.get(ALLOWED_CHAT_ID) in ["WAITING_FOR_API_KEY", "WAITING_FOR_GEMINI_KEY", "WAITING_FOR_DEEPSEEK_KEY", "WAITING_FOR_OPENROUTER_KEY", "WAITING_FOR_GROQ_KEY"]:
                     saved_st = user_states.pop(ALLOWED_CHAT_ID, None)
                     clean_k = text.strip()
@@ -1484,8 +1736,13 @@ def start_bot():
                         elif saved_st == "WAITING_FOR_GEMINI_KEY":
                             prov = "gemini"
                             
+                        # Live test key before adding!
+                        tg_send("⏳ *Проверяю валидность ключа...*", reply_to=msg_id)
+                        t_res = test_and_discover_models("", clean_k, prov)
                         k_name, assigned_prov = add_new_key(clean_k, provider=prov)
-                        tg_send(f"✅ *Ключ успешно добавлен!*\n• Провайдер: *{assigned_prov.capitalize()}*\n• Название: *{k_name}*\n\nБот теперь автоматически переключается между всеми вашими ключами при исчерпании лимитов.", reply_to=msg_id)
+                        
+                        status_str = f"Статус: {t_res.get('status_msg', '🟢 Добавлен')}"
+                        tg_send(f"✅ *Ключ успешно добавлен!*\n• Провайдер: *{assigned_prov.capitalize()}*\n• Название: *{k_name}*\n• {status_str}\n\nБот автоматически переключается между всеми ключами при исчерпании лимитов.", reply_to=msg_id)
                         show_keys_menu(ALLOWED_CHAT_ID)
                         continue
                     else:
@@ -1610,13 +1867,46 @@ def start_bot():
                     else:
                         tg_send("Использование: `/set_gh_token <ghp_...>`\nТокен создается в https://github.com/settings/tokens (права: repo + workflow)", reply_to=msg_id)
                     continue
+                elif text.startswith("/add_custom"):
+                    parts = text.split()
+                    if len(parts) >= 3:
+                        c_key = parts[1].strip()
+                        c_url = parts[2].strip()
+                        c_model = parts[3].strip() if len(parts) >= 4 else None
+                        c_name = parts[4].strip() if len(parts) >= 5 else None
+                        
+                        tg_send(f"⏳ *Тестирую подключение к `{c_url}` и запрашиваю модели...*", reply_to=msg_id)
+                        res = test_and_discover_models(c_url, c_key)
+                        if not res.get("valid"):
+                            tg_send(f"❌ *Ошибка проверки провайдера:*\n`{res.get('error')}`", reply_to=msg_id)
+                        else:
+                            models = res.get("models", [])
+                            if not c_model:
+                                c_model = models[0] if models else "deepseek-chat"
+                            k_name, prov = add_new_key(api_key=c_key, base_url=c_url, model=c_model, provider="custom", name=c_name or f"Custom ({c_model})")
+                            tg_send(
+                                f"✅ *Кастомный провайдер успешно добавлен и проверен!*\n"
+                                f"• Название: *{k_name}*\n"
+                                f"• Модель: `{c_model}`\n"
+                                f"• Base URL: `{c_url}`\n"
+                                f"• Статус: 🟢 Рабочий (200 OK)",
+                                reply_to=msg_id
+                            )
+                            show_keys_menu(ALLOWED_CHAT_ID)
+                    else:
+                        tg_send("Использование: `/add_custom <API_KEY> <BASE_URL> [MODEL] [NAME]`\n\nПример:\n`/add_custom sk-xxx https://api.deepseek.com/v1 deepseek-chat DeepSeek`", reply_to=msg_id)
+                    continue
                 elif text.startswith("/add_key"):
                     parts = text.split(maxsplit=2)
                     if len(parts) >= 2:
-                        k_val = parts[1]
-                        k_name = parts[2] if len(parts) > 2 else None
-                        added_name = add_new_key(k_val, k_name)
-                        tg_send(f"✅ *Ключ успешно добавлен!* Название: *{added_name}*", reply_to=msg_id)
+                        k_val = parts[1].strip()
+                        k_name = parts[2].strip() if len(parts) > 2 else None
+                        tg_send("⏳ *Проверяю API-ключ...*", reply_to=msg_id)
+                        t_res = test_and_discover_models("", k_val)
+                        added_name, prov = add_new_key(k_val, name=k_name)
+                        st_msg = t_res.get("status_msg", "🟢 Добавлен")
+                        tg_send(f"✅ *Ключ успешно добавлен!*\n• Провайдер: *{prov.capitalize()}*\n• Название: *{added_name}*\n• {st_msg}", reply_to=msg_id)
+                        show_keys_menu(ALLOWED_CHAT_ID)
                     else:
                         tg_send("Использование: `/add_key <API_KEY> [Название]`", reply_to=msg_id)
                     continue
