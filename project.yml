@@ -22,6 +22,7 @@ targets:
       - path: Aurora
         excludes:
           - "Info.plist"
+          - "PlayerScreen.swift"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo

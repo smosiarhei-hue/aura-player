@@ -64,7 +64,7 @@ private struct SyncedLyrics: View {
                 .padding(.vertical, 150)
                 .frame(maxWidth: .infinity)
             }
-            .onChange(of: activeIndex) { newIndex in
+            .onChange(of: activeIndex) { _, newIndex in
                 guard let newIndex else { return }
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
                     proxy.scrollTo(newIndex, anchor: .center)

@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 import MediaPlayer
 import SwiftUI
@@ -502,11 +502,9 @@ final class PlayerCore {
                 let frameCount = AVAudioFrameCount(audioFile.length - validOffset)
 
                 self.playerA.scheduleSegment(audioFile, startingFrame: validOffset, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                    DispatchQueue.main.async {
-                        Task { @MainActor in
-                            guard let self, self.generation == token, !self.isUsingStreamPlayer else { return }
-                            self.handleTrackFinish()
-                        }
+                    Task { @MainActor in
+                        guard let self, self.generation == token, !self.isUsingStreamPlayer else { return }
+                        self.handleTrackFinish()
                     }
                 }
 
@@ -641,11 +639,13 @@ final class PlayerCore {
         if isUsingStreamPlayer || nextTrack.isStream {
             transitionScheduled = true
             let token = generation
-            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
+            Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(remaining)) }
+                catch { return }
                 guard let self, self.generation == token else { return }
                 self.isTransitioning = false
                 self.currentTrack = nextTrack
-                self.start(at: 0) // transitionScheduled cleared in beginStream
+                self.start(at: 0)
             }
             return
         }
@@ -656,6 +656,7 @@ final class PlayerCore {
         incomingTrack = nextTrack
 
         let targetIdlePlayer = idlePlayer
+        let targetIsPlayerA = targetIdlePlayer === playerA
 
         Task {
             do {
@@ -664,11 +665,10 @@ final class PlayerCore {
 
                 let frameCount = AVAudioFrameCount(nextFile.length)
                 targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                    DispatchQueue.main.async {
-                        Task { @MainActor in
-                            guard let self, self.activePlayer === targetIdlePlayer else { return }
-                            self.handleTrackFinish()
-                        }
+                    Task { @MainActor in
+                        guard let self,
+                              self.activePlayer === (targetIsPlayerA ? self.playerA : self.playerB) else { return }
+                        self.handleTrackFinish()
                     }
                 }
 
@@ -880,7 +880,7 @@ final class PlayerCore {
     func installSpectrumTap() {
         engine.mainMixerNode.removeTap(onBus: 0)
         engine.mainMixerNode.installTap(onBus: 0, bufferSize: 2048, format: nil) { buffer, _ in
-            SpectrumAnalyzer.shared.process(buffer: buffer, sampleRate: buffer.format.sampleRate)
+            SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
         }
     }
 }

@@ -163,17 +163,17 @@ struct SeededGenerator: RandomNumberGenerator {
 
 // MARK: - Global Directory Helpers
 
-func documentsDirectoryURL() -> URL {
+nonisolated func documentsDirectoryURL() -> URL {
     FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 }
 
-func musicDirectoryURL() -> URL {
+nonisolated func musicDirectoryURL() -> URL {
     let dir = documentsDirectoryURL().appendingPathComponent("Music", isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir
 }
 
-func artworkCacheDirectoryURL() -> URL {
+nonisolated func artworkCacheDirectoryURL() -> URL {
     let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
     let dir = caches.appendingPathComponent("ArtworkCache", isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
