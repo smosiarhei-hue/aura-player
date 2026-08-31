@@ -37,20 +37,39 @@ SKILLS_DIR.mkdir(exist_ok=True)
 user_states = {}
 
 def load_config():
+    default_cfg = {
+        "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA"),
+        "TELEGRAM_CHAT_ID": int(os.environ.get("TELEGRAM_CHAT_ID", 8559869613)),
+        "ACTIVE_MODEL": "gemini-3.6-flash",
+        "GEMINI_KEYS": []
+    }
+    env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_KEY")
+    if env_key:
+        default_cfg["GEMINI_KEYS"].append({
+            "id": 1,
+            "name": "Основной (Cloud Env)",
+            "key": env_key.strip(),
+            "status": "active",
+            "requests_today": 0,
+            "requests_total": 0,
+            "last_used": None,
+            "cooldown_until": 0
+        })
     if not CONFIG_FILE.exists():
-        return {
-            "TELEGRAM_BOT_TOKEN": "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA",
-            "TELEGRAM_CHAT_ID": 8559869613,
-            "ACTIVE_MODEL": "gemini-2.5-pro",
-            "GEMINI_KEYS": []
-        }
+        return default_cfg
     try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if not loaded.get("GEMINI_KEYS") and env_key:
+            loaded["GEMINI_KEYS"] = default_cfg["GEMINI_KEYS"]
+        return loaded
     except Exception:
-        return {}
+        return default_cfg
 
 def save_config(cfg):
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 cfg = load_config()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg.get("TELEGRAM_BOT_TOKEN", "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA")
