@@ -177,6 +177,17 @@ struct NativeMiniPlayer: View {
         .padding(.leading, 10)
         .padding(.trailing, 6)
         .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .simultaneousGesture(openGesture)
+    }
+
+    private var openGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onEnded { value in
+                if value.translation.height < -20 || value.predictedEndTranslation.height < -55 {
+                    open()
+                }
+            }
     }
 
     private func open() {
@@ -184,7 +195,7 @@ struct NativeMiniPlayer: View {
         opening = true
         showPlayer = true
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .milliseconds(250))
             opening = false
         }
     }
@@ -213,6 +224,5 @@ struct MiniArtworkPulse: View {
                     .strokeBorder(.white.opacity(isPlaying ? 0.38 : 0.18), lineWidth: 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .compositingGroup()
     }
 }
