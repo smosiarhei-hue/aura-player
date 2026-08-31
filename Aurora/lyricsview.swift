@@ -1,24 +1,17 @@
 import SwiftUI
 
-// MARK: - Synchronized Karaoke Lyrics View (line highlight + progressive fill + auto-scroll)
-
 struct LyricsView: View {
     let lyrics: Lyrics?
     let isLoading: Bool
-    @State private var player = PlayerCore.shared
-    @State private var settings = SettingsStore.shared
 
     var body: some View {
         Group {
             if isLoading {
                 ProgressView("Загрузка текста…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .tint(.white)
             } else if let lyrics, !lyrics.lines.isEmpty {
-                if lyrics.isSynchronized {
-                    SyncedLyrics(lyrics: lyrics)
-                } else {
-                    StaticLyricsList(lyrics: lyrics)
-                }
+                if lyrics.isSynchronized { CinematicSyncedLyrics(lyrics: lyrics) }
+                else { CinematicStaticLyrics(lyrics: lyrics) }
             } else {
                 EmptyLyricsState()
             }
@@ -27,182 +20,96 @@ struct LyricsView: View {
     }
 }
 
-// MARK: - Synchronized Scrolling Lyrics
-
-private struct SyncedLyrics: View {
+private struct CinematicSyncedLyrics: View {
     let lyrics: Lyrics
     @State private var player = PlayerCore.shared
     @State private var settings = SettingsStore.shared
 
-    private var currentTime: Double { player.progress + settings.lyricsOffset }
+    private var activeIndex: Int {
+        lyrics.lines.lastIndex(where: { $0.startTime <= player.progress + settings.lyricsOffset }) ?? 0
+    }
 
-    private var activeIndex: Int? {
-        let t = currentTime
-        return lyrics.lines.firstIndex { line in
-            t >= line.startTime && t < (line.endTime ?? .greatestFiniteMagnitude)
-        }
+    private var visibleIndices: [Int] {
+        guard !lyrics.lines.isEmpty else { return [] }
+        let first = max(0, activeIndex - 1)
+        let last = min(lyrics.lines.count - 1, activeIndex + 3)
+        return Array(first...last)
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
-                        LyricsLineView(
-                            line: line,
-                            isActive: idx == activeIndex,
-                            currentTime: currentTime,
-                            fontSize: settings.lyricsFontSize
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            player.seek(to: line.startTime)
-                        }
-                        .id(idx)
-                    }
+        VStack(alignment: .leading, spacing: 28) {
+            ForEach(visibleIndices, id: \.self) { index in
+                let distance = index - activeIndex
+                let active = distance == 0
+                Button { player.seek(to: lyrics.lines[index].startTime) } label: {
+                    Text(lyrics.lines[index].text)
+                        .font(.system(
+                            size: active ? max(34, settings.lyricsFontSize) : max(28, settings.lyricsFontSize * 0.82),
+                            weight: active ? .bold : .semibold,
+                            design: .default
+                        ))
+                        .foregroundStyle(.white.opacity(active ? 1 : distance < 0 ? 0.16 : distance == 1 ? 0.32 : 0.13))
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.72)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .blur(radius: active ? 0 : distance == 1 ? 0.45 : 2.2)
+                        .shadow(color: active ? .black.opacity(0.55) : .clear, radius: 12, y: 5)
                 }
-                .padding(.vertical, 150)
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.plain)
             }
-            .onChange(of: activeIndex) { newIndex in
-                guard let newIndex else { return }
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
-                    proxy.scrollTo(newIndex, anchor: .center)
-                }
-            }
+            Spacer(minLength: 120)
         }
+        .padding(.horizontal, 30)
+        .padding(.top, 165)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
-// MARK: - Single Line (focused lyrics: big active line, dim surrounding)
-
-private struct LyricsLineView: View {
-    let line: LyricsLine
-    let isActive: Bool
-    let currentTime: Double
-    let fontSize: Double
-
-    private var lineFont: Font {
-        .system(size: isActive ? fontSize : fontSize * 0.72,
-                weight: isActive ? .heavy : .semibold)
-    }
-
-    var body: some View {
-        Group {
-            if let words = line.words, !words.isEmpty {
-                Text(wordAttributed(words: words))
-                    .font(lineFont)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-            } else {
-                Text(line.text)
-                    .font(lineFont)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-        .opacity(isActive ? 1.0 : 0.28)
-        .blur(radius: isActive ? 0 : 1)
-        .shadow(color: isActive ? .white.opacity(0.35) : .clear, radius: isActive ? 14 : 0)
-        .scaleEffect(isActive ? 1.0 : 0.96)
-        .animation(.easeInOut(duration: 0.3), value: isActive)
-    }
-
-    private func wordAttributed(words: [LyricsWord]) -> AttributedString {
-        var result = AttributedString()
-        for w in words {
-            if currentTime < w.startTime {
-                var piece = AttributedString(w.text)
-                piece.foregroundColor = .white.opacity(0.45)
-                result += piece
-            } else if currentTime < w.endTime {
-                // active word — smooth left-to-right fill
-                let span = max(w.endTime - w.startTime, 0.001)
-                let fraction = min(1.0, (currentTime - w.startTime) / span)
-                let chars = Array(w.text)
-                let split = Int(Double(chars.count) * fraction)
-                let sung = String(chars.prefix(split))
-                let unsung = String(chars.suffix(max(0, chars.count - split)))
-                if !sung.isEmpty {
-                    var s = AttributedString(sung)
-                    s.foregroundColor = .white.opacity(1.0)
-                    result += s
-                }
-                if !unsung.isEmpty {
-                    var u = AttributedString(unsung)
-                    u.foregroundColor = .white.opacity(0.45)
-                    result += u
-                }
-            } else {
-                var piece = AttributedString(w.text)
-                piece.foregroundColor = .white.opacity(1.0)
-                result += piece
-            }
-        }
-        return result
-    }
-}
-
-// MARK: - Static (unsynced) Lyrics List
-
-private struct StaticLyricsList: View {
+private struct CinematicStaticLyrics: View {
     let lyrics: Lyrics
     @State private var settings = SettingsStore.shared
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if let title = lyrics.title, !title.isEmpty {
-                    Text(title).font(.title.weight(.heavy))
-                    if let artist = lyrics.artist, !artist.isEmpty {
-                        Text(artist).font(.title3).foregroundStyle(.secondary)
-                    }
-                    Divider().padding(.vertical, 6)
-                }
+            VStack(alignment: .leading, spacing: 26) {
                 ForEach(lyrics.lines) { line in
                     Text(line.text)
-                        .font(.system(size: settings.lyricsFontSize * 0.8))
-                        .lineSpacing(6)
+                        .font(.system(size: max(30, settings.lyricsFontSize * 0.86), weight: .bold, design: .default))
+                        .foregroundStyle(.white.opacity(0.86))
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(28)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 165)
+            .padding(.bottom, 120)
         }
+        .scrollIndicators(.hidden)
     }
 }
 
-// MARK: - Empty / Not Found State
-
 private struct EmptyLyricsState: View {
     @State private var player = PlayerCore.shared
-    @State private var settings = SettingsStore.shared
-
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "music.note")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(.secondary)
-
-            Text("Синхронизированный текст не найден")
-                .font(.headline)
-                .foregroundStyle(.primary)
-
-            if let staticText = player.currentTrack?.lyricsText, !staticText.isEmpty {
-                Text(staticText)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(6)
-                    .padding(.horizontal, 28)
-            } else {
-                Text("Для этого трека нет текста в LRCLIB и в метаданных. Попробуйте другой трек.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-            }
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Текст песни")
+                .font(.system(size: 36, weight: .bold, design: .default))
+                .foregroundStyle(.white)
+            Text(player.currentTrack?.lyricsText?.isEmpty == false ? player.currentTrack?.lyricsText ?? "" : "Текст песни не найден")
+                .font(.system(size: 25, weight: .semibold, design: .default))
+                .foregroundStyle(.white.opacity(0.48))
+                .multilineTextAlignment(.leading)
+                .lineSpacing(6)
         }
-        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 30)
+        .padding(.top, 165)
     }
 }

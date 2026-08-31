@@ -25,5 +25,5 @@ content = (
     f"    static let token = {json.dumps(token)}\n"
     "}\n"
 )
-TARGET.write_text(content)
+TARGET.write_text(content, encoding="utf-8")
 print("AI config injected for this build.")

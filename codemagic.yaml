@@ -3,74 +3,60 @@ workflows:
     name: Sonivo iOS — unsigned IPA
     instance_type: mac_mini_m2
     max_build_duration: 60
-
     environment:
       xcode: 26.0
-      groups:
-        - sonivo_ai
+      groups: [sonivo_ai]
       vars:
         XCODE_PROJECT: Sonivo.xcodeproj
         XCODE_SCHEME: Sonivo
         DERIVED_DATA: derived
-
     cache:
-      cache_paths:
-        - $HOME/Library/Caches/Homebrew
-
+      cache_paths: [$HOME/Library/Caches/Homebrew]
     scripts:
-      - name: Apply Swift modernization patches
+      - name: Apply and verify Swift production patches
         script: |
-          python3 scripts/modernize_sources.py
-          python3 scripts/swift6_build_fixes.py
-          python3 scripts/runtime_stability_fixes.py
-          python3 scripts/playback_state_persistence.py
-          python3 scripts/track_wave_ui.py
-          python3 scripts/inject_ai_config.py
-          python3 scripts/launch_safety.py
-          python3 scripts/nowplaying_isolation_fix.py
-          python3 scripts/restore_nowplaying_guard.py
-          python3 scripts/nowplaying_artwork_off.py
-          python3 scripts/streaming_automix.py
-
+          set -euo pipefail
+          python3 -W error::SyntaxWarning scripts/streaming_automix.py
+          python3 -W error::SyntaxWarning scripts/modernize_sources.py
+          python3 -W error::SyntaxWarning scripts/swift6_build_fixes.py
+          python3 -W error::SyntaxWarning scripts/runtime_stability_fixes.py
+          python3 -W error::SyntaxWarning scripts/playback_state_persistence.py
+          python3 -W error::SyntaxWarning scripts/track_wave_ui.py
+          python3 -W error::SyntaxWarning scripts/inject_ai_config.py
+          python3 -W error::SyntaxWarning scripts/launch_safety.py
+          python3 -W error::SyntaxWarning scripts/nowplaying_isolation_fix.py
+          python3 -W error::SyntaxWarning scripts/restore_nowplaying_guard.py
+          python3 -W error::SyntaxWarning scripts/audio_system_fixes.py
+          python3 -W error::SyntaxWarning scripts/august2026_media_fixes.py
+          python3 -W error::SyntaxWarning scripts/fullscreen_artwork_videoshot.py
+          python3 -W error::SyntaxWarning scripts/spatial_audio_stability.py
+          python3 -W error::SyntaxWarning scripts/swift6_notification_isolation.py
+          python3 -W error::SyntaxWarning scripts/apple_music_visual_style.py
+          python3 -W error::SyntaxWarning scripts/apple_music_style_compile_fix.py
+          python3 -W error::SyntaxWarning scripts/ios27_player_cleanup.py
+          python3 -W error::SyntaxWarning scripts/smooth_player_interactions.py
+          python3 -W error::SyntaxWarning scripts/kinetic_lyrics_artwork.py
+          python3 -W error::SyntaxWarning scripts/ios26_standard_player_layout.py
+          python3 -W error::SyntaxWarning scripts/verify_build_features.py
       - name: Install XcodeGen
         script: |
-          if ! command -v xcodegen >/dev/null 2>&1; then
-            brew install xcodegen
-          fi
+          if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
           xcodegen --version
-
       - name: Generate Xcode project
-        script: |
-          xcodegen generate
-
+        script: xcodegen generate
       - name: Build unsigned application
         script: |
           set -o pipefail
-          xcodebuild \
-            -project "$XCODE_PROJECT" \
-            -scheme "$XCODE_SCHEME" \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$DERIVED_DATA" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build 2>&1 | tee build.log
-
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build 2>&1 | tee build.log
       - name: Package unsigned IPA
         script: |
           APP=$(find "$DERIVED_DATA/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' | head -n 1)
-          if [ -z "$APP" ]; then
-            echo "Application bundle was not found"
-            exit 1
-          fi
+          test -n "$APP" || { echo "Application bundle was not found"; exit 1; }
           rm -rf Payload Sonivo-unsigned.ipa
           mkdir -p Payload
           cp -R "$APP" Payload/
           zip -qry Sonivo-unsigned.ipa Payload
           ls -lh Sonivo-unsigned.ipa
-
     artifacts:
       - Sonivo-unsigned.ipa
       - build.log
