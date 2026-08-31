@@ -24,15 +24,15 @@ struct KineticLyricsArtwork: View {
         let totalCharacters = words.reduce(0) { $0 + $1.count } + max(words.count - 1, 0)
         let targetLength = max(totalCharacters / targetCount, 1)
         var lineIndex = 0
-        for word in words {
+        for (wordIndex, word) in words.enumerated() {
             let proposedLength = result[lineIndex].isEmpty
                 ? word.count
                 : result[lineIndex].count + 1 + word.count
-            let remainingWords = words.count - words.prefix(while: { $0 != word }).count
+            let remainingWords = words.count - wordIndex
             if lineIndex < targetCount - 1,
                !result[lineIndex].isEmpty,
                proposedLength > targetLength,
-               remainingWords >= targetCount - lineIndex - 1 {
+               remainingWords >= targetCount - lineIndex {
                 lineIndex += 1
             }
             result[lineIndex] += result[lineIndex].isEmpty ? word : " " + word
@@ -44,12 +44,12 @@ struct KineticLyricsArtwork: View {
         Button(action: onOpenLyrics) {
             TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || !isPlaying)) { context in
                 let time = context.date.timeIntervalSinceReferenceDate
-                let impact = reduceMotion ? 0 : min(max((beat - 0.58) / 0.42, 0), 1)
-                let shakeX = sin(time * .pi * 44) * impact * 12
-                let shakeY = cos(time * .pi * 38) * impact * 7
-                let driftX = reduceMotion ? 0 : sin(time * 0.72) * 2.5
-                let driftY = reduceMotion ? 0 : cos(time * 0.57) * 2
-                let idleScale = reduceMotion ? 1 : 1.015 + sin(time * 0.85) * 0.015
+                let impact: CGFloat = reduceMotion ? 0 : min(max((beat - 0.58) / 0.42, 0), 1)
+                let shakeX = CGFloat(sin(time * .pi * 44)) * impact * 12
+                let shakeY = CGFloat(cos(time * .pi * 38)) * impact * 7
+                let driftX: CGFloat = reduceMotion ? 0 : CGFloat(sin(time * 0.72)) * 2.5
+                let driftY: CGFloat = reduceMotion ? 0 : CGFloat(cos(time * 0.57)) * 2
+                let idleScale: CGFloat = reduceMotion ? 1 : 1.015 + CGFloat(sin(time * 0.85)) * 0.015
 
                 ZStack {
                     Color.black
