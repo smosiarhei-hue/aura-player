@@ -350,37 +350,61 @@ struct PlayerScreenV2: View {
             .padding(.bottom, 8)
     }
 
-    // MARK: - Lower Controls Deck (Contrast Protected)
+    // MARK: - Lower Controls Deck (Compact Liquid Glass Capsule & Native Controls)
 
     private var lowerControlsDeck: some View {
-        VStack(spacing: 16) {
-            // Track Metadata (Title & Artist)
+        VStack(spacing: 12) {
+            // Track Metadata (Title & Artist) - Floating with crisp contrast
             metadata
+                .padding(.horizontal, 4)
 
-            // Scrubber (Isolated Drag Gesture - No Conflict)
-            scrubber
+            // Compact Frosted Glass Capsule (Scrubber + Transport Controls)
+            VStack(spacing: 14) {
+                // Scrubber (Isolated Drag Gesture - No Conflict)
+                scrubber
 
-            // Main Playback Transport (Native Standard Icons & Physics)
-            transportControls
+                // Main Playback Transport Buttons
+                transportControls
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 16)
+            .background(
+                ZStack {
+                    // Dark base for 100% white-cover contrast
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color.black.opacity(0.38))
+
+                    // Adaptive artwork tint (subtly matches album color)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill((palette.first ?? AG.ember).opacity(0.14))
+                }
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.24),
+                                (palette.first ?? .white).opacity(0.12),
+                                Color.black.opacity(0.22)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.8
+                    )
+            )
+            .shadow(color: Color.black.opacity(0.28), radius: 16, y: 8)
 
             // Volume & AirPlay Bar
             volumeAndAirPlayBar
+                .padding(.horizontal, 6)
 
             // Bottom Quick Action Dock (Lyrics, Repeat, Shuffle, EQ, Queue)
             bottomDock
         }
-        .padding(.vertical, 16)
-        .padding(.horizontal, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color.black.opacity(0.35))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
-        )
-        .shadow(color: Color.black.opacity(0.30), radius: 20, y: 10)
     }
 
     // MARK: Metadata
