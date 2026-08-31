@@ -5,11 +5,19 @@ SCREEN = ROOT / "Aurora" / "PlayerScreenV2.swift"
 
 
 def replace_required(text: str, old: str, new: str, label: str) -> str:
-    if new in text:
+    if new and new in text:
         return text
     if old not in text:
         raise RuntimeError(f"{label}: required source anchor was not found")
     return text.replace(old, new, 1)
+
+
+def remove_required(text: str, old: str, completed_marker: str, label: str) -> str:
+    if old in text:
+        return text.replace(old, "", 1)
+    if completed_marker in text:
+        return text
+    raise RuntimeError(f"{label}: required source anchor was not found")
 
 
 def replace_section(text: str, start: str, end: str, replacement: str, label: str) -> str:
@@ -23,9 +31,7 @@ def replace_section(text: str, start: str, end: str, replacement: str, label: st
 
 
 screen = SCREEN.read_text(encoding="utf-8")
-screen = replace_required(
-    screen,
-    '''                        controls
+scrolling_controls = '''                        controls
                             .padding(.top, 10)
 
                         transitionCard
@@ -37,8 +43,11 @@ screen = replace_required(
                         featureDock
                             .padding(.top, 18)
 
-''',
-    '''''',
+'''
+screen = remove_required(
+    screen,
+    scrolling_controls,
+    "PlayerBottomGlassBar(",
     "remove scrolling player controls",
 )
 screen = replace_required(
