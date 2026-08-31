@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Sonivo Native Full Player (iOS 120 FPS, Contrast Protection, Isolated Gestures)
+// MARK: - Sonivo Native Full Player (Apple Music iOS Standard & Video-Shot Live Canvas)
 
 struct PlayerScreenV2: View {
     @State private var player = PlayerCore.shared
@@ -18,8 +18,9 @@ struct PlayerScreenV2: View {
     @State private var resolvingArtist = false
     @State private var dismissing = false
 
-    // Player Modes
+    // Player Display Modes
     @State private var showLyricsMode = false
+    @State private var isVideoShotMode = false
     @State private var showQueue = false
     @State private var showEqualizer = false
     @State private var showSleepTimer = false
@@ -32,11 +33,6 @@ struct PlayerScreenV2: View {
     // Scrubber local state to prevent gesture interference
     @State private var isScrubbing = false
     @State private var scrubProgress: Double = 0
-
-    // Wave builder state
-    @State private var buildingTrackWave = false
-    @State private var trackWaveReady = false
-    @State private var trackWaveMessage: String?
 
     // Cover swipe gesture offset
     @State private var coverDragX: CGFloat = 0
@@ -54,29 +50,37 @@ struct PlayerScreenV2: View {
 
     var body: some View {
         GeometryReader { geo in
-            let coverSide = min(geo.size.width - 48, 380)
+            let coverSide = min(geo.size.width - 56, 380)
 
             ZStack {
-                // Adaptive Dynamic Blurred Canvas
-                background
+                // 1. Dynamic Fluid HDR Mesh Background (drifting & color-adaptive)
+                fluidHDRBackground
 
-                // Protective Dark Vignette Gradient (Ensures 100% readability over white/bright covers)
+                // 2. Protective Vignette Gradient for 100% Text & Control Readability
                 contrastProtectionVignette
 
+                // 3. Main Player Container
                 VStack(spacing: 0) {
-                    // Top Bar (Dismiss Grabber + Actions)
-                    topBar
+                    // Top Bar (Grabber Pill & Video-Shot Toggle)
+                    topHeader
                         .padding(.top, max(geo.safeAreaInsets.top, 14))
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, 24)
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 4)
 
-                    // Center Stage: Album Artwork OR Live Synced Lyrics (Apple Music Style)
+                    // Center Stage: Standard Square Artwork, Video-Shot Live Canvas, OR Synced Lyrics
                     if showLyricsMode {
                         lyricsStage
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                                removal: .opacity.combined(with: .scale(scale: 0.95))
+                            ))
+                    } else if isVideoShotMode {
+                        videoShotStage(geo: geo)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 1.05)),
                                 removal: .opacity.combined(with: .scale(scale: 0.95))
                             ))
                     } else {
@@ -88,11 +92,11 @@ struct PlayerScreenV2: View {
                             ))
                     }
 
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 8)
 
-                    // Lower Controls Deck (Protected with frosted glass contrast)
-                    lowerControlsDeck
-                        .padding(.horizontal, 22)
+                    // Lower Controls Section (Apple Music Standard Layout)
+                    appleMusicLowerDeck
+                        .padding(.horizontal, 24)
                         .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -134,59 +138,54 @@ struct PlayerScreenV2: View {
         .task(id: track?.id) {
             await loadLyrics()
         }
-        .onChange(of: track?.id) { _, _ in
-            buildingTrackWave = false
-            trackWaveReady = false
-            trackWaveMessage = nil
-        }
     }
 
-    // MARK: - Background Layer (120 FPS Optimized)
+    // MARK: - Dynamic Fluid HDR Mesh Background
 
-    private var background: some View {
-        let colors = palette.isEmpty ? [AG.amber, AG.ember, Color.black] : palette
-        let first = colors[0]
-        let second = colors[min(1, colors.count - 1)]
-        let third = colors[min(2, colors.count - 1)]
-        let pulse = reduceMotion ? 0 : beat
+    private var fluidHDRBackground: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+            Canvas { ctx, size in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let w = Double(size.width)
+                let h = Double(size.height)
+                let colors = palette.isEmpty ? [AG.amber, AG.ember, Color.black] : palette
 
-        return ZStack {
-            Color.black
+                // Draw floating morphing fluid color blobs
+                for i in 0..<5 {
+                    let fi = Double(i)
+                    let speed = 0.07 + 0.025 * (fi.truncatingRemainder(dividingBy: 3))
+                    let phase = fi * 1.25 + t * speed
+                    let cx = w * (0.5 + 0.38 * sin(phase + fi * 0.7))
+                    let cy = h * (0.45 + 0.35 * cos(phase * 0.85 + fi * 1.1))
+                    let r = min(w, h) * (0.42 + 0.08 * sin(t * 0.4 + fi * 1.5))
 
-            // Ambient background artwork blur
-            if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .blur(radius: 65, opaque: true)
-                    .opacity(0.38)
+                    let color = colors[i % colors.count]
+                    let rect = CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
+
+                    ctx.opacity = 0.85
+                    ctx.fill(Path(ellipseIn: rect), with: .color(color))
+                }
             }
-
-            RadialGradient(colors: [first.opacity(0.70), .clear], center: .topLeading, startRadius: 10, endRadius: 460)
-                .scaleEffect(1 + pulse * 0.08, anchor: .topLeading)
-
-            RadialGradient(colors: [second.opacity(0.55), .clear], center: .trailing, startRadius: 20, endRadius: 400)
-                .scaleEffect(1 + pulse * 0.12, anchor: .trailing)
-                .opacity(0.55 + pulse * 0.25)
-
-            RadialGradient(colors: [third.opacity(0.48), Color.black.opacity(0.85)], center: .bottomLeading, startRadius: 0, endRadius: 520)
-                .scaleEffect(1 + pulse * 0.06, anchor: .bottomLeading)
         }
-        .animation(reduceMotion ? nil : .linear(duration: 0.10), value: beat)
+        .blur(radius: 65)
+        .scaleEffect(1.25)
+        .saturation(1.4)
+        .brightness(0.02)
+        .background(Color.black)
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .compositingGroup()
     }
 
-    // MARK: - Contrast Protection Vignette (Safeguards against Pure White Covers)
+    // MARK: - Contrast Protection Vignette
 
     private var contrastProtectionVignette: some View {
         LinearGradient(
             stops: [
-                .init(color: Color.black.opacity(0.65), location: 0.0),
-                .init(color: Color.black.opacity(0.15), location: 0.20),
-                .init(color: Color.black.opacity(0.15), location: 0.55),
-                .init(color: Color.black.opacity(0.75), location: 0.82),
+                .init(color: Color.black.opacity(0.45), location: 0.0),
+                .init(color: Color.black.opacity(0.10), location: 0.20),
+                .init(color: Color.black.opacity(0.18), location: 0.50),
+                .init(color: Color.black.opacity(0.68), location: 0.78),
                 .init(color: Color.black.opacity(0.92), location: 1.0)
             ],
             startPoint: .top,
@@ -196,95 +195,66 @@ struct PlayerScreenV2: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: - Top Navigation Bar
+    // MARK: - Top Header (Grabber & Video Shot Toggle)
 
-    private var topBar: some View {
-        HStack {
+    private var topHeader: some View {
+        HStack(alignment: .center) {
+            // Dismiss button
             Button(action: close) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.15), lineWidth: 0.8))
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.70))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Свернуть плеер")
+            .buttonStyle(GlassPressStyle())
 
             Spacer()
 
-            // Pull-down grabber pill
-            VStack(spacing: 4) {
-                Capsule()
-                    .fill(Color.white.opacity(0.65))
-                    .frame(width: 40, height: 5)
-            }
-            .frame(width: 140, height: 40)
-            .contentShape(Rectangle())
-            .gesture(closeGesture)
+            // Center Grabber Pill
+            Capsule()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 42, height: 5)
+                .frame(width: 120, height: 36)
+                .contentShape(Rectangle())
+                .gesture(closeGesture)
 
             Spacer()
 
-            Menu {
-                Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: {
-                    Label(showLyricsMode ? "Показать обложку" : "Караоке", systemImage: "quote.bubble")
-                }
-                Button { showQueue = true } label: {
-                    Label("Очередь", systemImage: "list.bullet")
-                }
-                Button { showEqualizer = true } label: {
-                    Label("Эквалайзер", systemImage: "slider.vertical.3")
-                }
-                Button { showSleepTimer = true } label: {
-                    Label("Таймер сна", systemImage: "timer")
-                }
-                Button { showSettings = true } label: {
-                    Label("Настройки", systemImage: "gearshape")
-                }
-                Divider()
-                Button(role: .destructive) {
-                    player.stopAndClear()
-                    close()
-                } label: {
-                    Label("Остановить и очистить", systemImage: "stop.fill")
+            // Video-Shot Live Canvas Toggle
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    isVideoShotMode.toggle()
                 }
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.15), lineWidth: 0.8))
+                Image(systemName: isVideoShotMode ? "rectangle.inset.filled.and.person.filled" : "play.rectangle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isVideoShotMode ? AG.amber : .white.opacity(0.70))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Circle())
             }
+            .buttonStyle(GlassPressStyle())
         }
+        .frame(height: 38)
     }
 
-    // MARK: - Center Stage: Artwork (With Dedicated Isolated Horizontal Swipe)
+    // MARK: - Center Stage: Standard Artwork (Screenshot 1)
 
     private func artworkStage(side: CGFloat) -> some View {
-        let pulse = reduceMotion ? 0 : beat
-
-        return ZStack {
-            // Bass Reactive Glow
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .fill(AngularGradient(colors: [AG.amber, AG.ember, .clear, AG.amber], center: .center))
-                .frame(width: side + 16, height: side + 16)
-                .blur(radius: 18 + pulse * 8)
-                .opacity(player.isPlaying ? 0.35 + pulse * 0.25 : 0.15)
-                .scaleEffect(0.98 + pulse * 0.05)
-
-            // Album Artwork with Swipe-to-change-tracks
+        ZStack {
             artwork
                 .frame(width: side, height: side)
-                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-                .shadow(color: Color.black.opacity(0.55), radius: 24, y: 14)
-                .scaleEffect(player.isPlaying ? 1.0 : 0.96)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
+                )
+                .shadow(color: Color.black.opacity(0.45), radius: player.isPlaying ? 28 : 14, y: player.isPlaying ? 16 : 8)
+                .scaleEffect(player.isPlaying ? 1.0 : 0.88)
                 .offset(x: coverDragX)
                 .gesture(
                     DragGesture(minimumDistance: 20)
                         .onChanged { val in
-                            // Only respond to horizontal swipes on the cover
                             if abs(val.translation.width) > abs(val.translation.height) {
                                 coverDragX = val.translation.width * 0.65
                             }
@@ -295,16 +265,12 @@ struct PlayerScreenV2: View {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 withAnimation(AG.fastSpring) { coverDragX = -side }
                                 nextTrack()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                                    coverDragX = 0
-                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { coverDragX = 0 }
                             } else if val.translation.width > threshold {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 withAnimation(AG.fastSpring) { coverDragX = side }
                                 previousTrack()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                                    coverDragX = 0
-                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { coverDragX = 0 }
                             } else {
                                 withAnimation(AG.fastSpring) { coverDragX = 0 }
                             }
@@ -312,9 +278,38 @@ struct PlayerScreenV2: View {
                 )
         }
         .frame(width: side, height: side)
-        .animation(reduceMotion ? nil : .linear(duration: 0.10), value: beat)
-        .animation(.smooth(duration: 0.28), value: player.isPlaying)
+        .animation(.spring(response: 0.42, dampingFraction: 0.72), value: player.isPlaying)
         .id(track?.id)
+    }
+
+    // MARK: - Center Stage: Video-Shot Live Canvas (Screenshot 2)
+
+    private func videoShotStage(geo: GeometryProxy) -> some View {
+        ZStack(alignment: .bottom) {
+            // Fullscreen Live Artwork / Video Canvas
+            artwork
+                .frame(width: geo.size.width, height: geo.size.height * 0.65)
+                .clipped()
+                .scaleEffect(1.08)
+
+            // Middle-to-Bottom Progressive Blur & Gradient Mask (dissolves behind text and controls)
+            VStack(spacing: 0) {
+                Spacer()
+
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: Color.black.opacity(0.35), location: 0.35),
+                        .init(color: Color.black.opacity(0.85), location: 0.75),
+                        .init(color: Color.black, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: geo.size.height * 0.40)
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder private var artwork: some View {
@@ -342,7 +337,7 @@ struct PlayerScreenV2: View {
         }
     }
 
-    // MARK: - Center Stage: Live Synced Lyrics (Apple Music Sing Mode)
+    // MARK: - Center Stage: Live Synced Lyrics
 
     private var lyricsStage: some View {
         LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
@@ -350,70 +345,34 @@ struct PlayerScreenV2: View {
             .padding(.bottom, 8)
     }
 
-    // MARK: - Lower Controls Deck (Compact Liquid Glass Capsule & Native Controls)
+    // MARK: - Apple Music Standard Lower Controls Deck (Screenshot 1 & 2)
 
-    private var lowerControlsDeck: some View {
-        VStack(spacing: 12) {
-            // Track Metadata (Title & Artist) - Floating with crisp contrast
-            metadata
-                .padding(.horizontal, 4)
+    private var appleMusicLowerDeck: some View {
+        VStack(spacing: 18) {
+            // Track Metadata (Title, Artist, Star, Context Menu)
+            metadataRow
 
-            // Compact Frosted Glass Capsule (Scrubber + Transport Controls)
-            VStack(spacing: 14) {
-                // Scrubber (Isolated Drag Gesture - No Conflict)
-                scrubber
+            // Scrubber Slider & Lossless Badge
+            scrubberSection
 
-                // Main Playback Transport Buttons
-                transportControls
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 16)
-            .background(
-                ZStack {
-                    // Dark base for 100% white-cover contrast
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(Color.black.opacity(0.38))
+            // Large Native Transport Controls (Backward, Play/Pause, Forward)
+            transportControls
 
-                    // Adaptive artwork tint (subtly matches album color)
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill((palette.first ?? AG.ember).opacity(0.14))
-                }
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.24),
-                                (palette.first ?? .white).opacity(0.12),
-                                Color.black.opacity(0.22)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.8
-                    )
-            )
-            .shadow(color: Color.black.opacity(0.28), radius: 16, y: 8)
+            // System Volume Slider
+            volumeBar
 
-            // Volume & AirPlay Bar
-            volumeAndAirPlayBar
-                .padding(.horizontal, 6)
-
-            // Bottom Quick Action Dock (Lyrics, Repeat, Shuffle, EQ, Queue)
-            bottomDock
+            // Apple Music Bottom Bar (Lyrics, AirPlay, Queue)
+            appleMusicBottomBar
         }
     }
 
-    // MARK: Metadata
+    // MARK: Metadata Row (Left: Title & Artist, Right: Favorite Star & 3-Dots)
 
-    private var metadata: some View {
+    private var metadataRow: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(track?.title ?? "Sonivo")
-                    .font(AG.display(22, .heavy))
+                    .font(AG.display(22, .bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -421,60 +380,96 @@ struct PlayerScreenV2: View {
                 Button(action: openArtist) {
                     HStack(spacing: 4) {
                         Text(track?.artist ?? "")
-                            .font(AG.text(15, .semibold))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .font(AG.text(17, .semibold))
+                            .foregroundStyle(.white.opacity(0.68))
                             .lineLimit(1)
                         if resolvingArtist {
                             ProgressView().controlSize(.mini).tint(.white)
-                        } else {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .black))
-                                .foregroundStyle(.white.opacity(0.55))
                         }
                     }
-                    .frame(minHeight: 24)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(track == nil || resolvingArtist)
             }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
 
-            if let track {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    library.toggleFavorite(track)
-                } label: {
-                    Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
-                        .font(.system(size: 21, weight: .semibold))
-                        .foregroundStyle(library.isTrackFavorite(track) ? AG.amber : .white)
-                        .frame(width: 44, height: 44)
-                        .background(Color.white.opacity(0.10), in: Circle())
+            // Right Action Icons: Favorite Star + 3-Dots Context Menu
+            HStack(spacing: 16) {
+                if let track {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        library.toggleFavorite(track)
+                    } label: {
+                        Image(systemName: library.isTrackFavorite(track) ? "star.fill" : "star")
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(library.isTrackFavorite(track) ? AG.amber : .white)
+                            .frame(width: 38, height: 38)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(GlassPressStyle())
                 }
-                .buttonStyle(.plain)
+
+                Menu {
+                    Button {
+                        withAnimation(AG.spring) { showLyricsMode.toggle() }
+                    } label: {
+                        Label(showLyricsMode ? "Показать обложку" : "Караоке", systemImage: "quote.bubble")
+                    }
+                    Button {
+                        withAnimation(AG.spring) { isVideoShotMode.toggle() }
+                    } label: {
+                        Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: "play.rectangle")
+                    }
+                    Button { showQueue = true } label: {
+                        Label("Очередь", systemImage: "list.bullet")
+                    }
+                    Button { showEqualizer = true } label: {
+                        Label("Эквалайзер", systemImage: "slider.vertical.3")
+                    }
+                    Button { showSleepTimer = true } label: {
+                        Label("Таймер сна", systemImage: "timer")
+                    }
+                    Button { showSettings = true } label: {
+                        Label("Настройки", systemImage: "gearshape")
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        player.stopAndClear()
+                        close()
+                    } label: {
+                        Label("Остановить и очистить", systemImage: "stop.fill")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .contentShape(Circle())
+                }
             }
         }
     }
 
-    // MARK: Scrubber (Isolated Slider)
+    // MARK: Scrubber Section with Audio Quality Badge (Screenshot 1 & 2)
 
-    private var scrubber: some View {
-        VStack(spacing: 5) {
+    private var scrubberSection: some View {
+        VStack(spacing: 7) {
             GeometryReader { geo in
                 let maxDuration = max(player.duration, 0.01)
                 let currentFraction = min(1.0, max(0.0, effectiveProgress / maxDuration))
 
                 ZStack(alignment: .leading) {
-                    // Track background
+                    // Track background line
                     Capsule()
-                        .fill(Color.white.opacity(0.20))
-                        .frame(height: isScrubbing ? 8 : 5)
+                        .fill(Color.white.opacity(0.24))
+                        .frame(height: isScrubbing ? 6 : 4)
 
-                    // Track filled
+                    // Filled progress line
                     Capsule()
-                        .fill(Color.white)
-                        .frame(width: geo.size.width * currentFraction, height: isScrubbing ? 8 : 5)
+                        .fill(Color.white.opacity(0.85))
+                        .frame(width: geo.size.width * currentFraction, height: isScrubbing ? 6 : 4)
 
                     // Thumb knob (visible when scrubbing)
                     if isScrubbing {
@@ -502,66 +497,79 @@ struct PlayerScreenV2: View {
                         }
                 )
             }
-            .frame(height: 22)
+            .frame(height: 18)
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
 
-            // Timers
-            HStack {
+            // Timings and Center Quality Badge (Lossless / Dolby Atmos)
+            HStack(alignment: .center) {
                 Text(player.formatted(effectiveProgress))
+                    .font(AG.text(12, .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.55))
+
                 Spacer()
+
+                // Apple Music Quality Badge
+                HStack(spacing: 4) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 10, weight: .bold))
+                    Text(player.currentBitrate >= 320 ? "Hi-Res Lossless" : "Lossless")
+                        .font(AG.text(11, .semibold))
+                }
+                .foregroundStyle(.white.opacity(0.70))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.white.opacity(0.10)))
+
+                Spacer()
+
                 Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
+                    .font(AG.text(12, .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.55))
             }
-            .font(AG.text(11.5, .medium).monospacedDigit())
-            .foregroundStyle(.white.opacity(0.65))
         }
     }
 
-    // MARK: Transport Controls (Native Standard Style)
+    // MARK: Transport Controls (Large Apple Music Symbols)
 
     private var transportControls: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 0) {
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 58, height: 58)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(GlassPressStyle(scale: 0.92))
-
-            Spacer()
-
-            Button(action: togglePlayback) {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 32, weight: .black))
-                    .foregroundStyle(Color.black.opacity(0.90))
-                    .frame(width: 72, height: 72)
-                    .background(Color.white, in: Circle())
-                    .shadow(color: Color.black.opacity(0.35), radius: 14, y: 6)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.90))
 
-            Spacer()
+            Button(action: togglePlayback) {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 46, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(GlassPressStyle(scale: 0.88))
 
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 58, height: 58)
-                    .contentShape(Circle())
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(GlassPressStyle(scale: 0.92))
+            .buttonStyle(GlassPressStyle(scale: 0.90))
         }
-        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
-    // MARK: Volume & AirPlay Bar
+    // MARK: Volume Slider (Apple Music Standard)
 
-    private var volumeAndAirPlayBar: some View {
+    private var volumeBar: some View {
         HStack(spacing: 12) {
             Image(systemName: "speaker.fill")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.white.opacity(0.50))
 
             Slider(
                 value: Binding(
@@ -570,99 +578,50 @@ struct PlayerScreenV2: View {
                 ),
                 in: 0...1
             )
-            .tint(Color.white)
+            .tint(Color.white.opacity(0.85))
 
             Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.55))
-
-            AirPlayButtonView()
-                .frame(width: 32, height: 32)
+                .foregroundStyle(.white.opacity(0.50))
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 4)
     }
 
-    // MARK: Bottom Quick Action Dock
+    // MARK: Apple Music Bottom Bar (Lyrics, AirPlay, Queue)
 
-    private var bottomDock: some View {
-        HStack(spacing: 8) {
-            // Lyrics Toggle
+    private var appleMusicBottomBar: some View {
+        HStack(spacing: 0) {
+            // Left: Lyrics / Sing
             Button {
                 withAnimation(AG.spring) {
                     showLyricsMode.toggle()
                 }
             } label: {
                 Image(systemName: showLyricsMode ? "quote.bubble.fill" : "quote.bubble")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(showLyricsMode ? AG.amber : .white.opacity(0.75))
-                    .frame(width: 40, height: 40)
-                    .background(showLyricsMode ? AG.amber.opacity(0.18) : Color.white.opacity(0.08), in: Circle())
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(showLyricsMode ? AG.amber : .white.opacity(0.65))
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(GlassPressStyle())
 
-            Spacer()
+            // Center: AirPlay route picker
+            AirPlayButtonView()
+                .frame(maxWidth: .infinity)
 
-            // Shuffle
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                player.shuffle.toggle()
-            } label: {
-                Image(systemName: "shuffle")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(player.shuffle ? AG.amber : .white.opacity(0.70))
-                    .frame(width: 40, height: 40)
-                    .background(player.shuffle ? AG.amber.opacity(0.18) : Color.white.opacity(0.08), in: Circle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // Repeat Mode
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                switch player.repeatMode {
-                case .off: player.repeatMode = .all
-                case .all: player.repeatMode = .one
-                case .one: player.repeatMode = .off
-                }
-            } label: {
-                Image(systemName: player.repeatMode.icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(player.repeatMode != .off ? AG.amber : .white.opacity(0.70))
-                    .frame(width: 40, height: 40)
-                    .background(player.repeatMode != .off ? AG.amber.opacity(0.18) : Color.white.opacity(0.08), in: Circle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // EQ
-            Button {
-                showEqualizer = true
-            } label: {
-                Image(systemName: "slider.vertical.3")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(player.eqEnabled ? AG.amber : .white.opacity(0.70))
-                    .frame(width: 40, height: 40)
-                    .background(player.eqEnabled ? AG.amber.opacity(0.18) : Color.white.opacity(0.08), in: Circle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // Queue
+            // Right: Queue sheet
             Button {
                 showQueue = true
             } label: {
                 Image(systemName: "list.bullet")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(showQueue ? AG.amber : .white.opacity(0.70))
-                    .frame(width: 40, height: 40)
-                    .background(showQueue ? AG.amber.opacity(0.18) : Color.white.opacity(0.08), in: Circle())
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(GlassPressStyle())
         }
-        .padding(.horizontal, 8)
+        .padding(.top, 4)
     }
 
     // MARK: - Actions

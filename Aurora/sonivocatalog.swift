@@ -142,11 +142,18 @@ struct RankedTrack: Identifiable {
 }
 
 /// Строка трека: обложка и название запускают воспроизведение,
-/// имя артиста ведёт на страницу артиста.
+/// Строка трека: вся карточка кликабельна в любую точку с пружинным откликом и живым эквалайзером
 struct ChartRowView: View {
     let rank: Int?
     let item: YandexMusicService.YMTrackItem
     let onPlay: () -> Void
+
+    @State private var player = PlayerCore.shared
+
+    private var isCurrentPlaying: Bool {
+        guard let cur = player.currentTrack else { return false }
+        return cur.title == item.title && cur.artist == item.artistName
+    }
 
     private var firstArtistId: String? {
         guard let a = item.artists?.first, let id = a.id else { return nil }
@@ -154,79 +161,74 @@ struct ChartRowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            if let rank {
-                Text(String(rank))
-                    .font(AG.display(15, .heavy).monospacedDigit())
-                    .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
-                    .frame(width: 26, alignment: .center)
-            }
+        Button(action: onPlay) {
+            HStack(spacing: 12) {
+                if let rank {
+                    Text(String(rank))
+                        .font(AG.display(15, .heavy).monospacedDigit())
+                        .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
+                        .frame(width: 26, alignment: .center)
+                }
 
-            Button(action: onPlay) {
-                RemoteArtwork(urlString: item.coverUrlString, corner: 10)
-                    .frame(width: 50, height: 50)
-            }
-            .buttonStyle(GlassPressStyle())
+                ZStack(alignment: .center) {
+                    RemoteArtwork(urlString: item.coverUrlString, corner: 10)
+                        .frame(width: 50, height: 50)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Button(action: onPlay) {
+                    if isCurrentPlaying {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.black.opacity(0.45))
+                            .frame(width: 50, height: 50)
+                        LiveWaveEqualizer(isPlaying: player.isPlaying, color: AG.amber)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
                         .font(AG.text(14, .semibold))
-                        .foregroundStyle(AG.ink)
+                        .foregroundStyle(isCurrentPlaying ? AG.amber : AG.ink)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(item.artistName)
+                        .font(AG.text(11.5, .medium))
+                        .foregroundStyle(isCurrentPlaying ? AG.amber.opacity(0.75) : AG.inkMuted)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Spacer(minLength: 0)
+
+                Menu {
+                    Button {
+                        SonivoPlay.download(item)
+                    } label: {
+                        Label("Скачать на iPhone", systemImage: "arrow.down.circle")
+                    }
+
+                    if let artistId = firstArtistId {
+                        NavigationLink {
+                            ArtistView(artistId: artistId)
+                        } label: {
+                            Label("К артисту", systemImage: "person.crop.circle")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(AG.inkMuted)
+                        .frame(width: 32, height: 44)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-
-                if let artistId = firstArtistId {
-                    NavigationLink {
-                        ArtistView(artistId: artistId)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(item.artistName)
-                                .lineLimit(1)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 7, weight: .black))
-                        }
-                        .font(AG.text(11.5, .medium))
-                        .foregroundStyle(AG.amber.opacity(0.85))
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Text(item.artistName)
-                        .font(AG.text(11.5, .regular))
-                        .foregroundStyle(AG.inkMuted)
-                        .lineLimit(1)
-                }
             }
-
-            Spacer(minLength: 0)
-
-            Menu {
-                Button {
-                    SonivoPlay.download(item)
-                } label: {
-                    Label("Скачать на iPhone", systemImage: "arrow.down.circle")
-                }
-
-                if let artistId = firstArtistId {
-                    NavigationLink {
-                        ArtistView(artistId: artistId)
-                    } label: {
-                        Label("К артисту", systemImage: "person.crop.circle")
-                    }
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(AG.inkMuted)
-                    .frame(width: 30, height: 44)
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isCurrentPlaying ? AG.card.opacity(0.92) : Color.white.opacity(0.001))
+            )
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
+        .buttonStyle(CardPressStyle())
     }
 }
 

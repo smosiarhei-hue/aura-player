@@ -17,6 +17,59 @@ struct GlassPressStyle: ButtonStyle {
     }
 }
 
+/// Современная интерактивная пружинная анимация карточки с тактильным откликом
+struct CardPressStyle: ButtonStyle {
+    var scale: CGFloat = 0.96
+    var haptic: Bool = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .scaleEffect(configuration.isPressed ? scale : 1.0)
+            .opacity(configuration.isPressed ? 0.88 : 1.0)
+            .animation(.spring(response: 0.24, dampingFraction: 0.72), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, isPressed in
+                if isPressed && haptic {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+            }
+    }
+}
+
+/// Живые анимированные столбики эквалайзера для активного трека
+struct LiveWaveEqualizer: View {
+    let isPlaying: Bool
+    var color: Color = AG.amber
+    var barCount: Int = 3
+
+    @State private var wavePhases: [CGFloat] = [0.4, 0.9, 0.6]
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2.5) {
+            ForEach(0..<barCount, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(color)
+                    .frame(width: 2.5, height: isPlaying ? 12 * wavePhases[i % wavePhases.count] : 3)
+            }
+        }
+        .frame(width: 14, height: 14, alignment: .bottom)
+        .onAppear {
+            if isPlaying {
+                withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
+                    wavePhases = [0.95, 0.35, 0.8]
+                }
+            }
+        }
+        .onChange(of: isPlaying) { _, playing in
+            if playing {
+                withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
+                    wavePhases = [0.95, 0.35, 0.8]
+                }
+            }
+        }
+    }
+}
+
 /// Бегущий блик по поверхности стеклянной карточки.
 struct ShimmerOverlay: View {
     var corner: CGFloat = 24
