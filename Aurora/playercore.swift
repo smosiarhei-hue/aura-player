@@ -877,10 +877,19 @@ final class PlayerCore {
 
     // MARK: - Spectrum tap
 
+    private var spectrumTapInstalled = false
+
+    nonisolated private static func handleSpectrumTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+        SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
+    }
+
     func installSpectrumTap() {
-        engine.mainMixerNode.removeTap(onBus: 0)
-        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 2048, format: nil) { buffer, _ in
-            SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
-        }
+        guard !spectrumTapInstalled else { return }
+        let mixer = engine.mainMixerNode
+        let format = mixer.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return }
+
+        mixer.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.handleSpectrumTap)
+        spectrumTapInstalled = true
     }
 }

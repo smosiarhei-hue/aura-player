@@ -89,7 +89,6 @@ struct RootView: View {
                 .presentationBackground(.clear)
         }
         .onAppear {
-            PlayerCore.shared.installSpectrumTap()
             PlaybackAudioSessionCoordinator.shared.install()
         }
         .onChange(of: player.currentTrack?.id) { _, _ in
