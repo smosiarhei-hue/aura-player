@@ -54,7 +54,7 @@ screen = replace_required(
                 SpatialTapGesture().onEnded { value in
                     let usableWidth = max(UIScreen.main.bounds.width - 44, 1)
                     let fraction = min(max(value.location.x / usableWidth, 0), 1)
-                    player.seek(to: player.duration * fraction)
+                    player.seek(to: player.duration * Double(fraction))
                 }
             )
 
