@@ -24,7 +24,7 @@ checks = {
 "spatial recovery": (PLAYER, "recoverSpatialAudioAfterCapabilityChange"),
 "spatial capability observer": (SESSION, "spatialPlaybackCapabilitiesChangedNotification"),
 "Swift 6 notification isolation": (PLAYER, "MainActor.assumeIsolated"),
-"120 Hz progress": (PLAYER, "CMTime(seconds: 1.0 / 120.0"),
+"efficient 60 Hz progress": (PLAYER, "CMTime(seconds: 1.0 / 60.0"),
 "one-shot sleep timer": (PLAYER, "Timer(timeInterval: delay, repeats: false)"),
 "single-commit scrubber": (SCREEN, "onEditingChanged: { editing in"),
 "velocity scrub haptics": (SCREEN, "scrubHapticEngine.update"),
@@ -32,11 +32,11 @@ checks = {
 "edge artwork paging": (SCREEN, "completeArtworkPage(forward:"),
 "kinetic artwork placement": (SCREEN, "KineticLyricsArtwork("),
 "kinetic typography": (KINETIC, "struct KineticLyricsArtwork: View"),
-"kinetic 60 fps": (KINETIC, "minimumInterval: 1.0 / 60.0"),
-"kinetic font": (KINETIC, 'Font.custom("Arial Black"') if False else (KINETIC, 'font(.custom("Arial Black"'),
-"kinetic glow": (KINETIC, "radius: 78"),
+"Display P3 white balance": (KINETIC, "Color(.displayP3"),
+"lightweight lyric glow": (KINETIC, "blur(radius: 22)"),
+"additive highlight": (KINETIC, ".plusLighter"),
+"kinetic font": (KINETIC, 'font(.custom("Arial Black"'),
 "kinetic perspective": (KINETIC, "rotation3DEffect"),
-"kinetic RGB impact": (KINETIC, ".cyan.opacity"),
 "stable inline lyrics": (SCREEN, "// MARK: Stable inline lyrics"),
 "simple bottom settings": (SCREEN, "gearshape.fill"),
 "artist tap target": (SCREEN, "minHeight: 44, alignment: .leading"),
@@ -59,6 +59,9 @@ for path in (ROOT / "Aurora/SonivoStreamEQ.h", ROOT / "Aurora/SonivoStreamEQ.c")
     if not path.exists(): missing.append(path.name)
 if "Artwork intentionally omitted" in PLAYER: missing.append("artwork disabled")
 if 'Text("КАРАОКЕ")' in SCREEN: missing.append("legacy karaoke label still present")
+if "Color.black" in KINETIC: missing.append("kinetic black background still present")
+if "TimelineView" in KINETIC: missing.append("continuous kinetic display timer still present")
+if "radius: 78" in KINETIC: missing.append("oversized kinetic glow still present")
 if missing:
     print("Build feature verification failed:")
     for name in missing: print("- " + name)

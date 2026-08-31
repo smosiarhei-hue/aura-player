@@ -122,15 +122,15 @@ player = PLAYER.read_text(encoding="utf-8")
 player = replace_required(
     player,
     "let interval = CMTime(seconds: 0.10, preferredTimescale: 600)",
-    "let interval = CMTime(seconds: 1.0 / 120.0, preferredTimescale: 600)",
-    "120 Hz stream progress",
+    "let interval = CMTime(seconds: 1.0 / 60.0, preferredTimescale: 600)",
+    "60 Hz stream progress",
 )
 player = replace_required(
     player,
     "let timer = Timer(timeInterval: 0.10, repeats: true)",
-    "let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true)",
-    "120 Hz local progress",
+    "let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true)",
+    "60 Hz local progress",
 )
 PLAYER.write_text(player, encoding="utf-8")
 
-print("Interactive edge-to-edge artwork paging, tap seeking, and 120 Hz progress applied.")
+print("Interactive artwork paging, tap seeking, and efficient 60 Hz progress applied.")

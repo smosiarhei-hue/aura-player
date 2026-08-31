@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Beat-reactive lyric typography rendered in the artwork area.
+/// Lightweight beat-reactive typography rendered directly over artwork or video.
 struct KineticLyricsArtwork: View {
     let phrase: String
     let beat: CGFloat
@@ -10,8 +10,10 @@ struct KineticLyricsArtwork: View {
 
     @State private var entryScale: CGFloat = 1
     @State private var entryOpacity: Double = 1
-    @State private var entryBlur: CGFloat = 0
     @State private var animationGeneration = 0
+
+    private let hdrWhite = Color(.displayP3, red: 1.0, green: 0.985, blue: 0.955)
+    private let coolHighlight = Color(.displayP3, red: 0.92, green: 0.97, blue: 1.0)
 
     private var lines: [String] {
         let words = phrase
@@ -43,57 +45,44 @@ struct KineticLyricsArtwork: View {
     }
 
     private var usesCinematicZoom: Bool {
-        let score = phrase.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % 10 }
-        return score == 0
+        phrase.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % 10 } == 0
+    }
+
+    private var impact: CGFloat {
+        guard isPlaying, !reduceMotion else { return 0 }
+        let raw = min(max((beat - 0.60) / 0.40, 0), 1)
+        return (raw * 5).rounded(.down) / 5
     }
 
     var body: some View {
         Button(action: onOpenLyrics) {
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || !isPlaying)) { context in
-                let time = context.date.timeIntervalSinceReferenceDate
-                let impact: CGFloat = reduceMotion ? 0 : min(max((beat - 0.58) / 0.42, 0), 1)
-                let shakeX = CGFloat(sin(time * .pi * 44)) * impact * 12
-                let shakeY = CGFloat(cos(time * .pi * 38)) * impact * 7
-                let driftX: CGFloat = reduceMotion ? 0 : CGFloat(sin(time * 0.72)) * 2.5
-                let driftY: CGFloat = reduceMotion ? 0 : CGFloat(cos(time * 0.57)) * 2
-                let idleScale: CGFloat = reduceMotion ? 1 : 1.015 + CGFloat(sin(time * 0.85)) * 0.015
+            ZStack {
+                typography(color: hdrWhite.opacity(0.40))
+                    .blur(radius: 22)
+                    .scaleEffect(1.012)
+                    .blendMode(.plusLighter)
 
-                ZStack {
-                    Color.black
-
-                    if impact > 0.68 {
-                        Color.white
-                            .opacity(Double((impact - 0.68) * 0.22))
-                            .blendMode(.screen)
+                typography(color: hdrWhite)
+                    .overlay {
+                        typography(color: coolHighlight.opacity(0.16))
+                            .blendMode(.plusLighter)
                     }
-
-                    if impact > 0.48 {
-                        typography(color: .cyan.opacity(Double(impact * 0.24)))
-                            .offset(x: -3.5 * impact)
-                            .blendMode(.screen)
-                        typography(color: .pink.opacity(Double(impact * 0.22)))
-                            .offset(x: 3.5 * impact)
-                            .blendMode(.screen)
-                    }
-
-                    typography(color: .white)
-                        .shadow(color: .white.opacity(0.95), radius: 3)
-                        .shadow(color: .white.opacity(0.48), radius: 34)
-                        .shadow(color: .white.opacity(0.24), radius: 78)
-                }
-                .compositingGroup()
-                .scaleEffect(entryScale * idleScale)
-                .opacity(entryOpacity)
-                .rotationEffect(.degrees(reduceMotion ? 0 : -5.5))
-                .rotation3DEffect(
-                    .degrees(reduceMotion ? 0 : 4),
-                    axis: (x: 1, y: -0.65, z: 0),
-                    perspective: 0.55
-                )
-                .offset(x: shakeX + driftX, y: shakeY + driftY)
-                .blur(radius: entryBlur + (impact > 0.82 ? 0.55 : 0))
-                .brightness(impact > 0.70 ? Double((impact - 0.70) * 0.42) : 0)
+                    .shadow(color: .black.opacity(0.82), radius: 2, y: 2)
+                    .shadow(color: hdrWhite.opacity(0.92), radius: 3)
+                    .shadow(color: hdrWhite.opacity(0.34), radius: 16)
             }
+            .scaleEffect(entryScale * (1 + impact * 0.022))
+            .opacity(entryOpacity)
+            .rotationEffect(.degrees(reduceMotion ? 0 : -5.5))
+            .rotation3DEffect(
+                .degrees(reduceMotion ? 0 : 4),
+                axis: (x: 1, y: -0.65, z: 0),
+                perspective: 0.55
+            )
+            .offset(x: reduceMotion ? 0 : impact * 4, y: reduceMotion ? 0 : -impact * 2)
+            .brightness(Double(impact * 0.10))
+            .animation(.linear(duration: 0.055), value: impact)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
@@ -138,7 +127,6 @@ struct KineticLyricsArtwork: View {
         guard !reduceMotion else {
             entryScale = 1
             entryOpacity = 1
-            entryBlur = 0
             return
         }
 
@@ -149,14 +137,12 @@ struct KineticLyricsArtwork: View {
         withTransaction(reset) {
             entryScale = usesCinematicZoom ? 2.5 : 0.80
             entryOpacity = usesCinematicZoom ? 0.34 : 0.60
-            entryBlur = usesCinematicZoom ? 11 : 0
         }
 
         if usesCinematicZoom {
             withAnimation(.easeOut(duration: 0.085)) {
                 entryScale = 1
                 entryOpacity = 1
-                entryBlur = 0
             }
             return
         }
