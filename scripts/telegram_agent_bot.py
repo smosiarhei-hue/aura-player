@@ -22,6 +22,7 @@ if sys.platform == "win32":
 
 import json
 import time
+import base64
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -41,6 +42,7 @@ def load_config():
         "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA"),
         "TELEGRAM_CHAT_ID": int(os.environ.get("TELEGRAM_CHAT_ID", 8559869613)),
         "ACTIVE_MODEL": "gemini-3.6-flash",
+        "BOT_MODE": "dev",
         "GEMINI_KEYS": []
     }
     env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_KEY")
@@ -61,6 +63,8 @@ def load_config():
         loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if not loaded.get("GEMINI_KEYS") and env_key:
             loaded["GEMINI_KEYS"] = default_cfg["GEMINI_KEYS"]
+        if "BOT_MODE" not in loaded:
+            loaded["BOT_MODE"] = "dev"
         return loaded
     except Exception:
         return default_cfg
@@ -144,9 +148,22 @@ def get_installed_skills():
     return sorted(skills)
 
 def build_system_prompt():
-    base = """Ты — Sonivo AI Agent, автономный Senior iOS Swift разработчик и DevOps инженер проекта Sonivo (музыкальный плеер для iOS на SwiftUI).
+    config = load_config()
+    mode = config.get("BOT_MODE", "dev")
+    
+    if mode == "chat":
+        base = """Ты — Sonivo AI Консультант и Архитектор, персональный AI-эксперт для создателя проекта Sonivo.
+Твоя цель — быть личным собеседником и экспертом:
+- Отвечать на любые вопросы пользователя (теория, архитектура, идеи фичей, анализ кода, дизайн, маркетинг).
+- Ты полностью знаешь кодовую базу Sonivo (можешь читать файлы и искать код через read_file/search_code).
+- Ты умеешь детально анализировать присланные скриншоты, фотографии макетов, видео-шоты и аудиозаписи.
+- В РЕЖИМЕ ЧАТА НЕ МЕНЯЙ ФАЙЛЫ И НЕ ДЕЛАЙ КОММИТЫ (edit_file / git_commit_and_push), если пользователь прямо не попросит об этом! Твоя задача здесь — давать умные, экспертные ответы, генерировать код в тексте и рассуждать.
+"""
+    else:
+        base = """Ты — Sonivo AI Agent, автономный Senior iOS Swift разработчик и DevOps инженер проекта Sonivo (музыкальный плеер для iOS на SwiftUI).
 Твоя цель — выполнять любые задачи пользователя прямо из Telegram:
 - Анализировать структуру проекта, искать нужные файлы и код.
+- Анализировать присланные скриншоты, макеты, видео-шоты и голосовые сообщения.
 - Исправлять ошибки компиляции, баги, краши и логи.
 - Модифицировать интерфейс (SwiftUI, Apple Music стиль, анимации, Liquid Glass, плеер, экраны, жесты).
 - Делать git commit и push в GitHub.
@@ -156,6 +173,7 @@ def build_system_prompt():
 Перед изменением файла ВСЕГДА читай его содержимое (read_file или search_code).
 После успешного внесения правок сделай git_commit_and_push с понятным описанием изменений.
 """
+
     custom_skills = []
     if SKILLS_DIR.exists():
         for p in SKILLS_DIR.iterdir():
@@ -519,21 +537,44 @@ def tg_edit(text, chat_id, message_id, reply_markup=None):
     return res
 
 def get_main_keyboard():
+    config = load_config()
+    mode = config.get("BOT_MODE", "dev")
+    mode_btn = "💬 Режим: Чат" if mode == "chat" else "⚡ Режим: Код"
     return {
         "keyboard": [
             [{"text": "🚀 Собрать IPA"}, {"text": "📊 Статус & Билды"}],
-            [{"text": "🔑 Ключи & Квоты"}, {"text": "📦 Мои Скиллы"}],
-            [{"text": "📋 Логи ошибок"}, {"text": "🧠 Сменить модель"}]
+            [{"text": mode_btn}, {"text": "🔑 Ключи & Квоты"}],
+            [{"text": "📦 Мои Скиллы"}, {"text": "🧠 Сменить модель"}],
+            [{"text": "📋 Логи ошибок"}]
         ],
         "resize_keyboard": True,
         "persistent": True
     }
 
+def show_mode_menu(chat_id, reply_to=None):
+    config = load_config()
+    mode = config.get("BOT_MODE", "dev")
+    text = "⚙️ *Выбор режима работы AI-агента*\n\n"
+    if mode == "chat":
+        text += "Текущий режим: 💬 *Личный Чат / Консультант*\n\n"
+        text += "• В этом режиме бот отвечает на любые вопросы, генерирует код в чате, обсуждает идеи и архитектуру, но *не меняет файлы в репозитории и не делает коммиты*.\n"
+    else:
+        text += "Текущий режим: ⚡ *Автономный Разработчик*\n\n"
+        text += "• В этом режиме бот активно ищет файлы, редактирует код, делает git commit & push и запускает сборку IPA.\n"
+        
+    inline_kb = {
+        "inline_keyboard": [
+            [{"text": f"{'✅ ' if mode=='dev' else ''}⚡ Режим Разработчика (Правки в код)", "callback_data": "mode_dev"}],
+            [{"text": f"{'✅ ' if mode=='chat' else ''}💬 Режим Чата (Вопросы & Идеи)", "callback_data": "mode_chat"}]
+        ]
+    }
+    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
+
 # --- GEMINI AGENT CORE WITH AUTOMATIC POOL ROTATION ---
 
 def call_gemini_with_fallback(contents, chat_id=None):
     config = load_config()
-    model = config.get("ACTIVE_MODEL", "gemini-2.5-pro")
+    model = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
     keys = config.get("GEMINI_KEYS", [])
     
     if not keys:
@@ -593,15 +634,20 @@ def call_gemini_with_fallback(contents, chat_id=None):
                 
     return {"error": "Все доступные аккаунты Gemini исчерпали свои квоты. Добавьте новый бесплатный ключ через '🔑 Ключи & Квоты'."}
 
-def execute_agent_loop(user_prompt, status_msg_id, chat_id):
-    history = [
-        {"role": "user", "parts": [{"text": user_prompt}]}
-    ]
+def execute_agent_loop(user_input, status_msg_id, chat_id):
+    if isinstance(user_input, list):
+        history = [{"role": "user", "parts": user_input}]
+    else:
+        history = [{"role": "user", "parts": [{"text": str(user_input)}]}]
+        
+    config = load_config()
+    mode = config.get("BOT_MODE", "dev")
+    role_title = "Sonivo AI Консультант" if mode == "chat" else "Sonivo AI Разработчик"
     
     max_steps = 15
     for step in range(max_steps):
         if status_msg_id:
-            tg_edit(f"🤖 *Sonivo AI Agent* (Шаг {step+1}/{max_steps}):\nДумаю над решением...", chat_id, status_msg_id)
+            tg_edit(f"🤖 *{role_title}* (Шаг {step+1}/{max_steps}):\nДумаю над ответом...", chat_id, status_msg_id)
         
         response = call_gemini_with_fallback(history, chat_id=chat_id)
         if "error" in response:
@@ -628,30 +674,34 @@ def execute_agent_loop(user_prompt, status_msg_id, chat_id):
             name = fc.get("name")
             args = fc.get("args", {})
             
-            action_desc = f"⚙️ Выполняю `{name}`..."
-            if name == "read_file":
-                action_desc = f"📖 Читаю `{args.get('file_path')}`..."
-            elif name == "edit_file":
-                action_desc = f"✏️ Редактирую `{args.get('file_path')}`..."
-            elif name == "git_commit_and_push":
-                action_desc = f"🚀 Отправляю коммит в GitHub: *{args.get('commit_message')}*..."
-            elif name == "check_ci_build":
-                action_desc = "🔍 Проверяю статус сборки IPA в GitHub Actions..."
-            elif name == "trigger_ipa_build":
-                action_desc = "🚀 Запускаю новую сборку IPA в GitHub Actions..."
-                
-            if status_msg_id:
-                tg_edit(f"🤖 *Sonivo AI Agent* (Шаг {step+1}):\n{action_desc}", chat_id, status_msg_id)
-            
-            tool_func = TOOL_MAP.get(name)
-            if tool_func:
-                try:
-                    result = tool_func(**args)
-                except Exception as ex:
-                    result = {"error": str(ex)}
+            if mode == "chat" and name in ["edit_file", "create_or_overwrite_file", "git_commit_and_push"]:
+                action_desc = f"💡 [Чат] Анализирую `{name}`..."
+                result = {"info": "Changes skipped because agent is in Chat/Consultation mode. Provide advice/code in text response instead."}
             else:
-                result = {"error": f"Unknown tool: {name}"}
+                action_desc = f"⚙️ Выполняю `{name}`..."
+                if name == "read_file":
+                    action_desc = f"📖 Читаю `{args.get('file_path')}`..."
+                elif name == "edit_file":
+                    action_desc = f"✏️ Редактирую `{args.get('file_path')}`..."
+                elif name == "git_commit_and_push":
+                    action_desc = f"🚀 Отправляю коммит в GitHub: *{args.get('commit_message')}*..."
+                elif name == "check_ci_build":
+                    action_desc = "🔍 Проверяю статус сборки IPA в GitHub Actions..."
+                elif name == "trigger_ipa_build":
+                    action_desc = "🚀 Запускаю новую сборку IPA в GitHub Actions..."
                 
+                tool_func = TOOL_MAP.get(name)
+                if tool_func:
+                    try:
+                        result = tool_func(**args)
+                    except Exception as ex:
+                        result = {"error": str(ex)}
+                else:
+                    result = {"error": f"Unknown tool: {name}"}
+                    
+            if status_msg_id:
+                tg_edit(f"🤖 *{role_title}* (Шаг {step+1}):\n{action_desc}", chat_id, status_msg_id)
+            
             response_parts.append({
                 "functionResponse": {
                     "name": name,
@@ -790,6 +840,16 @@ def start_bot():
                         tg_send("🔑 *Отправьте ваш ключ Gemini API следующим сообщением:*")
                     elif cq_data == "btn_refresh_keys":
                         show_keys_menu(ALLOWED_CHAT_ID)
+                    elif cq_data == "mode_dev":
+                        config = load_config()
+                        config["BOT_MODE"] = "dev"
+                        save_config(config)
+                        tg_send("⚡ *Режим переключен на: Автономный Разработчик*\nТеперь бот активно применяет код, делает коммиты и собирает IPA.", reply_markup=get_main_keyboard())
+                    elif cq_data == "mode_chat":
+                        config = load_config()
+                        config["BOT_MODE"] = "chat"
+                        save_config(config)
+                        tg_send("💬 *Режим переключен на: Личный Чат / Консультант*\nВ этом режиме бот отвечает на любые вопросы, генерирует код в чате и анализирует медиа без изменения файлов.", reply_markup=get_main_keyboard())
                     elif cq_data.startswith("model_"):
                         new_model = cq_data.replace("model_", "")
                         config = load_config()
@@ -809,6 +869,7 @@ def start_bot():
                     
                 msg_id = msg["message_id"]
                 
+                # Обработка отправки файлов со скиллами
                 if "document" in msg:
                     doc = msg["document"]
                     doc_name = doc.get("file_name", "custom_skill.md")
@@ -829,14 +890,57 @@ def start_bot():
                             tg_send(f"❌ Ошибка сохранения файла: {ex}", reply_to=msg_id)
                             continue
                             
+                # Обработка мультимодальности (Фото, Видео, Голосовые)
+                user_parts = []
+                has_media = False
+                
+                if "photo" in msg:
+                    photo = msg["photo"][-1]
+                    file_info = tg_request("getFile", {"file_id": photo["file_id"]})
+                    if file_info and file_info.get("ok"):
+                        f_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info['result']['file_path']}"
+                        try:
+                            with urllib.request.urlopen(f_url, timeout=25) as r:
+                                b64 = base64.b64encode(r.read()).decode("utf-8")
+                                user_parts.append({"inlineData": {"mimeType": "image/jpeg", "data": b64}})
+                                has_media = True
+                        except Exception as ex:
+                            print(f"[Photo download error]: {ex}")
+                            
+                elif "video" in msg or "video_note" in msg:
+                    vid = msg.get("video") or msg.get("video_note")
+                    file_info = tg_request("getFile", {"file_id": vid["file_id"]})
+                    if file_info and file_info.get("ok"):
+                        f_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info['result']['file_path']}"
+                        try:
+                            with urllib.request.urlopen(f_url, timeout=40) as r:
+                                b64 = base64.b64encode(r.read()).decode("utf-8")
+                                user_parts.append({"inlineData": {"mimeType": "video/mp4", "data": b64}})
+                                has_media = True
+                        except Exception as ex:
+                            print(f"[Video download error]: {ex}")
+                            
+                elif "voice" in msg or "audio" in msg:
+                    audio = msg.get("voice") or msg.get("audio")
+                    file_info = tg_request("getFile", {"file_id": audio["file_id"]})
+                    if file_info and file_info.get("ok"):
+                        f_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info['result']['file_path']}"
+                        try:
+                            with urllib.request.urlopen(f_url, timeout=25) as r:
+                                b64 = base64.b64encode(r.read()).decode("utf-8")
+                                user_parts.append({"inlineData": {"mimeType": "audio/ogg", "data": b64}})
+                                has_media = True
+                        except Exception as ex:
+                            print(f"[Voice download error]: {ex}")
+                            
                 text = msg.get("text", "").strip()
-                if not text:
-                    if "caption" in msg:
-                        text = msg["caption"].strip()
-                    else:
-                        continue
-                        
-                print(f"\n[User Request]: {text}")
+                if not text and "caption" in msg:
+                    text = msg["caption"].strip()
+                    
+                if not text and not has_media:
+                    continue
+                    
+                print(f"\n[User Request]: {text or '(Media attached)'}")
                 
                 if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_API_KEY":
                     user_states.pop(ALLOWED_CHAT_ID, None)
@@ -850,11 +954,26 @@ def start_bot():
                     
                 if text in ["/start", "Меню"]:
                     tg_send(
-                        "👋 Привет! Я твой личный AI-разработчик Sonivo.\n\n"
-                        "Отправь мне задачу, ошибку, лог или пожелание — я всё сделаю сам!",
+                        "👋 Привет! Я твой персональный AI-разработчик и консультант Sonivo.\n\n"
+                        "Отправь мне задачу, ошибку, скриншот, видео или любой вопрос — я помогу!",
                         reply_to=msg_id,
                         reply_markup=get_main_keyboard()
                     )
+                    continue
+                elif text in ["/mode", "💬 Режим: Чат", "⚡ Режим: Код"]:
+                    show_mode_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text == "/chat":
+                    config = load_config()
+                    config["BOT_MODE"] = "chat"
+                    save_config(config)
+                    tg_send("💬 *Включен режим Чата / Консультанта!*", reply_to=msg_id, reply_markup=get_main_keyboard())
+                    continue
+                elif text == "/dev":
+                    config = load_config()
+                    config["BOT_MODE"] = "dev"
+                    save_config(config)
+                    tg_send("⚡ *Включен режим Разработчика!*", reply_to=msg_id, reply_markup=get_main_keyboard())
                     continue
                 elif text in ["/keys", "🔑 Ключи & Квоты"]:
                     show_keys_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
@@ -909,10 +1028,19 @@ def start_bot():
                         tg_send(f"⚠️ Ошибка запуска сборки: {res.get('output')}", reply_to=msg_id)
                     continue
                     
-                status_res = tg_send("⏳ *Принял задачу!* Начинаю работу...", reply_to=msg_id)
+                # Формируем промпт с медиа
+                if text:
+                    user_parts.append({"text": text})
+                elif has_media:
+                    user_parts.append({"text": "Посмотри это прикрепленное изображение / видео и проанализируй его для проекта Sonivo."})
+                    
+                config = load_config()
+                mode = config.get("BOT_MODE", "dev")
+                wait_text = "💭 *Думаю над ответом...*" if mode == "chat" else "⏳ *Принял задачу!* Начинаю работу..."
+                status_res = tg_send(wait_text, reply_to=msg_id)
                 status_msg_id = status_res.get("result", {}).get("message_id") if status_res else None
                 
-                final_answer = execute_agent_loop(text, status_msg_id, ALLOWED_CHAT_ID)
+                final_answer = execute_agent_loop(user_parts, status_msg_id, ALLOWED_CHAT_ID)
                 tg_send(f"✅ *Готово!*\n\n{final_answer}", reply_to=msg_id)
                 
         except KeyboardInterrupt:
