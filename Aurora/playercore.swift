@@ -164,7 +164,6 @@ final class PlayerCore {
                     }
 
                     self.scheduleTransitionIfNeeded()
-                    self.updateNowPlayingInfo()
                 }
             }
         }
@@ -298,6 +297,16 @@ final class PlayerCore {
         }
     }
 
+    // MPMediaItemArtwork calls its request handler on MediaPlayer's
+    // background accessQueue, so the handler must not be MainActor-isolated.
+    nonisolated private static func nowPlayingArtwork(from image: UIImage) -> MPMediaItemArtwork {
+        let data = image.pngData() ?? Data()
+        let size = image.size
+        return MPMediaItemArtwork(boundsSize: size) { _ in
+            UIImage(data: data) ?? UIImage()
+        }
+    }
+
     private func updateNowPlayingInfo() {
         guard let track = currentTrack else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -314,9 +323,9 @@ final class PlayerCore {
         ]
 
         if let image = LibraryStore.cachedArtworkImage(for: track) {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            info[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
         } else if let image = remoteArtworkCache[track.id] {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            info[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
         }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -331,7 +340,7 @@ final class PlayerCore {
                 guard let self, self.currentTrack?.id == track.id else { return }
                 self.remoteArtworkCache[track.id] = image
                 var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-                current[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                current[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = current
             }
         }
