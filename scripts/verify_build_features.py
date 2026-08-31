@@ -23,12 +23,19 @@ checks = {
 "spatial recovery": (PLAYER, "recoverSpatialAudioAfterCapabilityChange"),
 "spatial capability observer": (SESSION, "spatialPlaybackCapabilitiesChangedNotification"),
 "Swift 6 notification isolation": (PLAYER, "MainActor.assumeIsolated"),
+"optimized progress refresh": (PLAYER, "CMTime(seconds: 0.10"),
+"one-shot sleep timer": (PLAYER, "Timer(timeInterval: delay, repeats: false)"),
 "single-commit scrubber": (SCREEN, "onEditingChanged: { editing in"),
 "velocity scrub haptics": (SCREEN, "scrubHapticEngine.update"),
+"stable inline lyrics": (SCREEN, "// MARK: Stable inline lyrics"),
+"simple bottom settings": (SCREEN, "gearshape.fill"),
+"artist tap target": (SCREEN, "minHeight: 44, alignment: .leading"),
 "immersive artwork": (SCREEN, "fullScreenMediaBackground"),
+"undimmed visual media": (SCREEN, "resolvedVideoShotURL ?? track?.videoShotURL"),
 "artwork toggle": (THEME, "fullScreenArtworkEnabled"),
 "video shot model": (MODELS, "videoShotURL"),
 "Yandex video shot": (YANDEX, "backgroundVideoUri"),
+"visual media enrichment": (YANDEX, "func loadVisualMedia(for track: Track)"),
 "looping video surface": (FULLSCREEN, "AVPlayerLooper"),
 "cinematic lyrics": (LYRICS, "private struct CinematicSyncedLyrics"),
 "reference queue style": (CHROME, "private var playbackModes"),
@@ -41,6 +48,7 @@ missing = [name for name, (content, marker) in checks.items() if marker not in c
 for path in (ROOT / "Aurora/SonivoStreamEQ.h", ROOT / "Aurora/SonivoStreamEQ.c"):
     if not path.exists(): missing.append(path.name)
 if "Artwork intentionally omitted" in PLAYER: missing.append("artwork disabled")
+if 'Text("КАРАОКЕ")' in SCREEN: missing.append("legacy karaoke label still present")
 if missing:
     print("Build feature verification failed:")
     for name in missing: print("- " + name)
