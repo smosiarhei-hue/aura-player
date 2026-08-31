@@ -11,8 +11,8 @@ final class UserTasteEngine: @unchecked Sendable {
     static let shared = UserTasteEngine()
 
     private let defaults = UserDefaults.standard
-    private let dislikesKey = 'sonivo_disliked_tracks_v1'
-    private let artistScoresKey = 'sonivo_artist_scores_v1'
+    private let dislikesKey = "sonivo_disliked_tracks_v1"
+    private let artistScoresKey = "sonivo_artist_scores_v1"
 
     private(set) var dislikedTrackIDs: Set<String> = []
     private(set) var artistScores: [String: Double] = [:]
@@ -69,7 +69,7 @@ final class UserTasteEngine: @unchecked Sendable {
     }
 
     func filterAndRankWave(tracks: [Track]) -> [Track] {
-        let available = tracks.filter { !dislikedTrackIDs.contains(.id) }
+        let available = tracks.filter { !dislikedTrackIDs.contains($0.id) }
         return available.sorted { t1, t2 in
             let score1 = artistScores[t1.artist, default: 0]
             let score2 = artistScores[t2.artist, default: 0]
