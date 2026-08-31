@@ -6,6 +6,7 @@ import UIKit
 struct PlayerScreenV2: View {
     @State private var player = PlayerCore.shared
     @State private var library = LibraryStore.shared
+    @State private var taste = UserTasteEngine.shared
     @State private var analyzer = SpectrumAnalyzer.shared
     @State private var settings = SettingsStore.shared
     @Binding var isPresented: Bool
@@ -395,17 +396,33 @@ struct PlayerScreenV2: View {
 
             Spacer(minLength: 8)
 
-            // Right Action Icons: Favorite Star + 3-Dots Context Menu
-            HStack(spacing: 16) {
+            // Right Action Icons: Dislike + Like (Heart / Library) + 3-Dots Menu
+            HStack(spacing: 12) {
                 if let track {
+                    // Dislike Button
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        library.toggleFavorite(track)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        taste.recordDislike(track: track)
+                        nextTrack()
                     } label: {
-                        Image(systemName: library.isTrackFavorite(track) ? "star.fill" : "star")
-                            .font(.system(size: 22, weight: .medium))
-                            .foregroundStyle(library.isTrackFavorite(track) ? AG.amber : .white)
-                            .frame(width: 38, height: 38)
+                        Image(systemName: taste.isDisliked(track: track) ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(taste.isDisliked(track: track) ? Color.red.opacity(0.85) : .white.opacity(0.70))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(GlassPressStyle())
+
+                    // Like Button (Heart: Adds to Library & Favorites)
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        library.toggleFavorite(track)
+                        taste.recordLike(track: track)
+                    } label: {
+                        Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
+                            .font(.system(size: 21, weight: .semibold))
+                            .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white)
+                            .frame(width: 36, height: 36)
                             .contentShape(Circle())
                     }
                     .buttonStyle(GlassPressStyle())

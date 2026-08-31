@@ -37,6 +37,14 @@ SKILLS_DIR.mkdir(exist_ok=True)
 
 user_states = {}
 
+def sanitize_keys(keys_list):
+    valid = []
+    for k in keys_list:
+        val = str(k.get("key", "")).strip()
+        if val and len(val) >= 20 and not any(ord(c) > 127 or c.isspace() for c in val):
+            valid.append(k)
+    return valid
+
 def load_config():
     default_cfg = {
         "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA"),
@@ -46,7 +54,7 @@ def load_config():
         "GEMINI_KEYS": []
     }
     env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_KEY")
-    if env_key:
+    if env_key and not any(ord(c) > 127 or c.isspace() for c in env_key.strip()):
         default_cfg["GEMINI_KEYS"].append({
             "id": 1,
             "name": "Основной (Cloud Env)",
@@ -63,6 +71,7 @@ def load_config():
         loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if not loaded.get("GEMINI_KEYS") and env_key:
             loaded["GEMINI_KEYS"] = default_cfg["GEMINI_KEYS"]
+        loaded["GEMINI_KEYS"] = sanitize_keys(loaded.get("GEMINI_KEYS", []))
         if "BOT_MODE" not in loaded:
             loaded["BOT_MODE"] = "dev"
         return loaded
@@ -901,12 +910,15 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
             response_parts.append({
                 "functionResponse": {
                     "name": name,
-                    "response": result
+                    "response": {
+                        "name": name,
+                        "content": result
+                    }
                 }
             })
             
         history.append({
-            "role": "function",
+            "role": "user",
             "parts": response_parts
         })
         
@@ -1178,13 +1190,15 @@ def start_bot():
                 
                 if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_API_KEY":
                     user_states.pop(ALLOWED_CHAT_ID, None)
-                    if len(text) > 15:
-                        k_name = add_new_key(text)
+                    clean_k = text.strip()
+                    if len(clean_k) >= 25 and not any(ord(c) > 127 or c.isspace() for c in clean_k):
+                        k_name = add_new_key(clean_k)
                         tg_send(f"✅ *Ключ успешно добавлен!* Название: *{k_name}*\nТеперь агент может автоматически переключаться на него при исчерпании квот.", reply_to=msg_id)
                         show_keys_menu(ALLOWED_CHAT_ID)
+                        continue
                     else:
                         tg_send("⚠️ Текст не похож на ключ Gemini API. Добавление отменено.", reply_to=msg_id)
-                    continue
+                        # don't continue so if it was a button/command, it processes immediately!
                     
                 if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_HF_TOKEN":
                     user_states.pop(ALLOWED_CHAT_ID, None)

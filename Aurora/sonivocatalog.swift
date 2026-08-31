@@ -252,9 +252,11 @@ enum SonivoPlay {
             if tracks.isEmpty {
                 tracks = (try? await ym.getChart()) ?? []
             }
-            guard let first = tracks.first else { return }
-            let queue = tracks.map { ym.convertToTrack($0) }
-            PlayerCore.shared.play(ym.convertToTrack(first), newQueue: queue)
+            guard !tracks.isEmpty else { return }
+            let converted = tracks.map { ym.convertToTrack($0) }
+            let rankedQueue = UserTasteEngine.shared.filterAndRankWave(tracks: converted)
+            guard let first = rankedQueue.first else { return }
+            PlayerCore.shared.play(first, newQueue: rankedQueue)
         }
     }
 

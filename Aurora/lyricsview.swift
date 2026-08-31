@@ -56,13 +56,13 @@ private struct SyncedLyrics: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 22) {
+                LazyVStack(spacing: 28) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                         LyricsLineView(
                             line: line,
                             isActive: idx == activeIndex,
                             currentTime: currentTime,
-                            fontSize: max(settings.lyricsFontSize, 24)
+                            fontSize: max(settings.lyricsFontSize, 28)
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -72,7 +72,7 @@ private struct SyncedLyrics: View {
                         .id(idx)
                     }
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 28)
                 .padding(.top, 180)
                 .padding(.bottom, 240)
                 .frame(maxWidth: .infinity)
@@ -81,8 +81,8 @@ private struct SyncedLyrics: View {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: .black, location: 0.10),
-                        .init(color: .black, location: 0.86),
+                        .init(color: .black, location: 0.12),
+                        .init(color: .black, location: 0.84),
                         .init(color: .clear, location: 1.0)
                     ],
                     startPoint: .top,
@@ -109,33 +109,33 @@ private struct LyricsLineView: View {
     let fontSize: Double
 
     private var lineFont: Font {
-        .system(size: isActive ? fontSize : fontSize * 0.82,
-                weight: isActive ? .bold : .semibold,
-                design: .rounded)
+        .system(size: isActive ? fontSize : fontSize * 0.84,
+                weight: isActive ? .bold : .medium,
+                design: .default)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let words = line.words, !words.isEmpty, isActive {
                 // Word-level karaoke progressive fill
                 Text(wordAttributed(words: words))
                     .font(lineFont)
                     .multilineTextAlignment(.leading)
-                    .lineSpacing(6)
+                    .lineSpacing(8)
             } else {
                 Text(line.text)
                     .font(lineFont)
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.leading)
-                    .lineSpacing(6)
+                    .lineSpacing(8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(isActive ? 1.0 : 0.32)
-        .blur(radius: isActive ? 0 : 0.4)
+        .opacity(isActive ? 1.0 : 0.38)
+        .blur(radius: isActive ? 0 : 0.7)
         .scaleEffect(isActive ? 1.0 : 0.96, anchor: .leading)
-        .shadow(color: isActive ? Color.white.opacity(0.35) : .clear, radius: isActive ? 12 : 0)
-        .animation(.spring(response: 0.32, dampingFraction: 0.78), value: isActive)
+        .shadow(color: isActive ? Color.white.opacity(0.30) : .clear, radius: isActive ? 14 : 0)
+        .animation(.spring(response: 0.35, dampingFraction: 0.80), value: isActive)
     }
 
     private func wordAttributed(words: [LyricsWord]) -> AttributedString {
