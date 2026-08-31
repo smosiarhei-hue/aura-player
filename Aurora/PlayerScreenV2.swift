@@ -512,7 +512,7 @@ struct PlayerScreenV2: View {
                 HStack(spacing: 4) {
                     Image(systemName: "waveform")
                         .font(.system(size: 10, weight: .bold))
-                    Text(player.currentBitrate >= 320 ? "Hi-Res Lossless" : "Lossless")
+                    Text((player.currentBitrate ?? 0) >= 320 ? "Hi-Res Lossless" : "Lossless")
                         .font(AG.text(11, .semibold))
                 }
                 .foregroundStyle(.white.opacity(0.70))
