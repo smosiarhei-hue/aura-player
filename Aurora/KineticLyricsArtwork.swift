@@ -10,6 +10,8 @@ struct KineticLyricsArtwork: View {
 
     @State private var entryScale: CGFloat = 1
     @State private var entryOpacity: Double = 1
+    @State private var entryBlur: CGFloat = 0
+    @State private var animationGeneration = 0
 
     private var lines: [String] {
         let words = phrase
@@ -38,6 +40,11 @@ struct KineticLyricsArtwork: View {
             result[lineIndex] += result[lineIndex].isEmpty ? word : " " + word
         }
         return result.filter { !$0.isEmpty }.map { $0.uppercased() }
+    }
+
+    private var usesCinematicZoom: Bool {
+        let score = phrase.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % 10 }
+        return score == 0
     }
 
     var body: some View {
@@ -84,7 +91,7 @@ struct KineticLyricsArtwork: View {
                     perspective: 0.55
                 )
                 .offset(x: shakeX + driftX, y: shakeY + driftY)
-                .blur(radius: impact > 0.82 ? 0.55 : 0)
+                .blur(radius: entryBlur + (impact > 0.82 ? 0.55 : 0))
                 .brightness(impact > 0.70 ? Double((impact - 0.70) * 0.42) : 0)
             }
         }
@@ -131,19 +138,35 @@ struct KineticLyricsArtwork: View {
         guard !reduceMotion else {
             entryScale = 1
             entryOpacity = 1
+            entryBlur = 0
             return
         }
+
+        animationGeneration += 1
+        let generation = animationGeneration
         var reset = Transaction(animation: nil)
         reset.disablesAnimations = true
         withTransaction(reset) {
-            entryScale = 0.80
-            entryOpacity = 0.60
+            entryScale = usesCinematicZoom ? 2.5 : 0.80
+            entryOpacity = usesCinematicZoom ? 0.34 : 0.60
+            entryBlur = usesCinematicZoom ? 11 : 0
         }
+
+        if usesCinematicZoom {
+            withAnimation(.easeOut(duration: 0.085)) {
+                entryScale = 1
+                entryOpacity = 1
+                entryBlur = 0
+            }
+            return
+        }
+
         withAnimation(.interpolatingSpring(stiffness: 520, damping: 24)) {
             entryScale = 1.06
             entryOpacity = 1
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard generation == animationGeneration else { return }
             withAnimation(.easeOut(duration: 0.10)) {
                 entryScale = 1
             }
