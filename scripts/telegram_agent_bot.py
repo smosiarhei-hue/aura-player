@@ -475,18 +475,56 @@ def tool_check_ci_build():
                 for r in data.get("workflow_runs", []):
                     runs.append(f"• #{r.get('run_number')} ({r.get('name')}): {r.get('status')} / {r.get('conclusion')} ({r.get('html_url')})")
                 return {"recent_runs": "\n".join(runs) or "No runs found"}
-        except Exception as e:
+        except Exception:
             pass
 
-    res = subprocess.run(["gh", "run", "list", "-L", "3"], cwd=REPO_DIR, capture_output=True, text=True)
-    if res.returncode != 0:
-        return {"output": "GitHub CLI error or token not set. Use /set_gh_token <token>", "raw": res.stderr}
-    return {"recent_runs": res.stdout.strip()}
+    # Публичный запрос к GitHub REST API (работает без gh CLI)
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/smosiarhei-hue/aura-player/actions/runs?per_page=3",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "Sonivo-Agent"}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+            runs = []
+            for r in data.get("workflow_runs", []):
+                runs.append(f"• #{r.get('run_number')} ({r.get('name')}): {r.get('status')} / {r.get('conclusion') or 'in_progress'} ({r.get('html_url')})")
+            return {"recent_runs": "\n".join(runs) or "Сборок пока не найдено"}
+    except Exception:
+        pass
+
+    try:
+        res = subprocess.run(["gh", "run", "list", "-L", "3"], cwd=REPO_DIR, capture_output=True, text=True)
+        if res.returncode != 0:
+            return {"output": "Токен не установлен. Отправьте /set_gh_token <токен_github>", "raw": res.stderr}
+        return {"recent_runs": res.stdout.strip()}
+    except Exception:
+        return {"output": "Для полного доступа к CI добавьте токен командой /set_gh_token <токен>"}
 
 def tool_get_failed_build_logs():
-    res = subprocess.run(["gh", "run", "view", "--log-failed"], cwd=REPO_DIR, capture_output=True, text=True)
-    out = res.stdout.strip() or res.stderr.strip()
-    return {"failed_logs": out[-4000:] if len(out) > 4000 else out}
+    config = load_config()
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or config.get("GITHUB_TOKEN", "")
+    
+    if token:
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/smosiarhei-hue/aura-player/actions/runs?status=failure&per_page=1",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": "Sonivo-Agent"}
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+                runs = data.get("workflow_runs", [])
+                if runs:
+                    return {"failed_logs": f"Последняя упавшая сборка #{runs[0].get('run_number')}: {runs[0].get('html_url')}"}
+        except Exception:
+            pass
+            
+    try:
+        res = subprocess.run(["gh", "run", "view", "--log-failed"], cwd=REPO_DIR, capture_output=True, text=True)
+        out = res.stdout.strip() or res.stderr.strip()
+        return {"failed_logs": out[-4000:] if len(out) > 4000 else out}
+    except Exception:
+        return {"failed_logs": "Логи доступны на странице: https://github.com/smosiarhei-hue/aura-player/actions"}
 
 def tool_trigger_ipa_build():
     config = load_config()
@@ -505,11 +543,21 @@ def tool_trigger_ipa_build():
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return {"success": True, "output": "Build triggered successfully via GitHub API"}
+        except urllib.error.HTTPError as e:
+            return {"success": False, "output": f"GitHub API error {e.code}: {e.read().decode()}"}
         except Exception as e:
-            pass
+            return {"success": False, "output": str(e)}
             
-    res = subprocess.run(["gh", "workflow", "run", "build-ipa.yml"], cwd=REPO_DIR, capture_output=True, text=True)
-    return {"success": res.returncode == 0, "output": res.stdout.strip() or res.stderr.strip()}
+    try:
+        res = subprocess.run(["gh", "workflow", "run", "build-ipa.yml"], cwd=REPO_DIR, capture_output=True, text=True)
+        return {"success": res.returncode == 0, "output": res.stdout.strip() or res.stderr.strip()}
+    except FileNotFoundError:
+        return {
+            "success": False,
+            "output": "Для запуска сборки с сервера нужен GitHub Token. Отправьте боту команду /set_gh_token <токен>"
+        }
+    except Exception as ex:
+        return {"success": False, "output": str(ex)}
 
 def tool_run_shell_command(command):
     res = subprocess.run(command, cwd=REPO_DIR, capture_output=True, text=True, shell=True)
