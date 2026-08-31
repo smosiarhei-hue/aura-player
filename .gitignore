@@ -8,3 +8,5 @@ xcuserdata/
 .openclaw/
 
 scripts/__pycache__/
+
+agent_config.json
