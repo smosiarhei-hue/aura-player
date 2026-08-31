@@ -14,41 +14,23 @@ def replace_required(text: str, old: str, new: str, label: str) -> str:
 
 
 screen = SCREEN.read_text(encoding="utf-8")
-screen = replace_required(
-    screen,
-    '''    @State private var dismissing = false
-''',
-    '''    @State private var dismissing = false
+screen = replace_required(screen, '''    @State private var dismissing = false
+''', '''    @State private var dismissing = false
     @State private var artworkPageOffset: CGFloat = 0
     @State private var isPagingArtwork = false
-''',
-    "artwork paging state",
-)
-screen = replace_required(
-    screen,
-    '''                    .frame(width: geo.size.width, alignment: .center)
-                    .clipped()''',
-    '''                    .frame(width: geo.size.width, alignment: .center)
+''', "artwork paging state")
+screen = replace_required(screen, '''                    .frame(width: geo.size.width, alignment: .center)
+                    .clipped()''', '''                    .frame(width: geo.size.width, alignment: .center)
                     .offset(x: artworkPageOffset)
-                    .clipped()''',
-    "interactive player offset",
-)
-screen = replace_required(
-    screen,
-    '''        .interactiveDismissDisabled(dismissing)
-''',
-    '''        .interactiveDismissDisabled(dismissing)
+                    .clipped()''', "interactive player offset")
+screen = replace_required(screen, '''        .interactiveDismissDisabled(dismissing)
+''', '''        .interactiveDismissDisabled(dismissing)
         .simultaneousGesture(artworkPagingGesture)
-''',
-    "artwork paging gesture",
-)
-screen = replace_required(
-    screen,
-    '''            )
+''', "artwork paging gesture")
+screen = replace_required(screen, '''            )
             .tint(.white)
 
-            HStack {''',
-    '''            )
+            HStack {''', '''            )
             .tint(.white)
             .simultaneousGesture(
                 SpatialTapGesture().onEnded { value in
@@ -58,14 +40,9 @@ screen = replace_required(
                 }
             )
 
-            HStack {''',
-    "tap to seek",
-)
-screen = replace_required(
-    screen,
-    '''    // MARK: Actions
-''',
-    '''    // MARK: Artwork paging
+            HStack {''', "tap to seek")
+screen = replace_required(screen, '''    // MARK: Actions
+''', '''    // MARK: Artwork paging
 
     private var artworkPagingGesture: some Gesture {
         DragGesture(minimumDistance: 18, coordinateSpace: .local)
@@ -93,44 +70,23 @@ screen = replace_required(
         guard !isPagingArtwork else { return }
         isPagingArtwork = true
         let exitOffset = forward ? -width : width
-        withAnimation(.smooth(duration: 0.22)) {
-            artworkPageOffset = exitOffset
-        }
+        withAnimation(.smooth(duration: 0.22)) { artworkPageOffset = exitOffset }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
             if forward { nextTrack() } else { previousTrack() }
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                artworkPageOffset = forward ? width : -width
-            }
-            withAnimation(.smooth(duration: 0.28)) {
-                artworkPageOffset = 0
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-                isPagingArtwork = false
-            }
+            withTransaction(transaction) { artworkPageOffset = forward ? width : -width }
+            withAnimation(.smooth(duration: 0.28)) { artworkPageOffset = 0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { isPagingArtwork = false }
         }
     }
 
     // MARK: Actions
-''',
-    "artwork paging implementation",
-)
+''', "artwork paging implementation")
 SCREEN.write_text(screen, encoding="utf-8")
 
 player = PLAYER.read_text(encoding="utf-8")
-player = replace_required(
-    player,
-    "let interval = CMTime(seconds: 0.10, preferredTimescale: 600)",
-    "let interval = CMTime(seconds: 1.0 / 60.0, preferredTimescale: 600)",
-    "60 Hz stream progress",
-)
-player = replace_required(
-    player,
-    "let timer = Timer(timeInterval: 0.10, repeats: true)",
-    "let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true)",
-    "60 Hz local progress",
-)
+player = replace_required(player, "let interval = CMTime(seconds: 0.10, preferredTimescale: 600)", "let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)", "30 Hz stream progress")
+player = replace_required(player, "let timer = Timer(timeInterval: 0.10, repeats: true)", "let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true)", "30 Hz local progress")
 PLAYER.write_text(player, encoding="utf-8")
-
-print("Interactive artwork paging, tap seeking, and efficient 60 Hz progress applied.")
+print("Interactive artwork paging, tap seeking, and efficient 30 Hz progress applied.")

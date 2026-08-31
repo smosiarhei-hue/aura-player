@@ -24,9 +24,6 @@ final class ScrubHapticEngine {
         let elapsed = max(now - lastSampleTime, 1.0 / 120.0)
         let mediaVelocity = abs(position - lastPosition) / elapsed
         let distance = abs(position - lastPulsePosition)
-
-        // Slow scrubbing produces distinct soft ticks. Fast scrubbing produces
-        // closer, sharper ticks so the finger can feel the scrub velocity.
         let normalized = min(max(mediaVelocity / 90.0, 0), 1)
         let distanceStep = 1.8 - (1.25 * normalized)
         let minimumInterval = 0.085 - (0.050 * normalized)
@@ -37,7 +34,6 @@ final class ScrubHapticEngine {
             lastPulsePosition = position
             lastPulseTime = now
         }
-
         lastPosition = position
         lastSampleTime = now
     }
@@ -80,9 +76,14 @@ struct FullScreenArtworkVideo: UIViewRepresentable {
             stop()
             currentURL = url
             let item = AVPlayerItem(url: url)
+            item.preferredMaximumResolution = CGSize(width: 720, height: 1280)
+            item.preferredPeakBitRate = 2_500_000
+            item.preferredForwardBufferDuration = 2
+
             let queue = AVQueuePlayer()
             queue.isMuted = true
             queue.actionAtItemEnd = .advance
+            queue.automaticallyWaitsToMinimizeStalling = true
             queue.preventsDisplaySleepDuringVideoPlayback = false
             let loop = AVPlayerLooper(player: queue, templateItem: item)
             player = queue
@@ -107,13 +108,18 @@ final class PlayerSurfaceView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        playerLayer.videoGravity = .resizeAspectFill
-        backgroundColor = .black
+        configure()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        configure()
+    }
+
+    private func configure() {
         playerLayer.videoGravity = .resizeAspectFill
-        backgroundColor = .black
+        playerLayer.backgroundColor = UIColor.clear.cgColor
+        backgroundColor = .clear
+        isOpaque = false
     }
 }
