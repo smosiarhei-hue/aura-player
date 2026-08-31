@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Sonivo Autonomous Telegram AI Developer Agent
-==============================================
-Полноценный автономный AI-разработчик для управления проектом Sonivo прямо из Telegram.
+Sonivo Autonomous Telegram AI Developer Agent v2.0
+===================================================
+Полноценный автономный AI-разработчик и DevOps для проекта Sonivo в Telegram:
+- Интерактивная клавиатура и inline-кнопки
+- Пул аккаунтов Gemini API с автопереключением при исчерпании квот (Free Tier Failover)
+- Мониторинг квот и оставшихся запросов в реальном времени
+- Загрузка пользовательских Скиллов и Агентов (файлами или текстом)
+- Автоматический сборщик IPA и самовосстановление при ошибках
 """
 
 import os
@@ -23,23 +28,104 @@ import urllib.error
 import subprocess
 from pathlib import Path
 
-# --- КОНФИГУРАЦИЯ ---
-CONFIG_FILE = Path(__file__).resolve().parent.parent / "agent_config.json"
-_cfg = {}
-if CONFIG_FILE.exists():
-    try:
-        _cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or _cfg.get("TELEGRAM_BOT_TOKEN", "")
-ALLOWED_CHAT_ID = int(os.environ.get("TELEGRAM_CHAT_ID") or _cfg.get("TELEGRAM_CHAT_ID", 0))
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or _cfg.get("GEMINI_API_KEY", "")
-MODEL_NAME = os.environ.get("GEMINI_MODEL") or _cfg.get("GEMINI_MODEL", "gemini-2.5-pro")
-
+# --- КОНФИГУРАЦИЯ И ПУТИ ---
 REPO_DIR = Path(__file__).resolve().parent.parent
+CONFIG_FILE = REPO_DIR / "agent_config.json"
+SKILLS_DIR = REPO_DIR / "agent_skills"
+SKILLS_DIR.mkdir(exist_ok=True)
 
-SYSTEM_PROMPT = """Ты — Sonivo AI Agent, автономный Senior iOS Swift разработчик и DevOps инженер проекта Sonivo (музыкальный плеер для iOS на SwiftUI).
+user_states = {}
+
+def load_config():
+    if not CONFIG_FILE.exists():
+        return {
+            "TELEGRAM_BOT_TOKEN": "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA",
+            "TELEGRAM_CHAT_ID": 8559869613,
+            "ACTIVE_MODEL": "gemini-2.5-pro",
+            "GEMINI_KEYS": []
+        }
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def save_config(cfg):
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+
+cfg = load_config()
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg.get("TELEGRAM_BOT_TOKEN", "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA")
+ALLOWED_CHAT_ID = int(os.environ.get("TELEGRAM_CHAT_ID") or cfg.get("TELEGRAM_CHAT_ID", 8559869613))
+
+# --- ПУЛ КЛЮЧЕЙ GEMINI И УПРАВЛЕНИЕ КВОТАМИ ---
+
+def get_keys():
+    config = load_config()
+    return config.get("GEMINI_KEYS", [])
+
+def get_active_key_entry():
+    keys = get_keys()
+    now = time.time()
+    for k in keys:
+        if k.get("cooldown_until", 0) <= now and k.get("status") in ["active", "cooldown"]:
+            return k
+    return keys[0] if keys else None
+
+def record_key_success(key_id):
+    config = load_config()
+    for k in config.get("GEMINI_KEYS", []):
+        if k.get("id") == key_id:
+            k["requests_today"] = k.get("requests_today", 0) + 1
+            k["requests_total"] = k.get("requests_total", 0) + 1
+            k["last_used"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            k["status"] = "active"
+            break
+    save_config(config)
+
+def record_key_exhausted(key_id, cooldown_seconds=120):
+    config = load_config()
+    next_key_name = None
+    for idx, k in enumerate(config.get("GEMINI_KEYS", [])):
+        if k.get("id") == key_id:
+            k["status"] = "cooldown"
+            k["cooldown_until"] = time.time() + cooldown_seconds
+            for other in config.get("GEMINI_KEYS", []):
+                if other.get("id") != key_id and other.get("cooldown_until", 0) <= time.time():
+                    next_key_name = other.get("name")
+                    break
+            break
+    save_config(config)
+    return next_key_name
+
+def add_new_key(api_key, name=None):
+    config = load_config()
+    keys = config.setdefault("GEMINI_KEYS", [])
+    new_id = max([k.get("id", 0) for k in keys] + [0]) + 1
+    key_name = name or f"Аккаунт {new_id}"
+    keys.append({
+        "id": new_id,
+        "name": key_name,
+        "key": api_key.strip(),
+        "status": "active",
+        "requests_today": 0,
+        "requests_total": 0,
+        "last_used": None,
+        "cooldown_until": 0
+    })
+    save_config(config)
+    return key_name
+
+# --- СКИЛЛЫ И КАСТОМНЫЕ АГЕНТЫ ---
+
+def get_installed_skills():
+    skills = []
+    if SKILLS_DIR.exists():
+        for p in SKILLS_DIR.iterdir():
+            if p.is_file() and p.suffix.lower() in [".md", ".txt", ".py", ".json"]:
+                skills.append(p.name)
+    return sorted(skills)
+
+def build_system_prompt():
+    base = """Ты — Sonivo AI Agent, автономный Senior iOS Swift разработчик и DevOps инженер проекта Sonivo (музыкальный плеер для iOS на SwiftUI).
 Твоя цель — выполнять любые задачи пользователя прямо из Telegram:
 - Анализировать структуру проекта, искать нужные файлы и код.
 - Исправлять ошибки компиляции, баги, краши и логи.
@@ -51,6 +137,20 @@ SYSTEM_PROMPT = """Ты — Sonivo AI Agent, автономный Senior iOS Swi
 Перед изменением файла ВСЕГДА читай его содержимое (read_file или search_code).
 После успешного внесения правок сделай git_commit_and_push с понятным описанием изменений.
 """
+    custom_skills = []
+    if SKILLS_DIR.exists():
+        for p in SKILLS_DIR.iterdir():
+            if p.is_file() and p.suffix.lower() in [".md", ".txt", ".py", ".json"]:
+                try:
+                    content = p.read_text(encoding="utf-8", errors="ignore")
+                    custom_skills.append(f"\n--- [ЗАГРУЖЕННЫЙ СКИЛЛ: {p.name}] ---\n{content}\n")
+                except Exception:
+                    pass
+
+    if custom_skills:
+        base += "\n\n=== АКТИВНЫЕ ПОЛЬЗОВАТЕЛЬСКИЕ СКИЛЛЫ И ИНСТРУКЦИИ ===\n" + "\n".join(custom_skills)
+
+    return base
 
 # --- ИНСТРУМЕНТЫ (TOOLS) ДЛЯ GEMINI ---
 TOOL_DECLARATIONS = [
@@ -137,6 +237,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "get_failed_build_logs",
         "description": "Получить лог ошибки последней упавшей сборки GitHub Actions для диагностики.",
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
+        "name": "trigger_ipa_build",
+        "description": "Запустить новую сборку IPA в GitHub Actions вручную.",
         "parameters": {"type": "OBJECT", "properties": {}}
     },
     {
@@ -269,6 +374,10 @@ def tool_get_failed_build_logs():
     out = res.stdout.strip() or res.stderr.strip()
     return {"failed_logs": out[-4000:] if len(out) > 4000 else out}
 
+def tool_trigger_ipa_build():
+    res = subprocess.run(["gh", "workflow", "run", "build-ipa.yml"], cwd=REPO_DIR, capture_output=True, text=True)
+    return {"success": res.returncode == 0, "output": res.stdout.strip() or res.stderr.strip()}
+
 def tool_run_shell_command(command):
     res = subprocess.run(command, cwd=REPO_DIR, capture_output=True, text=True, shell=True)
     return {
@@ -287,6 +396,7 @@ TOOL_MAP = {
     "git_commit_and_push": tool_git_commit_and_push,
     "check_ci_build": tool_check_ci_build,
     "get_failed_build_logs": tool_get_failed_build_logs,
+    "trigger_ipa_build": tool_trigger_ipa_build,
     "run_shell_command": tool_run_shell_command
 }
 
@@ -304,58 +414,102 @@ def tg_request(method, payload=None):
         print(f"[TG Error {method}]: {e}")
         return None
 
-def tg_send(text, chat_id=ALLOWED_CHAT_ID, reply_to=None):
+def tg_send(text, chat_id=ALLOWED_CHAT_ID, reply_to=None, reply_markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     if reply_to:
         payload["reply_to_message_id"] = reply_to
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     res = tg_request("sendMessage", payload)
     if not res or not res.get("ok"):
         payload.pop("parse_mode", None)
         return tg_request("sendMessage", payload)
     return res
 
-def tg_edit(text, chat_id, message_id):
+def tg_edit(text, chat_id, message_id, reply_markup=None):
     payload = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     res = tg_request("editMessageText", payload)
     if not res or not res.get("ok"):
         payload.pop("parse_mode", None)
         return tg_request("editMessageText", payload)
     return res
 
-# --- GEMINI AGENT CORE ---
+def get_main_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🚀 Собрать IPA"}, {"text": "📊 Статус & Билды"}],
+            [{"text": "🔑 Ключи & Квоты"}, {"text": "📦 Мои Скиллы"}],
+            [{"text": "📋 Логи ошибок"}, {"text": "🧠 Сменить модель"}]
+        ],
+        "resize_keyboard": True,
+        "persistent": True
+    }
 
-def call_gemini(contents):
-    for model in [MODEL_NAME, "gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-        payload = {
-            "contents": contents,
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-            "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
-            "generationConfig": {
-                "temperature": 0.2
-            }
-        }
+# --- GEMINI AGENT CORE WITH AUTOMATIC POOL ROTATION ---
+
+def call_gemini_with_fallback(contents, chat_id=None):
+    config = load_config()
+    model = config.get("ACTIVE_MODEL", "gemini-2.5-pro")
+    keys = config.get("GEMINI_KEYS", [])
+    
+    if not keys:
+        return {"error": "Нет добавленных ключей Gemini API! Нажмите '🔑 Ключи & Квоты' и добавьте ключ."}
         
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
-                data = json.loads(resp.read().decode())
-                return data
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode()
-            print(f"[Gemini HTTP {e.code} on {model}]: {err_body}")
-            if e.code in [404, 400]:
-                continue
-            return {"error": f"HTTP {e.code}: {err_body}"}
-        except Exception as e:
-            print(f"[Gemini Error on {model}]: {e}")
-            return {"error": str(e)}
+    system_prompt = build_system_prompt()
+    
+    for attempt in range(len(keys)):
+        key_entry = get_active_key_entry()
+        if not key_entry:
+            return {"error": "Все ключи Gemini временно исчерпали квоту (кулдаун). Подождите 1-2 минуты или добавьте ещё один аккаунт."}
             
-    return {"error": "All Gemini models failed to respond."}
+        key_val = key_entry.get("key")
+        key_id = key_entry.get("id")
+        key_name = key_entry.get("name")
+        
+        for m in [model, "gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"]:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
+            payload = {
+                "contents": contents,
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
+                "generationConfig": {"temperature": 0.2}
+            }
+            
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    data = json.loads(resp.read().decode())
+                    record_key_success(key_id)
+                    return data
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode()
+                print(f"[Gemini HTTP {e.code} on {m} / {key_name}]: {err_body}")
+                
+                if e.code in [429, 403]:
+                    next_name = record_key_exhausted(key_id, cooldown_seconds=90)
+                    if chat_id:
+                        msg = f"⚠️ *Квота на ключе '{key_name}' исчерпана!*"
+                        if next_name:
+                            msg += f"\n🔄 Автоматически переключился на *'{next_name}'*..."
+                        else:
+                            msg += "\n⏳ Ожидаю сброса лимита..."
+                        tg_send(msg, chat_id=chat_id)
+                    break
+                elif e.code in [404, 400]:
+                    continue
+                else:
+                    return {"error": f"HTTP {e.code}: {err_body}"}
+            except Exception as e:
+                print(f"[Gemini Error on {m} / {key_name}]: {e}")
+                return {"error": str(e)}
+                
+    return {"error": "Все доступные аккаунты Gemini исчерпали свои квоты. Добавьте новый бесплатный ключ через '🔑 Ключи & Квоты'."}
 
 def execute_agent_loop(user_prompt, status_msg_id, chat_id):
     history = [
@@ -367,7 +521,7 @@ def execute_agent_loop(user_prompt, status_msg_id, chat_id):
         if status_msg_id:
             tg_edit(f"🤖 *Sonivo AI Agent* (Шаг {step+1}/{max_steps}):\nДумаю над решением...", chat_id, status_msg_id)
         
-        response = call_gemini(history)
+        response = call_gemini_with_fallback(history, chat_id=chat_id)
         if "error" in response:
             return f"❌ Ошибка Gemini API: {response['error']}"
         
@@ -401,6 +555,8 @@ def execute_agent_loop(user_prompt, status_msg_id, chat_id):
                 action_desc = f"🚀 Отправляю коммит в GitHub: *{args.get('commit_message')}*..."
             elif name == "check_ci_build":
                 action_desc = "🔍 Проверяю статус сборки IPA в GitHub Actions..."
+            elif name == "trigger_ipa_build":
+                action_desc = "🚀 Запускаю новую сборку IPA в GitHub Actions..."
                 
             if status_msg_id:
                 tg_edit(f"🤖 *Sonivo AI Agent* (Шаг {step+1}):\n{action_desc}", chat_id, status_msg_id)
@@ -428,23 +584,101 @@ def execute_agent_loop(user_prompt, status_msg_id, chat_id):
         
     return "⚠️ Достигнут лимит шагов (15). Завершаю сессию."
 
+# --- ОБРАБОТЧИКИ МЕНЮ И КОМАНД ---
+
+def show_keys_menu(chat_id, reply_to=None):
+    keys = get_keys()
+    now = time.time()
+    
+    text = "🔑 *Управление ключами и квотами Gemini API*\n\n"
+    if not keys:
+        text += "_У вас пока нет добавленных ключей!_\n"
+    else:
+        for k in keys:
+            k_id = k.get("id")
+            k_name = k.get("name")
+            k_val = k.get("key", "")
+            masked = k_val[:6] + "..." + k_val[-4:] if len(k_val) > 10 else "***"
+            status = k.get("status", "active")
+            cooldown = max(0, int(k.get("cooldown_until", 0) - now))
+            
+            status_icon = "🟢 Активен"
+            if cooldown > 0:
+                status_icon = f"⏳ Кулдаун ({cooldown} сек)"
+            elif status != "active":
+                status_icon = "🔴 Ошибка"
+                
+            req_today = k.get("requests_today", 0)
+            req_total = k.get("requests_total", 0)
+            
+            text += f"*{k_name}* (`{masked}`)\n"
+            text += f"• Статус: {status_icon}\n"
+            text += f"• Запросов сегодня: `{req_today}` (Всего: `{req_total}`)\n\n"
+            
+    text += "💡 _При исчерпании лимита бот автоматически переключится на следующий свободный аккаунт!_\n"
+    text += "Чтобы добавить новый ключ, отправьте: `/add_key <API_KEY> [Название]` или нажмите кнопку ниже:"
+    
+    inline_kb = {
+        "inline_keyboard": [
+            [{"text": "➕ Добавить ключ API", "callback_data": "btn_add_key"}],
+            [{"text": "🔄 Обновить статус", "callback_data": "btn_refresh_keys"}]
+        ]
+    }
+    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
+
+def show_skills_menu(chat_id, reply_to=None):
+    skills = get_installed_skills()
+    text = "📦 *Загруженные Скиллы и Агенты*\n\n"
+    if not skills:
+        text += "_Скиллы пока не установлены._\n\n"
+    else:
+        text += "Активные скиллы, внедрённые в системный промпт агента:\n"
+        for s in skills:
+            text += f"• 📄 *{s}*\n"
+        text += "\n"
+        
+    text += "📥 *Как добавить скилл:*\n"
+    text += "Просто перешлите боту любой файл (`.md`, `.txt`, `.py`, `.json`) со своими инструкциями, правилами кода или дизайном!\n"
+    text += "Бот мгновенно сохранит его в `agent_skills/` и начнёт использовать."
+    
+    tg_send(text, chat_id=chat_id, reply_to=reply_to)
+
+def show_model_menu(chat_id, reply_to=None):
+    config = load_config()
+    current = config.get("ACTIVE_MODEL", "gemini-2.5-pro")
+    
+    text = f"🧠 *Выбор модели AI*\n\nТекущая модель: *{current}*\n\n"
+    text += "• *gemini-2.5-pro* — максимальный интеллект, глубокий рефакторинг и исправление сложных Swift крашей.\n"
+    text += "• *gemini-2.5-flash* — молниеносная скорость, высокие лимиты запросов.\n"
+    text += "• *gemini-1.5-pro* — классическая стабильная про-модель."
+    
+    inline_kb = {
+        "inline_keyboard": [
+            [{"text": f"{'✅ ' if current=='gemini-2.5-pro' else ''}Gemini 2.5 Pro", "callback_data": "model_gemini-2.5-pro"}],
+            [{"text": f"{'✅ ' if current=='gemini-2.5-flash' else ''}Gemini 2.5 Flash", "callback_data": "model_gemini-2.5-flash"}],
+            [{"text": f"{'✅ ' if current=='gemini-1.5-pro' else ''}Gemini 1.5 Pro", "callback_data": "model_gemini-1.5-pro"}]
+        ]
+    }
+    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
+
 # --- ОСНОВНОЙ ЦИКЛ ОПРОСА TELEGRAM ---
 
 def start_bot():
     print("="*60)
-    print("🤖 Sonivo Autonomous Telegram AI Developer Agent")
+    print("🤖 Sonivo Autonomous Telegram AI Developer Agent v2.0")
     print(f"📌 Авторизованный Chat ID: {ALLOWED_CHAT_ID}")
     print(f"📁 Репозиторий: {REPO_DIR}")
     print("="*60)
     
     tg_send(
-        "🚀 *Sonivo AI Agent активирован и готов к работе!*\n\n"
-        "Вы можете писать мне любые задачи на русском языке:\n"
-        "• «_Сделай фон плеера более ярким_»\n"
-        "• «_Почини краш в PlayerCore, вот лог..._»\n"
-        "• «_Добавь новую кнопку в меню_»\n"
-        "• «_Проверь статус сборки IPA_»\n\n"
-        "Я сам найду код, внесу изменения, сделаю коммит, запущу сборку и пришлю вам IPA! 🎧"
+        "🚀 *Sonivo AI Agent v2.0 активирован!*\n\n"
+        "✨ *Что нового:*\n"
+        "• 📱 Удобные кнопки меню прямо под клавиатурой\n"
+        "• 🔑 Пул ключей Gemini с *автоматическим переключением* при исчерпании квот\n"
+        "• 📦 Возможность загружать свои *Скиллы и Агентов* файлами прямо в чат\n"
+        "• 🚀 Запуск сборки IPA в один клик\n\n"
+        "Пишите любые задачи или выберите действие в меню ниже! 🎧",
+        reply_markup=get_main_keyboard()
     )
     
     last_update_id = 0
@@ -457,6 +691,31 @@ def start_bot():
                 
             for u in updates.get("result", []):
                 last_update_id = u["update_id"]
+                
+                if "callback_query" in u:
+                    cq = u["callback_query"]
+                    cq_id = cq["id"]
+                    cq_data = cq.get("data", "")
+                    cq_from = cq.get("from", {}).get("id")
+                    
+                    if cq_from != ALLOWED_CHAT_ID:
+                        continue
+                        
+                    tg_request("answerCallbackQuery", {"callback_query_id": cq_id})
+                    
+                    if cq_data == "btn_add_key":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_API_KEY"
+                        tg_send("🔑 *Отправьте ваш ключ Gemini API следующим сообщением:*")
+                    elif cq_data == "btn_refresh_keys":
+                        show_keys_menu(ALLOWED_CHAT_ID)
+                    elif cq_data.startswith("model_"):
+                        new_model = cq_data.replace("model_", "")
+                        config = load_config()
+                        config["ACTIVE_MODEL"] = new_model
+                        save_config(config)
+                        tg_send(f"✅ Активная модель переключена на: *{new_model}*")
+                    continue
+                    
                 msg = u.get("message")
                 if not msg:
                     continue
@@ -466,6 +725,28 @@ def start_bot():
                     print(f"[Security] Ignored message from unauthorized user: {sender_id}")
                     continue
                     
+                msg_id = msg["message_id"]
+                
+                if "document" in msg:
+                    doc = msg["document"]
+                    doc_name = doc.get("file_name", "custom_skill.md")
+                    file_id = doc.get("file_id")
+                    
+                    file_info = tg_request("getFile", {"file_id": file_id})
+                    if file_info and file_info.get("ok"):
+                        f_path = file_info["result"]["file_path"]
+                        download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{f_path}"
+                        try:
+                            with urllib.request.urlopen(download_url) as r:
+                                content = r.read().decode("utf-8", errors="replace")
+                                target_file = SKILLS_DIR / doc_name
+                                target_file.write_text(content, encoding="utf-8")
+                                tg_send(f"📦 *Скилл `{doc_name}` успешно загружен и активирован!*\nТеперь AI-агент использует эти инструкции в своей работе.", reply_to=msg_id)
+                                continue
+                        except Exception as ex:
+                            tg_send(f"❌ Ошибка сохранения файла: {ex}", reply_to=msg_id)
+                            continue
+                            
                 text = msg.get("text", "").strip()
                 if not text:
                     if "caption" in msg:
@@ -473,17 +754,46 @@ def start_bot():
                     else:
                         continue
                         
-                msg_id = msg["message_id"]
                 print(f"\n[User Request]: {text}")
                 
-                if text == "/start":
+                if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_API_KEY":
+                    user_states.pop(ALLOWED_CHAT_ID, None)
+                    if len(text) > 15:
+                        k_name = add_new_key(text)
+                        tg_send(f"✅ *Ключ успешно добавлен!* Название: *{k_name}*\nТеперь агент может автоматически переключаться на него при исчерпании квот.", reply_to=msg_id)
+                        show_keys_menu(ALLOWED_CHAT_ID)
+                    else:
+                        tg_send("⚠️ Текст не похож на ключ Gemini API. Добавление отменено.", reply_to=msg_id)
+                    continue
+                    
+                if text in ["/start", "Меню"]:
                     tg_send(
                         "👋 Привет! Я твой личный AI-разработчик Sonivo.\n\n"
                         "Отправь мне задачу, ошибку, лог или пожелание — я всё сделаю сам!",
-                        reply_to=msg_id
+                        reply_to=msg_id,
+                        reply_markup=get_main_keyboard()
                     )
                     continue
-                elif text == "/status":
+                elif text in ["/keys", "🔑 Ключи & Квоты"]:
+                    show_keys_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text in ["/skills", "📦 Мои Скиллы"]:
+                    show_skills_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text in ["/model", "🧠 Сменить модель"]:
+                    show_model_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text.startswith("/add_key"):
+                    parts = text.split(maxsplit=2)
+                    if len(parts) >= 2:
+                        k_val = parts[1]
+                        k_name = parts[2] if len(parts) > 2 else None
+                        added_name = add_new_key(k_val, k_name)
+                        tg_send(f"✅ *Ключ успешно добавлен!* Название: *{added_name}*", reply_to=msg_id)
+                    else:
+                        tg_send("Использование: `/add_key <API_KEY> [Название]`", reply_to=msg_id)
+                    continue
+                elif text in ["/status", "📊 Статус & Билды"]:
                     status = tool_git_status()
                     ci = tool_check_ci_build()
                     tg_send(
@@ -492,9 +802,16 @@ def start_bot():
                         reply_to=msg_id
                     )
                     continue
-                elif text == "/logs":
+                elif text in ["/logs", "📋 Логи ошибок"]:
                     logs = tool_get_failed_build_logs()
                     tg_send(f"📋 *Логи последней ошибки*:\n```\n{logs.get('failed_logs')}\n```", reply_to=msg_id)
+                    continue
+                elif text in ["/build", "🚀 Собрать IPA"]:
+                    res = tool_trigger_ipa_build()
+                    if res.get("success"):
+                        tg_send("🚀 *Сборка IPA запущена в GitHub Actions!*\nКак только билд завершится, готовый `.ipa` прилетит сюда в чат.", reply_to=msg_id)
+                    else:
+                        tg_send(f"⚠️ Ошибка запуска сборки: {res.get('output')}", reply_to=msg_id)
                     continue
                     
                 status_res = tg_send("⏳ *Принял задачу!* Начинаю работу...", reply_to=msg_id)
