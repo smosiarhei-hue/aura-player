@@ -129,6 +129,12 @@ screen = replace_required(screen,
                                 .padding(.top, 18)
                         }''', "immersive player layout")
 screen = replace_required(screen,
+'''                    .padding(.horizontal, 22)
+                    .frame(maxWidth: .infinity)''',
+'''                    .padding(.horizontal, 22)
+                    .frame(width: geo.size.width, alignment: .center)
+                    .clipped()''', "player viewport width")
+screen = replace_required(screen,
 '''            AG.bg
 
             RadialGradient''',
@@ -153,20 +159,23 @@ screen = replace_required(screen,
 '''    // MARK: Header
 ''',
 '''    @ViewBuilder private var fullScreenMediaBackground: some View {
-        if settings.videoShotsEnabled,
-           !reduceMotion,
-           let value = track?.videoShotURL,
-           let url = URL(string: value) {
-            FullScreenArtworkVideo(url: url)
-                .id(value)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-        } else {
-            artwork
-                .scaledToFill()
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
+        GeometryReader { mediaGeo in
+            Group {
+                if settings.videoShotsEnabled,
+                   !reduceMotion,
+                   let value = track?.videoShotURL,
+                   let url = URL(string: value) {
+                    FullScreenArtworkVideo(url: url)
+                        .id(value)
+                } else {
+                    artwork
+                }
+            }
+            .frame(width: mediaGeo.size.width, height: mediaGeo.size.height)
+            .clipped()
         }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     // MARK: Header
