@@ -1014,11 +1014,15 @@ def show_skills_menu(chat_id, reply_to=None):
             text += f"• 📄 *{s}*\n"
         text += "\n"
         
-    text += "📥 *Как добавить скилл:*\n"
-    text += "Просто перешлите боту любой файл (`.md`, `.txt`, `.py`, `.json`) со своими инструкциями, правилами кода или дизайном!\n"
-    text += "Бот мгновенно сохранит его в `agent_skills/` и начнёт использовать."
+    text += "💡 *Скиллы* — это специализированные файлы правил, стилей и архитектуры (`.md`, `.txt`).\n\n"
+    text += "Чтобы загрузить новый скилл, нажмите кнопку ниже:"
     
-    tg_send(text, chat_id=chat_id, reply_to=reply_to)
+    inline_kb = {
+        "inline_keyboard": [
+            [{"text": "➕ Загрузить файл скилла", "callback_data": "btn_add_skill"}]
+        ]
+    }
+    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
 
 def show_model_menu(chat_id, reply_to=None):
     config = load_config()
@@ -1147,6 +1151,9 @@ def start_bot():
                         config["BOT_MODE"] = "chat"
                         save_config(config)
                         tg_send("💬 *Режим переключен на: Личный Чат / Консультант*\nВ этом режиме бот отвечает на любые вопросы по Sonivo, обсуждает идеи и анализирует медиа без изменения файлов.", reply_markup=get_main_keyboard())
+                    elif cq_data == "btn_add_skill":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_SKILL"
+                        tg_send("📥 *Отправьте файл скилла или инструкций (`.md`, `.txt`, `.json`):*\nБот сохранит его в постоянные навыки `agent_skills/`.", reply_markup=get_main_keyboard())
                     elif cq_data.startswith("model_"):
                         new_model = cq_data.replace("model_", "")
                         config = load_config()
@@ -1166,10 +1173,10 @@ def start_bot():
                     
                 msg_id = msg["message_id"]
                 
-                # Обработка отправки файлов со скиллами
+                # Обработка отправки файлов и документов (логи, ошибки, код, скиллы)
                 if "document" in msg:
                     doc = msg["document"]
-                    doc_name = doc.get("file_name", "custom_skill.md")
+                    doc_name = doc.get("file_name", "log.txt")
                     file_id = doc.get("file_id")
                     
                     file_info = tg_request("getFile", {"file_id": file_id})
@@ -1179,12 +1186,26 @@ def start_bot():
                         try:
                             with urllib.request.urlopen(download_url) as r:
                                 content = r.read().decode("utf-8", errors="replace")
-                                target_file = SKILLS_DIR / doc_name
-                                target_file.write_text(content, encoding="utf-8")
-                                tg_send(f"📦 *Скилл `{doc_name}` успешно загружен и активирован!*\nТеперь AI-агент использует эти инструкции в своей работе.", reply_to=msg_id)
-                                continue
+                                
+                                # Если пользователь явно нажал "Загрузить файл скилла"
+                                if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_SKILL":
+                                    user_states.pop(ALLOWED_CHAT_ID, None)
+                                    target_file = SKILLS_DIR / doc_name
+                                    target_file.write_text(content, encoding="utf-8")
+                                    tg_send(f"📦 *Скилл `{doc_name}` успешно загружен и активирован!*\nТеперь AI-агент использует эти инструкции в системном промпте.", reply_to=msg_id)
+                                    continue
+                                else:
+                                    # Обычный лог, код или файл для анализа
+                                    caption = msg.get("caption", "").strip()
+                                    file_prompt = f"📄 Пользователь прикрепил файл `{doc_name}` (лог/ошибка/код):\n\n```text\n{content[:18000]}\n```\n\n"
+                                    if caption:
+                                        file_prompt += f"Комментарий: {caption}"
+                                    else:
+                                        file_prompt += "Внимательно изучи этот лог/файл, найди проблему и исправь её в проекте."
+                                    
+                                    msg["text"] = file_prompt
                         except Exception as ex:
-                            tg_send(f"❌ Ошибка сохранения файла: {ex}", reply_to=msg_id)
+                            tg_send(f"❌ Ошибка чтения файла: {ex}", reply_to=msg_id)
                             continue
                             
                 # Обработка мультимодальности (Фото, Видео, Голосовые)
