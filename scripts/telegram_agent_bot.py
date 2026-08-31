@@ -88,11 +88,11 @@ cfg = load_config()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg.get("TELEGRAM_BOT_TOKEN", "8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA")
 ALLOWED_CHAT_ID = int(os.environ.get("TELEGRAM_CHAT_ID") or cfg.get("TELEGRAM_CHAT_ID", 8559869613))
 
-# --- ПУЛ КЛЮЧЕЙ GEMINI И УПРАВЛЕНИЕ КВОТАМИ ---
+# --- ПУЛ КЛЮЧЕЙ И МУЛЬТИ-ПРОВАЙДЕРЫ (Gemini, DeepSeek, OpenRouter, Groq, OpenAI) ---
 
 def get_keys():
     config = load_config()
-    return config.get("GEMINI_KEYS", [])
+    return config.get("AI_KEYS") or config.get("GEMINI_KEYS", [])
 
 def get_active_key_entry():
     keys = get_keys()
@@ -104,47 +104,84 @@ def get_active_key_entry():
 
 def record_key_success(key_id):
     config = load_config()
-    for k in config.get("GEMINI_KEYS", []):
+    key_list = config.get("AI_KEYS") or config.get("GEMINI_KEYS", [])
+    for k in key_list:
         if k.get("id") == key_id:
             k["requests_today"] = k.get("requests_today", 0) + 1
             k["requests_total"] = k.get("requests_total", 0) + 1
             k["last_used"] = time.strftime("%Y-%m-%d %H:%M:%S")
             k["status"] = "active"
             break
+    config["AI_KEYS"] = key_list
+    config["GEMINI_KEYS"] = key_list
     save_config(config)
 
 def record_key_exhausted(key_id, cooldown_seconds=120):
     config = load_config()
+    key_list = config.get("AI_KEYS") or config.get("GEMINI_KEYS", [])
     next_key_name = None
-    for idx, k in enumerate(config.get("GEMINI_KEYS", [])):
+    for k in key_list:
         if k.get("id") == key_id:
             k["status"] = "cooldown"
             k["cooldown_until"] = time.time() + cooldown_seconds
-            for other in config.get("GEMINI_KEYS", []):
+            for other in key_list:
                 if other.get("id") != key_id and other.get("cooldown_until", 0) <= time.time():
                     next_key_name = other.get("name")
                     break
             break
+    config["AI_KEYS"] = key_list
+    config["GEMINI_KEYS"] = key_list
     save_config(config)
     return next_key_name
 
-def add_new_key(api_key, name=None):
+def add_new_key(api_key, name=None, provider=None, base_url=None, model=None):
     config = load_config()
-    keys = config.setdefault("GEMINI_KEYS", [])
-    new_id = max([k.get("id", 0) for k in keys] + [0]) + 1
-    key_name = name or f"Аккаунт {new_id}"
-    keys.append({
+    key_list = config.get("AI_KEYS") or config.get("GEMINI_KEYS", [])
+    new_id = max([k.get("id", 0) for k in key_list] + [0]) + 1
+    
+    clean_key = api_key.strip()
+    if not provider:
+        if clean_key.startswith("sk-or-"):
+            provider = "openrouter"
+            base_url = "https://openrouter.ai/api/v1"
+            model = model or "deepseek/deepseek-r1"
+            default_name = f"OpenRouter {new_id}"
+        elif clean_key.startswith("gsk_"):
+            provider = "groq"
+            base_url = "https://api.groq.com/openai/v1"
+            model = model or "llama-3.3-70b-versatile"
+            default_name = f"Groq {new_id}"
+        elif clean_key.startswith("sk-"):
+            provider = "deepseek"
+            base_url = "https://api.deepseek.com"
+            model = model or "deepseek-chat"
+            default_name = f"DeepSeek {new_id}"
+        else:
+            provider = "gemini"
+            base_url = "https://generativelanguage.googleapis.com/v1beta"
+            model = model or "gemini-3.6-flash"
+            default_name = f"Gemini {new_id}"
+    else:
+        default_name = f"{provider.capitalize()} {new_id}"
+
+    key_name = name or default_name
+    key_list.append({
         "id": new_id,
+        "provider": provider,
         "name": key_name,
-        "key": api_key.strip(),
+        "key": clean_key,
+        "base_url": base_url,
+        "model": model,
         "status": "active",
         "requests_today": 0,
         "requests_total": 0,
         "last_used": None,
         "cooldown_until": 0
     })
+    config["AI_KEYS"] = key_list
+    config["GEMINI_KEYS"] = key_list
     save_config(config)
-    return key_name
+    return key_name, provider
 
 # --- СКИЛЛЫ И КАСТОМНЫЕ АГЕНТЫ ---
 
@@ -811,69 +848,208 @@ def show_mode_menu(chat_id, reply_to=None):
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
 
-# --- GEMINI AGENT CORE WITH AUTOMATIC POOL ROTATION ---
+# --- МУЛЬТИ-ПРОВАЙДЕРНЫЙ AI ДВИЖОК (Gemini, DeepSeek, OpenRouter, Groq, OpenAI) ---
 
-def call_gemini_with_fallback(contents, chat_id=None):
-    config = load_config()
-    model = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
-    keys = config.get("GEMINI_KEYS", [])
-    
+def get_openai_tools():
+    openai_tools = []
+    for decl in TOOL_DECLARATIONS:
+        props = {}
+        for k, v in decl.get("parameters", {}).get("properties", {}).items():
+            props[k] = {
+                "type": v.get("type", "string").lower(),
+                "description": v.get("description", "")
+            }
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": decl["name"],
+                "description": decl["description"],
+                "parameters": {
+                    "type": "object",
+                    "properties": props,
+                    "required": decl.get("parameters", {}).get("required", [])
+                }
+            }
+        })
+    return openai_tools
+
+def gemini_contents_to_openai_messages(contents, system_prompt):
+    messages = [{"role": "system", "content": system_prompt}]
+    for c in contents:
+        role = c.get("role")
+        parts = c.get("parts", [])
+        
+        if role == "user":
+            func_resps = [p["functionResponse"] for p in parts if "functionResponse" in p]
+            if func_resps:
+                for fr in func_resps:
+                    content_str = json.dumps(fr.get("response", {}).get("content", {}), ensure_ascii=False)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": fr.get("name", "call_1"),
+                        "content": content_str
+                    })
+            else:
+                text_parts = [p.get("text", "") for p in parts if "text" in p]
+                if text_parts:
+                    messages.append({"role": "user", "content": "\n".join(text_parts)})
+        elif role == "model":
+            func_calls = [p["functionCall"] for p in parts if "functionCall" in p]
+            text_parts = [p.get("text", "") for p in parts if "text" in p]
+            msg = {"role": "assistant"}
+            if text_parts:
+                msg["content"] = "\n".join(text_parts)
+            if func_calls:
+                t_calls = []
+                for idx, fc in enumerate(func_calls):
+                    t_calls.append({
+                        "id": fc.get("name", f"call_{idx+1}"),
+                        "type": "function",
+                        "function": {
+                            "name": fc.get("name"),
+                            "arguments": json.dumps(fc.get("args", {}))
+                        }
+                    })
+                msg["tool_calls"] = t_calls
+            messages.append(msg)
+    return messages
+
+def call_openai_compatible(base_url, api_key, model, messages):
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "tools": get_openai_tools(),
+        "tool_choice": "auto",
+        "temperature": 0.2
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Sonivo-Agent"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        data = json.loads(resp.read().decode())
+        choice = data.get("choices", [{}])[0]
+        msg = choice.get("message", {})
+        
+        parts = []
+        if msg.get("content"):
+            parts.append({"text": msg["content"]})
+        
+        for tc in msg.get("tool_calls", []):
+            fn = tc.get("function", {})
+            fn_name = fn.get("name")
+            try:
+                fn_args = json.loads(fn.get("arguments", "{}"))
+            except Exception:
+                fn_args = {}
+            parts.append({
+                "functionCall": {
+                    "name": fn_name,
+                    "args": fn_args
+                }
+            })
+            
+        return {
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": parts
+                    }
+                }
+            ]
+        }
+
+def call_ai_with_fallback(contents, chat_id=None):
+    keys = get_keys()
     if not keys:
-        return {"error": "Нет добавленных ключей Gemini API! Нажмите '🔑 Ключи & Квоты' и добавьте ключ."}
+        return {"error": "Нет добавленных ключей API! Нажмите '🔑 Ключи & Квоты' и добавьте ключ Gemini, DeepSeek или OpenRouter."}
         
     system_prompt = build_system_prompt()
     
     for attempt in range(len(keys)):
         key_entry = get_active_key_entry()
         if not key_entry:
-            return {"error": "Все ключи Gemini временно исчерпали квоту (кулдаун). Подождите 1-2 минуты или добавьте ещё один аккаунт."}
+            return {"error": "Все ключи временно исчерпали квоту (кулдаун). Подождите 1-2 минуты или добавьте ещё один ключ."}
             
         key_val = key_entry.get("key")
         key_id = key_entry.get("id")
         key_name = key_entry.get("name")
+        provider = key_entry.get("provider", "gemini")
+        base_url = key_entry.get("base_url") or "https://api.deepseek.com"
+        model = key_entry.get("model") or "gemini-3.6-flash"
         
-        for m in [model, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.5-flash", "gemini-3.1-pro-preview"]:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
-            payload = {
-                "contents": contents,
-                "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
-                "generationConfig": {"temperature": 0.2}
-            }
-            
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
+        if provider == "gemini":
+            models_to_try = [model, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-3.1-pro-preview"]
+            for m in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
+                payload = {
+                    "contents": contents,
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
+                    "generationConfig": {"temperature": 0.2}
+                }
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=90) as resp:
+                        data = json.loads(resp.read().decode())
+                        record_key_success(key_id)
+                        data["_provider_name"] = f"Gemini ({m})"
+                        return data
+                except urllib.error.HTTPError as e:
+                    err_body = e.read().decode()
+                    print(f"[Gemini HTTP {e.code} on {m} / {key_name}]: {err_body}")
+                    if e.code in [429, 403]:
+                        next_name = record_key_exhausted(key_id, cooldown_seconds=90)
+                        if chat_id:
+                            msg = f"⚠️ *Квота на ключе '{key_name}' исчерпана!*"
+                            if next_name:
+                                msg += f"\n🔄 Автоматически переключаюсь на *'{next_name}'*..."
+                            tg_send(msg, chat_id=chat_id)
+                        break
+                    elif e.code in [404, 400]:
+                        continue
+                    else:
+                        return {"error": f"HTTP {e.code}: {err_body}"}
+                except Exception as e:
+                    print(f"[Gemini Error on {m} / {key_name}]: {e}")
+                    return {"error": str(e)}
+        else:
+            # OpenAI-compatible API (DeepSeek, OpenRouter, Groq, OpenAI)
             try:
-                with urllib.request.urlopen(req, timeout=90) as resp:
-                    data = json.loads(resp.read().decode())
-                    record_key_success(key_id)
-                    return data
+                openai_messages = gemini_contents_to_openai_messages(contents, system_prompt)
+                data = call_openai_compatible(base_url, key_val, model, openai_messages)
+                record_key_success(key_id)
+                data["_provider_name"] = f"{provider.capitalize()} ({model})"
+                return data
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode()
-                print(f"[Gemini HTTP {e.code} on {m} / {key_name}]: {err_body}")
-                
+                print(f"[{provider.capitalize()} HTTP {e.code} / {key_name}]: {err_body}")
                 if e.code in [429, 403]:
                     next_name = record_key_exhausted(key_id, cooldown_seconds=90)
                     if chat_id:
-                        msg = f"⚠️ *Квота на ключе '{key_name}' исчерпана!*"
+                        msg = f"⚠️ *Квота на провайдере '{key_name}' исчерпана!*"
                         if next_name:
-                            msg += f"\n🔄 Автоматически переключился на *'{next_name}'*..."
-                        else:
-                            msg += "\n⏳ Ожидаю сброса лимита..."
+                            msg += f"\n🔄 Переключаюсь на *'{next_name}'*..."
                         tg_send(msg, chat_id=chat_id)
-                    break
-                elif e.code in [404, 400]:
                     continue
                 else:
                     return {"error": f"HTTP {e.code}: {err_body}"}
             except Exception as e:
-                print(f"[Gemini Error on {m} / {key_name}]: {e}")
+                print(f"[{provider.capitalize()} Error / {key_name}]: {e}")
                 return {"error": str(e)}
                 
-    return {"error": "Все доступные аккаунты Gemini исчерпали свои квоты. Добавьте новый бесплатный ключ через '🔑 Ключи & Квоты'."}
+    return {"error": "Все доступные ключи API исчерпали свои квоты. Добавьте DeepSeek или Gemini ключ через '🔑 Ключи & Квоты'."}
 
 def execute_agent_loop(user_input, status_msg_id, chat_id):
     if isinstance(user_input, list):
@@ -888,16 +1064,14 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
     committed = False
     max_steps = 15
     for step in range(max_steps):
-        if status_msg_id:
-            tg_edit(f"🤖 *{role_title}* (Шаг {step+1}/{max_steps}):\nДумаю над ответом...", chat_id, status_msg_id)
-        
-        response = call_gemini_with_fallback(history, chat_id=chat_id)
+        response = call_ai_with_fallback(history, chat_id=chat_id)
         if "error" in response:
-            return {"text": f"❌ Ошибка Gemini API: {response['error']}", "committed": False}
+            return {"text": f"❌ Ошибка API: {response['error']}", "committed": False}
         
+        provider_name = response.get("_provider_name", "AI Engine")
         candidates = response.get("candidates", [])
         if not candidates:
-            return {"text": "❌ Gemini вернул пустой ответ.", "committed": False}
+            return {"text": "❌ Модель вернула пустой ответ.", "committed": False}
         
         candidate = candidates[0]
         content = candidate.get("content", {})
@@ -917,18 +1091,31 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
             args = fc.get("args", {})
             
             if mode == "chat" and name in ["edit_file", "create_or_overwrite_file", "git_commit_and_push"]:
-                action_desc = f"💡 [Чат] Анализирую `{name}`..."
+                action_desc = f"💡 [Чат] Анализирую структуру `{name}`..."
                 result = {"info": "Changes skipped because agent is in Chat/Consultation mode. Provide advice/code in text response instead."}
             else:
                 action_desc = f"⚙️ Выполняю `{name}`..."
                 if name == "read_file":
                     action_desc = f"📖 Читаю `{args.get('file_path')}`..."
+                elif name == "search_code":
+                    action_desc = f"🔍 Ищу по коду: `{args.get('query')}`..."
                 elif name == "edit_file":
                     action_desc = f"✏️ Редактирую `{args.get('file_path')}`..."
+                elif name == "create_or_overwrite_file":
+                    action_desc = f"📄 Создаю/перезаписываю `{args.get('file_path')}`..."
                 elif name == "git_commit_and_push":
-                    action_desc = f"🚀 Отправляю коммит в GitHub: *{args.get('commit_message')}*..."
+                    action_desc = f"🚀 Отправляю коммит: *{args.get('commit_message')}*..."
                 elif name == "check_ci_build":
                     action_desc = "🔍 Проверяю статус сборки IPA в GitHub Actions..."
+                elif name == "trigger_ipa_build":
+                    action_desc = "🚀 Запускаю компиляцию IPA на macOS runner..."
+                
+                # Реальное отображение прогресса в Telegram
+                if status_msg_id:
+                    status_text = f"🤖 *{role_title}* (Шаг {step+1}/{max_steps})\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    status_text += f"⚙️ *Провайдер:* `{provider_name}`\n"
+                    status_text += f"⚡ *Действие:* {action_desc}"
+                    tg_edit(status_text, chat_id, status_msg_id)
                 
                 tool_func = TOOL_MAP.get(name)
                 if tool_func:
@@ -936,13 +1123,21 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
                         result = tool_func(**args)
                         if name == "git_commit_and_push" and result.get("success"):
                             committed = True
+                            
+                        # Отправляем предпросмотр изменений в реальном времени!
+                        if name == "edit_file" and result.get("success"):
+                            rep_snip = args.get("replacement_content", "").strip()
+                            if len(rep_snip) > 400:
+                                rep_snip = rep_snip[:400] + "\n// ... (остальной код обновлен)"
+                            diff_msg = f"✏️ *Внесены правки в* `{args.get('file_path')}`:\n```swift\n{rep_snip}\n```"
+                            tg_send(diff_msg, chat_id=chat_id)
+                        elif name == "create_or_overwrite_file" and result.get("success"):
+                            tg_send(f"📄 *Создан/обновлен файл* `{args.get('file_path')}`", chat_id=chat_id)
+                            
                     except Exception as ex:
                         result = {"error": str(ex)}
                 else:
                     result = {"error": f"Unknown tool: {name}"}
-                    
-            if status_msg_id:
-                tg_edit(f"🤖 *{role_title}* (Шаг {step+1}):\n{action_desc}", chat_id, status_msg_id)
             
             response_parts.append({
                 "functionResponse": {
@@ -967,7 +1162,7 @@ def show_keys_menu(chat_id, reply_to=None):
     keys = get_keys()
     now = time.time()
     
-    text = "🔑 *Управление ключами и квотами Gemini API*\n\n"
+    text = "🔑 *Пул ключей и AI-провайдеров (Gemini, DeepSeek, OpenRouter, Groq)*\n\n"
     if not keys:
         text += "_У вас пока нет добавленных ключей!_\n"
     else:
@@ -975,10 +1170,13 @@ def show_keys_menu(chat_id, reply_to=None):
             k_id = k.get("id")
             k_name = k.get("name")
             k_val = k.get("key", "")
+            provider = k.get("provider", "gemini").capitalize()
+            model = k.get("model", "auto")
             masked = k_val[:6] + "..." + k_val[-4:] if len(k_val) > 10 else "***"
             status = k.get("status", "active")
             cooldown = max(0, int(k.get("cooldown_until", 0) - now))
             
+            p_icon = "🟢" if provider.lower() == "gemini" else ("🐳" if provider.lower() == "deepseek" else "🌐")
             status_icon = "🟢 Активен"
             if cooldown > 0:
                 status_icon = f"⏳ Кулдаун ({cooldown} сек)"
@@ -988,17 +1186,18 @@ def show_keys_menu(chat_id, reply_to=None):
             req_today = k.get("requests_today", 0)
             req_total = k.get("requests_total", 0)
             
-            text += f"*{k_name}* (`{masked}`)\n"
-            text += f"• Статус: {status_icon}\n"
-            text += f"• Запросов сегодня: `{req_today}` (Всего: `{req_total}`)\n\n"
+            text += f"{p_icon} *{k_name}* [{provider} · `{model}`]\n"
+            text += f"• Ключ: `{masked}`\n"
+            text += f"• Статус: {status_icon} | Запросов сегодня: `{req_today}` (Всего: `{req_total}`)\n\n"
             
-    text += "💡 _При исчерпании лимита бот автоматически переключится на следующий свободный аккаунт!_\n"
-    text += "Чтобы добавить новый ключ, отправьте: `/add_key <API_KEY> [Название]` или нажмите кнопку ниже:"
+    text += "💡 *Авто-переключение:* При исчерпании квоты на Gemini бот мгновенно переключается на DeepSeek / OpenRouter или следующий ключ!\n\n"
+    text += "Отправьте команду `/add_key <API_KEY>` или выберите провайдера ниже:"
     
     inline_kb = {
         "inline_keyboard": [
-            [{"text": "➕ Добавить ключ API", "callback_data": "btn_add_key"}],
-            [{"text": "🔄 Обновить статус", "callback_data": "btn_refresh_keys"}]
+            [{"text": "➕ Добавить DeepSeek ключ", "callback_data": "key_add_deepseek"}, {"text": "➕ Добавить Gemini ключ", "callback_data": "key_add_gemini"}],
+            [{"text": "➕ Добавить OpenRouter ключ", "callback_data": "key_add_openrouter"}, {"text": "➕ Добавить Groq / OpenAI", "callback_data": "key_add_groq"}],
+            [{"text": "🔄 Обновить статус квот", "callback_data": "btn_refresh_keys"}]
         ]
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
@@ -1028,16 +1227,18 @@ def show_model_menu(chat_id, reply_to=None):
     config = load_config()
     current = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
     
-    text = f"🧠 *Выбор модели AI*\n\nТекущая модель: *{current}*\n\n"
-    text += "• *gemini-3.6-flash* — молниеносная скорость, высокие лимиты, стабильный анализ кода (Рекомендуется).\n"
-    text += "• *gemini-3.7-flash* — новейшая модель Flash с улучшенным рассуждением.\n"
-    text += "• *gemini-3.1-pro-preview* — максимальный интеллект для масштабных рефакторингов."
+    text = f"🧠 *Выбор активной AI-модели*\n\nТекущая модель: *{current}*\n\n"
+    text += "• 🟢 *Gemini 3.6 Flash* — молниеносная скорость, мультимодальность (видео, фото, звук).\n"
+    text += "• 🟢 *Gemini 3.7 Flash* — улучшенное рассуждение и код.\n"
+    text += "• 🐳 *DeepSeek-V3 (deepseek-chat)* — мощный анализ кода без лимитов Google.\n"
+    text += "• 🧠 *DeepSeek-R1 (deepseek-reasoner)* — максимальный интеллект и логика.\n"
+    text += "• 🌐 *OpenRouter (deepseek-r1)* — мульти-провайдер."
     
     inline_kb = {
         "inline_keyboard": [
-            [{"text": f"{'✅ ' if current=='gemini-3.6-flash' else ''}Gemini 3.6 Flash (Рекомендуется)", "callback_data": "model_gemini-3.6-flash"}],
-            [{"text": f"{'✅ ' if current=='gemini-3.7-flash' else ''}Gemini 3.7 Flash", "callback_data": "model_gemini-3.7-flash"}],
-            [{"text": f"{'✅ ' if current=='gemini-3.1-pro-preview' else ''}Gemini 3.1 Pro", "callback_data": "model_gemini-3.1-pro-preview"}]
+            [{"text": f"{'✅ ' if current=='gemini-3.6-flash' else ''}Gemini 3.6 Flash", "callback_data": "model_gemini-3.6-flash"}, {"text": f"{'✅ ' if current=='gemini-3.7-flash' else ''}Gemini 3.7 Flash", "callback_data": "model_gemini-3.7-flash"}],
+            [{"text": f"{'✅ ' if current=='deepseek-chat' else ''}🐳 DeepSeek-V3", "callback_data": "model_deepseek-chat"}, {"text": f"{'✅ ' if current=='deepseek-reasoner' else ''}🧠 DeepSeek-R1", "callback_data": "model_deepseek-reasoner"}],
+            [{"text": f"{'✅ ' if current=='deepseek/deepseek-r1' else ''}🌐 OpenRouter R1", "callback_data": "model_deepseek/deepseek-r1"}, {"text": f"{'✅ ' if current=='gemini-3.1-pro-preview' else ''}Gemini 3.1 Pro", "callback_data": "model_gemini-3.1-pro-preview"}]
         ]
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
@@ -1084,9 +1285,18 @@ def start_bot():
                         
                     tg_request("answerCallbackQuery", {"callback_query_id": cq_id})
                     
-                    if cq_data == "btn_add_key":
-                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_API_KEY"
-                        tg_send("🔑 *Отправьте ваш ключ Gemini API следующим сообщением:*")
+                    if cq_data in ["btn_add_key", "key_add_gemini"]:
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_GEMINI_KEY"
+                        tg_send("🟢 *Отправьте ваш ключ Gemini API следующим сообщением:*\n(Создается бесплатно на https://aistudio.google.com/app/apikey)")
+                    elif cq_data == "key_add_deepseek":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_DEEPSEEK_KEY"
+                        tg_send("🐳 *Отправьте ваш API-ключ DeepSeek (`sk-...`):*\n(Создается на https://platform.deepseek.com/api_keys)")
+                    elif cq_data == "key_add_openrouter":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_OPENROUTER_KEY"
+                        tg_send("🌐 *Отправьте ваш OpenRouter API ключ (`sk-or-...`):*\n(Создается на https://openrouter.ai/keys)")
+                    elif cq_data == "key_add_groq":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_GROQ_KEY"
+                        tg_send("⚡ *Отправьте ваш Groq или OpenAI API ключ (`gsk_...` или `sk-...`):*")
                     elif cq_data == "btn_refresh_keys":
                         show_keys_menu(ALLOWED_CHAT_ID)
                     elif cq_data == "btn_trigger_build":
@@ -1260,16 +1470,26 @@ def start_bot():
                     
                 print(f"\n[User Request]: {text or '(Media attached)'}")
                 
-                if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_API_KEY":
-                    user_states.pop(ALLOWED_CHAT_ID, None)
+                if user_states.get(ALLOWED_CHAT_ID) in ["WAITING_FOR_API_KEY", "WAITING_FOR_GEMINI_KEY", "WAITING_FOR_DEEPSEEK_KEY", "WAITING_FOR_OPENROUTER_KEY", "WAITING_FOR_GROQ_KEY"]:
+                    saved_st = user_states.pop(ALLOWED_CHAT_ID, None)
                     clean_k = text.strip()
-                    if len(clean_k) >= 25 and not any(ord(c) > 127 or c.isspace() for c in clean_k):
-                        k_name = add_new_key(clean_k)
-                        tg_send(f"✅ *Ключ успешно добавлен!* Название: *{k_name}*\nТеперь агент может автоматически переключаться на него при исчерпании квот.", reply_to=msg_id)
+                    if len(clean_k) >= 20 and not any(ord(c) > 127 or c.isspace() for c in clean_k):
+                        prov = None
+                        if saved_st == "WAITING_FOR_DEEPSEEK_KEY":
+                            prov = "deepseek"
+                        elif saved_st == "WAITING_FOR_OPENROUTER_KEY":
+                            prov = "openrouter"
+                        elif saved_st == "WAITING_FOR_GROQ_KEY":
+                            prov = "groq"
+                        elif saved_st == "WAITING_FOR_GEMINI_KEY":
+                            prov = "gemini"
+                            
+                        k_name, assigned_prov = add_new_key(clean_k, provider=prov)
+                        tg_send(f"✅ *Ключ успешно добавлен!*\n• Провайдер: *{assigned_prov.capitalize()}*\n• Название: *{k_name}*\n\nБот теперь автоматически переключается между всеми вашими ключами при исчерпании лимитов.", reply_to=msg_id)
                         show_keys_menu(ALLOWED_CHAT_ID)
                         continue
                     else:
-                        tg_send("⚠️ Текст не похож на ключ Gemini API. Добавление отменено.", reply_to=msg_id)
+                        tg_send("⚠️ Текст не похож на API-ключ. Добавление отменено.", reply_to=msg_id)
                         # don't continue so if it was a button/command, it processes immediately!
                     
                 if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_HF_TOKEN":
