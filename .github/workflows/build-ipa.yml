@@ -115,6 +115,19 @@ jobs:
           zip -qry Sonivo-unsigned.ipa Payload
           ls -lh Sonivo-unsigned.ipa
 
+      - name: Send IPA to Telegram
+        if: env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          CAPTION="🎵 <b>Sonivo IPA готов к установке!</b>%0A%0A📦 Версия: <code>${MARKETING_VERSION}</code> (build #${BUILD_NUMBER})%0A🔖 Коммит: <code>${GITHUB_SHA:0:7}</code>"
+          curl -F chat_id="${TELEGRAM_CHAT_ID}" \
+               -F document=@Sonivo-unsigned.ipa \
+               -F caption="${CAPTION}" \
+               -F parse_mode="HTML" \
+               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" || true
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
