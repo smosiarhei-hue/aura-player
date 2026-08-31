@@ -644,6 +644,7 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
     mode = config.get("BOT_MODE", "dev")
     role_title = "Sonivo AI Консультант" if mode == "chat" else "Sonivo AI Разработчик"
     
+    committed = False
     max_steps = 15
     for step in range(max_steps):
         if status_msg_id:
@@ -651,11 +652,11 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
         
         response = call_gemini_with_fallback(history, chat_id=chat_id)
         if "error" in response:
-            return f"❌ Ошибка Gemini API: {response['error']}"
+            return {"text": f"❌ Ошибка Gemini API: {response['error']}", "committed": False}
         
         candidates = response.get("candidates", [])
         if not candidates:
-            return "❌ Gemini вернул пустой ответ."
+            return {"text": "❌ Gemini вернул пустой ответ.", "committed": False}
         
         candidate = candidates[0]
         content = candidate.get("content", {})
@@ -667,7 +668,7 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
         
         if not function_calls:
             text_parts = [p.get("text", "") for p in parts if "text" in p]
-            return "\n".join(text_parts)
+            return {"text": "\n".join(text_parts), "committed": committed}
         
         response_parts = []
         for fc in function_calls:
@@ -687,13 +688,13 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
                     action_desc = f"🚀 Отправляю коммит в GitHub: *{args.get('commit_message')}*..."
                 elif name == "check_ci_build":
                     action_desc = "🔍 Проверяю статус сборки IPA в GitHub Actions..."
-                elif name == "trigger_ipa_build":
-                    action_desc = "🚀 Запускаю новую сборку IPA в GitHub Actions..."
                 
                 tool_func = TOOL_MAP.get(name)
                 if tool_func:
                     try:
                         result = tool_func(**args)
+                        if name == "git_commit_and_push" and result.get("success"):
+                            committed = True
                     except Exception as ex:
                         result = {"error": str(ex)}
                 else:
@@ -714,7 +715,7 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
             "parts": response_parts
         })
         
-    return "⚠️ Достигнут лимит шагов (15). Завершаю сессию."
+    return {"text": "⚠️ Достигнут лимит шагов (15). Завершаю сессию.", "committed": committed}
 
 # --- ОБРАБОТЧИКИ МЕНЮ И КОМАНД ---
 
@@ -840,16 +841,24 @@ def start_bot():
                         tg_send("🔑 *Отправьте ваш ключ Gemini API следующим сообщением:*")
                     elif cq_data == "btn_refresh_keys":
                         show_keys_menu(ALLOWED_CHAT_ID)
+                    elif cq_data == "btn_trigger_build":
+                        res = tool_trigger_ipa_build()
+                        if res.get("success"):
+                            tg_send("🚀 *Сборка IPA запущена в GitHub Actions!*\nКак только компиляция завершится, готовый `.ipa` прилетит сюда в чат.")
+                        else:
+                            tg_send(f"⚠️ Ошибка запуска сборки: {res.get('output')}")
+                    elif cq_data == "btn_dismiss":
+                        tg_send("👍 *Принято.* Сборка не запускается. Можете продолжать вносить правки или задавать вопросы.")
                     elif cq_data == "mode_dev":
                         config = load_config()
                         config["BOT_MODE"] = "dev"
                         save_config(config)
-                        tg_send("⚡ *Режим переключен на: Автономный Разработчик*\nТеперь бот активно применяет код, делает коммиты и собирает IPA.", reply_markup=get_main_keyboard())
+                        tg_send("⚡ *Режим переключен на: Редактор проекта (Правки кода)*\nТеперь бот может менять код, но всегда спросит вас перед сборкой IPA.", reply_markup=get_main_keyboard())
                     elif cq_data == "mode_chat":
                         config = load_config()
                         config["BOT_MODE"] = "chat"
                         save_config(config)
-                        tg_send("💬 *Режим переключен на: Личный Чат / Консультант*\nВ этом режиме бот отвечает на любые вопросы, генерирует код в чате и анализирует медиа без изменения файлов.", reply_markup=get_main_keyboard())
+                        tg_send("💬 *Режим переключен на: Личный Чат / Консультант*\nВ этом режиме бот отвечает на любые вопросы по Sonivo, обсуждает идеи и анализирует медиа без изменения файлов.", reply_markup=get_main_keyboard())
                     elif cq_data.startswith("model_"):
                         new_model = cq_data.replace("model_", "")
                         config = load_config()
@@ -1040,8 +1049,24 @@ def start_bot():
                 status_res = tg_send(wait_text, reply_to=msg_id)
                 status_msg_id = status_res.get("result", {}).get("message_id") if status_res else None
                 
-                final_answer = execute_agent_loop(user_parts, status_msg_id, ALLOWED_CHAT_ID)
-                tg_send(f"✅ *Готово!*\n\n{final_answer}", reply_to=msg_id)
+                res_obj = execute_agent_loop(user_parts, status_msg_id, ALLOWED_CHAT_ID)
+                if isinstance(res_obj, dict):
+                    final_answer = res_obj.get("text", "")
+                    committed = res_obj.get("committed", False)
+                else:
+                    final_answer = str(res_obj)
+                    committed = False
+                    
+                reply_markup = None
+                if committed:
+                    reply_markup = {
+                        "inline_keyboard": [
+                            [{"text": "🚀 Запустить сборку IPA сейчас?", "callback_data": "btn_trigger_build"}],
+                            [{"text": "❌ Нет, продолжить без сборки", "callback_data": "btn_dismiss"}]
+                        ]
+                    }
+                    
+                tg_send(f"✅ *Готово!*\n\n{final_answer}", reply_to=msg_id, reply_markup=reply_markup)
                 
         except KeyboardInterrupt:
             print("\n[!] Bot stopped by user.")

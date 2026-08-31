@@ -1,9 +1,8 @@
 name: Build IPA
 on:
-  push:
-    branches: [ main ]
-    tags: [ 'v*' ]
   workflow_dispatch:
+  push:
+    tags: [ 'v*' ]
 
 permissions:
   contents: write
