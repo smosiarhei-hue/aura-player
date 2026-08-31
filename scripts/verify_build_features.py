@@ -5,6 +5,7 @@ SESSION = (ROOT / "Aurora/playbackaudiosession.swift").read_text(encoding="utf-8
 SCREEN = (ROOT / "Aurora/PlayerScreenV2.swift").read_text(encoding="utf-8")
 CHROME = (ROOT / "Aurora/playerchrome.swift").read_text(encoding="utf-8")
 LYRICS = (ROOT / "Aurora/lyricsview.swift").read_text(encoding="utf-8")
+KINETIC = (ROOT / "Aurora/KineticLyricsArtwork.swift").read_text(encoding="utf-8")
 STREAM = (ROOT / "Aurora/streambeat.swift").read_text(encoding="utf-8")
 FULLSCREEN = (ROOT / "Aurora/fullscreenartwork.swift").read_text(encoding="utf-8")
 THEME = (ROOT / "Aurora/theme.swift").read_text(encoding="utf-8")
@@ -29,6 +30,13 @@ checks = {
 "velocity scrub haptics": (SCREEN, "scrubHapticEngine.update"),
 "tap seeking": (SCREEN, "SpatialTapGesture().onEnded"),
 "edge artwork paging": (SCREEN, "completeArtworkPage(forward:"),
+"kinetic artwork placement": (SCREEN, "KineticLyricsArtwork("),
+"kinetic typography": (KINETIC, "struct KineticLyricsArtwork: View"),
+"kinetic 60 fps": (KINETIC, "minimumInterval: 1.0 / 60.0"),
+"kinetic font": (KINETIC, 'Font.custom("Arial Black"') if False else (KINETIC, 'font(.custom("Arial Black"'),
+"kinetic glow": (KINETIC, "radius: 78"),
+"kinetic perspective": (KINETIC, "rotation3DEffect"),
+"kinetic RGB impact": (KINETIC, ".cyan.opacity"),
 "stable inline lyrics": (SCREEN, "// MARK: Stable inline lyrics"),
 "simple bottom settings": (SCREEN, "gearshape.fill"),
 "artist tap target": (SCREEN, "minHeight: 44, alignment: .leading"),
