@@ -181,20 +181,23 @@ struct NativeMiniPlayer: View {
 
     private func open() {
         guard !showPlayer, !opening else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         opening = true
         showPlayer = true
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .milliseconds(350))
             opening = false
         }
     }
 
     private func togglePlayback() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.togglePlay()
     }
 
     private func nextTrack() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.next()
     }
