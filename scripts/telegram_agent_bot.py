@@ -668,6 +668,41 @@ def tool_hf_update_file(file_path, content, commit_message="Update via Telegram 
     except Exception as e:
         return {"error": str(e)}
 
+def tool_hf_get_logs(log_type="run"):
+    token, space = get_hf_config()
+    if not token:
+        return {"error": "HF_TOKEN не установлен. Отправьте /set_hf_token <токен>"}
+    
+    url = f"https://huggingface.co/api/spaces/{space}/logs/{log_type}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Sonivo-Agent",
+        "Accept": "text/event-stream"
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            lines = []
+            start_t = time.time()
+            while time.time() - start_t < 4.0:
+                raw_line = resp.readline()
+                if not raw_line:
+                    break
+                line_str = raw_line.decode("utf-8", errors="replace").strip()
+                if line_str.startswith("data:"):
+                    line_str = line_str[5:].strip()
+                if line_str:
+                    lines.append(line_str)
+                if len(lines) >= 40:
+                    break
+            
+            res_logs = "\n".join(lines[-25:])
+            return {"success": True, "log_type": log_type, "logs": res_logs or "Логи пусты или сервер только запускается."}
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.read().decode()}"}
+    except Exception as e:
+        return {"error": str(e)}
+
 TOOL_MAP = {
     "list_directory": tool_list_directory,
     "read_file": tool_read_file,
@@ -683,7 +718,8 @@ TOOL_MAP = {
     "hf_get_status": tool_hf_get_status,
     "hf_restart_space": tool_hf_restart_space,
     "hf_get_file": tool_hf_get_file,
-    "hf_update_file": tool_hf_update_file
+    "hf_update_file": tool_hf_update_file,
+    "hf_get_logs": tool_hf_get_logs
 }
 
 # --- TELEGRAM API HELPER ---
@@ -749,6 +785,7 @@ def show_hf_menu(chat_id, reply_to=None):
     inline_kb = {
         "inline_keyboard": [
             [{"text": "📊 Проверить статус", "callback_data": "hf_status"}, {"text": "🔄 Перезапустить Space", "callback_data": "hf_restart"}],
+            [{"text": "📋 Логи Container (Run)", "callback_data": "hf_logs_run"}, {"text": "🛠️ Логи Build", "callback_data": "hf_logs_build"}],
             [{"text": "📝 Посмотреть app.py", "callback_data": "hf_view_app"}, {"text": "✏️ Изменить app.py", "callback_data": "hf_edit_app"}],
             [{"text": "🔑 Указать HF Token", "callback_data": "hf_set_token"}, {"text": "🏷️ Сменить имя Space", "callback_data": "hf_set_space"}]
         ]
@@ -1071,6 +1108,20 @@ def start_bot():
                             tg_send(f"❌ Ошибка перезапуска: {res['error']}")
                         else:
                             tg_send(f"🔄 *{res.get('message')}*")
+                    elif cq_data == "hf_logs_run":
+                        tg_send("⏳ *Запрашиваю логи контейнера (Run) с сервера Hugging Face...*")
+                        res = tool_hf_get_logs("run")
+                        if "error" in res:
+                            tg_send(f"❌ {res['error']}")
+                        else:
+                            tg_send(f"📋 *Логи работы контейнера (Hugging Face Spaces):*\n```text\n{res.get('logs')}\n```")
+                    elif cq_data == "hf_logs_build":
+                        tg_send("⏳ *Запрашиваю логи сборки (Build) с сервера Hugging Face...*")
+                        res = tool_hf_get_logs("build")
+                        if "error" in res:
+                            tg_send(f"❌ {res['error']}")
+                        else:
+                            tg_send(f"🛠️ *Логи сборки контейнера (Build):*\n```text\n{res.get('logs')}\n```")
                     elif cq_data == "hf_view_app":
                         res = tool_hf_get_file("app.py")
                         if "error" in res:
