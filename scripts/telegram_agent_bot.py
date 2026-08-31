@@ -468,7 +468,7 @@ def call_gemini_with_fallback(contents, chat_id=None):
         key_id = key_entry.get("id")
         key_name = key_entry.get("name")
         
-        for m in [model, "gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"]:
+        for m in [model, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.5-flash", "gemini-3.1-pro-preview"]:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
             payload = {
                 "contents": contents,
@@ -645,18 +645,18 @@ def show_skills_menu(chat_id, reply_to=None):
 
 def show_model_menu(chat_id, reply_to=None):
     config = load_config()
-    current = config.get("ACTIVE_MODEL", "gemini-2.5-pro")
+    current = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
     
     text = f"🧠 *Выбор модели AI*\n\nТекущая модель: *{current}*\n\n"
-    text += "• *gemini-2.5-pro* — максимальный интеллект, глубокий рефакторинг и исправление сложных Swift крашей.\n"
-    text += "• *gemini-2.5-flash* — молниеносная скорость, высокие лимиты запросов.\n"
-    text += "• *gemini-1.5-pro* — классическая стабильная про-модель."
+    text += "• *gemini-3.6-flash* — молниеносная скорость, высокие лимиты, стабильный анализ кода (Рекомендуется).\n"
+    text += "• *gemini-3.7-flash* — новейшая модель Flash с улучшенным рассуждением.\n"
+    text += "• *gemini-3.1-pro-preview* — максимальный интеллект для масштабных рефакторингов."
     
     inline_kb = {
         "inline_keyboard": [
-            [{"text": f"{'✅ ' if current=='gemini-2.5-pro' else ''}Gemini 2.5 Pro", "callback_data": "model_gemini-2.5-pro"}],
-            [{"text": f"{'✅ ' if current=='gemini-2.5-flash' else ''}Gemini 2.5 Flash", "callback_data": "model_gemini-2.5-flash"}],
-            [{"text": f"{'✅ ' if current=='gemini-1.5-pro' else ''}Gemini 1.5 Pro", "callback_data": "model_gemini-1.5-pro"}]
+            [{"text": f"{'✅ ' if current=='gemini-3.6-flash' else ''}Gemini 3.6 Flash (Рекомендуется)", "callback_data": "model_gemini-3.6-flash"}],
+            [{"text": f"{'✅ ' if current=='gemini-3.7-flash' else ''}Gemini 3.7 Flash", "callback_data": "model_gemini-3.7-flash"}],
+            [{"text": f"{'✅ ' if current=='gemini-3.1-pro-preview' else ''}Gemini 3.1 Pro", "callback_data": "model_gemini-3.1-pro-preview"}]
         ]
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
