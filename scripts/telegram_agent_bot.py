@@ -291,6 +291,39 @@ TOOL_DECLARATIONS = [
             },
             "required": ["command"]
         }
+    },
+    {
+        "name": "hf_get_status",
+        "description": "Получить статус сервера Hugging Face Spaces (RUNNING, PAUSED, ошибки).",
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
+        "name": "hf_restart_space",
+        "description": "Перезагрузить сервер Hugging Face Spaces.",
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
+        "name": "hf_get_file",
+        "description": "Прочитать файл из репозитория Hugging Face Space (например 'app.py').",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "file_path": {"type": "STRING", "description": "Путь к файлу на Hugging Face (по умолчанию 'app.py')"}
+            }
+        }
+    },
+    {
+        "name": "hf_update_file",
+        "description": "Изменить код файла прямо на сервере Hugging Face Space (например обновить 'app.py').",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "file_path": {"type": "STRING", "description": "Имя файла на HF (например 'app.py')"},
+                "content": {"type": "STRING", "description": "Новый код файла"},
+                "commit_message": {"type": "STRING", "description": "Описание коммита"}
+            },
+            "required": ["file_path", "content"]
+        }
     }
 ]
 
@@ -486,6 +519,98 @@ def tool_run_shell_command(command):
         "stderr": res.stderr.strip()[:2000]
     }
 
+# --- HUGGING FACE SPACES API & ADMIN ---
+
+def get_hf_config():
+    config = load_config()
+    token = os.environ.get("HF_TOKEN") or config.get("HF_TOKEN", "")
+    space = os.environ.get("HF_SPACE") or config.get("HF_SPACE", "IsseT/sonivo-bot")
+    return token, space
+
+def tool_hf_get_status():
+    token, space = get_hf_config()
+    headers = {"User-Agent": "Sonivo-Agent"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    url = f"https://huggingface.co/api/spaces/{space}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+            runtime = data.get("runtime", {})
+            stage = runtime.get("stage", "UNKNOWN")
+            hardware = runtime.get("hardware", {}).get("current", "cpu-basic")
+            return {
+                "space": space,
+                "stage": stage,
+                "hardware": hardware,
+                "likes": data.get("likes", 0),
+                "private": data.get("private", False)
+            }
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.read().decode()}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+def tool_hf_restart_space():
+    token, space = get_hf_config()
+    if not token:
+        return {"error": "HF_TOKEN не установлен. Отправьте /set_hf_token <токен_с_hf>"}
+    url = f"https://huggingface.co/api/spaces/{space}/restart"
+    req = urllib.request.Request(url, data=b"", headers={"Authorization": f"Bearer {token}", "User-Agent": "Sonivo-Agent"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return {"success": True, "message": f"Space '{space}' перезагружается..."}
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.read().decode()}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+def tool_hf_get_file(file_path="app.py"):
+    token, space = get_hf_config()
+    url = f"https://huggingface.co/spaces/{space}/raw/main/{file_path}"
+    headers = {"User-Agent": "Sonivo-Agent"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content = resp.read().decode("utf-8")
+            return {"file_path": file_path, "content": content}
+    except Exception as e:
+        return {"error": f"Не удалось прочитать {file_path}: {e}"}
+
+def tool_hf_update_file(file_path, content, commit_message="Update via Telegram Admin"):
+    token, space = get_hf_config()
+    if not token:
+        return {"error": "HF_TOKEN не установлен. Отправьте /set_hf_token <токен>"}
+    
+    url = f"https://huggingface.co/api/spaces/{space}/commit/main"
+    b64_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+    payload = {
+        "summary": commit_message,
+        "operations": [
+            {
+                "operation": "add",
+                "path": file_path,
+                "content": b64_content,
+                "encoding": "base64"
+            }
+        ]
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "Sonivo-Agent"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return {"success": True, "file_path": file_path, "message": f"Файл '{file_path}' на Hugging Face успешно обновлен!"}
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.read().decode()}"}
+    except Exception as e:
+        return {"error": str(e)}
+
 TOOL_MAP = {
     "list_directory": tool_list_directory,
     "read_file": tool_read_file,
@@ -497,7 +622,11 @@ TOOL_MAP = {
     "check_ci_build": tool_check_ci_build,
     "get_failed_build_logs": tool_get_failed_build_logs,
     "trigger_ipa_build": tool_trigger_ipa_build,
-    "run_shell_command": tool_run_shell_command
+    "run_shell_command": tool_run_shell_command,
+    "hf_get_status": tool_hf_get_status,
+    "hf_restart_space": tool_hf_restart_space,
+    "hf_get_file": tool_hf_get_file,
+    "hf_update_file": tool_hf_update_file
 }
 
 # --- TELEGRAM API HELPER ---
@@ -543,13 +672,31 @@ def get_main_keyboard():
     return {
         "keyboard": [
             [{"text": "🚀 Собрать IPA"}, {"text": "📊 Статус & Билды"}],
-            [{"text": mode_btn}, {"text": "🔑 Ключи & Квоты"}],
-            [{"text": "📦 Мои Скиллы"}, {"text": "🧠 Сменить модель"}],
-            [{"text": "📋 Логи ошибок"}]
+            [{"text": mode_btn}, {"text": "🤗 Hugging Face"}],
+            [{"text": "🔑 Ключи & Квоты"}, {"text": "📦 Мои Скиллы"}],
+            [{"text": "🧠 Сменить модель"}, {"text": "📋 Логи ошибок"}]
         ],
         "resize_keyboard": True,
         "persistent": True
     }
+
+def show_hf_menu(chat_id, reply_to=None):
+    token, space = get_hf_config()
+    masked_tok = token[:6] + "..." + token[-4:] if len(token) > 10 else "❌ Не установлен"
+    
+    text = "🤗 *Админ-панель сервера Hugging Face*\n\n"
+    text += f"• **Space**: `{space}`\n"
+    text += f"• **HF Token**: `{masked_tok}`\n\n"
+    text += "Управляйте облачным сервером бота прямо отсюда: перезагружайте Space, проверяйте статус и редактируйте `app.py` без браузера!"
+    
+    inline_kb = {
+        "inline_keyboard": [
+            [{"text": "📊 Проверить статус", "callback_data": "hf_status"}, {"text": "🔄 Перезапустить Space", "callback_data": "hf_restart"}],
+            [{"text": "📝 Посмотреть app.py", "callback_data": "hf_view_app"}, {"text": "✏️ Изменить app.py", "callback_data": "hf_edit_app"}],
+            [{"text": "🔑 Указать HF Token", "callback_data": "hf_set_token"}, {"text": "🏷️ Сменить имя Space", "callback_data": "hf_set_space"}]
+        ]
+    }
+    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
 
 def show_mode_menu(chat_id, reply_to=None):
     config = load_config()
@@ -849,6 +996,36 @@ def start_bot():
                             tg_send(f"⚠️ Ошибка запуска сборки: {res.get('output')}")
                     elif cq_data == "btn_dismiss":
                         tg_send("👍 *Принято.* Сборка не запускается. Можете продолжать вносить правки или задавать вопросы.")
+                    elif cq_data == "hf_status":
+                        res = tool_hf_get_status()
+                        if "error" in res:
+                            tg_send(f"❌ Ошибка Hugging Face: {res['error']}")
+                        else:
+                            stage = res.get("stage")
+                            hw = res.get("hardware")
+                            priv = "🔒 Приватный" if res.get("private") else "🌍 Публичный"
+                            tg_send(f"📊 *Статус Hugging Face Space* (`{res.get('space')}`):\n\n• **Состояние**: `🟢 {stage}`\n• **Оборудование**: `{hw}`\n• **Тип**: {priv}\n• **Лайки**: ❤️ {res.get('likes')}")
+                    elif cq_data == "hf_restart":
+                        res = tool_hf_restart_space()
+                        if "error" in res:
+                            tg_send(f"❌ Ошибка перезапуска: {res['error']}")
+                        else:
+                            tg_send(f"🔄 *{res.get('message')}*")
+                    elif cq_data == "hf_view_app":
+                        res = tool_hf_get_file("app.py")
+                        if "error" in res:
+                            tg_send(f"❌ {res['error']}")
+                        else:
+                            tg_send(f"📝 *Содержимое `app.py` на Hugging Face:*\n```python\n{res.get('content')[:3500]}\n```")
+                    elif cq_data == "hf_edit_app":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_HF_APP_CODE"
+                        tg_send("✏️ *Отправьте новый полный код для `app.py` на Hugging Face следующим сообщением:*")
+                    elif cq_data == "hf_set_token":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_HF_TOKEN"
+                        tg_send("🔑 *Отправьте ваш Hugging Face User Access Token (с правами Write):*\n(Создается на https://huggingface.co/settings/tokens)")
+                    elif cq_data == "hf_set_space":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_HF_SPACE"
+                        tg_send("🏷️ *Отправьте имя вашего Space на Hugging Face (например: `IsseT/sonivo-bot`):*")
                     elif cq_data == "mode_dev":
                         config = load_config()
                         config["BOT_MODE"] = "dev"
@@ -961,6 +1138,41 @@ def start_bot():
                         tg_send("⚠️ Текст не похож на ключ Gemini API. Добавление отменено.", reply_to=msg_id)
                     continue
                     
+                if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_HF_TOKEN":
+                    user_states.pop(ALLOWED_CHAT_ID, None)
+                    if len(text) > 10:
+                        config = load_config()
+                        config["HF_TOKEN"] = text.strip()
+                        save_config(config)
+                        os.environ["HF_TOKEN"] = text.strip()
+                        tg_send("✅ *Hugging Face Token сохранен!*\nТеперь вы можете перезагружать сервер и менять код прямо из чата.", reply_to=msg_id)
+                        show_hf_menu(ALLOWED_CHAT_ID)
+                    else:
+                        tg_send("⚠️ Текст не похож на HF Token. Отменено.", reply_to=msg_id)
+                    continue
+
+                if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_HF_SPACE":
+                    user_states.pop(ALLOWED_CHAT_ID, None)
+                    if "/" in text:
+                        config = load_config()
+                        config["HF_SPACE"] = text.strip()
+                        save_config(config)
+                        os.environ["HF_SPACE"] = text.strip()
+                        tg_send(f"✅ *Имя Space сохранено: `{text.strip()}`*", reply_to=msg_id)
+                        show_hf_menu(ALLOWED_CHAT_ID)
+                    else:
+                        tg_send("⚠️ Имя Space должно быть в формате `Username/Space-Name` (например `IsseT/sonivo-bot`).", reply_to=msg_id)
+                    continue
+
+                if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_HF_APP_CODE":
+                    user_states.pop(ALLOWED_CHAT_ID, None)
+                    res = tool_hf_update_file("app.py", text.strip(), commit_message="Update app.py from Telegram")
+                    if "error" in res:
+                        tg_send(f"❌ Ошибка обновления `app.py`: {res['error']}", reply_to=msg_id)
+                    else:
+                        tg_send("✅ *`app.py` на Hugging Face успешно обновлен!*\nСервер автоматически перезапустится с новым кодом.", reply_to=msg_id)
+                    continue
+                    
                 if text in ["/start", "Меню"]:
                     tg_send(
                         "👋 Привет! Я твой персональный AI-разработчик и консультант Sonivo.\n\n"
@@ -968,6 +1180,44 @@ def start_bot():
                         reply_to=msg_id,
                         reply_markup=get_main_keyboard()
                     )
+                    continue
+                elif text in ["/hf", "🤗 Hugging Face"]:
+                    show_hf_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text.startswith("/set_hf_token"):
+                    parts = text.split(maxsplit=1)
+                    if len(parts) >= 2:
+                        tok = parts[1].strip()
+                        config = load_config()
+                        config["HF_TOKEN"] = tok
+                        save_config(config)
+                        os.environ["HF_TOKEN"] = tok
+                        tg_send("✅ *Hugging Face Token сохранен!*", reply_to=msg_id)
+                    else:
+                        tg_send("Использование: `/set_hf_token <hf_...>`", reply_to=msg_id)
+                    continue
+                elif text.startswith("/set_hf_space"):
+                    parts = text.split(maxsplit=1)
+                    if len(parts) >= 2:
+                        sp = parts[1].strip()
+                        config = load_config()
+                        config["HF_SPACE"] = sp
+                        save_config(config)
+                        os.environ["HF_SPACE"] = sp
+                        tg_send(f"✅ *HF Space установлен: `{sp}`*", reply_to=msg_id)
+                    else:
+                        tg_send("Использование: `/set_hf_space <Username/Space-Name>`", reply_to=msg_id)
+                    continue
+                elif text in ["/hf_status"]:
+                    res = tool_hf_get_status()
+                    if "error" in res:
+                        tg_send(f"❌ {res['error']}", reply_to=msg_id)
+                    else:
+                        tg_send(f"📊 Space: `{res.get('space')}` | Статус: `🟢 {res.get('stage')}` | HW: `{res.get('hardware')}`", reply_to=msg_id)
+                    continue
+                elif text in ["/hf_restart"]:
+                    res = tool_hf_restart_space()
+                    tg_send(f"🔄 {res.get('message') or res.get('error')}", reply_to=msg_id)
                     continue
                 elif text in ["/mode", "💬 Режим: Чат", "⚡ Режим: Код"]:
                     show_mode_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
