@@ -367,25 +367,69 @@ def tool_create_or_overwrite_file(file_path, content):
     target.write_text(content, encoding="utf-8")
     return {"status": "success", "file_path": file_path, "bytes_written": len(content)}
 
+def configure_git_auth():
+    config = load_config()
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or config.get("GITHUB_TOKEN", "")
+    subprocess.run(["git", "config", "user.name", "Sonivo AI Agent"], cwd=REPO_DIR, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "agent@sonivo.app"], cwd=REPO_DIR, capture_output=True)
+    if token:
+        remote_url = f"https://x-access-token:{token.strip()}@github.com/smosiarhei-hue/aura-player.git"
+        subprocess.run(["git", "remote", "set-url", "origin", remote_url], cwd=REPO_DIR, capture_output=True)
+
 def tool_git_status():
     res = subprocess.run(["git", "status", "-s"], cwd=REPO_DIR, capture_output=True, text=True)
     return {"status_output": res.stdout.strip() or "Working tree clean"}
 
 def tool_git_commit_and_push(commit_message):
+    configure_git_auth()
     add_res = subprocess.run(["git", "add", "."], cwd=REPO_DIR, capture_output=True, text=True)
     commit_res = subprocess.run(["git", "commit", "-m", commit_message], cwd=REPO_DIR, capture_output=True, text=True)
     push_res = subprocess.run(["git", "push", "origin", "main"], cwd=REPO_DIR, capture_output=True, text=True)
+    
+    success = push_res.returncode == 0
+    err_out = push_res.stderr.strip()
+    if not success and ("Permission" in err_out or "Authentication" in err_out or "403" in err_out or "fatal" in err_out):
+        return {
+            "success": False,
+            "error": "Git Push Error: Требуется GitHub Token для авторизации на облачном сервере.",
+            "hint": "Отправьте боту команду /set_gh_token <ваш_токен_github> (создается в github.com/settings/tokens)",
+            "raw": err_out
+        }
+        
     return {
         "add": add_res.returncode == 0,
         "commit": commit_res.stdout.strip() or commit_res.stderr.strip(),
         "push": push_res.stdout.strip() or push_res.stderr.strip(),
-        "success": push_res.returncode == 0
+        "success": success
     }
 
 def tool_check_ci_build():
+    config = load_config()
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or config.get("GITHUB_TOKEN", "")
+    
+    # Сначала пробуем через GitHub REST API
+    if token:
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/smosiarhei-hue/aura-player/actions/runs?per_page=3",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "Sonivo-Agent"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+                runs = []
+                for r in data.get("workflow_runs", []):
+                    runs.append(f"• #{r.get('run_number')} ({r.get('name')}): {r.get('status')} / {r.get('conclusion')} ({r.get('html_url')})")
+                return {"recent_runs": "\n".join(runs) or "No runs found"}
+        except Exception as e:
+            pass
+
     res = subprocess.run(["gh", "run", "list", "-L", "3"], cwd=REPO_DIR, capture_output=True, text=True)
     if res.returncode != 0:
-        return {"output": "GitHub CLI error or not logged in", "raw": res.stderr}
+        return {"output": "GitHub CLI error or token not set. Use /set_gh_token <token>", "raw": res.stderr}
     return {"recent_runs": res.stdout.strip()}
 
 def tool_get_failed_build_logs():
@@ -394,6 +438,25 @@ def tool_get_failed_build_logs():
     return {"failed_logs": out[-4000:] if len(out) > 4000 else out}
 
 def tool_trigger_ipa_build():
+    config = load_config()
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or config.get("GITHUB_TOKEN", "")
+    
+    if token:
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/smosiarhei-hue/aura-player/actions/workflows/build-ipa.yml/dispatches",
+                data=json.dumps({"ref": "main"}).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "Sonivo-Agent"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return {"success": True, "output": "Build triggered successfully via GitHub API"}
+        except Exception as e:
+            pass
+            
     res = subprocess.run(["gh", "workflow", "run", "build-ipa.yml"], cwd=REPO_DIR, capture_output=True, text=True)
     return {"success": res.returncode == 0, "output": res.stdout.strip() or res.stderr.strip()}
 
@@ -801,6 +864,19 @@ def start_bot():
                     continue
                 elif text in ["/model", "🧠 Сменить модель"]:
                     show_model_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text.startswith("/set_gh_token"):
+                    parts = text.split(maxsplit=1)
+                    if len(parts) >= 2:
+                        tok = parts[1].strip()
+                        config = load_config()
+                        config["GITHUB_TOKEN"] = tok
+                        save_config(config)
+                        os.environ["GH_TOKEN"] = tok
+                        configure_git_auth()
+                        tg_send("✅ *GitHub Token сохранен!*\nТеперь бот может отправлять коммиты и запускать сборки прямо из облака.", reply_to=msg_id)
+                    else:
+                        tg_send("Использование: `/set_gh_token <ghp_...>`\nТокен создается в https://github.com/settings/tokens (права: repo + workflow)", reply_to=msg_id)
                     continue
                 elif text.startswith("/add_key"):
                     parts = text.split(maxsplit=2)
