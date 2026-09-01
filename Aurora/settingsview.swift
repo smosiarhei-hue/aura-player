@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var ym = YandexMusicService.shared
     @State private var socialAuth = SocialAuthStore.shared
     @State private var dj = AutoMixDJEngine.shared
+    @State private var automix = AutoMixController.shared
     @State private var tokenInput = ""
 
     var body: some View {
@@ -116,58 +117,14 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("DJ AutoMix и переходы (Apple Music)") {
-                    Picker("Режим сведения", selection: $player.transitionMode) {
-                        ForEach(TransitionMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.menu)
+                songTransitionsSection
 
-                    Text(player.transitionMode.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if player.transitionMode == .crossfade {
+                    crossfadeSection
+                }
 
-                    if player.transitionMode == .automix {
-                        Picker("Стиль DJ-сведения", selection: $dj.djStyle) {
-                            ForEach(DJTransitionStyle.allCases) { style in
-                                Label(style.localizedTitle, systemImage: style.icon).tag(style)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        Text(dj.djStyle.description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Toggle("Срез басов (Bass-Swap)", isOn: $dj.bassSwapEnabled)
-                            .tint(settings.accentColor)
-
-                        Toggle("Умная обрезка тишины", isOn: $dj.trimSilenceEnabled)
-                            .tint(settings.accentColor)
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Длительность перехода")
-                                Spacer()
-                                Text(String(format: "%.1f сек", dj.maxTransitionDuration))
-                                    .foregroundStyle(.secondary)
-                            }
-                            Slider(value: $dj.maxTransitionDuration, in: 2.0...10.0, step: 0.5)
-                                .tint(settings.accentColor)
-                        }
-                    } else if player.transitionMode == .crossfade {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Время кроссфейда")
-                                Spacer()
-                                Text(String(format: "%.1f сек", player.crossfadeDuration))
-                                    .foregroundStyle(.secondary)
-                            }
-                            Slider(value: $player.crossfadeDuration, in: 1.0...12.0, step: 0.5)
-                                .tint(settings.accentColor)
-                        }
-                    }
+                if player.transitionMode == .automix {
+                    autoMixSection
                 }
 
                 Section("Тактильный отклик") {
@@ -253,6 +210,117 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Настройки")
+        }
+    }
+
+    // MARK: - Song Transitions (Apple Music parity)
+
+    private var songTransitionsSection: some View {
+        Section {
+            ForEach(TransitionMode.allCases) { mode in
+                Button {
+                    player.transitionMode = mode
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(mode.rawValue)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                            Text(mode.description)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        if player.transitionMode == mode {
+                            Image(systemName: "checkmark")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(settings.accentColor)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        } header: {
+            Text("Переходы между песнями")
+        } footer: {
+            Text("AutoMix заранее слушает файл: находит биты, тональность и структуру, вводит следующий трек после интро и подтягивает его темп под текущий. Если треки не сводятся, переход сам откатывается на кроссфейд.")
+        }
+    }
+
+    private var crossfadeSection: some View {
+        Section("Кроссфейд") {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Длительность")
+                    Spacer()
+                    Text(String(format: "%.1f сек", player.crossfadeDuration))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(value: $player.crossfadeDuration, in: 1.0...12.0, step: 0.5)
+                    .tint(settings.accentColor)
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var autoMixSection: some View {
+        Section {
+            Picker("Стиль сведения", selection: $dj.djStyle) {
+                ForEach(DJTransitionStyle.allCases) { style in
+                    Label(style.localizedTitle, systemImage: style.icon).tag(style)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Text(dj.djStyle.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle("Срез басов (Bass-Swap)", isOn: $dj.bassSwapEnabled)
+                .tint(settings.accentColor)
+
+            Toggle("Умная обрезка тишины", isOn: $dj.trimSilenceEnabled)
+                .tint(settings.accentColor)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Максимальная длина перехода")
+                    Spacer()
+                    Text(String(format: "%.1f сек", dj.maxTransitionDuration))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(value: $dj.maxTransitionDuration, in: 4.0...18.0, step: 0.5)
+                    .tint(settings.accentColor)
+                Text("8 тактов на 128 BPM — это 15 секунд, 16 тактов — уже 30. Низкий потолок обрезает длинные DJ-сведения до кроссфейда.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 2)
+
+            if let badge = automix.badge {
+                LabeledContent("Следующий переход", value: badge)
+                if let reason = automix.reason {
+                    Text(reason)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else if automix.isPreparing {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Анализирую следующий трек…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("AutoMix")
+        } footer: {
+            Text("Бит-мэтчинг и гармоническое сведение работают только для локальных файлов: потоковый трек нельзя проанализировать до воспроизведения, он сводится обычным наложением.")
         }
     }
 

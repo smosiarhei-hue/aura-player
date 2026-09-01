@@ -50,17 +50,29 @@ final class AutoMixController {
 
     // MARK: - Read-only surface for the UI
 
-    /// Short label for the queue / player indicator.
+    /// Short label for the player toast, the queue and Settings.
     var badge: String? {
         guard let plan else { return nil }
         switch plan.scenario {
         case .fullBlend(let bars):
-            return "AutoMix · " + String(bars) + " bars"
+            var text = "AutoMix · " + String(bars) + " " + Self.barsWord(bars)
+            if let tempoShiftText {
+                text += " · " + tempoShiftText
+            }
+            return text
         case .crossfade:
-            return "Crossfade"
+            return "Кроссфейд"
         case .gapRemoval:
-            return nil
+            return "Без паузы"
         }
+    }
+
+    /// Tempo correction applied to the incoming lane, e.g. "темп +2.4 %".
+    var tempoShiftText: String? {
+        guard let plan, plan.isBeatMatched else { return nil }
+        let percent = (Double(plan.tempoRate) - 1) * 100
+        guard abs(percent) >= 0.1 else { return nil }
+        return String(format: "темп %+.1f %%", percent)
     }
 
     /// Why the planner chose this scenario. Useful in Settings and for debugging.
@@ -254,18 +266,37 @@ final class AutoMixController {
 
     // MARK: - Settings mapping
 
-    /// Maps the player setting onto the planner mode by raw value, so the two
-    /// enums stay independent of each other.
+    /// Maps the player setting onto the planner mode.
+    ///
+    /// This used to switch over `mode.rawValue`, which is wrong: TransitionMode
+    /// raw values are localised display strings ("Кроссфейд", "Выключено"), so
+    /// everything except AutoMix fell through to the default and got beat
+    /// matched even when the user had asked for a plain crossfade or no
+    /// transition at all.
     nonisolated static func autoMixMode(from mode: TransitionMode) -> AutoMixMode {
-        switch mode.rawValue.lowercased() {
-        case "crossfade":
-            return .crossfade
-        case "gapless", "gapremoval":
-            return .gapless
-        case "off", "none":
-            return .off
-        default:
+        switch mode {
+        case .automix:
             return .automix
+        case .crossfade:
+            return .crossfade
+        case .gapless:
+            return .gapless
+        case .off:
+            return .off
+        }
+    }
+
+    /// 1 такт / 2 такта / 8 тактов.
+    nonisolated private static func barsWord(_ bars: Int) -> String {
+        let hundreds = bars % 100
+        if hundreds >= 11 && hundreds <= 14 { return "тактов" }
+        switch bars % 10 {
+        case 1:
+            return "такт"
+        case 2, 3, 4:
+            return "такта"
+        default:
+            return "тактов"
         }
     }
 }

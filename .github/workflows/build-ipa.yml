@@ -38,6 +38,7 @@ jobs:
           python3 -W error::SyntaxWarning scripts/player_ux_fixes.py
           python3 -W error::SyntaxWarning scripts/automix_timestretch.py
           python3 -W error::SyntaxWarning scripts/automix_stage4.py
+          python3 -W error::SyntaxWarning scripts/automix_badge.py
 
       - name: Compute version (auto-increment per build)
         id: version
