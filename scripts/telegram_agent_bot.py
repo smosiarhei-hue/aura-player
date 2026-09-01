@@ -1035,6 +1035,7 @@ def call_openai_compatible(base_url, api_key, model, messages):
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
+            "x-api-key": str(api_key),
             "Content-Type": "application/json",
             "User-Agent": "Sonivo-Agent"
         }
@@ -1045,8 +1046,14 @@ def call_openai_compatible(base_url, api_key, model, messages):
         msg = choice.get("message", {})
         
         parts = []
-        if msg.get("content"):
-            parts.append({"text": msg["content"]})
+        # If model returned reasoning / think block
+        reasoning = msg.get("reasoning_content") or msg.get("reasoning")
+        content_text = msg.get("content") or ""
+        
+        if content_text:
+            parts.append({"text": content_text})
+        elif reasoning and not msg.get("tool_calls"):
+            parts.append({"text": reasoning})
         
         for tc in msg.get("tool_calls", []):
             fn = tc.get("function", {})
@@ -1342,11 +1349,51 @@ def show_keys_menu(chat_id, reply_to=None, show_full_keys=False):
         "inline_keyboard": [
             [{"text": "➕ Добавить DeepSeek", "callback_data": "key_add_deepseek"}, {"text": "➕ Добавить Gemini", "callback_data": "key_add_gemini"}],
             [{"text": "➕ Добавить OpenRouter", "callback_data": "key_add_openrouter"}, {"text": "➕ Добавить Groq", "callback_data": "key_add_groq"}],
+            [{"text": "⚡ Подключить deeperseeker (Free)", "callback_data": "key_add_deeperseeker"}, {"text": "📖 Гайд deeperseeker", "callback_data": "cmd_deeperseeker_guide"}],
             [{"text": "⚙️ Добавить Custom Provider (URL + Ключ)", "callback_data": "key_add_custom"}],
             [toggle_btn, {"text": "🔄 Проверить всё (Live Test)", "callback_data": "btn_validate_all_keys"}]
         ]
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
+
+def show_deeperseeker_guide(chat_id, reply_to=None):
+    guide = (
+        "⚡ *Инструкция: Бесплатный DeepSeek через DeeperSeeker в Sonivo Bot*\n\n"
+        "*Что это:* `deeperseeker` — локальный reverse-proxy, который берет веб-версию `chat.deepseek.com` и делает из неё полноценный OpenAI API без лимитов и оплат!\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🛠 *Шаг 1: Запуск deeperseeker на компьютере*\n"
+        "```bash\n"
+        "git clone https://github.com/AmanCode22/deeperseeker\n"
+        "cd deeperseeker\n"
+        "pip install -r requirements.txt\n"
+        "playwright install chromium\n"
+        "python3 app.py\n"
+        "```\n"
+        "*(Дашборд откроется на http://localhost:4000)*\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🔑 *Шаг 2: Получение токена chat.deepseek.com*\n"
+        "1. Откройте режим **Инкогнито** в браузере ➔ [chat.deepseek.com](https://chat.deepseek.com) ➔ авторизуйтесь.\n"
+        "2. Нажмите **F12** (или Cmd+Option+I) ➔ вкладка **Console** ➔ выполните команду:\n"
+        "```javascript\n"
+        'JSON.parse(localStorage.getItem("userToken")).value\n'
+        "```\n"
+        "3. Скопируйте строку токена без кавычек и закройте инкогнито (не нажимайте выход из аккаунта!).\n"
+        "4. Откройте `http://localhost:4000/` (логин/пароль: `admin`/`admin`) ➔ нажмите **Add Auth Token** ➔ вставьте токен (статус станет `ACTIVE`).\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📱 *Шаг 3: Подключение к нашему Telegram-боту*\n"
+        "Отправьте команду:\n"
+        "```text\n"
+        "/add_custom dseeker http://localhost:4000/v1 all DeeperSeeker\n"
+        "```\n"
+        "Или нажмите кнопку **⚡ Подключить deeperseeker** ниже!"
+    )
+    inline_kb = {
+        "inline_keyboard": [
+            [{"text": "⚡ Подключить deeperseeker сейчас", "callback_data": "key_add_deeperseeker"}],
+            [{"text": "🔑 Меню ключей и провайдеров", "callback_data": "btn_refresh_keys"}]
+        ]
+    }
+    tg_send(guide, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
 
 def validate_all_keys(chat_id=None):
     keys = get_keys()
@@ -1520,6 +1567,15 @@ def start_bot():
                     elif cq_data == "key_add_groq":
                         user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_GROQ_KEY"
                         tg_send("⚡ *Отправьте ваш Groq или OpenAI API ключ (`gsk_...` или `sk-...`):*")
+                    elif cq_data == "cmd_deeperseeker_guide":
+                        show_deeperseeker_guide(ALLOWED_CHAT_ID)
+                    elif cq_data == "key_add_deeperseeker":
+                        user_states[ALLOWED_CHAT_ID] = {"step": "WAITING_FOR_DEEPERSEEKER_KEY"}
+                        tg_send(
+                            "⚡ *Подключение deeperseeker (Бесплатный DeepSeek)*\n\n"
+                            "🔑 Введите API-ключ сервера deeperseeker (по умолчанию `dseeker`)\n"
+                            "или напишите `default`, чтобы сразу подключить `http://localhost:4000/v1` с ключом `dseeker`:"
+                        )
                     elif cq_data == "key_add_custom":
                         user_states[ALLOWED_CHAT_ID] = {"step": "WAITING_FOR_CUSTOM_KEY"}
                         tg_send("⚙️ *Настройка кастомного AI-провайдера*\n\n🔑 *Шаг 1 из 3:* Отправьте ваш API-ключ (например: `sk-...`):")
@@ -1809,12 +1865,50 @@ def start_bot():
                 st = user_states.get(ALLOWED_CHAT_ID)
                 if isinstance(st, dict):
                     step = st.get("step")
-                    if step == "WAITING_FOR_CUSTOM_KEY":
+                    if step == "WAITING_FOR_DEEPERSEEKER_KEY":
+                        k_val = text.strip()
+                        if k_val.lower() in ["default", "dseeker", ""]:
+                            k_val = "dseeker"
+                        clean_url = "http://localhost:4000/v1"
+                        tg_send(f"⏳ *Проверяю подключение к deeperseeker (`{clean_url}`) с ключом `{k_val}`...*", reply_to=msg_id)
+                        res = test_and_discover_models(clean_url, k_val)
+                        if not res.get("valid"):
+                            tg_send(
+                                f"⚠️ *Сервер deeperseeker не отвечает на `{clean_url}`!*\n\n"
+                                f"Убедитесь, что сервер deeperseeker запущен на вашем компьютере (`python3 app.py`).\n\n"
+                                f"• Ошибка: `{res.get('error')}`\n"
+                                f"• Для полной инструкции отправьте команду /deeperseeker",
+                                reply_to=msg_id
+                            )
+                            user_states.pop(ALLOWED_CHAT_ID, None)
+                            continue
+                        else:
+                            models = res.get("models", [])
+                            st["step"] = "WAITING_FOR_CUSTOM_MODEL"
+                            st["url"] = clean_url
+                            st["key"] = k_val
+                            st["models"] = models
+                            st["free_models"] = res.get("free_models", [])
+                            st["top_models"] = res.get("top_models", [])
+                            user_states[ALLOWED_CHAT_ID] = st
+                            
+                            succ_text = f"✅ *deeperseeker успешно подключен! (HTTP 200 OK)*\n\n"
+                            succ_text += f"🌐 На сервере обнаружено *{len(models)} моделей*.\n\n"
+                            succ_text += "Выберите вариант добавления:\n"
+                            
+                            kb_rows = [
+                                [{"text": f"📦 Подключить ВСЕ модели ({len(models)} шт)", "callback_data": "add_bulk_all"}],
+                                [{"text": "🐳 deepseek-chat", "callback_data": "pick_m_deepseek-chat"}, {"text": "🧠 deepseek-reasoner", "callback_data": "pick_m_deepseek-reasoner"}]
+                            ]
+                            tg_send(succ_text, reply_to=msg_id, reply_markup={"inline_keyboard": kb_rows})
+                            continue
+                    elif step == "WAITING_FOR_CUSTOM_KEY":
                         clean_k = text.strip()
-                        if len(clean_k) >= 10 and not any(ord(c) > 127 or c.isspace() for c in clean_k):
+                        if len(clean_k) >= 4 and not any(ord(c) > 127 or c.isspace() for c in clean_k):
                             user_states[ALLOWED_CHAT_ID] = {"step": "WAITING_FOR_CUSTOM_URL", "key": clean_k}
                             preset_kb = {
                                 "inline_keyboard": [
+                                    [{"text": "⚡ deeperseeker (http://localhost:4000/v1)", "callback_data": "set_url_http://localhost:4000/v1"}],
                                     [{"text": "🐳 DeepSeek (https://api.deepseek.com/v1)", "callback_data": "set_url_https://api.deepseek.com/v1"}],
                                     [{"text": "🌐 OpenRouter (https://openrouter.ai/api/v1)", "callback_data": "set_url_https://openrouter.ai/api/v1"}],
                                     [{"text": "⚡ Groq (https://api.groq.com/openai/v1)", "callback_data": "set_url_https://api.groq.com/openai/v1"}],
@@ -1994,6 +2088,9 @@ def start_bot():
                         reply_to=msg_id,
                         reply_markup=get_main_keyboard()
                     )
+                    continue
+                elif text in ["/deeperseeker", "deeperseeker", "/ds"]:
+                    show_deeperseeker_guide(ALLOWED_CHAT_ID, reply_to=msg_id)
                     continue
                 elif text in ["/hf", "🤗 Hugging Face"]:
                     show_hf_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
