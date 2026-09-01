@@ -3,9 +3,12 @@ import Foundation
 // MARK: - Analysis orchestration and cache
 //
 // Analysis costs seconds per track, so it runs off the main actor in detached
-// tasks and the result is cached on disk. The cache key includes the file
-// identity (name, size, modification date) and the analyser version, so a new
-// algorithm or an edited file invalidates the entry automatically.
+// tasks and the result is cached on disk. Local files are keyed by file
+// identity (name, size, modification date); Yandex streams are analysed once
+// by downloading a compact economical copy to a temporary file, which is
+// deleted right after decoding - only the cached JSON stays. The cache key
+// includes the analyser version, so a new algorithm or an edited file
+// invalidates the entry automatically.
 
 nonisolated struct AnalysisRequest: Sendable {
     let trackID: UUID
@@ -22,6 +25,10 @@ actor TrackAnalysisService {
 
     private var memory: [String: TrackAnalysis] = [:]
     private var inFlight: [String: Task<TrackAnalysis?, Never>] = [:]
+    private var ymInFlight: [String: Task<TrackAnalysis?, Never>] = [:]
+
+    /// Upper bound for the temporary analysis download of a streamed track.
+    private static let maxStreamDownloadBytes = 20 * 1024 * 1024
 
     private init() {}
 
@@ -31,13 +38,10 @@ actor TrackAnalysisService {
     func cached(for url: URL) -> TrackAnalysis? {
         let key = Self.cacheKey(for: url)
         if let value = memory[key] { return value }
-
-        let file = Self.cacheDirectory().appendingPathComponent(key + ".json")
-        guard let data = try? Data(contentsOf: file),
-              let decoded = try? JSONDecoder().decode(TrackAnalysis.self, from: data),
-              decoded.analysisVersion == TrackAnalysis.currentVersion else { return nil }
-        memory[key] = decoded
-        return decoded
+        return Self.loadFromDisk(key: key).map { value in
+            memory[key] = value
+            return value
+        }
     }
 
     /// Analyse the file if needed. Concurrent callers share one run.
@@ -55,6 +59,42 @@ actor TrackAnalysisService {
         inFlight[key] = nil
 
         if let result { store(result, key: key) }
+        return result
+    }
+
+    /// Analyse any track - local file or Yandex stream. Streams are resolved,
+    /// downloaded as a compact copy, decoded and cleaned up. This is what makes
+    /// AutoMix decisions real for the streaming catalogue instead of running on
+    /// invented placeholder data.
+    func analysis(for track: Track) async -> TrackAnalysis? {
+        let url = track.url
+        if !track.isStream, FileManager.default.fileExists(atPath: url.path) {
+            return await analysis(trackID: track.id, url: url)
+        }
+
+        let ymID = Self.ymTrackID(from: track)
+        guard !ymID.isEmpty else { return nil }
+
+        let key = "ym-\(ymID)-v\(TrackAnalysis.currentVersion)"
+        if let value = memory[key] { return value }
+        if let value = Self.loadFromDisk(key: key) {
+            memory[key] = value
+            return value
+        }
+        if let running = ymInFlight[key] { return await running.value }
+
+        let trackID = track.id
+        let task = Task.detached(priority: .utility) { [key] in
+            await Self.computeStream(trackID: trackID, ymID: ymID, cacheKey: key)
+        }
+        ymInFlight[key] = task
+        let result = await task.value
+        ymInFlight[key] = nil
+
+        if let result {
+            memory[key] = result
+            Self.writeToDisk(result, key: key)
+        }
         return result
     }
 
@@ -97,12 +137,75 @@ actor TrackAnalysisService {
         try? FileManager.default.removeItem(at: Self.cacheDirectory())
     }
 
+    // MARK: - Stream decoding
+
+    nonisolated private static func ymTrackID(from track: Track) -> String {
+        let raw = track.streamUrlString ?? track.fileName
+        return raw
+            .replacingOccurrences(of: "ym_", with: "")
+            .replacingOccurrences(of: ".mp3", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func computeStream(trackID: UUID, ymID: String, cacheKey: String) async -> TrackAnalysis? {
+        guard let info = try? await YandexMusicService.shared.getStreamInfo(
+            for: ymID,
+            preferredQuality: .economical
+        ) else {
+            SonivoDiagnostics.log("[AutoMix] Stream analysis: could not resolve \(ymID)", tag: "AUTOMIX")
+            return nil
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AutoMixStreamAnalysis", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent(cacheKey + ".bin")
+
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        guard let (temp, response) = try? await URLSession.shared.download(from: info.url) else {
+            SonivoDiagnostics.log("[AutoMix] Stream analysis: download failed for \(ymID)", tag: "AUTOMIX")
+            return nil
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: temp.path)
+        let size = (attributes?[.size] as? Int) ?? 0
+        guard size > 0, size <= maxStreamDownloadBytes, response.expectedContentLength <= Int64(maxStreamDownloadBytes) else {
+            try? FileManager.default.removeItem(at: temp)
+            return nil
+        }
+        try? FileManager.default.removeItem(at: destination)
+        do {
+            try FileManager.default.moveItem(at: temp, to: destination)
+        } catch {
+            return nil
+        }
+
+        guard let analysis = await compute(trackID: trackID, url: destination) else { return nil }
+        SonivoDiagnostics.log(
+            "[AutoMix] Stream analysis ready: \(ymID) BPM \(analysis.bpm.map { String(format: "%.1f", $0) } ?? "—"), key \(analysis.musicalKey ?? "—")",
+            tag: "AUTOMIX"
+        )
+        return analysis
+    }
+
     // MARK: - Internals
 
     private func store(_ analysis: TrackAnalysis, key: String) {
         memory[key] = analysis
+        Self.writeToDisk(analysis, key: key)
+    }
+
+    nonisolated private static func loadFromDisk(key: String) -> TrackAnalysis? {
+        let file = cacheDirectory().appendingPathComponent(key + ".json")
+        guard let data = try? Data(contentsOf: file),
+              let decoded = try? JSONDecoder().decode(TrackAnalysis.self, from: data),
+              decoded.analysisVersion == TrackAnalysis.currentVersion else { return nil }
+        return decoded
+    }
+
+    nonisolated private static func writeToDisk(_ analysis: TrackAnalysis, key: String) {
         guard let data = try? JSONEncoder().encode(analysis) else { return }
-        let file = Self.cacheDirectory().appendingPathComponent(key + ".json")
+        let file = cacheDirectory().appendingPathComponent(key + ".json")
         try? data.write(to: file, options: .atomic)
     }
 
@@ -114,22 +217,27 @@ actor TrackAnalysisService {
         let key = KeyDetector.detect(chroma: features.chroma)
         let structure = StructureAnalyzer.analyze(features: features, downbeats: beats.downbeats)
 
-        let avgEnergy = structure.energyCurve.isEmpty ? 0.7 : Double(structure.energyCurve.reduce(0, +) / Float(structure.energyCurve.count))
-        let introEndSec = structure.introEnd ?? 8.0
+        let avgEnergy = structure.energyCurve.isEmpty ? 0.5 : Double(structure.energyCurve.reduce(0, +) / Float(structure.energyCurve.count))
+        let introEndSec = structure.introEnd ?? min(8.0, features.duration * 0.15)
         let outroStartSec = structure.outroStart ?? max(0, features.duration - 18.0)
 
-        let introSection = MusicSection(start: 0, end: introEndSec, type: .intro, energy: 0.4)
-        let outroSection = MusicSection(start: outroStartSec, end: features.duration, type: .outro, energy: 0.5)
+        let drops = structure.cuePoints.filter { $0.kind == .preDrop }.map(\.time)
+
+        // Danceability is derived from the measured beat confidence - strong
+        // pulse means danceable, no pulse means we honestly do not know.
+        let danceability: Double? = beats.confidence > 0.2
+            ? 0.4 + 0.6 * Double(beats.confidence)
+            : nil
 
         return TrackAnalysis(
             trackID: trackID.uuidString,
             duration: features.duration,
             bpm: beats.bpm,
             bpmConfidence: Double(beats.confidence),
-            musicalKey: key.displayName,
+            musicalKey: key.confidence > 0.15 ? key.displayName : nil,
             keyConfidence: Double(key.confidence),
             energy: avgEnergy,
-            danceability: avgEnergy > 0.6 ? 0.85 : 0.60,
+            danceability: danceability,
             introStart: 0,
             introEnd: introEndSec,
             outroStart: outroStartSec,
@@ -138,19 +246,19 @@ actor TrackAnalysisService {
             lastBeat: beats.beatGrid.last,
             beats: beats.beatGrid,
             downbeats: beats.downbeats,
-            sections: [introSection, outroSection],
-            silenceRegions: [],
-            vocalRegions: [],
-            instrumentalRegions: [],
-            drops: [],
-            buildUps: [],
+            sections: structure.sections,
+            silenceRegions: structure.silenceRegions,
+            vocalRegions: structure.vocalRegions,
+            instrumentalRegions: structure.instrumentalRegions,
+            drops: drops,
+            buildUps: structure.buildUps,
             energyCurve: structure.energyCurve,
             analysisVersion: TrackAnalysis.currentVersion
         )
     }
 
     nonisolated private static func cacheDirectory() -> URL {
-        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let directory = base.appendingPathComponent("AutoMixAnalysis", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

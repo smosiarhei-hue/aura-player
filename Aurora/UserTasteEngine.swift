@@ -68,13 +68,85 @@ final class UserTasteEngine: @unchecked Sendable {
         dislikedTrackIDs.contains(track.id)
     }
 
+    /// Ranks a wave queue by taste but stays non-deterministic: equal-score
+    /// artists are shuffled each session, artists are spread out so the same
+    /// performer never stacks at the top, and tracks that already opened a
+    /// recent wave are demoted so two sessions never start identically.
     func filterAndRankWave(tracks: [Track]) -> [Track] {
         let available = tracks.filter { !dislikedTrackIDs.contains($0.id) }
-        return available.sorted { t1, t2 in
-            let score1 = artistScores[t1.artist, default: 0]
-            let score2 = artistScores[t2.artist, default: 0]
-            return score1 > score2
+        guard available.count > 1 else { return available }
+
+        // Fisher-Yates shuffle first: inside a taste tier the order rotates.
+        var pool = available
+        for index in stride(from: pool.count - 1, through: 1, by: -1) {
+            let swap = Int.random(in: 0...index)
+            pool.swapAt(index, swap)
         }
+
+        let openerPenalty = Set(recentWaveOpeners.prefix(12))
+        let scored = pool.map { track -> (track: Track, score: Double) in
+            var score = artistScores[track.artist, default: 0]
+            if openerPenalty.contains(track.id.uuidString) { score -= 2.5 }
+            return (track, score)
+        }
+
+        // Stable sort by score: high taste wins, ties keep their fresh shuffle.
+        let sorted = scored.sorted { left, right in
+            if left.score != right.score { return left.score > right.score }
+            return false
+        }
+
+        // Spread artists: max 2 in a row from the same performer.
+        var result: [Track] = []
+        var taken = Set<UUID>()
+        var streakArtist: String?
+        var streakCount = 0
+        var cursor = 0
+
+        while result.count < sorted.count {
+            guard cursor < sorted.count else { break }
+            let entry = sorted[cursor]
+            if taken.contains(entry.track.id) {
+                cursor += 1
+                continue
+            }
+            let artist = entry.track.artist
+            if artist == streakArtist, streakCount >= 2 {
+                // Find the next candidate from a different artist.
+                if let alternative = sorted.firstIndex(where: { !taken.contains($0.track.id) && $0.track.artist != artist }) {
+                    let pick = sorted[alternative]
+                    taken.insert(pick.track.id)
+                    result.append(pick.track)
+                    streakArtist = pick.track.artist
+                    streakCount = 1
+                    continue
+                }
+            }
+            taken.insert(entry.track.id)
+            result.append(entry.track)
+            streakCount = (artist == streakArtist) ? streakCount + 1 : 1
+            streakArtist = artist
+            cursor += 1
+        }
+
+        rememberWaveOpeners(result)
+        return result
+    }
+
+    // MARK: - Wave opener rotation
+
+    private let openersKey = "sonivo_wave_openers_v1"
+
+    private var recentWaveOpeners: [String] {
+        defaults.stringArray(forKey: openersKey) ?? []
+    }
+
+    private func rememberWaveOpeners(_ queue: [Track]) {
+        let ids = queue.prefix(4).map(\.id.uuidString)
+        var merged = ids + recentWaveOpeners
+        var seen = Set<String>()
+        merged = merged.filter { seen.insert($0).inserted }
+        defaults.set(Array(merged.prefix(24)), forKey: openersKey)
     }
 
     private func save() {

@@ -49,8 +49,9 @@ extension YandexMusicService {
                 score += max(0, 10 * (1 - ratio))
             }
 
-            let jitter = Double(item.id.utf8.reduce(0) { ($0 &* 31) &+ Int($1) } % 100) / 100
-            score += jitter
+            // Per-session jitter keeps consecutive waves from ranking identical
+            // candidates in the identical order.
+            score += Double.random(in: 0...3)
 
             if let existing = candidates[item.id] {
                 candidates[item.id] = TrackWaveCandidate(

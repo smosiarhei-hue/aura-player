@@ -25,153 +25,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
-// MARK: - AutoMix DJ Transition Style
-
-enum DJTransitionStyle: String, CaseIterable, Identifiable, Codable, Sendable {
-    case adaptiveAI = "AutoMix AI"
-    case bassSwap = "Bass-Swap DJ"
-    case filterSweep = "Filter Sweep"
-    case smoothDissolve = "Harmonic Dissolve"
-    case quickDrop = "Drop on Beat"
-
-    var id: String { rawValue }
-
-    var localizedTitle: String {
-        switch self {
-        case .adaptiveAI: return "AutoMix AI (Умный DJ)"
-        case .bassSwap: return "Bass-Swap (Срез басов DJ)"
-        case .filterSweep: return "Filter Sweep (Фильтр-переход)"
-        case .smoothDissolve: return "Harmonic Dissolve (Плавное сведение)"
-        case .quickDrop: return "Drop on Beat (Мгновенный дроп)"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .adaptiveAI: return "sparkles"
-        case .bassSwap: return "waveform.badge.magnifyingglass"
-        case .filterSweep: return "slider.horizontal.3"
-        case .smoothDissolve: return "waveform"
-        case .quickDrop: return "bolt.fill"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .adaptiveAI:
-            return "ИИ анализирует концовку трека, динамику баса и структуру, подбирая идеальный момент и кривую перехода."
-        case .bassSwap:
-            return "Классический DJ-прием: плавный срез низких частот уходящего трека для чистого входа баса без грязи."
-        case .filterSweep:
-            return "Мягкий срез средних и высоких частот с фильтрацией и растворением в следующий трек."
-        case .smoothDissolve:
-            return "Плавное гармоническое логарифмическое наложение с сохранением вокала."
-        case .quickDrop:
-            return "Быстрый переход прямо в сильную долю следующей песни (Drop on Beat)."
-        }
-    }
-}
-
-// MARK: - BPM & Musical Beat-Grid Engine (Сведение в такт и BPM)
-
-struct BPMBeatGrid: Sendable, Codable {
-    var bpm: Double
-    var beatInterval: Double     // 60 / BPM (секунд на 1 удар)
-    var barInterval: Double      // 4 удара (1 такт)
-    var phraseInterval: Double   // 8 ударов (2 такта)
-    var dropInterval: Double     // 16 ударов (4 такта / квадрат)
-
-    static func estimate(for track: Track) -> BPMBeatGrid {
-        let text = (track.title + " " + track.artist + " " + (track.album ?? "")).lowercased()
-        var estimatedBPM: Double
-
-        if text.contains("hip-hop") || text.contains("hip hop") || text.contains("rap") || text.contains("рэп") || text.contains("хип-хоп") {
-            estimatedBPM = 92.0
-        } else if text.contains("trap") || text.contains("drill") || text.contains("дрил") || text.contains("трэп") {
-            estimatedBPM = 140.0
-        } else if text.contains("techno") || text.contains("house") || text.contains("edm") || text.contains("remix") || text.contains("club") || text.contains("dance") {
-            estimatedBPM = 126.0
-        } else if text.contains("rock") || text.contains("metal") || text.contains("punk") || text.contains("рок") {
-            estimatedBPM = 132.0
-        } else if text.contains("lo-fi") || text.contains("lofi") || text.contains("chill") || text.contains("acoustic") || text.contains("piano") || text.contains("slow") {
-            estimatedBPM = 84.0
-        } else if text.contains("phonk") || text.contains("фонк") {
-            estimatedBPM = 130.0
-        } else if text.contains("r&b") || text.contains("soul") {
-            estimatedBPM = 96.0
-        } else {
-            // Musical tempo heuristic based on track characteristics
-            let seed = Double(abs(track.id.uuidString.hashValue % 12))
-            estimatedBPM = 122.0 + seed
-        }
-
-        let beat = 60.0 / estimatedBPM
-        return BPMBeatGrid(
-            bpm: estimatedBPM,
-            beatInterval: beat,
-            barInterval: beat * 4.0,
-            phraseInterval: beat * 8.0,
-            dropInterval: beat * 16.0
-        )
-    }
-}
-
-// MARK: - Track Cue Profile (Анализ трека перед сведением)
-
-struct TrackCueProfile: Sendable, Codable {
-    var outroStartOffset: Double
-    var outroDuration: Double
-    var introDropOffset: Double
-    var beatGrid: BPMBeatGrid
-    var silenceTailDuration: Double
-    var recommendedStyle: DJTransitionStyle
-
-    static func computeProfile(for track: Track, duration: Double) -> TrackCueProfile {
-        let totalDur = max(duration, track.duration)
-        let grid = BPMBeatGrid.estimate(for: track)
-
-        // Apple Music Style Dynamic DJ Outro & Blend Length:
-        // Standard tracks: 12-24 seconds blend (4 to 8 bars)
-        // Short tracks: 8-12 seconds
-        let outroDur: Double
-        if totalDur > 180 {
-            outroDur = min(grid.dropInterval, 24.0) // 16 beats = 4 bars or 8 bars (~16-24s)
-        } else if totalDur > 90 {
-            outroDur = min(grid.phraseInterval * 2.0, 18.0) // ~12-16s
-        } else if totalDur > 45 {
-            outroDur = min(grid.phraseInterval, 10.0) // ~6-10s
-        } else {
-            outroDur = min(grid.barInterval, 4.0)
-        }
-
-        let style: DJTransitionStyle
-        let titleLower = (track.title + " " + track.artist + " " + (track.album ?? "")).lowercased()
-        if titleLower.contains("remix") || titleLower.contains("club") || titleLower.contains("edit") || titleLower.contains("dance") || titleLower.contains("edm") {
-            style = .bassSwap
-        } else {
-            style = totalDur > 60 ? .bassSwap : .smoothDissolve
-        }
-
-        return TrackCueProfile(
-            outroStartOffset: max(0, totalDur - outroDur),
-            outroDuration: outroDur,
-            introDropOffset: 0.0,
-            beatGrid: grid,
-            silenceTailDuration: 0.3,
-            recommendedStyle: style
-        )
-    }
-}
-
-// MARK: - AutoMix Transition Style (Legacy Compatibility)
-
-enum AutoMixStyle: Sendable {
-    case bassSwapBlend(duration: Double)
-    case quickDrop(duration: Double)
-    case fadeOut(duration: Double)
-}
-
-// MARK: - AutoMix DJ Engine (Gemini 3.7 Flash AI & DSP Controller)
+// MARK: - AutoMix DJ Engine (AI & DSP Transition Executor)
 
 @Observable
 @MainActor
@@ -182,79 +36,39 @@ final class AutoMixDJEngine {
     var transitionProgress: Double = 0.0
     var activeStrategyName: String = "BASS_SWAP"
     var activePlan: TransitionPlan? = nil
-    var activeStyle: DJTransitionStyle = .adaptiveAI
     var statusBadge: String? = nil
-    var currentBPM: Double = 124.0
+    var currentBPM: Double = 0
 
-    var djStyle: DJTransitionStyle = .adaptiveAI {
-        didSet { UserDefaults.standard.set(djStyle.rawValue, forKey: "automix.djStyle") }
-    }
-    var bassSwapEnabled: Bool = true {
-        didSet { UserDefaults.standard.set(bassSwapEnabled, forKey: "automix.bassSwap") }
-    }
-    var trimSilenceEnabled: Bool = true {
-        didSet { UserDefaults.standard.set(trimSilenceEnabled, forKey: "automix.trimSilence") }
-    }
-    var maxTransitionDuration: Double = 24.0 {
-        didSet { UserDefaults.standard.set(maxTransitionDuration, forKey: "automix.maxDuration") }
-    }
+    private init() {}
 
-    private init() {
-        if let saved = UserDefaults.standard.string(forKey: "automix.djStyle"),
-           let style = DJTransitionStyle(rawValue: saved) {
-            djStyle = style
-        }
-        if UserDefaults.standard.object(forKey: "automix.bassSwap") != nil {
-            bassSwapEnabled = UserDefaults.standard.bool(forKey: "automix.bassSwap")
-        }
-        if UserDefaults.standard.object(forKey: "automix.trimSilence") != nil {
-            trimSilenceEnabled = UserDefaults.standard.bool(forKey: "automix.trimSilence")
-        }
-        let dur = UserDefaults.standard.double(forKey: "automix.maxDuration")
-        if dur > 0 { maxTransitionDuration = dur }
-    }
+    /// Execute the plan's action envelopes (TZ Section 15): piecewise ramps
+    /// over the plan's keyframes for one lane/parameter. Returns nil when the
+    /// plan carries no keyframes for that pair, so the caller keeps its own
+    /// fallback curves.
+    nonisolated static func sampleEnvelope(
+        _ actions: [TransitionAction],
+        target: String,
+        parameter: String,
+        at time: Double
+    ) -> Float? {
+        let frames = actions
+            .filter {
+                $0.target == target && $0.parameter == parameter
+                    && $0.time.isFinite && $0.value.isFinite && $0.duration.isFinite
+            }
+            .sorted { $0.time < $1.time }
+        guard let first = frames.first else { return nil }
 
-    func planTransition(
-        outgoing: Track,
-        outgoingDuration: Double,
-        incoming: Track,
-        mode: TransitionMode
-    ) -> (cueTime: Double, blendDuration: Double, style: DJTransitionStyle) {
-        guard mode != .off else {
-            return (outgoingDuration, 0, .quickDrop)
+        // The level before a keyframe begins is the value the previous ramp
+        // reached; every keyframe ramps from there to its own value.
+        var value = first.value
+        for frame in frames where frame.time <= time {
+            let segment = frame.duration > 0.001
+                ? min(1, max(0, (time - frame.time) / frame.duration))
+                : 1
+            value = value + (frame.value - value) * Float(segment)
         }
-        if mode == .gapless {
-            return (max(0, outgoingDuration - 0.08), 0.08, .quickDrop)
-        }
-        if mode == .crossfade {
-            let dur = UserDefaults.standard.double(forKey: "player.crossfadeDuration")
-            let effectiveDur = dur > 0 ? dur : 6.0
-            let cue = max(0, outgoingDuration - effectiveDur)
-            return (cue, effectiveDur, .smoothDissolve)
-        }
-
-        let profile = TrackCueProfile.computeProfile(for: outgoing, duration: outgoingDuration)
-        let grid = profile.beatGrid
-        currentBPM = grid.bpm
-
-        var blendDur = profile.outroDuration
-        blendDur = min(max(blendDur, 6.0), maxTransitionDuration)
-
-        // 2. Quantize cue time to exact musical bar (такт) boundary before outro
-        let unquantizedCue = max(0, outgoingDuration - blendDur)
-        let bar = max(grid.barInterval, 1.0)
-        let barIndex = floor(unquantizedCue / bar)
-        var quantizedCue = barIndex * bar
-
-        if quantizedCue < (outgoingDuration - blendDur - bar) {
-            quantizedCue += bar
-        }
-        if (outgoingDuration - quantizedCue) < 2.0 {
-            quantizedCue = max(0, outgoingDuration - blendDur)
-        }
-
-        let chosenStyle: DJTransitionStyle = (djStyle == .adaptiveAI) ? profile.recommendedStyle : djStyle
-        return (quantizedCue, blendDur, chosenStyle)
+        return value
     }
 
     func computeVolumesAndEQ(
