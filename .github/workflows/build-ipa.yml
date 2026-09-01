@@ -36,6 +36,7 @@ jobs:
           python3 -W error::SyntaxWarning scripts/automix_v3.py
           python3 -W error::SyntaxWarning scripts/nowplaying_widget_fix.py
           python3 -W error::SyntaxWarning scripts/player_ux_fixes.py
+          python3 -W error::SyntaxWarning scripts/automix_timestretch.py
 
       - name: Compute version (auto-increment per build)
         id: version
@@ -133,7 +134,7 @@ jobs:
                -F document=@Sonivo-unsigned.ipa \
                -F caption="${CAPTION}" \
                -F parse_mode="HTML" \
-               "{{https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}}}/sendDocument" || true
+               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
