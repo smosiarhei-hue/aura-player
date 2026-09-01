@@ -42,14 +42,20 @@ final class AutoMixDJEngine {
     private init() {}
 
     /// Execute the plan's action envelopes (TZ Section 15): piecewise ramps
-    /// over the plan's keyframes for one lane/parameter. Returns nil when the
-    /// plan carries no keyframes for that pair, so the caller keeps its own
-    /// fallback curves.
+    /// over the plan's keyframes for one lane/parameter. A keyframe
+    /// (time, value, duration) means "starting at `time`, ramp to `value`
+    /// over `duration` seconds". `defaultValue` is the level before the first
+    /// keyframe begins - the source plays at full level until told otherwise,
+    /// the target starts silent - which keeps half-specified envelopes from
+    /// jumping to their final value on the very first tick. Returns nil when
+    /// the plan carries no keyframes for that pair, so the caller keeps its
+    /// own fallback curves.
     nonisolated static func sampleEnvelope(
         _ actions: [TransitionAction],
         target: String,
         parameter: String,
-        at time: Double
+        at time: Double,
+        defaultValue: Float? = nil
     ) -> Float? {
         let frames = actions
             .filter {
@@ -59,9 +65,7 @@ final class AutoMixDJEngine {
             .sorted { $0.time < $1.time }
         guard let first = frames.first else { return nil }
 
-        // The level before a keyframe begins is the value the previous ramp
-        // reached; every keyframe ramps from there to its own value.
-        var value = first.value
+        var value = Double(defaultValue ?? first.value)
         for frame in frames where frame.time <= time {
             let segment: Double = frame.duration > 0.001
                 ? min(1, max(0, (time - frame.time) / frame.duration))

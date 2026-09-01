@@ -165,6 +165,10 @@ nonisolated enum TransitionPlanner {
         if strategy != .SILENCE_TRIM, let snapped = sourceAnalysis.nearestDownbeat(to: cueTime) {
             cueTime = snapped
         }
+        // The blend must END with the track: the cue may never sit further from
+        // the end than the blend length (+ a 2 s safety). Otherwise the source
+        // would go silent tens of seconds before its file actually ends.
+        cueTime = max(cueTime, sourceDur - blendDuration - 2)
         cueTime = min(max(0, cueTime), max(0, sourceDur - 1.5))
 
         // --- 4. Action envelopes (TZ Sections 11, 15, 16) ---
@@ -249,38 +253,47 @@ nonisolated enum TransitionPlanner {
         case .BASS_SWAP, .BEAT_MATCH_EQ, .BEAT_MATCH:
             // Source keeps full level, loses the low end; target enters mid/high
             // only and receives the bass on a musical boundary (TZ Section 11).
+            // Both lanes ride real ramps - no instant jumps, no dead air.
             actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: 0))
-            actions.append(TransitionAction(time: half * 0.4, target: "source", parameter: "lowEQ", value: 0.05, duration: half))
-            actions.append(TransitionAction(time: duration, target: "source", parameter: "volume", value: 0.0, duration: 0))
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "lowEQ", value: 0.95, duration: half))
+            actions.append(TransitionAction(time: half, target: "source", parameter: "lowEQ", value: 0.05, duration: half))
+            actions.append(TransitionAction(time: duration * 0.5, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.4))
+            actions.append(TransitionAction(time: duration * 0.9, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.1))
 
-            actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: 0))
-            actions.append(TransitionAction(time: 0, target: "target", parameter: "lowEQ", value: 0.0, duration: 0))
-            actions.append(TransitionAction(time: half * 0.6, target: "target", parameter: "lowEQ", value: 1.0, duration: half))
-            actions.append(TransitionAction(time: duration, target: "target", parameter: "volume", value: 1.0, duration: 0))
+            actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: duration * 0.55))
+            actions.append(TransitionAction(time: duration * 0.55, target: "target", parameter: "volume", value: 0.7, duration: duration * 0.45))
+            actions.append(TransitionAction(time: 0, target: "target", parameter: "lowEQ", value: 0.0, duration: half * 0.6))
+            actions.append(TransitionAction(time: half * 0.6, target: "target", parameter: "lowEQ", value: 1.0, duration: half * 0.4))
 
         case .FILTER_TRANSITION:
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: half))
+            actions.append(TransitionAction(time: half, target: "source", parameter: "volume", value: 0.35, duration: half))
             actions.append(TransitionAction(time: 0, target: "source", parameter: "filter", value: 1.0, duration: 0))
             actions.append(TransitionAction(time: half, target: "source", parameter: "filter", value: 0.1, duration: half))
-            actions.append(TransitionAction(time: duration, target: "source", parameter: "volume", value: 0.0, duration: 0))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.1, duration: 0))
-            actions.append(TransitionAction(time: half, target: "target", parameter: "volume", value: 1.0, duration: half))
+            actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 1.0, duration: half * 1.2))
 
         case .DROP_SWITCH, .HARD_CUT:
-            actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.15))
-            actions.append(TransitionAction(time: duration, target: "target", parameter: "volume", value: 1.0, duration: 0))
+            // Deliberate hard style: source rides at full level until the very
+            // last beat, target enters at once on the switch.
+            actions.append(TransitionAction(time: duration * 0.8, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.15))
+            actions.append(TransitionAction(time: duration * 0.95, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.05))
+            actions.append(TransitionAction(time: duration * 0.95, target: "target", parameter: "volume", value: 1.0, duration: 0))
 
         case .VOCAL_CUT:
-            // Outgoing dies right at its vocal end, target comes in clean.
-            actions.append(TransitionAction(time: duration * 0.6, target: "source", parameter: "volume", value: 0.6, duration: 0))
-            actions.append(TransitionAction(time: duration, target: "source", parameter: "volume", value: 0.0, duration: 0))
+            // Outgoing dips under the target's entrance, target rises cleanly;
+            // source dies out only at the very end of the window.
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.55))
+            actions.append(TransitionAction(time: duration * 0.55, target: "source", parameter: "volume", value: 0.45, duration: duration * 0.3))
+            actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.15))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: 0))
-            actions.append(TransitionAction(time: duration * 0.6, target: "target", parameter: "volume", value: 0.7, duration: duration * 0.4))
+            actions.append(TransitionAction(time: duration * 0.45, target: "target", parameter: "volume", value: 0.75, duration: duration * 0.45))
 
         default:
-            actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: 0))
-            actions.append(TransitionAction(time: duration, target: "source", parameter: "volume", value: 0.0, duration: duration))
-            actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: 0))
-            actions.append(TransitionAction(time: duration, target: "target", parameter: "volume", value: 1.0, duration: duration))
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.85))
+            actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.15))
+            actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: duration))
+            actions.append(TransitionAction(time: duration, target: "target", parameter: "volume", value: 1.0, duration: 0))
         }
 
         return actions
@@ -310,6 +323,13 @@ nonisolated enum TransitionPlanner {
         cue = min(max(0, cue), max(0, sourceDur - 1.5))
         var end = min(plan.sourceTrack.transitionEnd.isFinite ? plan.sourceTrack.transitionEnd : sourceDur, sourceDur)
         if end - cue < 2 { end = min(sourceDur, cue + 4) }
+        // The blend must end WITH the track: an early cue would mute the
+        // source long before its file ends. Keep at most a 2 s safety gap.
+        if sourceDur - end > 2 {
+            let blendLength = end - cue
+            end = sourceDur
+            cue = min(cue, max(0, sourceDur - blendLength - 2))
+        }
 
         // 2. Tempo: clamp rates to the musical stretch window; drop invented rates.
         func clampRate(_ r: Double) -> Double {

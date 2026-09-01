@@ -864,6 +864,13 @@ final class PlayerCore {
             targetAnalysis: TrackAnalysis.minimal(trackID: nextTrack.id.uuidString, duration: nextTrack.duration)
         )
 
+        // Executor-side invariant: the blend always ends together with the
+        // outgoing track. Planners already clamp the cue; this simply waits for
+        // the right moment instead of starting a blend whose end would leave
+        // the track playing on after the source lane is already silent.
+        if plan.cueTime > currentPos + 1.0 { return }
+        guard totalDur - currentPos <= plan.leadTime + 2.5 else { return }
+
         transitionScheduled = true
         isTransitioning = true
         incomingLaneReady = false
@@ -1045,6 +1052,8 @@ final class PlayerCore {
 
         // Execute the plan's action envelopes (volume / lowEQ keyframes) when
         // the plan carries them; otherwise fall back to the classic curves.
+        // A keyframe ramp that would still be running at the transition's end is
+        // compressed to finish with it, so the blend never ends mid-ramp.
         let hasEnvelopes = actions.contains { $0.target == "source" && $0.parameter == "volume" }
             && actions.contains { $0.target == "target" && $0.parameter == "volume" }
 
@@ -1055,11 +1064,13 @@ final class PlayerCore {
         // AVAudioEngine hands over to AVPlayer or vice versa).
         var sourceLevel = outVol
         var targetLevel = inVol
-        if hasEnvelopes,
-           let outEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime),
-           let inEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime) {
-            sourceLevel = max(0, min(1.0, outEnv))
-            targetLevel = max(0, min(1.0, inEnv))
+        if hasEnvelopes {
+            if let outEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime, defaultValue: 1.0) {
+                sourceLevel = max(0, min(1.0, outEnv))
+            }
+            if let inEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime, defaultValue: 0.0) {
+                targetLevel = max(0, min(1.0, inEnv))
+            }
         }
 
         // Outgoing lane is an AVPlayer.
@@ -1082,10 +1093,10 @@ final class PlayerCore {
         if !isUsingStreamPlayer {
             var outLowDB = outBassCut
             var inLowDB = inBassGain
-            if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime) {
+            if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0) {
                 outLowDB = (outLow - 1) * 24.0
             }
-            if let inLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime) {
+            if let inLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0) {
                 inLowDB = (inLow - 1) * 24.0
             }
             activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outLowDB) : outLowDB
