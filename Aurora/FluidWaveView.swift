@@ -41,7 +41,7 @@ struct FluidWaveView: View {
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: isBackgroundMode ? 1.0 / 30.0 : 1.0 / 60.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let elapsedTime = Float(timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1000))
 
             GeometryReader { proxy in

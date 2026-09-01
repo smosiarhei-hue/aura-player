@@ -141,30 +141,48 @@ nonisolated enum TransitionPlanner {
         var sourcePlaybackRate: Double = 1.0
         var targetPlaybackRate: Double = 1.0
 
-        let silenceTail = sourceAnalysis.silenceRegions.first(where: { $0.end >= sourceDur - 1.0 })?.duration ?? 0.0
+        let vocalEnd = sourceAnalysis.vocalRegions.last?.end ?? (sourceAnalysis.outroStart > 0 ? sourceAnalysis.outroStart : max(0, sourceDur - 16.0))
+        let remainingAfterVocal = max(0, sourceDur - vocalEnd)
 
         if silenceTail > 3.0 {
             strategy = .SILENCE_TRIM
-            reason = "Обнаружена пауза в конце трека, выполняется бесшовная обрезка тишины"
-            blendDuration = 2.0
+            reason = "Обрезка хвостовой тишины в конце композиции"
+            blendDuration = 2.5
+        } else if bpmRatio > 1.28 {
+            if tgtEnergy > srcEnergy + 0.25 {
+                strategy = .BUILDUP_TO_DROP
+                reason = "Разгон энергии и резкий дроп на сильную долю"
+                blendDuration = 10.0
+            } else {
+                strategy = .FILTER_TRANSITION
+                reason = "Контрастный темп: High-Pass фильтрация с резонансным срезом"
+                blendDuration = 12.0
+            }
+        } else if remainingAfterVocal >= 8.0 && remainingAfterVocal <= 24.0 {
+            // Vocal finished: perfect window for vocal cut / outro blend
+            if energyDiff < 0.25 {
+                strategy = .VOCAL_CUT
+                reason = "Переход сразу после окончания вокала без наложения голосов"
+                blendDuration = min(remainingAfterVocal, 16.0)
+            } else {
+                strategy = .ENERGY_BLEND
+                reason = "Окончание вокала: плавный энергетический переход"
+                blendDuration = min(remainingAfterVocal, 18.0)
+            }
         } else if bpmRatio <= 1.08 {
             let avgBPM = (srcBPM + tgtBPM) / 2.0
             sourcePlaybackRate = min(1.06, max(0.94, avgBPM / srcBPM))
             targetPlaybackRate = min(1.06, max(0.94, avgBPM / tgtBPM))
             let gridBar = sourceAnalysis.barDuration ?? (60.0 / avgBPM * 4.0)
 
-            strategy = .BASS_SWAP
-            reason = "Бит-синхронизированный DJ Bass-Swap с выравниванием по тактам"
-            blendDuration = min(24.0, max(12.0, gridBar * 4.0))
-        } else if bpmRatio > 1.25 {
-            if tgtEnergy > srcEnergy + 0.3 {
-                strategy = .BUILDUP_TO_DROP
-                reason = "Разгон энергии к дропу следующего трека"
-                blendDuration = 10.0
+            if energyDiff < 0.20 {
+                strategy = .BASS_SWAP
+                reason = "Синхронный DJ Bass-Swap с выравниванием по тактам"
+                blendDuration = min(24.0, max(12.0, gridBar * 4.0))
             } else {
-                strategy = .FILTER_TRANSITION
-                reason = "High-Pass фильтрация с резонансным срезом"
-                blendDuration = 12.0
+                strategy = .BEAT_MATCH_EQ
+                reason = "Бит-матчинг с частотным разделением"
+                blendDuration = min(18.0, max(10.0, gridBar * 3.0))
             }
         } else if energyDiff > 0.40 {
             strategy = .ENERGY_BLEND
@@ -176,8 +194,14 @@ nonisolated enum TransitionPlanner {
             blendDuration = 16.0
         }
 
-        // 3. Compute Musical Cue Time (Sections 9, 10, 23)
-        var cueTime = max(0, sourceDur - blendDuration - silenceTail)
+        // 3. Compute Musical Cue Time (Snapped to vocal finish or downbeat)
+        var cueTime: Double
+        if remainingAfterVocal >= 6.0 && remainingAfterVocal <= 30.0 {
+            cueTime = vocalEnd
+        } else {
+            cueTime = max(0, sourceDur - blendDuration - silenceTail)
+        }
+
         if let barDur = sourceAnalysis.barDuration, barDur > 0.5 {
             let barIdx = floor(cueTime / barDur)
             cueTime = barIdx * barDur

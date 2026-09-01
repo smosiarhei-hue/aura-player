@@ -256,11 +256,15 @@ Respond ONLY with a JSON object matching this schema:
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = payload
-        request.timeoutInterval = 7.0
+        request.timeoutInterval = 5.0
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            guard let http = response as? HTTPURLResponse else { return nil }
+
+            if http.statusCode != 200 {
+                let errStr = String(data: data, encoding: .utf8) ?? ""
+                SonivoDiagnostics.log("[AutoMix AI] HTTP \(http.statusCode): \(errStr.prefix(90))", tag: "AUTOMIX")
                 return nil
             }
 
@@ -289,11 +293,14 @@ Respond ONLY with a JSON object matching this schema:
 
             guard let jsonData = cleanedJson.data(using: .utf8),
                   let plan = try? JSONDecoder().decode(TransitionPlan.self, from: jsonData) else {
+                SonivoDiagnostics.log("[AutoMix AI] JSON decode failed: \(cleanedJson.prefix(80))", tag: "AUTOMIX")
                 return nil
             }
 
+            SonivoDiagnostics.log("[AutoMix AI] Plan: \(plan.decision.transitionType) (cue: \(String(format: "%.1f", plan.cueTime))s, dur: \(String(format: "%.1f", plan.leadTime))s, rate: \(String(format: "%.2f", plan.tempo.targetPlaybackRate)))", tag: "AUTOMIX")
             return plan
         } catch {
+            SonivoDiagnostics.log("[AutoMix AI] Network error: \(error.localizedDescription)", tag: "AUTOMIX")
             return nil
         }
     }
