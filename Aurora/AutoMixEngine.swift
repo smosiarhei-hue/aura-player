@@ -38,7 +38,7 @@ struct AutoMixTransitionPlan: Sendable {
     var incomingSkip: Double
     var style: DJTransitionStyle
 
-    static func fallback(outgoingDuration: Double) -> AutoMixTransitionPlan {
+    nonisolated static func fallback(outgoingDuration: Double) -> AutoMixTransitionPlan {
         let blend = min(10.0, max(4.0, outgoingDuration * 0.06))
         return AutoMixTransitionPlan(
             leadTime: blend,
@@ -185,9 +185,10 @@ actor AutoMixEngine {
             return nil
         }
 
-        let size = (try? FileManager.default.attributesOfItem(atPath: temp.path)[.size] as? Int) ?? 0
+        let attributes = try? FileManager.default.attributesOfItem(atPath: temp.path)
+        let size = (attributes?[.size] as? Int) ?? 0
         let expected = Int(response.expectedContentLength)
-        if (size ?? 0) > maxPrefetchBytes || expected > maxPrefetchBytes {
+        if size > maxPrefetchBytes || expected > maxPrefetchBytes {
             try? FileManager.default.removeItem(at: temp)
             return nil
         }
