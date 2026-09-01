@@ -252,7 +252,9 @@ final class PlayerCore {
         configureEQ(eqNodeB)
         // Wet-only reverb lanes: the dry signal reaches the mixer straight from
         // the EQ, the reverb contributes the effect tail. Keeps the normal sound
-        // untouched while a transition smears the outgoing track.
+        // untouched while a transition smears the outgoing track. The factory
+        // preset is re-chosen per transition from the measured pair (see
+        // applyReverbPreset); this is just the neutral default.
         reverbA.wetDryMix = 0
         reverbB.wetDryMix = 0
         reverbA.loadFactoryPreset(.plate)
@@ -898,6 +900,9 @@ final class PlayerCore {
         AutoMixDJEngine.shared.isTransitionActive = true
         AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
         AutoMixDJEngine.shared.activePlan = plan
+        // Reverb character is part of the per-pair plan: the planner chose it
+        // from the measured audio (club BPM -> short tail, quiet -> hall).
+        applyReverbPreset(plan.effects.resolvedReverbPreset)
 
         SonivoDiagnostics.log("[AutoMix] Transition triggered: \(current.title) -> \(nextTrack.title) [Strategy: \(plan.decision.transitionType), Duration: \(String(format: "%.1f", plan.leadTime))s, Reason: \(plan.decision.reason)]", tag: "AUTOMIX")
 
@@ -1268,6 +1273,29 @@ final class PlayerCore {
         updateNowPlayingInfo()
         // Kick off planning for the pair that now follows.
         scheduleTransitionIfNeeded()
+    }
+
+    /// Applies the plan's chosen reverb character to both engine lanes. The
+    /// wet mix stays 0 until a transition envelope raises it.
+    private func applyReverbPreset(_ name: String) {
+        let preset: AVAudioUnitReverbPreset
+        switch name {
+        case "smallRoom": preset = .smallRoom
+        case "mediumRoom": preset = .mediumRoom
+        case "largeRoom": preset = .largeRoom
+        case "largeRoom2": preset = .largeRoom2
+        case "mediumHall": preset = .mediumHall
+        case "mediumHall2": preset = .mediumHall2
+        case "mediumHall3": preset = .mediumHall3
+        case "largeHall": preset = .largeHall
+        case "largeHall2": preset = .largeHall2
+        case "mediumChamber": preset = .mediumChamber
+        case "largeChamber": preset = .largeChamber
+        case "cathedral": preset = .cathedral
+        default: preset = .plate
+        }
+        reverbA.loadFactoryPreset(preset)
+        reverbB.loadFactoryPreset(preset)
     }
 
     /// Eases the active lane's time-pitch rate back to 1.0 over a few seconds.

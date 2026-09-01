@@ -5,9 +5,25 @@ import Foundation
 nonisolated struct TransitionAction: Codable, Sendable {
     let time: Double
     let target: String       // "source" | "target"
-    let parameter: String    // "volume" | "lowEQ" | "midEQ" | "highEQ" | "filter" | "pan" | "pitch"
+    let parameter: String    // "volume" | "lowEQ" | "midEQ" | "highEQ" | "filter" | "pan" | "pitch" | "reverb"
     let value: Double
     let duration: Double
+}
+
+/// Per-plan DSP character, chosen from the measured audio of the pair.
+nonisolated struct TransitionEffects: Codable, Sendable {
+    /// Factory reverb character for the outgoing lane's tail, e.g. "plate".
+    var reverbPreset: String = "plate"
+
+    static let reverbPresets = [
+        "smallRoom", "mediumRoom", "largeRoom", "mediumHall", "largeHall",
+        "plate", "mediumChamber", "largeChamber", "cathedral", "largeRoom2",
+        "mediumHall2", "mediumHall3", "largeHall2"
+    ]
+
+    var resolvedReverbPreset: String {
+        Self.reverbPresets.contains(reverbPreset) ? reverbPreset : "plate"
+    }
 }
 
 nonisolated struct TransitionDecisionInfo: Codable, Sendable {
@@ -43,6 +59,8 @@ nonisolated struct TransitionPlan: Codable, Sendable {
     let tempo: TransitionTempoInfo
     let actions: [TransitionAction]
     let fallback: TransitionFallbackInfo
+    /// Optional DSP character (reverb choice); local plans always set it.
+    var effects: TransitionEffects = TransitionEffects()
 
     var strategy: TransitionStrategy {
         TransitionStrategy(rawValue: decision.transitionType) ?? .BASS_SWAP
@@ -63,7 +81,7 @@ actor GeminiAutoMixPlanner {
     static let shared = GeminiAutoMixPlanner()
 
     /// Bump when the prompt/schema changes so stale cached plans are dropped.
-    private static let planCacheVersion = 3
+    private static let planCacheVersion = 4
 
     private var cache: [String: TransitionPlan] = [:]
     private var inFlightTasks: [String: Task<TransitionPlan, Never>] = [:]
@@ -253,6 +271,9 @@ PLAYER STATE:
 - Current position: \(String(format: "%.1f", currentPosition))s
 - Remaining duration: \(String(format: "%.1f", max(0, sourceAnalysis.duration - currentPosition)))s
 
+The effects.reverbPreset describes the reverb character for the outgoing track's tail. Pick it from the measured audio: short bright tails (plate, smallRoom, mediumRoom) for upbeat club material so the kick stays readable; long lush tails (largeHall, cathedral, largeRoom) for slow or quiet material; chambers and halls for vocal-heavy pairs. You may also add "reverb" action keyframes (0...1 wetness over time) on the source lane.
+Every plan should feel individual: vary blend lengths, curve shapes and effect depths based on what the analysis actually shows about THIS pair of tracks.
+
 Respond ONLY with a JSON object matching this schema:
 {
   "decision": {
@@ -280,6 +301,9 @@ Respond ONLY with a JSON object matching this schema:
   ],
   "fallback": {
     "type": "SIMPLE_CROSSFADE"
+  },
+  "effects": {
+    "reverbPreset": "plate"
   }
 }
 """

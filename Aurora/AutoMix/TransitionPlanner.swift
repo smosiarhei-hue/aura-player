@@ -12,6 +12,72 @@ nonisolated enum TransitionPlanner {
     static let minStretch: Double = 0.94
     static let maxStretch: Double = 1.06
 
+    // MARK: - Per-pair variation (TZ Sections 24, 29)
+    //
+    // Every measured pair of tracks should get its OWN transition, not a
+    // template. A deterministic seed derived from both track IDs drives small
+    // musical variations: blend length, curve shapes, reverb depth and entry
+    // offsets differ pair to pair, and even the same pair never repeats the
+    // exact same transition twice because the seed also mixes in the queue
+    // position.
+
+    /// Stable 64-bit seed from the pair + a salt.
+    nonisolated private static func variationSeed(
+        sourceTrackID: UUID,
+        targetTrackID: UUID,
+        salt: Int
+    ) -> UInt64 {
+        var hash: UInt64 = 1469598103934665603
+        func mix(_ value: UInt64) {
+            hash = (hash ^ value) &* 1099511628211
+        }
+        let combined = sourceTrackID.uuidString + "|" + targetTrackID.uuidString + "|" + String(salt)
+        for byte in combined.utf8 { mix(UInt64(byte)) }
+        return hash
+    }
+
+    nonisolated private static func seededDouble(_ seed: UInt64) -> Double {
+        var z = seed
+        z = (z ^ (z >> 33)) &* 0xFF51AFD7ED558CCD
+        z = (z ^ (z >> 33)) &* 0xC4CEB9FE1A85EC53
+        z = z ^ (z >> 33)
+        return Double(z % 10_000) / 10_000.0
+    }
+
+    // MARK: - Reverb character selection
+
+    /// Chooses the reverb character from the measured audio of the pair, with a
+    /// seeded pick between two musical candidates so the same genre does not
+    /// always get the identical tail. Upbeat dance material gets short bright
+    /// tails that keep the rhythm readable; slow, quiet or heavily vocal
+    //  material gets longer, darker rooms.
+    nonisolated static func chooseReverbPreset(
+        source: TrackAnalysis,
+        target: TrackAnalysis,
+        seed: UInt64
+    ) -> String {
+        let avgEnergy = (source.energy + target.energy) / 2
+        let knownBPMs = [source.bpm, target.bpm].compactMap { $0 }
+        let avgBPM = knownBPMs.isEmpty ? nil : knownBPMs.reduce(0, +) / Double(knownBPMs.count)
+        let vocalHeavy = source.vocalRegions.count >= 3 || target.vocalRegions.count >= 3
+
+        var candidates: [String]
+        if let bpm = avgBPM, bpm >= 118 {
+            // Club material: the tail must not wash out the kick.
+            candidates = ["plate", "smallRoom", "mediumRoom"]
+        } else if avgEnergy < 0.35 {
+            // Slow/quiet: long lush tails sound intentional.
+            candidates = ["largeHall", "cathedral", "largeRoom"]
+        } else if vocalHeavy {
+            candidates = ["mediumChamber", "mediumHall", "largeChamber"]
+        } else {
+            candidates = ["mediumRoom", "mediumHall", "plate"]
+        }
+
+        let index = Int(seededDouble(seed) * Double(candidates.count)) % candidates.count
+        return candidates[index]
+    }
+
     // MARK: - Compatibility scores
 
     nonisolated static func rhythmScore(sourceBPM: Double, targetBPM: Double) -> Double {
@@ -46,6 +112,12 @@ nonisolated enum TransitionPlanner {
         let bpmRatio = bothTempiKnown ? (max(srcBPM, tgtBPM) / max(1, min(srcBPM, tgtBPM))) : 2.0
 
         let energyDiff = abs(sourceAnalysis.energy - targetAnalysis.energy)
+
+        // Per-pair variation seeds: the same pair never blends identically twice
+        // (the salt mixes the track ids differently each planning run).
+        let lengthSeed = variationSeed(sourceTrackID: sourceTrackID, targetTrackID: targetTrackID, salt: 1)
+        let reverbSeed = variationSeed(sourceTrackID: sourceTrackID, targetTrackID: targetTrackID, salt: 2)
+        let depthSeed = variationSeed(sourceTrackID: sourceTrackID, targetTrackID: targetTrackID, salt: 3)
 
         // --- 1. Score components (TZ Section 7) ---
         let rhythm = bothTempiKnown ? rhythmScore(sourceBPM: srcBPM, targetBPM: tgtBPM) : 0.4
@@ -121,8 +193,20 @@ nonisolated enum TransitionPlanner {
                 reason = "Короткое сведение с частотным разделением из-за вокала"
             }
         } else if canBeatMatch && energyDiff < 0.20 && harmonic >= 0.85 {
-            strategy = .BASS_SWAP
-            reason = "Гармоничный DJ Bass-Swap на границе тактов"
+            // Equally musical candidates: a seeded pick keeps the mix alive so
+            // a run of similar pairs does not sound copy-pasted (TZ Section 24).
+            let strategySeed = variationSeed(sourceTrackID: sourceTrackID, targetTrackID: targetTrackID, salt: 4)
+            let pick = seededDouble(strategySeed)
+            if pick < 0.55 {
+                strategy = .BASS_SWAP
+                reason = "Гармоничный DJ Bass-Swap на границе тактов"
+            } else if pick < 0.8 {
+                strategy = .BEAT_MATCH_EQ
+                reason = "Бит-матчинг с EQ-разделением низа — вариация сведения"
+            } else {
+                strategy = .ECHO_OUT
+                reason = "Вариация: последний акцент уходит в реверб-хвост"
+            }
         } else if canBeatMatch {
             strategy = .BEAT_MATCH_EQ
             reason = "Бит-матчинг с EQ-разделением низа"
@@ -135,11 +219,22 @@ nonisolated enum TransitionPlanner {
         }
 
         // --- 3. Musical cue time (TZ Sections 10, 23) ---
-        let blendDuration = blendLength(
+        var blendDuration = blendLength(
             for: strategy,
             source: sourceAnalysis,
             sourceDur: sourceDur
         )
+        // Per-pair length variation: the same pair must not always blend for
+        // exactly the same number of seconds; quantize back to whole bars so
+        // the variation stays musical.
+        let lengthJitter = 0.8 + seededDouble(lengthSeed) * 0.4   // ±20 %
+        if strategy != .SILENCE_TRIM, strategy != .HARD_CUT, strategy != .DROP_SWITCH {
+            blendDuration = min(30, max(3, blendDuration * lengthJitter))
+            if let bar = sourceAnalysis.barDuration, bar > 0.4 {
+                let bars = max(1, (blendDuration / bar).rounded())
+                blendDuration = bars * bar
+            }
+        }
 
         var cueTime: TimeInterval
         switch strategy {
@@ -172,10 +267,7 @@ nonisolated enum TransitionPlanner {
         cueTime = min(max(0, cueTime), max(0, sourceDur - 1.5))
 
         // --- 4. Action envelopes (TZ Sections 11, 15, 16) ---
-        let actions = actionEnvelopes(
-            strategy: strategy,
-            duration: blendDuration
-        )
+        // (built inside the return; depth-scaled per pair below)
 
         // --- 5. Phase-aligned target entry (TZ Section 9) ---
         // The incoming track's first beat must land on the outgoing track's
@@ -198,6 +290,16 @@ nonisolated enum TransitionPlanner {
         default: fallbackStrategy = .SIMPLE_CROSSFADE
         }
 
+        // Reverb character from the measured pair (TZ Section 29): club BPMs
+        // get short readable tails, quiet material gets lush halls, vocal-heavy
+        // pairs get chambers - with a seeded pick inside the candidate set so
+        // consecutive transitions of the same genre differ.
+        let reverbPreset = chooseReverbPreset(
+            source: sourceAnalysis,
+            target: targetAnalysis,
+            seed: reverbSeed
+        )
+
         return TransitionPlan(
             decision: TransitionDecisionInfo(
                 transitionType: strategy.rawValue,
@@ -216,9 +318,39 @@ nonisolated enum TransitionPlanner {
                 sourcePlaybackRate: sourceRate,
                 targetPlaybackRate: targetRate
             ),
-            actions: actions,
-            fallback: TransitionFallbackInfo(type: fallbackStrategy.rawValue)
+            actions: varyEnvelopeDepth(
+                actionEnvelopes(strategy: strategy, duration: blendDuration),
+                seed: depthSeed,
+                strategy: strategy
+            ),
+            fallback: TransitionFallbackInfo(type: fallbackStrategy.rawValue),
+            effects: TransitionEffects(reverbPreset: reverbPreset)
         )
+    }
+
+    /// Scales the effect depths (reverb, EQ cuts) by a seeded factor so the
+    /// character of consecutive transitions varies even for the same strategy.
+    nonisolated private static func varyEnvelopeDepth(
+        _ actions: [TransitionAction],
+        seed: UInt64,
+        strategy: TransitionStrategy
+    ) -> [TransitionAction] {
+        // Long-tail strategies vary more; plain crossfades stay predictable.
+        let factor = strategy == .ECHO_OUT || strategy == .FILTER_TRANSITION
+            ? 0.6 + seededDouble(seed) * 0.8
+            : 0.85 + seededDouble(seed) * 0.3
+        return actions.map { action in
+            guard action.parameter == "reverb" || action.parameter == "lowEQ" || action.parameter == "highEQ" else {
+                return action
+            }
+            return TransitionAction(
+                time: action.time,
+                target: action.target,
+                parameter: action.parameter,
+                value: min(1, max(0, action.value * factor)),
+                duration: action.duration
+            )
+        }
     }
 
     /// Chooses the target's start position so that (with the plan's playback
@@ -464,6 +596,17 @@ nonisolated enum TransitionPlanner {
             ? plan.tempo.targetBPM
             : (targetAnalysis.bpm ?? sourceAnalysis.bpm ?? 120)
 
+        // Reverb character: keep the AI's valid choice, otherwise derive it from
+        // the measured pair like the local planner does.
+        var effects = plan.effects
+        if !TransitionEffects.reverbPresets.contains(effects.reverbPreset) {
+            effects.reverbPreset = chooseReverbPreset(
+                source: sourceAnalysis,
+                target: targetAnalysis,
+                seed: UInt64(truncatingIfNeeded: Int(sourceAnalysis.duration * 1000) + Int(targetAnalysis.duration * 1000))
+            )
+        }
+
         return TransitionPlan(
             decision: TransitionDecisionInfo(
                 transitionType: strategy.rawValue,
@@ -486,7 +629,8 @@ nonisolated enum TransitionPlanner {
             ),
             tempo: TransitionTempoInfo(targetBPM: targetBPM, sourcePlaybackRate: sRate, targetPlaybackRate: tRate),
             actions: actions,
-            fallback: TransitionFallbackInfo(type: plan.fallback.type.isEmpty ? TransitionStrategy.SIMPLE_CROSSFADE.rawValue : plan.fallback.type)
+            fallback: TransitionFallbackInfo(type: plan.fallback.type.isEmpty ? TransitionStrategy.SIMPLE_CROSSFADE.rawValue : plan.fallback.type),
+            effects: effects
         )
     }
 }
