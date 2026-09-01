@@ -1158,8 +1158,12 @@ def select_best_model_and_key(keys, has_media=False, is_video=False):
         vision_models = [
             "gemini-3.7-flash",
             "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
             "gemini-2.5-flash",
             "gemini-3.1-pro-preview",
+            "gemini-2.5-pro",
             "claude-vision",
             "gpt-4o"
         ]
@@ -1173,7 +1177,7 @@ def select_best_model_and_key(keys, has_media=False, is_video=False):
                 if k.get("model") == target_m or target_m in available:
                     return k, target_m
 
-    # 2. Приоритет для глубоких рассуждений и кодинга (Reasoning & Architecture)
+    # 2. Приоритет для глубоких рассуждений, архитектуры и кодинга (Reasoning & Agents)
     reasoning_priorities = [
         "deepseek-reasoner",
         "deepseek/deepseek-r1",
@@ -1183,14 +1187,26 @@ def select_best_model_and_key(keys, has_media=False, is_video=False):
         "claude-expert",
         "gemini-3.7-flash",
         "gemini-3.1-pro-preview",
+        "gemini-2.5-pro",
+        "deep-research-pro-preview",
+        "antigravity",
         "deepseek-coder",
         "qwen/qwen-2.5-coder-32b-instruct",
         "qwen-2.5-coder",
         "deepseek-chat",
         "gpt-4o",
         "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemma-4-31b",
+        "gemma-4-26b",
         "claude-instant",
+        "gemini-3-flash",
         "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
         "llama-3.3-70b-versatile",
         "meta-llama/llama-3.3-70b-instruct:free"
     ]
@@ -1201,7 +1217,7 @@ def select_best_model_and_key(keys, has_media=False, is_video=False):
             available = k.get("available_models", [])
             if k.get("model") == target_m or target_m in available:
                 return k, target_m
-            if k.get("provider") == "gemini" and target_m.startswith("gemini"):
+            if k.get("provider") == "gemini" and (target_m.startswith("gemini") or target_m.startswith("gemma") or target_m in ["antigravity", "deep-research-pro-preview"]):
                 return k, target_m
 
     for k in keys:
@@ -1229,7 +1245,7 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
             av = k.get("available_models", [])
             if k.get("model") == active_model or active_model in av:
                 return 0
-            if k.get("provider") == "gemini" and "gemini" in active_model:
+            if k.get("provider") == "gemini" and ("gemini" in active_model or "gemma" in active_model):
                 return 1
             return 2
         sorted_keys = sorted(keys, key=get_priority)
@@ -1256,7 +1272,24 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
             target_model = key_entry.get("model") or ("gemini-3.6-flash" if provider == "gemini" else "deepseek-chat")
         
         if provider == "gemini":
-            models_to_try = [target_model, "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash"]
+            # Полная цепочка каскада по квотам (от топ-логики до безлимитных 14.4k RPD)
+            models_to_try = [
+                target_model,
+                "gemini-3.7-flash",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-3.1-flash-lite",
+                "gemma-4-31b",
+                "gemma-4-26b",
+                "gemini-3.1-pro-preview",
+                "gemini-3-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-pro",
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite"
+            ]
             for m in models_to_try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
                 gen_cfg = {"temperature": 0.2}
@@ -1632,19 +1665,46 @@ def show_skills_menu(chat_id, reply_to=None):
 
 def show_model_menu(chat_id, reply_to=None):
     config = load_config()
-    current = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
+    current = config.get("ACTIVE_MODEL", "auto")
     keys = get_keys()
     
     gemini_defaults = [
-        ("gemini-3.6-flash", "Gemini 3.6 Flash", "free"),
-        ("gemini-3.7-flash", "Gemini 3.7 Flash", "free"),
-        ("gemini-2.5-flash", "Gemini 2.5 Flash", "free"),
-        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro", "pro")
+        # 🧠 Рассуждения и Архитектура
+        ("gemini-3.7-flash", "Gemini 3.7 Flash [Reasoning]", "reasoning"),
+        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro [Heavy Logic]", "reasoning"),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro", "reasoning"),
+        ("deep-research-pro-preview", "Deep Research Pro Preview", "reasoning"),
+        ("antigravity", "Antigravity Agent", "reasoning"),
+        
+        # ⚡ Высокий суточный лимит (500 - 14,400 RPD) & Экономия
+        ("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite (500 RPD)", "high_limit"),
+        ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite (500 RPD)", "high_limit"),
+        ("gemma-4-31b", "Gemma 4 31B (14.4k RPD)", "high_limit"),
+        ("gemma-4-26b", "Gemma 4 26B (14.4k RPD)", "high_limit"),
+        ("gemini-3.6-flash", "Gemini 3.6 Flash", "high_limit"),
+        ("gemini-3.5-flash", "Gemini 3.5 Flash", "high_limit"),
+        ("gemini-3-flash", "Gemini 3 Flash", "high_limit"),
+        ("gemini-2.5-flash", "Gemini 2.5 Flash", "high_limit"),
+        ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", "high_limit"),
+        ("gemini-2.0-flash", "Gemini 2 Flash", "high_limit"),
+        
+        # 🎨 Генерация изображений & Мультимодал
+        ("nano-banana-2", "Nano Banana 2 (3.1 Flash Image)", "media_gen"),
+        ("nano-banana-pro", "Nano Banana Pro (3 Pro Image)", "media_gen"),
+        ("nano-banana", "Nano Banana (2.5 Flash Image)", "media_gen"),
+        ("imagen-3.0-generate-002", "Google Imagen 3 HD", "media_gen"),
+        ("gemini-omni-1.1-flash", "Gemini Omni 1.1 Flash", "media_gen"),
+        
+        # 🎬 Видео & Музыка
+        ("veo-3-fast-generate", "Veo 3 Fast Video Gen", "media_gen"),
+        ("veo-3-generate", "Veo 3 Video Gen", "media_gen"),
+        ("lyria-3-pro", "Lyria 3 Pro Music Gen", "media_gen"),
+        ("gemini-3.1-flash-tts", "Gemini 3.1 Flash TTS (Voice)", "media_gen")
     ]
     
     all_models = []
-    for m_id, label, tier in gemini_defaults:
-        all_models.append((m_id, label, tier))
+    for m_id, label, cat in gemini_defaults:
+        all_models.append((m_id, label, cat))
         
     for k in keys:
         prov = k.get("provider", "custom")
@@ -1653,11 +1713,13 @@ def show_model_menu(chat_id, reply_to=None):
         for m in p_models:
             if not m:
                 continue
-            is_free = ":free" in m or "free" in m.lower() or prov == "gemini"
-            tier = "free" if is_free else "pro"
             short_m = m.split("/")[-1] if "/" in m else m
             label = f"{short_m} ({k_name})"
-            all_models.append((m, label, tier))
+            if ":free" in m or "free" in m.lower() or prov == "gemini":
+                cat = "high_limit"
+            else:
+                cat = "reasoning"
+            all_models.append((m, label, cat))
             
     seen = set()
     unique_models = []
@@ -1666,35 +1728,41 @@ def show_model_menu(chat_id, reply_to=None):
             seen.add(item[0])
             unique_models.append(item)
             
-    free_models = [m for m in unique_models if m[2] == "free"]
-    pro_models = [m for m in unique_models if m[2] == "pro"]
+    reasoning_list = [m for m in unique_models if m[2] == "reasoning"]
+    high_limit_list = [m for m in unique_models if m[2] == "high_limit"]
+    media_gen_list = [m for m in unique_models if m[2] == "media_gen"]
     
-    text = f"🧠 *Выбор активной AI-модели*\n\n"
+    text = f"🧠 *Каталог AI-моделей Gemini & Провайдеров*\n\n"
     if current == "auto":
         text += "Текущая модель: 🤖 *Авто-выбор (Лучшая модель под задачу)*\n\n"
     else:
         text += f"Текущая модель: *`{current}`*\n\n"
         
-    text += "💡 *Режим Авто-выбора:* бот сам выберет самую умную модель с глубоким мышлением (DeepSeek-R1, Claude 3.5, Gemini 3.7) для исправления багов и архитектуры.\n\n"
-    text += "🟢 *Бесплатные модели (:free / Free Tier)* — без списания баланса\n"
-    text += "💎 *Платные / Топ-кодинг модели* — максимальный интеллект\n\n"
+    text += "💡 *Категории:*\n"
+    text += "• 🧠 *Рассуждения и Код* — максимальный интеллект, DeepSeek-R1, Gemini 3.7 Reasoning, 3.1 Pro\n"
+    text += "• ⚡ *Высокий лимит (500 - 14.4k RPD)* — Flash Lite, Gemma 4, безлимитная скорость\n"
+    text += "• 🎨 *Генерация медиа* — Nano Banana 2, Imagen 3, Veo 3 Video, Lyria 3\n\n"
     text += "Нажмите на нужную модель для мгновенной смены:"
     
     kb_rows = []
-    # Auto select button on top
     auto_prefix = "✅ " if current == "auto" else "🤖 "
     kb_rows.append([{"text": f"{auto_prefix}Авто-выбор (Лучшая модель под задачу)", "callback_data": "model_auto"}])
     
-    if free_models:
-        for m_id, label, _ in free_models[:12]:
-            prefix = "✅ " if current == m_id else "🟢 "
-            kb_rows.append([{"text": f"{prefix}{label}", "callback_data": f"model_{m_id}"}])
-            
-    if pro_models:
-        for m_id, label, _ in pro_models[:12]:
-            prefix = "✅ " if current == m_id else "💎 "
-            kb_rows.append([{"text": f"{prefix}{label}", "callback_data": f"model_{m_id}"}])
-            
+    # 1. Reasoning Top Models
+    for m_id, label, _ in reasoning_list[:6]:
+        prefix = "✅ " if current == m_id else "🧠 "
+        kb_rows.append([{"text": f"{prefix}{label}", "callback_data": f"model_{m_id}"}])
+        
+    # 2. High Limit Economy Models
+    for m_id, label, _ in high_limit_list[:6]:
+        prefix = "✅ " if current == m_id else "⚡ "
+        kb_rows.append([{"text": f"{prefix}{label}", "callback_data": f"model_{m_id}"}])
+        
+    # 3. Media & Generation Models
+    for m_id, label, _ in media_gen_list[:4]:
+        prefix = "✅ " if current == m_id else "🎨 "
+        kb_rows.append([{"text": f"{prefix}{label}", "callback_data": f"model_{m_id}"}])
+        
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup={"inline_keyboard": kb_rows})
 
 # --- ОСНОВНОЙ ЦИКЛ ОПРОСА TELEGRAM ---
