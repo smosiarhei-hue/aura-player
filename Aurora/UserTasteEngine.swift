@@ -14,12 +14,12 @@ final class UserTasteEngine: @unchecked Sendable {
     private let dislikesKey = "sonivo_disliked_tracks_v1"
     private let artistScoresKey = "sonivo_artist_scores_v1"
 
-    private(set) var dislikedTrackIDs: Set<String> = []
+    private(set) var dislikedTrackIDs: Set<UUID> = []
     private(set) var artistScores: [String: Double] = [:]
 
     init() {
         if let savedDislikes = defaults.stringArray(forKey: dislikesKey) {
-            dislikedTrackIDs = Set(savedDislikes)
+            dislikedTrackIDs = Set(savedDislikes.compactMap { UUID(uuidString: $0) })
         }
         if let savedScores = defaults.dictionary(forKey: artistScoresKey) as? [String: Double] {
             artistScores = savedScores
@@ -78,7 +78,7 @@ final class UserTasteEngine: @unchecked Sendable {
     }
 
     private func save() {
-        defaults.set(Array(dislikedTrackIDs), forKey: dislikesKey)
+        defaults.set(dislikedTrackIDs.map(\.uuidString), forKey: dislikesKey)
         defaults.set(artistScores, forKey: artistScoresKey)
     }
 }
