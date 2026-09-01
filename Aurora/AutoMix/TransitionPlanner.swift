@@ -141,6 +141,8 @@ nonisolated enum TransitionPlanner {
         var sourcePlaybackRate: Double = 1.0
         var targetPlaybackRate: Double = 1.0
 
+        let silenceTail = sourceAnalysis.silenceRegions.first(where: { $0.end >= sourceDur - 1.0 })?.duration ?? 0.0
+
         if silenceTail > 3.0 {
             strategy = .SILENCE_TRIM
             reason = "Обнаружена пауза в конце трека, выполняется бесшовная обрезка тишины"
