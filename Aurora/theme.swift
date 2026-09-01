@@ -58,38 +58,33 @@ enum AG {
     }
 }
 
-// MARK: - Native Apple Music HDR Shimmer & Iridescent Luster Modifier
+// MARK: - Native Apple Music HDR Shimmer & Pure Luster Modifier (Zero Ghosting)
 
 struct HDRShimmerModifier: ViewModifier {
     let isActive: Bool
-    @State private var phase: CGFloat = -1.0
+    @State private var phase: CGFloat = -0.8
 
     func body(content: Content) -> some View {
         if isActive {
             content
                 .overlay(
-                    GeometryReader { geo in
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.0),
-                                .init(color: Color.white.opacity(0.20), location: 0.30),
-                                .init(color: AG.amber.opacity(0.95), location: 0.50),
-                                .init(color: Color(hex: "#FF8AD1")?.opacity(0.85) ?? .pink, location: 0.65),
-                                .init(color: Color.white.opacity(0.35), location: 0.80),
-                                .init(color: .clear, location: 1.0)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: geo.size.width * 2.4)
-                        .offset(x: phase * geo.size.width * 1.8)
-                        .blendMode(.colorDodge)
-                        .mask(content)
-                    }
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: Color.white.opacity(0.65), location: 0.50),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .rotationEffect(.degrees(25))
+                    .offset(x: phase * 180)
+                    .blendMode(.plusLighter)
+                    .allowsHitTesting(false)
                 )
                 .onAppear {
-                    withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) {
-                        phase = 1.0
+                    withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                        phase = 0.8
                     }
                 }
         } else {

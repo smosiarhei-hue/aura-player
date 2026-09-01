@@ -350,34 +350,35 @@ struct PlayerScreenV2: View {
         .id(track?.id)
     }
 
-    // MARK: - Center Stage: Video-Shot Live Canvas (Screenshot 2)
+    // MARK: - Center Stage: Video-Shot Live Canvas (Apple Music Style Fullscreen)
 
     private func videoShotStage(geo: GeometryProxy) -> some View {
         ZStack(alignment: .bottom) {
             // Fullscreen Live Artwork / Video Canvas
             artwork
-                .frame(width: geo.size.width, height: geo.size.height * 0.65)
+                .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
-                .scaleEffect(1.08)
+                .scaleEffect(1.02)
 
-            // Middle-to-Bottom Progressive Blur & Gradient Mask (dissolves behind text and controls)
+            // Middle-to-Bottom Progressive Blur & Gradient Mask (Apple Music standard)
             VStack(spacing: 0) {
                 Spacer()
 
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: Color.black.opacity(0.35), location: 0.35),
-                        .init(color: Color.black.opacity(0.85), location: 0.75),
-                        .init(color: Color.black, location: 1.0)
+                        .init(color: Color.black.opacity(0.30), location: 0.30),
+                        .init(color: Color.black.opacity(0.70), location: 0.65),
+                        .init(color: Color.black.opacity(0.92), location: 1.0)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: geo.size.height * 0.40)
+                .frame(height: geo.size.height * 0.52)
             }
         }
         .allowsHitTesting(false)
+        .ignoresSafeArea()
     }
 
     @ViewBuilder private var artwork: some View {
@@ -422,6 +423,11 @@ struct PlayerScreenV2: View {
             let url = await YandexMusicService.shared.getVideoShotUrl(for: ymId)
             if player.currentTrack?.id == track.id {
                 videoShotUrl = url
+                if url != nil {
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        isVideoShotMode = true
+                    }
+                }
             }
             videoShotLoading = false
         }
@@ -485,12 +491,6 @@ struct PlayerScreenV2: View {
             // Apple Music Bottom Bar (Lyrics, AirPlay, Queue)
             appleMusicBottomBar
         }
-        .padding(isVideoShotMode && videoShotUrl != nil ? 14 : 0)
-        .background(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(isVideoShotMode && videoShotUrl != nil ? 0.90 : 0)
-        )
     }
 
     // MARK: Metadata Row (Left: Title & Artist, Right: Like + Track Wave + 3-Dots)
@@ -982,53 +982,71 @@ struct PlayerScreenV2: View {
     }
 }
 
-// MARK: - VideoShot Player View (Native Looping Canvas)
+// MARK: - VideoShot Player View (Native Looping Canvas - Pure AVPlayerLayer, No PiP)
 
-struct VideoShotPlayerView: UIViewControllerRepresentable {
+struct VideoShotPlayerView: UIViewRepresentable {
     let url: URL
 
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let player = AVQueuePlayer(url: url)
+    func makeUIView(context: Context) -> VideoShotUIView {
+        let view = VideoShotUIView()
+        view.configure(with: url)
+        return view
+    }
+
+    func updateUIView(_ uiView: VideoShotUIView, context: Context) {
+        uiView.configure(with: url)
+    }
+}
+
+final class VideoShotUIView: UIView {
+    private var playerLayer: AVPlayerLayer?
+    private var looper: AVPlayerLooper?
+    private var queuePlayer: AVQueuePlayer?
+    private var currentURL: URL?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        clipsToBounds = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        backgroundColor = .clear
+        clipsToBounds = true
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        playerLayer?.frame = bounds
+    }
+
+    func configure(with url: URL) {
+        guard currentURL != url else { return }
+        currentURL = url
+
+        queuePlayer?.pause()
+        queuePlayer = nil
+        looper = nil
+        playerLayer?.removeFromSuperlayer()
+
+        let item = AVPlayerItem(url: url)
+        let player = AVQueuePlayer(playerItem: item)
         player.isMuted = true
         player.automaticallyWaitsToMinimizeStalling = false
         player.actionAtItemEnd = .none
-        let looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
-        context.coordinator.looper = looper
-        context.coordinator.player = player
-        context.coordinator.url = url
+        player.preventsDisplaySleepDuringVideoPlayback = false
 
-        let controller = AVPlayerViewController()
-        controller.player = player
-        controller.showsPlaybackControls = false
-        controller.videoGravity = .resizeAspectFill
-        controller.view.backgroundColor = .clear
+        looper = AVPlayerLooper(player: player, templateItem: item)
+        queuePlayer = player
+
+        let layer = AVPlayerLayer(player: player)
+        layer.videoGravity = .resizeAspectFill
+        layer.frame = bounds
+        self.layer.addSublayer(layer)
+        self.playerLayer = layer
+
         player.play()
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        if context.coordinator.url != url {
-            context.coordinator.url = url
-            let player = AVQueuePlayer(url: url)
-            player.isMuted = true
-            player.automaticallyWaitsToMinimizeStalling = false
-            player.actionAtItemEnd = .none
-            let looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
-            context.coordinator.looper = looper
-            context.coordinator.player = player
-            uiViewController.player = player
-            player.play()
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    class Coordinator {
-        var looper: AVPlayerLooper?
-        var player: AVQueuePlayer?
-        var url: URL?
     }
 }
 

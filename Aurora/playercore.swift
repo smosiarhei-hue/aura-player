@@ -701,9 +701,9 @@ final class PlayerCore {
             mode: transitionMode
         )
 
-        // 1. Pre-buffer incoming streaming track ahead of time (~10-12s before finish)
+        // 1. Pre-buffer incoming streaming track ahead of time (~14-16s before transition cue)
         if isUsingStreamPlayer || nextTrack.isStream {
-            let prebufferThreshold = plan.blendDuration + 8.0
+            let prebufferThreshold = plan.blendDuration + 14.0
             let remaining = totalDur - currentPos
             if remaining <= prebufferThreshold && prebufferedTrackId != nextTrack.id && !isPrebufferingNextStream {
                 isPrebufferingNextStream = true
@@ -718,6 +718,7 @@ final class PlayerCore {
                         self.idleStreamingPlayer.pause()
                         self.prebufferedTrackId = nextTrack.id
                         self.isPrebufferingNextStream = false
+                        SonivoDiagnostics.log("Pre-buffered upcoming stream: \(nextTrack.title)", tag: "AUTOMIX")
                     } catch {
                         self.isPrebufferingNextStream = false
                     }

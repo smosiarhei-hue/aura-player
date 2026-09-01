@@ -130,34 +130,36 @@ struct TrackCueProfile: Sendable, Codable {
         let totalDur = max(duration, track.duration)
         let grid = BPMBeatGrid.estimate(for: track)
 
-        // Musical transition length aligned to bars (8 beats = 2 bars or 16 beats = 4 bars)
+        // Apple Music Style Dynamic DJ Outro & Blend Length:
+        // Standard tracks: 12-24 seconds blend (4 to 8 bars)
+        // Short tracks: 8-12 seconds
         let outroDur: Double
-        if totalDur > 120 {
-            outroDur = min(grid.phraseInterval, 8.0) // 8 beats (~4-6s)
-        } else if totalDur > 60 {
-            outroDur = min(grid.phraseInterval, 6.0)
-        } else if totalDur > 30 {
-            outroDur = grid.barInterval // 4 beats (~2-3s)
+        if totalDur > 180 {
+            outroDur = min(grid.dropInterval, 24.0) // 16 beats = 4 bars or 8 bars (~16-24s)
+        } else if totalDur > 90 {
+            outroDur = min(grid.phraseInterval * 2.0, 18.0) // ~12-16s
+        } else if totalDur > 45 {
+            outroDur = min(grid.phraseInterval, 10.0) // ~6-10s
         } else {
-            outroDur = min(grid.barInterval, 1.8)
+            outroDur = min(grid.barInterval, 4.0)
         }
 
         let style: DJTransitionStyle
-        let titleLower = (track.title + " " + track.artist).lowercased()
-        if titleLower.contains("remix") || titleLower.contains("club") || titleLower.contains("edit") || titleLower.contains("dance") {
+        let titleLower = (track.title + " " + track.artist + " " + (track.album ?? "")).lowercased()
+        if titleLower.contains("remix") || titleLower.contains("club") || titleLower.contains("edit") || titleLower.contains("dance") || titleLower.contains("edm") {
             style = .bassSwap
-        } else if titleLower.contains("tune") || titleLower.contains("piano") || titleLower.contains("chill") || titleLower.contains("acoustic") {
+        } else if titleLower.contains("tune") || titleLower.contains("piano") || titleLower.contains("chill") || titleLower.contains("acoustic") || titleLower.contains("slow") {
             style = .smoothDissolve
         } else {
-            style = totalDur > 90 ? .bassSwap : .smoothDissolve
+            style = totalDur > 60 ? .bassSwap : .smoothDissolve
         }
 
         return TrackCueProfile(
             outroStartOffset: max(0, totalDur - outroDur),
             outroDuration: outroDur,
-            introDropOffset: 0.05,
+            introDropOffset: 0.0,
             beatGrid: grid,
-            silenceTailDuration: 0.15,
+            silenceTailDuration: 0.3,
             recommendedStyle: style
         )
     }
@@ -193,7 +195,7 @@ final class AutoMixDJEngine {
     var trimSilenceEnabled: Bool = true {
         didSet { UserDefaults.standard.set(trimSilenceEnabled, forKey: "automix.trimSilence") }
     }
-    var maxTransitionDuration: Double = 8.0 {
+    var maxTransitionDuration: Double = 24.0 {
         didSet { UserDefaults.standard.set(maxTransitionDuration, forKey: "automix.maxDuration") }
     }
 
@@ -226,7 +228,7 @@ final class AutoMixDJEngine {
         }
         if mode == .crossfade {
             let dur = UserDefaults.standard.double(forKey: "player.crossfadeDuration")
-            let effectiveDur = dur > 0 ? dur : 4.0
+            let effectiveDur = dur > 0 ? dur : 6.0
             let cue = max(0, outgoingDuration - effectiveDur)
             return (cue, effectiveDur, .smoothDissolve)
         }
@@ -235,24 +237,19 @@ final class AutoMixDJEngine {
         let grid = profile.beatGrid
         currentBPM = grid.bpm
 
-        // 1. Calculate duration quantized to musical bars (4 or 8 beats)
-        var blendDur = grid.phraseInterval // 8 beats
-        if blendDur > maxTransitionDuration {
-            blendDur = grid.barInterval    // 4 beats
-        }
-        blendDur = min(blendDur, maxTransitionDuration)
+        var blendDur = profile.outroDuration
+        blendDur = min(max(blendDur, 6.0), maxTransitionDuration)
 
         // 2. Quantize cue time to exact musical bar (такт) boundary before outro
         let unquantizedCue = max(0, outgoingDuration - blendDur)
-        let bar = grid.barInterval
+        let bar = max(grid.barInterval, 1.0)
         let barIndex = floor(unquantizedCue / bar)
         var quantizedCue = barIndex * bar
 
-        // Avoid triggering prematurely if bar math underflows
         if quantizedCue < (outgoingDuration - blendDur - bar) {
             quantizedCue += bar
         }
-        if (outgoingDuration - quantizedCue) < 1.0 {
+        if (outgoingDuration - quantizedCue) < 2.0 {
             quantizedCue = max(0, outgoingDuration - blendDur)
         }
 
