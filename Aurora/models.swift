@@ -65,12 +65,15 @@ final class AutoMixDJEngine {
             .sorted { $0.time < $1.time }
         guard let first = frames.first else { return nil }
 
-        var value = Double(defaultValue ?? first.value)
+        var value = Double(defaultValue ?? Float(first.value))
         for frame in frames where frame.time <= time {
             let segment: Double = frame.duration > 0.001
                 ? min(1, max(0, (time - frame.time) / frame.duration))
                 : 1
-            value = value + (frame.value - value) * segment
+            let startValue: Double = value
+            let endValue: Double = frame.value
+            let delta: Double = endValue - startValue
+            value = startValue + delta * segment
         }
         return Float(value)
     }
