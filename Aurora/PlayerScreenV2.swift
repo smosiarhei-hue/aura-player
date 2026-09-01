@@ -93,20 +93,38 @@ struct PlayerScreenV2: View {
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
 
-                    // Progressive Apple Music Gradient & Blur Fog over the lower half
+                    // Progressive Apple Music Gradient & Frosted Blur Fog over the lower half
                     VStack(spacing: 0) {
                         Spacer()
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.0),
-                                .init(color: Color.black.opacity(0.30), location: 0.30),
-                                .init(color: Color.black.opacity(0.70), location: 0.65),
-                                .init(color: Color.black.opacity(0.92), location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: geo.size.height * 0.55)
+                        ZStack(alignment: .bottom) {
+                            // Real progressive frosted blur material behind the gradient
+                            Rectangle()
+                                .fill(.ultraThinMaterial)
+                                .mask(
+                                    LinearGradient(
+                                        stops: [
+                                            .init(color: .clear, location: 0.0),
+                                            .init(color: .black.opacity(0.35), location: 0.25),
+                                            .init(color: .black.opacity(0.85), location: 0.65),
+                                            .init(color: .black, location: 1.0)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .clear, location: 0.0),
+                                    .init(color: Color.black.opacity(0.30), location: 0.20),
+                                    .init(color: Color.black.opacity(0.70), location: 0.58),
+                                    .init(color: Color.black.opacity(0.95), location: 1.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        }
+                        .frame(height: geo.size.height * 0.60)
                     }
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
@@ -542,50 +560,59 @@ struct PlayerScreenV2: View {
                 }
 
                 Menu {
-                    Button(action: startTrackWave) {
-                        Label("Моя волна по треку", systemImage: "dot.radiowaves.left.and.right")
-                    }
-                    Button {
-                        withAnimation(AG.spring) { showLyricsMode.toggle() }
-                    } label: {
-                        Label(showLyricsMode ? "Показать обложку" : "Караоке / Текст песни", systemImage: "quote.bubble")
-                    }
-                    Button {
-                        withAnimation(AG.spring) { isVideoShotMode.toggle() }
-                    } label: {
-                        Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: "play.rectangle")
-                    }
-                    Button { openModal(.queue) } label: {
-                        Label("Очередь воспроизведения", systemImage: "list.bullet")
-                    }
-                    Button { openModal(.equalizer) } label: {
-                        Label("Эквалайзер", systemImage: "slider.vertical.3")
-                    }
-                    Button { openModal(.sleepTimer) } label: {
-                        Label("Таймер сна", systemImage: "timer")
-                    }
-                    Button { openModal(.settings) } label: {
-                        Label("Настройки", systemImage: "gearshape")
-                    }
-                    Divider()
-                    Button {
-                        Task {
-                            let ok = await SonivoDiagnostics.shared.sendReportToTelegram()
-                            if ok {
-                                waveMessage = "✅ Диагностика отправлена в Telegram"
-                                try? await Task.sleep(nanoseconds: 2_500_000_000)
-                                if waveMessage?.contains("Диагностика") == true { waveMessage = nil }
-                            }
+                    Section("Воспроизведение") {
+                        Button(action: startTrackWave) {
+                            Label("Моя волна по треку", systemImage: "dot.radiowaves.left.and.right")
                         }
-                    } label: {
-                        Label("Отправить логи в Telegram", systemImage: "paperplane.fill")
+                        Button {
+                            withAnimation(AG.spring) { isVideoShotMode.toggle() }
+                        } label: {
+                            Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: isVideoShotMode ? "photo" : "play.rectangle.fill")
+                        }
+                        Button {
+                            withAnimation(AG.spring) { showLyricsMode.toggle() }
+                        } label: {
+                            Label(showLyricsMode ? "Скрыть текст песни" : "Текст песни", systemImage: "quote.bubble")
+                        }
                     }
-                    Divider()
-                    Button(role: .destructive) {
-                        player.stopAndClear()
-                        close()
-                    } label: {
-                        Label("Остановить и очистить", systemImage: "stop.fill")
+
+                    Section("Звук и очередь") {
+                        Button { openModal(.queue) } label: {
+                            Label("Очередь воспроизведения", systemImage: "list.bullet")
+                        }
+                        Button { openModal(.equalizer) } label: {
+                            Label("Эквалайзер", systemImage: "slider.vertical.3")
+                        }
+                        Button { openModal(.sleepTimer) } label: {
+                            Label("Таймер сна", systemImage: "timer")
+                        }
+                    }
+
+                    Section("Приложение") {
+                        Button { openModal(.settings) } label: {
+                            Label("Настройки", systemImage: "gearshape")
+                        }
+                        Button {
+                            Task {
+                                let ok = await SonivoDiagnostics.shared.sendReportToTelegram()
+                                if ok {
+                                    waveMessage = "✅ Диагностика отправлена в Telegram"
+                                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                                    if waveMessage?.contains("Диагностика") == true { waveMessage = nil }
+                                }
+                            }
+                        } label: {
+                            Label("Отправить логи в Telegram", systemImage: "paperplane")
+                        }
+                    }
+
+                    Section {
+                        Button(role: .destructive) {
+                            player.stopAndClear()
+                            close()
+                        } label: {
+                            Label("Остановить и очистить", systemImage: "stop.fill")
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -865,10 +892,8 @@ struct PlayerScreenV2: View {
 
     private func openModal(_ modal: ActivePlayerModal) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                activeModal = modal
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            activeModal = modal
         }
     }
 
