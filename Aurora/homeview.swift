@@ -88,70 +88,77 @@ struct HomeView: View {
         .padding(.horizontal, 16)
     }
 
-    // MARK: Волна под настроение
+    // MARK: Волна под настроение (MyWaveWidget)
 
     private var waveHero: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button {
                 SonivoPlay.wave(moodStation)
             } label: {
-                ZStack(alignment: .bottomLeading) {
+                ZStack(alignment: .leading) {
+                    // 1. Фоновый градиент карточки
                     LinearGradient(
-                        colors: moodColors.map { $0.opacity(0.92) },
+                        colors: moodColors.isEmpty ? [Color(hex: "E58C12") ?? .orange, Color(hex: "F26101") ?? .red] : moodColors,
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
 
-                    // Hero Organic Metal SDF Wave Visualizer
-                    HStack {
-                        Spacer()
-                        FluidWaveView(colors: moodColors, isBackgroundMode: false)
-                            .frame(width: 170, height: 170)
-                            .offset(x: 20, y: 10)
-                            .clipped()
+                    // 2. Слой процедурной волны (смещен вправо, без жесткой обрезки)
+                    GeometryReader { geo in
+                        FluidWaveView(
+                            colors: moodColors,
+                            isBackgroundMode: false
+                        )
+                        .frame(width: geo.size.height * 1.35, height: geo.size.height * 1.35)
+                        .position(x: geo.size.width * 0.78, y: geo.size.height * 0.50)
+                        .blendMode(.plusLighter)
                     }
+                    .allowsHitTesting(false)
 
-                    // стеклянная вуаль поверх градиента
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.20)
+                    // 3. Информационный оверлей (Текст слева)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("ПОД НАСТРОЕНИЕ")
+                            .font(.system(size: 11.5, weight: .heavy))
+                            .tracking(1.4)
+                            .foregroundStyle(Color.black.opacity(0.62))
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Text("ПОД НАСТРОЕНИЕ")
-                                .font(AG.text(10, .heavy))
-                                .tracking(1.4)
-                                .foregroundStyle(Color.black.opacity(0.62))
-                            Spacer(minLength: 0)
-                            Image(systemName: "play.circle.fill")
-                                .font(.system(size: 32, weight: .bold))
-                                .foregroundStyle(Color.black.opacity(0.78))
-                        }
-
-                        Spacer(minLength: 0)
+                        Spacer()
 
                         Text(moodStation.title)
-                            .font(AG.display(27, .heavy))
-                            .foregroundStyle(Color.black.opacity(0.9))
+                            .font(AG.display(28, .heavy))
+                            .foregroundStyle(Color.black.opacity(0.92))
 
                         Text(moodStation.stationId == "user:onyourwave" ? ym.waveSubtitle : moodStation.subtitle)
-                            .font(AG.text(11.5, .semibold))
-                            .foregroundStyle(Color.black.opacity(0.66))
+                            .font(AG.text(12.5, .medium))
+                            .foregroundStyle(Color.black.opacity(0.72))
                             .lineLimit(2)
-                            .multilineTextAlignment(.leading)
+                            .padding(.top, 4)
                     }
-                    .padding(17)
+                    .padding(20)
+
+                    // 4. Кнопка Play в правом верхнем углу (строго над анимацией)
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(Color.black.opacity(0.85))
+                                .clipShape(Circle())
+                        }
+                        Spacer()
+                    }
+                    .padding(16)
+                    .zIndex(2)
                 }
-                .frame(height: 158)
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .frame(height: 185)
+                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .strokeBorder(AG.hairline, lineWidth: 0.8)
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)
                 )
-                .overlay(ShimmerOverlay(corner: 24))
-                .pulsingGlow(moodColors.first ?? AG.ember)
                 .padding(.horizontal, 16)
-                .animation(AG.spring, value: moodStation.id)
             }
             .buttonStyle(GlassPressStyle())
 

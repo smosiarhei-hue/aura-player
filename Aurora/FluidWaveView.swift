@@ -16,15 +16,15 @@ struct FluidWaveView: View {
 
     init(
         colors: [Color] = [.pink, .cyan, .yellow],
-        bassIntensity: Float? = nil,
-        midIntensity: Float? = nil,
-        highIntensity: Float? = nil,
+        bass: Float? = nil,
+        mid: Float? = nil,
+        high: Float? = nil,
         isBackgroundMode: Bool = false
     ) {
         self.colors = colors
-        self.bassIntensity = bassIntensity
-        self.midIntensity = midIntensity
-        self.highIntensity = highIntensity
+        self.bassIntensity = bass
+        self.midIntensity = mid
+        self.highIntensity = high
         self.isBackgroundMode = isBackgroundMode
     }
 

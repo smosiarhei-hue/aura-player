@@ -85,13 +85,37 @@ struct PlayerScreenV2: View {
             let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
 
             ZStack {
-                // 1. Dynamic Fluid HDR Mesh Background (drifting & color-adaptive)
-                fluidHDRBackground
+                // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR Fluid HDR Background
+                if isVideoShotMode, let videoShotUrl {
+                    VideoShotPlayerView(url: videoShotUrl)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .scaleEffect(1.02)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
 
-                // 2. Protective Vignette Gradient for 100% Text & Control Readability
-                contrastProtectionVignette
+                    // Progressive Apple Music Gradient & Blur Fog over the lower half
+                    VStack(spacing: 0) {
+                        Spacer()
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.0),
+                                .init(color: Color.black.opacity(0.30), location: 0.30),
+                                .init(color: Color.black.opacity(0.70), location: 0.65),
+                                .init(color: Color.black.opacity(0.92), location: 1.0)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: geo.size.height * 0.55)
+                    }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                } else {
+                    fluidHDRBackground
+                    contrastProtectionVignette
+                }
 
-                // 3. Main Player Container
+                // 2. Main Player Container (Controls ALWAYS pinned on top)
                 VStack(spacing: 0) {
                     // Top Bar (Grabber Pill) - Smoothly fades out during drag
                     topHeader
@@ -101,28 +125,18 @@ struct PlayerScreenV2: View {
 
                     Spacer(minLength: 4)
 
-                    // Center Stage: Standard Square Artwork, Video-Shot Live Canvas, OR Synced Lyrics
+                    // Center Stage: Standard Square Artwork or Synced Lyrics
                     if showLyricsMode {
                         lyricsStage
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .transition(.asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.95)),
-                                removal: .opacity.combined(with: .scale(scale: 0.95))
-                            ))
-                    } else if isVideoShotMode {
-                        videoShotStage(geo: geo)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .transition(.asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 1.05)),
-                                removal: .opacity.combined(with: .scale(scale: 0.95))
-                            ))
-                    } else {
+                            .transition(.opacity)
+                    } else if !isVideoShotMode {
                         artworkStage(side: coverSide)
                             .frame(maxWidth: .infinity)
-                            .transition(.asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.95)),
-                                removal: .opacity.combined(with: .scale(scale: 0.95))
-                            ))
+                            .transition(.opacity)
+                    } else {
+                        // Open space in VideoShot mode so background video is clearly visible
+                        Spacer(minLength: 20)
                     }
 
                     Spacer(minLength: 6)
@@ -163,7 +177,7 @@ struct PlayerScreenV2: View {
                         .padding(.bottom, 4)
                     }
 
-                    // Lower Controls Section (Apple Music Standard Layout) - Smoothly fades during drag
+                    // Lower Controls Section (Apple Music Standard Layout) - ALWAYS ON SCREEN
                     appleMusicLowerDeck
                         .padding(.horizontal, 24)
                         .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
@@ -350,36 +364,7 @@ struct PlayerScreenV2: View {
         .id(track?.id)
     }
 
-    // MARK: - Center Stage: Video-Shot Live Canvas (Apple Music Style Fullscreen)
 
-    private func videoShotStage(geo: GeometryProxy) -> some View {
-        ZStack(alignment: .bottom) {
-            // Fullscreen Live Artwork / Video Canvas
-            artwork
-                .frame(width: geo.size.width, height: geo.size.height)
-                .clipped()
-                .scaleEffect(1.02)
-
-            // Middle-to-Bottom Progressive Blur & Gradient Mask (Apple Music standard)
-            VStack(spacing: 0) {
-                Spacer()
-
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: Color.black.opacity(0.30), location: 0.30),
-                        .init(color: Color.black.opacity(0.70), location: 0.65),
-                        .init(color: Color.black.opacity(0.92), location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: geo.size.height * 0.52)
-            }
-        }
-        .allowsHitTesting(false)
-        .ignoresSafeArea()
-    }
 
     @ViewBuilder private var artwork: some View {
         if isVideoShotMode, let videoShotUrl {

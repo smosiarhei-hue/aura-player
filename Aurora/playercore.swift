@@ -820,8 +820,8 @@ final class PlayerCore {
         let (outVol, inVol, outBassCut, inBassGain) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, style: style)
 
         if isUsingStreamPlayer {
-            activeStreamingPlayer.volume = max(0, min(1.0, outVol * volume))
-            idleStreamingPlayer.volume = max(0, min(1.0, inVol * volume))
+            activeStreamingPlayer.volume = max(0, min(1.0, outVol))
+            idleStreamingPlayer.volume = max(0, min(1.0, inVol))
         } else {
             activePlayer.volume = outVol * volume
             idlePlayer.volume = inVol * volume
@@ -852,7 +852,7 @@ final class PlayerCore {
             let oldActive = activeStreamingPlayer
             activeStreamingPlayer = idleStreamingPlayer
             idleStreamingPlayer = oldActive
-            activeStreamingPlayer.volume = volume
+            activeStreamingPlayer.volume = 1.0
         } else {
             let oldActive = activePlayer
             oldActive.stop()
