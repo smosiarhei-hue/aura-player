@@ -2,6 +2,7 @@
 import CoreMedia
 import MediaPlayer
 import SwiftUI
+import UIKit
 import Observation
 
 // MARK: - Audio Quality Selection
@@ -133,6 +134,8 @@ final class PlayerCore {
 
     // Remote artwork cache for Now Playing (prevents Control Center flicker)
     private var remoteArtworkCache: [UUID: UIImage] = [:]
+    // Throttle for lock screen / Control Center elapsed-time refresh
+    private var lastNowPlayingSync: Date?
 
     // AutoMix State
     private var isTransitioning = false
@@ -181,6 +184,8 @@ final class PlayerCore {
         setupStreamingPlayer()
         loadSettings()
         setupRemoteCommandCenter()
+        // Required for the system to route lock screen / Control Center events here.
+        UIApplication.shared.beginReceivingRemoteControlEvents()
     }
 
     private func configureSession() {
@@ -213,6 +218,7 @@ final class PlayerCore {
                             }
                         }
 
+                        self.syncNowPlayingElapsedIfNeeded()
                         self.scheduleTransitionIfNeeded()
                     }
                 }
@@ -220,9 +226,10 @@ final class PlayerCore {
         }
 
         NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
+            let finishedItem = notification.object as? AVPlayerItem
             Task { @MainActor [weak self] in
                 guard let self, self.isUsingStreamPlayer else { return }
-                if let item = notification.object as? AVPlayerItem, item !== self.activeStreamingPlayer.currentItem {
+                if let finishedItem, finishedItem !== self.activeStreamingPlayer.currentItem {
                     return
                 }
                 self.handleTrackFinish()
@@ -230,12 +237,13 @@ final class PlayerCore {
         }
 
         NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
+            let failedItem = notification.object as? AVPlayerItem
+            let message = failedItem?.error?.localizedDescription
             Task { @MainActor [weak self] in
                 guard let self, self.isUsingStreamPlayer else { return }
-                if let item = notification.object as? AVPlayerItem, item !== self.activeStreamingPlayer.currentItem {
+                if let failedItem, failedItem !== self.activeStreamingPlayer.currentItem {
                     return
                 }
-                let message = (notification.object as? AVPlayerItem)?.error?.localizedDescription
                 self.isPlaying = false
                 self.playError = message.map { "Ошибка потока: \($0)" } ?? "Не удалось воспроизвести трек"
             }
@@ -383,6 +391,25 @@ final class PlayerCore {
     private func setupRemoteCommandCenter() {
         let commandCenter = MPRemoteCommandCenter.shared()
 
+        // Standard music-player layout: transport + scrubbing only.
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.nextTrackCommand.isEnabled = true
+        commandCenter.previousTrackCommand.isEnabled = true
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
+
+        commandCenter.skipForwardCommand.isEnabled = false
+        commandCenter.skipBackwardCommand.isEnabled = false
+        commandCenter.seekForwardCommand.isEnabled = false
+        commandCenter.seekBackwardCommand.isEnabled = false
+        commandCenter.changeRepeatModeCommand.isEnabled = false
+        commandCenter.changeShuffleModeCommand.isEnabled = false
+        commandCenter.likeCommand.isEnabled = false
+        commandCenter.dislikeCommand.isEnabled = false
+        commandCenter.bookmarkCommand.isEnabled = false
+        commandCenter.ratingCommand.isEnabled = false
+
         commandCenter.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.resume() }
             return .success
@@ -405,7 +432,8 @@ final class PlayerCore {
         }
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            Task { @MainActor in self?.seek(to: event.positionTime) }
+            let target = event.positionTime
+            Task { @MainActor in self?.seek(to: target) }
             return .success
         }
     }
@@ -421,18 +449,27 @@ final class PlayerCore {
     }
 
     private func updateNowPlayingInfo() {
+        let center = MPNowPlayingInfoCenter.default()
+
         guard let track = currentTrack else {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            center.nowPlayingInfo = nil
+            center.playbackState = .stopped
             return
         }
+
+        let elapsed = isUsingStreamPlayer ? progress : liveProgress()
 
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.title,
             MPMediaItemPropertyArtist: track.artist,
             MPMediaItemPropertyAlbumTitle: track.album,
+            MPMediaItemPropertyAlbumArtist: track.artist,
             MPMediaItemPropertyPlaybackDuration: duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: progress,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+            MPNowPlayingInfoPropertyIsLiveStream: false
         ]
 
         if let image = LibraryStore.cachedArtworkImage(for: track) {
@@ -441,7 +478,12 @@ final class PlayerCore {
             info[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
         }
 
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        center.nowPlayingInfo = info
+        // Declaring the playback state is what makes iOS treat this app as the
+        // active Now Playing app, so tapping the title on the lock screen or in
+        // Control Center opens it instead of doing nothing.
+        center.playbackState = isPlaying ? .playing : .paused
+        lastNowPlayingSync = Date()
 
         // Fetch remote artwork once per track, then cache (prevents flicker)
         if let cover = track.coverURL, let url = URL(string: cover),
@@ -457,6 +499,25 @@ final class PlayerCore {
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = current
             }
         }
+    }
+
+    /// Keeps the lock screen scrubber honest without rebuilding artwork every frame.
+    private func syncNowPlayingElapsedIfNeeded() {
+        guard currentTrack != nil else { return }
+        let now = Date()
+        if let last = lastNowPlayingSync, now.timeIntervalSince(last) < 2.0 { return }
+        lastNowPlayingSync = now
+
+        let center = MPNowPlayingInfoCenter.default()
+        guard var info = center.nowPlayingInfo, !info.isEmpty else {
+            updateNowPlayingInfo()
+            return
+        }
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = isUsingStreamPlayer ? progress : liveProgress()
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        info[MPMediaItemPropertyPlaybackDuration] = duration
+        center.nowPlayingInfo = info
+        center.playbackState = isPlaying ? .playing : .paused
     }
 
     // MARK: - Playback Controls
@@ -571,6 +632,7 @@ final class PlayerCore {
                 start(at: clamped)
             }
         }
+        lastNowPlayingSync = nil
         updateNowPlayingInfo()
     }
 
@@ -662,6 +724,7 @@ final class PlayerCore {
                 self.pausedProgress = seconds
                 self.progress = seconds
                 self.startTimer()
+                self.lastNowPlayingSync = nil
                 self.updateNowPlayingInfo()
             } catch {
                 self.activeAudioFile = nil
@@ -747,6 +810,7 @@ final class PlayerCore {
         self.isPlaying = true
         self.progress = seconds
         self.transitionScheduled = false
+        self.lastNowPlayingSync = nil
         self.updateNowPlayingInfo()
     }
 
@@ -1224,6 +1288,7 @@ final class PlayerCore {
         prewarmAnalysis(for: nextTrack)
         if let upcoming = peekNext(auto: true) { prewarmAnalysis(for: upcoming) }
 
+        lastNowPlayingSync = nil
         updateNowPlayingInfo()
         savePlaybackState()
     }
@@ -1395,6 +1460,7 @@ final class PlayerCore {
     private func tickProgress() {
         guard isPlaying, !isUsingStreamPlayer else { return }
         progress = liveProgress()
+        syncNowPlayingElapsedIfNeeded()
         scheduleTransitionIfNeeded()
     }
 
