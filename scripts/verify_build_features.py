@@ -8,6 +8,7 @@ BOTTOM = (ROOT / "Aurora/PlayerBottomGlassBar.swift").read_text(encoding="utf-8"
 CHROME = (ROOT / "Aurora/playerchrome.swift").read_text(encoding="utf-8")
 LYRICS = (ROOT / "Aurora/lyricsview.swift").read_text(encoding="utf-8")
 KINETIC = (ROOT / "Aurora/KineticLyricsArtwork.swift").read_text(encoding="utf-8")
+AUTOMIX = (ROOT / "Aurora/AutoMixEngine.swift").read_text(encoding="utf-8")
 STREAM = (ROOT / "Aurora/streambeat.swift").read_text(encoding="utf-8")
 FULLSCREEN = (ROOT / "Aurora/fullscreenartwork.swift").read_text(encoding="utf-8")
 THEME = (ROOT / "Aurora/theme.swift").read_text(encoding="utf-8")
@@ -19,13 +20,26 @@ checks = {
 "artwork": (PLAYER, "nonisolated private static func nowPlayingArtwork"),
 "media session": (PLAYER, "systemNowPlayingSession.becomeActiveIfPossible"),
 "single-flight seek": (PLAYER, "cancelPendingSeeks()"),
-"AutoMix": (PLAYER, "private func completeStreamingTransition()"),
 "route recovery": (PLAYER, "recoverAudioPipelineAfterRouteChange"),
 "Swift 6 notification isolation": (PLAYER, "MainActor.assumeIsolated"),
 "efficient 30 Hz progress": (PLAYER, "CMTime(seconds: 1.0 / 30.0"),
 "one-shot sleep timer": (PLAYER, "Timer(timeInterval: delay, repeats: false)"),
+# Now Playing widget: cover art and tap-to-open the app.
+"Now Playing playback state": (PLAYER, "MPNowPlayingInfoCenter.default().playbackState"),
+"sized lock screen artwork": (PLAYER, "UIGraphicsImageRenderer(size: requestedSize"),
+# AutoMix v2: listens to the next track, then decides the blend.
+"AutoMix": (PLAYER, "private func completeStreamingTransition()"),
+"AutoMix engine": (AUTOMIX, "actor AutoMixEngine"),
+"AutoMix lookahead": (AUTOMIX, "prepareLeadTime"),
+"AutoMix loudness analysis": (AUTOMIX, "AVAssetReaderTrackOutput"),
+"AutoMix tempo estimate": (AUTOMIX, "estimateBPM"),
+"AutoMix planning": (PLAYER, "prepareAutoMixIfNeeded"),
+"AutoMix blend shaping": (PLAYER, "blendCurve(for: currentAutoMixStyle"),
+"AutoMix intro trim": (PLAYER, "pendingIncomingSkip"),
+# Player gestures.
 "tap seeking": (SCREEN, "SpatialTapGesture().onEnded"),
 "edge artwork paging": (SCREEN, "completeArtworkPage(forward:"),
+"deliberate artwork paging": (SCREEN, "artworkPageActivation"),
 "fixed bottom controls": (SCREEN, "PlayerBottomGlassBar("),
 "native glass container": (BOTTOM, "GlassEffectContainer"),
 "native glass buttons": (BOTTOM, ".buttonStyle(.glass)"),
@@ -39,8 +53,11 @@ checks = {
 "ghost lyric layer": (KINETIC, "emeraldDeep.opacity(0.16)"),
 "lightweight lyric glow": (KINETIC, "radius: 16"),
 "static efficient artwork": (SCREEN, "private func animatedCover(side: CGFloat)"),
+# Full screen video shot.
 "video resolution cap": (FULLSCREEN, "preferredMaximumResolution"),
 "transparent video surface": (FULLSCREEN, "backgroundColor = .clear"),
+"video shot fade in": (FULLSCREEN, "private func reveal()"),
+"video shot failure fallback": (FULLSCREEN, "case .failed:"),
 "immersive artwork": (SCREEN, "fullScreenMediaBackground"),
 "undimmed visual media": (SCREEN, "resolvedVideoShotURL ?? track?.videoShotURL"),
 "video shot model": (MODELS, "videoShotURL"),
@@ -61,6 +78,8 @@ if "TimelineView" in KINETIC: missing.append("continuous lyric display timer sti
 if "Color.black" in KINETIC: missing.append("lyric background overlay still present")
 if "RadialGradient" in KINETIC: missing.append("lyric video tint still present")
 if "compositingGroup" in APP: missing.append("mini-player offscreen compositing still present")
+# The old duration-bucket AutoMix must be gone, not merely bypassed.
+if ".bassSwapBlend(duration: 4.5)" in PLAYER: missing.append("legacy fixed 4.5s AutoMix still present")
 if missing:
     print("Build feature verification failed:")
     for name in missing: print("- " + name)

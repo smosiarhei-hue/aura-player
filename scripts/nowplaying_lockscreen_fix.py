@@ -12,11 +12,21 @@ def replace_required(text, old, new, label):
     return text.replace(old, new, 1)
 
 
+def replace_optional(text, old, new, label):
+    """Best-effort refinement. Never fails the build if the shape changed."""
+    if new in text:
+        return text, True
+    if old not in text:
+        print(f"[patch-skip] {label} - anchor absent; skipping this refinement")
+        return text, False
+    return text.replace(old, new, 1), True
+
+
 text = PLAYER.read_text(encoding="utf-8")
 
-# 1. MediaPlayer needs an explicit playback state before iOS treats this app as
-#    the Now Playing app. Without it the lock screen and Dynamic Island show
-#    controls that work, but tapping them does not open the app.
+# 1. iOS only treats an app as "the Now Playing app" - the one the lock screen
+#    and Dynamic Island open when tapped - once it publishes an explicit
+#    playback state. Without this the controls work but the tap does nothing.
 text = replace_required(
     text,
     "        MPNowPlayingInfoCenter.default().nowPlayingInfo = info\n",
@@ -26,8 +36,8 @@ text = replace_required(
     "Now Playing playback state",
 )
 
-# 2. MediaPlayer asks for a specific size. Returning one fixed oversized image
-#    is why the artwork often stayed blank; draw the requested size instead.
+# 2. MediaPlayer requests artwork at a specific size on a background queue.
+#    Handing back one fixed oversized PNG is why the cover often stayed blank.
 text = replace_required(
     text,
     """    nonisolated private static func nowPlayingArtwork(from image: UIImage) -> MPMediaItemArtwork {
@@ -38,11 +48,12 @@ text = replace_required(
         }
     }""",
     """    nonisolated private static func nowPlayingArtwork(from image: UIImage) -> MPMediaItemArtwork {
-        // Downscale once so the handler stays cheap, then satisfy each request
+        // Downscale once so the handler stays cheap, then answer every request
         // at exactly the size MediaPlayer asked for.
         let maxSide: CGFloat = 600
         let source: UIImage
-        if max(image.size.width, image.size.height) > maxSide, image.size.width > 0, image.size.height > 0 {
+        if image.size.width > 0, image.size.height > 0,
+           max(image.size.width, image.size.height) > maxSide {
             let scale = maxSide / max(image.size.width, image.size.height)
             let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
             let renderer = UIGraphicsImageRenderer(size: target)
@@ -56,7 +67,7 @@ text = replace_required(
 
         return MPMediaItemArtwork(boundsSize: baseSize) { requestedSize in
             guard let decoded = UIImage(data: data) else { return UIImage() }
-            guard requestedSize.width > 0, requestedSize.height > 0 else { return decoded }
+            guard requestedSize.width > 1, requestedSize.height > 1 else { return decoded }
 
             let format = UIGraphicsImageRendererFormat.default()
             format.opaque = true
@@ -70,9 +81,8 @@ text = replace_required(
     "resizable Now Playing artwork",
 )
 
-# 3. Publish artwork as soon as a track is selected, not only after the first
-#    progress tick, so the lock screen is never left without a cover.
-text = replace_required(
+# 3. Optional: stop re-issuing the same remote cover download on every tick.
+text, guarded = replace_optional(
     text,
     """        if let cover = track.coverURL, let url = URL(string: cover),
            LibraryStore.cachedArtworkImage(for: track) == nil,
@@ -84,40 +94,27 @@ text = replace_required(
             pendingArtworkFetches.insert(track.id)""",
     "single-flight artwork fetch",
 )
-text = replace_required(
-    text,
-    """            Task { [weak self] in
-                guard let (data, _) = try? await URLSession.shared.data(from: url),
-                      let image = UIImage(data: data) else { return }
-                guard let self, self.currentTrack?.id == track.id else { return }
-                self.remoteArtworkCache[track.id] = image""",
-    """            Task { [weak self] in
+if guarded:
+    text, released = replace_optional(
+        text,
+        """            Task { [weak self] in
+                guard let (data, _) = try? await URLSession.shared.data(from: url),""",
+        """            Task { [weak self] in
                 defer { Task { @MainActor [weak self] in self?.pendingArtworkFetches.remove(track.id) } }
-                guard let (data, _) = try? await URLSession.shared.data(from: url),
-                      let image = UIImage(data: data) else { return }
-                guard let self, self.currentTrack?.id == track.id else { return }
-                self.remoteArtworkCache[track.id] = image""",
-    "artwork fetch bookkeeping",
-)
-text = replace_required(
-    text,
-    "    private var remoteArtworkCache: [UUID: UIImage] = [:]\n",
-    """    private var remoteArtworkCache: [UUID: UIImage] = [:]
+                guard let (data, _) = try? await URLSession.shared.data(from: url),""",
+        "artwork fetch release",
+    )
+    if released:
+        text = replace_required(
+            text,
+            "    private var remoteArtworkCache: [UUID: UIImage] = [:]\n",
+            """    private var remoteArtworkCache: [UUID: UIImage] = [:]
     private var pendingArtworkFetches: Set<UUID> = []
 """,
-    "artwork fetch state",
-)
-
-# 4. Keep the widget in sync when a track is chosen and when playback stops.
-text = replace_required(
-    text,
-    """        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-            return""",
-    """        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-            MPNowPlayingInfoCenter.default().playbackState = .stopped
-            return""",
-    "stopped playback state",
-)
+            "artwork fetch state",
+        )
+    else:
+        raise RuntimeError("artwork fetch release: guard was inserted without a matching release")
 
 PLAYER.write_text(text, encoding="utf-8")
 print("Lock screen artwork and tap-to-open Now Playing fixes applied.")

@@ -37,6 +37,8 @@ workflows:
           python3 -W error::SyntaxWarning scripts/smooth_player_interactions.py
           python3 -W error::SyntaxWarning scripts/kinetic_lyrics_artwork.py
           python3 -W error::SyntaxWarning scripts/ios26_standard_player_layout.py
+          python3 -W error::SyntaxWarning scripts/automix_v2.py
+          python3 -W error::SyntaxWarning scripts/nowplaying_lockscreen_fix.py
           python3 -W error::SyntaxWarning scripts/verify_build_features.py
       - name: Install XcodeGen
         script: |
