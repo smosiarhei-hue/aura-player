@@ -66,7 +66,10 @@ struct RootView: View {
     @State private var tab: AppTab = .home
     @State private var showPlayer = false
 
-    private var miniVisible: Bool { player.currentTrack != nil }
+    private var miniVisible: Bool {
+        guard let track = player.currentTrack else { return false }
+        return !track.title.isEmpty || track.isStream || track.duration > 0
+    }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -128,8 +131,8 @@ struct NativeMiniPlayer: View {
                     HStack(spacing: 10) {
                         MiniArtworkPulse(track: player.currentTrack, isPlaying: player.isPlaying)
 
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(player.currentTrack?.title ?? "Не выбрана песня")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(player.currentTrack?.title ?? "")
                                 .font(.system(.headline, design: .rounded, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
@@ -176,6 +179,15 @@ struct NativeMiniPlayer: View {
         .padding(.leading, 10)
         .padding(.trailing, 6)
         .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onEnded { val in
+                    if val.translation.height < -25 {
+                        open()
+                    }
+                }
+        )
     }
 
     private func open() {
@@ -207,14 +219,14 @@ struct MiniArtworkPulse: View {
     let isPlaying: Bool
 
     var body: some View {
-        SmallArtwork(track: track, size: 40)
-            .frame(width: 40, height: 40)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        SmallArtwork(track: track, size: 42)
+            .frame(width: 42, height: 42)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(.white.opacity(isPlaying ? 0.38 : 0.18), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(.white.opacity(isPlaying ? 0.35 : 0.15), lineWidth: 0.8)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .clipped()
             .compositingGroup()
     }
 }

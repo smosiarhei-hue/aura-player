@@ -116,10 +116,16 @@ struct SmallArtwork: View {
                 Image(uiImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipped()
             } else if let track = track, let cover = track.coverURL, let url = URL(string: cover) {
                 AsyncImage(url: url) { phase in
                     if case .success(let image) = phase {
-                        image.resizable().aspectRatio(contentMode: .fill)
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: size, height: size)
+                            .clipped()
                     } else {
                         artworkPlaceholder
                     }
@@ -130,6 +136,7 @@ struct SmallArtwork: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .clipped()
     }
 
     private var artworkPlaceholder: some View {

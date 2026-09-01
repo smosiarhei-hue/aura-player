@@ -146,14 +146,16 @@ struct HomeView: View {
             }
             .buttonStyle(GlassPressStyle())
 
-            // Чипы настроения — волна перестраивается мгновенно
+            // Чипы настроения — волна перестраивается и запускается мгновенно
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(YandexMusicService.rotorStations) { station in
                         Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             withAnimation(AG.fastSpring) {
                                 ym.waveMoodStationId = station.stationId
                             }
+                            SonivoPlay.wave(station)
                         } label: {
                             SonivoChip(
                                 title: station.title,

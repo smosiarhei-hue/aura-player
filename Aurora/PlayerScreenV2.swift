@@ -21,7 +21,7 @@ struct PlayerScreenV2: View {
 
     // Player Display Modes
     @State private var showLyricsMode = false
-    @State private var isVideoShotMode = false
+    @State private var isVideoShotMode = UserDefaults.standard.bool(forKey: "player.videoshot")
     @State private var showQueue = false
     @State private var showEqualizer = false
     @State private var showSleepTimer = false
@@ -123,6 +123,26 @@ struct PlayerScreenV2: View {
                         .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 15)
+                        .onChanged { val in
+                            guard !isScrubbing else { return }
+                            if val.translation.height > 0 && abs(val.translation.height) > abs(val.translation.width) * 1.15 {
+                                dragY = val.translation.height * 0.80
+                            }
+                        }
+                        .onEnded { val in
+                            guard !isScrubbing else { return }
+                            if val.translation.height > 75 || val.predictedEndTranslation.height > 150 {
+                                close()
+                            } else {
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                                    dragY = 0
+                                }
+                            }
+                        }
+                )
             }
             .offset(y: max(0, dragY))
             .scaleEffect(1 - min(max(dragY, 0) / 1800, 0.035), anchor: .bottom)
@@ -163,38 +183,26 @@ struct PlayerScreenV2: View {
         }
     }
 
-    // MARK: - Dynamic Fluid HDR Mesh Background
+    // MARK: - Dynamic Fluid HDR Mesh Background (GPU 120 FPS Optimized)
 
     private var fluidHDRBackground: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
-            Canvas { ctx, size in
-                let t = timeline.date.timeIntervalSinceReferenceDate
-                let w = Double(size.width)
-                let h = Double(size.height)
-                let colors = palette.isEmpty ? [AG.amber, AG.ember, Color.black] : palette
-
-                // Draw floating morphing fluid color blobs
-                for i in 0..<5 {
-                    let fi = Double(i)
-                    let speed = 0.07 + 0.025 * (fi.truncatingRemainder(dividingBy: 3))
-                    let phase = fi * 1.25 + t * speed
-                    let cx = w * (0.5 + 0.38 * sin(phase + fi * 0.7))
-                    let cy = h * (0.45 + 0.35 * cos(phase * 0.85 + fi * 1.1))
-                    let r = min(w, h) * (0.42 + 0.08 * sin(t * 0.4 + fi * 1.5))
-
-                    let color = colors[i % colors.count]
-                    let rect = CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
-
-                    ctx.opacity = 0.85
-                    ctx.fill(Path(ellipseIn: rect), with: .color(color))
-                }
-            }
+        ZStack {
+            Color.black
+            LinearGradient(
+                colors: palette.isEmpty ? [AG.amber.opacity(0.85), AG.ember.opacity(0.70), Color.black] : palette.map { $0.opacity(0.80) } + [Color.black],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            RadialGradient(
+                colors: [(palette.first ?? AG.amber).opacity(0.65), Color.clear],
+                center: .top,
+                startRadius: 40,
+                endRadius: 460
+            )
         }
-        .blur(radius: 65)
-        .scaleEffect(1.25)
-        .saturation(1.4)
-        .brightness(0.02)
-        .background(Color.black)
+        .blur(radius: 45)
+        .scaleEffect(1.20)
+        .saturation(1.35)
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .compositingGroup()
@@ -246,8 +254,9 @@ struct PlayerScreenV2: View {
 
             // Video-Shot Live Canvas Toggle
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                     isVideoShotMode.toggle()
+                    UserDefaults.standard.set(isVideoShotMode, forKey: "player.videoshot")
                 }
             } label: {
                 Image(systemName: isVideoShotMode ? "rectangle.inset.filled.and.person.filled" : "play.rectangle")
@@ -276,32 +285,32 @@ struct PlayerScreenV2: View {
                 .scaleEffect(player.isPlaying ? 1.0 : 0.88)
                 .offset(x: coverDragX)
                 .gesture(
-                    DragGesture(minimumDistance: 20)
+                    DragGesture(minimumDistance: 12)
                         .onChanged { val in
                             if abs(val.translation.width) > abs(val.translation.height) {
-                                coverDragX = val.translation.width * 0.65
+                                coverDragX = val.translation.width * 0.60
                             }
                         }
                         .onEnded { val in
-                            let threshold: CGFloat = 60
+                            let threshold: CGFloat = 45
                             if val.translation.width < -threshold {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                withAnimation(AG.fastSpring) { coverDragX = -side }
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -side }
                                 nextTrack()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { coverDragX = 0 }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
                             } else if val.translation.width > threshold {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                withAnimation(AG.fastSpring) { coverDragX = side }
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = side }
                                 previousTrack()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { coverDragX = 0 }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
                             } else {
-                                withAnimation(AG.fastSpring) { coverDragX = 0 }
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = 0 }
                             }
                         }
                 )
         }
         .frame(width: side, height: side)
-        .animation(.spring(response: 0.42, dampingFraction: 0.72), value: player.isPlaying)
+        .animation(.spring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
         .id(track?.id)
     }
 

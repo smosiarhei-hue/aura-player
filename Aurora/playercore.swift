@@ -248,6 +248,40 @@ final class PlayerCore {
             eqGains = gains
         }
         applyEQ()
+        restorePlaybackState()
+    }
+
+    func savePlaybackState() {
+        guard let track = currentTrack else {
+            defaults.removeObject(forKey: "player.lastTrack")
+            defaults.removeObject(forKey: "player.lastProgress")
+            defaults.removeObject(forKey: "player.lastQueue")
+            return
+        }
+        if let data = try? JSONEncoder().encode(track) {
+            defaults.set(data, forKey: "player.lastTrack")
+        }
+        defaults.set(progress, forKey: "player.lastProgress")
+        if !queue.isEmpty, let qData = try? JSONEncoder().encode(Array(queue.prefix(60))) {
+            defaults.set(qData, forKey: "player.lastQueue")
+        }
+    }
+
+    func restorePlaybackState() {
+        guard let data = defaults.data(forKey: "player.lastTrack"),
+              let track = try? JSONDecoder().decode(Track.self, from: data) else { return }
+        
+        currentTrack = track
+        let savedProg = defaults.double(forKey: "player.lastProgress")
+        progress = max(0, min(savedProg, track.duration > 0 ? track.duration : savedProg))
+        pausedProgress = progress
+        streamDuration = track.duration
+        
+        if let qData = defaults.data(forKey: "player.lastQueue"),
+           let savedQueue = try? JSONDecoder().decode([Track].self, from: qData) {
+            queue = savedQueue
+        }
+        updateNowPlayingInfo()
     }
 
     private func saveEQ() {
@@ -364,6 +398,7 @@ final class PlayerCore {
         streamDuration = track.duration
         cancelTransition()
         start(at: 0)
+        savePlaybackState()
     }
 
     func pause() {
@@ -378,16 +413,21 @@ final class PlayerCore {
         }
         isPlaying = false
         updateNowPlayingInfo()
+        savePlaybackState()
     }
 
     func resume() {
-        guard !isPlaying, currentTrack != nil else { return }
-        if isUsingStreamPlayer {
+        guard !isPlaying, let track = currentTrack else { return }
+        if track.isStream || track.streamUrlString != nil {
+            if streamingPlayer.currentItem == nil {
+                start(at: progress)
+                return
+            }
             streamingPlayer.play()
             isPlaying = true
         } else {
             if activeAudioFile == nil {
-                start(at: pausedProgress)
+                start(at: progress > 0 ? progress : pausedProgress)
                 return
             }
             if !engine.isRunning { try? engine.start() }
@@ -398,6 +438,7 @@ final class PlayerCore {
             startTimer()
         }
         updateNowPlayingInfo()
+        savePlaybackState()
     }
 
     func next() {
