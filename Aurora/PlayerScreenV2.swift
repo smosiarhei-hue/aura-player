@@ -54,6 +54,11 @@ struct PlayerScreenV2: View {
     @State private var artworkPaletteColors: [Color] = []
 
     private var track: Track? { player.currentTrack }
+
+    /// Video canvas is only shown when a clip actually exists.
+    /// Otherwise the standard artwork must appear immediately, with no manual toggling.
+    private var videoShotActive: Bool { isVideoShotMode && videoShotUrl != nil }
+
     private var palette: [Color] {
         if !artworkPaletteColors.isEmpty { return artworkPaletteColors }
         if let p = track?.palette, !p.isEmpty { return p }
@@ -86,7 +91,7 @@ struct PlayerScreenV2: View {
 
             ZStack {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR Fluid HDR Background
-                if isVideoShotMode, let videoShotUrl {
+                if videoShotActive, let videoShotUrl {
                     VideoShotPlayerView(url: videoShotUrl)
                         .frame(width: geo.size.width, height: geo.size.height)
                         .scaleEffect(1.02)
@@ -148,7 +153,7 @@ struct PlayerScreenV2: View {
                         lyricsStage
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(.opacity)
-                    } else if !isVideoShotMode {
+                    } else if !videoShotActive {
                         artworkStage(side: coverSide)
                             .frame(maxWidth: .infinity)
                             .transition(.opacity)
@@ -159,26 +164,11 @@ struct PlayerScreenV2: View {
 
                     Spacer(minLength: 6)
 
-                    // Floating toast for Track Wave or AutoMix DJ Transition (Native Pure White HDR Shimmer)
+                    // Floating status line: plain shimmering AutoMix mark or Track Wave toast
                     if dj.isTransitionActive {
-                        HStack(spacing: 6) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(.white)
-                            Text("AutoMix · \(dj.activeStrategyName.replacingOccurrences(of: "_", with: " "))")
-                                .font(AG.display(13, .bold))
-                                .foregroundStyle(.white)
-                        }
-                        .hdrShimmer(isActive: true)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule()
-                                .fill(.ultraThinMaterial)
-                                .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
-                        )
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .padding(.bottom, 4)
+                        AutoMixBadge()
+                            .transition(.opacity)
+                            .padding(.bottom, 6)
                     } else if let waveMessage {
                         HStack(spacing: 6) {
                             Image(systemName: "dot.radiowaves.left.and.right")
@@ -231,6 +221,8 @@ struct PlayerScreenV2: View {
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(dismissing)
+        .animation(.easeInOut(duration: 0.28), value: dj.isTransitionActive)
+        .animation(.easeInOut(duration: 0.30), value: videoShotActive)
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -314,7 +306,7 @@ struct PlayerScreenV2: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.70))
-                    .frame(width: 36, height: 36)
+                    .frame(width: 44, height: 44)
                     .contentShape(Circle())
             }
             .buttonStyle(GlassPressStyle())
@@ -325,7 +317,7 @@ struct PlayerScreenV2: View {
             Capsule()
                 .fill(Color.white.opacity(0.35))
                 .frame(width: 42, height: 5)
-                .frame(width: 120, height: 36)
+                .frame(width: 120, height: 44)
                 .contentShape(Rectangle())
                 .gesture(closeGesture)
 
@@ -333,9 +325,9 @@ struct PlayerScreenV2: View {
 
             // Right spacer for visual balance
             Color.clear
-                .frame(width: 36, height: 36)
+                .frame(width: 44, height: 44)
         }
-        .frame(height: 38)
+        .frame(height: 44)
     }
 
     // MARK: - Center Stage: Standard Artwork (Screenshot 1)
@@ -382,10 +374,8 @@ struct PlayerScreenV2: View {
         .id(track?.id)
     }
 
-
-
     @ViewBuilder private var artwork: some View {
-        if isVideoShotMode, let videoShotUrl {
+        if videoShotActive, let videoShotUrl {
             VideoShotPlayerView(url: videoShotUrl)
                 .transition(.opacity)
         } else if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
@@ -421,19 +411,17 @@ struct PlayerScreenV2: View {
         videoShotUrl = nil
         guard let track else { return }
         let ymId = YandexMusicService.ymId(fromFileName: track.fileName) ?? (track.isStream ? track.streamUrlString : nil) ?? ""
-        if !ymId.isEmpty {
-            videoShotLoading = true
-            let url = await YandexMusicService.shared.getVideoShotUrl(for: ymId)
-            if player.currentTrack?.id == track.id {
+        guard !ymId.isEmpty else { return }
+
+        videoShotLoading = true
+        let url = await YandexMusicService.shared.getVideoShotUrl(for: ymId)
+        if player.currentTrack?.id == track.id {
+            withAnimation(.easeInOut(duration: 0.30)) {
                 videoShotUrl = url
-                if url != nil {
-                    withAnimation(.easeInOut(duration: 0.35)) {
-                        isVideoShotMode = true
-                    }
-                }
+                if url != nil { isVideoShotMode = true }
             }
-            videoShotLoading = false
         }
+        videoShotLoading = false
     }
 
     // MARK: - Center Stage: Live Synced Lyrics
@@ -448,7 +436,7 @@ struct PlayerScreenV2: View {
 
     private var appleMusicLowerDeck: some View {
         VStack(spacing: 14) {
-            // Compact Video-Shot / Artwork Toggle Pill (appears above right action icons when available)
+            // Compact Video-Shot / Artwork Toggle Pill (only when a clip really exists)
             if videoShotUrl != nil {
                 HStack {
                     Spacer()
@@ -466,13 +454,14 @@ struct PlayerScreenV2: View {
                                 .font(AG.text(11, .semibold))
                         }
                         .foregroundStyle(isVideoShotMode ? AG.amber : .white.opacity(0.85))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
                         .background(
                             Capsule()
                                 .fill(.ultraThinMaterial)
                                 .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.8))
                         )
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(GlassPressStyle())
                 }
@@ -506,7 +495,6 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
-                    .hdrShimmer(isActive: dj.isTransitionActive)
 
                 Button(action: openArtist) {
                     HStack(spacing: 4) {
@@ -514,11 +502,11 @@ struct PlayerScreenV2: View {
                             .font(AG.text(17, .semibold))
                             .foregroundStyle(.white.opacity(0.68))
                             .lineLimit(1)
-                            .hdrShimmer(isActive: dj.isTransitionActive)
                         if resolvingArtist {
                             ProgressView().controlSize(.mini).tint(.white)
                         }
                     }
+                    .frame(minHeight: 28)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -527,8 +515,8 @@ struct PlayerScreenV2: View {
 
             Spacer(minLength: 8)
 
-            // Right Action Icons: Dislike + Like (Heart) + Track Wave + 3-Dots Menu
-            HStack(spacing: 8) {
+            // Right Action Icons: Like (Heart) + Track Wave + 3-Dots Menu
+            HStack(spacing: 6) {
                 if let track {
                     // Like Button (Heart: Adds to Library & Favorites)
                     Button {
@@ -539,7 +527,7 @@ struct PlayerScreenV2: View {
                         Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
                             .font(.system(size: 21, weight: .semibold))
                             .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white.opacity(0.80))
-                            .frame(width: 36, height: 36)
+                            .frame(width: 44, height: 44)
                             .contentShape(Circle())
                     }
                     .buttonStyle(GlassPressStyle())
@@ -549,12 +537,8 @@ struct PlayerScreenV2: View {
                         Image(systemName: "dot.radiowaves.left.and.right")
                             .font(.system(size: 19, weight: .semibold))
                             .foregroundStyle(waveActive ? AG.amber : .white.opacity(0.80))
-                            .frame(width: 36, height: 36)
+                            .frame(width: 44, height: 44)
                             .contentShape(Circle())
-                            .overlay(
-                                Circle()
-                                    .stroke(waveActive ? AG.amber.opacity(0.6) : Color.clear, lineWidth: 1)
-                            )
                     }
                     .buttonStyle(GlassPressStyle())
                 }
@@ -564,10 +548,15 @@ struct PlayerScreenV2: View {
                         Button(action: startTrackWave) {
                             Label("Моя волна по треку", systemImage: "dot.radiowaves.left.and.right")
                         }
-                        Button {
-                            withAnimation(AG.spring) { isVideoShotMode.toggle() }
-                        } label: {
-                            Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: isVideoShotMode ? "photo" : "play.rectangle.fill")
+                        if videoShotUrl != nil {
+                            Button {
+                                withAnimation(AG.spring) {
+                                    isVideoShotMode.toggle()
+                                    UserDefaults.standard.set(isVideoShotMode, forKey: "player.videoshot")
+                                }
+                            } label: {
+                                Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: isVideoShotMode ? "photo" : "play.rectangle.fill")
+                            }
                         }
                         Button {
                             withAnimation(AG.spring) { showLyricsMode.toggle() }
@@ -618,7 +607,7 @@ struct PlayerScreenV2: View {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.white.opacity(0.85))
-                        .frame(width: 36, height: 36)
+                        .frame(width: 44, height: 44)
                         .contentShape(Circle())
                 }
             }
@@ -632,25 +621,27 @@ struct PlayerScreenV2: View {
             GeometryReader { geo in
                 let maxDuration = max(player.duration, 0.01)
                 let currentFraction = min(1.0, max(0.0, effectiveProgress / maxDuration))
+                let barHeight: CGFloat = isScrubbing ? 11 : 7
+                let knob: CGFloat = isScrubbing ? 19 : 0
 
                 ZStack(alignment: .leading) {
                     // Track background line
                     Capsule()
                         .fill(Color.white.opacity(0.24))
-                        .frame(height: isScrubbing ? 6 : 4)
+                        .frame(height: barHeight)
 
                     // Filled progress line
                     Capsule()
-                        .fill(Color.white.opacity(0.85))
-                        .frame(width: geo.size.width * currentFraction, height: isScrubbing ? 6 : 4)
+                        .fill(Color.white.opacity(isScrubbing ? 1.0 : 0.85))
+                        .frame(width: max(barHeight, geo.size.width * currentFraction), height: barHeight)
 
-                    // Thumb knob (visible when scrubbing)
+                    // Thumb knob (grows out of the bar while scrubbing)
                     if isScrubbing {
                         Circle()
                             .fill(Color.white)
-                            .frame(width: 16, height: 16)
-                            .shadow(color: Color.black.opacity(0.4), radius: 4)
-                            .offset(x: max(0, min(geo.size.width * currentFraction - 8, geo.size.width - 16)))
+                            .frame(width: knob, height: knob)
+                            .shadow(color: Color.black.opacity(0.45), radius: 5)
+                            .offset(x: max(0, min(geo.size.width * currentFraction - knob / 2, geo.size.width - knob)))
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -658,7 +649,12 @@ struct PlayerScreenV2: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { val in
-                            isScrubbing = true
+                            if !isScrubbing {
+                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
+                                    isScrubbing = true
+                                }
+                            }
                             let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
                             scrubProgress = fraction * maxDuration
                         }
@@ -666,18 +662,21 @@ struct PlayerScreenV2: View {
                             let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
                             let target = fraction * maxDuration
                             player.seek(to: target)
-                            isScrubbing = false
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                                isScrubbing = false
+                            }
                         }
                 )
             }
-            .frame(height: 18)
+            .frame(height: 30)
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
 
             // Timings and Center Quality Badge (Hi-Res Lossless / Lossless / HQ)
             HStack(alignment: .center) {
                 Text(player.formatted(effectiveProgress))
                     .font(AG.text(12, .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
 
                 Spacer()
 
@@ -692,9 +691,10 @@ struct PlayerScreenV2: View {
                             .font(AG.text(11, .semibold))
                     }
                     .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
                     .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8)))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(GlassPressStyle())
 
@@ -702,7 +702,7 @@ struct PlayerScreenV2: View {
 
                 Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
                     .font(AG.text(12, .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
             }
         }
     }
@@ -725,7 +725,7 @@ struct PlayerScreenV2: View {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.90))
@@ -734,7 +734,7 @@ struct PlayerScreenV2: View {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 46, weight: .black))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 60)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.88))
@@ -743,7 +743,7 @@ struct PlayerScreenV2: View {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.90))
@@ -791,7 +791,7 @@ struct PlayerScreenV2: View {
 
             // Center: AirPlay route picker (Standard native size)
             AirPlayButtonView()
-                .frame(width: 38, height: 38)
+                .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
 
             Spacer()
@@ -809,7 +809,7 @@ struct PlayerScreenV2: View {
             .buttonStyle(GlassPressStyle())
         }
         .padding(.horizontal, 28)
-        .frame(height: 44)
+        .frame(height: 48)
     }
 
     // MARK: - Active Modal Views
@@ -840,6 +840,7 @@ struct PlayerScreenV2: View {
                             }
                         }
                         .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
                 }
             } header: {
@@ -876,6 +877,7 @@ struct PlayerScreenV2: View {
                                 .foregroundStyle(.white.opacity(0.40))
                         }
                         .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
                 }
             }
@@ -992,6 +994,94 @@ struct PlayerScreenV2: View {
     }
 }
 
+// MARK: - AutoMix mark: plain white text, shimmering sweep, sparks and running lines
+
+struct AutoMixBadge: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let title = "AutoMix"
+    private let sparkSeeds: [CGFloat] = [0.06, 0.24, 0.41, 0.58, 0.74, 0.92]
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                content(time: 0)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                    content(time: context.date.timeIntervalSinceReferenceDate)
+                }
+            }
+        }
+        .accessibilityLabel("AutoMix")
+        .allowsHitTesting(false)
+    }
+
+    private func content(time: TimeInterval) -> some View {
+        HStack(spacing: 9) {
+            runningLines(time: time, mirrored: true)
+            shimmeringTitle(time: time)
+                .overlay { sparks(time: time) }
+            runningLines(time: time, mirrored: false)
+        }
+    }
+
+    private func shimmeringTitle(time: TimeInterval) -> some View {
+        let cycle = 2.4
+        let sweep = CGFloat(time.truncatingRemainder(dividingBy: cycle) / cycle)
+        let label = Text(title).font(AG.display(15, .bold))
+
+        return label
+            .foregroundStyle(.white.opacity(0.88))
+            .overlay(
+                LinearGradient(
+                    colors: [.clear, .white, .white, .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 46)
+                .offset(x: -60 + sweep * 150)
+                .blendMode(.plusLighter)
+                .mask(label)
+            )
+            .shadow(color: .white.opacity(0.35), radius: 6)
+            .fixedSize()
+    }
+
+    private func sparks(time: TimeInterval) -> some View {
+        ZStack {
+            ForEach(Array(sparkSeeds.enumerated()), id: \.offset) { index, seed in
+                let phase = (time * 0.85 + Double(seed) * 2.7).truncatingRemainder(dividingBy: 2.0) / 2.0
+                let fade = sin(phase * .pi)
+                Image(systemName: "sparkle")
+                    .font(.system(size: index % 2 == 0 ? 7 : 5, weight: .bold))
+                    .foregroundStyle(.white)
+                    .opacity(reduceMotion ? 0.45 : fade * 0.95)
+                    .scaleEffect(0.7 + fade * 0.55)
+                    .offset(
+                        x: (seed - 0.5) * 104,
+                        y: (index % 2 == 0 ? -1 : 1) * (7 + CGFloat(fade) * 7)
+                    )
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func runningLines(time: TimeInterval, mirrored: Bool) -> some View {
+        VStack(alignment: mirrored ? .trailing : .leading, spacing: 3) {
+            ForEach(0..<3, id: \.self) { row in
+                let phase = (time * 1.15 + Double(row) * 0.42).truncatingRemainder(dividingBy: 1.6) / 1.6
+                let travel = reduceMotion ? 0.5 : phase
+                Capsule()
+                    .fill(Color.white)
+                    .frame(width: 8 + CGFloat(row) * 5, height: 1.6)
+                    .opacity(0.15 + sin(travel * .pi) * 0.75)
+                    .offset(x: (mirrored ? -1 : 1) * CGFloat(travel * 9 - 4.5))
+            }
+        }
+        .frame(width: 22)
+    }
+}
+
 // MARK: - VideoShot Player View (Native Looping Canvas - Pure AVPlayerLayer, No PiP)
 
 struct VideoShotPlayerView: UIViewRepresentable {
@@ -1078,4 +1168,3 @@ struct NativeVolumeSlider: UIViewRepresentable {
 
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
-
