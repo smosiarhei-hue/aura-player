@@ -77,8 +77,8 @@ nonisolated enum TransitionPlanner {
 
         let trailingSilence = sourceAnalysis.trailingSilence?.duration ?? 0
         let beatOK = bothTempiKnown
-            && sourceAnalysis.bpmConfidence >= 0.65
-            && targetAnalysis.bpmConfidence >= 0.65
+            && sourceAnalysis.bpmConfidence >= 0.45
+            && targetAnalysis.bpmConfidence >= 0.45
             && sourceAnalysis.hasSteadyBeat && targetAnalysis.hasSteadyBeat
 
         // Time stretch: only when both tempi are known, close, and confident.
@@ -177,6 +177,19 @@ nonisolated enum TransitionPlanner {
             duration: blendDuration
         )
 
+        // --- 5. Phase-aligned target entry (TZ Section 9) ---
+        // The incoming track's first beat must land on the outgoing track's
+        // downbeat, not at a random sample. Shift the target's start position so
+        // its beat grid lines up with the source's grid at the cue.
+        let targetStart = phaseAlignedStart(
+            cueTime: cueTime,
+            blendDuration: blendDuration,
+            sourceRate: sourceRate,
+            targetRate: targetRate,
+            source: sourceAnalysis,
+            target: targetAnalysis
+        )
+
         let fallbackStrategy: TransitionStrategy
         switch strategy {
         case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ: fallbackStrategy = .SIMPLE_CROSSFADE
@@ -196,7 +209,7 @@ nonisolated enum TransitionPlanner {
                 transitionEnd: min(sourceDur, cueTime + blendDuration)
             ),
             targetTrack: TransitionTargetTrackInfo(
-                startPosition: 0
+                startPosition: targetStart
             ),
             tempo: TransitionTempoInfo(
                 targetBPM: tgtBPM > 0 ? tgtBPM : (srcBPM > 0 ? srcBPM : 120),
@@ -206,6 +219,51 @@ nonisolated enum TransitionPlanner {
             actions: actions,
             fallback: TransitionFallbackInfo(type: fallbackStrategy.rawValue)
         )
+    }
+
+    /// Chooses the target's start position so that (with the plan's playback
+    /// rates) its beat grid is in phase with the source's grid at the cue: the
+    /// beat that plays when the target becomes audible lands on the source's
+    /// nearest downbeat. Returns 0 when the beat grids are unknown.
+    nonisolated static func phaseAlignedStart(
+        cueTime: TimeInterval,
+        blendDuration: TimeInterval,
+        sourceRate: Double,
+        targetRate: Double,
+        source: TrackAnalysis,
+        target: TrackAnalysis
+    ) -> Double {
+        guard let sourceBeatInterval = source.bpm.map({ 60.0 / max(1, $0) }),
+              let targetBeatInterval = target.bpm.map({ 60.0 / max(1, $0) }) else { return 0 }
+
+        // Wall-clock beat period of each lane while stretched.
+        let sourcePeriod = sourceBeatInterval / max(0.5, sourceRate)
+        let targetPeriod = targetBeatInterval / max(0.5, targetRate)
+        guard sourcePeriod.isFinite, targetPeriod.isFinite else { return 0 }
+
+        // Phase of the source grid at the moment the blend starts.
+        let sourcePhase = cueTime.truncatingRemainder(dividingBy: sourcePeriod)
+
+        // The target becomes audible part-way through the blend (its volume
+        // ramp crosses the source's about mid-way); align around that moment.
+        let audibleAt = cueTime + blendDuration * 0.5
+        let sourcePhaseAtAudible = audibleAt.truncatingRemainder(dividingBy: sourcePeriod)
+
+        // Find the target's nearest beat-position to align onto the source's
+        // phase: pick the next target grid point whose phase matches.
+        let targetStart = target.firstBeat ?? 0
+        let targetPhase = (targetStart).truncatingRemainder(dividingBy: targetPeriod)
+        var shift = sourcePhaseAtAudible - targetPhase
+        if shift < 0 { shift += targetPeriod }
+
+        // Keep the shift inside one beat - nudging a whole beat off just moves
+        // the entry point without changing the phase relationship.
+        if shift > targetPeriod / 2 { shift -= targetPeriod }
+        if shift < -targetPeriod / 2 { shift += targetPeriod }
+
+        let aligned = max(0, targetStart + shift)
+        // Never start absurdly deep into the track just for phase.
+        return min(aligned, max(0, target.duration - blendDuration - 2))
     }
 
     /// Adaptive transition duration (TZ Section 24): strategy-driven, then
@@ -220,6 +278,7 @@ nonisolated enum TransitionPlanner {
         case .SILENCE_TRIM: base = 1.5
         case .HARD_CUT, .DROP_SWITCH: base = 3
         case .VOCAL_CUT: base = 8
+        case .ECHO_OUT: base = 8
         case .FILTER_TRANSITION: base = 12
         case .BUILDUP_TO_DROP: base = 10
         case .ENERGY_BLEND: base = 14
@@ -288,6 +347,40 @@ nonisolated enum TransitionPlanner {
             actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.15))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: 0))
             actions.append(TransitionAction(time: duration * 0.45, target: "target", parameter: "volume", value: 0.75, duration: duration * 0.45))
+
+        case .ECHO_OUT:
+            // Last hit of the source dissolves into a growing plate reverb
+            // while the target enters clean (TZ Section 14 ECHO_OUT).
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.5))
+            actions.append(TransitionAction(time: duration * 0.5, target: "source", parameter: "volume", value: 0.5, duration: duration * 0.4))
+            actions.append(TransitionAction(time: duration * 0.9, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.1))
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "reverb", value: 0.0, duration: 0))
+            actions.append(TransitionAction(time: duration * 0.25, target: "source", parameter: "reverb", value: 0.55, duration: duration * 0.5))
+            actions.append(TransitionAction(time: duration * 0.75, target: "source", parameter: "reverb", value: 0.95, duration: duration * 0.25))
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "highEQ", value: 0.8, duration: duration))
+            actions.append(TransitionAction(time: duration * 0.55, target: "target", parameter: "volume", value: 0.0, duration: 0))
+            actions.append(TransitionAction(time: duration * 0.9, target: "target", parameter: "volume", value: 1.0, duration: duration * 0.1))
+
+        case .ENERGY_BLEND:
+            // Energy rides across: source eases down through the mid, target
+            // rises over the whole window, low-end crosses at the midpoint.
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.7))
+            actions.append(TransitionAction(time: duration * 0.7, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.3))
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "lowEQ", value: 0.8, duration: duration * 0.5))
+            actions.append(TransitionAction(time: duration * 0.5, target: "source", parameter: "lowEQ", value: 0.05, duration: duration * 0.5))
+            actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: duration * 0.8))
+            actions.append(TransitionAction(time: duration * 0.8, target: "target", parameter: "volume", value: 1.0, duration: duration * 0.2))
+            actions.append(TransitionAction(time: 0, target: "target", parameter: "lowEQ", value: 0.0, duration: duration * 0.4))
+            actions.append(TransitionAction(time: duration * 0.4, target: "target", parameter: "lowEQ", value: 1.0, duration: duration * 0.6))
+
+        case .LOOP_TRANSITION, .INSTRUMENTAL_OVERLAY:
+            // The incoming phrase carries over the source's tail with a light
+            // reverb smear on the way out.
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.75))
+            actions.append(TransitionAction(time: duration * 0.75, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.25))
+            actions.append(TransitionAction(time: duration * 0.4, target: "source", parameter: "reverb", value: 0.3, duration: duration * 0.5))
+            actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: duration * 0.6))
+            actions.append(TransitionAction(time: duration * 0.6, target: "target", parameter: "volume", value: 1.0, duration: duration * 0.4))
 
         default:
             actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.85))
@@ -378,7 +471,19 @@ nonisolated enum TransitionPlanner {
                 reason: reason
             ),
             sourceTrack: TransitionSourceTrackInfo(transitionStart: cue, transitionEnd: end),
-            targetTrack: TransitionTargetTrackInfo(startPosition: max(0, plan.targetTrack.startPosition.isFinite ? plan.targetTrack.startPosition : 0)),
+            targetTrack: TransitionTargetTrackInfo(
+                startPosition: max(
+                    0,
+                    phaseAlignedStart(
+                        cueTime: cue,
+                        blendDuration: end - cue,
+                        sourceRate: sRate,
+                        targetRate: tRate,
+                        source: sourceAnalysis,
+                        target: targetAnalysis
+                    )
+                )
+            ),
             tempo: TransitionTempoInfo(targetBPM: targetBPM, sourcePlaybackRate: sRate, targetPlaybackRate: tRate),
             actions: actions,
             fallback: TransitionFallbackInfo(type: plan.fallback.type.isEmpty ? TransitionStrategy.SIMPLE_CROSSFADE.rawValue : plan.fallback.type)

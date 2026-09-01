@@ -120,7 +120,7 @@ final class PlayerCore {
     private var transitionScheduledAt: Date? = nil
     private var transitionPausedAt: Date? = nil
 
-    // Local Audio Engine (AVAudioEngine + 10-band EQ + per-lane time pitch)
+    // Local Audio Engine (AVAudioEngine + 10-band EQ + per-lane time pitch & reverb)
     private let engine = AVAudioEngine()
     private let playerA = AVAudioPlayerNode()
     private let playerB = AVAudioPlayerNode()
@@ -128,6 +128,9 @@ final class PlayerCore {
     // Pitch-preserving time stretch per lane, so beat matching never chips vocals.
     private let timePitchA = AVAudioUnitTimePitch()
     private let timePitchB = AVAudioUnitTimePitch()
+    // Per-lane reverb for DJ effects (echo-out tails, dissolve smears).
+    private let reverbA = AVAudioUnitReverb()
+    private let reverbB = AVAudioUnitReverb()
     private let eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
     private let eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
 
@@ -240,11 +243,20 @@ final class PlayerCore {
         engine.attach(playerB)
         engine.attach(timePitchA)
         engine.attach(timePitchB)
+        engine.attach(reverbA)
+        engine.attach(reverbB)
         engine.attach(eqNodeA)
         engine.attach(eqNodeB)
 
         configureEQ(eqNodeA)
         configureEQ(eqNodeB)
+        // Wet-only reverb lanes: the dry signal reaches the mixer straight from
+        // the EQ, the reverb contributes the effect tail. Keeps the normal sound
+        // untouched while a transition smears the outgoing track.
+        reverbA.wetDryMix = 0
+        reverbB.wetDryMix = 0
+        reverbA.loadFactoryPreset(.mediumPlate)
+        reverbB.loadFactoryPreset(.mediumPlate)
 
         engine.connect(playerA, to: timePitchA, format: nil)
         engine.connect(playerB, to: timePitchB, format: nil)
@@ -252,6 +264,10 @@ final class PlayerCore {
         engine.connect(timePitchB, to: eqNodeB, format: nil)
         engine.connect(eqNodeA, to: engine.mainMixerNode, format: nil)
         engine.connect(eqNodeB, to: engine.mainMixerNode, format: nil)
+        engine.connect(eqNodeA, to: reverbA, format: nil)
+        engine.connect(eqNodeB, to: reverbB, format: nil)
+        engine.connect(reverbA, to: engine.mainMixerNode, format: nil)
+        engine.connect(reverbB, to: engine.mainMixerNode, format: nil)
 
         engine.mainMixerNode.outputVolume = volume
         try? engine.start()
@@ -346,6 +362,8 @@ final class PlayerCore {
     private var idlePlayer: AVAudioPlayerNode { (activePlayer === playerA) ? playerB : playerA }
     private var activeTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchA : timePitchB }
     private var idleTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchB : timePitchA }
+    private var activeReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbA : reverbB }
+    private var idleReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbB : reverbA }
 
     // MARK: - Lockscreen & Remote Commands
 
@@ -885,9 +903,9 @@ final class PlayerCore {
 
         if isUsingStreamPlayer || nextTrack.isStream {
             // Dual-AVPlayer stream blending. The incoming item was already
-            // resolved and parked on the cue position during pre-buffering; the
-            // blend timer only starts once the lane is actually audible, so the
-            // overlap never starts late (or after the outgoing track ended).
+            // resolved during pre-buffering; re-seek it to the plan's phase-
+            // aligned start (the plan usually arrived after the pre-buffer
+            // parked the lane), then start the blend.
             guard idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id else {
                 // Defensive: someone invalidated the buffer - abort cleanly.
                 isTransitioning = false
@@ -895,11 +913,20 @@ final class PlayerCore {
                 AutoMixDJEngine.shared.isTransitionActive = false
                 return
             }
-            idleStreamingPlayer.volume = 0.001
-            idleStreamingPlayer.playImmediately(atRate: 1.0)
-            transitionStartTime = Date()
-            incomingLaneReady = true
-            startTransitionTimer()
+            let laneStart = max(0, plan.targetTrack.startPosition)
+            let seekTime = CMTime(seconds: laneStart, preferredTimescale: 600)
+            idleStreamingPlayer.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
+                    self.idleStreamingPlayer.volume = 0.001
+                    // Pitch-preserving rate changes for streamed lanes.
+                    self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                    self.idleStreamingPlayer.playImmediately(atRate: 1.0)
+                    self.transitionStartTime = Date()
+                    self.incomingLaneReady = true
+                    self.startTransitionTimer()
+                }
+            }
             return
         }
 
@@ -1106,17 +1133,45 @@ final class PlayerCore {
             idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inLowDB) : inLowDB
             idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inLowDB) : inLowDB
             idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inLowDB) : inLowDB
+        }
 
-            // Pitch-corrected time stretch for beat matching (TZ Section 8).
-            if let rates {
-                let outRate = Float(rates.sourcePlaybackRate)
-                let inRate = Float(rates.targetPlaybackRate)
+        // DJ effects (TZ Section 29): reverb smears the outgoing track into the
+        // next one (echo-out, dissolve), high-shelf attenuation darkens it.
+        // Engine lanes get the real reverb node; streamed lanes approximate the
+        // effect through a high-cut on the plan's filter envelope.
+        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
+        let inReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
+        if !isUsingStreamPlayer {
+            activeReverb.wetDryMix = max(0, min(100, outReverbMix * 100))
+            if !incomingIsStream {
+                idleReverb.wetDryMix = max(0, min(100, inReverbMix * 100))
+            }
+        }
+
+        // Tempo ramps for beat matching (TZ Section 8): the stretch eases in
+        // with the blend progress instead of snapping. Streamed lanes ride
+        // AVPlayer.rate (audioTimePitchAlgorithm keeps the pitch); engine lanes
+        // use the pitch-corrected time-pitch nodes.
+        if let rates, transitionDuration > 0.001 {
+            let outTarget = Float(min(1.10, max(0.90, rates.sourcePlaybackRate)))
+            let inTarget = Float(min(1.10, max(0.90, rates.targetPlaybackRate)))
+            // Ramp from 1.0 to the plan rate over the first 60 % of the blend.
+            let rampProgress = Float(min(1.0, p / 0.6))
+            let outRate = 1.0 + (outTarget - 1.0) * rampProgress
+            let inRate = 1.0 + (inTarget - 1.0) * rampProgress
+
+            if isUsingStreamPlayer {
+                activeStreamingPlayer.rate = isPlaying ? outRate : 0
+            } else {
                 activeTimePitch.bypass = abs(outRate - 1) < 0.0005
-                activeTimePitch.rate = min(1.10, max(0.90, outRate))
-                if !incomingIsStream {
-                    idleTimePitch.bypass = abs(inRate - 1) < 0.0005
-                    idleTimePitch.rate = min(1.10, max(0.90, inRate))
-                }
+                activeTimePitch.rate = outRate
+            }
+
+            if incomingIsStream {
+                if isPlaying { idleStreamingPlayer.rate = inRate }
+            } else if !isUsingStreamPlayer {
+                idleTimePitch.bypass = abs(inRate - 1) < 0.0005
+                idleTimePitch.rate = inRate
             }
         }
         _ = filterCutoff
@@ -1187,6 +1242,9 @@ final class PlayerCore {
         incomingLaneReady = false
         prebufferedTrackId = nil
         plannedNextTrack = nil
+        // The outgoing lane's effect tail must not ring over the new track.
+        reverbA.wetDryMix = 0
+        reverbB.wetDryMix = 0
         currentTrack = nextTrack
         streamDuration = nextTrack.duration
         anchorDate = Date()
@@ -1203,6 +1261,8 @@ final class PlayerCore {
         // to its natural tempo once the outgoing track is gone.
         if !isUsingStreamPlayer {
             releaseActiveTimePitchToUnity()
+        } else {
+            releaseActiveStreamRateToUnity()
         }
 
         updateNowPlayingInfo()
@@ -1242,6 +1302,45 @@ final class PlayerCore {
         rateReleaseTimer = timer
     }
 
+    /// Streamed twin of the time-pitch release: eases AVPlayer.rate back to
+    /// 1.0 after a beat-matched blend, correcting the progress anchor for the
+    /// wall-clock drift the stretched rate introduced.
+    private func releaseActiveStreamRateToUnity() {
+        rateReleaseTimer?.invalidate()
+        let player = activeStreamingPlayer
+        let from = player.rate
+        guard abs(from - 1.0) > 0.0005, isPlaying else {
+            player.rate = isPlaying ? 1.0 : 0
+            return
+        }
+        let releaseStart = Date()
+        let duration: TimeInterval = 4.0
+        let tick: TimeInterval = 1.0 / 20.0
+        let timer = Timer(timeInterval: tick, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.isPlaying, self.activeStreamingPlayer === player else {
+                    self.rateReleaseTimer?.invalidate()
+                    self.rateReleaseTimer = nil
+                    return
+                }
+                let progress = min(1, max(0, -releaseStart.timeIntervalSinceNow / duration))
+                let eased = Float(progress * progress * (3 - 2 * progress))
+                let value = from + (1.0 - from) * eased
+                player.rate = value
+                // The clock ran fast/slow while stretched; keep the scrubber honest.
+                self.nudgePlaybackAnchor(by: (Double(value) - 1.0) * tick)
+                if progress >= 1 {
+                    player.rate = self.isPlaying ? 1.0 : 0
+                    self.rateReleaseTimer?.invalidate()
+                    self.rateReleaseTimer = nil
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        rateReleaseTimer = timer
+    }
+
     private func cancelTransition() {
         transitionScheduled = false
         rateReleaseTimer?.invalidate()
@@ -1266,8 +1365,12 @@ final class PlayerCore {
         idlePlayer.volume = 0
         activePlayer.volume = 1.0
         activeStreamingPlayer.volume = volume
+        activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
         idleStreamingPlayer.pause()
         idleStreamingPlayer.volume = 0
+        idleStreamingPlayer.rate = 1.0
+        reverbA.wetDryMix = 0
+        reverbB.wetDryMix = 0
         incomingAudioFile = nil
         isTransitioning = false
         AutoMixDJEngine.shared.isTransitionActive = false
