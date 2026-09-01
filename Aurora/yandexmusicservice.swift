@@ -886,37 +886,62 @@ final class YandexMusicService {
         )
     }
 
-    // MARK: - Video Shots (Canvas)
+    // MARK: - Video Shots (Canvas Video from Yandex API)
 
     private var videoShotCache: [String: URL] = [:]
 
     /// Получение видеошота (Canvas Video) для трека из Yandex Music API
     func getVideoShotUrl(for trackId: String) async -> URL? {
-        if let cached = videoShotCache[trackId] { return cached }
         let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
-        guard !cleanId.isEmpty, let url = URL(string: Self.apiBase + "/tracks/" + cleanId + "/supplement") else { return nil }
-        guard let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return nil }
+        guard !cleanId.isEmpty else { return nil }
+        if let cached = videoShotCache[cleanId] { return cached }
 
-        struct SupplementResponse: Decodable {
-            struct Result: Decodable {
-                let videoShotUrl: String?
-                let shotUrl: String?
-                struct VideoItem: Decodable {
-                    let url: String?
+        // 1. Check Supplement Endpoint (/tracks/{id}/supplement)
+        if let suppURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/supplement") {
+            if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: suppURL)) {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let result = json["result"] as? [String: Any] {
+                    var candidate: String? = nil
+                    if let s = result["videoShotUrl"] as? String, !s.isEmpty { candidate = s }
+                    else if let s = result["shotUrl"] as? String, !s.isEmpty { candidate = s }
+                    else if let s = result["videoUrl"] as? String, !s.isEmpty { candidate = s }
+                    else if let s = result["canvasUrl"] as? String, !s.isEmpty { candidate = s }
+                    else if let clips = result["clips"] as? [[String: Any]], let first = clips.first, let u = (first["url"] ?? first["videoUrl"] ?? first["previewUrl"]) as? String, !u.isEmpty {
+                        candidate = u
+                    } else if let videos = result["videos"] as? [[String: Any]], let first = videos.first, let u = (first["url"] ?? first["videoUrl"]) as? String, !u.isEmpty {
+                        candidate = u
+                    }
+                    if let candidate, let shotURL = URL(string: candidate.hasPrefix("http") ? candidate : "https://" + candidate) {
+                        videoShotCache[cleanId] = shotURL
+                        SonivoDiagnostics.log("VideoShot found for \(cleanId): \(shotURL.absoluteString)", tag: "VIDEOSHOT")
+                        return shotURL
+                    }
                 }
-                let videos: [VideoItem]?
-                let videoUrl: String?
             }
-            let result: Result?
         }
 
-        guard let res = try? JSONDecoder().decode(SupplementResponse.self, from: data).result else { return nil }
-        let rawUrl = res.videoShotUrl ?? res.shotUrl ?? res.videoUrl ?? res.videos?.first?.url
-        guard let rawUrl, let shotURL = URL(string: rawUrl) else { return nil }
+        // 2. Check Track Metadata Endpoint (/tracks/{id})
+        if let trackURL = URL(string: Self.apiBase + "/tracks/" + cleanId) {
+            if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: trackURL)) {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let result = (json["result"] as? [[String: Any]])?.first ?? (json["result"] as? [String: Any]) {
+                    var candidate: String? = nil
+                    if let s = result["videoShotUrl"] as? String, !s.isEmpty { candidate = s }
+                    else if let s = result["shotUrl"] as? String, !s.isEmpty { candidate = s }
+                    else if let s = result["videoUrl"] as? String, !s.isEmpty { candidate = s }
+                    else if let clips = result["clips"] as? [[String: Any]], let first = clips.first, let u = (first["url"] ?? first["videoUrl"]) as? String, !u.isEmpty {
+                        candidate = u
+                    }
+                    if let candidate, let shotURL = URL(string: candidate.hasPrefix("http") ? candidate : "https://" + candidate) {
+                        videoShotCache[cleanId] = shotURL
+                        SonivoDiagnostics.log("VideoShot found in track info for \(cleanId): \(shotURL.absoluteString)", tag: "VIDEOSHOT")
+                        return shotURL
+                    }
+                }
+            }
+        }
 
-        videoShotCache[trackId] = shotURL
-        videoShotCache[cleanId] = shotURL
-        return shotURL
+        return nil
     }
 
     // MARK: - Helpers

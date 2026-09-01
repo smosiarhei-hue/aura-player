@@ -734,6 +734,7 @@ final class PlayerCore {
         currentAutoMixStyle = .bassSwapBlend(duration: plan.blendDuration)
         AutoMixDJEngine.shared.isTransitionActive = true
         AutoMixDJEngine.shared.activeStyle = plan.style
+        SonivoDiagnostics.log("AutoMix transition triggered: \(current.title) -> \(nextTrack.title) [Duration: \(String(format: "%.1f", plan.blendDuration))s, Style: \(plan.style.rawValue)]", tag: "AUTOMIX")
 
         if isUsingStreamPlayer || nextTrack.isStream {
             // Live Simultaneous Dual-Player Stream Blending
@@ -745,21 +746,22 @@ final class PlayerCore {
                         let nextItem = AVPlayerItem(url: info.url)
                         StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
-                        self.idleStreamingPlayer.volume = 0
+                        self.idleStreamingPlayer.volume = 0.05
                         self.idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
-                        self.idleStreamingPlayer.play()
+                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
                         self.transitionStartTime = Date()
                         self.startTransitionTimer()
                     } catch {
                         self.isTransitioning = false
                         self.transitionScheduled = false
                         AutoMixDJEngine.shared.isTransitionActive = false
+                        SonivoDiagnostics.log("AutoMix stream fetch failed: \(error.localizedDescription)", tag: "AUTOMIX")
                     }
                 }
             } else {
-                idleStreamingPlayer.volume = 0
+                idleStreamingPlayer.volume = 0.05
                 idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
-                idleStreamingPlayer.play()
+                idleStreamingPlayer.playImmediately(atRate: 1.0)
                 transitionStartTime = Date()
                 startTransitionTimer()
             }

@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import AVKit
+import MediaPlayer
 
 // MARK: - Sonivo Native Full Player (Apple Music iOS Standard & Video-Shot Live Canvas)
 
@@ -50,9 +51,14 @@ struct PlayerScreenV2: View {
 
     // Cover swipe gesture offset
     @State private var coverDragX: CGFloat = 0
+    @State private var artworkPaletteColors: [Color] = []
 
     private var track: Track? { player.currentTrack }
-    private var palette: [Color] { track?.palette ?? Palette.seeded(42).colors }
+    private var palette: [Color] {
+        if !artworkPaletteColors.isEmpty { return artworkPaletteColors }
+        if let p = track?.palette, !p.isEmpty { return p }
+        return Palette.seeded(42).colors
+    }
     private var beat: CGFloat {
         let source = max(analyzer.streamLevel, analyzer.bass, analyzer.level)
         return player.isPlaying ? CGFloat(min(max(source, 0), 1)) : 0
@@ -60,6 +66,16 @@ struct PlayerScreenV2: View {
 
     private var effectiveProgress: Double {
         isScrubbing ? scrubProgress : player.progress
+    }
+
+    private func updatePalette(from image: UIImage) {
+        let hexes = LibraryStore.artworkPalette(from: image)
+        let colors = hexes.compactMap { Color(hex: $0) }
+        if !colors.isEmpty {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                artworkPaletteColors = colors
+            }
+        }
     }
 
     var body: some View {
@@ -77,7 +93,7 @@ struct PlayerScreenV2: View {
 
                 // 3. Main Player Container
                 VStack(spacing: 0) {
-                    // Top Bar (Grabber Pill & Video-Shot Toggle) - Smoothly fades out during drag
+                    // Top Bar (Grabber Pill) - Smoothly fades out during drag
                     topHeader
                         .padding(.top, max(geo.safeAreaInsets.top + 8, 48))
                         .padding(.horizontal, 24)
@@ -111,19 +127,24 @@ struct PlayerScreenV2: View {
 
                     Spacer(minLength: 6)
 
-                    // Floating toast for Track Wave or AutoMix DJ Transition
+                    // Floating toast for Track Wave or AutoMix DJ Transition (Native Pure White HDR Shimmer)
                     if dj.isTransitionActive {
                         HStack(spacing: 6) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(AG.amber)
-                            Text("AutoMix DJ: \(dj.activeStyle.localizedTitle) • \(Int(dj.currentBPM)) BPM")
-                                .font(AG.text(12, .semibold))
+                                .foregroundStyle(.white)
+                            Text("AutoMix")
+                                .font(AG.display(13, .bold))
                                 .foregroundStyle(.white)
                         }
-                        .padding(.horizontal, 14)
+                        .hdrShimmer(isActive: true)
+                        .padding(.horizontal, 16)
                         .padding(.vertical, 7)
-                        .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(AG.amber.opacity(0.45), lineWidth: 1)))
+                        .background(
+                            Capsule()
+                                .fill(.ultraThinMaterial)
+                                .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                        )
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .padding(.bottom, 4)
                     } else if let waveMessage {
@@ -250,7 +271,7 @@ struct PlayerScreenV2: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: - Top Header (Grabber & Video Shot Toggle)
+    // MARK: - Top Header (Grabber & Dismiss)
 
     private var topHeader: some View {
         HStack(alignment: .center) {
@@ -276,26 +297,9 @@ struct PlayerScreenV2: View {
 
             Spacer()
 
-            // Video-Shot Live Canvas Toggle
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
-                    isVideoShotMode.toggle()
-                    UserDefaults.standard.set(isVideoShotMode, forKey: "player.videoshot")
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: (isVideoShotMode && videoShotUrl != nil) ? "video.fill" : (isVideoShotMode ? "video" : "video.slash"))
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(isVideoShotMode ? "Видеошот" : "Обложка")
-                        .font(AG.text(11, .semibold))
-                }
-                .foregroundStyle((isVideoShotMode && videoShotUrl != nil) ? AG.amber : .white.opacity(0.70))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.8)))
-            }
-            .buttonStyle(GlassPressStyle())
+            // Right spacer for visual balance
+            Color.clear
+                .frame(width: 36, height: 36)
         }
         .frame(height: 38)
     }
@@ -379,11 +383,16 @@ struct PlayerScreenV2: View {
             VideoShotPlayerView(url: videoShotUrl)
                 .transition(.opacity)
         } else if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
-            Image(uiImage: image).resizable().scaledToFill()
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .onAppear { updatePalette(from: image) }
         } else if let cover = track?.coverURL, let url = URL(string: cover) {
             AsyncImage(url: url) { phase in
                 if let image = phase.image {
-                    image.resizable().scaledToFill()
+                    image
+                        .resizable()
+                        .scaledToFill()
                 } else {
                     fallbackArtwork
                 }
@@ -428,6 +437,37 @@ struct PlayerScreenV2: View {
 
     private var appleMusicLowerDeck: some View {
         VStack(spacing: 14) {
+            // Compact Video-Shot / Artwork Toggle Pill (appears above right action icons when available)
+            if videoShotUrl != nil {
+                HStack {
+                    Spacer()
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
+                            isVideoShotMode.toggle()
+                            UserDefaults.standard.set(isVideoShotMode, forKey: "player.videoshot")
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: isVideoShotMode ? "video.fill" : "photo.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(isVideoShotMode ? "Видеошот" : "Обложка")
+                                .font(AG.text(11, .semibold))
+                        }
+                        .foregroundStyle(isVideoShotMode ? AG.amber : .white.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule()
+                                .fill(.ultraThinMaterial)
+                                .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.8))
+                        )
+                    }
+                    .buttonStyle(GlassPressStyle())
+                }
+                .padding(.bottom, -6)
+            }
+
             // Track Metadata (Title, Artist, Like, Track Wave, 3-Dots)
             metadataRow
 
@@ -443,6 +483,12 @@ struct PlayerScreenV2: View {
             // Apple Music Bottom Bar (Lyrics, AirPlay, Queue)
             appleMusicBottomBar
         }
+        .padding(isVideoShotMode && videoShotUrl != nil ? 14 : 0)
+        .background(
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .opacity(isVideoShotMode && videoShotUrl != nil ? 0.90 : 0)
+        )
     }
 
     // MARK: Metadata Row (Left: Title & Artist, Right: Like + Track Wave + 3-Dots)
@@ -533,6 +579,19 @@ struct PlayerScreenV2: View {
                     }
                     Button { openModal(.settings) } label: {
                         Label("Настройки", systemImage: "gearshape")
+                    }
+                    Divider()
+                    Button {
+                        Task {
+                            let ok = await SonivoDiagnostics.shared.sendReportToTelegram()
+                            if ok {
+                                waveMessage = "✅ Диагностика отправлена в Telegram"
+                                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                                if waveMessage?.contains("Диагностика") == true { waveMessage = nil }
+                            }
+                        }
+                    } label: {
+                        Label("Отправить логи в Telegram", systemImage: "paperplane.fill")
                     }
                     Divider()
                     Button(role: .destructive) {
@@ -678,7 +737,7 @@ struct PlayerScreenV2: View {
         .padding(.vertical, 8)
     }
 
-    // MARK: Volume Slider (Apple Music Standard)
+    // MARK: Volume Slider (Apple Music Native System MPVolumeView)
 
     private var volumeBar: some View {
         HStack(spacing: 12) {
@@ -686,14 +745,8 @@ struct PlayerScreenV2: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white.opacity(0.50))
 
-            Slider(
-                value: Binding(
-                    get: { Double(player.volume) },
-                    set: { player.volume = Float($0) }
-                ),
-                in: 0...1
-            )
-            .tint(Color.white.opacity(0.85))
+            NativeVolumeSlider()
+                .frame(height: 32)
 
             Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 11, weight: .bold))
@@ -975,5 +1028,24 @@ struct VideoShotPlayerView: UIViewControllerRepresentable {
         var player: AVQueuePlayer?
         var url: URL?
     }
+}
+
+// MARK: - Native iOS System Volume Slider (MPVolumeView)
+
+struct NativeVolumeSlider: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeView.showsRouteButton = false
+        volumeView.showsVolumeSlider = true
+        for subview in volumeView.subviews {
+            if let slider = subview as? UISlider {
+                slider.minimumTrackTintColor = UIColor.white.withAlphaComponent(0.85)
+                slider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.25)
+            }
+        }
+        return volumeView
+    }
+
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 
