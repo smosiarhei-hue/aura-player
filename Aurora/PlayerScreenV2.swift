@@ -26,6 +26,7 @@ struct PlayerScreenV2: View {
     @State private var showEqualizer = false
     @State private var showSleepTimer = false
     @State private var showSettings = false
+    @State private var dj = AutoMixDJEngine.shared
 
     // Track Wave state
     @State private var waveLoading = false
@@ -100,8 +101,22 @@ struct PlayerScreenV2: View {
 
                     Spacer(minLength: 6)
 
-                    // Floating toast for Track Wave
-                    if let waveMessage {
+                    // Floating toast for Track Wave or AutoMix DJ Transition
+                    if dj.isTransitionActive {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(AG.amber)
+                            Text("AutoMix DJ: \(dj.activeStyle.localizedTitle)")
+                                .font(AG.text(12, .semibold))
+                                .foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(AG.amber.opacity(0.45), lineWidth: 1)))
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, 4)
+                    } else if let waveMessage {
                         HStack(spacing: 6) {
                             Image(systemName: "dot.radiowaves.left.and.right")
                                 .font(.system(size: 13, weight: .bold))

@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var player = PlayerCore.shared
     @State private var ym = YandexMusicService.shared
     @State private var socialAuth = SocialAuthStore.shared
+    @State private var dj = AutoMixDJEngine.shared
     @State private var tokenInput = ""
 
     var body: some View {
@@ -115,8 +116,8 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Переходы между треками") {
-                    Picker("Режим перехода", selection: $player.transitionMode) {
+                Section("DJ AutoMix и переходы (Apple Music)") {
+                    Picker("Режим сведения", selection: $player.transitionMode) {
                         ForEach(TransitionMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
@@ -127,7 +128,35 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    if player.transitionMode == .crossfade {
+                    if player.transitionMode == .automix {
+                        Picker("Стиль DJ-сведения", selection: $dj.djStyle) {
+                            ForEach(DJTransitionStyle.allCases) { style in
+                                Label(style.localizedTitle, systemImage: style.icon).tag(style)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Text(dj.djStyle.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Срез басов (Bass-Swap)", isOn: $dj.bassSwapEnabled)
+                            .tint(settings.accentColor)
+
+                        Toggle("Умная обрезка тишины", isOn: $dj.trimSilenceEnabled)
+                            .tint(settings.accentColor)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Длительность перехода")
+                                Spacer()
+                                Text(String(format: "%.1f сек", dj.maxTransitionDuration))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $dj.maxTransitionDuration, in: 2.0...10.0, step: 0.5)
+                                .tint(settings.accentColor)
+                        }
+                    } else if player.transitionMode == .crossfade {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("Время кроссфейда")

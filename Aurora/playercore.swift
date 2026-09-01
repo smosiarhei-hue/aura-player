@@ -652,59 +652,59 @@ final class PlayerCore {
         self.updateNowPlayingInfo()
     }
 
-    // MARK: - AutoMix Transitions
+    // MARK: - AutoMix DJ Transitions
 
     private func scheduleTransitionIfNeeded() {
-        guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying else { return }
+        guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
-        let remaining = duration - currentPos
+        let totalDur = duration
+        guard totalDur > 5, let nextTrack = peekNext(auto: true) else { return }
 
-        let targetDuration: Double
-        switch transitionMode {
-        case .automix:
-            if duration > 120 {
-                targetDuration = 4.5
-                currentAutoMixStyle = .bassSwapBlend(duration: 4.5)
-            } else if duration > 45 {
-                targetDuration = 3.0
-                currentAutoMixStyle = .bassSwapBlend(duration: 3.0)
-            } else {
-                targetDuration = 1.5
-                currentAutoMixStyle = .quickDrop(duration: 1.5)
-            }
-        case .crossfade:
-            targetDuration = crossfadeDuration
-            currentAutoMixStyle = .fadeOut(duration: crossfadeDuration)
-        case .gapless:
-            targetDuration = 0.1
-            currentAutoMixStyle = .quickDrop(duration: 0.1)
-        case .off:
-            return
-        }
+        let plan = AutoMixDJEngine.shared.planTransition(
+            outgoing: current,
+            outgoingDuration: totalDur,
+            incoming: nextTrack,
+            mode: transitionMode
+        )
 
-        guard remaining <= targetDuration, remaining > 0 else { return }
-        guard let nextTrack = peekNext(auto: true) else { return }
+        guard currentPos >= plan.cueTime, (totalDur - currentPos) > 0.05 else { return }
 
-        // Progressive stream transitions
+        transitionScheduled = true
+        isTransitioning = true
+        transitionDuration = plan.blendDuration
+        incomingTrack = nextTrack
+        currentAutoMixStyle = .bassSwapBlend(duration: plan.blendDuration)
+        AutoMixDJEngine.shared.isTransitionActive = true
+        AutoMixDJEngine.shared.activeStyle = plan.style
+
         if isUsingStreamPlayer || nextTrack.isStream {
-            transitionScheduled = true
+            // Streaming AutoMix Blending with Pre-buffering
+            let remaining = max(0.1, totalDur - currentPos)
             let token = generation
             Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(remaining)) }
-                catch { return }
+                let steps = 20
+                let stepDelay = remaining / Double(steps)
+                for step in 1...steps {
+                    guard let self, self.generation == token, self.isTransitioning else { return }
+                    let p = Double(step) / Double(steps)
+                    let (outVol, _, _, _) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, style: plan.style)
+                    self.streamingPlayer.volume = max(0, min(1.0, outVol * self.volume))
+                    AutoMixDJEngine.shared.transitionProgress = p
+                    try? await Task.sleep(for: .seconds(stepDelay))
+                }
                 guard let self, self.generation == token else { return }
                 self.isTransitioning = false
+                self.transitionScheduled = false
+                AutoMixDJEngine.shared.isTransitionActive = false
+                AutoMixDJEngine.shared.transitionProgress = 0
+                self.streamingPlayer.volume = self.volume
                 self.currentTrack = nextTrack
                 self.start(at: 0)
             }
             return
         }
 
-        transitionScheduled = true
-        isTransitioning = true
-        transitionDuration = targetDuration
-        incomingTrack = nextTrack
-
+        // Local multi-node AVAudioEngine AutoMix with Bass-Swap EQ
         let targetIdlePlayer = idlePlayer
         let targetIsPlayerA = targetIdlePlayer === playerA
 
@@ -731,6 +731,7 @@ final class PlayerCore {
             } catch {
                 self.isTransitioning = false
                 self.transitionScheduled = false
+                AutoMixDJEngine.shared.isTransitionActive = false
             }
         }
     }
@@ -748,25 +749,24 @@ final class PlayerCore {
         guard let start = transitionStartTime, isTransitioning else { return }
         let elapsed = -start.timeIntervalSinceNow
         let p = min(elapsed / transitionDuration, 1.0)
+        AutoMixDJEngine.shared.transitionProgress = p
 
-        let outVol = Float(cos(p * .pi / 2))
-        let inVol = Float(sin(p * .pi / 2))
+        let style = AutoMixDJEngine.shared.activeStyle
+        let (outVol, inVol, outBassCut, inBassGain) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, style: style)
 
-        activePlayer.volume = outVol
-        idlePlayer.volume = inVol
+        activePlayer.volume = outVol * volume
+        idlePlayer.volume = inVol * volume
 
-        if case .bassSwapBlend = currentAutoMixStyle {
-            let bassCut = Float(p) * -16.0
-            activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + bassCut) : bassCut
-            activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + bassCut) : bassCut
-            activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + bassCut * 0.7) : (bassCut * 0.7)
+        activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outBassCut) : outBassCut
+        activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + outBassCut * 0.8) : (outBassCut * 0.8)
+        activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + outBassCut * 0.5) : (outBassCut * 0.5)
 
-            idleEQ.bands[0].gain = eqEnabled ? eqGains[0] : 0
-            idleEQ.bands[1].gain = eqEnabled ? eqGains[1] : 0
-            idleEQ.bands[2].gain = eqEnabled ? eqGains[2] : 0
-        }
+        idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inBassGain) : inBassGain
+        idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inBassGain) : inBassGain
+        idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inBassGain) : inBassGain
 
         if p >= 1.0, let incomingTrack {
+            AutoMixDJEngine.shared.isTransitionActive = false
             completeTransition(to: incomingTrack)
         }
     }
@@ -792,6 +792,8 @@ final class PlayerCore {
         progress = 0
         isTransitioning = false
         transitionScheduled = false
+        AutoMixDJEngine.shared.isTransitionActive = false
+        AutoMixDJEngine.shared.transitionProgress = 0
 
         applyEQ()
         updateNowPlayingInfo()
@@ -806,8 +808,11 @@ final class PlayerCore {
         idlePlayer.stop()
         idlePlayer.volume = 0
         activePlayer.volume = 1.0
+        streamingPlayer.volume = volume
         incomingAudioFile = nil
         isTransitioning = false
+        AutoMixDJEngine.shared.isTransitionActive = false
+        AutoMixDJEngine.shared.transitionProgress = 0
         applyEQ()
     }
 
