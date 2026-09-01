@@ -460,6 +460,7 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
+                    .hdrShimmer(isActive: dj.isTransitionActive)
 
                 Button(action: openArtist) {
                     HStack(spacing: 4) {
@@ -467,6 +468,7 @@ struct PlayerScreenV2: View {
                             .font(AG.text(17, .semibold))
                             .foregroundStyle(.white.opacity(0.68))
                             .lineLimit(1)
+                            .hdrShimmer(isActive: dj.isTransitionActive)
                         if resolvingArtist {
                             ProgressView().controlSize(.mini).tint(.white)
                         }

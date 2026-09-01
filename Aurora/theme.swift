@@ -40,17 +40,67 @@ enum AG {
                        endPoint: .bottomTrailing)
     }
 
-    // MARK: - Typography
-    static func display(_ size: CGFloat, _ weight: Font.Weight = .heavy) -> Font {
-        .system(size: size, weight: weight, design: .rounded)
+    // MARK: - Typography (Apple Music iOS Standard SF Pro)
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+        .system(size: size, weight: weight, design: .default)
     }
 
     static func text(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .default)
+    }
+
+    static func rounded(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font {
         .system(size: size, weight: weight, design: .rounded)
     }
 
     static func serifAccent(_ size: CGFloat) -> Font {
         .system(size: size, weight: .semibold, design: .serif)
+    }
+}
+
+// MARK: - Native Apple Music HDR Shimmer & Iridescent Luster Modifier
+
+struct HDRShimmerModifier: ViewModifier {
+    let isActive: Bool
+    @State private var phase: CGFloat = -1.0
+
+    func body(content: Content) -> some View {
+        if isActive {
+            content
+                .overlay(
+                    GeometryReader { geo in
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.0),
+                                .init(color: Color.white.opacity(0.20), location: 0.30),
+                                .init(color: AG.amber.opacity(0.95), location: 0.50),
+                                .init(color: Color(hex: "#FF8AD1")?.opacity(0.85) ?? .pink, location: 0.65),
+                                .init(color: Color.white.opacity(0.35), location: 0.80),
+                                .init(color: .clear, location: 1.0)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: geo.size.width * 2.4)
+                        .offset(x: phase * geo.size.width * 1.8)
+                        .blendMode(.colorDodge)
+                        .mask(content)
+                    }
+                )
+                .onAppear {
+                    withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) {
+                        phase = 1.0
+                    }
+                }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func hdrShimmer(isActive: Bool = true) -> some View {
+        modifier(HDRShimmerModifier(isActive: isActive))
     }
 }
 
