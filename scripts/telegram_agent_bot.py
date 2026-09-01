@@ -1080,6 +1080,44 @@ def call_openai_compatible(base_url, api_key, model, messages):
             ]
         }
 
+def select_best_model_and_key(keys):
+    # Hierarchy of the smartest reasoning and coding models:
+    reasoning_priorities = [
+        "deepseek-reasoner",
+        "deepseek/deepseek-r1",
+        "deepseek/deepseek-r1:free",
+        "claude-3.7-sonnet",
+        "claude-3.5-sonnet",
+        "claude-expert",
+        "gemini-3.7-flash",
+        "gemini-3.1-pro-preview",
+        "deepseek-coder",
+        "qwen/qwen-2.5-coder-32b-instruct",
+        "qwen-2.5-coder",
+        "deepseek-chat",
+        "gpt-4o",
+        "gemini-3.6-flash",
+        "claude-instant",
+        "gemini-2.5-flash",
+        "llama-3.3-70b-versatile",
+        "meta-llama/llama-3.3-70b-instruct:free"
+    ]
+    now = time.time()
+    for target_m in reasoning_priorities:
+        for k in keys:
+            if k.get("cooldown_until", 0) > now:
+                continue
+            available = k.get("available_models", [])
+            if k.get("model") == target_m or target_m in available:
+                return k, target_m
+            if k.get("provider") == "gemini" and target_m.startswith("gemini"):
+                return k, target_m
+
+    for k in keys:
+        if k.get("cooldown_until", 0) <= now:
+            return k, k.get("model") or "gemini-3.6-flash"
+    return keys[0] if keys else None, "gemini-3.6-flash"
+
 def call_ai_with_fallback(contents, chat_id=None):
     keys = get_keys()
     if not keys:
@@ -1087,22 +1125,27 @@ def call_ai_with_fallback(contents, chat_id=None):
         
     system_prompt = build_system_prompt()
     config = load_config()
-    active_model = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
+    active_model = config.get("ACTIVE_MODEL", "auto")
     now = time.time()
     
-    # Priority ordering: providers that support or have the active model first
-    def get_priority(k):
-        av = k.get("available_models", [])
-        if k.get("model") == active_model or active_model in av:
-            return 0
-        if k.get("provider") == "gemini" and "gemini" in active_model:
-            return 1
-        return 2
+    # Intelligent Auto-Selection if active_model is "auto"
+    if active_model == "auto":
+        best_k, best_m = select_best_model_and_key(keys)
+        sorted_keys = [best_k] + [k for k in keys if k != best_k] if best_k else keys
+        auto_target_model = best_m
+    else:
+        def get_priority(k):
+            av = k.get("available_models", [])
+            if k.get("model") == active_model or active_model in av:
+                return 0
+            if k.get("provider") == "gemini" and "gemini" in active_model:
+                return 1
+            return 2
+        sorted_keys = sorted(keys, key=get_priority)
+        auto_target_model = active_model
 
-    sorted_keys = sorted(keys, key=get_priority)
-    
     for key_entry in sorted_keys:
-        if key_entry.get("cooldown_until", 0) > now:
+        if not key_entry or key_entry.get("cooldown_until", 0) > now:
             continue
             
         key_val = key_entry.get("key")
@@ -1111,9 +1154,10 @@ def call_ai_with_fallback(contents, chat_id=None):
         provider = key_entry.get("provider", "gemini")
         base_url = key_entry.get("base_url") or "https://api.deepseek.com"
         
-        # Select target model for this provider
         av_models = key_entry.get("available_models", [])
-        if active_model in av_models or key_entry.get("model") == active_model:
+        if active_model == "auto":
+            target_model = auto_target_model
+        elif active_model in av_models or key_entry.get("model") == active_model:
             target_model = active_model
         elif av_models:
             target_model = av_models[0]
@@ -1121,14 +1165,18 @@ def call_ai_with_fallback(contents, chat_id=None):
             target_model = key_entry.get("model") or ("gemini-3.6-flash" if provider == "gemini" else "deepseek-chat")
         
         if provider == "gemini":
-            models_to_try = [target_model, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-2.5-flash"]
+            models_to_try = [target_model, "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash"]
             for m in models_to_try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
+                gen_cfg = {"temperature": 0.2}
+                if "3.7" in m or "thinking" in m:
+                    gen_cfg["thinkingConfig"] = {"thinkingBudget": 2048}
+                    
                 payload = {
                     "contents": contents,
                     "systemInstruction": {"parts": [{"text": system_prompt}]},
                     "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
-                    "generationConfig": {"temperature": 0.2}
+                    "generationConfig": gen_cfg
                 }
                 req = urllib.request.Request(
                     url,
@@ -1140,6 +1188,11 @@ def call_ai_with_fallback(contents, chat_id=None):
                         data = json.loads(resp.read().decode())
                         record_key_success(key_id)
                         data["_provider_name"] = f"Gemini ({m})"
+                        # Extract thoughts from Gemini parts if present
+                        for cand in data.get("candidates", []):
+                            for p in cand.get("content", {}).get("parts", []):
+                                if p.get("thought"):
+                                    data["_reasoning"] = p["thought"]
                         return data
                 except urllib.error.HTTPError as e:
                     err_body = e.read().decode()
@@ -1160,7 +1213,7 @@ def call_ai_with_fallback(contents, chat_id=None):
                     print(f"[Gemini Error on {m} / {key_name}]: {e}")
                     return {"error": str(e)}
         else:
-            # OpenAI-compatible API (DeepSeek, OpenRouter, Groq, Custom API)
+            # OpenAI-compatible API (DeepSeek, OpenRouter, Groq, Custom API, deeperseeker)
             try:
                 openai_messages = gemini_contents_to_openai_messages(contents, system_prompt)
                 data = call_openai_compatible(base_url, key_val, target_model, openai_messages)
@@ -1204,6 +1257,7 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
             return {"text": f"❌ Ошибка API: {response['error']}", "committed": False}
         
         provider_name = response.get("_provider_name", "AI Engine")
+        reasoning_text = response.get("_reasoning", "")
         candidates = response.get("candidates", [])
         if not candidates:
             return {"text": "❌ Модель вернула пустой ответ.", "committed": False}
@@ -1212,12 +1266,22 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
         content = candidate.get("content", {})
         parts = content.get("parts", [])
         
+        # Check and extract <think> tags from text parts
+        for p in parts:
+            t = p.get("text", "")
+            if "<think>" in t and "</think>" in t:
+                s_idx = t.find("<think>") + 7
+                e_idx = t.find("</think>")
+                if not reasoning_text:
+                    reasoning_text = t[s_idx:e_idx].strip()
+                p["text"] = (t[:s_idx-7] + t[e_idx+8:]).strip()
+                
         history.append(content)
         
         function_calls = [p["functionCall"] for p in parts if "functionCall" in p]
         
         if not function_calls:
-            text_parts = [p.get("text", "") for p in parts if "text" in p]
+            text_parts = [p.get("text", "") for p in parts if "text" in p and p.get("text")]
             return {"text": "\n".join(text_parts), "committed": committed}
         
         response_parts = []
@@ -1245,10 +1309,15 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
                 elif name == "trigger_ipa_build":
                     action_desc = "🚀 Запускаю компиляцию IPA на macOS runner..."
                 
-                # Реальное отображение прогресса в Telegram
+                # Реальное отображение прогресса и мышления (Reasoning) в Telegram
                 if status_msg_id:
                     status_text = f"🤖 *{role_title}* (Шаг {step+1}/{max_steps})\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    status_text += f"⚙️ *Провайдер:* `{provider_name}`\n"
+                    status_text += f"⚙️ *Модель:* `{provider_name}`\n"
+                    if reasoning_text:
+                        r_preview = reasoning_text.replace("\n", " ").strip()
+                        if len(r_preview) > 300:
+                            r_preview = r_preview[:300] + "..."
+                        status_text += f"💭 *Мысли модели (Reasoning):*\n_{r_preview}_\n\n"
                     status_text += f"⚡ *Действие:* {action_desc}"
                     tg_edit(status_text, chat_id, status_msg_id)
                 
@@ -1495,12 +1564,21 @@ def show_model_menu(chat_id, reply_to=None):
     pro_models = [m for m in unique_models if m[2] == "pro"]
     
     text = f"🧠 *Выбор активной AI-модели*\n\n"
-    text += f"Текущая модель: *`{current}`*\n\n"
+    if current == "auto":
+        text += "Текущая модель: 🤖 *Авто-выбор (Лучшая модель под задачу)*\n\n"
+    else:
+        text += f"Текущая модель: *`{current}`*\n\n"
+        
+    text += "💡 *Режим Авто-выбора:* бот сам выберет самую умную модель с глубоким мышлением (DeepSeek-R1, Claude 3.5, Gemini 3.7) для исправления багов и архитектуры.\n\n"
     text += "🟢 *Бесплатные модели (:free / Free Tier)* — без списания баланса\n"
     text += "💎 *Платные / Топ-кодинг модели* — максимальный интеллект\n\n"
     text += "Нажмите на нужную модель для мгновенной смены:"
     
     kb_rows = []
+    # Auto select button on top
+    auto_prefix = "✅ " if current == "auto" else "🤖 "
+    kb_rows.append([{"text": f"{auto_prefix}Авто-выбор (Лучшая модель под задачу)", "callback_data": "model_auto"}])
+    
     if free_models:
         for m_id, label, _ in free_models[:12]:
             prefix = "✅ " if current == m_id else "🟢 "
@@ -1760,7 +1838,11 @@ def start_bot():
                         config = load_config()
                         config["ACTIVE_MODEL"] = new_model
                         save_config(config)
-                        tg_send(f"✅ Активная модель переключена на: *{new_model}*")
+                        if new_model == "auto":
+                            tg_send("🤖 *Включен умный Авто-выбор моделей!*\n\nБот сам анализирует ваши задачи и автоматически выбирает самую мощную модель для рассуждений (DeepSeek R1, Claude 3.5, Gemini 3.7) из подключенных.")
+                        else:
+                            tg_send(f"✅ Активная модель переключена на: *{new_model}*")
+                        show_model_menu(ALLOWED_CHAT_ID)
                     continue
                     
                 msg = u.get("message")
