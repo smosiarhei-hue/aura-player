@@ -111,6 +111,14 @@ final class PlayerCore {
     private var prebufferedTrackId: UUID? = nil
     private var activeTransitionPlan: TransitionPlan? = nil
     private var isPlanningTransition: Bool = false
+    private var planningStartedAt: Date? = nil
+    /// The next track is picked once per outgoing track (shuffle included) so
+    /// planning, pre-buffering and the blend always target the same pair.
+    private var plannedNextTrack: Track? = nil
+    private var incomingIsStream: Bool = false
+    private var incomingLaneReady: Bool = false
+    private var transitionScheduledAt: Date? = nil
+    private var transitionPausedAt: Date? = nil
 
     // Local Audio Engine (AVAudioEngine + 10-band EQ + per-lane time pitch)
     private let engine = AVAudioEngine()
@@ -450,8 +458,18 @@ final class PlayerCore {
         } else {
             pausedProgress = liveProgress()
             activePlayer.pause()
+            if incomingIsStream {
+                idleStreamingPlayer.pause()
+            } else {
+                idlePlayer.pause()
+            }
             anchorDate = nil
             progress = pausedProgress
+        }
+        // Freeze the blend clock so the overlap resumes where it stopped
+        // instead of having "elapsed" run on while both lanes are silent.
+        if isTransitioning, transitionStartTime != nil {
+            transitionPausedAt = Date()
         }
         isPlaying = false
         updateNowPlayingInfo()
@@ -477,10 +495,24 @@ final class PlayerCore {
             }
             if !engine.isRunning { try? engine.start() }
             activePlayer.play()
+            if isTransitioning {
+                if incomingIsStream {
+                    idleStreamingPlayer.play()
+                } else {
+                    idlePlayer.play()
+                }
+            }
             isPlaying = true
             anchorDate = Date()
             anchorOffset = pausedProgress
             startTimer()
+        }
+        // Restart the blend clock from the pause point: shift the virtual
+        // start forward by exactly the pause length.
+        if isTransitioning, let paused = transitionPausedAt, let start = transitionStartTime {
+            let frozen = paused.timeIntervalSince(start)
+            transitionStartTime = Date().addingTimeInterval(-frozen)
+            transitionPausedAt = nil
         }
         updateNowPlayingInfo()
         savePlaybackState()
@@ -561,6 +593,9 @@ final class PlayerCore {
     private func start(at seconds: Double) {
         guard let track = currentTrack else { return }
         playError = nil
+        // A new track invalidates the previous pair's plan and pre-buffer.
+        activeTransitionPlan = nil
+        plannedNextTrack = nil
         generation += 1
         let token = generation
 
@@ -703,15 +738,48 @@ final class PlayerCore {
 
     private func scheduleTransitionIfNeeded() {
         guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
+
+        // Crossfade and gapless have their own predictable behaviour - no AI
+        // analysis, no plan, just the user's fixed settings (TZ Section 25).
+        if transitionMode == .crossfade {
+            scheduleSimpleTransition(current: current, blendDuration: max(1, crossfadeDuration))
+            return
+        }
+        if transitionMode == .gapless {
+            scheduleSimpleTransition(current: current, blendDuration: 0.1)
+            return
+        }
+
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let totalDur = duration
-        guard totalDur > 10, let nextTrack = peekNext(auto: true) else { return }
+        guard totalDur > 10 else { return }
+
+        // Pick the next track ONCE for the outgoing song (shuffle included), so
+        // AI planning, pre-buffering and the blend all target the same pair.
+        let nextTrack: Track
+        if let planned = plannedNextTrack, planned.id != current.id {
+            nextTrack = planned
+        } else if let peeked = peekNext(auto: true) {
+            plannedNextTrack = peeked
+            nextTrack = peeked
+        } else {
+            return
+        }
 
         let remaining = totalDur - currentPos
 
+        // Bail out of a hopeless pair early: a mid-track queue edit can remove
+        // the planned next track.
+        if let queued = queue.firstIndex(where: { $0.id == nextTrack.id }), !nextTrack.isStream, !FileManager.default.fileExists(atPath: nextTrack.url.path) {
+            _ = queued
+            plannedNextTrack = nil
+            return
+        }
+
         // 1. Background AI / Local Pre-Planning (~40s before track end, never on realtime critical path)
-        if remaining <= 42.0 && activeTransitionPlan == nil && !isPlanningTransition {
+        if remaining <= 42.0, activeTransitionPlan == nil, !isPlanningTransition {
             isPlanningTransition = true
+            planningStartedAt = Date()
             Task {
                 // Real analysis for both sides. Yandex streams are downloaded as a
                 // compact copy, decoded and cleaned up inside the service; only
@@ -730,8 +798,10 @@ final class PlayerCore {
                 )
 
                 await MainActor.run {
+                    guard self.currentTrack?.id == current.id, !self.isTransitioning else { return }
                     self.activeTransitionPlan = plan
                     self.isPlanningTransition = false
+                    self.planningStartedAt = nil
                     AutoMixDJEngine.shared.currentBPM = plan.tempo.targetBPM
                 }
             }
@@ -740,16 +810,23 @@ final class PlayerCore {
         // 2. Pre-buffer incoming streaming track ahead of time (~16s before transition cue)
         let leadTime = activeTransitionPlan?.leadTime ?? 18.0
         let prebufferThreshold = leadTime + 14.0
-        if (isUsingStreamPlayer || nextTrack.isStream) && remaining <= prebufferThreshold && prebufferedTrackId != nextTrack.id && !isPrebufferingNextStream {
+        if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream {
             isPrebufferingNextStream = true
             let ymID = Self.yandexTrackID(from: nextTrack)
+            let targetStart = max(0, activeTransitionPlan?.targetTrack.startPosition ?? 0)
             Task {
                 do {
                     let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
+                    // Ignore a plan that arrived after we already fetched: the
+                    // start position could differ.
+                    let resolvedStart = self.activeTransitionPlan != nil ? targetStart : 0
                     let nextItem = AVPlayerItem(url: info.url)
                     StreamBeatTap.shared.attach(to: nextItem)
                     self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                     self.idleStreamingPlayer.volume = 0
+                    // Park the incoming lane ON the cue position, paused. The
+                    // blend then only has to hit play - no network on the beat.
+                    self.idleStreamingPlayer.seek(to: CMTime(seconds: resolvedStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
                     self.idleStreamingPlayer.pause()
                     self.prebufferedTrackId = nextTrack.id
                     self.isPrebufferingNextStream = false
@@ -763,6 +840,23 @@ final class PlayerCore {
         let cue = activeTransitionPlan?.cueTime ?? max(0, totalDur - 18.0)
         guard currentPos >= cue, (totalDur - currentPos) > 0.05 else { return }
 
+        // 3. Prepare the incoming lane BEFORE announcing the transition. If the
+        // stream cannot be resolved, the outgoing track keeps playing normally
+        // and the standard finish handler moves on - music never goes silent.
+        if nextTrack.isStream || (!isUsingStreamPlayer && nextTrack.isStream) {
+            incomingIsStream = true
+            guard prebufferedTrackId == nextTrack.id, idleStreamingPlayer.currentItem != nil else {
+                // Not buffered yet - let the pre-buffer task finish; the next
+                // tick re-enters here.
+                if remaining > 2.0 { return }
+                // Out of time: do not start a broken blend, let the track end
+                // naturally and let handleTrackFinish advance the queue.
+                return
+            }
+        } else {
+            incomingIsStream = false
+        }
+
         let plan = activeTransitionPlan ?? TransitionPlanner.planLocalFallback(
             sourceTrackID: current.id,
             sourceAnalysis: TrackAnalysis.minimal(trackID: current.id.uuidString, duration: totalDur),
@@ -772,6 +866,7 @@ final class PlayerCore {
 
         transitionScheduled = true
         isTransitioning = true
+        incomingLaneReady = false
         transitionDuration = plan.leadTime
         incomingTrack = nextTrack
         incomingStartPosition = max(0, plan.targetTrack.startPosition)
@@ -782,36 +877,22 @@ final class PlayerCore {
         SonivoDiagnostics.log("[AutoMix] Transition triggered: \(current.title) -> \(nextTrack.title) [Strategy: \(plan.decision.transitionType), Duration: \(String(format: "%.1f", plan.leadTime))s, Reason: \(plan.decision.reason)]", tag: "AUTOMIX")
 
         if isUsingStreamPlayer || nextTrack.isStream {
-            // Live Simultaneous Dual-Player Stream Blending. The incoming lane
-            // starts at the plan's target position (skipping silence/dead intro).
-            let targetStart = max(0, plan.targetTrack.startPosition)
-            if idleStreamingPlayer.currentItem == nil || prebufferedTrackId != nextTrack.id {
-                let ymID = Self.yandexTrackID(from: nextTrack)
-                Task {
-                    do {
-                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                        let nextItem = AVPlayerItem(url: info.url)
-                        StreamBeatTap.shared.attach(to: nextItem)
-                        self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
-                        self.idleStreamingPlayer.volume = 0.05
-                        self.idleStreamingPlayer.seek(to: CMTime(seconds: targetStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
-                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
-                        self.transitionStartTime = Date()
-                        self.startTransitionTimer()
-                    } catch {
-                        self.isTransitioning = false
-                        self.transitionScheduled = false
-                        AutoMixDJEngine.shared.isTransitionActive = false
-                        SonivoDiagnostics.log("[AutoMix] Stream fetch failed: \(error.localizedDescription)", tag: "AUTOMIX")
-                    }
-                }
-            } else {
-                idleStreamingPlayer.volume = 0.05
-                idleStreamingPlayer.seek(to: CMTime(seconds: targetStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
-                idleStreamingPlayer.playImmediately(atRate: 1.0)
-                transitionStartTime = Date()
-                startTransitionTimer()
+            // Dual-AVPlayer stream blending. The incoming item was already
+            // resolved and parked on the cue position during pre-buffering; the
+            // blend timer only starts once the lane is actually audible, so the
+            // overlap never starts late (or after the outgoing track ended).
+            guard idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id else {
+                // Defensive: someone invalidated the buffer - abort cleanly.
+                isTransitioning = false
+                transitionScheduled = false
+                AutoMixDJEngine.shared.isTransitionActive = false
+                return
             }
+            idleStreamingPlayer.volume = 0.001
+            idleStreamingPlayer.playImmediately(atRate: 1.0)
+            transitionStartTime = Date()
+            incomingLaneReady = true
+            startTransitionTimer()
             return
         }
 
@@ -850,8 +931,92 @@ final class PlayerCore {
                 self.isTransitioning = false
                 self.transitionScheduled = false
                 AutoMixDJEngine.shared.isTransitionActive = false
+                SonivoDiagnostics.log("[AutoMix] Local lane setup failed: \(error.localizedDescription)", tag: "AUTOMIX")
             }
         }
+    }
+
+    /// Plain crossfade/gapless: the next track starts from the beginning at a
+    /// fixed cue, no analysis and no plan involved.
+    private func scheduleSimpleTransition(current: Track, blendDuration: Double) {
+        let currentPos = isUsingStreamPlayer ? progress : liveProgress()
+        let totalDur = duration
+        let cue = max(0, totalDur - blendDuration)
+        guard totalDur > 5, currentPos >= cue, let nextTrack = peekNext(auto: true) else { return }
+
+        transitionScheduled = true
+        isTransitioning = true
+        incomingIsStream = nextTrack.isStream
+        transitionDuration = blendDuration
+        incomingTrack = nextTrack
+        incomingStartPosition = 0
+        AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade
+        AutoMixDJEngine.shared.activeStrategyName = transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS"
+        AutoMixDJEngine.shared.activePlan = nil
+        AutoMixDJEngine.shared.transitionProgress = 0
+
+        if isUsingStreamPlayer || nextTrack.isStream {
+            if idleStreamingPlayer.currentItem == nil || prebufferedTrackId != nextTrack.id {
+                // Resolve inline; AVPlayer tolerates a short stall on this path.
+                let ymID = Self.yandexTrackID(from: nextTrack)
+                Task { @MainActor in
+                    do {
+                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
+                        let nextItem = AVPlayerItem(url: info.url)
+                        StreamBeatTap.shared.attach(to: nextItem)
+                        self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
+                        self.idleStreamingPlayer.volume = 0.001
+                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
+                        self.transitionStartTime = Date()
+                        self.startTransitionTimer()
+                    } catch {
+                        self.isTransitioning = false
+                        self.transitionScheduled = false
+                        self.AutoMixDJEngineCleanup()
+                    }
+                }
+            } else {
+                idleStreamingPlayer.volume = 0.001
+                idleStreamingPlayer.playImmediately(atRate: 1.0)
+                transitionStartTime = Date()
+                startTransitionTimer()
+            }
+            return
+        }
+
+        // Local pair: the engine schedules the incoming segment at zero.
+        let targetIdlePlayer = idlePlayer
+        let targetIsPlayerA = targetIdlePlayer === playerA
+        Task { @MainActor in
+            do {
+                let nextFile = try AVAudioFile(forReading: nextTrack.url)
+                self.incomingAudioFile = nextFile
+                let frameCount = AVAudioFrameCount(max(0, nextFile.length))
+                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self,
+                              self.activePlayer === (targetIsPlayerA ? self.playerA : self.playerB) else { return }
+                        self.handleTrackFinish()
+                    }
+                }
+                targetIdlePlayer.volume = 0
+                if !self.engine.isRunning { try? self.engine.start() }
+                targetIdlePlayer.play()
+                self.transitionStartTime = Date()
+                self.startTransitionTimer()
+            } catch {
+                self.isTransitioning = false
+                self.transitionScheduled = false
+                self.AutoMixDJEngineCleanup()
+            }
+        }
+    }
+
+    private func AutoMixDJEngineCleanup() {
+        incomingTrack = nil
+        incomingLaneReady = false
+        AutoMixDJEngine.shared.isTransitionActive = false
+        AutoMixDJEngine.shared.transitionProgress = 0
     }
 
     private func startTransitionTimer() {
@@ -870,7 +1035,11 @@ final class PlayerCore {
         AutoMixDJEngine.shared.transitionProgress = p
         let blendTime = p * transitionDuration
 
-        let strategy = AutoMixDJEngine.shared.activePlan?.strategy ?? .BASS_SWAP
+        // Plan-less transitions (crossfade/gapless) take their curve from the
+        // announced strategy name instead of defaulting to a DJ bass swap.
+        let strategy = AutoMixDJEngine.shared.activePlan?.strategy
+            ?? TransitionStrategy(rawValue: AutoMixDJEngine.shared.activeStrategyName)
+            ?? .BASS_SWAP
         let actions = AutoMixDJEngine.shared.activePlan?.actions ?? []
         let rates = AutoMixDJEngine.shared.activePlan?.tempo
 
@@ -881,28 +1050,36 @@ final class PlayerCore {
 
         let (outVol, inVol, outBassCut, inBassGain, filterCutoff) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, strategy: strategy)
 
-        if isUsingStreamPlayer {
-            if hasEnvelopes,
-               let outEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime),
-               let inEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime) {
-                activeStreamingPlayer.volume = max(0, min(1.0, outEnv))
-                idleStreamingPlayer.volume = max(0, min(1.0, inEnv))
-            } else {
-                activeStreamingPlayer.volume = max(0, min(1.0, outVol))
-                idleStreamingPlayer.volume = max(0, min(1.0, inVol))
-            }
-        } else {
-            if hasEnvelopes,
-               let outEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime),
-               let inEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime) {
-                activePlayer.volume = max(0, min(1.0, outEnv)) * volume
-                idlePlayer.volume = max(0, min(1.0, inEnv)) * volume
-            } else {
-                activePlayer.volume = outVol * volume
-                idlePlayer.volume = inVol * volume
-            }
+        // Resolve both lane levels once - which engine plays each side depends
+        // on the pair kind (stream/stream, local/local, and mixed pairs where
+        // AVAudioEngine hands over to AVPlayer or vice versa).
+        var sourceLevel = outVol
+        var targetLevel = inVol
+        if hasEnvelopes,
+           let outEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime),
+           let inEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime) {
+            sourceLevel = max(0, min(1.0, outEnv))
+            targetLevel = max(0, min(1.0, inEnv))
+        }
 
-            // Low-end hand-over: envelope-driven when available (TZ Section 11).
+        // Outgoing lane is an AVPlayer.
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.volume = sourceLevel * volume
+        } else {
+            activePlayer.volume = sourceLevel * volume
+        }
+
+        // Incoming lane is an AVPlayer when the pair is streamed, an engine
+        // node otherwise.
+        if incomingIsStream {
+            idleStreamingPlayer.volume = targetLevel * volume
+        } else {
+            idlePlayer.volume = targetLevel * volume
+        }
+
+        // Low-end hand-over and pitch-corrected stretch only exist for the
+        // engine lanes; AVPlayer volume handles the streamed side.
+        if !isUsingStreamPlayer {
             var outLowDB = outBassCut
             var inLowDB = inBassGain
             if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime) {
@@ -925,11 +1102,13 @@ final class PlayerCore {
                 let inRate = Float(rates.targetPlaybackRate)
                 activeTimePitch.bypass = abs(outRate - 1) < 0.0005
                 activeTimePitch.rate = min(1.10, max(0.90, outRate))
-                idleTimePitch.bypass = abs(inRate - 1) < 0.0005
-                idleTimePitch.rate = min(1.10, max(0.90, inRate))
+                if !incomingIsStream {
+                    idleTimePitch.bypass = abs(inRate - 1) < 0.0005
+                    idleTimePitch.rate = min(1.10, max(0.90, inRate))
+                }
             }
-            _ = filterCutoff
         }
+        _ = filterCutoff
 
         if p >= 1.0, let incomingTrack {
             AutoMixDJEngine.shared.isTransitionActive = false
@@ -941,34 +1120,62 @@ final class PlayerCore {
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
+        transitionScheduledAt = nil
         activeTransitionPlan = nil
         isPlanningTransition = false
+        planningStartedAt = nil
         flushListeningStats()
 
-        if isUsingStreamPlayer {
+        // After a mixed-pair blend the ACTIVE engine changes (AVPlayer <->
+        // AVAudioEngine). Park every non-playing lane first, then promote the
+        // engine that owns the incoming track.
+        let wasStream = isUsingStreamPlayer
+        if wasStream {
             activeStreamingPlayer.pause()
             activeStreamingPlayer.replaceCurrentItem(with: nil)
+        } else {
+            let outgoingNode = activeTimePitch
+            activePlayer.stop()
+            activePlayer.volume = 1.0
+            outgoingNode.rate = 1.0
+            outgoingNode.bypass = true
+        }
+
+        if nextTrack.isStream || incomingIsStream {
+            // Incoming lane is the (already playing) idle AVPlayer.
+            if !wasStream {
+                // Engine lanes keep sounding until stopped above - hand over now.
+                isUsingStreamPlayer = true
+            }
             let oldActive = activeStreamingPlayer
             activeStreamingPlayer = idleStreamingPlayer
             idleStreamingPlayer = oldActive
-            activeStreamingPlayer.volume = 1.0
+            activeStreamingPlayer.volume = volume
+            idleStreamingPlayer.pause()
+            idleStreamingPlayer.volume = 0
+            playerA.stop()
+            playerB.stop()
+            applyEQ()
         } else {
-            let outgoingNode = activeTimePitch
-            let oldActive = activePlayer
-            oldActive.stop()
-            oldActive.volume = 1.0
-            outgoingNode.rate = 1.0
-            outgoingNode.bypass = true
-
+            // Incoming lane is the engine's idle player node.
+            if wasStream {
+                isUsingStreamPlayer = false
+                streamingPlayerA.pause()
+                streamingPlayerB.pause()
+                if !engine.isRunning { try? engine.start() }
+            }
             generation += 1
             activePlayer = idlePlayer
             activeAudioFile = incomingAudioFile
             incomingAudioFile = nil
+            activePlayer.volume = volume
             applyEQ()
         }
 
         incomingTrack = nil
+        incomingLaneReady = false
         prebufferedTrackId = nil
+        plannedNextTrack = nil
         currentTrack = nextTrack
         streamDuration = nextTrack.duration
         anchorDate = Date()
@@ -988,6 +1195,8 @@ final class PlayerCore {
         }
 
         updateNowPlayingInfo()
+        // Kick off planning for the pair that now follows.
+        scheduleTransitionIfNeeded()
     }
 
     /// Eases the active lane's time-pitch rate back to 1.0 over a few seconds.
@@ -1030,6 +1239,14 @@ final class PlayerCore {
         timePitchA.bypass = true
         timePitchB.rate = 1.0
         timePitchB.bypass = true
+        activeTransitionPlan = nil
+        isPlanningTransition = false
+        planningStartedAt = nil
+        plannedNextTrack = nil
+        incomingTrack = nil
+        incomingLaneReady = false
+        transitionPausedAt = nil
+        transitionScheduledAt = nil
         guard isTransitioning else { return }
         transitionTimer?.invalidate()
         transitionTimer = nil
@@ -1076,6 +1293,10 @@ final class PlayerCore {
         progress = duration
         anchorDate = nil
         isPlaying = false
+        // A finished song invalidates the plan and the planned pair - the next
+        // song plans its own transition from scratch.
+        activeTransitionPlan = nil
+        plannedNextTrack = nil
         if repeatMode == .one {
             start(at: 0)
             return
