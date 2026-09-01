@@ -148,8 +148,6 @@ struct TrackCueProfile: Sendable, Codable {
         let titleLower = (track.title + " " + track.artist + " " + (track.album ?? "")).lowercased()
         if titleLower.contains("remix") || titleLower.contains("club") || titleLower.contains("edit") || titleLower.contains("dance") || titleLower.contains("edm") {
             style = .bassSwap
-        } else if titleLower.contains("tune") || titleLower.contains("piano") || titleLower.contains("chill") || titleLower.contains("acoustic") || titleLower.contains("slow") {
-            style = .smoothDissolve
         } else {
             style = totalDur > 60 ? .bassSwap : .smoothDissolve
         }
@@ -173,7 +171,7 @@ enum AutoMixStyle: Sendable {
     case fadeOut(duration: Double)
 }
 
-// MARK: - AutoMix DJ Engine (Профессиональное сведение)
+// MARK: - AutoMix DJ Engine (Gemini 3.7 Flash AI & DSP Controller)
 
 @Observable
 @MainActor
@@ -182,6 +180,8 @@ final class AutoMixDJEngine {
 
     var isTransitionActive: Bool = false
     var transitionProgress: Double = 0.0
+    var activeStrategyName: String = "BASS_SWAP"
+    var activePlan: TransitionPlan? = nil
     var activeStyle: DJTransitionStyle = .adaptiveAI
     var statusBadge: String? = nil
     var currentBPM: Double = 124.0
@@ -259,48 +259,59 @@ final class AutoMixDJEngine {
 
     func computeVolumesAndEQ(
         progress: Double,
-        style: DJTransitionStyle
-    ) -> (outgoingVol: Float, incomingVol: Float, outgoingBassCutDB: Float, incomingBassGainDB: Float) {
+        strategy: TransitionStrategy
+    ) -> (outgoingVol: Float, incomingVol: Float, outgoingBassCutDB: Float, incomingBassGainDB: Float, filterCutoff: Float) {
         let p = max(0.0, min(1.0, progress))
 
-        // 1. Equal-Power Cosine Crossfade Curve with early incoming presence
+        // 1. Equal-Power Cosine Crossfade Curve (Section 28)
         let outVol = Float(cos(p * (.pi / 2)))
         let inVol = Float(sin(p * (.pi / 2)))
 
         var outBassCut: Float = 0
         var inBassGain: Float = 0
+        var filterCutoff: Float = 1.0
 
-        switch style {
-        case .bassSwap, .adaptiveAI:
-            if bassSwapEnabled {
-                // Classic DJ Bass Swap:
-                // First 20%: outgoing bass is full, incoming layers in
-                // 20% -> 70%: outgoing bass smoothly drops to -26dB
-                // 35% -> 100%: incoming bass takes over completely
-                if p > 0.18 {
-                    let bassP = Float((p - 0.18) / 0.82)
-                    outBassCut = -26.0 * bassP
-                }
-                if p < 0.35 {
-                    let inP = Float(p / 0.35)
-                    inBassGain = -16.0 * (1.0 - inP)
-                } else {
-                    inBassGain = 0.0
-                }
+        switch strategy {
+        case .BASS_SWAP, .BEAT_MATCH_EQ:
+            if p > 0.18 {
+                let bassP = Float((p - 0.18) / 0.82)
+                outBassCut = -28.0 * (bassP * bassP)
             }
-        case .filterSweep:
-            outBassCut = Float(p) * -28.0
+            if p < 0.32 {
+                let inP = Float(p / 0.32)
+                inBassGain = -22.0 * (1.0 - inP)
+            } else {
+                inBassGain = 0.0
+            }
+
+        case .FILTER_TRANSITION:
+            filterCutoff = max(0.1, Float(1.0 - p))
+            outBassCut = Float(p) * -32.0
             inBassGain = Float(1.0 - p) * -12.0
-        case .smoothDissolve:
-            outBassCut = Float(p) * -8.0
-            inBassGain = 0
-        case .quickDrop:
+
+        case .ENERGY_BLEND, .BUILDUP_TO_DROP:
+            if p > 0.35 {
+                outBassCut = Float((p - 0.35) / 0.65) * -30.0
+            }
+            if p < 0.25 {
+                inBassGain = -18.0 * (1.0 - Float(p / 0.25))
+            }
+
+        case .DROP_SWITCH, .HARD_CUT:
             if p > 0.85 {
-                outBassCut = -30.0
+                outBassCut = -36.0
+            }
+
+        case .ECHO_OUT:
+            outBassCut = Float(p) * -20.0
+
+        case .SILENCE_TRIM, .SIMPLE_CROSSFADE, .BEAT_MATCH, .LOOP_TRANSITION, .VOCAL_CUT, .INSTRUMENTAL_OVERLAY, .NONE:
+            if p > 0.40 {
+                outBassCut = Float((p - 0.40) / 0.60) * -16.0
             }
         }
 
-        return (outVol, inVol, outBassCut, inBassGain)
+        return (outVol, inVol, outBassCut, inBassGain, filterCutoff)
     }
 }
 

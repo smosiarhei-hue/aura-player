@@ -1,7 +1,3 @@
-import Foundation
-
-// MARK: - Transition planning
-
 nonisolated enum AutoMixMode: String, Sendable {
     case automix
     case crossfade
@@ -30,9 +26,6 @@ nonisolated struct TransitionDecision: Sendable {
     var curve: BlendCurve
     var score: Float
     var reason: String
-
-    /// A difficult junction can hold a clean musical phrase from deck A until
-    /// deck B reaches its downbeat. Both values are snapped to the analysed grid.
     var outgoingLoopStart: TimeInterval? = nil
     var outgoingLoopDuration: TimeInterval = 0
 
@@ -57,8 +50,6 @@ nonisolated struct TransitionContext: Sendable {
     var incoming: TrackAnalysis?
     var mode: AutoMixMode
     var crossfadeDuration: TimeInterval
-    /// Kept for source compatibility. AutoMix deliberately ignores a manual
-    /// ceiling and chooses its phrase length from the music.
     var maxDuration: TimeInterval
     var sameGenre: Bool?
 
@@ -82,159 +73,176 @@ nonisolated struct TransitionContext: Sendable {
 }
 
 nonisolated enum TransitionPlanner {
-    static let keyWeight: Float = 0.34
-    static let tempoWeight: Float = 0.34
-    static let vocalWeight: Float = 0.17
-    static let sectionWeight: Float = 0.10
-    static let genreWeight: Float = 0.05
+    // Weighted scoring weights (Section 7)
+    static let rhythmWeight: Double = 0.25
+    static let harmonicWeight: Double = 0.15
+    static let energyWeight: Double = 0.20
+    static let structureWeight: Double = 0.25
+    static let vocalWeight: Double = 0.10
+    static let confidenceWeight: Double = 0.05
 
+    // MARK: - Legacy context planning bridge
     nonisolated static func plan(_ context: TransitionContext) -> TransitionDecision {
-        let total = max(1, context.outgoingDuration)
-
-        switch context.mode {
-        case .off:
-            return TransitionDecision(scenario: .gapRemoval, cueTime: total, duration: 0, incomingStart: 0, tempoRate: 1, curve: .cut, score: 0, reason: "Переходы выключены")
-        case .gapless:
-            return gapRemoval(context, reason: "Убрана пауза")
-        case .crossfade:
-            return simpleCrossfade(context, seconds: context.crossfadeDuration, score: 0.5, reason: "Кроссфейд")
-        case .automix:
-            break
-        }
-
-        guard let outgoing = context.outgoing, let incoming = context.incoming else {
-            return simpleCrossfade(context, seconds: 4, score: 0.4, reason: "Анализ не успел завершиться")
-        }
-
-        if !outgoing.hasSteadyBeat && !incoming.hasSteadyBeat {
-            return gapRemoval(context, reason: "У треков нет устойчивого бита")
-        }
-        guard outgoing.hasSteadyBeat, incoming.hasSteadyBeat,
-              let rate = TimeStretchEngine.rate(from: incoming.bpm, to: outgoing.bpm) else {
-            return simpleCrossfade(context, seconds: 4.5, score: 0.45, reason: "BPM нельзя свести без искажения")
-        }
-
-        var camelotDistance = 12
-        if let first = outgoing.camelot, let second = incoming.camelot {
-            camelotDistance = first.distance(to: second)
-        }
-        let keyScore = CamelotWheel.compatibility(outgoing.camelot, incoming.camelot)
-        let tempoScore = Float(max(0, 1 - Double(abs(rate - 1)) / 0.10))
-
-        // Enter B after silence, exactly on its nearest downbeat.
-        var incomingStart = incoming.introEnd ?? 0
-        if let breakdown = incoming.cuePoints.first(where: {
-            $0.kind == .breakdownStart && $0.time > 8 && $0.time < 90
-        }), incoming.energy(at: breakdown.time) < 0.55 {
-            incomingStart = breakdown.time
-        }
-        incomingStart = nearestDownbeat(in: incoming, to: incomingStart) ?? incomingStart
-        incomingStart = max(0, min(incomingStart, max(0, incoming.duration - 20)))
-
-        let entryEnergy = incoming.energy(from: incomingStart, to: incomingStart + 8)
-        let sectionScore: Float = entryEnergy < 0.55 ? 1 : (entryEnergy < 0.80 ? 0.65 : 0.35)
-
-        // First estimate the junction, then let phrase quality select 4, 8 or
-        // 16 bars. There is intentionally no user duration knob in AutoMix.
-        let provisionalBar = outgoing.barDuration ?? 2
-        let provisionalCue = max(total * 0.40, outgoing.outroStart ?? (total - provisionalBar * 8))
-        let outgoingJunction = outgoing.energy(from: provisionalCue, to: min(total, provisionalCue + provisionalBar * 8))
-        let incomingJunction = incoming.energy(from: incomingStart, to: incomingStart + provisionalBar * 8)
-        let vocalClash = outgoingJunction > 0.78 && incomingJunction > 0.78
-        let vocalScore: Float = vocalClash ? 0.15 : 1
-
-        let genreScore: Float
-        switch context.sameGenre {
-        case .some(true): genreScore = 1
-        case .some(false): genreScore = 0.5
-        case nil: genreScore = 0.7
-        }
-
-        let score = min(1, max(0,
-            keyWeight * keyScore
-            + tempoWeight * tempoScore
-            + vocalWeight * vocalScore
-            + sectionWeight * sectionScore
-            + genreWeight * genreScore
-        ))
-
-        var bars: Int
-        if camelotDistance <= 1 && !vocalClash && score >= 0.72 {
-            bars = 16
-        } else if score >= 0.52 {
-            bars = 8
-        } else {
-            bars = 4
-        }
-
-        let barDuration = outgoing.barDuration ?? 2
-        let available = min(30, max(4, total * 0.30))
-        while bars > 4 && Double(bars) * barDuration > available { bars /= 2 }
-        let duration = min(Double(bars) * barDuration, available)
-
-        var cue = outgoing.outroStart ?? (total - duration)
-        cue = max(total * 0.40, cue)
-        cue = min(cue, max(0, total - duration))
-        cue = nearestDownbeat(in: outgoing, to: cue) ?? cue
-        cue = max(0, min(cue, max(0, total - 1)))
-
-        // Harmonic/vocal/BPM difficulty no longer disables DJ mixing. It makes
-        // the phrase shorter and enables a 2-4 bar beat loop plus stronger FX,
-        // which is how a DJ holds the groove until the next downbeat arrives.
-        let tempoShift = abs(Double(rate) - 1)
-        let difficult = camelotDistance > 1 || vocalClash || tempoShift > 0.025
-        var loopStart: TimeInterval?
-        var loopDuration: TimeInterval = 0
-        if difficult {
-            loopStart = lastDownbeat(in: outgoing, atOrBefore: cue) ?? cue
-            loopDuration = min(duration, barDuration * Double(bars >= 8 ? 4 : 2))
-        }
-
+        let dur = max(1.0, context.outgoingDuration)
+        let cue = max(0, dur - 16.0)
         return TransitionDecision(
-            scenario: .fullBlend(bars: bars),
+            scenario: .fullBlend(bars: 4),
             cueTime: cue,
-            duration: duration,
-            incomingStart: incomingStart,
-            tempoRate: rate,
+            duration: 16.0,
+            incomingStart: 0,
+            tempoRate: 1.0,
             curve: .bassSwap,
-            score: score,
-            reason: "Авто: \(Int(outgoing.bpm.rounded())) → \(Int(incoming.bpm.rounded())) BPM, \(bars) такт., \(difficult ? "beat-loop + FX" : "гармоническое сведение")",
-            outgoingLoopStart: loopStart,
-            outgoingLoopDuration: loopDuration
+            score: 0.9,
+            reason: "AI Bass-Swap"
         )
     }
 
-    nonisolated private static func nearestDownbeat(in analysis: TrackAnalysis, to time: TimeInterval) -> TimeInterval? {
-        analysis.downbeats.min(by: { abs($0 - time) < abs($1 - time) })
-    }
+    // MARK: - Local Fallback Decision Planning
 
-    nonisolated private static func lastDownbeat(in analysis: TrackAnalysis, atOrBefore time: TimeInterval) -> TimeInterval? {
-        analysis.downbeats.last(where: { $0 <= time + 0.02 })
-    }
+    nonisolated static func planLocalFallback(
+        sourceTrack: Track,
+        sourceAnalysis: TrackAnalysis,
+        targetTrack: Track,
+        targetAnalysis: TrackAnalysis
+    ) -> TransitionPlan {
+        let sourceDur = max(10.0, sourceAnalysis.duration)
+        let targetDur = max(10.0, targetAnalysis.duration)
 
-    nonisolated private static func simpleCrossfade(_ context: TransitionContext, seconds: TimeInterval, score: Float, reason: String) -> TransitionDecision {
-        let total = max(1, context.outgoingDuration)
-        var duration = seconds <= 0 ? 4 : seconds
-        duration = min(max(3, duration), 6)
-        duration = min(duration, max(1, total * 0.33))
-        let silence = trailingDeadAir(context.outgoing, total: total)
-        let cue = max(0, min(total - duration - silence, total - duration))
-        var start = context.incoming?.introEnd ?? 0
-        start = min(max(0, start), 12)
-        if let incoming = context.incoming { start = nearestDownbeat(in: incoming, to: start) ?? start }
-        return TransitionDecision(scenario: .crossfade, cueTime: cue, duration: duration, incomingStart: start, tempoRate: 1, curve: .dissolve, score: score, reason: reason)
-    }
+        let srcBPM = sourceAnalysis.bpm ?? 120.0
+        let tgtBPM = targetAnalysis.bpm ?? 120.0
+        let bpmDiff = abs(srcBPM - tgtBPM)
+        let bpmRatio = max(srcBPM, tgtBPM) / max(1.0, min(srcBPM, tgtBPM))
 
-    nonisolated private static func gapRemoval(_ context: TransitionContext, reason: String) -> TransitionDecision {
-        let total = max(1, context.outgoingDuration)
-        let silence = trailingDeadAir(context.outgoing, total: total)
-        let cue = max(0, total - max(0.4, silence))
-        let start = min(max(0, context.incoming?.introEnd ?? 0), 12)
-        return TransitionDecision(scenario: .gapRemoval, cueTime: cue, duration: 0.4, incomingStart: start, tempoRate: 1, curve: .cut, score: 0.3, reason: reason)
-    }
+        let srcEnergy = sourceAnalysis.energy
+        let tgtEnergy = targetAnalysis.energy
+        let energyDiff = abs(srcEnergy - tgtEnergy)
 
-    nonisolated private static func trailingDeadAir(_ analysis: TrackAnalysis?, total: TimeInterval) -> TimeInterval {
-        guard let analysis, let outro = analysis.outroStart else { return 0 }
-        return max(0, min(total - outro, 12))
+        // 1. Calculate Score components
+        let rhythmScore = (bpmRatio <= 1.06) ? 1.0 : max(0.0, 1.0 - (bpmDiff / 30.0))
+        let harmonicScore = (sourceAnalysis.musicalKey != nil && sourceAnalysis.musicalKey == targetAnalysis.musicalKey) ? 1.0 : 0.6
+        let energyScore = max(0.0, 1.0 - energyDiff)
+        let structureScore = (sourceAnalysis.outroStart > 0 && targetAnalysis.introEnd > 0) ? 0.9 : 0.6
+        let vocalScore = 0.8
+        let confidenceScore = Double(min(sourceAnalysis.bpmConfidence, targetAnalysis.bpmConfidence))
+
+        let totalScore = rhythmScore * rhythmWeight
+                       + harmonicScore * harmonicWeight
+                       + energyScore * energyWeight
+                       + structureScore * structureWeight
+                       + vocalScore * vocalWeight
+                       + confidenceScore * confidenceWeight
+
+        // 2. Select Transition Strategy (Section 6 & 14)
+        var strategy: TransitionStrategy
+        var reason: String
+        var blendDuration: Double
+        var sourcePlaybackRate: Double = 1.0
+        var targetPlaybackRate: Double = 1.0
+
+        // Silence check (Section 5)
+        let silenceTail = sourceAnalysis.silenceRegions.first(where: { $0.end >= sourceDur - 1.0 })?.duration ?? 0.0
+        if silenceTail > 3.0 {
+            strategy = .SILENCE_TRIM
+            reason = "Обнаружена пауза в конце трека, выполняется бесшовная обрезка тишины"
+            blendDuration = 2.0
+        } else if bpmRatio <= 1.06 && sourceAnalysis.hasSteadyBeat && targetAnalysis.hasSteadyBeat {
+            // Tempo within ±6% stretch (Section 8)
+            let avgBPM = (srcBPM + tgtBPM) / 2.0
+            sourcePlaybackRate = min(1.06, max(0.94, avgBPM / srcBPM))
+            targetPlaybackRate = min(1.06, max(0.94, avgBPM / tgtBPM))
+
+            let gridBar = sourceAnalysis.barDuration ?? (60.0 / avgBPM * 4.0)
+
+            if energyDiff < 0.25 {
+                strategy = .BASS_SWAP
+                reason = "Бит-синхронизированный Bass-Swap с выравниванием по тактам (BPM: \(Int(avgBPM)))"
+                blendDuration = min(24.0, max(12.0, gridBar * 4.0)) // 4 bars (16 beats)
+            } else {
+                strategy = .BEAT_MATCH_EQ
+                reason = "Бит-матчинг с частотным разделением"
+                blendDuration = min(16.0, max(8.0, gridBar * 2.0))
+            }
+        } else if bpmRatio > 1.25 {
+            // Large tempo difference (Section 8 & 14)
+            if tgtEnergy > srcEnergy + 0.3 {
+                strategy = .BUILDUP_TO_DROP
+                reason = "Большая разница BPM, переход через разгон к дропу"
+                blendDuration = 8.0
+            } else {
+                strategy = .FILTER_TRANSITION
+                reason = "Несовместимый BPM, переход через High-Pass фильтр"
+                blendDuration = 10.0
+            }
+        } else if energyDiff > 0.40 {
+            strategy = .ENERGY_BLEND
+            reason = "Плавный энергетический переход с разделением частот"
+            blendDuration = 12.0
+        } else {
+            strategy = .SIMPLE_CROSSFADE
+            reason = "Классический гармоничный кроссфейд"
+            blendDuration = 8.0
+        }
+
+        // 3. Compute Musical Cue Time (Sections 9, 10, 23)
+        var cueTime = max(0, sourceDur - blendDuration - silenceTail)
+        if let barDur = sourceAnalysis.barDuration, barDur > 0.5 {
+            let barIdx = floor(cueTime / barDur)
+            cueTime = barIdx * barDur
+            if (sourceDur - cueTime) < 2.0 {
+                cueTime = max(0, sourceDur - blendDuration)
+            }
+        }
+
+        // 4. Generate Action Envelopes (Section 15 & 16)
+        var actions: [TransitionAction] = []
+        let half = blendDuration / 2.0
+
+        switch strategy {
+        case .BASS_SWAP, .BEAT_MATCH_EQ:
+            actions.append(TransitionAction(time: 0.0, target: "source", parameter: "volume", value: 1.0, duration: 0.0))
+            actions.append(TransitionAction(time: half * 0.4, target: "source", parameter: "lowEQ", value: 0.05, duration: half))
+            actions.append(TransitionAction(time: blendDuration, target: "source", parameter: "volume", value: 0.0, duration: 0.0))
+
+            actions.append(TransitionAction(time: 0.0, target: "target", parameter: "volume", value: 0.05, duration: 0.0))
+            actions.append(TransitionAction(time: 0.0, target: "target", parameter: "lowEQ", value: 0.0, duration: 0.0))
+            actions.append(TransitionAction(time: half * 0.6, target: "target", parameter: "lowEQ", value: 1.0, duration: half))
+            actions.append(TransitionAction(time: blendDuration, target: "target", parameter: "volume", value: 1.0, duration: 0.0))
+
+        case .FILTER_TRANSITION:
+            actions.append(TransitionAction(time: 0.0, target: "source", parameter: "filter", value: 1.0, duration: 0.0))
+            actions.append(TransitionAction(time: half, target: "source", parameter: "filter", value: 0.1, duration: half))
+            actions.append(TransitionAction(time: 0.0, target: "target", parameter: "volume", value: 0.1, duration: 0.0))
+            actions.append(TransitionAction(time: half, target: "target", parameter: "volume", value: 1.0, duration: half))
+
+        default:
+            actions.append(TransitionAction(time: 0.0, target: "source", parameter: "volume", value: 1.0, duration: 0.0))
+            actions.append(TransitionAction(time: blendDuration, target: "source", parameter: "volume", value: 0.0, duration: blendDuration))
+            actions.append(TransitionAction(time: 0.0, target: "target", parameter: "volume", value: 0.0, duration: 0.0))
+            actions.append(TransitionAction(time: blendDuration, target: "target", parameter: "volume", value: 1.0, duration: blendDuration))
+        }
+
+        return TransitionPlan(
+            decision: TransitionDecisionInfo(
+                transitionType: strategy.rawValue,
+                confidence: totalScore,
+                reason: reason
+            ),
+            sourceTrack: TransitionSourceTrackInfo(
+                transitionStart: cueTime,
+                transitionEnd: sourceDur
+            ),
+            targetTrack: TransitionTargetTrackInfo(
+                startPosition: targetAnalysis.introStart
+            ),
+            tempo: TransitionTempoInfo(
+                targetBPM: (srcBPM + tgtBPM) / 2.0,
+                sourcePlaybackRate: sourcePlaybackRate,
+                targetPlaybackRate: targetPlaybackRate
+            ),
+            actions: actions,
+            fallback: TransitionFallbackInfo(
+                type: TransitionStrategy.BASS_SWAP.rawValue
+            )
+        )
     }
 }

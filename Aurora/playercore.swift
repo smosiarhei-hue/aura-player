@@ -109,6 +109,8 @@ final class PlayerCore {
     private var isUsingStreamPlayer = false
     private var isPrebufferingNextStream = false
     private var prebufferedTrackId: UUID? = nil
+    private var activeTransitionPlan: TransitionPlan? = nil
+    private var isPlanningTransition: Bool = false
 
     // Local Audio Engine (AVAudioEngine + 10-band EQ)
     private let engine = AVAudioEngine()
@@ -686,56 +688,135 @@ final class PlayerCore {
         self.updateNowPlayingInfo()
     }
 
-    // MARK: - AutoMix DJ Transitions
+    // MARK: - AutoMix DJ Transitions (Gemini 3.7 Flash AI & DSP Pipeline)
 
     private func scheduleTransitionIfNeeded() {
         guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let totalDur = duration
-        guard totalDur > 5, let nextTrack = peekNext(auto: true) else { return }
+        guard totalDur > 10, let nextTrack = peekNext(auto: true) else { return }
 
-        let plan = AutoMixDJEngine.shared.planTransition(
-            outgoing: current,
-            outgoingDuration: totalDur,
-            incoming: nextTrack,
-            mode: transitionMode
-        )
+        let remaining = totalDur - currentPos
 
-        // 1. Pre-buffer incoming streaming track ahead of time (~14-16s before transition cue)
-        if isUsingStreamPlayer || nextTrack.isStream {
-            let prebufferThreshold = plan.blendDuration + 14.0
-            let remaining = totalDur - currentPos
-            if remaining <= prebufferThreshold && prebufferedTrackId != nextTrack.id && !isPrebufferingNextStream {
-                isPrebufferingNextStream = true
-                let ymID = Self.yandexTrackID(from: nextTrack)
-                Task {
-                    do {
-                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                        let nextItem = AVPlayerItem(url: info.url)
-                        StreamBeatTap.shared.attach(to: nextItem)
-                        self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
-                        self.idleStreamingPlayer.volume = 0
-                        self.idleStreamingPlayer.pause()
-                        self.prebufferedTrackId = nextTrack.id
-                        self.isPrebufferingNextStream = false
-                        SonivoDiagnostics.log("Pre-buffered upcoming stream: \(nextTrack.title)", tag: "AUTOMIX")
-                    } catch {
-                        self.isPrebufferingNextStream = false
-                    }
+        // 1. Background AI / Local Pre-Planning (~30-40s before track end, never on realtime critical path)
+        if remaining <= 42.0 && activeTransitionPlan == nil && !isPlanningTransition {
+            isPlanningTransition = true
+            Task {
+                let currentAnalysis = await TrackAnalysisService.shared.analysis(trackID: current.id, url: current.url)
+                let nextAnalysis = await TrackAnalysisService.shared.analysis(trackID: nextTrack.id, url: nextTrack.url)
+
+                let srcAnalysis = currentAnalysis ?? TrackAnalysis(
+                    trackID: current.id.uuidString,
+                    duration: totalDur,
+                    bpm: 124.0,
+                    bpmConfidence: 0.8,
+                    musicalKey: nil,
+                    keyConfidence: 0.5,
+                    energy: 0.7,
+                    danceability: nil,
+                    introStart: 0,
+                    introEnd: 8,
+                    outroStart: max(0, totalDur - 18),
+                    outroEnd: totalDur,
+                    firstBeat: 0,
+                    lastBeat: totalDur,
+                    beats: [],
+                    downbeats: [],
+                    sections: [],
+                    silenceRegions: [],
+                    vocalRegions: [],
+                    instrumentalRegions: [],
+                    drops: [],
+                    buildUps: [],
+                    energyCurve: [],
+                    analysisVersion: 2
+                )
+
+                let tgtAnalysis = nextAnalysis ?? TrackAnalysis(
+                    trackID: nextTrack.id.uuidString,
+                    duration: nextTrack.duration,
+                    bpm: 124.0,
+                    bpmConfidence: 0.8,
+                    musicalKey: nil,
+                    keyConfidence: 0.5,
+                    energy: 0.7,
+                    danceability: nil,
+                    introStart: 0,
+                    introEnd: 8,
+                    outroStart: max(0, nextTrack.duration - 18),
+                    outroEnd: nextTrack.duration,
+                    firstBeat: 0,
+                    lastBeat: nextTrack.duration,
+                    beats: [],
+                    downbeats: [],
+                    sections: [],
+                    silenceRegions: [],
+                    vocalRegions: [],
+                    instrumentalRegions: [],
+                    drops: [],
+                    buildUps: [],
+                    energyCurve: [],
+                    analysisVersion: 2
+                )
+
+                let plan = await GeminiAutoMixPlanner.shared.planTransition(
+                    sourceTrack: current,
+                    sourceAnalysis: srcAnalysis,
+                    targetTrack: nextTrack,
+                    targetAnalysis: tgtAnalysis,
+                    currentPosition: currentPos
+                )
+
+                await MainActor.run {
+                    self.activeTransitionPlan = plan
+                    self.isPlanningTransition = false
                 }
             }
         }
 
-        guard currentPos >= plan.cueTime, (totalDur - currentPos) > 0.05 else { return }
+        // 2. Pre-buffer incoming streaming track ahead of time (~16s before transition cue)
+        let leadTime = activeTransitionPlan?.leadTime ?? 18.0
+        let prebufferThreshold = leadTime + 14.0
+        if (isUsingStreamPlayer || nextTrack.isStream) && remaining <= prebufferThreshold && prebufferedTrackId != nextTrack.id && !isPrebufferingNextStream {
+            isPrebufferingNextStream = true
+            let ymID = Self.yandexTrackID(from: nextTrack)
+            Task {
+                do {
+                    let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
+                    let nextItem = AVPlayerItem(url: info.url)
+                    StreamBeatTap.shared.attach(to: nextItem)
+                    self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
+                    self.idleStreamingPlayer.volume = 0
+                    self.idleStreamingPlayer.pause()
+                    self.prebufferedTrackId = nextTrack.id
+                    self.isPrebufferingNextStream = false
+                    SonivoDiagnostics.log("[AutoMix] Pre-buffered upcoming stream: \(nextTrack.title)", tag: "AUTOMIX")
+                } catch {
+                    self.isPrebufferingNextStream = false
+                }
+            }
+        }
+
+        let cue = activeTransitionPlan?.cueTime ?? max(0, totalDur - 18.0)
+        guard currentPos >= cue, (totalDur - currentPos) > 0.05 else { return }
+
+        let plan = activeTransitionPlan ?? TransitionPlanner.planLocalFallback(
+            sourceTrack: current,
+            sourceAnalysis: TrackAnalysis(trackID: current.id.uuidString, duration: totalDur, bpm: 124, bpmConfidence: 0.8, musicalKey: nil, keyConfidence: 0.5, energy: 0.7, danceability: nil, introStart: 0, introEnd: 8, outroStart: max(0, totalDur - 18), outroEnd: totalDur, firstBeat: 0, lastBeat: totalDur, beats: [], downbeats: [], sections: [], silenceRegions: [], vocalRegions: [], instrumentalRegions: [], drops: [], buildUps: [], energyCurve: [], analysisVersion: 2),
+            targetTrack: nextTrack,
+            targetAnalysis: TrackAnalysis(trackID: nextTrack.id.uuidString, duration: nextTrack.duration, bpm: 124, bpmConfidence: 0.8, musicalKey: nil, keyConfidence: 0.5, energy: 0.7, danceability: nil, introStart: 0, introEnd: 8, outroStart: max(0, nextTrack.duration - 18), outroEnd: nextTrack.duration, firstBeat: 0, lastBeat: nextTrack.duration, beats: [], downbeats: [], sections: [], silenceRegions: [], vocalRegions: [], instrumentalRegions: [], drops: [], buildUps: [], energyCurve: [], analysisVersion: 2)
+        )
 
         transitionScheduled = true
         isTransitioning = true
-        transitionDuration = plan.blendDuration
+        transitionDuration = plan.leadTime
         incomingTrack = nextTrack
-        currentAutoMixStyle = .bassSwapBlend(duration: plan.blendDuration)
+        currentAutoMixStyle = .bassSwapBlend(duration: plan.leadTime)
         AutoMixDJEngine.shared.isTransitionActive = true
-        AutoMixDJEngine.shared.activeStyle = plan.style
-        SonivoDiagnostics.log("AutoMix transition triggered: \(current.title) -> \(nextTrack.title) [Duration: \(String(format: "%.1f", plan.blendDuration))s, Style: \(plan.style.rawValue)]", tag: "AUTOMIX")
+        AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
+        AutoMixDJEngine.shared.activePlan = plan
+
+        SonivoDiagnostics.log("[AutoMix] Transition triggered: \(current.title) -> \(nextTrack.title) [Strategy: \(plan.decision.transitionType), Duration: \(String(format: "%.1f", plan.leadTime))s, Reason: \(plan.decision.reason)]", tag: "AUTOMIX")
 
         if isUsingStreamPlayer || nextTrack.isStream {
             // Live Simultaneous Dual-Player Stream Blending
@@ -756,7 +837,7 @@ final class PlayerCore {
                         self.isTransitioning = false
                         self.transitionScheduled = false
                         AutoMixDJEngine.shared.isTransitionActive = false
-                        SonivoDiagnostics.log("AutoMix stream fetch failed: \(error.localizedDescription)", tag: "AUTOMIX")
+                        SonivoDiagnostics.log("[AutoMix] Stream fetch failed: \(error.localizedDescription)", tag: "AUTOMIX")
                     }
                 }
             } else {
@@ -816,8 +897,8 @@ final class PlayerCore {
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
 
-        let style = AutoMixDJEngine.shared.activeStyle
-        let (outVol, inVol, outBassCut, inBassGain) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, style: style)
+        let strategy = AutoMixDJEngine.shared.activePlan?.strategy ?? .BASS_SWAP
+        let (outVol, inVol, outBassCut, inBassGain, filterCutoff) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, strategy: strategy)
 
         if isUsingStreamPlayer {
             activeStreamingPlayer.volume = max(0, min(1.0, outVol))
@@ -845,6 +926,8 @@ final class PlayerCore {
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
+        activeTransitionPlan = nil
+        isPlanningTransition = false
 
         if isUsingStreamPlayer {
             activeStreamingPlayer.pause()
@@ -876,6 +959,8 @@ final class PlayerCore {
         isTransitioning = false
         transitionScheduled = false
         AutoMixDJEngine.shared.isTransitionActive = false
+        AutoMixDJEngine.shared.transitionProgress = 0
+        SonivoDiagnostics.log("[AutoMix] Transition completed: now playing \(nextTrack.title)", tag: "AUTOMIX")
         AutoMixDJEngine.shared.transitionProgress = 0
 
         updateNowPlayingInfo()

@@ -114,19 +114,37 @@ actor TrackAnalysisService {
         let key = KeyDetector.detect(chroma: features.chroma)
         let structure = StructureAnalyzer.analyze(features: features, downbeats: beats.downbeats)
 
+        let avgEnergy = structure.energyCurve.isEmpty ? 0.7 : Double(structure.energyCurve.reduce(0, +) / Float(structure.energyCurve.count))
+        let introEndSec = structure.introEnd ?? 8.0
+        let outroStartSec = structure.outroStart ?? max(0, features.duration - 18.0)
+
+        let introSection = MusicSection(start: 0, end: introEndSec, type: .intro, energy: 0.4)
+        let outroSection = MusicSection(start: outroStartSec, end: features.duration, type: .outro, energy: 0.5)
+
         return TrackAnalysis(
-            trackID: trackID,
-            bpm: beats.bpm,
-            beatConfidence: beats.confidence,
-            beatGrid: beats.beatGrid,
-            downbeats: beats.downbeats,
-            key: key,
-            camelotPosition: CamelotPosition(key: key).label,
-            energyCurve: structure.energyCurve,
-            introEnd: structure.introEnd,
-            outroStart: structure.outroStart,
-            cuePoints: structure.cuePoints,
+            trackID: trackID.uuidString,
             duration: features.duration,
+            bpm: beats.bpm,
+            bpmConfidence: Double(beats.confidence),
+            musicalKey: key.displayName,
+            keyConfidence: Double(key.confidence),
+            energy: avgEnergy,
+            danceability: avgEnergy > 0.6 ? 0.85 : 0.60,
+            introStart: 0,
+            introEnd: introEndSec,
+            outroStart: outroStartSec,
+            outroEnd: features.duration,
+            firstBeat: beats.beatGrid.first,
+            lastBeat: beats.beatGrid.last,
+            beats: beats.beatGrid,
+            downbeats: beats.downbeats,
+            sections: [introSection, outroSection],
+            silenceRegions: [],
+            vocalRegions: [],
+            instrumentalRegions: [],
+            drops: [],
+            buildUps: [],
+            energyCurve: structure.energyCurve,
             analysisVersion: TrackAnalysis.currentVersion
         )
     }

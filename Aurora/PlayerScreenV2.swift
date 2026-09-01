@@ -147,7 +147,7 @@ struct PlayerScreenV2: View {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundStyle(.white)
-                            Text("AutoMix")
+                            Text(dj.activeStrategyName.replacingOccurrences(of: "_", with: " "))
                                 .font(AG.display(13, .bold))
                                 .foregroundStyle(.white)
                         }
