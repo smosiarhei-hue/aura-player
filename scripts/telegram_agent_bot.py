@@ -28,6 +28,8 @@ import urllib.parse
 import urllib.error
 import subprocess
 import shutil
+import http.server
+import threading
 from pathlib import Path
 
 # --- КОНФИГУРАЦИЯ И ПУТИ ---
@@ -1209,6 +1211,97 @@ def sync_local_antigravity_to_config():
             
     return {"success": False, "error": "Файлы авторизации Antigravity не найдены"}
 
+class AntigravityWebHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass # Suppress noisy stdout logs
+        
+    def do_GET(self):
+        st = get_antigravity_account_status()
+        auth_color = "#10b981" if st["has_token"] else "#ef4444"
+        auth_text = "🟢 Авторизован (24/7)" if st["has_token"] else "🔴 Не авторизован"
+        
+        html = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Sonivo AI & Google Antigravity Auth</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #0b0f19; color: #f1f5f9; padding: 2rem 1rem; margin: 0; display: flex; justify-content: center; }}
+        .container {{ width: 100%; max-width: 680px; }}
+        .card {{ background: #161e2e; border-radius: 16px; padding: 1.75rem; border: 1px solid #27354a; margin-bottom: 1.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }}
+        h1 {{ font-size: 1.5rem; margin-top: 0; color: #38bdf8; display: flex; align-items: center; gap: 0.5rem; }}
+        h2 {{ font-size: 1.2rem; margin-top: 0; color: #93c5fd; }}
+        .status-badge {{ display: inline-block; padding: 0.35rem 0.85rem; border-radius: 9999px; font-weight: 600; font-size: 0.85rem; background: {auth_color}; color: white; }}
+        .info-row {{ margin: 0.75rem 0; font-size: 0.95rem; }}
+        .info-row strong {{ color: #94a3b8; }}
+        code {{ background: #0f172a; padding: 0.2rem 0.5rem; border-radius: 6px; font-family: monospace; color: #38bdf8; }}
+        textarea {{ width: 100%; height: 130px; background: #0b0f19; border: 1px solid #334155; border-radius: 10px; color: #f8fafc; padding: 0.85rem; font-family: monospace; font-size: 0.85rem; resize: vertical; }}
+        textarea:focus {{ outline: none; border-color: #38bdf8; }}
+        button {{ background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: none; padding: 0.85rem 1.75rem; border-radius: 10px; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s; display: inline-block; margin-top: 0.75rem; width: 100%; }}
+        button:hover {{ opacity: 0.95; transform: translateY(-1px); }}
+        .oauth-btn {{ background: #ffffff; color: #1f2937; text-decoration: none; padding: 0.75rem 1.25rem; border-radius: 10px; font-weight: 600; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; border: 1px solid #e5e7eb; }}
+        .oauth-btn:hover {{ background: #f3f4f6; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🌌 Sonivo AI & Antigravity Cloud</h1>
+            <div class="info-row"><strong>Статус сессии:</strong> <span class="status-badge">{auth_text}</span></div>
+            <div class="info-row"><strong>Google Аккаунт:</strong> <code>{st['email']}</code></div>
+            <div class="info-row"><strong>Время жизни токена:</strong> <code>{st['expires_in']}</code></div>
+            <div class="info-row"><strong>Сервер:</strong> <code>{st['app_status']}</code></div>
+        </div>
+
+        <div class="card">
+            <h2>🔑 Авторизация в 1 клик</h2>
+            <p style="color: #94a3b8; font-size: 0.9rem; margin-top: 0;">Вставьте ваш Google OAuth токен (<code>ya29...</code>) или содержимое файла <code>oauth_creds.json</code>:</p>
+            <form method="POST" action="/save_token">
+                <textarea name="token_data" placeholder="Вставьте токен или JSON сюда..." required></textarea>
+                <button type="submit">💾 Сохранить и Активировать 24/7</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>"""
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+
+    def do_POST(self):
+        if self.path == "/save_token":
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length).decode('utf-8')
+            params = urllib.parse.parse_qs(post_data)
+            raw_token = params.get("token_data", [""])[0]
+            res = apply_google_oauth_token(raw_token)
+            
+            # Auto-save permanent HF secret
+            config = load_config()
+            hf_token = config.get("HF_TOKEN") or os.environ.get("HF_TOKEN")
+            hf_space = config.get("HF_SPACE") or os.environ.get("HF_SPACE", "IsseT/sonivo-bot")
+            if res.get("success") and config.get("ANTIGRAVITY_CREDS") and hf_token:
+                try:
+                    url = f'https://huggingface.co/api/spaces/{hf_space}/secrets'
+                    secret_payload = {'key': 'ANTIGRAVITY_CREDS_JSON', 'value': json.dumps(config["ANTIGRAVITY_CREDS"])}
+                    req = urllib.request.Request(url, data=json.dumps(secret_payload).encode('utf-8'), headers={'Authorization': f'Bearer {hf_token}', 'Content-Type': 'application/json', 'User-Agent': 'Sonivo-Agent'})
+                    urllib.request.urlopen(req, timeout=10)
+                except Exception as ex:
+                    print(f"[HF Secret Sync Error]: {ex}")
+
+            tg_send(f"🎉 *Google Antigravity авторизован через Браузер!*\n• Аккаунт: `{res.get('email', 'OK')}`\n• Режим: 🟢 Облачный сервер (24/7)\n\nСессия сохранена в постоянных секретах Hugging Face!")
+            
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            status_title = "✅ Авторизация успешна!" if res.get("success") else "❌ Ошибка авторизации"
+            status_desc = f"Аккаунт: {res.get('email')}" if res.get("success") else res.get("error")
+            resp_html = f"""<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Статус</title><style>body{{font-family:sans-serif;background:#0b0f19;color:#fff;text-align:center;padding:4rem 1rem;}} .card{{background:#161e2e;padding:2rem;border-radius:12px;display:inline-block;max-width:500px;border:1px solid #27354a;}} a{{color:#38bdf8;text-decoration:none;font-weight:600;}}</style></head><body><div class="card"><h2>{status_title}</h2><p>{status_desc}</p><p><a href="/">← Вернуться на главную</a></p></div></body></html>"""
+            self.wfile.write(resp_html.encode("utf-8"))
+
 def show_antigravity_menu(chat_id, reply_to=None):
     st = get_antigravity_account_status()
     version_res = tool_antigravity_cli("--version")
@@ -1233,14 +1326,14 @@ def show_antigravity_menu(chat_id, reply_to=None):
         "• 💎 `Gemini 3.1 Pro (High / Low)`\n"
         "• 🌐 `GPT-OSS 120B (Medium)`\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 *Работа 24/7:* Сессия сохранена в облаке и работает непрерывно, даже когда ваш ПК выключен!"
+        "💡 *Работа 24/7:* Нажмите кнопку ниже, чтобы открыть веб-страницу авторизации в браузере или вставить токен прямо в чат!"
     )
     inline_kb = {
         "inline_keyboard": [
-            [{"text": "🌐 Войти через браузер / Вставить токен", "callback_data": "agy_browser_login"}],
-            [{"text": "🔄 Обновить квоты и статус", "callback_data": "agy_refresh"}, {"text": "🧠 Модели Antigravity", "callback_data": "agy_models"}],
-            [{"text": "🤖 Субагенты Antigravity", "callback_data": "agy_agents"}, {"text": "🔌 Плагины Antigravity", "callback_data": "agy_plugins"}],
-            [{"text": "🌌 Сделать Antigravity активной моделью", "callback_data": "model_antigravity"}]
+            [{"text": "🌐 1. Открыть Веб-вход в браузере", "url": "https://isset-sonivo-bot.hf.space"}],
+            [{"text": "📝 2. Вставить токен в чат", "callback_data": "agy_browser_login"}, {"text": "🔄 Обновить статус", "callback_data": "agy_refresh"}],
+            [{"text": "🧠 Модели Antigravity", "callback_data": "agy_models"}, {"text": "🤖 Субагенты", "callback_data": "agy_agents"}],
+            [{"text": "🔌 Плагины Antigravity", "callback_data": "agy_plugins"}, {"text": "🌌 Сделать моделью по умолчанию", "callback_data": "model_antigravity"}]
         ]
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
@@ -2043,6 +2136,17 @@ def start_bot():
     print(f"📌 Авторизованный Chat ID: {ALLOWED_CHAT_ID}")
     print(f"📁 Репозиторий: {REPO_DIR}")
     print("="*60)
+    
+    # Запуск встроенного веб-сервера на порту 7860 для Hugging Face Space
+    def run_web_server():
+        try:
+            srv = http.server.HTTPServer(("0.0.0.0", 7860), AntigravityWebHandler)
+            print("[Web Server] Listening on http://0.0.0.0:7860")
+            srv.serve_forever()
+        except Exception as e:
+            print(f"[Web Server Error]: {e}")
+            
+    threading.Thread(target=run_web_server, daemon=True).start()
     
     tg_send(
         "🚀 *Sonivo AI Agent v2.0 активирован!*\n\n"
