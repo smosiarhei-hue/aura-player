@@ -67,8 +67,11 @@ actor TrackAnalysisService {
     /// AutoMix decisions real for the streaming catalogue instead of running on
     /// invented placeholder data.
     func analysis(for track: Track) async -> TrackAnalysis? {
-        let url = track.url
-        if !track.isStream, FileManager.default.fileExists(atPath: url.path) {
+        // Track is a value type but its `url` helper is MainActor-isolated under
+        // default isolation, so capture the needed fields synchronously first.
+        let url = await MainActor.run { track.url }
+        let isStream = await MainActor.run { track.isStream }
+        if !isStream, FileManager.default.fileExists(atPath: url.path) {
             return await analysis(trackID: track.id, url: url)
         }
 

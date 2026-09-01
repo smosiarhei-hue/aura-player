@@ -63,12 +63,12 @@ final class AutoMixDJEngine {
         // reached; every keyframe ramps from there to its own value.
         var value = first.value
         for frame in frames where frame.time <= time {
-            let segment = frame.duration > 0.001
+            let segment: Double = frame.duration > 0.001
                 ? min(1, max(0, (time - frame.time) / frame.duration))
                 : 1
-            value = value + (frame.value - value) * Float(segment)
+            value = value + (frame.value - value) * segment
         }
-        return value
+        return Float(value)
     }
 
     func computeVolumesAndEQ(

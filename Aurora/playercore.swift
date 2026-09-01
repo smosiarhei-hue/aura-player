@@ -828,7 +828,9 @@ final class PlayerCore {
                 self.incomingAudioFile = nextFile
 
                 let sampleRate = nextFile.processingFormat.sampleRate
-                let startFrame = AVAudioFramePosition(min(max(0, targetStart) * sampleRate, max(0, nextFile.length - 1)))
+                let requestedFrame: AVAudioFramePosition = AVAudioFramePosition(max(0, targetStart) * sampleRate)
+                let lastFrame: AVAudioFramePosition = max(0, nextFile.length - 1)
+                let startFrame = min(requestedFrame, lastFrame)
                 let frameCount = AVAudioFrameCount(max(0, nextFile.length - startFrame))
                 targetIdlePlayer.scheduleSegment(nextFile, startingFrame: startFrame, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     Task { @MainActor in
