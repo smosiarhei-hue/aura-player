@@ -129,10 +129,32 @@ actor GeminiAutoMixPlanner {
         let apiKey = SonivoAIConfig.geminiApiKey
         guard !apiKey.isEmpty else { return nil }
 
-        let model = SonivoAIConfig.geminiModel
-        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)") else {
-            return nil
+        for model in SonivoAIConfig.candidateModels {
+            guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)") else {
+                continue
+            }
+            if let plan = await executeGeminiRequest(
+                url: url,
+                sourceTrack: sourceTrack,
+                sourceAnalysis: sourceAnalysis,
+                targetTrack: targetTrack,
+                targetAnalysis: targetAnalysis,
+                currentPosition: currentPosition
+            ) {
+                return plan
+            }
         }
+        return nil
+    }
+
+    private func executeGeminiRequest(
+        url: URL,
+        sourceTrack: Track,
+        sourceAnalysis: TrackAnalysis,
+        targetTrack: Track,
+        targetAnalysis: TrackAnalysis,
+        currentPosition: Double
+    ) async -> TransitionPlan? {
 
         let systemInstruction = """
 You are the AI transition director for a professional music player.

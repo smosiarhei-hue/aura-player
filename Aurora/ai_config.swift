@@ -5,7 +5,8 @@ import Foundation
 nonisolated enum SonivoAIConfig {
     static let endpoint = "https://sonivo-ai.siarheismazhankoy.workers.dev"
     static let token = ""
-    static let geminiModel = "gemini-2.5-flash"
+    static let geminiModel = "gemini-3.7-flash"
+    static let candidateModels = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]
     static let geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models"
 
     static var geminiApiKey: String {

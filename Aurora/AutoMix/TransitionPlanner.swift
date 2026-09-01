@@ -141,48 +141,37 @@ nonisolated enum TransitionPlanner {
         var sourcePlaybackRate: Double = 1.0
         var targetPlaybackRate: Double = 1.0
 
-        // Silence check (Section 5)
-        let silenceTail = sourceAnalysis.silenceRegions.first(where: { $0.end >= sourceDur - 1.0 })?.duration ?? 0.0
         if silenceTail > 3.0 {
             strategy = .SILENCE_TRIM
             reason = "Обнаружена пауза в конце трека, выполняется бесшовная обрезка тишины"
             blendDuration = 2.0
-        } else if bpmRatio <= 1.06 && sourceAnalysis.hasSteadyBeat && targetAnalysis.hasSteadyBeat {
-            // Tempo within ±6% stretch (Section 8)
+        } else if bpmRatio <= 1.08 {
             let avgBPM = (srcBPM + tgtBPM) / 2.0
             sourcePlaybackRate = min(1.06, max(0.94, avgBPM / srcBPM))
             targetPlaybackRate = min(1.06, max(0.94, avgBPM / tgtBPM))
-
             let gridBar = sourceAnalysis.barDuration ?? (60.0 / avgBPM * 4.0)
 
-            if energyDiff < 0.25 {
-                strategy = .BASS_SWAP
-                reason = "Бит-синхронизированный Bass-Swap с выравниванием по тактам (BPM: \(Int(avgBPM)))"
-                blendDuration = min(24.0, max(12.0, gridBar * 4.0)) // 4 bars (16 beats)
-            } else {
-                strategy = .BEAT_MATCH_EQ
-                reason = "Бит-матчинг с частотным разделением"
-                blendDuration = min(16.0, max(8.0, gridBar * 2.0))
-            }
+            strategy = .BASS_SWAP
+            reason = "Бит-синхронизированный DJ Bass-Swap с выравниванием по тактам"
+            blendDuration = min(24.0, max(12.0, gridBar * 4.0))
         } else if bpmRatio > 1.25 {
-            // Large tempo difference (Section 8 & 14)
             if tgtEnergy > srcEnergy + 0.3 {
                 strategy = .BUILDUP_TO_DROP
-                reason = "Большая разница BPM, переход через разгон к дропу"
-                blendDuration = 8.0
+                reason = "Разгон энергии к дропу следующего трека"
+                blendDuration = 10.0
             } else {
                 strategy = .FILTER_TRANSITION
-                reason = "Несовместимый BPM, переход через High-Pass фильтр"
-                blendDuration = 10.0
+                reason = "High-Pass фильтрация с резонансным срезом"
+                blendDuration = 12.0
             }
         } else if energyDiff > 0.40 {
             strategy = .ENERGY_BLEND
             reason = "Плавный энергетический переход с разделением частот"
-            blendDuration = 12.0
+            blendDuration = 14.0
         } else {
-            strategy = .SIMPLE_CROSSFADE
-            reason = "Классический гармоничный кроссфейд"
-            blendDuration = 8.0
+            strategy = .BASS_SWAP
+            reason = "DJ Bass-Swap с выравниванием по тактам"
+            blendDuration = 16.0
         }
 
         // 3. Compute Musical Cue Time (Sections 9, 10, 23)
