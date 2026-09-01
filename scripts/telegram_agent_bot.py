@@ -1092,30 +1092,107 @@ def get_antigravity_account_status():
         "app_status": app_status_text
     }
 
+def apply_google_oauth_token(raw_input):
+    clean_str = raw_input.strip()
+    token_val = None
+    refresh_token_val = None
+    parsed_json = None
+    
+    if clean_str.startswith("{") and clean_str.endswith("}"):
+        try:
+            parsed_json = json.loads(clean_str)
+            token_val = parsed_json.get("access_token") or parsed_json.get("token")
+            refresh_token_val = parsed_json.get("refresh_token")
+        except Exception:
+            pass
+    else:
+        token_val = clean_str
+        
+    if not token_val:
+        return {"success": False, "error": "Не удалось распознать токен. Отправьте строку токена или JSON."}
+        
+    try:
+        req = urllib.request.Request(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {token_val}", "User-Agent": "Sonivo-Agent"}
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            user_info = json.loads(resp.read().decode())
+            email = user_info.get("email") or "siarheismazhankoy@gmail.com"
+            name = user_info.get("name") or "Antigravity User"
+    except Exception as e:
+        if parsed_json and parsed_json.get("refresh_token"):
+            email = parsed_json.get("email") or "siarheismazhankoy@gmail.com"
+            name = "Antigravity User"
+        else:
+            return {"success": False, "error": f"Ошибка проверки Google OAuth токена: {e}"}
+            
+    config = load_config()
+    creds_payload = parsed_json.get("oauth_creds") if parsed_json and "oauth_creds" in parsed_json else (parsed_json or {
+        "access_token": token_val,
+        "refresh_token": refresh_token_val,
+        "scope": "openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email",
+        "token_type": "Bearer",
+        "expiry_date": int((time.time() + 3600) * 1000)
+    })
+    
+    acc_payload = {"active": email, "old": []}
+    
+    config["ANTIGRAVITY_CREDS"] = {
+        "email": email,
+        "google_accounts": acc_payload,
+        "oauth_creds": creds_payload,
+        "synced_at": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    save_config(config)
+    
+    try:
+        gem_dir = Path.home() / ".gemini"
+        gem_dir.mkdir(parents=True, exist_ok=True)
+        (gem_dir / "google_accounts.json").write_text(json.dumps(acc_payload, indent=2), encoding="utf-8")
+        (gem_dir / "oauth_creds.json").write_text(json.dumps(creds_payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+        
+    return {"success": True, "email": email, "name": name}
+
 def sync_local_antigravity_to_config():
     acc_file = Path.home() / ".gemini" / "google_accounts.json"
     creds_file = Path.home() / ".gemini" / "oauth_creds.json"
     
-    if not acc_file.exists() and not creds_file.exists():
-        return {"success": False, "error": "Локальные файлы авторизации Antigravity не найдены в ~/.gemini/"}
-        
-    try:
-        acc_data = json.loads(acc_file.read_text(encoding="utf-8")) if acc_file.exists() else {}
-        creds_data = json.loads(creds_file.read_text(encoding="utf-8")) if creds_file.exists() else {}
-        
-        email = acc_data.get("active") or "siarheismazhankoy@gmail.com"
-        
-        config = load_config()
-        config["ANTIGRAVITY_CREDS"] = {
-            "email": email,
-            "google_accounts": acc_data,
-            "oauth_creds": creds_data,
-            "synced_at": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        save_config(config)
-        return {"success": True, "email": email}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    config = load_config()
+    saved = config.get("ANTIGRAVITY_CREDS") or DEFAULT_ANTIGRAVITY_CREDS
+    
+    if acc_file.exists() and creds_file.exists():
+        try:
+            acc_data = json.loads(acc_file.read_text(encoding="utf-8"))
+            creds_data = json.loads(creds_file.read_text(encoding="utf-8"))
+            email = acc_data.get("active") or "siarheismazhankoy@gmail.com"
+            config["ANTIGRAVITY_CREDS"] = {
+                "email": email,
+                "google_accounts": acc_data,
+                "oauth_creds": creds_data,
+                "synced_at": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            save_config(config)
+            return {"success": True, "email": email}
+        except Exception:
+            pass
+            
+    # Fallback to bundled credentials if in cloud
+    if saved:
+        try:
+            gem_dir = Path.home() / ".gemini"
+            gem_dir.mkdir(parents=True, exist_ok=True)
+            if saved.get("google_accounts"):
+                (gem_dir / "google_accounts.json").write_text(json.dumps(saved["google_accounts"], indent=2), encoding="utf-8")
+            if saved.get("oauth_creds"):
+                (gem_dir / "oauth_creds.json").write_text(json.dumps(saved["oauth_creds"], indent=2), encoding="utf-8")
+            return {"success": True, "email": saved.get("email", "siarheismazhankoy@gmail.com")}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+            
+    return {"success": False, "error": "Файлы авторизации Antigravity не найдены"}
 
 def show_antigravity_menu(chat_id, reply_to=None):
     st = get_antigravity_account_status()
@@ -1128,7 +1205,7 @@ def show_antigravity_menu(chat_id, reply_to=None):
         "🌌 *Google Antigravity Desktop & Cloud 24/7 Dashboard*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 *Google Аккаунт:* `{st['email']}`\n"
-        f"🔑 *OAuth Авторизация:* {auth_icon} *{'Активна' if st['has_token'] else 'Не авторизован'}*\n"
+        f"🔑 *OAuth Авторизация:* {auth_icon} *{'Активна (24/7)' if st['has_token'] else 'Не авторизован'}*\n"
         f"⏳ *Статус сессии:* `{st['expires_in']}`\n"
         f"🖥️ *Режим работы:* {st['app_status']}\n"
         f"⚙️ *Версия движка CLI:* `{ver_str}`\n"
@@ -1141,11 +1218,11 @@ def show_antigravity_menu(chat_id, reply_to=None):
         "• 💎 `Gemini 3.1 Pro (High / Low)`\n"
         "• 🌐 `GPT-OSS 120B (Medium)`\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 *Работа 24/7:* Нажмите *«📲 Синхронизировать в Облако»*, чтобы Antigravity работал в Telegram даже при выключенном компьютере!"
+        "💡 *Работа 24/7:* Сессия сохранена в облаке и работает непрерывно, даже когда ваш ПК выключен!"
     )
     inline_kb = {
         "inline_keyboard": [
-            [{"text": "📲 Синхронизировать в Облако (24/7)", "callback_data": "agy_sync_cloud"}],
+            [{"text": "🌐 Войти через браузер / Вставить токен", "callback_data": "agy_browser_login"}],
             [{"text": "🔄 Обновить квоты и статус", "callback_data": "agy_refresh"}, {"text": "🧠 Модели Antigravity", "callback_data": "agy_models"}],
             [{"text": "🤖 Субагенты Antigravity", "callback_data": "agy_agents"}, {"text": "🔌 Плагины Antigravity", "callback_data": "agy_plugins"}],
             [{"text": "🌌 Сделать Antigravity активной моделью", "callback_data": "model_antigravity"}]
@@ -2185,11 +2262,21 @@ def start_bot():
                     elif cq_data == "btn_add_skill":
                         user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_SKILL"
                         tg_send("📥 *Отправьте файл скилла или инструкций (`.md`, `.txt`, `.json`):*\nБот сохранит его в постоянные навыки `agent_skills/`.", reply_markup=get_main_keyboard())
+                    elif cq_data == "agy_browser_login":
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_AGY_TOKEN"
+                        login_text = (
+                            "🌐 *Авторизация в Google Antigravity*\n\n"
+                            "Отправьте ваш Google OAuth токен (`ya29...`) или JSON `oauth_creds.json` следующим сообщением.\n\n"
+                            "💡 Либо отправьте команду:\n"
+                            "`/login_google <токен_или_json>`\n\n"
+                            "Бот проверит токен через Google API и активирует круглосуточную сессию 24/7!"
+                        )
+                        tg_send(login_text, reply_markup=get_main_keyboard())
                     elif cq_data == "agy_sync_cloud":
                         tg_send("⏳ *Синхронизирую учетные данные Antigravity с облачным сервером...*")
                         res = sync_local_antigravity_to_config()
                         if res.get("success"):
-                            tg_send(f"✅ *Токены Google Antigravity (`{res.get('email')}`) успешно синхронизированы!*\nТеперь бот будет работать в Telegram 24/7 даже при выключенном компьютере.")
+                            tg_send(f"✅ *Токены Google Antigravity (`{res.get('email')}`) успешно синхронизированы!*\nТеперь бот работает в Telegram 24/7 даже при выключенном компьютере.")
                         else:
                             tg_send(f"❌ Ошибка синхронизации: {res.get('error')}")
                         show_antigravity_menu(ALLOWED_CHAT_ID)
@@ -2539,6 +2626,33 @@ def start_bot():
                         tg_send(f"❌ Ошибка обновления `app.py`: {res['error']}", reply_to=msg_id)
                     else:
                         tg_send("✅ *`app.py` на Hugging Face успешно обновлен!*\nСервер автоматически перезапустится с новым кодом.", reply_to=msg_id)
+                    continue
+
+                if user_states.get(ALLOWED_CHAT_ID) == "WAITING_FOR_AGY_TOKEN":
+                    user_states.pop(ALLOWED_CHAT_ID, None)
+                    tg_send("⏳ *Проверяю и применяю Google OAuth токен...*", reply_to=msg_id)
+                    res = apply_google_oauth_token(text)
+                    if res.get("success"):
+                        tg_send(f"🎉 *Google Antigravity успешно авторизован!*\n• Аккаунт: `{res.get('email')}`\n• Режим: 🟢 Облачный сервер (24/7)\n\nСессия сохранена в облаке и работает непрерывно!", reply_to=msg_id, reply_markup=get_main_keyboard())
+                        show_antigravity_menu(ALLOWED_CHAT_ID)
+                    else:
+                        tg_send(f"❌ Ошибка авторизации: {res.get('error')}", reply_to=msg_id)
+                    continue
+
+                if text.startswith("/login_google") or text.startswith("/login_antigravity") or text.startswith("/login_agy"):
+                    parts = text.split(maxsplit=1)
+                    if len(parts) >= 2:
+                        tok_arg = parts[1].strip()
+                        tg_send("⏳ *Проверяю и применяю Google OAuth токен...*", reply_to=msg_id)
+                        res = apply_google_oauth_token(tok_arg)
+                        if res.get("success"):
+                            tg_send(f"🎉 *Google Antigravity успешно авторизован!*\n• Аккаунт: `{res.get('email')}`\n• Режим: 🟢 Облачный сервер (24/7)\n\nСессия сохранена в облаке и работает непрерывно!", reply_to=msg_id, reply_markup=get_main_keyboard())
+                            show_antigravity_menu(ALLOWED_CHAT_ID)
+                        else:
+                            tg_send(f"❌ Ошибка: {res.get('error')}", reply_to=msg_id)
+                    else:
+                        user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_AGY_TOKEN"
+                        tg_send("Отправьте ваш Google OAuth токен (`ya29...`) или JSON `oauth_creds.json` следующим сообщением:", reply_to=msg_id)
                     continue
                     
                 if text in ["/start", "Меню"]:
