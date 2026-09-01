@@ -108,19 +108,26 @@ screen = replace_required(screen, '''    // MARK: Actions
 ''', "artwork paging implementation")
 SCREEN.write_text(screen, encoding="utf-8")
 
-# The stream observer and the local progress timer are both installed at
-# 1/60 s and 1/120 s in the current sources. Driving the whole Observable
-# PlayerCore that fast repaints the entire player every tick, which is what
-# caused the heat and the choppy feel. 30 Hz is smooth for a progress bar.
+# Driving the whole Observable PlayerCore at 60-120 Hz repaints the entire
+# player on every tick, which is what caused the heat and the choppy feel.
+# 30 Hz is smooth for a progress bar.
+#
+# The target string already exists elsewhere in the file (the transition timer
+# runs at 30 Hz by design), so a plain "already applied" check would wrongly
+# skip this patch. Look for the old cadences first instead.
 player = PLAYER.read_text(encoding="utf-8")
 
 
 def relax_cadence(text: str, candidates, new: str, label: str) -> str:
-    if new in text:
-        return text
+    replaced = False
     for old in candidates:
         if old in text:
-            return text.replace(old, new, 1)
+            text = text.replace(old, new)
+            replaced = True
+    if replaced:
+        return text
+    if new in text:
+        return text
     raise RuntimeError(f"{label}: required source anchor was not found")
 
 
