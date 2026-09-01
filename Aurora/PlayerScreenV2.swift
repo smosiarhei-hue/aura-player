@@ -27,6 +27,11 @@ struct PlayerScreenV2: View {
     @State private var showSleepTimer = false
     @State private var showSettings = false
 
+    // Track Wave state
+    @State private var waveLoading = false
+    @State private var waveActive = false
+    @State private var waveMessage: String? = nil
+
     // Lyrics state
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
@@ -51,7 +56,7 @@ struct PlayerScreenV2: View {
 
     var body: some View {
         GeometryReader { geo in
-            let coverSide = min(geo.size.width - 56, 380)
+            let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
 
             ZStack {
                 // 1. Dynamic Fluid HDR Mesh Background (drifting & color-adaptive)
@@ -64,7 +69,7 @@ struct PlayerScreenV2: View {
                 VStack(spacing: 0) {
                     // Top Bar (Grabber Pill & Video-Shot Toggle)
                     topHeader
-                        .padding(.top, max(geo.safeAreaInsets.top, 14))
+                        .padding(.top, max(geo.safeAreaInsets.top, 12))
                         .padding(.horizontal, 24)
 
                     Spacer(minLength: 4)
@@ -93,7 +98,24 @@ struct PlayerScreenV2: View {
                             ))
                     }
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 6)
+
+                    // Floating toast for Track Wave
+                    if let waveMessage {
+                        HStack(spacing: 6) {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(AG.amber)
+                            Text(waveMessage)
+                                .font(AG.text(12, .semibold))
+                                .foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8)))
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, 4)
+                    }
 
                     // Lower Controls Section (Apple Music Standard Layout)
                     appleMusicLowerDeck
@@ -349,8 +371,8 @@ struct PlayerScreenV2: View {
     // MARK: - Apple Music Standard Lower Controls Deck (Screenshot 1 & 2)
 
     private var appleMusicLowerDeck: some View {
-        VStack(spacing: 18) {
-            // Track Metadata (Title, Artist, Star, Context Menu)
+        VStack(spacing: 14) {
+            // Track Metadata (Title, Artist, Like, Track Wave, 3-Dots)
             metadataRow
 
             // Scrubber Slider & Lossless Badge
@@ -367,7 +389,7 @@ struct PlayerScreenV2: View {
         }
     }
 
-    // MARK: Metadata Row (Left: Title & Artist, Right: Favorite Star & 3-Dots)
+    // MARK: Metadata Row (Left: Title & Artist, Right: Like + Track Wave + 3-Dots)
 
     private var metadataRow: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -396,23 +418,9 @@ struct PlayerScreenV2: View {
 
             Spacer(minLength: 8)
 
-            // Right Action Icons: Dislike + Like (Heart / Library) + 3-Dots Menu
-            HStack(spacing: 12) {
+            // Right Action Icons: Dislike + Like (Heart) + Track Wave + 3-Dots Menu
+            HStack(spacing: 8) {
                 if let track {
-                    // Dislike Button
-                    Button {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        taste.recordDislike(track: track)
-                        nextTrack()
-                    } label: {
-                        Image(systemName: taste.isDisliked(track: track) ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(taste.isDisliked(track: track) ? Color.red.opacity(0.85) : .white.opacity(0.70))
-                            .frame(width: 36, height: 36)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(GlassPressStyle())
-
                     // Like Button (Heart: Adds to Library & Favorites)
                     Button {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -421,18 +429,35 @@ struct PlayerScreenV2: View {
                     } label: {
                         Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
                             .font(.system(size: 21, weight: .semibold))
-                            .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white)
+                            .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white.opacity(0.80))
                             .frame(width: 36, height: 36)
                             .contentShape(Circle())
+                    }
+                    .buttonStyle(GlassPressStyle())
+
+                    // "Моя волна по треку" (Track Wave / Infinite Flow related to song)
+                    Button(action: startTrackWave) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(waveActive ? AG.amber : .white.opacity(0.80))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(waveActive ? AG.amber.opacity(0.6) : Color.clear, lineWidth: 1)
+                            )
                     }
                     .buttonStyle(GlassPressStyle())
                 }
 
                 Menu {
+                    Button(action: startTrackWave) {
+                        Label("Моя волна по треку", systemImage: "dot.radiowaves.left.and.right")
+                    }
                     Button {
                         withAnimation(AG.spring) { showLyricsMode.toggle() }
                     } label: {
-                        Label(showLyricsMode ? "Показать обложку" : "Караоке", systemImage: "quote.bubble")
+                        Label(showLyricsMode ? "Показать обложку" : "Караоке / Текст песни", systemImage: "quote.bubble")
                     }
                     Button {
                         withAnimation(AG.spring) { isVideoShotMode.toggle() }
@@ -440,16 +465,13 @@ struct PlayerScreenV2: View {
                         Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: "play.rectangle")
                     }
                     Button { showQueue = true } label: {
-                        Label("Очередь", systemImage: "list.bullet")
+                        Label("Очередь воспроизведения", systemImage: "list.bullet")
                     }
                     Button { showEqualizer = true } label: {
                         Label("Эквалайзер", systemImage: "slider.vertical.3")
                     }
                     Button { showSleepTimer = true } label: {
                         Label("Таймер сна", systemImage: "timer")
-                    }
-                    Button { showSettings = true } label: {
-                        Label("Настройки", systemImage: "gearshape")
                     }
                     Divider()
                     Button(role: .destructive) {
@@ -461,8 +483,8 @@ struct PlayerScreenV2: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 38, height: 38)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 36, height: 36)
                         .contentShape(Circle())
                 }
             }
@@ -607,7 +629,7 @@ struct PlayerScreenV2: View {
     // MARK: Apple Music Bottom Bar (Lyrics, AirPlay, Queue)
 
     private var appleMusicBottomBar: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .center) {
             // Left: Lyrics / Sing
             Button {
                 withAnimation(AG.spring) {
@@ -617,31 +639,58 @@ struct PlayerScreenV2: View {
                 Image(systemName: showLyricsMode ? "quote.bubble.fill" : "quote.bubble")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(showLyricsMode ? AG.amber : .white.opacity(0.65))
-                    .frame(maxWidth: .infinity)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle())
 
-            // Center: AirPlay route picker
+            Spacer()
+
+            // Center: AirPlay route picker (Standard native size)
             AirPlayButtonView()
-                .frame(maxWidth: .infinity)
+                .frame(width: 38, height: 38)
+                .contentShape(Rectangle())
+
+            Spacer()
 
             // Right: Queue sheet
             Button {
                 showQueue = true
             } label: {
-                Image(systemName: "list.bullet")
+                Image(systemName: showQueue ? "list.bullet.rectangle.portrait.fill" : "list.bullet")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.65))
-                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(showQueue ? AG.amber : .white.opacity(0.65))
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle())
         }
-        .padding(.top, 4)
+        .padding(.horizontal, 28)
+        .frame(height: 44)
     }
 
     // MARK: - Actions
+
+    private func startTrackWave() {
+        guard let current = track else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        waveLoading = true
+        Task {
+            let waveTracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45)
+            waveLoading = false
+            if !waveTracks.isEmpty {
+                player.queue = waveTracks
+                waveActive = true
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                withAnimation(AG.spring) {
+                    waveMessage = "🌊 Моя волна по треку запущена"
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    withAnimation { waveMessage = nil }
+                }
+            }
+        }
+    }
 
     private func loadLyrics() async {
         lyrics = nil
