@@ -1220,7 +1220,7 @@ except Exception:
 def create_gradio_ui():
     if not HAS_GRADIO:
         return None
-    with gr.Blocks(title="Sonivo AI & Antigravity Dashboard", theme=gr.themes.Soft(primary_hue="blue")) as demo:
+    with gr.Blocks(title="Sonivo AI & Antigravity Dashboard") as blk:
         gr.Markdown("# 🌌 Sonivo AI & Antigravity Cloud Dashboard (24/7)")
         
         with gr.Row():
@@ -1268,7 +1268,9 @@ def create_gradio_ui():
         save_btn.click(on_save, inputs=[token_input], outputs=[result_box, account_box, status_box, server_box])
         refresh_btn.click(on_refresh, outputs=[account_box, status_box, server_box])
         
-    return demo
+    return blk
+
+demo = create_gradio_ui()
 
 class AntigravityWebHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
