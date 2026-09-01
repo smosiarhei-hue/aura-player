@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.error
 import subprocess
 import shutil
+import http.server
 import threading
 from pathlib import Path
 
