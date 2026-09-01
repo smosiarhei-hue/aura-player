@@ -141,6 +141,7 @@ nonisolated enum TransitionPlanner {
         var sourcePlaybackRate: Double = 1.0
         var targetPlaybackRate: Double = 1.0
 
+        let silenceTail = sourceAnalysis.silenceRegions.first(where: { $0.end >= sourceDur - 1.0 })?.duration ?? 0.0
         let vocalEnd = sourceAnalysis.vocalRegions.last?.end ?? (sourceAnalysis.outroStart > 0 ? sourceAnalysis.outroStart : max(0, sourceDur - 16.0))
         let remainingAfterVocal = max(0, sourceDur - vocalEnd)
 
