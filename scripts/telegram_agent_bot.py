@@ -1674,9 +1674,13 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
             target_model = key_entry.get("model") or ("gemini-3.6-flash" if provider == "gemini" else "deepseek-chat")
         
         if provider == "gemini":
-            # Полная цепочка каскада по квотам (от топ-логики до безлимитных 14.4k RPD)
+            # Полная цепочка каскада по квотам (от супер-стабильных до экспериментальных)
             gemini_cascade = [
                 target_model,
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.0-flash",
+                "gemini-1.5-flash",
                 "gemini-3.7-flash",
                 "gemini-3.6-flash",
                 "gemini-3.5-flash",
@@ -1684,11 +1688,8 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
                 "gemini-3.1-flash-lite",
                 "gemma-4-31b",
                 "gemma-4-26b",
-                "gemini-2.5-flash",
-                "gemini-2.5-flash-lite",
-                "gemini-2.0-flash",
-                "gemini-3.1-pro-preview",
-                "gemini-2.5-pro"
+                "gemini-2.5-pro",
+                "gemini-3.1-pro-preview"
             ]
             seen_m = set()
             models_to_try = []
@@ -1715,7 +1716,7 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
                     headers={"Content-Type": "application/json"}
                 )
                 try:
-                    with urllib.request.urlopen(req, timeout=90) as resp:
+                    with urllib.request.urlopen(req, timeout=35) as resp:
                         data = json.loads(resp.read().decode())
                         record_key_success(key_id)
                         data["_provider_name"] = f"Gemini ({m})"
@@ -1728,7 +1729,7 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
                 except urllib.error.HTTPError as e:
                     err_body = e.read().decode()
                     print(f"[Gemini HTTP {e.code} on model '{m}' / key '{key_name}']: {err_body}")
-                    # В Gemini квоты РАЗДЕЛЬНЫЕ для каждой модели! При 429 продолжаем пробовать следующую модель с более высокой квотой (Lite / Gemma)
+                    # При 429 или 503 пробуем следующую стабильную модель в каскаде
                     continue
                 except Exception as e:
                     print(f"[Gemini Connection Error on '{m}' / '{key_name}']: {e}")
