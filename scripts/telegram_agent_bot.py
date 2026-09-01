@@ -1024,10 +1024,24 @@ def get_main_keyboard():
     }
 
 def get_antigravity_account_status():
-    account_email = "Не авторизован"
+    config = load_config()
     acc_file = Path.home() / ".gemini" / "google_accounts.json"
     creds_file = Path.home() / ".gemini" / "oauth_creds.json"
     
+    # 1. Если запущены в облаке (Hugging Face) и есть сохраненные учетные данные в config:
+    saved_creds = config.get("ANTIGRAVITY_CREDS")
+    if saved_creds and not acc_file.exists():
+        try:
+            gem_dir = Path.home() / ".gemini"
+            gem_dir.mkdir(parents=True, exist_ok=True)
+            if saved_creds.get("google_accounts"):
+                acc_file.write_text(json.dumps(saved_creds["google_accounts"], indent=2), encoding="utf-8")
+            if saved_creds.get("oauth_creds"):
+                creds_file.write_text(json.dumps(saved_creds["oauth_creds"], indent=2), encoding="utf-8")
+        except Exception:
+            pass
+            
+    account_email = "Не авторизован"
     has_token = False
     expires_in = "Авто-обновление (Active)"
     
@@ -1037,6 +1051,8 @@ def get_antigravity_account_status():
             account_email = acc_data.get("active") or "Не указан"
         except Exception:
             pass
+    elif saved_creds and saved_creds.get("email"):
+        account_email = saved_creds.get("email")
             
     if creds_file.exists():
         try:
@@ -1052,21 +1068,54 @@ def get_antigravity_account_status():
                     expires_in = "авто-обновление токена"
         except Exception:
             pass
+    elif saved_creds and saved_creds.get("oauth_creds"):
+        has_token = True
+        expires_in = "активен в облаке 24/7"
             
-    app_running = False
-    try:
-        res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Antigravity.exe"], capture_output=True, text=True, timeout=5)
-        if "Antigravity.exe" in res.stdout:
-            app_running = True
-    except Exception:
-        pass
+    # Check desktop app or cloud mode
+    if os.name == "nt":
+        app_running = False
+        try:
+            res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Antigravity.exe"], capture_output=True, text=True, timeout=5)
+            if "Antigravity.exe" in res.stdout:
+                app_running = True
+        except Exception:
+            pass
+        app_status_text = "🟢 Запущено на ПК" if app_running else "⚪ Фоновый режим"
+    else:
+        app_status_text = "🟢 Облачный сервер (24/7)"
         
     return {
         "email": account_email,
         "has_token": has_token,
         "expires_in": expires_in,
-        "app_running": app_running
+        "app_status": app_status_text
     }
+
+def sync_local_antigravity_to_config():
+    acc_file = Path.home() / ".gemini" / "google_accounts.json"
+    creds_file = Path.home() / ".gemini" / "oauth_creds.json"
+    
+    if not acc_file.exists() and not creds_file.exists():
+        return {"success": False, "error": "Локальные файлы авторизации Antigravity не найдены в ~/.gemini/"}
+        
+    try:
+        acc_data = json.loads(acc_file.read_text(encoding="utf-8")) if acc_file.exists() else {}
+        creds_data = json.loads(creds_file.read_text(encoding="utf-8")) if creds_file.exists() else {}
+        
+        email = acc_data.get("active") or "siarheismazhankoy@gmail.com"
+        
+        config = load_config()
+        config["ANTIGRAVITY_CREDS"] = {
+            "email": email,
+            "google_accounts": acc_data,
+            "oauth_creds": creds_data,
+            "synced_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        save_config(config)
+        return {"success": True, "email": email}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 def show_antigravity_menu(chat_id, reply_to=None):
     st = get_antigravity_account_status()
@@ -1074,15 +1123,14 @@ def show_antigravity_menu(chat_id, reply_to=None):
     ver_str = version_res.get("output", "1.1.23")
     
     auth_icon = "🟢" if st["has_token"] else "🔴"
-    app_icon = "🟢 Запущено" if st["app_running"] else "⚪ Фоновый режим"
     
     text = (
-        "🌌 *Google Antigravity Desktop & CLI Dashboard*\n"
+        "🌌 *Google Antigravity Desktop & Cloud 24/7 Dashboard*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 *Google Аккаунт:* `{st['email']}`\n"
-        f"🔑 *OAuth Авторизация:* {auth_icon} *Активна*\n"
-        f"⏳ *Статус токена:* `{st['expires_in']}`\n"
-        f"🖥️ *Приложение для Windows:* {app_icon}\n"
+        f"🔑 *OAuth Авторизация:* {auth_icon} *{'Активна' if st['has_token'] else 'Не авторизован'}*\n"
+        f"⏳ *Статус сессии:* `{st['expires_in']}`\n"
+        f"🖥️ *Режим работы:* {st['app_status']}\n"
         f"⚙️ *Версия движка CLI:* `{ver_str}`\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "📦 *Доступные модели Antigravity:*\n"
@@ -1093,10 +1141,11 @@ def show_antigravity_menu(chat_id, reply_to=None):
         "• 💎 `Gemini 3.1 Pro (High / Low)`\n"
         "• 🌐 `GPT-OSS 120B (Medium)`\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 Бот синхронизирует квоты и сессии напрямую с вашим приложением Antigravity для Windows!"
+        "💡 *Работа 24/7:* Нажмите *«📲 Синхронизировать в Облако»*, чтобы Antigravity работал в Telegram даже при выключенном компьютере!"
     )
     inline_kb = {
         "inline_keyboard": [
+            [{"text": "📲 Синхронизировать в Облако (24/7)", "callback_data": "agy_sync_cloud"}],
             [{"text": "🔄 Обновить квоты и статус", "callback_data": "agy_refresh"}, {"text": "🧠 Модели Antigravity", "callback_data": "agy_models"}],
             [{"text": "🤖 Субагенты Antigravity", "callback_data": "agy_agents"}, {"text": "🔌 Плагины Antigravity", "callback_data": "agy_plugins"}],
             [{"text": "🌌 Сделать Antigravity активной моделью", "callback_data": "model_antigravity"}]
@@ -2136,6 +2185,14 @@ def start_bot():
                     elif cq_data == "btn_add_skill":
                         user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_SKILL"
                         tg_send("📥 *Отправьте файл скилла или инструкций (`.md`, `.txt`, `.json`):*\nБот сохранит его в постоянные навыки `agent_skills/`.", reply_markup=get_main_keyboard())
+                    elif cq_data == "agy_sync_cloud":
+                        tg_send("⏳ *Синхронизирую учетные данные Antigravity с облачным сервером...*")
+                        res = sync_local_antigravity_to_config()
+                        if res.get("success"):
+                            tg_send(f"✅ *Токены Google Antigravity (`{res.get('email')}`) успешно синхронизированы!*\nТеперь бот будет работать в Telegram 24/7 даже при выключенном компьютере.")
+                        else:
+                            tg_send(f"❌ Ошибка синхронизации: {res.get('error')}")
+                        show_antigravity_menu(ALLOWED_CHAT_ID)
                     elif cq_data == "agy_refresh":
                         show_antigravity_menu(ALLOWED_CHAT_ID)
                     elif cq_data == "agy_models":
@@ -2573,6 +2630,15 @@ def start_bot():
                     if len(out_text) > 3800:
                         out_text = out_text[:3800] + "\n... (вывод обрезан)"
                     tg_send(f"🌌 *Результат Antigravity CLI:*\n```text\n{out_text}\n```", reply_to=msg_id)
+                    continue
+                elif text in ["/sync_antigravity", "/sync_agy"]:
+                    tg_send("⏳ *Синхронизирую учетные данные Antigravity с облачным сервером...*", reply_to=msg_id)
+                    res = sync_local_antigravity_to_config()
+                    if res.get("success"):
+                        tg_send(f"✅ *Токены Google Antigravity (`{res.get('email')}`) успешно синхронизированы!*\nТеперь бот будет работать в Telegram 24/7 даже при выключенном компьютере.", reply_to=msg_id)
+                    else:
+                        tg_send(f"❌ Ошибка синхронизации: {res.get('error')}", reply_to=msg_id)
+                    show_antigravity_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
                     continue
                 elif text.startswith("/set_gh_token"):
                     parts = text.split(maxsplit=1)
