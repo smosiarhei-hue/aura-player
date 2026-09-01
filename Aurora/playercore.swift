@@ -79,10 +79,15 @@ final class PlayerCore {
 
     private let defaults = UserDefaults.standard
 
-    // Instant Streaming Engine (AVPlayer progressive playback in ~150ms)
-    private let streamingPlayer = AVPlayer()
-    private var timeObserverToken: Any?
+    // Instant Streaming Engine (Dual AVPlayers for Seamless DJ Transitions & Pre-buffering)
+    private let streamingPlayerA = AVPlayer()
+    private let streamingPlayerB = AVPlayer()
+    private var activeStreamingPlayer: AVPlayer
+    private var idleStreamingPlayer: AVPlayer
+    var streamingPlayer: AVPlayer { activeStreamingPlayer }
     private var isUsingStreamPlayer = false
+    private var isPrebufferingNextStream = false
+    private var prebufferedTrackId: UUID? = nil
 
     // Local Audio Engine (AVAudioEngine + 10-band EQ)
     private let engine = AVAudioEngine()
@@ -115,7 +120,7 @@ final class PlayerCore {
     var duration: Double {
         if isUsingStreamPlayer {
             if streamDuration > 0 { return streamDuration }
-            if let item = streamingPlayer.currentItem {
+            if let item = activeStreamingPlayer.currentItem {
                 let d = CMTimeGetSeconds(item.duration)
                 if d.isFinite && d > 0 { return d }
             }
@@ -127,6 +132,8 @@ final class PlayerCore {
     // MARK: - Init
     private init() {
         activePlayer = playerA
+        activeStreamingPlayer = streamingPlayerA
+        idleStreamingPlayer = streamingPlayerB
         configureSession()
         setupAudioEngine()
         setupStreamingPlayer()
@@ -145,25 +152,27 @@ final class PlayerCore {
     }
 
     private func setupStreamingPlayer() {
-        streamingPlayer.automaticallyWaitsToMinimizeStalling = false
-        streamingPlayer.volume = volume
+        for p in [streamingPlayerA, streamingPlayerB] {
+            p.automaticallyWaitsToMinimizeStalling = false
+            p.volume = volume
 
-        let interval = CMTime(seconds: 1.0 / 120.0, preferredTimescale: 600)
-        timeObserverToken = streamingPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            Task { @MainActor [weak self] in
-                guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
-                let sec = CMTimeGetSeconds(time)
-                if sec.isFinite && sec >= 0 {
-                    self.progress = sec
+            let interval = CMTime(seconds: 1.0 / 60.0, preferredTimescale: 600)
+            p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
+                    let sec = CMTimeGetSeconds(time)
+                    if sec.isFinite && sec >= 0 {
+                        self.progress = sec
 
-                    if let item = self.streamingPlayer.currentItem {
-                        let d = CMTimeGetSeconds(item.duration)
-                        if d.isFinite && d > 0 && self.streamDuration != d {
-                            self.streamDuration = d
+                        if let item = self.activeStreamingPlayer.currentItem {
+                            let d = CMTimeGetSeconds(item.duration)
+                            if d.isFinite && d > 0 && self.streamDuration != d {
+                                self.streamDuration = d
+                            }
                         }
-                    }
 
-                    self.scheduleTransitionIfNeeded()
+                        self.scheduleTransitionIfNeeded()
+                    }
                 }
             }
         }
@@ -171,9 +180,7 @@ final class PlayerCore {
         NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             Task { @MainActor [weak self] in
                 guard let self, self.isUsingStreamPlayer else { return }
-                // Ignore end-of-track notifications from replaced (stale) AVPlayerItems
-                // so the AutoMix asyncAfter transition and this observer don't double-advance.
-                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                if let item = notification.object as? AVPlayerItem, item !== self.activeStreamingPlayer.currentItem {
                     return
                 }
                 self.handleTrackFinish()
@@ -183,7 +190,7 @@ final class PlayerCore {
         NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             Task { @MainActor [weak self] in
                 guard let self, self.isUsingStreamPlayer else { return }
-                if let item = notification.object as? AVPlayerItem, item !== self.streamingPlayer.currentItem {
+                if let item = notification.object as? AVPlayerItem, item !== self.activeStreamingPlayer.currentItem {
                     return
                 }
                 let message = (notification.object as? AVPlayerItem)?.error?.localizedDescription
@@ -404,7 +411,8 @@ final class PlayerCore {
     func pause() {
         guard isPlaying else { return }
         if isUsingStreamPlayer {
-            streamingPlayer.pause()
+            activeStreamingPlayer.pause()
+            idleStreamingPlayer.pause()
         } else {
             pausedProgress = liveProgress()
             activePlayer.pause()
@@ -419,11 +427,14 @@ final class PlayerCore {
     func resume() {
         guard !isPlaying, let track = currentTrack else { return }
         if track.isStream || track.streamUrlString != nil {
-            if streamingPlayer.currentItem == nil {
+            if activeStreamingPlayer.currentItem == nil {
                 start(at: progress)
                 return
             }
-            streamingPlayer.play()
+            activeStreamingPlayer.play()
+            if isTransitioning {
+                idleStreamingPlayer.play()
+            }
             isPlaying = true
         } else {
             if activeAudioFile == nil {
@@ -667,6 +678,30 @@ final class PlayerCore {
             mode: transitionMode
         )
 
+        // 1. Pre-buffer incoming streaming track ahead of time (~10-12s before finish)
+        if isUsingStreamPlayer || nextTrack.isStream {
+            let prebufferThreshold = plan.blendDuration + 8.0
+            let remaining = totalDur - currentPos
+            if remaining <= prebufferThreshold && prebufferedTrackId != nextTrack.id && !isPrebufferingNextStream {
+                isPrebufferingNextStream = true
+                let ymID = Self.yandexTrackID(from: nextTrack)
+                Task {
+                    do {
+                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: self.audioQuality.targetBitrate)
+                        let nextItem = AVPlayerItem(url: info.url)
+                        StreamBeatTap.shared.attach(to: nextItem)
+                        self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
+                        self.idleStreamingPlayer.volume = 0
+                        self.idleStreamingPlayer.pause()
+                        self.prebufferedTrackId = nextTrack.id
+                        self.isPrebufferingNextStream = false
+                    } catch {
+                        self.isPrebufferingNextStream = false
+                    }
+                }
+            }
+        }
+
         guard currentPos >= plan.cueTime, (totalDur - currentPos) > 0.05 else { return }
 
         transitionScheduled = true
@@ -678,28 +713,32 @@ final class PlayerCore {
         AutoMixDJEngine.shared.activeStyle = plan.style
 
         if isUsingStreamPlayer || nextTrack.isStream {
-            // Streaming AutoMix Blending with Pre-buffering
-            let remaining = max(0.1, totalDur - currentPos)
-            let token = generation
-            Task { @MainActor [weak self] in
-                let steps = 20
-                let stepDelay = remaining / Double(steps)
-                for step in 1...steps {
-                    guard let self, self.generation == token, self.isTransitioning else { return }
-                    let p = Double(step) / Double(steps)
-                    let (outVol, _, _, _) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, style: plan.style)
-                    self.streamingPlayer.volume = max(0, min(1.0, outVol * self.volume))
-                    AutoMixDJEngine.shared.transitionProgress = p
-                    try? await Task.sleep(for: .seconds(stepDelay))
+            // Live Simultaneous Dual-Player Stream Blending
+            if idleStreamingPlayer.currentItem == nil || prebufferedTrackId != nextTrack.id {
+                let ymID = Self.yandexTrackID(from: nextTrack)
+                Task {
+                    do {
+                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: self.audioQuality.targetBitrate)
+                        let nextItem = AVPlayerItem(url: info.url)
+                        StreamBeatTap.shared.attach(to: nextItem)
+                        self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
+                        self.idleStreamingPlayer.volume = 0
+                        self.idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                        self.idleStreamingPlayer.play()
+                        self.transitionStartTime = Date()
+                        self.startTransitionTimer()
+                    } catch {
+                        self.isTransitioning = false
+                        self.transitionScheduled = false
+                        AutoMixDJEngine.shared.isTransitionActive = false
+                    }
                 }
-                guard let self, self.generation == token else { return }
-                self.isTransitioning = false
-                self.transitionScheduled = false
-                AutoMixDJEngine.shared.isTransitionActive = false
-                AutoMixDJEngine.shared.transitionProgress = 0
-                self.streamingPlayer.volume = self.volume
-                self.currentTrack = nextTrack
-                self.start(at: 0)
+            } else {
+                idleStreamingPlayer.volume = 0
+                idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                idleStreamingPlayer.play()
+                transitionStartTime = Date()
+                startTransitionTimer()
             }
             return
         }
@@ -738,7 +777,7 @@ final class PlayerCore {
 
     private func startTransitionTimer() {
         transitionTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickTransition() }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -754,16 +793,21 @@ final class PlayerCore {
         let style = AutoMixDJEngine.shared.activeStyle
         let (outVol, inVol, outBassCut, inBassGain) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, style: style)
 
-        activePlayer.volume = outVol * volume
-        idlePlayer.volume = inVol * volume
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.volume = max(0, min(1.0, outVol * volume))
+            idleStreamingPlayer.volume = max(0, min(1.0, inVol * volume))
+        } else {
+            activePlayer.volume = outVol * volume
+            idlePlayer.volume = inVol * volume
 
-        activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outBassCut) : outBassCut
-        activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + outBassCut * 0.8) : (outBassCut * 0.8)
-        activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + outBassCut * 0.5) : (outBassCut * 0.5)
+            activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outBassCut) : outBassCut
+            activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + outBassCut * 0.8) : (outBassCut * 0.8)
+            activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + outBassCut * 0.5) : (outBassCut * 0.5)
 
-        idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inBassGain) : inBassGain
-        idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inBassGain) : inBassGain
-        idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inBassGain) : inBassGain
+            idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inBassGain) : inBassGain
+            idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inBassGain) : inBassGain
+            idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inBassGain) : inBassGain
+        }
 
         if p >= 1.0, let incomingTrack {
             AutoMixDJEngine.shared.isTransitionActive = false
@@ -776,16 +820,29 @@ final class PlayerCore {
         transitionTimer = nil
         transitionStartTime = nil
 
-        let oldActive = activePlayer
-        oldActive.stop()
-        oldActive.volume = 1.0
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.pause()
+            activeStreamingPlayer.replaceCurrentItem(with: nil)
+            let oldActive = activeStreamingPlayer
+            activeStreamingPlayer = idleStreamingPlayer
+            idleStreamingPlayer = oldActive
+            activeStreamingPlayer.volume = volume
+        } else {
+            let oldActive = activePlayer
+            oldActive.stop()
+            oldActive.volume = 1.0
 
-        generation += 1
-        activePlayer = idlePlayer
-        activeAudioFile = incomingAudioFile
-        incomingAudioFile = nil
+            generation += 1
+            activePlayer = idlePlayer
+            activeAudioFile = incomingAudioFile
+            incomingAudioFile = nil
+            applyEQ()
+        }
+
         incomingTrack = nil
+        prebufferedTrackId = nil
         currentTrack = nextTrack
+        streamDuration = nextTrack.duration
         anchorDate = Date()
         anchorOffset = 0
         pausedProgress = 0
@@ -795,7 +852,6 @@ final class PlayerCore {
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
 
-        applyEQ()
         updateNowPlayingInfo()
     }
 
@@ -808,7 +864,9 @@ final class PlayerCore {
         idlePlayer.stop()
         idlePlayer.volume = 0
         activePlayer.volume = 1.0
-        streamingPlayer.volume = volume
+        activeStreamingPlayer.volume = volume
+        idleStreamingPlayer.pause()
+        idleStreamingPlayer.volume = 0
         incomingAudioFile = nil
         isTransitioning = false
         AutoMixDJEngine.shared.isTransitionActive = false

@@ -85,10 +85,10 @@ struct TrackCueProfile: Sendable, Codable {
     static func computeProfile(for track: Track, duration: Double) -> TrackCueProfile {
         let totalDur = max(duration, track.duration)
         let outroDur: Double
-        if totalDur > 180 { outroDur = 5.5 }
-        else if totalDur > 100 { outroDur = 4.0 }
-        else if totalDur > 45 { outroDur = 2.8 }
-        else { outroDur = 1.2 }
+        if totalDur > 120 { outroDur = 6.0 }
+        else if totalDur > 60 { outroDur = 4.5 }
+        else if totalDur > 30 { outroDur = 3.0 }
+        else { outroDur = 1.5 }
 
         let style: DJTransitionStyle
         let titleLower = (track.title + " " + track.artist).lowercased()
@@ -140,7 +140,7 @@ final class AutoMixDJEngine {
     var trimSilenceEnabled: Bool = true {
         didSet { UserDefaults.standard.set(trimSilenceEnabled, forKey: "automix.trimSilence") }
     }
-    var maxTransitionDuration: Double = 5.5 {
+    var maxTransitionDuration: Double = 6.0 {
         didSet { UserDefaults.standard.set(maxTransitionDuration, forKey: "automix.maxDuration") }
     }
 
@@ -173,7 +173,7 @@ final class AutoMixDJEngine {
         }
         if mode == .crossfade {
             let dur = UserDefaults.standard.double(forKey: "player.crossfadeDuration")
-            let effectiveDur = dur > 0 ? dur : 3.0
+            let effectiveDur = dur > 0 ? dur : 4.0
             let cue = max(0, outgoingDuration - effectiveDur)
             return (cue, effectiveDur, .smoothDissolve)
         }
@@ -192,8 +192,9 @@ final class AutoMixDJEngine {
     ) -> (outgoingVol: Float, incomingVol: Float, outgoingBassCutDB: Float, incomingBassGainDB: Float) {
         let p = max(0.0, min(1.0, progress))
 
+        // Equal-Power Transition with early incoming sound presence
         let outVol = Float(cos(p * .pi / 2))
-        let inVol = Float(sin(p * .pi / 2))
+        let inVol = Float(pow(sin(p * .pi / 2), 0.75))
 
         var outBassCut: Float = 0
         var inBassGain: Float = 0
@@ -201,8 +202,8 @@ final class AutoMixDJEngine {
         switch style {
         case .bassSwap, .adaptiveAI:
             if bassSwapEnabled {
-                if p > 0.20 {
-                    let bassP = (p - 0.20) / 0.80
+                if p > 0.15 {
+                    let bassP = (p - 0.15) / 0.85
                     outBassCut = Float(bassP) * -22.0
                 }
                 inBassGain = 0
