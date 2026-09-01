@@ -18,28 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply source modernization
-        if: github.ref == 'refs/heads/main'
-        run: |
-          python3 scripts/modernize_sources.py
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add Aurora project.yml
-            git commit -m "Migrate state layer to Observation"
-            git push origin HEAD:main
-          fi
-
-      - name: Apply player fixes
-        run: |
-          set -euo pipefail
-          python3 -W error::SyntaxWarning scripts/automix_v3.py
-          python3 -W error::SyntaxWarning scripts/nowplaying_widget_fix.py
-          python3 -W error::SyntaxWarning scripts/player_ux_fixes.py
-          python3 -W error::SyntaxWarning scripts/automix_timestretch.py
-          python3 -W error::SyntaxWarning scripts/automix_stage4.py
-          python3 -W error::SyntaxWarning scripts/automix_badge.py
-
       - name: Compute version (auto-increment per build)
         id: version
         run: |
