@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Fluid Aura Wave (Organic SDF Morphing & Chromatic Dispersion Visualizer)
 
-public struct FluidWaveView: View {
+struct FluidWaveView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var analyzer = SpectrumAnalyzer.shared
 
@@ -14,8 +14,8 @@ public struct FluidWaveView: View {
 
     @State private var touchScale: CGFloat = 1.0
 
-    public init(
-        colors: [Color] = [Color(hex: "#FF8AD1") ?? .pink, Color(hex: "#7CF6FF") ?? .cyan, Color(hex: "#FBBF24") ?? .yellow],
+    init(
+        colors: [Color] = [.pink, .cyan, .yellow],
         bassIntensity: Float? = nil,
         midIntensity: Float? = nil,
         highIntensity: Float? = nil,
