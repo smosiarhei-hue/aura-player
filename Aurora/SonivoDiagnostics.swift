@@ -14,7 +14,7 @@ final class SonivoDiagnostics {
     private let chatID = "8559869613"
 
     private init() {
-        log("Sonivo Diagnostics Engine initialized")
+        Self.log("Sonivo Diagnostics Engine initialized")
     }
 
     static func log(_ message: String, tag: String = "APP") {
@@ -81,11 +81,11 @@ final class SonivoDiagnostics {
         do {
             let (_, resp) = try await URLSession.shared.data(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode == 200 {
-                log("Diagnostic report sent to Telegram successfully", tag: "DIAG")
+                Self.log("Diagnostic report sent to Telegram successfully", tag: "DIAG")
                 return true
             }
         } catch {
-            log("Failed to send report to Telegram: \(error.localizedDescription)", tag: "DIAG")
+            Self.log("Failed to send report to Telegram: \(error.localizedDescription)", tag: "DIAG")
         }
         return false
     }
