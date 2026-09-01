@@ -897,6 +897,25 @@ final class PlayerCore {
         applyEQ()
     }
 
+    // MARK: - AutoMix Playback Rate & Anchor Helpers
+
+    func setOutgoingPlaybackRate(_ rate: Float) {
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.rate = rate
+        }
+    }
+
+    func resetPlaybackRates() {
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.rate = isPlaying ? 1.0 : 0.0
+            idleStreamingPlayer.rate = 0.0
+        }
+    }
+
+    func nudgePlaybackAnchor(by drift: TimeInterval) {
+        anchorOffset += drift
+    }
+
     // MARK: - Finish & Queue
 
     private func handleTrackFinish() {
