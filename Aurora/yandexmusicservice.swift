@@ -866,6 +866,39 @@ final class YandexMusicService {
         )
     }
 
+    // MARK: - Video Shots (Canvas)
+
+    private var videoShotCache: [String: URL] = [:]
+
+    /// Получение видеошота (Canvas Video) для трека из Yandex Music API
+    func getVideoShotUrl(for trackId: String) async -> URL? {
+        if let cached = videoShotCache[trackId] { return cached }
+        let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+        guard !cleanId.isEmpty, let url = URL(string: Self.apiBase + "/tracks/" + cleanId + "/supplement") else { return nil }
+        guard let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return nil }
+
+        struct SupplementResponse: Decodable {
+            struct Result: Decodable {
+                let videoShotUrl: String?
+                let shotUrl: String?
+                struct VideoItem: Decodable {
+                    let url: String?
+                }
+                let videos: [VideoItem]?
+                let videoUrl: String?
+            }
+            let result: Result?
+        }
+
+        guard let res = try? JSONDecoder().decode(SupplementResponse.self, from: data).result else { return nil }
+        let rawUrl = res.videoShotUrl ?? res.shotUrl ?? res.videoUrl ?? res.videos?.first?.url
+        guard let rawUrl, let shotURL = URL(string: rawUrl) else { return nil }
+
+        videoShotCache[trackId] = shotURL
+        videoShotCache[cleanId] = shotURL
+        return shotURL
+    }
+
     // MARK: - Helpers
 
     static func playable(_ items: [YMTrackItem]) -> [YMTrackItem] {

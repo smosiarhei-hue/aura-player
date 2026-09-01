@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import AVKit
 
 // MARK: - Sonivo Native Full Player (Apple Music iOS Standard & Video-Shot Live Canvas)
 
@@ -27,6 +28,10 @@ struct PlayerScreenV2: View {
     @State private var showSleepTimer = false
     @State private var showSettings = false
     @State private var dj = AutoMixDJEngine.shared
+
+    // Video Shot state
+    @State private var videoShotUrl: URL? = nil
+    @State private var videoShotLoading = false
 
     // Track Wave state
     @State private var waveLoading = false
@@ -140,19 +145,19 @@ struct PlayerScreenV2: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 15)
+                    DragGesture(minimumDistance: 8)
                         .onChanged { val in
                             guard !isScrubbing else { return }
-                            if val.translation.height > 0 && abs(val.translation.height) > abs(val.translation.width) * 1.15 {
-                                dragY = val.translation.height * 0.80
+                            if val.translation.height > 0 {
+                                dragY = val.translation.height
                             }
                         }
                         .onEnded { val in
                             guard !isScrubbing else { return }
-                            if val.translation.height > 75 || val.predictedEndTranslation.height > 150 {
+                            if val.translation.height > 110 || val.predictedEndTranslation.height > 220 {
                                 close()
                             } else {
-                                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                                     dragY = 0
                                 }
                             }
@@ -160,8 +165,8 @@ struct PlayerScreenV2: View {
                 )
             }
             .offset(y: max(0, dragY))
-            .scaleEffect(1 - min(max(dragY, 0) / 1800, 0.035), anchor: .bottom)
-            .opacity(1 - min(max(dragY, 0) / 650, 0.25))
+            .scaleEffect(1 - min(max(dragY, 0) / (geo.size.height * 2.2), 0.10), anchor: .bottom)
+            .clipShape(RoundedRectangle(cornerRadius: dragY > 0 ? min(38, 20 + dragY / 14) : 0, style: .continuous))
         }
         .ignoresSafeArea()
         .statusBarHidden()
@@ -195,6 +200,7 @@ struct PlayerScreenV2: View {
         }
         .task(id: track?.id) {
             await loadLyrics()
+            await loadVideoShot()
         }
     }
 
@@ -269,16 +275,22 @@ struct PlayerScreenV2: View {
 
             // Video-Shot Live Canvas Toggle
             Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                     isVideoShotMode.toggle()
                     UserDefaults.standard.set(isVideoShotMode, forKey: "player.videoshot")
                 }
             } label: {
-                Image(systemName: isVideoShotMode ? "rectangle.inset.filled.and.person.filled" : "play.rectangle")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(isVideoShotMode ? AG.amber : .white.opacity(0.70))
-                    .frame(width: 36, height: 36)
-                    .contentShape(Circle())
+                HStack(spacing: 5) {
+                    Image(systemName: (isVideoShotMode && videoShotUrl != nil) ? "video.fill" : (isVideoShotMode ? "video" : "video.slash"))
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(isVideoShotMode ? "Видеошот" : "Обложка")
+                        .font(AG.text(11, .semibold))
+                }
+                .foregroundStyle((isVideoShotMode && videoShotUrl != nil) ? AG.amber : .white.opacity(0.70))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.8)))
             }
             .buttonStyle(GlassPressStyle())
         }
@@ -360,7 +372,10 @@ struct PlayerScreenV2: View {
     }
 
     @ViewBuilder private var artwork: some View {
-        if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
+        if isVideoShotMode, let videoShotUrl {
+            VideoShotPlayerView(url: videoShotUrl)
+                .transition(.opacity)
+        } else if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
             Image(uiImage: image).resizable().scaledToFill()
         } else if let cover = track?.coverURL, let url = URL(string: cover) {
             AsyncImage(url: url) { phase in
@@ -381,6 +396,20 @@ struct PlayerScreenV2: View {
             Image(systemName: "music.note")
                 .font(.system(size: 70, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
+        }
+    }
+
+    private func loadVideoShot() async {
+        videoShotUrl = nil
+        guard let track else { return }
+        let ymId = YandexMusicService.ymId(fromFileName: track.fileName) ?? (track.isStream ? track.streamUrlString : nil) ?? ""
+        if !ymId.isEmpty {
+            videoShotLoading = true
+            let url = await YandexMusicService.shared.getVideoShotUrl(for: ymId)
+            if player.currentTrack?.id == track.id {
+                videoShotUrl = url
+            }
+            videoShotLoading = false
         }
     }
 
@@ -770,20 +799,70 @@ struct PlayerScreenV2: View {
     }
 
     private var closeGesture: some Gesture {
-        DragGesture(minimumDistance: 10)
+        DragGesture(minimumDistance: 8)
             .onChanged { value in
                 guard value.translation.height > 0 else { return }
-                dragY = min(value.translation.height * 0.75, 180)
+                dragY = value.translation.height
             }
             .onEnded { value in
-                if value.translation.height > 65 || value.predictedEndTranslation.height > 120 {
+                if value.translation.height > 110 || value.predictedEndTranslation.height > 220 {
                     close()
                 } else {
-                    withAnimation(AG.fastSpring) {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                         dragY = 0
                     }
                 }
             }
+    }
+}
+
+// MARK: - VideoShot Player View (Native Looping Canvas)
+
+struct VideoShotPlayerView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let player = AVQueuePlayer(url: url)
+        player.isMuted = true
+        player.automaticallyWaitsToMinimizeStalling = false
+        player.actionAtItemEnd = .none
+        let looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+        context.coordinator.looper = looper
+        context.coordinator.player = player
+        context.coordinator.url = url
+
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = false
+        controller.videoGravity = .resizeAspectFill
+        controller.view.backgroundColor = .clear
+        player.play()
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
+        if context.coordinator.url != url {
+            context.coordinator.url = url
+            let player = AVQueuePlayer(url: url)
+            player.isMuted = true
+            player.automaticallyWaitsToMinimizeStalling = false
+            player.actionAtItemEnd = .none
+            let looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+            context.coordinator.looper = looper
+            context.coordinator.player = player
+            uiViewController.player = player
+            player.play()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator {
+        var looper: AVPlayerLooper?
+        var player: AVQueuePlayer?
+        var url: URL?
     }
 }
 
