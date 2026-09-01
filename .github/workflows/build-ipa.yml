@@ -29,6 +29,13 @@ jobs:
             git push origin HEAD:main
           fi
 
+      - name: Apply player fixes
+        run: |
+          set -euo pipefail
+          python3 -W error::SyntaxWarning scripts/automix_v3.py
+          python3 -W error::SyntaxWarning scripts/nowplaying_widget_fix.py
+          python3 -W error::SyntaxWarning scripts/player_ux_fixes.py
+
       - name: Compute version (auto-increment per build)
         id: version
         run: |
