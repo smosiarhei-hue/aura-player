@@ -255,8 +255,8 @@ final class PlayerCore {
         // untouched while a transition smears the outgoing track.
         reverbA.wetDryMix = 0
         reverbB.wetDryMix = 0
-        reverbA.loadFactoryPreset(.mediumPlate)
-        reverbB.loadFactoryPreset(.mediumPlate)
+        reverbA.loadFactoryPreset(.largePlate)
+        reverbB.loadFactoryPreset(.largePlate)
 
         engine.connect(playerA, to: timePitchA, format: nil)
         engine.connect(playerB, to: timePitchB, format: nil)
