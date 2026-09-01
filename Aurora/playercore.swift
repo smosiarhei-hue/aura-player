@@ -793,7 +793,7 @@ final class PlayerCore {
 
         // 2. Optional AI refinement — requested early, applied only if it returns before the cue.
         if transitionMode == .automix, remaining <= 55 {
-            requestAIRefinement(current: current, currentDuration: totalDur, next: nextTrack, position: currentPos)
+            requestAIRefinement(current: current, next: nextTrack, position: currentPos)
         }
 
         // 3. Pre-buffer the incoming stream well ahead of the cue.
@@ -864,8 +864,8 @@ final class PlayerCore {
 
     /// The mix must land on a downbeat, otherwise it never feels in time.
     private func snappedToDownbeat(_ plan: TransitionPlan, analysis: TrackAnalysis) -> TransitionPlan {
-        guard let downbeat = analysis.nearestDownbeat(to: plan.cueTime, tolerance: 4.0),
-              analysis.hasSteadyBeat else { return plan }
+        guard analysis.hasSteadyBeat,
+              let downbeat = analysis.nearestDownbeat(to: plan.cueTime, tolerance: 4.0) else { return plan }
         return TransitionPlan(
             decision: plan.decision,
             sourceTrack: TransitionSourceTrackInfo(transitionStart: downbeat, transitionEnd: plan.sourceTrack.transitionEnd),
@@ -876,7 +876,7 @@ final class PlayerCore {
         )
     }
 
-    private func requestAIRefinement(current: Track, currentDuration: Double, next: Track, position: Double) {
+    private func requestAIRefinement(current: Track, next: Track, position: Double) {
         guard let source = analysisCache[current.id], let target = analysisCache[next.id] else { return }
         let key = current.id.uuidString + "->" + next.id.uuidString
         guard !aiRefinementRequested.contains(key) else { return }
@@ -1073,7 +1073,7 @@ final class PlayerCore {
                 inReverb: 0
             )
 
-        case .VOCAL_CUT, .VOCAL_CUT_SAFE:
+        case .VOCAL_CUT:
             return TransitionFX(
                 outVolume: outVol,
                 inVolume: inVol,
@@ -1112,14 +1112,17 @@ final class PlayerCore {
         }
     }
 
+    private func baseBandGain(_ index: Int) -> Float {
+        eqEnabled ? eqGains[index] : 0
+    }
+
     private func applyBandOffsets(_ eq: AVAudioUnitEQ, bassDB: Float, highDB: Float) {
-        let base: (Int) -> Float = { [eqEnabled, eqGains] index in eqEnabled ? eqGains[index] : 0 }
-        eq.bands[0].gain = base(0) + bassDB
-        eq.bands[1].gain = base(1) + bassDB * 0.85
-        eq.bands[2].gain = base(2) + bassDB * 0.55
-        eq.bands[7].gain = base(7) + highDB * 0.45
-        eq.bands[8].gain = base(8) + highDB * 0.80
-        eq.bands[9].gain = base(9) + highDB
+        eq.bands[0].gain = baseBandGain(0) + bassDB
+        eq.bands[1].gain = baseBandGain(1) + bassDB * 0.85
+        eq.bands[2].gain = baseBandGain(2) + bassDB * 0.55
+        eq.bands[7].gain = baseBandGain(7) + highDB * 0.45
+        eq.bands[8].gain = baseBandGain(8) + highDB * 0.80
+        eq.bands[9].gain = baseBandGain(9) + highDB
     }
 
     private func tickTransition() {
@@ -1165,9 +1168,8 @@ final class PlayerCore {
         transitionTimer = nil
         transitionStartTime = nil
 
-        let plan = activeTransitionPlan
         let blend = transitionDuration
-        let startPosition = plan?.targetTrack.startPosition ?? 0
+        let startPosition = activeTransitionPlan?.targetTrack.startPosition ?? 0
         let promoted = max(0, startPosition + blend * Double(incomingTempoRate))
 
         activeTransitionPlan = nil
@@ -1184,7 +1186,6 @@ final class PlayerCore {
             progress = promoted
         } else {
             let oldActive = activePlayer
-            let oldEQ = activeEQ
             let oldReverb = activeReverb
             let oldTimePitch = activeTimePitch
             oldActive.stop()
@@ -1198,7 +1199,6 @@ final class PlayerCore {
             incomingAudioFile = nil
             activePlayer.volume = volume
             activeReverb.wetDryMix = 0
-            _ = oldEQ
             applyEQ()
 
             anchorDate = Date()
