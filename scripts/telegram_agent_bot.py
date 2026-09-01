@@ -27,6 +27,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import subprocess
+import shutil
 from pathlib import Path
 
 # --- КОНФИГУРАЦИЯ И ПУТИ ---
@@ -490,6 +491,17 @@ TOOL_DECLARATIONS = [
             },
             "required": ["prompt"]
         }
+    },
+    {
+        "name": "antigravity_cli",
+        "description": "Выполнить команду через официальный Google Antigravity CLI (agy) для автономного программирования, анализа или управления плагинами.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "command": {"type": "STRING", "description": "Аргументы команды agy (например: 'models', 'agents', 'plugin list', '--version')"},
+                "prompt": {"type": "STRING", "description": "Промпт для автономного выполнения агентом agy --print"}
+            }
+        }
     }
 ]
 
@@ -904,6 +916,29 @@ def tool_generate_ai_image(prompt, aspect_ratio="1:1", file_name=None):
     tg_send_photo(gen_url, caption=f"🎨 *Сгенерировано изображение (FLUX AI):*\n_{prompt}_")
     return {"success": True, "prompt": prompt, "url": gen_url, "model": "FLUX"}
 
+def tool_antigravity_cli(command="", prompt=""):
+    try:
+        agy_bin = shutil.which("agy") or shutil.which("agy.exe") or "agy"
+        if prompt:
+            cmd = [agy_bin, "--print", prompt, "--dangerously-skip-permissions"]
+        elif command:
+            cmd = [agy_bin] + command.split()
+        else:
+            cmd = [agy_bin, "--version"]
+            
+        use_shell = os.name == "nt"
+        res = subprocess.run(cmd, cwd=REPO_DIR, capture_output=True, text=True, timeout=60, shell=use_shell)
+        out = res.stdout.strip() or res.stderr.strip()
+        return {
+            "success": res.returncode == 0,
+            "output": out or "Команда agy выполнена успешно.",
+            "returncode": res.returncode
+        }
+    except FileNotFoundError:
+        return {"success": False, "error": "Antigravity CLI (agy) не найден в PATH сервера."}
+    except Exception as ex:
+        return {"success": False, "error": str(ex)}
+
 TOOL_MAP = {
     "list_directory": tool_list_directory,
     "read_file": tool_read_file,
@@ -921,7 +956,8 @@ TOOL_MAP = {
     "hf_get_file": tool_hf_get_file,
     "hf_update_file": tool_hf_update_file,
     "hf_get_logs": tool_hf_get_logs,
-    "generate_ai_image": tool_generate_ai_image
+    "generate_ai_image": tool_generate_ai_image,
+    "antigravity_cli": tool_antigravity_cli
 }
 
 # --- TELEGRAM API HELPER ---
@@ -980,12 +1016,37 @@ def get_main_keyboard():
         "keyboard": [
             [{"text": "🚀 Собрать IPA"}, {"text": "📊 Статус & Билды"}],
             [{"text": mode_btn}, {"text": "🤗 Hugging Face"}],
-            [{"text": "🔑 Ключи & Квоты"}, {"text": "📦 Мои Скиллы"}],
-            [{"text": "🧠 Сменить модель"}, {"text": "📋 Логи ошибок"}]
+            [{"text": "🌌 Antigravity CLI"}, {"text": "🔑 Ключи & Квоты"}],
+            [{"text": "🧠 Сменить модель"}, {"text": "📦 Мои Скиллы"}]
         ],
         "resize_keyboard": True,
         "persistent": True
     }
+
+def show_antigravity_menu(chat_id, reply_to=None):
+    version_res = tool_antigravity_cli("--version")
+    ver_str = version_res.get("output", "1.1.13")
+    
+    text = (
+        "🌌 *Google Antigravity CLI (agy) & Agent Suite*\n\n"
+        f"• **Версия CLI**: `{ver_str}`\n"
+        "• **Режим**: Автономный Agentic AI Developer\n"
+        "• **Возможности**: Запуск субагентов, планирование, выполнение терминальных задач, аудит кода и управление плагинами.\n\n"
+        "Быстрые команды:\n"
+        "• `/agy models` — список доступных моделей в Antigravity\n"
+        "• `/agy agents` — список субагентов\n"
+        "• `/agy plugin list` — установленные расширения\n"
+        "• `/agy --print \"<промпт>\"` — запуск автономного решения задачи\n\n"
+        "Или нажмите кнопку ниже:"
+    )
+    inline_kb = {
+        "inline_keyboard": [
+            [{"text": "🧠 Модели Antigravity", "callback_data": "agy_models"}, {"text": "🤖 Агенты Antigravity", "callback_data": "agy_agents"}],
+            [{"text": "🔌 Плагины Antigravity", "callback_data": "agy_plugins"}, {"text": "ℹ️ Версия agy", "callback_data": "agy_version"}],
+            [{"text": "🌌 Сделать Antigravity активной моделью", "callback_data": "model_antigravity"}]
+        ]
+    }
+    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
 
 def show_hf_menu(chat_id, reply_to=None):
     token, space = get_hf_config()
@@ -1273,7 +1334,7 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
         
         if provider == "gemini":
             # Полная цепочка каскада по квотам (от топ-логики до безлимитных 14.4k RPD)
-            models_to_try = [
+            gemini_cascade = [
                 target_model,
                 "gemini-3.7-flash",
                 "gemini-3.6-flash",
@@ -1282,14 +1343,19 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
                 "gemini-3.1-flash-lite",
                 "gemma-4-31b",
                 "gemma-4-26b",
-                "gemini-3.1-pro-preview",
-                "gemini-3-flash",
                 "gemini-2.5-flash",
                 "gemini-2.5-flash-lite",
-                "gemini-2.5-pro",
                 "gemini-2.0-flash",
-                "gemini-2.0-flash-lite"
+                "gemini-3.1-pro-preview",
+                "gemini-2.5-pro"
             ]
+            seen_m = set()
+            models_to_try = []
+            for m in gemini_cascade:
+                if m and m not in seen_m:
+                    seen_m.add(m)
+                    models_to_try.append(m)
+
             for m in models_to_try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
                 gen_cfg = {"temperature": 0.2}
@@ -1320,22 +1386,16 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
                         return data
                 except urllib.error.HTTPError as e:
                     err_body = e.read().decode()
-                    print(f"[Gemini HTTP {e.code} on {m} / {key_name}]: {err_body}")
-                    if e.code in [429, 403]:
-                        next_name = record_key_exhausted(key_id, cooldown_seconds=90)
-                        if chat_id:
-                            msg = f"⚠️ *Квота на ключе '{key_name}' исчерпана!*"
-                            if next_name:
-                                msg += f"\n🔄 Автоматически переключаюсь на *'{next_name}'*..."
-                            tg_send(msg, chat_id=chat_id)
-                        break
-                    elif e.code in [404, 400]:
-                        continue
-                    else:
-                        return {"error": f"HTTP {e.code}: {err_body}"}
+                    print(f"[Gemini HTTP {e.code} on model '{m}' / key '{key_name}']: {err_body}")
+                    # В Gemini квоты РАЗДЕЛЬНЫЕ для каждой модели! При 429 продолжаем пробовать следующую модель с более высокой квотой (Lite / Gemma)
+                    continue
                 except Exception as e:
-                    print(f"[Gemini Error on {m} / {key_name}]: {e}")
-                    return {"error": str(e)}
+                    print(f"[Gemini Connection Error on '{m}' / '{key_name}']: {e}")
+                    continue
+
+            # Если ВСЕ модели на этом ключе исчерпаны:
+            record_key_exhausted(key_id, cooldown_seconds=60)
+            continue
         else:
             # OpenAI-compatible API (DeepSeek, OpenRouter, Groq, Custom API, deeperseeker)
             try:
@@ -1347,21 +1407,34 @@ def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=Fals
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode()
                 print(f"[{provider.capitalize()} HTTP {e.code} / {key_name}]: {err_body}")
-                if e.code in [429, 403]:
-                    next_name = record_key_exhausted(key_id, cooldown_seconds=90)
-                    if chat_id:
-                        msg = f"⚠️ *Квота на провайдере '{key_name}' исчерпана!*"
-                        if next_name:
-                            msg += f"\n🔄 Переключаюсь на *'{next_name}'*..."
-                        tg_send(msg, chat_id=chat_id)
-                    continue
-                else:
-                    return {"error": f"HTTP {e.code}: {err_body}"}
+                record_key_exhausted(key_id, cooldown_seconds=60)
+                continue
             except Exception as e:
                 print(f"[{provider.capitalize()} Error / {key_name}]: {e}")
-                return {"error": str(e)}
+                continue
                 
-    return {"error": "Все доступные ключи API исчерпали свои квоты. Добавьте ещё один ключ через '🔑 Ключи & Квоты'."}
+    # Аварийный прогон: пробуем сверхлимитные Gemma 4 / Flash Lite игнорируя кулдауны
+    for k in keys:
+        if k.get("provider") == "gemini":
+            k_val = k.get("key")
+            for em_m in ["gemma-4-31b", "gemma-4-26b", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"]:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{em_m}:generateContent?key={k_val}"
+                    payload = {
+                        "contents": contents,
+                        "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        "tools": [{"functionDeclarations": TOOL_DECLARATIONS}],
+                        "generationConfig": {"temperature": 0.2}
+                    }
+                    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(req, timeout=90) as resp:
+                        data = json.loads(resp.read().decode())
+                        data["_provider_name"] = f"Gemini High-Quota ({em_m})"
+                        return data
+                except Exception:
+                    continue
+
+    return {"error": "Все доступные модели и ключи API исчерпали свои квоты. Добавьте ещё один ключ через '🔑 Ключи & Квоты'."}
 
 def execute_agent_loop(user_input, status_msg_id, chat_id):
     has_media = False
@@ -2007,6 +2080,20 @@ def start_bot():
                     elif cq_data == "btn_add_skill":
                         user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_SKILL"
                         tg_send("📥 *Отправьте файл скилла или инструкций (`.md`, `.txt`, `.json`):*\nБот сохранит его в постоянные навыки `agent_skills/`.", reply_markup=get_main_keyboard())
+                    elif cq_data == "agy_models":
+                        tg_send("⏳ *Запрашиваю модели из Google Antigravity CLI...*")
+                        res = tool_antigravity_cli("models")
+                        tg_send(f"🧠 *Модели Google Antigravity:*\n```text\n{res.get('output')}\n```")
+                    elif cq_data == "agy_agents":
+                        tg_send("⏳ *Запрашиваю список субагентов Antigravity...*")
+                        res = tool_antigravity_cli("agents")
+                        tg_send(f"🤖 *Субагенты Antigravity:*\n```text\n{res.get('output')}\n```")
+                    elif cq_data == "agy_plugins":
+                        res = tool_antigravity_cli("plugin list")
+                        tg_send(f"🔌 *Плагины Antigravity:*\n```text\n{res.get('output')}\n```")
+                    elif cq_data == "agy_version":
+                        res = tool_antigravity_cli("--version")
+                        tg_send(f"ℹ️ *Версия Antigravity CLI:* `{res.get('output')}`")
                     elif cq_data.startswith("model_"):
                         new_model = cq_data.replace("model_", "")
                         config = load_config()
@@ -2014,6 +2101,8 @@ def start_bot():
                         save_config(config)
                         if new_model == "auto":
                             tg_send("🤖 *Включен умный Авто-выбор моделей!*\n\nБот сам анализирует ваши задачи и автоматически выбирает самую мощную модель для рассуждений (DeepSeek R1, Claude 3.5, Gemini 3.7) из подключенных.")
+                        elif new_model == "antigravity":
+                            tg_send("🌌 *Активирован движок Google Antigravity Agent!*\nТеперь бот решает задачи с планированием и возможностями Antigravity CLI.")
                         else:
                             tg_send(f"✅ Активная модель переключена на: *{new_model}*")
                         show_model_menu(ALLOWED_CHAT_ID)
@@ -2409,6 +2498,23 @@ def start_bot():
                     continue
                 elif text in ["/model", "🧠 Сменить модель"]:
                     show_model_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text in ["/antigravity", "/agy", "🌌 Antigravity CLI"]:
+                    show_antigravity_menu(ALLOWED_CHAT_ID, reply_to=msg_id)
+                    continue
+                elif text.startswith("/agy "):
+                    cmd_args = text[5:].strip()
+                    tg_send(f"⏳ *Выполняю:* `agy {cmd_args}`...", reply_to=msg_id)
+                    if cmd_args.startswith("--print") or cmd_args.startswith("-p"):
+                        # Prompt execution via agy print mode
+                        prompt_text = cmd_args.replace("--print", "").replace("-p", "").strip().strip('"').strip("'")
+                        res = tool_antigravity_cli(prompt=prompt_text)
+                    else:
+                        res = tool_antigravity_cli(command=cmd_args)
+                    out_text = res.get("output", "")
+                    if len(out_text) > 3800:
+                        out_text = out_text[:3800] + "\n... (вывод обрезан)"
+                    tg_send(f"🌌 *Результат Antigravity CLI:*\n```text\n{out_text}\n```", reply_to=msg_id)
                     continue
                 elif text.startswith("/set_gh_token"):
                     parts = text.split(maxsplit=1)
