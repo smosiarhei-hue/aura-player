@@ -6,30 +6,51 @@ import Observation
 
 // MARK: - Audio Quality Selection
 
-enum AudioQuality: Int, CaseIterable, Identifiable {
-    case auto = 0, excellent = 1, optimal = 2, economical = 3
+enum AudioQuality: Int, CaseIterable, Identifiable, Sendable {
+    case hiResLossless = 0
+    case lossless = 1
+    case hq = 2
+    case auto = 3
+    case economical = 4
+
     var id: Int { rawValue }
+
     var label: String {
         switch self {
-        case .auto: return "Автоматическое"
-        case .excellent: return "Превосходное"
-        case .optimal: return "Оптимальное"
-        case .economical: return "Экономичное"
+        case .hiResLossless: return "Hi-Res Lossless (FLAC 24-bit)"
+        case .lossless: return "Lossless (FLAC 16-bit / 44.1 kHz)"
+        case .hq: return "Высокое качество (AAC / MP3 320 kbps)"
+        case .auto: return "Автоматически (По скорости сети)"
+        case .economical: return "Экономия трафика (64-128 kbps)"
         }
     }
+
+    var badgeText: String {
+        switch self {
+        case .hiResLossless: return "Hi-Res Lossless"
+        case .lossless: return "Lossless"
+        case .hq: return "HQ"
+        case .auto: return "Lossless"
+        case .economical: return "AAC"
+        }
+    }
+
     var detail: String {
         switch self {
-        case .auto: return "Звук автоматически подстраивается под текущее качество вашей сети"
-        case .excellent: return "Музыка в lossless и других высококачественных форматах — для безлимитного интернета и хорошей акустики"
-        case .optimal: return "Сбалансированный звук для большинства устройств, со средним расходом трафика"
-        case .economical: return "Для медленного интернета, с минимальным расходом трафика"
+        case .hiResLossless: return "Студийное качество без потерь (FLAC 24-бит) для аудиофилов и внешних ЦАП"
+        case .lossless: return "Качество компакт-диска (CD) без сжатия до 1411 кбит/с (FLAC 16-бит / 44.1 кГц)"
+        case .hq: return "Кристально чистый звук в максимальном битрейте 320 кбит/с"
+        case .auto: return "Автоматический выбор наилучшего доступного качества под скорость сети"
+        case .economical: return "Минимальный расход мобильного интернета (64-128 кбит/с)"
         }
     }
+
     var targetBitrate: Int? {
         switch self {
+        case .hiResLossless: return 1411
+        case .lossless: return 900
+        case .hq: return 320
         case .auto: return nil
-        case .excellent: return 320
-        case .optimal: return 192
         case .economical: return 64
         }
     }
@@ -491,7 +512,7 @@ final class PlayerCore {
 
         if isUsingStreamPlayer {
             let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
-            streamingPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            activeStreamingPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
         } else {
             pausedProgress = clamped
             anchorOffset = clamped
@@ -522,24 +543,25 @@ final class PlayerCore {
         updateNowPlayingInfo()
     }
 
-    // MARK: - Start Playback (Local Engine or Instant Progressive Streaming)
+    // MARK: - Internal Playback Helpers
 
     private func start(at seconds: Double) {
         guard let track = currentTrack else { return }
+        playError = nil
         generation += 1
         let token = generation
 
-        cancelTransition()
-
-        // 1. Instant Progressive Online Stream (AVPlayer progressive playback in ~150ms)
-        if track.isStream {
+        if track.isStream || track.streamUrlString != nil {
             startStream(track, at: seconds, token: token)
-            return
+        } else {
+            startLocal(track, at: seconds, token: token)
         }
+    }
 
-        // 2. Local File Playback with Segment Scheduling for Accurate Offset Seeking
+    private func startLocal(_ track: Track, at seconds: Double, token: Int) {
         isUsingStreamPlayer = false
-        streamingPlayer.pause()
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
         playerA.stop()
         playerB.stop()
         playerA.volume = 1.0
@@ -604,7 +626,7 @@ final class PlayerCore {
         let ymID = Self.yandexTrackID(from: track)
         Task {
             do {
-                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: audioQuality.targetBitrate)
+                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
@@ -640,7 +662,7 @@ final class PlayerCore {
         let token = generation
         Task {
             do {
-                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: audioQuality.targetBitrate)
+                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
@@ -652,11 +674,12 @@ final class PlayerCore {
     private func beginStream(_ url: URL, at seconds: Double) {
         let item = AVPlayerItem(url: url)
         StreamBeatTap.shared.attach(to: item)
-        streamingPlayer.replaceCurrentItem(with: item)
+        activeStreamingPlayer.replaceCurrentItem(with: item)
+        activeStreamingPlayer.volume = volume
         if seconds > 0 {
-            streamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            activeStreamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
         }
-        streamingPlayer.play()
+        activeStreamingPlayer.play()
         self.isPlaying = true
         self.progress = seconds
         self.transitionScheduled = false
@@ -687,7 +710,7 @@ final class PlayerCore {
                 let ymID = Self.yandexTrackID(from: nextTrack)
                 Task {
                     do {
-                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: self.audioQuality.targetBitrate)
+                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                         let nextItem = AVPlayerItem(url: info.url)
                         StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
@@ -718,12 +741,12 @@ final class PlayerCore {
                 let ymID = Self.yandexTrackID(from: nextTrack)
                 Task {
                     do {
-                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredBitrate: self.audioQuality.targetBitrate)
+                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                         let nextItem = AVPlayerItem(url: info.url)
                         StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                         self.idleStreamingPlayer.volume = 0
-                        self.idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                        self.idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
                         self.idleStreamingPlayer.play()
                         self.transitionStartTime = Date()
                         self.startTransitionTimer()
@@ -735,7 +758,7 @@ final class PlayerCore {
                 }
             } else {
                 idleStreamingPlayer.volume = 0
-                idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
                 idleStreamingPlayer.play()
                 transitionStartTime = Date()
                 startTransitionTimer()

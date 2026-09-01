@@ -793,8 +793,9 @@ final class YandexMusicService {
         try await getStreamInfo(for: trackId).url
     }
 
-    func getStreamInfo(for trackId: String, preferredBitrate: Int? = nil) async throws -> StreamInfo {
-        let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + trackId + "/download-info")!
+    func getStreamInfo(for trackId: String, preferredQuality: AudioQuality = .auto, preferredBitrate: Int? = nil) async throws -> StreamInfo {
+        let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+        let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info")!
         let req = authorizedRequest(url: downloadInfoListURL)
         let (data, _) = try await URLSession.shared.data(for: req)
 
@@ -813,12 +814,30 @@ final class YandexMusicService {
             throw URLError(.cannotFindHost)
         }
 
-        let mp3 = list.filter { $0.codec.lowercased() == "mp3" }
         let best: DownloadInfoEntry
-        if let preferred = preferredBitrate {
-            best = mp3.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
-        } else {
-            best = mp3.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+        switch preferredQuality {
+        case .hiResLossless, .lossless:
+            let flacs = list.filter { $0.codec.lowercased() == "flac" }
+            if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
+                best = bestFlac
+            } else {
+                best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+            }
+        case .hq:
+            let hqs = list.filter { $0.bitrateInKbps >= 256 }
+            best = hqs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+        case .economical:
+            best = list.min(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+        case .auto:
+            if let preferred = preferredBitrate {
+                best = list.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
+            } else {
+                if let flac = list.first(where: { $0.codec.lowercased() == "flac" }) {
+                    best = flac
+                } else {
+                    best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+                }
+            }
         }
 
         guard let xmlURL = URL(string: best.downloadInfoUrl) else { throw URLError(.badURL) }
@@ -838,7 +857,8 @@ final class YandexMusicService {
         let signRaw = Self.secretSalt + pathWithoutLeadingSlash + s
         let sign = md5(signRaw)
 
-        let finalURLString = "https://" + host + "/get-mp3/" + sign + "/" + ts + path
+        let getEndpoint = best.codec.lowercased() == "flac" ? "get-flac" : "get-mp3"
+        let finalURLString = "https://" + host + "/" + getEndpoint + "/" + sign + "/" + ts + path
         guard let finalURL = URL(string: finalURLString) else { throw URLError(.badURL) }
         return StreamInfo(url: finalURL, bitrate: best.bitrateInKbps, codec: best.codec)
     }

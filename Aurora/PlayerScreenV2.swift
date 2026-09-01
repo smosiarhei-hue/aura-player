@@ -27,6 +27,7 @@ struct PlayerScreenV2: View {
     @State private var showEqualizer = false
     @State private var showSleepTimer = false
     @State private var showSettings = false
+    @State private var showQualitySheet = false
     @State private var dj = AutoMixDJEngine.shared
 
     // Video Shot state
@@ -169,9 +170,17 @@ struct PlayerScreenV2: View {
             .clipShape(RoundedRectangle(cornerRadius: dragY > 0 ? min(38, 20 + dragY / 14) : 0, style: .continuous))
         }
         .ignoresSafeArea()
-        .statusBarHidden()
-        .colorScheme(.dark)
+        .preferredColorScheme(.dark)
         .interactiveDismissDisabled(dismissing)
+        .confirmationDialog("Качество звука (Hi-Res Lossless)", isPresented: $showQualitySheet, titleVisibility: .visible) {
+            ForEach(AudioQuality.allCases) { q in
+                Button(q.label) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    player.selectQuality(q)
+                }
+            }
+            Button("Отмена", role: .cancel) {}
+        }
         .confirmationDialog("Выберите исполнителя", isPresented: $showArtistChoice, titleVisibility: .visible) {
             ForEach(artistChoices) { artist in
                 Button(artist.name) { selectedArtist = artist }
@@ -592,7 +601,7 @@ struct PlayerScreenV2: View {
             .frame(height: 18)
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
 
-            // Timings and Center Quality Badge (Lossless / Dolby Atmos)
+            // Timings and Center Quality Badge (Hi-Res Lossless / Lossless / HQ)
             HStack(alignment: .center) {
                 Text(player.formatted(effectiveProgress))
                     .font(AG.text(12, .medium).monospacedDigit())
@@ -600,17 +609,23 @@ struct PlayerScreenV2: View {
 
                 Spacer()
 
-                // Apple Music Quality Badge
-                HStack(spacing: 4) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 10, weight: .bold))
-                    Text((player.currentBitrate ?? 0) >= 320 ? "Hi-Res Lossless" : "Lossless")
-                        .font(AG.text(11, .semibold))
+                // Apple Music Interactive Quality Badge
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showQualitySheet = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(qualityBadgeLabel)
+                            .font(AG.text(11, .semibold))
+                    }
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8)))
                 }
-                .foregroundStyle(.white.opacity(0.70))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.white.opacity(0.10)))
+                .buttonStyle(GlassPressStyle())
 
                 Spacer()
 
@@ -619,6 +634,16 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(.white.opacity(0.55))
             }
         }
+    }
+
+    private var qualityBadgeLabel: String {
+        if let codec = player.currentCodec?.lowercased(), codec.contains("flac") {
+            return "Hi-Res Lossless"
+        }
+        if (player.currentBitrate ?? 0) >= 320 {
+            return "Lossless"
+        }
+        return player.audioQuality.badgeText
     }
 
     // MARK: Transport Controls (Large Apple Music Symbols)
