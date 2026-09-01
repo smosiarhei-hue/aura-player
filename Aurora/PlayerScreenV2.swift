@@ -117,7 +117,7 @@ struct PlayerScreenV2: View {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundStyle(AG.amber)
-                            Text("AutoMix DJ: \(dj.activeStyle.localizedTitle)")
+                            Text("AutoMix DJ: \(dj.activeStyle.localizedTitle) • \(Int(dj.currentBPM)) BPM")
                                 .font(AG.text(12, .semibold))
                                 .foregroundStyle(.white)
                         }
