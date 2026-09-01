@@ -1,3 +1,5 @@
+import Foundation
+
 nonisolated enum AutoMixMode: String, Sendable {
     case automix
     case crossfade

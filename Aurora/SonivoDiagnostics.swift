@@ -17,7 +17,7 @@ final class SonivoDiagnostics {
         Self.log("Sonivo Diagnostics Engine initialized")
     }
 
-    static func log(_ message: String, tag: String = "APP") {
+    nonisolated static func log(_ message: String, tag: String = "APP") {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timestamp = formatter.string(from: Date())

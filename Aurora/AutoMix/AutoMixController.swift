@@ -86,7 +86,7 @@ final class AutoMixController {
                 mode: target,
                 crossfadeDuration: crossfadeDuration,
                 maxDuration: 30,
-                sameGenre: nil
+                sameGenre: nil as Bool?
             ))
             self.plannedTrackID = incomingID
         }
