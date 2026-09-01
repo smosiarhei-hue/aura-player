@@ -66,7 +66,7 @@ struct SearchCatalogView: View {
                         }
                     }
                     .padding(.top, 6)
-                    .padding(.bottom, 18)
+                    .padding(.bottom, 84)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }

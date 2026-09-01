@@ -40,7 +40,7 @@ struct HomeView: View {
                         albumsSection.riseIn(delay: 0.20)
                     }
                     .padding(.top, 4)
-                    .padding(.bottom, 18)
+                    .padding(.bottom, 84)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)

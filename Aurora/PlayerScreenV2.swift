@@ -16,18 +16,19 @@ struct PlayerScreenV2: View {
     @State private var dragY: CGFloat = 0
     @State private var artistChoices: [PlayerArtistLink] = []
     @State private var selectedArtist: PlayerArtistLink?
-    @State private var showArtistChoice = false
     @State private var resolvingArtist = false
     @State private var dismissing = false
+
+    // Unified Modal State Machine to eliminate CATransaction sheet conflicts
+    enum ActivePlayerModal: String, Identifiable {
+        case queue, equalizer, sleepTimer, settings, quality, artistSelection
+        var id: String { rawValue }
+    }
+    @State private var activeModal: ActivePlayerModal? = nil
 
     // Player Display Modes
     @State private var showLyricsMode = false
     @State private var isVideoShotMode = UserDefaults.standard.bool(forKey: "player.videoshot")
-    @State private var showQueue = false
-    @State private var showEqualizer = false
-    @State private var showSleepTimer = false
-    @State private var showSettings = false
-    @State private var showQualitySheet = false
     @State private var dj = AutoMixDJEngine.shared
 
     // Video Shot state
@@ -64,6 +65,8 @@ struct PlayerScreenV2: View {
     var body: some View {
         GeometryReader { geo in
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
+            let dismissThreshold = max(geo.size.height * 0.38, 240)
+            let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
 
             ZStack {
                 // 1. Dynamic Fluid HDR Mesh Background (drifting & color-adaptive)
@@ -74,10 +77,11 @@ struct PlayerScreenV2: View {
 
                 // 3. Main Player Container
                 VStack(spacing: 0) {
-                    // Top Bar (Grabber Pill & Video-Shot Toggle)
+                    // Top Bar (Grabber Pill & Video-Shot Toggle) - Smoothly fades out during drag
                     topHeader
-                        .padding(.top, max(geo.safeAreaInsets.top, 12))
+                        .padding(.top, max(geo.safeAreaInsets.top + 8, 48))
                         .padding(.horizontal, 24)
+                        .opacity(max(0, 1.0 - Double(dragProgress * 2.2)))
 
                     Spacer(minLength: 4)
 
@@ -138,15 +142,16 @@ struct PlayerScreenV2: View {
                         .padding(.bottom, 4)
                     }
 
-                    // Lower Controls Section (Apple Music Standard Layout)
+                    // Lower Controls Section (Apple Music Standard Layout) - Smoothly fades during drag
                     appleMusicLowerDeck
                         .padding(.horizontal, 24)
                         .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
+                        .opacity(max(0, 1.0 - Double(dragProgress * 1.7)))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 8)
+                    DragGesture(minimumDistance: 6)
                         .onChanged { val in
                             guard !isScrubbing else { return }
                             if val.translation.height > 0 {
@@ -155,10 +160,11 @@ struct PlayerScreenV2: View {
                         }
                         .onEnded { val in
                             guard !isScrubbing else { return }
-                            if val.translation.height > 110 || val.predictedEndTranslation.height > 220 {
+                            let velocity = val.predictedEndTranslation.height
+                            if val.translation.height > 120 || velocity > 280 {
                                 close()
                             } else {
-                                withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                                withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.86)) {
                                     dragY = 0
                                 }
                             }
@@ -166,47 +172,40 @@ struct PlayerScreenV2: View {
                 )
             }
             .offset(y: max(0, dragY))
-            .scaleEffect(1 - min(max(dragY, 0) / (geo.size.height * 2.2), 0.10), anchor: .bottom)
-            .clipShape(RoundedRectangle(cornerRadius: dragY > 0 ? min(38, 20 + dragY / 14) : 0, style: .continuous))
+            .scaleEffect(1.0 - (dragProgress * 0.10), anchor: .bottom)
+            .clipShape(RoundedRectangle(cornerRadius: dragY > 0 ? (22 + dragProgress * 20) : 0, style: .continuous))
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(dismissing)
-        .confirmationDialog("Качество звука (Hi-Res Lossless)", isPresented: $showQualitySheet, titleVisibility: .visible) {
-            ForEach(AudioQuality.allCases) { q in
-                Button(q.label) {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    player.selectQuality(q)
+        .sheet(item: $activeModal) { modal in
+            NavigationStack {
+                switch modal {
+                case .queue:
+                    QueueSheetView()
+                case .equalizer:
+                    PlayerEQSheetView()
+                case .sleepTimer:
+                    SleepTimerSheetView()
+                case .settings:
+                    SettingsView()
+                case .quality:
+                    audioQualitySheetContent
+                case .artistSelection:
+                    artistSelectionSheetContent
                 }
             }
-            Button("Отмена", role: .cancel) {}
-        }
-        .confirmationDialog("Выберите исполнителя", isPresented: $showArtistChoice, titleVisibility: .visible) {
-            ForEach(artistChoices) { artist in
-                Button(artist.name) { selectedArtist = artist }
-            }
-            Button("Отмена", role: .cancel) {}
+            .preferredColorScheme(.dark)
         }
         .sheet(item: $selectedArtist) { artist in
             NavigationStack { ArtistView(artistId: artist.id) }
                 .preferredColorScheme(.dark)
         }
-        .sheet(isPresented: $showQueue) {
-            QueueSheetView()
-                .preferredColorScheme(.dark)
+        .task(id: track?.id) {
+            await loadLyrics()
+            await loadVideoShot()
         }
-        .sheet(isPresented: $showEqualizer) {
-            PlayerEQSheetView()
-                .preferredColorScheme(.dark)
-        }
-        .sheet(isPresented: $showSleepTimer) {
-            SleepTimerSheetView()
-                .preferredColorScheme(.dark)
-        }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
-                .preferredColorScheme(.dark)
-        }
+    }
         .task(id: track?.id) {
             await loadLyrics()
             await loadVideoShot()
@@ -526,14 +525,17 @@ struct PlayerScreenV2: View {
                     } label: {
                         Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: "play.rectangle")
                     }
-                    Button { showQueue = true } label: {
+                    Button { openModal(.queue) } label: {
                         Label("Очередь воспроизведения", systemImage: "list.bullet")
                     }
-                    Button { showEqualizer = true } label: {
+                    Button { openModal(.equalizer) } label: {
                         Label("Эквалайзер", systemImage: "slider.vertical.3")
                     }
-                    Button { showSleepTimer = true } label: {
+                    Button { openModal(.sleepTimer) } label: {
                         Label("Таймер сна", systemImage: "timer")
+                    }
+                    Button { openModal(.settings) } label: {
+                        Label("Настройки", systemImage: "gearshape")
                     }
                     Divider()
                     Button(role: .destructive) {
@@ -611,8 +613,7 @@ struct PlayerScreenV2: View {
 
                 // Apple Music Interactive Quality Badge
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showQualitySheet = true
+                    openModal(.quality)
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "waveform")
@@ -733,11 +734,11 @@ struct PlayerScreenV2: View {
 
             // Right: Queue sheet
             Button {
-                showQueue = true
+                openModal(.queue)
             } label: {
-                Image(systemName: showQueue ? "list.bullet.rectangle.portrait.fill" : "list.bullet")
+                Image(systemName: activeModal == .queue ? "list.bullet.rectangle.portrait.fill" : "list.bullet")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(showQueue ? AG.amber : .white.opacity(0.65))
+                    .foregroundStyle(activeModal == .queue ? AG.amber : .white.opacity(0.65))
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -745,6 +746,93 @@ struct PlayerScreenV2: View {
         }
         .padding(.horizontal, 28)
         .frame(height: 44)
+    }
+
+    // MARK: - Active Modal Views
+
+    private var audioQualitySheetContent: some View {
+        List {
+            Section {
+                ForEach(AudioQuality.allCases) { q in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        player.selectQuality(q)
+                        activeModal = nil
+                    } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(q.label)
+                                    .font(AG.text(15, .semibold))
+                                    .foregroundStyle(.white)
+                                Text(q.detail)
+                                    .font(AG.text(12, .regular))
+                                    .foregroundStyle(.white.opacity(0.60))
+                            }
+                            Spacer()
+                            if player.audioQuality == q {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundStyle(AG.amber)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            } header: {
+                Text("Качество звука и кодеки")
+            } footer: {
+                Text("Для треков из Яндекс Музыки стриминг во FLAC Lossless активируется автоматически при стабильном интернет-соединении.")
+            }
+        }
+        .navigationTitle("Качество звука")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Готово") { activeModal = nil }
+                    .foregroundStyle(AG.amber)
+            }
+        }
+    }
+
+    private var artistSelectionSheetContent: some View {
+        List {
+            Section("Выберите исполнителя") {
+                ForEach(artistChoices) { artist in
+                    Button {
+                        activeModal = nil
+                        selectedArtist = artist
+                    } label: {
+                        HStack {
+                            Text(artist.name)
+                                .font(AG.text(16, .medium))
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.40))
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Исполнители")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Закрыть") { activeModal = nil }
+                    .foregroundStyle(AG.amber)
+            }
+        }
+    }
+
+    private func openModal(_ modal: ActivePlayerModal) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                activeModal = modal
+            }
+        }
     }
 
     // MARK: - Actions
@@ -812,7 +900,7 @@ struct PlayerScreenV2: View {
             if resolved.count == 1 {
                 selectedArtist = resolved[0]
             } else if resolved.count > 1 {
-                showArtistChoice = true
+                openModal(.artistSelection)
             }
         }
     }
@@ -824,16 +912,17 @@ struct PlayerScreenV2: View {
     }
 
     private var closeGesture: some Gesture {
-        DragGesture(minimumDistance: 8)
+        DragGesture(minimumDistance: 6)
             .onChanged { value in
                 guard value.translation.height > 0 else { return }
                 dragY = value.translation.height
             }
             .onEnded { value in
-                if value.translation.height > 110 || value.predictedEndTranslation.height > 220 {
+                let velocity = value.predictedEndTranslation.height
+                if value.translation.height > 120 || velocity > 280 {
                     close()
                 } else {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                    withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.86)) {
                         dragY = 0
                     }
                 }
