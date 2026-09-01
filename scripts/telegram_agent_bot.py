@@ -139,6 +139,12 @@ def test_and_discover_models(base_url, api_key, provider_type=None):
     if not provider_type:
         if clean_key.startswith("AQ.") or clean_key.startswith("AIza"):
             provider_type = "gemini"
+        elif clean_key.startswith("sk-or-"):
+            provider_type = "openrouter"
+        elif clean_key.startswith("gsk_"):
+            provider_type = "groq"
+        elif clean_key.startswith("sk-"):
+            provider_type = "deepseek"
         else:
             provider_type = "openai_compatible"
             
@@ -150,13 +156,22 @@ def test_and_discover_models(base_url, api_key, provider_type=None):
                 data = json.loads(resp.read().decode())
                 models = [m.get("name", "").replace("models/", "") for m in data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
                 curated = [m for m in models if "flash" in m or "pro" in m]
-                return {"valid": True, "provider": "gemini", "models": curated or models[:12], "status_msg": f"🟢 Ключ Gemini рабочий! Доступно {len(models)} моделей"}
+                free_list = [m for m in curated if "flash" in m]
+                top_list = [m for m in curated if "pro" in m or "3.7" in m]
+                return {
+                    "valid": True,
+                    "provider": "gemini",
+                    "models": curated or models[:15],
+                    "free_models": free_list,
+                    "top_models": top_list,
+                    "status_msg": f"🟢 Ключ Gemini рабочий! Доступно моделей: {len(models)}"
+                }
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                return {"valid": True, "provider": "gemini", "status_msg": "⏳ Ключ рабочий, но суточный лимит временно исчерпан", "models": ["gemini-3.6-flash", "gemini-3.7-flash"]}
-            return {"valid": False, "provider": "gemini", "error": f"HTTP {e.code}: Неверный ключ или ошибка доступа", "models": []}
+                return {"valid": True, "provider": "gemini", "status_msg": "⏳ Ключ верный, но лимит исчерпан", "models": ["gemini-3.6-flash", "gemini-3.7-flash"], "free_models": ["gemini-3.6-flash"], "top_models": ["gemini-3.7-flash"]}
+            return {"valid": False, "provider": "gemini", "error": f"HTTP {e.code}: Неверный ключ или ошибка доступа", "models": [], "free_models": [], "top_models": []}
         except Exception as e:
-            return {"valid": False, "provider": "gemini", "error": str(e), "models": []}
+            return {"valid": False, "provider": "gemini", "error": str(e), "models": [], "free_models": [], "top_models": []}
     else:
         target_url = (base_url or "https://api.deepseek.com").rstrip("/")
         models_endpoint = target_url + "/models"
@@ -175,15 +190,20 @@ def test_and_discover_models(base_url, api_key, provider_type=None):
                     elif isinstance(m, str):
                         model_ids.append(m)
                 
+                free_m = [m for m in model_ids if ":free" in m or "free" in m.lower()]
+                top_m = [m for m in model_ids if any(k in m.lower() for k in ["coder", "deepseek", "claude", "gpt-4", "llama", "qwen", "gemini", "o1", "o3", "sonnet"])]
+                
                 return {
                     "valid": True,
-                    "provider": "openai_compatible",
-                    "models": model_ids[:25],
-                    "status_msg": f"🟢 Ключ рабочий! На сервере обнаружено {len(model_ids)} моделей"
+                    "provider": provider_type,
+                    "models": model_ids[:40],
+                    "free_models": free_m[:20],
+                    "top_models": top_m[:20],
+                    "status_msg": f"🟢 Ключ рабочий! На сервере найдено {len(model_ids)} моделей"
                 }
         except urllib.error.HTTPError as e:
             if e.code == 401:
-                return {"valid": False, "provider": "openai_compatible", "error": "🔴 Ошибка 401: Неверный API-ключ (Unauthorized)", "models": []}
+                return {"valid": False, "provider": provider_type, "error": "🔴 Ошибка 401: Неверный API-ключ (Unauthorized)", "models": [], "free_models": [], "top_models": []}
             
             # Test with chat completion for endpoints without /models
             try:
@@ -199,17 +219,24 @@ def test_and_discover_models(base_url, api_key, provider_type=None):
                     headers={"Authorization": f"Bearer {clean_key}", "Content-Type": "application/json", "User-Agent": "Sonivo-Agent"}
                 )
                 with urllib.request.urlopen(t_req, timeout=10) as t_resp:
-                    return {"valid": True, "provider": "openai_compatible", "models": ["deepseek-chat"], "status_msg": "🟢 Ключ успешно проверен и авторизован!"}
+                    return {
+                        "valid": True,
+                        "provider": provider_type,
+                        "models": ["deepseek-chat"],
+                        "free_models": [],
+                        "top_models": ["deepseek-chat"],
+                        "status_msg": "🟢 Ключ успешно проверен и авторизован!"
+                    }
             except urllib.error.HTTPError as te:
                 if te.code == 404:
-                    return {"valid": True, "provider": "openai_compatible", "models": [], "status_msg": "🟢 Авторизация пройдена! Укажите имя модели"}
-                return {"valid": False, "provider": "openai_compatible", "error": f"HTTP {te.code}: Ошибка авторизации", "models": []}
+                    return {"valid": True, "provider": provider_type, "models": [], "free_models": [], "top_models": [], "status_msg": "🟢 Авторизация пройдена! Введите имя модели"}
+                return {"valid": False, "provider": provider_type, "error": f"HTTP {te.code}: Ошибка авторизации", "models": [], "free_models": [], "top_models": []}
             except Exception as te:
-                return {"valid": False, "provider": "openai_compatible", "error": str(te), "models": []}
+                return {"valid": False, "provider": provider_type, "error": str(te), "models": [], "free_models": [], "top_models": []}
         except Exception as e:
-            return {"valid": False, "provider": "openai_compatible", "error": str(e), "models": []}
+            return {"valid": False, "provider": provider_type, "error": str(e), "models": [], "free_models": [], "top_models": []}
 
-def add_new_key(api_key, name=None, provider=None, base_url=None, model=None):
+def add_new_key(api_key, name=None, provider=None, base_url=None, model=None, available_models=None):
     config = load_config()
     key_list = config.get("AI_KEYS") or config.get("GEMINI_KEYS", [])
     new_id = max([k.get("id", 0) for k in key_list] + [0]) + 1
@@ -219,7 +246,7 @@ def add_new_key(api_key, name=None, provider=None, base_url=None, model=None):
         if clean_key.startswith("sk-or-"):
             provider = "openrouter"
             base_url = "https://openrouter.ai/api/v1"
-            model = model or "deepseek/deepseek-r1"
+            model = model or "deepseek/deepseek-r1:free"
             default_name = f"OpenRouter {new_id}"
         elif clean_key.startswith("gsk_"):
             provider = "groq"
@@ -240,13 +267,18 @@ def add_new_key(api_key, name=None, provider=None, base_url=None, model=None):
         default_name = f"{provider.capitalize()} {new_id}"
 
     key_name = name or default_name
+    models_to_store = available_models or ([model] if model else [])
+    if model and model not in models_to_store:
+        models_to_store.insert(0, model)
+
     key_list.append({
         "id": new_id,
         "provider": provider,
         "name": key_name,
         "key": clean_key,
         "base_url": base_url,
-        "model": model,
+        "model": model or (models_to_store[0] if models_to_store else "default"),
+        "available_models": models_to_store,
         "status": "active",
         "requests_today": 0,
         "requests_total": 0,
@@ -1047,21 +1079,42 @@ def call_ai_with_fallback(contents, chat_id=None):
         return {"error": "Нет добавленных ключей API! Нажмите '🔑 Ключи & Квоты' и добавьте ключ Gemini, DeepSeek или OpenRouter."}
         
     system_prompt = build_system_prompt()
+    config = load_config()
+    active_model = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
+    now = time.time()
     
-    for attempt in range(len(keys)):
-        key_entry = get_active_key_entry()
-        if not key_entry:
-            return {"error": "Все ключи временно исчерпали квоту (кулдаун). Подождите 1-2 минуты или добавьте ещё один ключ."}
+    # Priority ordering: providers that support or have the active model first
+    def get_priority(k):
+        av = k.get("available_models", [])
+        if k.get("model") == active_model or active_model in av:
+            return 0
+        if k.get("provider") == "gemini" and "gemini" in active_model:
+            return 1
+        return 2
+
+    sorted_keys = sorted(keys, key=get_priority)
+    
+    for key_entry in sorted_keys:
+        if key_entry.get("cooldown_until", 0) > now:
+            continue
             
         key_val = key_entry.get("key")
         key_id = key_entry.get("id")
         key_name = key_entry.get("name")
         provider = key_entry.get("provider", "gemini")
         base_url = key_entry.get("base_url") or "https://api.deepseek.com"
-        model = key_entry.get("model") or "gemini-3.6-flash"
+        
+        # Select target model for this provider
+        av_models = key_entry.get("available_models", [])
+        if active_model in av_models or key_entry.get("model") == active_model:
+            target_model = active_model
+        elif av_models:
+            target_model = av_models[0]
+        else:
+            target_model = key_entry.get("model") or ("gemini-3.6-flash" if provider == "gemini" else "deepseek-chat")
         
         if provider == "gemini":
-            models_to_try = [model, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-3.1-pro-preview"]
+            models_to_try = [target_model, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-2.5-flash"]
             for m in models_to_try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key_val}"
                 payload = {
@@ -1100,12 +1153,12 @@ def call_ai_with_fallback(contents, chat_id=None):
                     print(f"[Gemini Error on {m} / {key_name}]: {e}")
                     return {"error": str(e)}
         else:
-            # OpenAI-compatible API (DeepSeek, OpenRouter, Groq, OpenAI)
+            # OpenAI-compatible API (DeepSeek, OpenRouter, Groq, Custom API)
             try:
                 openai_messages = gemini_contents_to_openai_messages(contents, system_prompt)
-                data = call_openai_compatible(base_url, key_val, model, openai_messages)
+                data = call_openai_compatible(base_url, key_val, target_model, openai_messages)
                 record_key_success(key_id)
-                data["_provider_name"] = f"{provider.capitalize()} ({model})"
+                data["_provider_name"] = f"{provider.capitalize()} ({target_model})"
                 return data
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode()
@@ -1124,7 +1177,7 @@ def call_ai_with_fallback(contents, chat_id=None):
                 print(f"[{provider.capitalize()} Error / {key_name}]: {e}")
                 return {"error": str(e)}
                 
-    return {"error": "Все доступные ключи API исчерпали свои квоты. Добавьте DeepSeek или Gemini ключ через '🔑 Ключи & Квоты'."}
+    return {"error": "Все доступные ключи API исчерпали свои квоты. Добавьте ещё один ключ через '🔑 Ключи & Квоты'."}
 
 def execute_agent_loop(user_input, status_msg_id, chat_id):
     if isinstance(user_input, list):
@@ -1233,7 +1286,7 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
 
 # --- ОБРАБОТЧИКИ МЕНЮ И КОМАНД ---
 
-def show_keys_menu(chat_id, reply_to=None):
+def show_keys_menu(chat_id, reply_to=None, show_full_keys=False):
     keys = get_keys()
     now = time.time()
     
@@ -1247,8 +1300,14 @@ def show_keys_menu(chat_id, reply_to=None):
             k_val = k.get("key", "")
             provider = k.get("provider", "gemini").capitalize()
             model = k.get("model", "auto")
+            available = k.get("available_models", [])
             base_url = k.get("base_url", "")
-            masked = k_val[:6] + "..." + k_val[-4:] if len(k_val) > 10 else "***"
+            
+            if show_full_keys:
+                key_display = f"`{k_val}`"
+            else:
+                key_display = f"`{k_val[:6]}...{k_val[-4:]}`" if len(k_val) > 10 else "`***`"
+                
             status = k.get("status", "active")
             cooldown = max(0, int(k.get("cooldown_until", 0) - now))
             
@@ -1262,23 +1321,29 @@ def show_keys_menu(chat_id, reply_to=None):
             req_today = k.get("requests_today", 0)
             req_total = k.get("requests_total", 0)
             
-            text += f"{p_icon} *{k_name}* [{provider} · `{model}`]\n"
+            text += f"{p_icon} *{k_name}* [{provider}]\n"
+            text += f"• Модель: `{model}`"
+            if len(available) > 1:
+                text += f" (Всего подключено моделей: *{len(available)}*)"
+            text += "\n"
             if base_url and "generativelanguage" not in base_url:
                 text += f"• Base URL: `{base_url}`\n"
-            text += f"• Ключ: `{masked}` | Статус: {status_icon}\n"
+            text += f"• API-ключ: {key_display} | {status_icon}\n"
             text += f"• Запросов сегодня: `{req_today}` (Всего: `{req_total}`)\n\n"
             
     text += "💡 *Авто-подхват моделей и Failover:*\n"
-    text += "Бот автоматически тестирует API-ключ, подхватывает список моделей с сервера и переключается между ключами при исчерпании лимитов!\n\n"
-    text += "• `/add_custom <KEY> <BASE_URL> [MODEL] [NAME]`\n"
+    text += "Вы можете добавить неограниченное число любых провайдеров. Бот автоматически подгружает все их модели (включая бесплатные :free) и переключается между ними!\n\n"
+    text += "• `/add_custom <KEY> <BASE_URL> [all|free|top|MODEL] [NAME]`\n"
     text += "• Или выберите действие в меню ниже:"
+    
+    toggle_btn = {"text": "🙈 Скрыть ключи", "callback_data": "btn_hide_keys"} if show_full_keys else {"text": "👁️ Показать полные ключи", "callback_data": "btn_show_full_keys"}
     
     inline_kb = {
         "inline_keyboard": [
             [{"text": "➕ Добавить DeepSeek", "callback_data": "key_add_deepseek"}, {"text": "➕ Добавить Gemini", "callback_data": "key_add_gemini"}],
             [{"text": "➕ Добавить OpenRouter", "callback_data": "key_add_openrouter"}, {"text": "➕ Добавить Groq", "callback_data": "key_add_groq"}],
             [{"text": "⚙️ Добавить Custom Provider (URL + Ключ)", "callback_data": "key_add_custom"}],
-            [{"text": "🔄 Проверить все ключи и квоты (Live Test)", "callback_data": "btn_validate_all_keys"}]
+            [toggle_btn, {"text": "🔄 Проверить всё (Live Test)", "callback_data": "btn_validate_all_keys"}]
         ]
     }
     tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
@@ -1303,10 +1368,11 @@ def validate_all_keys(chat_id=None):
         if res.get("valid"):
             k["status"] = "active"
             models_found = res.get("models", [])
+            free_found = res.get("free_models", [])
             report += f"🟢 *{k_name}* [{k_prov.capitalize()}]: *Рабочий (200 OK)*\n"
             if models_found:
-                models_preview = ", ".join([f"`{m}`" for m in models_found[:5]])
-                report += f"  • Обнаружено моделей: {len(models_found)} ({models_preview}...)\n"
+                k["available_models"] = models_found
+                report += f"  • Найдено моделей: *{len(models_found)}* (Бесплатных: *{len(free_found)}*)\n"
         else:
             err_msg = res.get("error", "Неизвестная ошибка")
             report += f"🔴 *{k_name}* [{k_prov.capitalize()}]: *Ошибка доступа*\n"
@@ -1345,22 +1411,60 @@ def show_skills_menu(chat_id, reply_to=None):
 def show_model_menu(chat_id, reply_to=None):
     config = load_config()
     current = config.get("ACTIVE_MODEL", "gemini-3.6-flash")
+    keys = get_keys()
     
-    text = f"🧠 *Выбор активной AI-модели*\n\nТекущая модель: *{current}*\n\n"
-    text += "• 🟢 *Gemini 3.6 Flash* — молниеносная скорость, мультимодальность (видео, фото, звук).\n"
-    text += "• 🟢 *Gemini 3.7 Flash* — улучшенное рассуждение и код.\n"
-    text += "• 🐳 *DeepSeek-V3 (deepseek-chat)* — мощный анализ кода без лимитов Google.\n"
-    text += "• 🧠 *DeepSeek-R1 (deepseek-reasoner)* — максимальный интеллект и логика.\n"
-    text += "• 🌐 *OpenRouter (deepseek-r1)* — мульти-провайдер."
+    gemini_defaults = [
+        ("gemini-3.6-flash", "Gemini 3.6 Flash", "free"),
+        ("gemini-3.7-flash", "Gemini 3.7 Flash", "free"),
+        ("gemini-2.5-flash", "Gemini 2.5 Flash", "free"),
+        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro", "pro")
+    ]
     
-    inline_kb = {
-        "inline_keyboard": [
-            [{"text": f"{'✅ ' if current=='gemini-3.6-flash' else ''}Gemini 3.6 Flash", "callback_data": "model_gemini-3.6-flash"}, {"text": f"{'✅ ' if current=='gemini-3.7-flash' else ''}Gemini 3.7 Flash", "callback_data": "model_gemini-3.7-flash"}],
-            [{"text": f"{'✅ ' if current=='deepseek-chat' else ''}🐳 DeepSeek-V3", "callback_data": "model_deepseek-chat"}, {"text": f"{'✅ ' if current=='deepseek-reasoner' else ''}🧠 DeepSeek-R1", "callback_data": "model_deepseek-reasoner"}],
-            [{"text": f"{'✅ ' if current=='deepseek/deepseek-r1' else ''}🌐 OpenRouter R1", "callback_data": "model_deepseek/deepseek-r1"}, {"text": f"{'✅ ' if current=='gemini-3.1-pro-preview' else ''}Gemini 3.1 Pro", "callback_data": "model_gemini-3.1-pro-preview"}]
-        ]
-    }
-    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup=inline_kb)
+    all_models = []
+    for m_id, label, tier in gemini_defaults:
+        all_models.append((m_id, label, tier))
+        
+    for k in keys:
+        prov = k.get("provider", "custom")
+        k_name = k.get("name")
+        p_models = k.get("available_models") or ([k.get("model")] if k.get("model") else [])
+        for m in p_models:
+            if not m:
+                continue
+            is_free = ":free" in m or "free" in m.lower() or prov == "gemini"
+            tier = "free" if is_free else "pro"
+            short_m = m.split("/")[-1] if "/" in m else m
+            label = f"{short_m} ({k_name})"
+            all_models.append((m, label, tier))
+            
+    seen = set()
+    unique_models = []
+    for item in all_models:
+        if item[0] not in seen:
+            seen.add(item[0])
+            unique_models.append(item)
+            
+    free_models = [m for m in unique_models if m[2] == "free"]
+    pro_models = [m for m in unique_models if m[2] == "pro"]
+    
+    text = f"🧠 *Выбор активной AI-модели*\n\n"
+    text += f"Текущая модель: *`{current}`*\n\n"
+    text += "🟢 *Бесплатные модели (:free / Free Tier)* — без списания баланса\n"
+    text += "💎 *Платные / Топ-кодинг модели* — максимальный интеллект\n\n"
+    text += "Нажмите на нужную модель для мгновенной смены:"
+    
+    kb_rows = []
+    if free_models:
+        for m_id, label, _ in free_models[:12]:
+            prefix = "✅ " if current == m_id else "🟢 "
+            kb_rows.append([{"text": f"{prefix}{label}", "callback_data": f"model_{m_id}"}])
+            
+    if pro_models:
+        for m_id, label, _ in pro_models[:12]:
+            prefix = "✅ " if current == m_id else "💎 "
+            kb_rows.append([{"text": f"{prefix}{label}", "callback_data": f"model_{m_id}"}])
+            
+    tg_send(text, chat_id=chat_id, reply_to=reply_to, reply_markup={"inline_keyboard": kb_rows})
 
 # --- ОСНОВНОЙ ЦИКЛ ОПРОСА TELEGRAM ---
 
@@ -1420,7 +1524,6 @@ def start_bot():
                         user_states[ALLOWED_CHAT_ID] = {"step": "WAITING_FOR_CUSTOM_KEY"}
                         tg_send("⚙️ *Настройка кастомного AI-провайдера*\n\n🔑 *Шаг 1 из 3:* Отправьте ваш API-ключ (например: `sk-...`):")
                     elif cq_data.startswith("set_url_"):
-                        # Быстрый пресет URL из кнопок
                         url_preset = cq_data.replace("set_url_", "")
                         st = user_states.get(ALLOWED_CHAT_ID)
                         if isinstance(st, dict) and st.get("step") == "WAITING_FOR_CUSTOM_URL":
@@ -1432,39 +1535,103 @@ def start_bot():
                                 user_states.pop(ALLOWED_CHAT_ID, None)
                             else:
                                 models = res.get("models", [])
+                                free_m = res.get("free_models", [])
+                                top_m = res.get("top_models", [])
                                 st["step"] = "WAITING_FOR_CUSTOM_MODEL"
                                 st["url"] = url_preset
+                                st["models"] = models
+                                st["free_models"] = free_m
+                                st["top_models"] = top_m
                                 user_states[ALLOWED_CHAT_ID] = st
                                 
-                                succ_text = f"✅ *API-ключ проверен и рабочий! (HTTP 200 OK)*\n\n"
+                                succ_text = f"✅ *API-ключ проверен и рабочий (HTTP 200 OK)!*\n\n"
+                                succ_text += f"🌐 На сервере обнаружено *{len(models)} моделей*.\n\n"
+                                succ_text += "Выберите, как добавить модели:\n"
+                                
+                                kb_rows = []
+                                if free_m:
+                                    kb_rows.append([{"text": f"🟢 Добавить ВСЕ бесплатные (:free) ({len(free_m)} шт)", "callback_data": "add_bulk_free"}])
+                                if top_m:
+                                    kb_rows.append([{"text": f"💎 Добавить ВСЕ Топ-кодинг модели ({len(top_m)} шт)", "callback_data": "add_bulk_top"}])
                                 if models:
-                                    succ_text += f"📋 *Обнаружено {len(models)} моделей на сервере:*\nВыберите модель кнопкой ниже или напишите своё имя модели:"
-                                    kb_rows = []
-                                    row = []
-                                    for idx, m in enumerate(models[:8]):
-                                        row.append({"text": m, "callback_data": f"pick_m_{m}"})
-                                        if len(row) == 2:
-                                            kb_rows.append(row)
-                                            row = []
-                                    if row:
+                                    kb_rows.append([{"text": f"📦 Добавить ВСЕ найденные модели ({len(models)} шт)", "callback_data": "add_bulk_all"}])
+                                
+                                # Show top 4 individual models
+                                row = []
+                                for m in (top_m or models)[:4]:
+                                    row.append({"text": m.split('/')[-1], "callback_data": f"pick_m_{m}"})
+                                    if len(row) == 2:
                                         kb_rows.append(row)
-                                    tg_send(succ_text, reply_markup={"inline_keyboard": kb_rows})
-                                else:
-                                    succ_text += "📝 *Шаг 3 из 3:* Введите имя модели (например: `deepseek-chat` или `gpt-4o`):"
-                                    tg_send(succ_text)
+                                        row = []
+                                if row:
+                                    kb_rows.append(row)
+                                    
+                                tg_send(succ_text, reply_markup={"inline_keyboard": kb_rows})
+                    elif cq_data in ["add_bulk_free", "add_bulk_top", "add_bulk_all"]:
+                        st = user_states.pop(ALLOWED_CHAT_ID, None)
+                        if isinstance(st, dict) and st.get("key") and st.get("url"):
+                            if cq_data == "add_bulk_free":
+                                chosen_list = st.get("free_models") or st.get("models")
+                                grp = "Free Tier"
+                            elif cq_data == "add_bulk_top":
+                                chosen_list = st.get("top_models") or st.get("models")
+                                grp = "Top Coding"
+                            else:
+                                chosen_list = st.get("models")
+                                grp = "All Models"
+                                
+                            first_m = chosen_list[0] if chosen_list else "deepseek-chat"
+                            k_name, prov = add_new_key(
+                                api_key=st["key"],
+                                base_url=st["url"],
+                                model=first_m,
+                                available_models=chosen_list,
+                                provider="custom",
+                                name=f"Custom ({grp})"
+                            )
+                            config = load_config()
+                            config["ACTIVE_MODEL"] = first_m
+                            save_config(config)
+                            
+                            tg_send(
+                                f"🎉 *Провайдер успешно добавлен и активирован!*\n"
+                                f"• Название: *{k_name}*\n"
+                                f"• Активная модель: `{first_m}`\n"
+                                f"• Подключено моделей: *{len(chosen_list)} шт*\n\n"
+                                f"💡 Все они теперь доступны в меню *🧠 Сменить модель*!",
+                                reply_markup=get_main_keyboard()
+                            )
+                            show_keys_menu(ALLOWED_CHAT_ID)
                     elif cq_data.startswith("pick_m_"):
                         chosen_model = cq_data.replace("pick_m_", "")
                         st = user_states.pop(ALLOWED_CHAT_ID, None)
                         if isinstance(st, dict) and st.get("key") and st.get("url"):
+                            all_m = st.get("models", [chosen_model])
                             k_name, prov = add_new_key(
                                 api_key=st["key"],
                                 base_url=st["url"],
                                 model=chosen_model,
+                                available_models=all_m,
                                 provider="custom",
-                                name=f"Custom ({chosen_model})"
+                                name=f"Custom ({chosen_model.split('/')[-1]})"
                             )
-                            tg_send(f"🎉 *Провайдер успешно добавлен и активирован!*\n• Модель: `{chosen_model}`\n• Base URL: `{st['url']}`\n• Статус: 🟢 Рабочий", reply_markup=get_main_keyboard())
+                            config = load_config()
+                            config["ACTIVE_MODEL"] = chosen_model
+                            save_config(config)
+                            
+                            tg_send(
+                                f"🎉 *Провайдер успешно добавлен!*\n"
+                                f"• Модель: `{chosen_model}`\n"
+                                f"• Base URL: `{st['url']}`\n"
+                                f"• Статус: 🟢 Рабочий\n"
+                                f"• Всего сохранено моделей: *{len(all_m)}*",
+                                reply_markup=get_main_keyboard()
+                            )
                             show_keys_menu(ALLOWED_CHAT_ID)
+                    elif cq_data == "btn_show_full_keys":
+                        show_keys_menu(ALLOWED_CHAT_ID, show_full_keys=True)
+                    elif cq_data == "btn_hide_keys":
+                        show_keys_menu(ALLOWED_CHAT_ID, show_full_keys=False)
                     elif cq_data == "btn_validate_all_keys" or cq_data == "btn_refresh_keys":
                         validate_all_keys(ALLOWED_CHAT_ID)
                     elif cq_data == "btn_trigger_build":
@@ -1677,43 +1844,79 @@ def start_bot():
                             continue
                         else:
                             models = res.get("models", [])
+                            free_m = res.get("free_models", [])
+                            top_m = res.get("top_models", [])
                             st["step"] = "WAITING_FOR_CUSTOM_MODEL"
                             st["url"] = clean_url
+                            st["models"] = models
+                            st["free_models"] = free_m
+                            st["top_models"] = top_m
                             user_states[ALLOWED_CHAT_ID] = st
                             
                             succ_text = f"✅ *API-ключ проверен и рабочий (HTTP 200 OK)!*\n\n"
+                            succ_text += f"🌐 На сервере обнаружено *{len(models)} моделей*.\n\n"
+                            succ_text += "Выберите вариант добавления:\n"
+                            
+                            kb_rows = []
+                            if free_m:
+                                kb_rows.append([{"text": f"🟢 Добавить ВСЕ бесплатные (:free) ({len(free_m)} шт)", "callback_data": "add_bulk_free"}])
+                            if top_m:
+                                kb_rows.append([{"text": f"💎 Добавить ВСЕ Топ-кодинг модели ({len(top_m)} шт)", "callback_data": "add_bulk_top"}])
                             if models:
-                                succ_text += f"📋 *Обнаружено {len(models)} моделей на сервере:*\nВыберите модель кнопкой ниже или напишите своё имя модели:"
-                                kb_rows = []
-                                row = []
-                                for idx, m in enumerate(models[:8]):
-                                    row.append({"text": m, "callback_data": f"pick_m_{m}"})
-                                    if len(row) == 2:
-                                        kb_rows.append(row)
-                                        row = []
-                                if row:
+                                kb_rows.append([{"text": f"📦 Добавить ВСЕ найденные модели ({len(models)} шт)", "callback_data": "add_bulk_all"}])
+                                
+                            row = []
+                            for m in (top_m or models)[:4]:
+                                row.append({"text": m.split('/')[-1], "callback_data": f"pick_m_{m}"})
+                                if len(row) == 2:
                                     kb_rows.append(row)
-                                tg_send(succ_text, reply_to=msg_id, reply_markup={"inline_keyboard": kb_rows})
-                            else:
-                                succ_text += "📝 *Шаг 3 из 3:* Введите имя модели на этом сервере (например `deepseek-chat` или `gpt-4o`):"
-                                tg_send(succ_text, reply_to=msg_id)
+                                    row = []
+                            if row:
+                                kb_rows.append(row)
+                                
+                            tg_send(succ_text, reply_to=msg_id, reply_markup={"inline_keyboard": kb_rows})
                             continue
                     elif step == "WAITING_FOR_CUSTOM_MODEL":
                         chosen_model = text.strip()
                         saved_key = st.get("key")
                         saved_url = st.get("url")
+                        all_m = st.get("models", [chosen_model])
                         user_states.pop(ALLOWED_CHAT_ID, None)
                         
+                        if chosen_model.lower() == "free" and st.get("free_models"):
+                            selected_models = st.get("free_models")
+                            act_m = selected_models[0]
+                            k_label = "Free Tier"
+                        elif chosen_model.lower() == "top" and st.get("top_models"):
+                            selected_models = st.get("top_models")
+                            act_m = selected_models[0]
+                            k_label = "Top Coding"
+                        elif chosen_model.lower() == "all" and all_m:
+                            selected_models = all_m
+                            act_m = all_m[0]
+                            k_label = "All Models"
+                        else:
+                            selected_models = [chosen_model] + [m for m in all_m if m != chosen_model]
+                            act_m = chosen_model
+                            k_label = chosen_model.split('/')[-1]
+                            
                         k_name, prov = add_new_key(
                             api_key=saved_key,
                             base_url=saved_url,
-                            model=chosen_model,
+                            model=act_m,
+                            available_models=selected_models,
                             provider="custom",
-                            name=f"Custom ({chosen_model})"
+                            name=f"Custom ({k_label})"
                         )
+                        config = load_config()
+                        config["ACTIVE_MODEL"] = act_m
+                        save_config(config)
+                        
                         tg_send(
                             f"🎉 *Провайдер успешно добавлен и активирован!*\n"
-                            f"• Модель: `{chosen_model}`\n"
+                            f"• Название: *{k_name}*\n"
+                            f"• Активная модель: `{act_m}`\n"
+                            f"• Подключено моделей: *{len(selected_models)} шт*\n"
                             f"• Base URL: `{saved_url}`\n"
                             f"• Статус: 🟢 Рабочий",
                             reply_to=msg_id,
@@ -1872,7 +2075,7 @@ def start_bot():
                     if len(parts) >= 3:
                         c_key = parts[1].strip()
                         c_url = parts[2].strip()
-                        c_model = parts[3].strip() if len(parts) >= 4 else None
+                        c_mode = parts[3].strip() if len(parts) >= 4 else "all"
                         c_name = parts[4].strip() if len(parts) >= 5 else None
                         
                         tg_send(f"⏳ *Тестирую подключение к `{c_url}` и запрашиваю модели...*", reply_to=msg_id)
@@ -1881,20 +2084,51 @@ def start_bot():
                             tg_send(f"❌ *Ошибка проверки провайдера:*\n`{res.get('error')}`", reply_to=msg_id)
                         else:
                             models = res.get("models", [])
-                            if not c_model:
-                                c_model = models[0] if models else "deepseek-chat"
-                            k_name, prov = add_new_key(api_key=c_key, base_url=c_url, model=c_model, provider="custom", name=c_name or f"Custom ({c_model})")
+                            free_m = res.get("free_models", [])
+                            top_m = res.get("top_models", [])
+                            
+                            if c_mode.lower() == "free" and free_m:
+                                selected_models = free_m
+                                active_m = free_m[0]
+                                p_name = c_name or "Custom (Free)"
+                            elif c_mode.lower() == "top" and top_m:
+                                selected_models = top_m
+                                active_m = top_m[0]
+                                p_name = c_name or "Custom (Top)"
+                            elif c_mode.lower() == "all" or not c_mode:
+                                selected_models = models
+                                active_m = models[0] if models else "deepseek-chat"
+                                p_name = c_name or f"Custom ({len(models)} моделей)"
+                            else:
+                                selected_models = [c_mode] + [m for m in models if m != c_mode]
+                                active_m = c_mode
+                                p_name = c_name or f"Custom ({c_mode})"
+                                
+                            k_name, prov = add_new_key(
+                                api_key=c_key,
+                                base_url=c_url,
+                                model=active_m,
+                                available_models=selected_models,
+                                provider="custom",
+                                name=p_name
+                            )
+                            config = load_config()
+                            config["ACTIVE_MODEL"] = active_m
+                            save_config(config)
+                            
                             tg_send(
                                 f"✅ *Кастомный провайдер успешно добавлен и проверен!*\n"
                                 f"• Название: *{k_name}*\n"
-                                f"• Модель: `{c_model}`\n"
+                                f"• Активная модель: `{active_m}`\n"
+                                f"• Загружено моделей: *{len(selected_models)} шт*\n"
                                 f"• Base URL: `{c_url}`\n"
-                                f"• Статус: 🟢 Рабочий (200 OK)",
+                                f"• Статус: 🟢 Рабочий (200 OK)\n\n"
+                                f"💡 Все {len(selected_models)} моделей теперь доступны в меню *🧠 Сменить модель*!",
                                 reply_to=msg_id
                             )
                             show_keys_menu(ALLOWED_CHAT_ID)
                     else:
-                        tg_send("Использование: `/add_custom <API_KEY> <BASE_URL> [MODEL] [NAME]`\n\nПример:\n`/add_custom sk-xxx https://api.deepseek.com/v1 deepseek-chat DeepSeek`", reply_to=msg_id)
+                        tg_send("Использование: `/add_custom <API_KEY> <BASE_URL> [all|free|top|MODEL] [NAME]`\n\nПример (все бесплатные):\n`/add_custom sk-or-xxx https://openrouter.ai/api/v1 free OpenRouter`\n\nПример (все модели):\n`/add_custom sk-xxx https://api.deepseek.com/v1 all DeepSeek`", reply_to=msg_id)
                     continue
                 elif text.startswith("/add_key"):
                     parts = text.split(maxsplit=2)
