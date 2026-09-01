@@ -206,11 +206,6 @@ struct PlayerScreenV2: View {
             await loadVideoShot()
         }
     }
-        .task(id: track?.id) {
-            await loadLyrics()
-            await loadVideoShot()
-        }
-    }
 
     // MARK: - Dynamic Fluid HDR Mesh Background (GPU 120 FPS Optimized)
 
