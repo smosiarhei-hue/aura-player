@@ -109,16 +109,18 @@ final class PlayerCore {
     private var isUsingStreamPlayer = false
     private var isPrebufferingNextStream = false
     private var prebufferedTrackId: UUID? = nil
-    private var activeTransitionPlan: TransitionPlan? = nil
-    private var isPlanningTransition: Bool = false
 
-    // Local Audio Engine (AVAudioEngine + 10-band EQ)
+    // Local Audio Engine (AVAudioEngine + TimePitch + 10-band EQ + Reverb)
     private let engine = AVAudioEngine()
     private let playerA = AVAudioPlayerNode()
     private let playerB = AVAudioPlayerNode()
     private var activePlayer: AVAudioPlayerNode
     private let eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
     private let eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    private let timePitchA = AVAudioUnitTimePitch()
+    private let timePitchB = AVAudioUnitTimePitch()
+    private let reverbA = AVAudioUnitReverb()
+    private let reverbB = AVAudioUnitReverb()
 
     private var activeAudioFile: AVAudioFile?
     private var incomingAudioFile: AVAudioFile?
@@ -139,6 +141,23 @@ final class PlayerCore {
     private var transitionDuration: Double = 3.0
     private var transitionTimer: Timer?
     private var currentAutoMixStyle: AutoMixStyle = .bassSwapBlend(duration: 3.5)
+    private let transitionTick: TimeInterval = 1.0 / 60.0
+
+    // AutoMix planning (offline first, AI refinement only when it arrives in time)
+    private var activeTransitionPlan: TransitionPlan? = nil
+    private var isPlanningTransition = false
+    private var analysisCache: [UUID: TrackAnalysis] = [:]
+    private var analysisRequested: Set<UUID> = []
+    private var aiRefinementRequested: Set<String> = []
+
+    // Tempo release after a beat-matched blend (CDJ style ramp back to 1.0)
+    private var incomingTempoRate: Float = 1.0
+    private var outgoingTempoRate: Float = 1.0
+    private var rateReleaseTimer: Timer?
+    private var rateReleaseStart: Date?
+    private var rateReleaseFrom: Float = 1.0
+    private let rateReleaseDuration: TimeInterval = 8.0
+    private let rateReleaseTick: TimeInterval = 1.0 / 30.0
 
     var duration: Double {
         if isUsingStreamPlayer {
@@ -226,16 +245,31 @@ final class PlayerCore {
     private func setupAudioEngine() {
         engine.attach(playerA)
         engine.attach(playerB)
+        engine.attach(timePitchA)
+        engine.attach(timePitchB)
         engine.attach(eqNodeA)
         engine.attach(eqNodeB)
+        engine.attach(reverbA)
+        engine.attach(reverbB)
 
         configureEQ(eqNodeA)
         configureEQ(eqNodeB)
+        configureTimePitch(timePitchA)
+        configureTimePitch(timePitchB)
+        configureReverb(reverbA)
+        configureReverb(reverbB)
 
-        engine.connect(playerA, to: eqNodeA, format: nil)
-        engine.connect(playerB, to: eqNodeB, format: nil)
-        engine.connect(eqNodeA, to: engine.mainMixerNode, format: nil)
-        engine.connect(eqNodeB, to: engine.mainMixerNode, format: nil)
+        // Deck A: player -> timePitch -> EQ -> reverb -> mixer
+        engine.connect(playerA, to: timePitchA, format: nil)
+        engine.connect(timePitchA, to: eqNodeA, format: nil)
+        engine.connect(eqNodeA, to: reverbA, format: nil)
+        engine.connect(reverbA, to: engine.mainMixerNode, format: nil)
+
+        // Deck B: player -> timePitch -> EQ -> reverb -> mixer
+        engine.connect(playerB, to: timePitchB, format: nil)
+        engine.connect(timePitchB, to: eqNodeB, format: nil)
+        engine.connect(eqNodeB, to: reverbB, format: nil)
+        engine.connect(reverbB, to: engine.mainMixerNode, format: nil)
 
         engine.mainMixerNode.outputVolume = volume
         try? engine.start()
@@ -248,6 +282,17 @@ final class PlayerCore {
             band.bypass = false
             band.gain = 0
         }
+    }
+
+    private func configureTimePitch(_ node: AVAudioUnitTimePitch) {
+        node.rate = 1.0
+        node.pitch = 0
+        node.overlap = 8.0
+    }
+
+    private func configureReverb(_ node: AVAudioUnitReverb) {
+        node.loadFactoryPreset(.largeHall2)
+        node.wetDryMix = 0
     }
 
     private func loadSettings() {
@@ -300,13 +345,13 @@ final class PlayerCore {
     func restorePlaybackState() {
         guard let data = defaults.data(forKey: "player.lastTrack"),
               let track = try? JSONDecoder().decode(Track.self, from: data) else { return }
-        
+
         currentTrack = track
         let savedProg = defaults.double(forKey: "player.lastProgress")
         progress = max(0, min(savedProg, track.duration > 0 ? track.duration : savedProg))
         pausedProgress = progress
         streamDuration = track.duration
-        
+
         if let qData = defaults.data(forKey: "player.lastQueue"),
            let savedQueue = try? JSONDecoder().decode([Track].self, from: qData) {
             queue = savedQueue
@@ -328,6 +373,10 @@ final class PlayerCore {
     private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
     private var idleEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeB : eqNodeA }
     private var idlePlayer: AVAudioPlayerNode { (activePlayer === playerA) ? playerB : playerA }
+    private var activeTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchA : timePitchB }
+    private var idleTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchB : timePitchA }
+    private var activeReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbA : reverbB }
+    private var idleReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbB : reverbA }
 
     // MARK: - Lockscreen & Remote Commands
 
@@ -552,6 +601,12 @@ final class PlayerCore {
         playError = nil
         generation += 1
         let token = generation
+        activeTransitionPlan = nil
+        isPlanningTransition = false
+
+        // Analysis takes seconds, so it starts the moment a track starts playing.
+        prewarmAnalysis(for: track)
+        if let upcoming = peekNext(auto: true) { prewarmAnalysis(for: upcoming) }
 
         if track.isStream || track.streamUrlString != nil {
             startStream(track, at: seconds, token: token)
@@ -569,6 +624,13 @@ final class PlayerCore {
         playerA.volume = 1.0
         playerB.volume = 0.0
         activePlayer = playerA
+        stopRateRelease()
+        timePitchA.rate = 1.0
+        timePitchB.rate = 1.0
+        reverbA.wetDryMix = 0
+        reverbB.wetDryMix = 0
+        incomingTempoRate = 1.0
+        outgoingTempoRate = 1.0
         applyEQ()
 
         Task {
@@ -688,7 +750,28 @@ final class PlayerCore {
         self.updateNowPlayingInfo()
     }
 
-    // MARK: - AutoMix DJ Transitions (Gemini 3.7 Flash AI & DSP Pipeline)
+    // MARK: - Track Analysis (real BPM, key, downbeats — never guessed)
+
+    private func prewarmAnalysis(for track: Track) {
+        guard !track.isStream, track.url.isFileURL else { return }
+        guard analysisCache[track.id] == nil, !analysisRequested.contains(track.id) else { return }
+        analysisRequested.insert(track.id)
+        let id = track.id
+        let url = track.url
+        Task { [weak self] in
+            let result = await TrackAnalysisService.shared.analysis(trackID: id, url: url)
+            guard let self else { return }
+            self.analysisRequested.remove(id)
+            guard let result else { return }
+            self.analysisCache[id] = result
+            if let bpm = result.bpm, self.currentTrack?.id == id {
+                AutoMixDJEngine.shared.currentBPM = bpm
+            }
+            SonivoDiagnostics.log("[AutoMix] Analysed \(url.lastPathComponent): BPM \(String(format: "%.1f", result.bpm ?? 0)), key \(result.musicalKey ?? "?"), downbeats \(result.downbeats.count)", tag: "AUTOMIX")
+        }
+    }
+
+    // MARK: - AutoMix DJ Transitions (offline DSP first, AI refinement when it arrives in time)
 
     private func scheduleTransitionIfNeeded() {
         guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
@@ -698,94 +781,22 @@ final class PlayerCore {
 
         let remaining = totalDur - currentPos
 
-        // 1. Background AI / Local Pre-Planning (~30-40s before track end, never on realtime critical path)
-        if remaining <= 42.0 && activeTransitionPlan == nil && !isPlanningTransition {
-            isPlanningTransition = true
-            Task {
-                let currentAnalysis = await TrackAnalysisService.shared.analysis(trackID: current.id, url: current.url)
-                let nextAnalysis = await TrackAnalysisService.shared.analysis(trackID: nextTrack.id, url: nextTrack.url)
-
-                let srcBeats = stride(from: 0.0, to: totalDur, by: 60.0 / 124.0).map { $0 }
-                let srcDownbeats = stride(from: 0.0, to: totalDur, by: 4.0 * (60.0 / 124.0)).map { $0 }
-                let tgtBeats = stride(from: 0.0, to: nextTrack.duration, by: 60.0 / 124.0).map { $0 }
-                let tgtDownbeats = stride(from: 0.0, to: nextTrack.duration, by: 4.0 * (60.0 / 124.0)).map { $0 }
-
-                let srcAnalysis = currentAnalysis ?? TrackAnalysis(
-                    trackID: current.id.uuidString,
-                    duration: totalDur,
-                    bpm: 124.0,
-                    bpmConfidence: 0.88,
-                    musicalKey: "A min",
-                    keyConfidence: 0.85,
-                    energy: 0.72,
-                    danceability: 0.80,
-                    introStart: 0,
-                    introEnd: 8,
-                    outroStart: max(0, totalDur - 18),
-                    outroEnd: totalDur,
-                    firstBeat: srcBeats.first,
-                    lastBeat: srcBeats.last,
-                    beats: srcBeats,
-                    downbeats: srcDownbeats,
-                    sections: [
-                        MusicSection(start: 0, end: 8, type: .intro, energy: 0.5),
-                        MusicSection(start: max(0, totalDur - 18), end: totalDur, type: .outro, energy: 0.6)
-                    ],
-                    silenceRegions: [],
-                    vocalRegions: [],
-                    instrumentalRegions: [],
-                    drops: [],
-                    buildUps: [],
-                    energyCurve: [0.5, 0.6, 0.7, 0.8, 0.8, 0.7, 0.6],
-                    analysisVersion: 2
-                )
-
-                let tgtAnalysis = nextAnalysis ?? TrackAnalysis(
-                    trackID: nextTrack.id.uuidString,
-                    duration: nextTrack.duration,
-                    bpm: 124.0,
-                    bpmConfidence: 0.88,
-                    musicalKey: "A min",
-                    keyConfidence: 0.85,
-                    energy: 0.75,
-                    danceability: 0.80,
-                    introStart: 0,
-                    introEnd: 8,
-                    outroStart: max(0, nextTrack.duration - 18),
-                    outroEnd: nextTrack.duration,
-                    firstBeat: tgtBeats.first,
-                    lastBeat: tgtBeats.last,
-                    beats: tgtBeats,
-                    downbeats: tgtDownbeats,
-                    sections: [
-                        MusicSection(start: 0, end: 8, type: .intro, energy: 0.6),
-                        MusicSection(start: max(0, nextTrack.duration - 18), end: nextTrack.duration, type: .outro, energy: 0.6)
-                    ],
-                    silenceRegions: [],
-                    vocalRegions: [],
-                    instrumentalRegions: [],
-                    drops: [],
-                    buildUps: [],
-                    energyCurve: [0.6, 0.7, 0.8, 0.8, 0.7, 0.6],
-                    analysisVersion: 2
-                )
-
-                let plan = await GeminiAutoMixPlanner.shared.planTransition(
-                    sourceTrack: current,
-                    sourceAnalysis: srcAnalysis,
-                    targetTrack: nextTrack,
-                    targetAnalysis: tgtAnalysis,
-                    currentPosition: currentPos
-                )
-
-                await MainActor.run {
-                    self.activeTransitionPlan = plan
-                    self.isPlanningTransition = false
-                }
-            }
+        if remaining <= 120 {
+            prewarmAnalysis(for: current)
+            prewarmAnalysis(for: nextTrack)
         }
 
-        // 2. Pre-buffer incoming streaming track ahead of time (~16s before transition cue)
+        // 1. Offline plan — instant, no network, built from the real analysis.
+        if activeTransitionPlan == nil, remaining <= 60 {
+            activeTransitionPlan = buildPlan(current: current, currentDuration: totalDur, next: nextTrack)
+        }
+
+        // 2. Optional AI refinement — requested early, applied only if it returns before the cue.
+        if transitionMode == .automix, remaining <= 55 {
+            requestAIRefinement(current: current, currentDuration: totalDur, next: nextTrack, position: currentPos)
+        }
+
+        // 3. Pre-buffer the incoming stream well ahead of the cue.
         let leadTime = activeTransitionPlan?.leadTime ?? 18.0
         let prebufferThreshold = leadTime + 14.0
         if (isUsingStreamPlayer || nextTrack.isStream) && remaining <= prebufferThreshold && prebufferedTrackId != nextTrack.id && !isPrebufferingNextStream {
@@ -808,29 +819,107 @@ final class PlayerCore {
             }
         }
 
-        let cue = activeTransitionPlan?.cueTime ?? max(0, totalDur - 18.0)
-        guard currentPos >= cue, (totalDur - currentPos) > 0.05 else { return }
+        guard let plan = activeTransitionPlan else { return }
+        guard currentPos >= plan.cueTime, (totalDur - currentPos) > 0.05 else { return }
 
-        let plan = activeTransitionPlan ?? TransitionPlanner.planLocalFallback(
-            sourceTrack: current,
-            sourceAnalysis: TrackAnalysis(trackID: current.id.uuidString, duration: totalDur, bpm: 124, bpmConfidence: 0.8, musicalKey: nil, keyConfidence: 0.5, energy: 0.7, danceability: nil, introStart: 0, introEnd: 8, outroStart: max(0, totalDur - 18), outroEnd: totalDur, firstBeat: 0, lastBeat: totalDur, beats: [], downbeats: [], sections: [], silenceRegions: [], vocalRegions: [], instrumentalRegions: [], drops: [], buildUps: [], energyCurve: [], analysisVersion: 2),
-            targetTrack: nextTrack,
-            targetAnalysis: TrackAnalysis(trackID: nextTrack.id.uuidString, duration: nextTrack.duration, bpm: 124, bpmConfidence: 0.8, musicalKey: nil, keyConfidence: 0.5, energy: 0.7, danceability: nil, introStart: 0, introEnd: 8, outroStart: max(0, nextTrack.duration - 18), outroEnd: nextTrack.duration, firstBeat: 0, lastBeat: nextTrack.duration, beats: [], downbeats: [], sections: [], silenceRegions: [], vocalRegions: [], instrumentalRegions: [], drops: [], buildUps: [], energyCurve: [], analysisVersion: 2)
+        beginTransition(plan: plan, to: nextTrack)
+    }
+
+    /// Offline decision. Uses the real analysis when it is ready and degrades to an
+    /// honest short crossfade when it is not — never to invented tempo values.
+    private func buildPlan(current: Track, currentDuration: Double, next: Track) -> TransitionPlan {
+        switch transitionMode {
+        case .off:
+            return neutralPlan(duration: currentDuration, blend: 0.05, strategy: .HARD_CUT, reason: "Переходы выключены")
+        case .gapless:
+            return neutralPlan(duration: currentDuration, blend: 0.12, strategy: .HARD_CUT, reason: "Gapless: без паузы между треками")
+        case .crossfade:
+            let blend = max(1.0, crossfadeDuration)
+            return neutralPlan(duration: currentDuration, blend: blend, strategy: .SIMPLE_CROSSFADE, reason: "Кроссфейд \(Int(blend)) с")
+        case .automix:
+            guard let source = analysisCache[current.id], let target = analysisCache[next.id] else {
+                return neutralPlan(duration: currentDuration, blend: 6.0, strategy: .SIMPLE_CROSSFADE, reason: "Анализ трека ещё не готов — мягкий кроссфейд")
+            }
+            let plan = TransitionPlanner.planLocalFallback(
+                sourceTrack: current,
+                sourceAnalysis: source,
+                targetTrack: next,
+                targetAnalysis: target
+            )
+            return snappedToDownbeat(plan, analysis: source)
+        }
+    }
+
+    private func neutralPlan(duration: Double, blend: Double, strategy: TransitionStrategy, reason: String) -> TransitionPlan {
+        let cue = max(0, duration - blend)
+        return TransitionPlan(
+            decision: TransitionDecisionInfo(transitionType: strategy.rawValue, confidence: 0.5, reason: reason),
+            sourceTrack: TransitionSourceTrackInfo(transitionStart: cue, transitionEnd: duration),
+            targetTrack: TransitionTargetTrackInfo(startPosition: 0),
+            tempo: TransitionTempoInfo(targetBPM: 0, sourcePlaybackRate: 1.0, targetPlaybackRate: 1.0),
+            actions: [],
+            fallback: TransitionFallbackInfo(type: TransitionStrategy.SIMPLE_CROSSFADE.rawValue)
         )
+    }
 
+    /// The mix must land on a downbeat, otherwise it never feels in time.
+    private func snappedToDownbeat(_ plan: TransitionPlan, analysis: TrackAnalysis) -> TransitionPlan {
+        guard let downbeat = analysis.nearestDownbeat(to: plan.cueTime, tolerance: 4.0),
+              analysis.hasSteadyBeat else { return plan }
+        return TransitionPlan(
+            decision: plan.decision,
+            sourceTrack: TransitionSourceTrackInfo(transitionStart: downbeat, transitionEnd: plan.sourceTrack.transitionEnd),
+            targetTrack: plan.targetTrack,
+            tempo: plan.tempo,
+            actions: plan.actions,
+            fallback: plan.fallback
+        )
+    }
+
+    private func requestAIRefinement(current: Track, currentDuration: Double, next: Track, position: Double) {
+        guard let source = analysisCache[current.id], let target = analysisCache[next.id] else { return }
+        let key = current.id.uuidString + "->" + next.id.uuidString
+        guard !aiRefinementRequested.contains(key) else { return }
+        aiRefinementRequested.insert(key)
+
+        Task { [weak self] in
+            let plan = await GeminiAutoMixPlanner.shared.planTransition(
+                sourceTrack: current,
+                sourceAnalysis: source,
+                targetTrack: next,
+                targetAnalysis: target,
+                currentPosition: position
+            )
+            guard let self else { return }
+            // Only adopt the AI plan while the offline one has not fired yet.
+            guard !self.isTransitioning, !self.transitionScheduled,
+                  self.currentTrack?.id == current.id else { return }
+            let livePosition = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
+            guard plan.cueTime > livePosition + 1.0 else { return }
+            self.activeTransitionPlan = self.snappedToDownbeat(plan, analysis: source)
+            SonivoDiagnostics.log("[AutoMix AI] Plan adopted: \(plan.decision.transitionType) at \(String(format: "%.1f", plan.cueTime))s", tag: "AUTOMIX")
+        }
+    }
+
+    private func beginTransition(plan: TransitionPlan, to nextTrack: Track) {
         transitionScheduled = true
         isTransitioning = true
-        transitionDuration = plan.leadTime
+        transitionDuration = max(0.1, plan.leadTime)
         incomingTrack = nextTrack
-        currentAutoMixStyle = .bassSwapBlend(duration: plan.leadTime)
-        AutoMixDJEngine.shared.isTransitionActive = true
-        AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
-        AutoMixDJEngine.shared.activePlan = plan
+        currentAutoMixStyle = .bassSwapBlend(duration: transitionDuration)
 
-        SonivoDiagnostics.log("[AutoMix] Transition triggered: \(current.title) -> \(nextTrack.title) [Strategy: \(plan.decision.transitionType), Duration: \(String(format: "%.1f", plan.leadTime))s, Reason: \(plan.decision.reason)]", tag: "AUTOMIX")
+        let strategy = plan.strategy
+        outgoingTempoRate = Float(min(1.08, max(0.92, plan.tempo.sourcePlaybackRate)))
+        incomingTempoRate = Float(min(1.08, max(0.92, plan.tempo.targetPlaybackRate)))
+
+        AutoMixDJEngine.shared.isTransitionActive = true
+        AutoMixDJEngine.shared.activeStrategyName = strategy.rawValue
+        AutoMixDJEngine.shared.activePlan = plan
+        AutoMixDJEngine.shared.statusBadge = "AutoMix"
+
+        SonivoDiagnostics.log("[AutoMix] Transition: \(currentTrack?.title ?? "?") -> \(nextTrack.title) [\(strategy.rawValue), \(String(format: "%.1f", transitionDuration))s, rate in \(String(format: "%.3f", incomingTempoRate)), \(plan.decision.reason)]", tag: "AUTOMIX")
 
         if isUsingStreamPlayer || nextTrack.isStream {
-            // Live Simultaneous Dual-Player Stream Blending
             if idleStreamingPlayer.currentItem == nil || prebufferedTrackId != nextTrack.id {
                 let ymID = Self.yandexTrackID(from: nextTrack)
                 Task {
@@ -840,38 +929,45 @@ final class PlayerCore {
                         StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                         self.idleStreamingPlayer.volume = 0.05
-                        self.idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
-                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
+                        self.idleStreamingPlayer.seek(to: CMTime(seconds: plan.targetTrack.startPosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
+                        self.idleStreamingPlayer.playImmediately(atRate: self.incomingTempoRate)
                         self.transitionStartTime = Date()
                         self.startTransitionTimer()
                     } catch {
                         self.isTransitioning = false
                         self.transitionScheduled = false
                         AutoMixDJEngine.shared.isTransitionActive = false
+                        AutoMixDJEngine.shared.statusBadge = nil
                         SonivoDiagnostics.log("[AutoMix] Stream fetch failed: \(error.localizedDescription)", tag: "AUTOMIX")
                     }
                 }
             } else {
                 idleStreamingPlayer.volume = 0.05
-                idleStreamingPlayer.seek(to: CMTime(seconds: 0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
-                idleStreamingPlayer.playImmediately(atRate: 1.0)
+                idleStreamingPlayer.seek(to: CMTime(seconds: plan.targetTrack.startPosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
+                idleStreamingPlayer.playImmediately(atRate: incomingTempoRate)
                 transitionStartTime = Date()
                 startTransitionTimer()
             }
             return
         }
 
-        // Local multi-node AVAudioEngine AutoMix with Bass-Swap EQ
+        // Local multi-node AVAudioEngine AutoMix: tempo sync + EQ swap + reverb
         let targetIdlePlayer = idlePlayer
+        let targetIdleTimePitch = idleTimePitch
         let targetIsPlayerA = targetIdlePlayer === playerA
+        let startPosition = max(0, plan.targetTrack.startPosition)
+        let rate = incomingTempoRate
 
         Task {
             do {
                 let nextFile = try AVAudioFile(forReading: nextTrack.url)
                 self.incomingAudioFile = nextFile
 
-                let frameCount = AVAudioFrameCount(nextFile.length)
-                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                let sr = nextFile.processingFormat.sampleRate
+                let startFrame = max(0, min(AVAudioFramePosition(startPosition * sr), max(0, nextFile.length - 1)))
+                let frameCount = AVAudioFrameCount(nextFile.length - startFrame)
+
+                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: startFrame, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     Task { @MainActor in
                         guard let self,
                               self.activePlayer === (targetIsPlayerA ? self.playerA : self.playerB) else { return }
@@ -880,6 +976,7 @@ final class PlayerCore {
                 }
 
                 targetIdlePlayer.volume = 0
+                targetIdleTimePitch.rate = rate
                 if !self.engine.isRunning { try? self.engine.start() }
                 targetIdlePlayer.play()
 
@@ -889,17 +986,140 @@ final class PlayerCore {
                 self.isTransitioning = false
                 self.transitionScheduled = false
                 AutoMixDJEngine.shared.isTransitionActive = false
+                AutoMixDJEngine.shared.statusBadge = nil
             }
         }
     }
 
     private func startTransitionTimer() {
         transitionTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: transitionTick, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickTransition() }
         }
         RunLoop.main.add(t, forMode: .common)
         transitionTimer = t
+    }
+
+    // MARK: - Transition automation (volume, bass swap, high cut, reverb, tempo)
+
+    private struct TransitionFX: Sendable {
+        var outVolume: Float
+        var inVolume: Float
+        var outBassDB: Float
+        var inBassDB: Float
+        var outHighDB: Float
+        var inHighDB: Float
+        var outReverb: Float
+        var inReverb: Float
+    }
+
+    private func automation(progress: Double, strategy: TransitionStrategy) -> TransitionFX {
+        let p = Float(max(0, min(1, progress)))
+        // Equal-power base curve keeps perceived loudness constant.
+        let outVol = cos(p * .pi / 2)
+        let inVol = sin(p * .pi / 2)
+
+        switch strategy {
+        case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ:
+            let handOver = min(1, p / 0.55)
+            let received = min(1, max(0, (p - 0.30) / 0.45))
+            return TransitionFX(
+                outVolume: outVol,
+                inVolume: inVol,
+                outBassDB: -26 * handOver * handOver,
+                inBassDB: -22 * (1 - received),
+                outHighDB: -18 * p,
+                inHighDB: -10 * (1 - received),
+                outReverb: 44 * p,
+                inReverb: 14 * (1 - p)
+            )
+
+        case .FILTER_TRANSITION:
+            // Resonant high-cut sweep on the outgoing deck, wet tail growing with it.
+            return TransitionFX(
+                outVolume: outVol,
+                inVolume: inVol,
+                outBassDB: -30 * p,
+                inBassDB: -12 * (1 - p),
+                outHighDB: -36 * p * p,
+                inHighDB: -6 * (1 - p),
+                outReverb: 55 * p,
+                inReverb: 10 * (1 - p)
+            )
+
+        case .ENERGY_BLEND, .BUILDUP_TO_DROP:
+            let lift = min(1, max(0, (p - 0.35) / 0.65))
+            return TransitionFX(
+                outVolume: outVol,
+                inVolume: inVol,
+                outBassDB: -30 * lift,
+                inBassDB: -18 * (1 - min(1, p / 0.30)),
+                outHighDB: -14 * p,
+                inHighDB: -12 * (1 - p),
+                outReverb: 38 * p,
+                inReverb: 8 * (1 - p)
+            )
+
+        case .ECHO_OUT, .LOOP_TRANSITION:
+            // The outgoing track dissolves into its own tail.
+            return TransitionFX(
+                outVolume: outVol * (1 - 0.35 * p),
+                inVolume: inVol,
+                outBassDB: -24 * p,
+                inBassDB: -14 * (1 - p),
+                outHighDB: -20 * p,
+                inHighDB: 0,
+                outReverb: 72 * p,
+                inReverb: 0
+            )
+
+        case .VOCAL_CUT, .VOCAL_CUT_SAFE:
+            return TransitionFX(
+                outVolume: outVol,
+                inVolume: inVol,
+                outBassDB: -22 * p,
+                inBassDB: -16 * (1 - min(1, p / 0.35)),
+                outHighDB: -24 * p,
+                inHighDB: 0,
+                outReverb: 50 * p,
+                inReverb: 0
+            )
+
+        case .DROP_SWITCH, .HARD_CUT:
+            let fade = min(1, p / 0.2)
+            return TransitionFX(
+                outVolume: 1 - fade,
+                inVolume: 1,
+                outBassDB: -36 * fade,
+                inBassDB: 0,
+                outHighDB: -30 * fade,
+                inHighDB: 0,
+                outReverb: 45 * fade,
+                inReverb: 0
+            )
+
+        case .SILENCE_TRIM, .SIMPLE_CROSSFADE, .INSTRUMENTAL_OVERLAY, .NONE:
+            return TransitionFX(
+                outVolume: outVol,
+                inVolume: inVol,
+                outBassDB: -10 * p,
+                inBassDB: -8 * (1 - p),
+                outHighDB: 0,
+                inHighDB: 0,
+                outReverb: 0,
+                inReverb: 0
+            )
+        }
+    }
+
+    private func applyBandOffsets(_ eq: AVAudioUnitEQ, bassDB: Float, highDB: Float) {
+        let base: (Int) -> Float = { [eqEnabled, eqGains] index in eqEnabled ? eqGains[index] : 0 }
+        eq.bands[0].gain = base(0) + bassDB
+        eq.bands[1].gain = base(1) + bassDB * 0.85
+        eq.bands[2].gain = base(2) + bassDB * 0.55
+        eq.bands[7].gain = base(7) + highDB * 0.45
+        eq.bands[8].gain = base(8) + highDB * 0.80
+        eq.bands[9].gain = base(9) + highDB
     }
 
     private func tickTransition() {
@@ -909,26 +1129,33 @@ final class PlayerCore {
         AutoMixDJEngine.shared.transitionProgress = p
 
         let strategy = AutoMixDJEngine.shared.activePlan?.strategy ?? .BASS_SWAP
-        let (outVol, inVol, outBassCut, inBassGain, filterCutoff) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, strategy: strategy)
+        let fx = automation(progress: p, strategy: strategy)
 
         if isUsingStreamPlayer {
-            activeStreamingPlayer.volume = max(0, min(1.0, outVol))
-            idleStreamingPlayer.volume = max(0, min(1.0, inVol))
+            activeStreamingPlayer.volume = max(0, min(1, fx.outVolume)) * volume
+            idleStreamingPlayer.volume = max(0, min(1, fx.inVolume)) * volume
+            if abs(outgoingTempoRate - 1) > 0.001 {
+                activeStreamingPlayer.rate = 1 + (outgoingTempoRate - 1) * Float(p)
+            }
         } else {
-            activePlayer.volume = outVol * volume
-            idlePlayer.volume = inVol * volume
+            activePlayer.volume = fx.outVolume * volume
+            idlePlayer.volume = fx.inVolume * volume
 
-            activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outBassCut) : outBassCut
-            activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + outBassCut * 0.8) : (outBassCut * 0.8)
-            activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + outBassCut * 0.5) : (outBassCut * 0.5)
+            applyBandOffsets(activeEQ, bassDB: fx.outBassDB, highDB: fx.outHighDB)
+            applyBandOffsets(idleEQ, bassDB: fx.inBassDB, highDB: fx.inHighDB)
 
-            idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inBassGain) : inBassGain
-            idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inBassGain) : inBassGain
-            idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inBassGain) : inBassGain
+            activeReverb.wetDryMix = max(0, min(100, fx.outReverb))
+            idleReverb.wetDryMix = max(0, min(100, fx.inReverb))
+
+            // Gradual tempo ramp of the outgoing deck, like a DJ nudging the pitch fader.
+            if abs(outgoingTempoRate - 1) > 0.001 {
+                let rate = 1 + (outgoingTempoRate - 1) * Float(p)
+                activeTimePitch.rate = rate
+                anchorOffset += Double(rate - 1) * transitionTick
+            }
         }
 
         if p >= 1.0, let incomingTrack {
-            AutoMixDJEngine.shared.isTransitionActive = false
             completeTransition(to: incomingTrack)
         }
     }
@@ -937,6 +1164,12 @@ final class PlayerCore {
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
+
+        let plan = activeTransitionPlan
+        let blend = transitionDuration
+        let startPosition = plan?.targetTrack.startPosition ?? 0
+        let promoted = max(0, startPosition + blend * Double(incomingTempoRate))
+
         activeTransitionPlan = nil
         isPlanningTransition = false
 
@@ -946,61 +1179,139 @@ final class PlayerCore {
             let oldActive = activeStreamingPlayer
             activeStreamingPlayer = idleStreamingPlayer
             idleStreamingPlayer = oldActive
-            activeStreamingPlayer.volume = 1.0
+            activeStreamingPlayer.volume = volume
+            activeStreamingPlayer.rate = 1.0
+            progress = promoted
         } else {
             let oldActive = activePlayer
+            let oldEQ = activeEQ
+            let oldReverb = activeReverb
+            let oldTimePitch = activeTimePitch
             oldActive.stop()
             oldActive.volume = 1.0
+            oldReverb.wetDryMix = 0
+            oldTimePitch.rate = 1.0
 
             generation += 1
             activePlayer = idlePlayer
             activeAudioFile = incomingAudioFile
             incomingAudioFile = nil
+            activePlayer.volume = volume
+            activeReverb.wetDryMix = 0
+            _ = oldEQ
             applyEQ()
+
+            anchorDate = Date()
+            anchorOffset = promoted
+            pausedProgress = promoted
+            progress = promoted
+            startRateRelease()
         }
 
         incomingTrack = nil
         prebufferedTrackId = nil
         currentTrack = nextTrack
         streamDuration = nextTrack.duration
-        anchorDate = Date()
-        anchorOffset = 0
-        pausedProgress = 0
-        progress = 0
         isTransitioning = false
         transitionScheduled = false
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
-        SonivoDiagnostics.log("[AutoMix] Transition completed: now playing \(nextTrack.title)", tag: "AUTOMIX")
-        AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.statusBadge = nil
+        if let bpm = analysisCache[nextTrack.id]?.bpm { AutoMixDJEngine.shared.currentBPM = bpm }
+
+        SonivoDiagnostics.log("[AutoMix] Transition completed: now playing \(nextTrack.title) at \(String(format: "%.1f", promoted))s", tag: "AUTOMIX")
+
+        prewarmAnalysis(for: nextTrack)
+        if let upcoming = peekNext(auto: true) { prewarmAnalysis(for: upcoming) }
 
         updateNowPlayingInfo()
+        savePlaybackState()
     }
 
     private func cancelTransition() {
         transitionScheduled = false
+        activeTransitionPlan = nil
         guard isTransitioning else { return }
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
         idlePlayer.stop()
         idlePlayer.volume = 0
-        activePlayer.volume = 1.0
+        activePlayer.volume = volume
         activeStreamingPlayer.volume = volume
         idleStreamingPlayer.pause()
         idleStreamingPlayer.volume = 0
         incomingAudioFile = nil
         isTransitioning = false
+        stopRateRelease()
+        timePitchA.rate = 1.0
+        timePitchB.rate = 1.0
+        reverbA.wetDryMix = 0
+        reverbB.wetDryMix = 0
+        incomingTempoRate = 1.0
+        outgoingTempoRate = 1.0
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.statusBadge = nil
         applyEQ()
     }
 
     // MARK: - AutoMix Playback Rate & Anchor Helpers
 
+    /// After a beat-matched blend the new track is still running at the mix tempo.
+    /// Ease it back to its own tempo instead of snapping, exactly like a CDJ.
+    private func startRateRelease() {
+        guard abs(incomingTempoRate - 1) > 0.0005 else {
+            activeTimePitch.rate = 1.0
+            return
+        }
+        rateReleaseFrom = incomingTempoRate
+        rateReleaseStart = Date()
+        activeTimePitch.rate = incomingTempoRate
+        rateReleaseTimer?.invalidate()
+        let timer = Timer(timeInterval: rateReleaseTick, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickRateRelease() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        rateReleaseTimer = timer
+    }
+
+    private func tickRateRelease() {
+        guard let start = rateReleaseStart, !isUsingStreamPlayer else { stopRateRelease(); return }
+        let p = min(1, max(0, -start.timeIntervalSinceNow / rateReleaseDuration))
+        let eased = Float(p * p * (3 - 2 * p))
+        let rate = rateReleaseFrom + (1 - rateReleaseFrom) * eased
+        activeTimePitch.rate = rate
+        anchorOffset += Double(rate - 1) * rateReleaseTick
+        if p >= 1 {
+            activeTimePitch.rate = 1.0
+            incomingTempoRate = 1.0
+            stopRateRelease()
+        }
+    }
+
+    private func stopRateRelease() {
+        rateReleaseTimer?.invalidate()
+        rateReleaseTimer = nil
+        rateReleaseStart = nil
+        rateReleaseFrom = 1.0
+    }
+
     func setOutgoingPlaybackRate(_ rate: Float) {
+        let clamped = min(1.15, max(0.85, rate))
         if isUsingStreamPlayer {
-            activeStreamingPlayer.rate = rate
+            activeStreamingPlayer.rate = clamped
+        } else {
+            activeTimePitch.rate = clamped
+        }
+    }
+
+    func setIncomingPlaybackRate(_ rate: Float) {
+        let clamped = min(1.15, max(0.85, rate))
+        if isUsingStreamPlayer {
+            idleStreamingPlayer.rate = clamped
+        } else {
+            idleTimePitch.rate = clamped
         }
     }
 
@@ -1008,6 +1319,9 @@ final class PlayerCore {
         if isUsingStreamPlayer {
             activeStreamingPlayer.rate = isPlaying ? 1.0 : 0.0
             idleStreamingPlayer.rate = 0.0
+        } else {
+            timePitchA.rate = 1.0
+            timePitchB.rate = 1.0
         }
     }
 
