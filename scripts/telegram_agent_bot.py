@@ -477,6 +477,19 @@ TOOL_DECLARATIONS = [
             },
             "required": ["file_path", "content"]
         }
+    },
+    {
+        "name": "generate_ai_image",
+        "description": "Сгенерировать изображение, обложку альбома, арт, иконку или UI-ассет по текстовому описанию (Google Imagen 3 / FLUX).",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "prompt": {"type": "STRING", "description": "Детальный запрос для генерации картинки на английском или русском"},
+                "aspect_ratio": {"type": "STRING", "description": "Соотношение: '1:1', '3:4', '4:3', '16:9', '9:16'"},
+                "file_name": {"type": "STRING", "description": "Опционально: имя файла для сохранения в проект"}
+            },
+            "required": ["prompt"]
+        }
     }
 ]
 
@@ -847,6 +860,50 @@ def tool_hf_get_logs(log_type="run"):
     except Exception as e:
         return {"error": str(e)}
 
+def tool_generate_ai_image(prompt, aspect_ratio="1:1", file_name=None):
+    keys = get_keys()
+    gemini_keys = [k for k in keys if k.get("provider") == "gemini"]
+    
+    # 1. Try Google Imagen 3 via Gemini API
+    for gk in gemini_keys:
+        k_val = gk.get("key")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={k_val}"
+        payload = {
+            "instances": [{"prompt": prompt}],
+            "parameters": {
+                "sampleCount": 1,
+                "aspectRatio": aspect_ratio if aspect_ratio in ["1:1", "3:4", "4:3", "16:9", "9:16"] else "1:1"
+            }
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                res_data = json.loads(resp.read().decode())
+                preds = res_data.get("predictions", [])
+                if preds and "bytesBase64Encoded" in preds[0]:
+                    b64_img = preds[0]["bytesBase64Encoded"]
+                    img_bytes = base64.b64decode(b64_img)
+                    
+                    if file_name:
+                        out_p = REPO_DIR / "Aurora" / "Assets.xcassets" / file_name
+                        out_p.parent.mkdir(parents=True, exist_ok=True)
+                        out_p.write_bytes(img_bytes)
+                    
+                    tg_send(f"🎨 *Сгенерировано изображение (Google Imagen 3)*\nЗапрос: _{prompt}_")
+                    return {"success": True, "prompt": prompt, "model": "Imagen 3", "saved_file": file_name}
+        except Exception as e:
+            print(f"[Imagen 3 error]: {e}")
+            
+    # 2. Universal Free High-Quality Fallback (Pollinations AI FLUX)
+    clean_p = urllib.parse.quote(prompt)
+    gen_url = f"https://image.pollinations.ai/prompt/{clean_p}?width=1024&height=1024&nologo=true&model=flux"
+    tg_send_photo(gen_url, caption=f"🎨 *Сгенерировано изображение (FLUX AI):*\n_{prompt}_")
+    return {"success": True, "prompt": prompt, "url": gen_url, "model": "FLUX"}
+
 TOOL_MAP = {
     "list_directory": tool_list_directory,
     "read_file": tool_read_file,
@@ -863,7 +920,8 @@ TOOL_MAP = {
     "hf_restart_space": tool_hf_restart_space,
     "hf_get_file": tool_hf_get_file,
     "hf_update_file": tool_hf_update_file,
-    "hf_get_logs": tool_hf_get_logs
+    "hf_get_logs": tool_hf_get_logs,
+    "generate_ai_image": tool_generate_ai_image
 }
 
 # --- TELEGRAM API HELPER ---
@@ -879,6 +937,18 @@ def tg_request(method, payload=None):
     except Exception as e:
         print(f"[TG Error {method}]: {e}")
         return None
+
+def tg_send_photo(photo_url, caption="", chat_id=ALLOWED_CHAT_ID, reply_to=None, reply_markup=None):
+    payload = {"chat_id": chat_id, "photo": photo_url, "caption": caption, "parse_mode": "Markdown"}
+    if reply_to:
+        payload["reply_to_message_id"] = reply_to
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    res = tg_request("sendPhoto", payload)
+    if not res or not res.get("ok"):
+        payload.pop("parse_mode", None)
+        return tg_request("sendPhoto", payload)
+    return res
 
 def tg_send(text, chat_id=ALLOWED_CHAT_ID, reply_to=None, reply_markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
@@ -1080,8 +1150,30 @@ def call_openai_compatible(base_url, api_key, model, messages):
             ]
         }
 
-def select_best_model_and_key(keys):
-    # Hierarchy of the smartest reasoning and coding models:
+def select_best_model_and_key(keys, has_media=False, is_video=False):
+    now = time.time()
+    
+    # 1. Приоритет при анализе Фото / Видео / Скриншотов (Vision & Multimodal)
+    if is_video or has_media:
+        vision_models = [
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-2.5-flash",
+            "gemini-3.1-pro-preview",
+            "claude-vision",
+            "gpt-4o"
+        ]
+        for target_m in vision_models:
+            for k in keys:
+                if k.get("cooldown_until", 0) > now:
+                    continue
+                if k.get("provider") == "gemini":
+                    return k, target_m if target_m.startswith("gemini") else "gemini-3.7-flash"
+                available = k.get("available_models", [])
+                if k.get("model") == target_m or target_m in available:
+                    return k, target_m
+
+    # 2. Приоритет для глубоких рассуждений и кодинга (Reasoning & Architecture)
     reasoning_priorities = [
         "deepseek-reasoner",
         "deepseek/deepseek-r1",
@@ -1102,7 +1194,6 @@ def select_best_model_and_key(keys):
         "llama-3.3-70b-versatile",
         "meta-llama/llama-3.3-70b-instruct:free"
     ]
-    now = time.time()
     for target_m in reasoning_priorities:
         for k in keys:
             if k.get("cooldown_until", 0) > now:
@@ -1118,7 +1209,7 @@ def select_best_model_and_key(keys):
             return k, k.get("model") or "gemini-3.6-flash"
     return keys[0] if keys else None, "gemini-3.6-flash"
 
-def call_ai_with_fallback(contents, chat_id=None):
+def call_ai_with_fallback(contents, chat_id=None, has_media=False, is_video=False):
     keys = get_keys()
     if not keys:
         return {"error": "Нет добавленных ключей API! Нажмите '🔑 Ключи & Квоты' и добавьте ключ Gemini, DeepSeek или OpenRouter."}
@@ -1128,9 +1219,9 @@ def call_ai_with_fallback(contents, chat_id=None):
     active_model = config.get("ACTIVE_MODEL", "auto")
     now = time.time()
     
-    # Intelligent Auto-Selection if active_model is "auto"
-    if active_model == "auto":
-        best_k, best_m = select_best_model_and_key(keys)
+    # Intelligent Auto-Selection with Media & Cost awareness
+    if active_model == "auto" or has_media or is_video:
+        best_k, best_m = select_best_model_and_key(keys, has_media=has_media, is_video=is_video)
         sorted_keys = [best_k] + [k for k in keys if k != best_k] if best_k else keys
         auto_target_model = best_m
     else:
@@ -1240,8 +1331,15 @@ def call_ai_with_fallback(contents, chat_id=None):
     return {"error": "Все доступные ключи API исчерпали свои квоты. Добавьте ещё один ключ через '🔑 Ключи & Квоты'."}
 
 def execute_agent_loop(user_input, status_msg_id, chat_id):
+    has_media = False
+    is_video = False
     if isinstance(user_input, list):
         history = [{"role": "user", "parts": user_input}]
+        for p in user_input:
+            if "inlineData" in p:
+                has_media = True
+                if "video" in p["inlineData"].get("mimeType", ""):
+                    is_video = True
     else:
         history = [{"role": "user", "parts": [{"text": str(user_input)}]}]
         
@@ -1252,7 +1350,7 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
     committed = False
     max_steps = 15
     for step in range(max_steps):
-        response = call_ai_with_fallback(history, chat_id=chat_id)
+        response = call_ai_with_fallback(history, chat_id=chat_id, has_media=has_media, is_video=is_video)
         if "error" in response:
             return {"text": f"❌ Ошибка API: {response['error']}", "committed": False}
         
@@ -1282,7 +1380,13 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
         
         if not function_calls:
             text_parts = [p.get("text", "") for p in parts if "text" in p and p.get("text")]
-            return {"text": "\n".join(text_parts), "committed": committed}
+            final_text = "\n".join(text_parts)
+            
+            # Если пользователь прислал медиа, а модель была не в авто-режиме, предлагаем переключение
+            if has_media and config.get("ACTIVE_MODEL") not in ["auto", "gemini-3.7-flash"]:
+                final_text += "\n\n💡 *Совет по экономии & качеству:* Для фото и видео рекомендуется включить `Gemini 3.7 Flash (Vision)` через меню *🧠 Сменить модель*."
+                
+            return {"text": final_text, "committed": committed}
         
         response_parts = []
         for fc in function_calls:
@@ -1308,6 +1412,8 @@ def execute_agent_loop(user_input, status_msg_id, chat_id):
                     action_desc = "🔍 Проверяю статус сборки IPA в GitHub Actions..."
                 elif name == "trigger_ipa_build":
                     action_desc = "🚀 Запускаю компиляцию IPA на macOS runner..."
+                elif name == "generate_ai_image":
+                    action_desc = f"🎨 Генерирую изображение по запросу: '{args.get('prompt')[:40]}...'..."
                 
                 # Реальное отображение прогресса и мышления (Reasoning) в Telegram
                 if status_msg_id:
