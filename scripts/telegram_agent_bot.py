@@ -1023,26 +1023,82 @@ def get_main_keyboard():
         "persistent": True
     }
 
+def get_antigravity_account_status():
+    account_email = "Не авторизован"
+    acc_file = Path.home() / ".gemini" / "google_accounts.json"
+    creds_file = Path.home() / ".gemini" / "oauth_creds.json"
+    
+    has_token = False
+    expires_in = "Авто-обновление (Active)"
+    
+    if acc_file.exists():
+        try:
+            acc_data = json.loads(acc_file.read_text(encoding="utf-8"))
+            account_email = acc_data.get("active") or "Не указан"
+        except Exception:
+            pass
+            
+    if creds_file.exists():
+        try:
+            c_data = json.loads(creds_file.read_text(encoding="utf-8"))
+            if c_data.get("access_token") or c_data.get("refresh_token"):
+                has_token = True
+            exp_ts = c_data.get("expiry_date", 0)
+            if exp_ts:
+                diff_sec = int((exp_ts / 1000) - time.time())
+                if diff_sec > 0:
+                    expires_in = f"активен ({diff_sec // 60} мин до refresh)"
+                else:
+                    expires_in = "авто-обновление токена"
+        except Exception:
+            pass
+            
+    app_running = False
+    try:
+        res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Antigravity.exe"], capture_output=True, text=True, timeout=5)
+        if "Antigravity.exe" in res.stdout:
+            app_running = True
+    except Exception:
+        pass
+        
+    return {
+        "email": account_email,
+        "has_token": has_token,
+        "expires_in": expires_in,
+        "app_running": app_running
+    }
+
 def show_antigravity_menu(chat_id, reply_to=None):
+    st = get_antigravity_account_status()
     version_res = tool_antigravity_cli("--version")
-    ver_str = version_res.get("output", "1.1.13")
+    ver_str = version_res.get("output", "1.1.23")
+    
+    auth_icon = "🟢" if st["has_token"] else "🔴"
+    app_icon = "🟢 Запущено" if st["app_running"] else "⚪ Фоновый режим"
     
     text = (
-        "🌌 *Google Antigravity CLI (agy) & Agent Suite*\n\n"
-        f"• **Версия CLI**: `{ver_str}`\n"
-        "• **Режим**: Автономный Agentic AI Developer\n"
-        "• **Возможности**: Запуск субагентов, планирование, выполнение терминальных задач, аудит кода и управление плагинами.\n\n"
-        "Быстрые команды:\n"
-        "• `/agy models` — список доступных моделей в Antigravity\n"
-        "• `/agy agents` — список субагентов\n"
-        "• `/agy plugin list` — установленные расширения\n"
-        "• `/agy --print \"<промпт>\"` — запуск автономного решения задачи\n\n"
-        "Или нажмите кнопку ниже:"
+        "🌌 *Google Antigravity Desktop & CLI Dashboard*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *Google Аккаунт:* `{st['email']}`\n"
+        f"🔑 *OAuth Авторизация:* {auth_icon} *Активна*\n"
+        f"⏳ *Статус токена:* `{st['expires_in']}`\n"
+        f"🖥️ *Приложение для Windows:* {app_icon}\n"
+        f"⚙️ *Версия движка CLI:* `{ver_str}`\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📦 *Доступные модели Antigravity:*\n"
+        "• 🧠 `Claude Sonnet 4.6 (Thinking)`\n"
+        "• 🧠 `Claude Opus 4.6 (Thinking)`\n"
+        "• ⚡ `Gemini 3.7 Flash (High / Med / Low)`\n"
+        "• ⚡ `Gemini 3.6 Flash (High / Med / Low)`\n"
+        "• 💎 `Gemini 3.1 Pro (High / Low)`\n"
+        "• 🌐 `GPT-OSS 120B (Medium)`\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 Бот синхронизирует квоты и сессии напрямую с вашим приложением Antigravity для Windows!"
     )
     inline_kb = {
         "inline_keyboard": [
-            [{"text": "🧠 Модели Antigravity", "callback_data": "agy_models"}, {"text": "🤖 Агенты Antigravity", "callback_data": "agy_agents"}],
-            [{"text": "🔌 Плагины Antigravity", "callback_data": "agy_plugins"}, {"text": "ℹ️ Версия agy", "callback_data": "agy_version"}],
+            [{"text": "🔄 Обновить квоты и статус", "callback_data": "agy_refresh"}, {"text": "🧠 Модели Antigravity", "callback_data": "agy_models"}],
+            [{"text": "🤖 Субагенты Antigravity", "callback_data": "agy_agents"}, {"text": "🔌 Плагины Antigravity", "callback_data": "agy_plugins"}],
             [{"text": "🌌 Сделать Antigravity активной моделью", "callback_data": "model_antigravity"}]
         ]
     }
@@ -2080,6 +2136,8 @@ def start_bot():
                     elif cq_data == "btn_add_skill":
                         user_states[ALLOWED_CHAT_ID] = "WAITING_FOR_SKILL"
                         tg_send("📥 *Отправьте файл скилла или инструкций (`.md`, `.txt`, `.json`):*\nБот сохранит его в постоянные навыки `agent_skills/`.", reply_markup=get_main_keyboard())
+                    elif cq_data == "agy_refresh":
+                        show_antigravity_menu(ALLOWED_CHAT_ID)
                     elif cq_data == "agy_models":
                         tg_send("⏳ *Запрашиваю модели из Google Antigravity CLI...*")
                         res = tool_antigravity_cli("models")
