@@ -28,9 +28,18 @@ import urllib.parse
 import urllib.error
 import subprocess
 import shutil
-import http.server
 import threading
 from pathlib import Path
+
+# --- HUGGING FACE ZEROGPU COMPATIBILITY ---
+try:
+    import spaces
+    @spaces.GPU
+    def zero_gpu_pipeline_init():
+        return "ZeroGPU Pipeline Ready"
+    HAS_SPACES_GPU = True
+except Exception:
+    HAS_SPACES_GPU = False
 
 # --- КОНФИГУРАЦИЯ И ПУТИ ---
 REPO_DIR = Path(__file__).resolve().parent.parent
