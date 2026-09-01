@@ -102,10 +102,19 @@ struct HomeView: View {
                         endPoint: .bottomTrailing
                     )
 
+                    // Hero Organic Metal SDF Wave Visualizer
+                    HStack {
+                        Spacer()
+                        FluidWaveView(colors: moodColors, isBackgroundMode: false)
+                            .frame(width: 170, height: 170)
+                            .offset(x: 20, y: 10)
+                            .clipped()
+                    }
+
                     // стеклянная вуаль поверх градиента
                     Rectangle()
                         .fill(.ultraThinMaterial)
-                        .opacity(0.30)
+                        .opacity(0.20)
 
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {

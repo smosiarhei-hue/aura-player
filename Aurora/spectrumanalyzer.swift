@@ -11,6 +11,8 @@ final class SpectrumAnalyzer {
 
     private(set) var bands: [Float] = Array(repeating: 0, count: bandCount)
     private(set) var bass: Float = 0
+    private(set) var mids: Float = 0
+    private(set) var highs: Float = 0
     private(set) var level: Float = 0
     private(set) var streamLevel: Float = 0
 
@@ -24,6 +26,8 @@ final class SpectrumAnalyzer {
             let analyzer = SpectrumAnalyzer.shared
             analyzer.bands = snapshot.bands
             analyzer.bass = snapshot.bass
+            analyzer.mids = snapshot.mids
+            analyzer.highs = snapshot.highs
             analyzer.level = snapshot.level
         }
     }
@@ -31,7 +35,13 @@ final class SpectrumAnalyzer {
     nonisolated static func ingestStreamLevel(_ rawLevel: Float) {
         guard let value = processor.processStreamLevel(rawLevel) else { return }
         Task { @MainActor in
-            SpectrumAnalyzer.shared.streamLevel = value
+            let analyzer = SpectrumAnalyzer.shared
+            analyzer.streamLevel = value
+            // Derive smooth dynamic frequency approximations when streaming
+            let alpha: Float = 0.20
+            analyzer.bass = analyzer.bass * (1 - alpha) + value * 0.9 * alpha
+            analyzer.mids = analyzer.mids * (1 - alpha) + value * 0.6 * alpha
+            analyzer.highs = analyzer.highs * (1 - alpha) + value * 0.4 * alpha
         }
     }
 
@@ -39,6 +49,8 @@ final class SpectrumAnalyzer {
         Self.processor.reset()
         bands = Array(repeating: 0, count: Self.bandCount)
         bass = 0
+        mids = 0
+        highs = 0
         level = 0
         streamLevel = 0
     }
@@ -47,6 +59,8 @@ final class SpectrumAnalyzer {
 nonisolated private struct SpectrumSnapshot: Sendable {
     let bands: [Float]
     let bass: Float
+    let mids: Float
+    let highs: Float
     let level: Float
 }
 
@@ -57,6 +71,9 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
     private var fftSetup: FFTSetup?
     private var window: [Float]
     private var displayValues = [Float](repeating: 0, count: SpectrumAnalyzer.bandCount)
+    private var smoothedBass: Float = 0
+    private var smoothedMids: Float = 0
+    private var smoothedHighs: Float = 0
     private var lastPublish = Date.distantPast
     private var streamLastPublish = Date.distantPast
 
@@ -150,9 +167,25 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         let now = Date()
         guard now.timeIntervalSince(lastPublish) > 1 / 30 else { return nil }
         lastPublish = now
-        let bass = displayValues.prefix(3).reduce(0, +) / 3
+
+        let rawBass = displayValues.prefix(4).reduce(0, +) / 4.0
+        let rawMids = displayValues[4..<min(18, displayValues.count)].reduce(0, +) / 14.0
+        let rawHighs = displayValues[min(18, displayValues.count)..<displayValues.count].reduce(0, +) / 14.0
         let level = displayValues.reduce(0, +) / Float(SpectrumAnalyzer.bandCount)
-        return SpectrumSnapshot(bands: displayValues, bass: bass, level: level)
+
+        // Double Exponential LERP Smoothing (alpha = 0.18)
+        let alpha: Float = 0.18
+        smoothedBass = smoothedBass * (1.0 - alpha) + rawBass * alpha
+        smoothedMids = smoothedMids * (1.0 - alpha) + rawMids * alpha
+        smoothedHighs = smoothedHighs * (1.0 - alpha) + rawHighs * alpha
+
+        return SpectrumSnapshot(
+            bands: displayValues,
+            bass: smoothedBass,
+            mids: smoothedMids,
+            highs: smoothedHighs,
+            level: level
+        )
     }
 
     func processStreamLevel(_ rawLevel: Float) -> Float? {

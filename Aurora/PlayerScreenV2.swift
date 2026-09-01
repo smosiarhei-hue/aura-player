@@ -238,6 +238,8 @@ struct PlayerScreenV2: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+            FluidWaveView(colors: palette, isBackgroundMode: true)
+                .scaleEffect(1.40)
             RadialGradient(
                 colors: [(palette.first ?? AG.amber).opacity(0.65), Color.clear],
                 center: .top,
