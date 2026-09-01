@@ -52,8 +52,18 @@ def load_config():
         "TELEGRAM_CHAT_ID": int(os.environ.get("TELEGRAM_CHAT_ID", 8559869613)),
         "ACTIVE_MODEL": "gemini-3.6-flash",
         "BOT_MODE": "dev",
-        "GEMINI_KEYS": []
+        "GEMINI_KEYS": [],
+        "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+        "HF_SPACE": os.environ.get("HF_SPACE", "IsseT/sonivo-bot")
     }
+    
+    env_agy = os.environ.get("ANTIGRAVITY_CREDS_JSON")
+    if env_agy:
+        try:
+            default_cfg["ANTIGRAVITY_CREDS"] = json.loads(env_agy)
+        except Exception:
+            pass
+
     env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_KEY")
     if env_key and not any(ord(c) > 127 or c.isspace() for c in env_key.strip()):
         default_cfg["GEMINI_KEYS"].append({
@@ -75,6 +85,11 @@ def load_config():
         loaded["GEMINI_KEYS"] = sanitize_keys(loaded.get("GEMINI_KEYS", []))
         if "BOT_MODE" not in loaded:
             loaded["BOT_MODE"] = "dev"
+        if not loaded.get("ANTIGRAVITY_CREDS") and env_agy:
+            try:
+                loaded["ANTIGRAVITY_CREDS"] = json.loads(env_agy)
+            except Exception:
+                pass
         return loaded
     except Exception:
         return default_cfg
