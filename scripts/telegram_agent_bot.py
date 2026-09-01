@@ -3049,13 +3049,8 @@ def start_bot():
     t_thread = threading.Thread(target=telegram_polling_loop, daemon=True)
     t_thread.start()
     
-    if HAS_GRADIO:
-        print("[Gradio] Launching Web Dashboard on http://0.0.0.0:7860 ...")
-        demo = create_gradio_ui()
-        if demo:
-            demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)
-        else:
-            t_thread.join()
+    if HAS_GRADIO and demo:
+        demo.launch()
     else:
         try:
             srv = http.server.HTTPServer(("0.0.0.0", 7860), AntigravityWebHandler)
