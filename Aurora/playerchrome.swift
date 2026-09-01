@@ -155,66 +155,105 @@ struct SleepTimerSheetView: View {
             }
         }
         .presentationDetents([.height(320)])
+        .presentationDragIndicator(.visible)
     }
 }
 
-// MARK: - Queue
+// MARK: - Queue (standard swipe-to-delete, drag-to-reorder, fully tappable rows)
 
 struct QueueSheetView: View {
     @State private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var editMode: EditMode = .inactive
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    if let current = player.currentTrack {
-                        Text("СЕЙЧАС ИГРАЕТ")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
+        List {
+            if let current = player.currentTrack {
+                Section {
+                    queueRow(current, isCurrent: true)
+                        .listRowBackground(Color.white.opacity(0.06))
+                } header: {
+                    Text("Сейчас играет")
+                }
+            }
 
-                        queueRow(current, isCurrent: true)
-                    }
-
-                    Text("ДАЛЕЕ В ОЧЕРЕДИ (" + String(player.queue.count) + ")")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-
-                    if player.queue.isEmpty {
-                        ContentUnavailableView(
-                            "Очередь пуста",
-                            systemImage: "music.note.list",
-                            description: Text("Выберите треки из каталога или медиатеки.")
-                        )
-                    } else {
-                        ForEach(player.queue) { track in
+            Section {
+                if player.queue.isEmpty {
+                    ContentUnavailableView(
+                        "Очередь пуста",
+                        systemImage: "music.note.list",
+                        description: Text("Выберите треки из каталога или медиатеки.")
+                    )
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(player.queue) { track in
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+                            player.play(track)
+                        } label: {
+                            queueRow(track, isCurrent: player.currentTrack?.id == track.id)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                withAnimation { player.removeFromQueue(track) }
+                            } label: {
+                                Label("Удалить", systemImage: "trash")
+                            }
+                        }
+                        .contextMenu {
                             Button {
                                 player.play(track)
                             } label: {
-                                queueRow(track, isCurrent: player.currentTrack?.id == track.id)
+                                Label("Воспроизвести сейчас", systemImage: "play.fill")
                             }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button("Удалить из очереди", systemImage: "trash", role: .destructive) {
-                                    player.removeFromQueue(track)
-                                }
+                            Button(role: .destructive) {
+                                withAnimation { player.removeFromQueue(track) }
+                            } label: {
+                                Label("Удалить из очереди", systemImage: "trash")
                             }
                         }
                     }
+                    .onMove { indices, destination in
+                        player.queue.move(fromOffsets: indices, toOffset: destination)
+                    }
+                    .onDelete { offsets in
+                        player.queue.remove(atOffsets: offsets)
+                    }
                 }
-                .padding(.vertical, 16)
-            }
-            .navigationTitle("Очередь")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { dismiss() }
+            } header: {
+                HStack {
+                    Text("Далее в очереди")
+                    Spacer()
+                    Text(String(player.queue.count))
                 }
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .environment(\.editMode, $editMode)
+        .navigationTitle("Очередь")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(editMode == .active ? "Готово" : "Изменить") {
+                    withAnimation {
+                        editMode = (editMode == .active) ? .inactive : .active
+                    }
+                }
+                .foregroundStyle(AG.amber)
+                .disabled(player.queue.isEmpty)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Закрыть") { dismiss() }
+                    .foregroundStyle(AG.amber)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationContentInteraction(.scrolls)
     }
 
     private func queueRow(_ track: Track, isCurrent: Bool) -> some View {
@@ -224,6 +263,7 @@ struct QueueSheetView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title)
                     .font(.headline)
+                    .foregroundStyle(isCurrent ? AG.amber : .primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Text(track.artist)
@@ -240,8 +280,7 @@ struct QueueSheetView: View {
                     .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
+        .frame(minHeight: 52)
         .contentShape(Rectangle())
     }
 }
@@ -255,58 +294,58 @@ struct PlayerEQSheetView: View {
     private let labels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    Toggle("10-полосный эквалайзер", isOn: $player.eqEnabled)
-                        .tint(AG.amber)
+        ScrollView {
+            VStack(spacing: 20) {
+                Toggle("10-полосный эквалайзер", isOn: $player.eqEnabled)
+                    .tint(AG.amber)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Пресеты").font(.headline)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(EQPresets.all) { preset in
-                                    Button(preset.name) {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            player.eqGains = preset.gains
-                                        }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Пресеты").font(.headline)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(EQPresets.all) { preset in
+                                Button(preset.name) {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        player.eqGains = preset.gains
                                     }
-                                    .buttonStyle(.bordered)
-                                    .tint(player.eqGains == preset.gains ? AG.amber : .secondary)
                                 }
+                                .buttonStyle(.bordered)
+                                .tint(player.eqGains == preset.gains ? AG.amber : .secondary)
                             }
                         }
                     }
+                }
 
-                    HStack {
-                        Text("Полосы частот").font(.headline)
-                        Spacer()
-                        Button("Сбросить") { player.eqGains = EQPresets.flat.gains }
-                    }
+                HStack {
+                    Text("Полосы частот").font(.headline)
+                    Spacer()
+                    Button("Сбросить") { player.eqGains = EQPresets.flat.gains }
+                }
 
-                    HStack(alignment: .center, spacing: 6) {
-                        ForEach(0..<10, id: \.self) { index in
-                            BandSlider(
-                                label: labels[index],
-                                value: Binding(
-                                    get: { player.eqGains[index] },
-                                    set: { player.eqGains[index] = $0 }
-                                )
+                HStack(alignment: .center, spacing: 6) {
+                    ForEach(0..<10, id: \.self) { index in
+                        BandSlider(
+                            label: labels[index],
+                            value: Binding(
+                                get: { player.eqGains[index] },
+                                set: { player.eqGains[index] = $0 }
                             )
-                        }
+                        )
                     }
                 }
-                .padding(20)
             }
-            .navigationTitle("Эквалайзер")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { dismiss() }
-                }
+            .padding(20)
+        }
+        .navigationTitle("Эквалайзер")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Готово") { dismiss() }
+                    .foregroundStyle(AG.amber)
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
