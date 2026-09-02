@@ -10,7 +10,7 @@ struct ArtistView: View {
     @State private var error: String?
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             SonivoBackdrop()
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -26,57 +26,99 @@ struct ArtistView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.bottom, 96)
+                .padding(.bottom, 110)
             }
+            .ignoresSafeArea(edges: .top)
         }
-        .navigationTitle(artist?.name ?? "Артист")
+        .navigationTitle(artist?.name ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .task { await load() }
     }
 
     private func heroSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
-        VStack(spacing: 0) {
-            RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
-                .frame(maxWidth: .infinity)
-                .frame(height: 320)
-                .overlay {
-                    LinearGradient(colors: [.clear, AG.bg.opacity(0.97)], startPoint: .center, endPoint: .bottom)
-                }
-                .clipped()
+        GeometryReader { proxy in
+            let minY = proxy.frame(in: .global).minY
+            let baseHeight: CGFloat = 460
+            let heroHeight = max(baseHeight, baseHeight + (minY > 0 ? minY : 0))
 
-            VStack(spacing: 12) {
-                Text(artist.name)
-                    .font(AG.display(32, .heavy))
-                    .foregroundStyle(AG.ink)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
+            ZStack(alignment: .bottom) {
+                // 1. Ambient blurred background wash for wide screens / edge bleed
+                RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
+                    .blur(radius: 45)
+                    .scaleEffect(1.3)
+                    .opacity(0.70)
+                    .frame(width: proxy.size.width, height: heroHeight)
 
-                if !artist.subtitle.isEmpty {
-                    Text(artist.subtitle)
-                        .font(AG.text(13, .medium))
-                        .foregroundStyle(AG.inkMuted)
+                // 2. High-res artist photo
+                RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
+                    .frame(width: proxy.size.width, height: heroHeight)
+
+                // 3. Top subtle vignette/blur overlay (for clock, status bar, and back button)
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.black.opacity(0.82), location: 0.0),
+                        .init(color: Color.black.opacity(0.40), location: 0.20),
+                        .init(color: .clear, location: 0.40)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(width: proxy.size.width, height: heroHeight)
+
+                // 4. Bottom Apple Music soft dissolving gradient
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .clear, location: 0.42),
+                        .init(color: AG.bg.opacity(0.45), location: 0.68),
+                        .init(color: AG.bg.opacity(0.85), location: 0.88),
+                        .init(color: AG.bg, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(width: proxy.size.width, height: heroHeight)
+
+                // 5. Artist Name and Play Button docked at the bottom of the hero
+                VStack(spacing: 12) {
+                    Text(artist.name)
+                        .font(AG.display(36, .heavy))
+                        .foregroundStyle(AG.ink)
                         .multilineTextAlignment(.center)
-                }
+                        .lineLimit(2)
+                        .shadow(color: Color.black.opacity(0.65), radius: 12, x: 0, y: 4)
 
-                if let first = artist.popularTracks.first {
-                    Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
-                        Label("Слушать", systemImage: "play.fill")
-                            .font(AG.text(14, .bold))
-                            .foregroundStyle(.black.opacity(0.88))
-                            .padding(.horizontal, 26)
-                            .padding(.vertical, 13)
-                            .background(AG.emberGradient, in: Capsule())
+                    if !artist.subtitle.isEmpty {
+                        Text(artist.subtitle)
+                            .font(AG.text(13, .medium))
+                            .foregroundStyle(AG.inkMuted)
+                            .multilineTextAlignment(.center)
+                            .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 2)
                     }
-                    .buttonStyle(GlassPressStyle())
-                    .pulsingGlow(AG.ember)
+
+                    if let first = artist.popularTracks.first {
+                        Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
+                            Label("Слушать", systemImage: "play.fill")
+                                .font(AG.text(15, .bold))
+                                .foregroundStyle(.black.opacity(0.92))
+                                .padding(.horizontal, 30)
+                                .padding(.vertical, 14)
+                                .background(AG.emberGradient, in: Capsule())
+                        }
+                        .buttonStyle(GlassPressStyle())
+                        .pulsingGlow(AG.ember)
+                        .padding(.top, 4)
+                    }
                 }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 20)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 24)
-            .padding(.top, -42)
+            .frame(width: proxy.size.width, height: heroHeight)
+            .clipped()
+            .offset(y: minY > 0 ? -minY : 0)
         }
-        .frame(maxWidth: .infinity)
+        .frame(height: 460)
     }
 
     private func popularTracksSection(_ artist: YandexMusicService.YMArtistItem) -> some View {

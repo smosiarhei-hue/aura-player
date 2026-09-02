@@ -269,12 +269,6 @@ struct PlayerScreenV2: View {
 
             Spacer()
 
-            Capsule()
-                .fill(Color.white.opacity(0.35))
-                .frame(width: 42, height: 5)
-
-            Spacer()
-
             Menu {
                 Section("Плеер") {
                     Button {
