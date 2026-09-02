@@ -108,10 +108,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
         run: |
-          curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
+          RESPONSE=$(curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
                -F document=@Sonivo-unsigned.ipa \
                -F caption="🎵 Sonivo IPA готов к установке! (Сборка: #${BUILD_NUMBER})" \
-               "{{https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}}}/sendDocument" || true
+               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument")
+          echo "Telegram response: $RESPONSE"
+          if echo "$RESPONSE" | grep -q '"ok":true'; then
+            echo "Telegram delivery succeeded."
+          else
+            echo "::warning::Telegram delivery failed: $RESPONSE"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
