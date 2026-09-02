@@ -164,12 +164,9 @@ struct PlayerScreenV2: View {
 
                     Spacer(minLength: 6)
 
-                    // Floating status line: plain shimmering AutoMix mark or Track Wave toast
-                    if dj.isTransitionActive {
-                        AutoMixBadge()
-                            .transition(.opacity)
-                            .padding(.bottom, 6)
-                    } else if let waveMessage {
+                    // Floating status line: Track Wave toast only.
+                    // The AutoMix mark lives in the center slot under the timeline.
+                    if let waveMessage {
                         HStack(spacing: 6) {
                             Image(systemName: "dot.radiowaves.left.and.right")
                                 .font(.system(size: 13, weight: .bold))
@@ -672,7 +669,7 @@ struct PlayerScreenV2: View {
             .frame(height: 30)
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
 
-            // Timings and Center Quality Badge (Hi-Res Lossless / Lossless / HQ)
+            // Timings and center status line (AutoMix mark while mixing, otherwise quality badge)
             HStack(alignment: .center) {
                 Text(player.formatted(effectiveProgress))
                     .font(AG.text(12, .medium).monospacedDigit())
@@ -680,23 +677,7 @@ struct PlayerScreenV2: View {
 
                 Spacer()
 
-                // Apple Music Interactive Quality Badge
-                Button {
-                    openModal(.quality)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 10, weight: .bold))
-                        Text(qualityBadgeLabel)
-                            .font(AG.text(11, .semibold))
-                    }
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8)))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(GlassPressStyle())
+                centerStatusLabel
 
                 Spacer()
 
@@ -705,6 +686,38 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
             }
         }
+    }
+
+    /// Apple Music places a single caption in the center slot under the timeline.
+    /// While AutoMix is blending two tracks it shows the shimmering AutoMix mark,
+    /// the rest of the time the interactive audio quality badge.
+    @ViewBuilder private var centerStatusLabel: some View {
+        if dj.isTransitionActive {
+            AutoMixBadge()
+                .transition(.opacity)
+        } else {
+            qualityBadgeButton
+                .transition(.opacity)
+        }
+    }
+
+    private var qualityBadgeButton: some View {
+        Button {
+            openModal(.quality)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10, weight: .bold))
+                Text(qualityBadgeLabel)
+                    .font(AG.text(11, .semibold))
+            }
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(GlassPressStyle())
     }
 
     private var qualityBadgeLabel: String {
@@ -994,91 +1007,67 @@ struct PlayerScreenV2: View {
     }
 }
 
-// MARK: - AutoMix mark: plain white text, shimmering sweep, sparks and running lines
+// MARK: - AutoMix mark (Apple Music "Mixing" style)
+//
+// Plain system text, no frame, no stroke, no material or solid backdrop of any kind.
+// A soft glow sits under the glyphs and a white HDR highlight sweeps across the
+// letters from left to right, driven by TimelineView instead of repeatForever.
+// With Reduce Motion the mark stays static and only keeps the glow.
 
 struct AutoMixBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let title = "AutoMix"
-    private let sparkSeeds: [CGFloat] = [0.06, 0.24, 0.41, 0.58, 0.74, 0.92]
+    private let sweepCycle: TimeInterval = 2.6
 
     var body: some View {
         Group {
             if reduceMotion {
-                content(time: 0)
+                mark(sweep: nil)
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-                    content(time: context.date.timeIntervalSinceReferenceDate)
+                    let time = context.date.timeIntervalSinceReferenceDate
+                    let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
+                    mark(sweep: CGFloat(phase))
                 }
             }
         }
-        .accessibilityLabel("AutoMix")
+        .accessibilityLabel(Text(title))
         .allowsHitTesting(false)
     }
 
-    private func content(time: TimeInterval) -> some View {
-        HStack(spacing: 9) {
-            runningLines(time: time, mirrored: true)
-            shimmeringTitle(time: time)
-                .overlay { sparks(time: time) }
-            runningLines(time: time, mirrored: false)
-        }
-    }
-
-    private func shimmeringTitle(time: TimeInterval) -> some View {
-        let cycle = 2.4
-        let sweep = CGFloat(time.truncatingRemainder(dividingBy: cycle) / cycle)
-        let label = Text(title).font(AG.display(15, .bold))
+    private func mark(sweep: CGFloat?) -> some View {
+        let label = Text(title)
+            .font(.system(size: 12, weight: .semibold, design: .default))
 
         return label
-            .foregroundStyle(.white.opacity(0.88))
-            .overlay(
-                LinearGradient(
-                    colors: [.clear, .white, .white, .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 46)
-                .offset(x: -60 + sweep * 150)
-                .blendMode(.plusLighter)
-                .mask(label)
-            )
-            .shadow(color: .white.opacity(0.35), radius: 6)
+            .foregroundStyle(.white.opacity(0.78))
+            .overlay {
+                if let sweep {
+                    GeometryReader { geo in
+                        let width = max(geo.size.width, 1)
+                        let band = max(width * 0.5, 22)
+                        let travel = width + band * 2
+
+                        LinearGradient(
+                            colors: [.clear, .white.opacity(0.35), .white, .white.opacity(0.35), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: band)
+                        .offset(x: -band + sweep * travel)
+                        .frame(width: width, height: geo.size.height, alignment: .leading)
+                        .clipped()
+                        .blendMode(.plusLighter)
+                    }
+                    .mask(label)
+                    .allowsHitTesting(false)
+                }
+            }
+            .shadow(color: .white.opacity(0.45), radius: 5)
+            .shadow(color: .white.opacity(0.18), radius: 11)
             .fixedSize()
-    }
-
-    private func sparks(time: TimeInterval) -> some View {
-        ZStack {
-            ForEach(Array(sparkSeeds.enumerated()), id: \.offset) { index, seed in
-                let phase = (time * 0.85 + Double(seed) * 2.7).truncatingRemainder(dividingBy: 2.0) / 2.0
-                let fade = sin(phase * .pi)
-                Image(systemName: "sparkle")
-                    .font(.system(size: index % 2 == 0 ? 7 : 5, weight: .bold))
-                    .foregroundStyle(.white)
-                    .opacity(reduceMotion ? 0.45 : fade * 0.95)
-                    .scaleEffect(0.7 + fade * 0.55)
-                    .offset(
-                        x: (seed - 0.5) * 104,
-                        y: (index % 2 == 0 ? -1 : 1) * (7 + CGFloat(fade) * 7)
-                    )
-            }
-        }
-        .allowsHitTesting(false)
-    }
-
-    private func runningLines(time: TimeInterval, mirrored: Bool) -> some View {
-        VStack(alignment: mirrored ? .trailing : .leading, spacing: 3) {
-            ForEach(0..<3, id: \.self) { row in
-                let phase = (time * 1.15 + Double(row) * 0.42).truncatingRemainder(dividingBy: 1.6) / 1.6
-                let travel = reduceMotion ? 0.5 : phase
-                Capsule()
-                    .fill(Color.white)
-                    .frame(width: 8 + CGFloat(row) * 5, height: 1.6)
-                    .opacity(0.15 + sin(travel * .pi) * 0.75)
-                    .offset(x: (mirrored ? -1 : 1) * CGFloat(travel * 9 - 4.5))
-            }
-        }
-        .frame(width: 22)
+            .compositingGroup()
     }
 }
 
