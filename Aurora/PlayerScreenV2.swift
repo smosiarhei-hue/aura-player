@@ -14,6 +14,14 @@ struct PlayerScreenV2: View {
     @Binding var isPresented: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
+    // Controls scale with the system font size and never go below 44x44 pt.
+    @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
+    @ScaledMetric(relativeTo: .body) private var iconGlyph: CGFloat = 20
+    @ScaledMetric(relativeTo: .title) private var skipGlyph: CGFloat = 34
+    @ScaledMetric(relativeTo: .largeTitle) private var playGlyph: CGFloat = 46
+
     @State private var dragY: CGFloat = 0
     @State private var artistChoices: [PlayerArtistLink] = []
     @State private var selectedArtist: PlayerArtistLink?
@@ -55,9 +63,19 @@ struct PlayerScreenV2: View {
 
     private var track: Track? { player.currentTrack }
 
-    /// Video canvas is only shown when a clip actually exists.
-    /// Otherwise the standard artwork must appear immediately, with no manual toggling.
-    private var videoShotActive: Bool { isVideoShotMode && videoShotUrl != nil }
+    /// Minimum comfortable touch target, grown with Dynamic Type but never shrunk.
+    private var tapSide: CGFloat { max(44, min(controlSide, 64)) }
+
+    /// The video canvas only runs while it can actually be seen and playback is
+    /// live. On pause, on stop, or once the app leaves the foreground it is torn
+    /// down and the standard artwork comes back, so nothing decodes video in the
+    /// background and the battery is left alone.
+    private var videoShotActive: Bool {
+        isVideoShotMode
+            && videoShotUrl != nil
+            && player.isPlaying
+            && scenePhase == .active
+    }
 
     private var palette: [Color] {
         if !artworkPaletteColors.isEmpty { return artworkPaletteColors }
@@ -92,8 +110,7 @@ struct PlayerScreenV2: View {
             ZStack {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR Fluid HDR Background
                 if videoShotActive, let videoShotUrl {
-                    VideoShotPlayerView(url: videoShotUrl)
-                        .frame(width: geo.size.width, height: geo.size.height)
+                    VideoShotPlayerView(url: videoShotUrl, isActive: true)
                         .scaleEffect(1.02)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
@@ -138,11 +155,13 @@ struct PlayerScreenV2: View {
                     contrastProtectionVignette
                 }
 
-                // 2. Main Player Container (Controls ALWAYS pinned on top)
+                // 2. Main Player Container (Controls ALWAYS pinned on top).
+                //    Only the background layers ignore the safe area, so no control
+                //    can escape it on devices with a large sensor housing.
                 VStack(spacing: 0) {
                     // Top Bar (Grabber Pill) - Smoothly fades out during drag
                     topHeader
-                        .padding(.top, max(geo.safeAreaInsets.top + 8, 48))
+                        .padding(.top, 8)
                         .padding(.horizontal, 24)
                         .opacity(max(0, 1.0 - Double(dragProgress * 2.2)))
 
@@ -185,7 +204,7 @@ struct PlayerScreenV2: View {
                     // Lower Controls Section (Apple Music Standard Layout) - ALWAYS ON SCREEN
                     appleMusicLowerDeck
                         .padding(.horizontal, 24)
-                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
+                        .padding(.bottom, 10)
                         .opacity(max(0, 1.0 - Double(dragProgress * 1.7)))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -215,7 +234,7 @@ struct PlayerScreenV2: View {
             .scaleEffect(1.0 - (dragProgress * 0.10), anchor: .bottom)
             .clipShape(RoundedRectangle(cornerRadius: dragY > 0 ? (22 + dragProgress * 20) : 0, style: .continuous))
         }
-        .ignoresSafeArea()
+        .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(dismissing)
         .animation(.easeInOut(duration: 0.28), value: dj.isTransitionActive)
@@ -301,12 +320,13 @@ struct PlayerScreenV2: View {
             // Dismiss button
             Button(action: close) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: max(15, iconGlyph * 0.75), weight: .bold))
                     .foregroundStyle(.white.opacity(0.70))
-                    .frame(width: 44, height: 44)
+                    .frame(width: tapSide, height: tapSide)
                     .contentShape(Circle())
             }
             .buttonStyle(GlassPressStyle())
+            .accessibilityLabel("Свернуть плеер")
 
             Spacer()
 
@@ -314,7 +334,7 @@ struct PlayerScreenV2: View {
             Capsule()
                 .fill(Color.white.opacity(0.35))
                 .frame(width: 42, height: 5)
-                .frame(width: 120, height: 44)
+                .frame(width: 120, height: tapSide)
                 .contentShape(Rectangle())
                 .gesture(closeGesture)
 
@@ -322,9 +342,9 @@ struct PlayerScreenV2: View {
 
             // Right spacer for visual balance
             Color.clear
-                .frame(width: 44, height: 44)
+                .frame(width: tapSide, height: tapSide)
         }
-        .frame(height: 44)
+        .frame(minHeight: tapSide)
     }
 
     // MARK: - Center Stage: Standard Artwork (Screenshot 1)
@@ -373,7 +393,7 @@ struct PlayerScreenV2: View {
 
     @ViewBuilder private var artwork: some View {
         if videoShotActive, let videoShotUrl {
-            VideoShotPlayerView(url: videoShotUrl)
+            VideoShotPlayerView(url: videoShotUrl, isActive: true)
                 .transition(.opacity)
         } else if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
             Image(uiImage: image)
@@ -404,6 +424,8 @@ struct PlayerScreenV2: View {
         }
     }
 
+    /// Finding a clip never switches the mode on by itself: the video canvas is
+    /// opt-in and only the toggle (or the last remembered choice) enables it.
     private func loadVideoShot() async {
         videoShotUrl = nil
         guard let track else { return }
@@ -415,7 +437,6 @@ struct PlayerScreenV2: View {
         if player.currentTrack?.id == track.id {
             withAnimation(.easeInOut(duration: 0.30)) {
                 videoShotUrl = url
-                if url != nil { isVideoShotMode = true }
             }
         }
         videoShotLoading = false
@@ -451,8 +472,9 @@ struct PlayerScreenV2: View {
                                 .font(AG.text(11, .semibold))
                         }
                         .foregroundStyle(isVideoShotMode ? AG.amber : .white.opacity(0.85))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .frame(minHeight: 44)
                         .background(
                             Capsule()
                                 .fill(.ultraThinMaterial)
@@ -499,11 +521,12 @@ struct PlayerScreenV2: View {
                             .font(AG.text(17, .semibold))
                             .foregroundStyle(.white.opacity(0.68))
                             .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                         if resolvingArtist {
                             ProgressView().controlSize(.mini).tint(.white)
                         }
                     }
-                    .frame(minHeight: 28)
+                    .frame(minHeight: 30)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -522,22 +545,24 @@ struct PlayerScreenV2: View {
                         taste.recordLike(track: track)
                     } label: {
                         Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
-                            .font(.system(size: 21, weight: .semibold))
+                            .font(.system(size: max(19, iconGlyph), weight: .semibold))
                             .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white.opacity(0.80))
-                            .frame(width: 44, height: 44)
+                            .frame(width: tapSide, height: tapSide)
                             .contentShape(Circle())
                     }
                     .buttonStyle(GlassPressStyle())
+                    .accessibilityLabel(library.isTrackFavorite(track) ? "Убрать из избранного" : "В избранное")
 
                     // "Моя волна по треку" (Track Wave / Infinite Flow related to song)
                     Button(action: startTrackWave) {
                         Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: 19, weight: .semibold))
+                            .font(.system(size: max(18, iconGlyph * 0.95), weight: .semibold))
                             .foregroundStyle(waveActive ? AG.amber : .white.opacity(0.80))
-                            .frame(width: 44, height: 44)
+                            .frame(width: tapSide, height: tapSide)
                             .contentShape(Circle())
                     }
                     .buttonStyle(GlassPressStyle())
+                    .accessibilityLabel("Моя волна по треку")
                 }
 
                 Menu {
@@ -602,11 +627,12 @@ struct PlayerScreenV2: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.system(size: max(19, iconGlyph), weight: .bold))
                         .foregroundStyle(.white.opacity(0.85))
-                        .frame(width: 44, height: 44)
+                        .frame(width: tapSide, height: tapSide)
                         .contentShape(Circle())
                 }
+                .accessibilityLabel("Ещё")
             }
         }
     }
@@ -666,7 +692,7 @@ struct PlayerScreenV2: View {
                         }
                 )
             }
-            .frame(height: 30)
+            .frame(height: 44)
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
 
             // Timings and center status line (AutoMix mark while mixing, otherwise quality badge)
@@ -710,6 +736,7 @@ struct PlayerScreenV2: View {
                     .font(.system(size: 10, weight: .bold))
                 Text(qualityBadgeLabel)
                     .font(AG.text(11, .semibold))
+                    .lineLimit(1)
             }
             .foregroundStyle(.white.opacity(0.85))
             .padding(.horizontal, 10)
@@ -718,6 +745,7 @@ struct PlayerScreenV2: View {
             .contentShape(Capsule())
         }
         .buttonStyle(GlassPressStyle())
+        .accessibilityLabel("Качество звука: \(qualityBadgeLabel)")
     }
 
     private var qualityBadgeLabel: String {
@@ -736,30 +764,33 @@ struct PlayerScreenV2: View {
         HStack(spacing: 0) {
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.system(size: max(30, min(skipGlyph, 44)), weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .frame(maxWidth: .infinity, minHeight: max(52, tapSide))
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.90))
+            .accessibilityLabel("Предыдущий трек")
 
             Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 46, weight: .black))
+                    .font(.system(size: max(40, min(playGlyph, 58)), weight: .black))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 60)
+                    .frame(maxWidth: .infinity, minHeight: max(60, tapSide))
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.88))
+            .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизвести")
 
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.system(size: max(30, min(skipGlyph, 44)), weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .frame(maxWidth: .infinity, minHeight: max(52, tapSide))
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.90))
+            .accessibilityLabel("Следующий трек")
         }
         .padding(.vertical, 8)
     }
@@ -793,19 +824,21 @@ struct PlayerScreenV2: View {
                 }
             } label: {
                 Image(systemName: showLyricsMode ? "quote.bubble.fill" : "quote.bubble")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: max(19, iconGlyph), weight: .semibold))
                     .foregroundStyle(showLyricsMode ? AG.amber : .white.opacity(0.65))
-                    .frame(width: 44, height: 44)
+                    .frame(width: tapSide, height: tapSide)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle())
+            .accessibilityLabel("Текст песни")
 
             Spacer()
 
             // Center: AirPlay route picker (Standard native size)
             AirPlayButtonView()
-                .frame(width: 44, height: 44)
+                .frame(width: tapSide, height: tapSide)
                 .contentShape(Rectangle())
+                .accessibilityLabel("AirPlay")
 
             Spacer()
 
@@ -814,15 +847,16 @@ struct PlayerScreenV2: View {
                 openModal(.queue)
             } label: {
                 Image(systemName: activeModal == .queue ? "list.bullet.rectangle.portrait.fill" : "list.bullet")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: max(19, iconGlyph), weight: .semibold))
                     .foregroundStyle(activeModal == .queue ? AG.amber : .white.opacity(0.65))
-                    .frame(width: 44, height: 44)
+                    .frame(width: tapSide, height: tapSide)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle())
+            .accessibilityLabel("Очередь")
         }
         .padding(.horizontal, 28)
-        .frame(height: 48)
+        .frame(minHeight: tapSide)
     }
 
     // MARK: - Active Modal Views
@@ -853,6 +887,7 @@ struct PlayerScreenV2: View {
                             }
                         }
                         .padding(.vertical, 4)
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                 }
@@ -890,6 +925,7 @@ struct PlayerScreenV2: View {
                                 .foregroundStyle(.white.opacity(0.40))
                         }
                         .padding(.vertical, 4)
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                 }
@@ -1075,15 +1111,22 @@ struct AutoMixBadge: View {
 
 struct VideoShotPlayerView: UIViewRepresentable {
     let url: URL
+    var isActive: Bool = true
 
     func makeUIView(context: Context) -> VideoShotUIView {
         let view = VideoShotUIView()
         view.configure(with: url)
+        view.setActive(isActive)
         return view
     }
 
     func updateUIView(_ uiView: VideoShotUIView, context: Context) {
         uiView.configure(with: url)
+        uiView.setActive(isActive)
+    }
+
+    static func dismantleUIView(_ uiView: VideoShotUIView, coordinator: Coordinator) {
+        uiView.teardown()
     }
 }
 
@@ -1092,6 +1135,7 @@ final class VideoShotUIView: UIView {
     private var looper: AVPlayerLooper?
     private var queuePlayer: AVQueuePlayer?
     private var currentURL: URL?
+    private var wantsPlayback = true
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1108,6 +1152,17 @@ final class VideoShotUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         playerLayer?.frame = bounds
+    }
+
+    /// Video decoding is expensive, so the loop is stopped the moment the canvas
+    /// leaves the screen instead of quietly running behind the artwork.
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        if newWindow == nil {
+            queuePlayer?.pause()
+        } else if wantsPlayback {
+            queuePlayer?.play()
+        }
     }
 
     func configure(with url: URL) {
@@ -1135,7 +1190,32 @@ final class VideoShotUIView: UIView {
         self.layer.addSublayer(layer)
         self.playerLayer = layer
 
-        player.play()
+        if wantsPlayback {
+            player.play()
+        }
+    }
+
+    func setActive(_ active: Bool) {
+        wantsPlayback = active
+        guard let queuePlayer else { return }
+        if active {
+            if queuePlayer.rate == 0 { queuePlayer.play() }
+        } else if queuePlayer.rate != 0 {
+            queuePlayer.pause()
+        }
+    }
+
+    func teardown() {
+        wantsPlayback = false
+        queuePlayer?.pause()
+        queuePlayer?.removeAllItems()
+        looper?.disableLooping()
+        looper = nil
+        queuePlayer = nil
+        playerLayer?.player = nil
+        playerLayer?.removeFromSuperlayer()
+        playerLayer = nil
+        currentURL = nil
     }
 }
 

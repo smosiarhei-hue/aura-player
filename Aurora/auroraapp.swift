@@ -119,6 +119,11 @@ struct NativeMiniPlayer: View {
     @Binding var showPlayer: Bool
     @State private var opening = false
 
+    // Controls follow the system font size but stay inside the bottom accessory.
+    @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
+
+    private var tapSide: CGFloat { max(44, min(controlSide, 56)) }
+
     private var progress: Double {
         guard player.duration > 0 else { return 0 }
         return min(1, max(0, player.progress / player.duration))
@@ -136,10 +141,12 @@ struct NativeMiniPlayer: View {
                                 .font(.system(.headline, design: .rounded, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                             Text(player.currentTrack?.artist ?? "")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.68))
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -152,7 +159,7 @@ struct NativeMiniPlayer: View {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 19, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
+                        .frame(width: tapSide, height: tapSide)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -162,7 +169,7 @@ struct NativeMiniPlayer: View {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
+                        .frame(width: tapSide, height: tapSide)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -179,6 +186,7 @@ struct NativeMiniPlayer: View {
         .padding(.leading, 10)
         .padding(.trailing, 6)
         .padding(.vertical, 3)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 12)
@@ -218,9 +226,13 @@ struct MiniArtworkPulse: View {
     let track: Track?
     let isPlaying: Bool
 
+    @ScaledMetric(relativeTo: .body) private var artworkSide: CGFloat = 42
+
+    private var side: CGFloat { max(42, min(artworkSide, 54)) }
+
     var body: some View {
-        SmallArtwork(track: track, size: 42)
-            .frame(width: 42, height: 42)
+        SmallArtwork(track: track, size: side)
+            .frame(width: side, height: side)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)

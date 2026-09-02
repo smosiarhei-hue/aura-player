@@ -55,7 +55,10 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "gearshape.fill")
                             .font(.system(size: 16, weight: .semibold))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
+                    .accessibilityLabel("Настройки")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -80,7 +83,10 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 18, weight: .semibold))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
+                    .accessibilityLabel("Добавить")
                 }
             }
             .alert("Новый плейлист", isPresented: $showNewPlaylistAlert) {
@@ -134,41 +140,64 @@ struct LibraryView: View {
                     }
                 }
             }
-            .padding(.bottom, 84)
         }
+        // The tab bar accessory already reserves its own space, so the list only
+        // needs a small breathing gap instead of a hard-coded inset.
+        .safeAreaPadding(.bottom, 12)
     }
 
     // MARK: - Media Scan Card
 
     private var mediaScanActionCard: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "iphone.and.arrow.forward")
-                .font(.title2)
-                .foregroundStyle(settings.accentColor)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Импорт музыки с телефона")
-                    .font(.subheadline.weight(.semibold))
-                Text("Выберите аудиофайлы через «Файлы»")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                mediaScanIcon
+                mediaScanText
+                Spacer()
+                mediaScanButton
             }
 
-            Spacer()
-
-            Button {
-                showFilePicker = true
-            } label: {
-                Text("Выбрать файлы")
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    mediaScanIcon
+                    mediaScanText
+                }
+                mediaScanButton
             }
-            .buttonStyle(.borderedProminent)
-            .tint(settings.accentColor)
         }
         .liquidGlass(corner: 16, padding: 12)
         .padding(.horizontal, 16)
+    }
+
+    private var mediaScanIcon: some View {
+        Image(systemName: "iphone.and.arrow.forward")
+            .font(.title2)
+            .foregroundStyle(settings.accentColor)
+    }
+
+    private var mediaScanText: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Импорт музыки с телефона")
+                .font(.subheadline.weight(.semibold))
+            Text("Выберите аудиофайлы через «Файлы»")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var mediaScanButton: some View {
+        Button {
+            showFilePicker = true
+        } label: {
+            Text("Выбрать файлы")
+                .font(.caption.weight(.bold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(settings.accentColor)
     }
 
     // MARK: - Playlists Section
@@ -184,6 +213,7 @@ struct LibraryView: View {
                 }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(settings.accentColor)
+                .frame(minHeight: 44)
             }
             .padding(.horizontal, 16)
 
@@ -286,12 +316,14 @@ struct LibraryView: View {
                             .font(.subheadline.weight(filter == f ? .semibold : .regular))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
+                            .frame(minHeight: 44)
                             .background(
                                 Capsule().fill(filter == f
                                     ? AnyShapeStyle(settings.accentGradient)
                                     : AnyShapeStyle(.primary.opacity(0.06)))
                             )
                             .foregroundStyle(filter == f ? .white : .primary)
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -343,6 +375,8 @@ struct LibraryView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -382,6 +416,7 @@ struct LibraryView: View {
 
             Text("Ваша медиатека пуста")
                 .font(.title2.weight(.bold))
+                .multilineTextAlignment(.center)
 
             Text("Загрузите аудиофайлы через приложение «Файлы», чтобы начать слушать музыку.")
                 .font(.subheadline)
@@ -396,10 +431,3 @@ struct LibraryView: View {
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(settings.accentColor)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
