@@ -9,8 +9,6 @@ struct PlayerScreenV2: View {
     @State private var player = PlayerCore.shared
     @State private var library = LibraryStore.shared
     @State private var taste = UserTasteEngine.shared
-    @State private var analyzer = SpectrumAnalyzer.shared
-    @State private var settings = SettingsStore.shared
     @Binding var isPresented: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -53,13 +51,12 @@ struct PlayerScreenV2: View {
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
 
-    // Scrubber local state to prevent gesture interference
-    @State private var isScrubbing = false
-    @State private var scrubProgress: Double = 0
-
     // Cover swipe gesture offset
     @State private var coverDragX: CGFloat = 0
+
+    // Colours extracted from the current artwork, driving the background
     @State private var artworkPaletteColors: [Color] = []
+    @State private var paletteTrackId: UUID? = nil
 
     private var track: Track? { player.currentTrack }
 
@@ -82,21 +79,33 @@ struct PlayerScreenV2: View {
         if let p = track?.palette, !p.isEmpty { return p }
         return Palette.seeded(42).colors
     }
-    private var beat: CGFloat {
-        let source = max(analyzer.streamLevel, analyzer.bass, analyzer.level)
-        return player.isPlaying ? CGFloat(min(max(source, 0), 1)) : 0
-    }
-
-    private var effectiveProgress: Double {
-        isScrubbing ? scrubProgress : player.progress
-    }
 
     private func updatePalette(from image: UIImage) {
         let hexes = LibraryStore.artworkPalette(from: image)
         let colors = hexes.compactMap { Color(hex: $0) }
-        if !colors.isEmpty {
-            withAnimation(.easeInOut(duration: 0.35)) {
-                artworkPaletteColors = colors
+        guard !colors.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.85)) {
+            artworkPaletteColors = colors
+        }
+    }
+
+    /// Reading colours out of a bitmap is a CPU spike, so it is kept away from the
+    /// presentation animation and never repeated for a track that is already known.
+    private func refreshPalette() async {
+        guard let track else { return }
+        guard paletteTrackId != track.id else { return }
+
+        try? await Task.sleep(nanoseconds: 280_000_000)
+        guard player.currentTrack?.id == track.id else { return }
+        paletteTrackId = track.id
+
+        if let image = LibraryStore.cachedArtworkImage(for: track) {
+            updatePalette(from: image)
+        } else {
+            let fallback = track.palette
+            guard !fallback.isEmpty else { return }
+            withAnimation(.easeInOut(duration: 0.85)) {
+                artworkPaletteColors = fallback
             }
         }
     }
@@ -108,7 +117,8 @@ struct PlayerScreenV2: View {
             let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
 
             ZStack {
-                // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR Fluid HDR Background
+                // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
+                //    gradient built from the colours of the current artwork.
                 if videoShotActive, let videoShotUrl {
                     VideoShotPlayerView(url: videoShotUrl, isActive: true)
                         .scaleEffect(1.02)
@@ -151,7 +161,7 @@ struct PlayerScreenV2: View {
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
                 } else {
-                    fluidHDRBackground
+                    artworkGradientBackground
                     contrastProtectionVignette
                 }
 
@@ -210,15 +220,13 @@ struct PlayerScreenV2: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 6)
+                    DragGesture(minimumDistance: 8)
                         .onChanged { val in
-                            guard !isScrubbing else { return }
                             if val.translation.height > 0 {
                                 dragY = val.translation.height
                             }
                         }
                         .onEnded { val in
-                            guard !isScrubbing else { return }
                             let velocity = val.predictedEndTranslation.height
                             if val.translation.height > 120 || velocity > 280 {
                                 close()
@@ -263,36 +271,89 @@ struct PlayerScreenV2: View {
                 .preferredColorScheme(.dark)
         }
         .task(id: track?.id) {
+            await refreshPalette()
             await loadLyrics()
             await loadVideoShot()
         }
     }
 
-    // MARK: - Dynamic Fluid HDR Mesh Background (GPU 120 FPS Optimized)
+    // MARK: - Artwork Gradient Background
+    //
+    // The backdrop is derived from the cover: a base wash plus a few soft radial
+    // pools of colour. Nothing is blurred here, which is what used to make opening
+    // the player stutter, and every pool is a plain colour fill behind a static
+    // mask, so SwiftUI can interpolate the colours when the artwork changes.
+    // The drift is driven by a 12 Hz timeline and stops on pause.
 
-    private var fluidHDRBackground: some View {
-        ZStack {
+    private static let blobAnchors: [UnitPoint] = [.topLeading, .topTrailing, .bottomLeading, .bottomTrailing]
+
+    private var backgroundColors: [Color] {
+        let source = palette
+        return source.isEmpty ? [AG.amber, AG.ember] : Array(source.prefix(4))
+    }
+
+    private var artworkGradientBackground: some View {
+        let colors = backgroundColors
+        let top = colors[0]
+        let mid = colors.count > 1 ? colors[1] : colors[0]
+        let drifting = player.isPlaying && !reduceMotion
+
+        return ZStack {
             Color.black
+
             LinearGradient(
-                colors: palette.isEmpty ? [AG.amber.opacity(0.85), AG.ember.opacity(0.70), Color.black] : palette.map { $0.opacity(0.80) } + [Color.black],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                stops: [
+                    .init(color: top.opacity(0.62), location: 0.0),
+                    .init(color: mid.opacity(0.34), location: 0.45),
+                    .init(color: .black, location: 1.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
             )
-            FluidWaveView(colors: palette, isBackgroundMode: true)
-                .scaleEffect(1.40)
-            RadialGradient(
-                colors: [(palette.first ?? AG.amber).opacity(0.65), Color.clear],
-                center: .top,
-                startRadius: 40,
-                endRadius: 460
-            )
+
+            GeometryReader { geo in
+                if drifting {
+                    TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: false)) { context in
+                        colorPools(colors: colors, size: geo.size, phase: context.date.timeIntervalSinceReferenceDate)
+                    }
+                } else {
+                    colorPools(colors: colors, size: geo.size, phase: 0)
+                }
+            }
         }
-        .blur(radius: 45)
-        .scaleEffect(1.20)
-        .saturation(1.35)
         .ignoresSafeArea()
         .allowsHitTesting(false)
-        .compositingGroup()
+        .animation(.easeInOut(duration: 0.85), value: colors)
+    }
+
+    private func colorPools(colors: [Color], size: CGSize, phase: TimeInterval) -> some View {
+        ZStack {
+            ForEach(Array(colors.enumerated()), id: \.offset) { entry in
+                colorPool(color: entry.element, index: entry.offset, size: size, phase: phase)
+            }
+        }
+        .blendMode(.plusLighter)
+    }
+
+    private func colorPool(color: Color, index: Int, size: CGSize, phase: TimeInterval) -> some View {
+        let seed = Double(index)
+        let speed = 0.055 + seed * 0.014
+        let dx = CGFloat(sin(phase * speed + seed * 1.7)) * size.width * 0.15
+        let dy = CGFloat(cos(phase * speed * 0.85 + seed * 2.3)) * size.height * 0.11
+        let anchor = Self.blobAnchors[index % Self.blobAnchors.count]
+
+        return Rectangle()
+            .fill(color)
+            .mask(
+                RadialGradient(
+                    colors: [.white, .white.opacity(0.30), .clear],
+                    center: anchor,
+                    startRadius: 0,
+                    endRadius: max(size.width, size.height) * 0.78
+                )
+            )
+            .offset(x: dx, y: dy)
+            .opacity(0.52)
     }
 
     // MARK: - Contrast Protection Vignette
@@ -347,48 +408,45 @@ struct PlayerScreenV2: View {
         .frame(minHeight: tapSide)
     }
 
-    // MARK: - Center Stage: Standard Artwork (Screenshot 1)
+    // MARK: - Center Stage: Standard Artwork
 
     private func artworkStage(side: CGFloat) -> some View {
-        ZStack {
-            artwork
-                .frame(width: side, height: side)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
-                )
-                .shadow(color: Color.black.opacity(0.45), radius: player.isPlaying ? 28 : 14, y: player.isPlaying ? 16 : 8)
-                .scaleEffect(player.isPlaying ? 1.0 : 0.88)
-                .offset(x: coverDragX)
-                .gesture(
-                    DragGesture(minimumDistance: 12)
-                        .onChanged { val in
-                            if abs(val.translation.width) > abs(val.translation.height) {
-                                coverDragX = val.translation.width * 0.60
-                            }
+        artwork
+            .frame(width: side, height: side)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
+            )
+            .shadow(color: Color.black.opacity(0.45), radius: player.isPlaying ? 26 : 14, y: player.isPlaying ? 15 : 8)
+            .scaleEffect(player.isPlaying ? 1.0 : 0.88)
+            .offset(x: coverDragX)
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { val in
+                        if abs(val.translation.width) > abs(val.translation.height) {
+                            coverDragX = val.translation.width * 0.60
                         }
-                        .onEnded { val in
-                            let threshold: CGFloat = 45
-                            if val.translation.width < -threshold {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -side }
-                                nextTrack()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
-                            } else if val.translation.width > threshold {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = side }
-                                previousTrack()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
-                            } else {
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = 0 }
-                            }
+                    }
+                    .onEnded { val in
+                        let threshold: CGFloat = 45
+                        if val.translation.width < -threshold {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -side }
+                            nextTrack()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
+                        } else if val.translation.width > threshold {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = side }
+                            previousTrack()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
+                        } else {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = 0 }
                         }
-                )
-        }
-        .frame(width: side, height: side)
-        .animation(.spring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
-        .id(track?.id)
+                    }
+            )
+            .frame(width: side, height: side)
+            .animation(.spring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
     }
 
     @ViewBuilder private var artwork: some View {
@@ -399,7 +457,6 @@ struct PlayerScreenV2: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
-                .onAppear { updatePalette(from: image) }
         } else if let cover = track?.coverURL, let url = URL(string: cover) {
             AsyncImage(url: url) { phase in
                 if let image = phase.image {
@@ -450,7 +507,7 @@ struct PlayerScreenV2: View {
             .padding(.bottom, 8)
     }
 
-    // MARK: - Apple Music Standard Lower Controls Deck (Screenshot 1 & 2)
+    // MARK: - Apple Music Standard Lower Controls Deck
 
     private var appleMusicLowerDeck: some View {
         VStack(spacing: 14) {
@@ -490,8 +547,11 @@ struct PlayerScreenV2: View {
             // Track Metadata (Title, Artist, Like, Track Wave, 3-Dots)
             metadataRow
 
-            // Scrubber Slider & Lossless Badge
-            scrubberSection
+            // Scrubber, timings and the center status slot. Kept in a separate view
+            // so its high frequency updates do not rebuild the whole player.
+            PlayerTimelineSection {
+                centerStatusLabel
+            }
 
             // Large Native Transport Controls (Backward, Play/Pause, Forward)
             transportControls
@@ -633,83 +693,6 @@ struct PlayerScreenV2: View {
                         .contentShape(Circle())
                 }
                 .accessibilityLabel("Ещё")
-            }
-        }
-    }
-
-    // MARK: Scrubber Section with Audio Quality Badge (Screenshot 1 & 2)
-
-    private var scrubberSection: some View {
-        VStack(spacing: 7) {
-            GeometryReader { geo in
-                let maxDuration = max(player.duration, 0.01)
-                let currentFraction = min(1.0, max(0.0, effectiveProgress / maxDuration))
-                let barHeight: CGFloat = isScrubbing ? 11 : 7
-                let knob: CGFloat = isScrubbing ? 19 : 0
-
-                ZStack(alignment: .leading) {
-                    // Track background line
-                    Capsule()
-                        .fill(Color.white.opacity(0.24))
-                        .frame(height: barHeight)
-
-                    // Filled progress line
-                    Capsule()
-                        .fill(Color.white.opacity(isScrubbing ? 1.0 : 0.85))
-                        .frame(width: max(barHeight, geo.size.width * currentFraction), height: barHeight)
-
-                    // Thumb knob (grows out of the bar while scrubbing)
-                    if isScrubbing {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: knob, height: knob)
-                            .shadow(color: Color.black.opacity(0.45), radius: 5)
-                            .offset(x: max(0, min(geo.size.width * currentFraction - knob / 2, geo.size.width - knob)))
-                    }
-                }
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { val in
-                            if !isScrubbing {
-                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                                withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
-                                    isScrubbing = true
-                                }
-                            }
-                            let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
-                            scrubProgress = fraction * maxDuration
-                        }
-                        .onEnded { val in
-                            let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
-                            let target = fraction * maxDuration
-                            player.seek(to: target)
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                                isScrubbing = false
-                            }
-                        }
-                )
-            }
-            .frame(height: 44)
-            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
-
-            // Timings and center status line (AutoMix mark while mixing, otherwise quality badge)
-            HStack(alignment: .center) {
-                Text(player.formatted(effectiveProgress))
-                    .font(AG.text(12, .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
-
-                Spacer()
-
-                centerStatusLabel
-
-                Spacer()
-
-                Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
-                    .font(AG.text(12, .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
             }
         }
     }
@@ -1040,6 +1023,104 @@ struct PlayerScreenV2: View {
                     }
                 }
             }
+    }
+}
+
+// MARK: - Timeline Section (scrubber, timings and center status slot)
+//
+// This lives in its own view on purpose. The playback position changes many times
+// per second, and while it was read directly by the player body every tick threw
+// away and rebuilt the entire screen, which is what made the player feel sticky.
+// Now only this small view is invalidated.
+
+struct PlayerTimelineSection<Center: View>: View {
+    @State private var player = PlayerCore.shared
+    @State private var isScrubbing = false
+    @State private var scrubProgress: Double = 0
+
+    private let center: Center
+
+    init(@ViewBuilder center: () -> Center) {
+        self.center = center()
+    }
+
+    private var effectiveProgress: Double {
+        isScrubbing ? scrubProgress : player.progress
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            GeometryReader { geo in
+                let maxDuration = max(player.duration, 0.01)
+                let currentFraction = min(1.0, max(0.0, effectiveProgress / maxDuration))
+                let barHeight: CGFloat = isScrubbing ? 11 : 7
+                let knob: CGFloat = isScrubbing ? 19 : 0
+
+                ZStack(alignment: .leading) {
+                    // Track background line
+                    Capsule()
+                        .fill(Color.white.opacity(0.24))
+                        .frame(height: barHeight)
+
+                    // Filled progress line
+                    Capsule()
+                        .fill(Color.white.opacity(isScrubbing ? 1.0 : 0.85))
+                        .frame(width: max(barHeight, geo.size.width * currentFraction), height: barHeight)
+
+                    // Thumb knob (grows out of the bar while scrubbing)
+                    if isScrubbing {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: knob, height: knob)
+                            .shadow(color: Color.black.opacity(0.45), radius: 5)
+                            .offset(x: max(0, min(geo.size.width * currentFraction - knob / 2, geo.size.width - knob)))
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { val in
+                            if !isScrubbing {
+                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
+                                    isScrubbing = true
+                                }
+                            }
+                            let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
+                            scrubProgress = fraction * maxDuration
+                        }
+                        .onEnded { val in
+                            let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
+                            let target = fraction * maxDuration
+                            player.seek(to: target)
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                                isScrubbing = false
+                            }
+                        }
+                )
+            }
+            .frame(height: 44)
+            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
+
+            // Timings and center status line (AutoMix mark while mixing, otherwise quality badge)
+            HStack(alignment: .center) {
+                Text(player.formatted(effectiveProgress))
+                    .font(AG.text(12, .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
+
+                Spacer()
+
+                center
+
+                Spacer()
+
+                Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
+                    .font(AG.text(12, .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
+            }
+        }
     }
 }
 
