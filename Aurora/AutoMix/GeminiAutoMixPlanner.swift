@@ -517,6 +517,19 @@ Respond ONLY with a JSON object matching this schema:
 
             if http.statusCode == 200 {
                 SonivoDiagnostics.log("[AutoMix AI] Diagnostic ping succeeded (\(model))", tag: "AUTOMIX")
+                // A live 200 here proves the key/region are healthy RIGHT NOW.
+                // Without this reset, a single earlier region/key refusal (for
+                // example from a since-replaced API key) leaves the circuit
+                // breaker (`geminiDisabledUntil`) armed for up to 6h, so real
+                // AutoMix planning keeps silently falling back to the local DSP
+                // engine even though this diagnostic - which deliberately
+                // bypasses that breaker - just reported success. Clear the
+                // breaker and drop any transition plans cached while it was
+                // open so the very next scheduled transition retries Gemini
+                // for real instead of reusing a stale local-DSP plan.
+                geminiDisabledUntil = nil
+                geminiRegionBlocked = false
+                cache.removeAll()
                 return .ok(model: model)
             }
 
