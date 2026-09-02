@@ -83,19 +83,26 @@ nonisolated enum TransitionPlanner {
     static let vocalWeight: Double = 0.10
     static let confidenceWeight: Double = 0.05
 
+    // A normal DJ blend must feel intentional. Ten-second fades were short enough
+    // to make every transition look and sound the same, so only silence trimming
+    // and an explicit hard cut may be shorter than this window.
+    static let minimumMusicalBlend: Double = 14.0
+    static let maximumMusicalBlend: Double = 24.0
+
     // MARK: - Legacy context planning bridge
     nonisolated static func plan(_ context: TransitionContext) -> TransitionDecision {
         let dur = max(1.0, context.outgoingDuration)
-        let cue = max(0, dur - 16.0)
+        let blend = min(maximumMusicalBlend, max(minimumMusicalBlend, context.maxDuration))
+        let cue = max(0, dur - blend)
         return TransitionDecision(
             scenario: .fullBlend(bars: 4),
             cueTime: cue,
-            duration: 16.0,
+            duration: blend,
             incomingStart: 0,
             tempoRate: 1.0,
             curve: .bassSwap,
             score: 0.9,
-            reason: "AI Bass-Swap"
+            reason: "AutoMix: музыкальное сведение по структуре"
         )
     }
 
@@ -108,8 +115,6 @@ nonisolated enum TransitionPlanner {
         targetAnalysis: TrackAnalysis
     ) -> TransitionPlan {
         let sourceDur = max(10.0, sourceAnalysis.duration)
-        let targetDur = max(10.0, targetAnalysis.duration)
-
         let srcBPM = sourceAnalysis.bpm ?? 120.0
         let tgtBPM = targetAnalysis.bpm ?? 120.0
         let bpmDiff = abs(srcBPM - tgtBPM)
@@ -134,70 +139,81 @@ nonisolated enum TransitionPlanner {
                        + vocalScore * vocalWeight
                        + confidenceScore * confidenceWeight
 
-        // 2. Select Transition Strategy (Section 6 & 14)
+        // 2. Select a strategy and a musical duration. The resulting duration is
+        // rounded to full bars below, avoiding arbitrary 10-second transitions.
         var strategy: TransitionStrategy
         var reason: String
-        var blendDuration: Double
+        var desiredBlend: Double
         var sourcePlaybackRate: Double = 1.0
         var targetPlaybackRate: Double = 1.0
 
         let silenceTail = sourceAnalysis.silenceRegions.first(where: { $0.end >= sourceDur - 1.0 })?.duration ?? 0.0
-        let vocalEnd = sourceAnalysis.vocalRegions.last?.end ?? (sourceAnalysis.outroStart > 0 ? sourceAnalysis.outroStart : max(0, sourceDur - 16.0))
+        let vocalEnd = sourceAnalysis.vocalRegions.last?.end ?? (sourceAnalysis.outroStart > 0 ? sourceAnalysis.outroStart : max(0, sourceDur - maximumMusicalBlend))
         let remainingAfterVocal = max(0, sourceDur - vocalEnd)
+        let sourceBar = sourceAnalysis.barDuration ?? (60.0 / srcBPM * 4.0)
+        let safeBar = sourceBar.isFinite && sourceBar > 0.5 && sourceBar < 8 ? sourceBar : 2.0
 
         if silenceTail > 3.0 {
             strategy = .SILENCE_TRIM
             reason = "Обрезка хвостовой тишины в конце композиции"
-            blendDuration = 2.5
+            desiredBlend = 2.5
         } else if bpmRatio > 1.28 {
             if tgtEnergy > srcEnergy + 0.25 {
                 strategy = .BUILDUP_TO_DROP
-                reason = "Разгон энергии и резкий дроп на сильную долю"
-                blendDuration = 10.0
+                reason = "Разгон энергии и дроп на сильную долю"
+                desiredBlend = 16.0
             } else {
                 strategy = .FILTER_TRANSITION
-                reason = "Контрастный темп: High-Pass фильтрация с резонансным срезом"
-                blendDuration = 12.0
+                reason = "Контрастный темп: частотный переход по тактам"
+                desiredBlend = 16.0
             }
-        } else if remainingAfterVocal >= 8.0 && remainingAfterVocal <= 24.0 {
-            // Vocal finished: perfect window for vocal cut / outro blend
+        } else if remainingAfterVocal >= minimumMusicalBlend && remainingAfterVocal <= 30.0 {
+            // A vocal boundary is useful only if there is enough runway for an
+            // audible hand-off. Do not turn it into the old 10-second fade.
             if energyDiff < 0.25 {
                 strategy = .VOCAL_CUT
-                reason = "Переход сразу после окончания вокала без наложения голосов"
-                blendDuration = min(remainingAfterVocal, 16.0)
+                reason = "Переход после вокала без наложения голосов"
             } else {
                 strategy = .ENERGY_BLEND
-                reason = "Окончание вокала: плавный энергетический переход"
-                blendDuration = min(remainingAfterVocal, 18.0)
+                reason = "Окончание вокала: энергетическое сведение"
             }
+            desiredBlend = min(remainingAfterVocal, maximumMusicalBlend)
         } else if bpmRatio <= 1.08 {
             let avgBPM = (srcBPM + tgtBPM) / 2.0
             sourcePlaybackRate = min(1.06, max(0.94, avgBPM / srcBPM))
             targetPlaybackRate = min(1.06, max(0.94, avgBPM / tgtBPM))
-            let gridBar = sourceAnalysis.barDuration ?? (60.0 / avgBPM * 4.0)
 
             if energyDiff < 0.20 {
                 strategy = .BASS_SWAP
                 reason = "Синхронный DJ Bass-Swap с выравниванием по тактам"
-                blendDuration = min(24.0, max(12.0, gridBar * 4.0))
+                desiredBlend = max(minimumMusicalBlend, safeBar * 4.0)
             } else {
                 strategy = .BEAT_MATCH_EQ
                 reason = "Бит-матчинг с частотным разделением"
-                blendDuration = min(18.0, max(10.0, gridBar * 3.0))
+                desiredBlend = max(minimumMusicalBlend, safeBar * 4.0)
             }
         } else if energyDiff > 0.40 {
             strategy = .ENERGY_BLEND
             reason = "Плавный энергетический переход с разделением частот"
-            blendDuration = 14.0
+            desiredBlend = 16.0
         } else {
             strategy = .BASS_SWAP
             reason = "DJ Bass-Swap с выравниванием по тактам"
-            blendDuration = 16.0
+            desiredBlend = 16.0
         }
 
-        // 3. Compute Musical Cue Time (Snapped to vocal finish or downbeat)
+        let blendDuration: Double
+        if strategy == .SILENCE_TRIM {
+            blendDuration = desiredBlend
+        } else {
+            let bars = max(1, floor(desiredBlend / safeBar))
+            blendDuration = min(maximumMusicalBlend, max(minimumMusicalBlend, bars * safeBar))
+        }
+
+        // 3. Compute Musical Cue Time (snapped to a downbeat). A vocal endpoint is
+        // used when it leaves the complete musical blend window intact.
         var cueTime: Double
-        if remainingAfterVocal >= 6.0 && remainingAfterVocal <= 30.0 {
+        if remainingAfterVocal >= blendDuration && remainingAfterVocal <= 30.0 {
             cueTime = vocalEnd
         } else {
             cueTime = max(0, sourceDur - blendDuration - silenceTail)
@@ -220,7 +236,6 @@ nonisolated enum TransitionPlanner {
             actions.append(TransitionAction(time: 0.0, target: "source", parameter: "volume", value: 1.0, duration: 0.0))
             actions.append(TransitionAction(time: half * 0.4, target: "source", parameter: "lowEQ", value: 0.05, duration: half))
             actions.append(TransitionAction(time: blendDuration, target: "source", parameter: "volume", value: 0.0, duration: 0.0))
-
             actions.append(TransitionAction(time: 0.0, target: "target", parameter: "volume", value: 0.05, duration: 0.0))
             actions.append(TransitionAction(time: 0.0, target: "target", parameter: "lowEQ", value: 0.0, duration: 0.0))
             actions.append(TransitionAction(time: half * 0.6, target: "target", parameter: "lowEQ", value: 1.0, duration: half))
