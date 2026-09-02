@@ -1,0 +1,361 @@
+name: Apply player repair
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/apply-player-fix.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-player-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply focused player fixes
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          player = Path('Aurora/PlayerScreenV2.swift')
+          text = player.read_text()
+
+          text = text.replace('''                    VideoShotPlayerView(url: videoShotUrl, isActive: true)
+                        .scaleEffect(1.02)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+''', '''                    VideoShotPlayerView(url: videoShotUrl, isActive: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+''')
+
+          old_drag = '''            .offset(y: max(0, dragY))
+            .scaleEffect(1.0 - (dragProgress * 0.10), anchor: .bottom)
+            .clipShape(RoundedRectangle(cornerRadius: dragY > 0 ? (22 + dragProgress * 20) : 0, style: .continuous))
+'''
+          new_drag = '''            // Keep every rendered pixel at device resolution while the sheet follows
+            // the finger. Scaling the complete AVPlayerLayer caused visible softness.
+            .offset(y: max(0, dragY))
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: dragY > 0 ? min(30, 10 + dragProgress * 20) : 0,
+                    style: .continuous
+                )
+            )
+            .drawingGroup(opaque: true, colorMode: .extendedLinear)
+'''
+          if old_drag not in text:
+              raise SystemExit('drag block not found')
+          text = text.replace(old_drag, new_drag)
+
+          start = text.index('    private static let blobAnchors:')
+          end = text.index('    // MARK: - Contrast Protection Vignette')
+          replacement = '''    private var backgroundColors: [Color] {
+        let source = palette
+        return source.isEmpty ? [AG.amber, AG.ember] : Array(source.prefix(4))
+    }
+
+    /// One continuous, edge-to-edge surface. Gradients are composited as a
+    /// single static layer, so there are no moving rectangular masks or seams.
+    private var artworkGradientBackground: some View {
+        let colors = backgroundColors
+        let primary = colors[0]
+        let secondary = colors.count > 1 ? colors[1] : primary
+        let tertiary = colors.count > 2 ? colors[2] : secondary
+
+        return ZStack {
+            LinearGradient(
+                stops: [
+                    .init(color: primary.opacity(0.68), location: 0.0),
+                    .init(color: secondary.opacity(0.48), location: 0.34),
+                    .init(color: tertiary.opacity(0.24), location: 0.64),
+                    .init(color: Color.black.opacity(0.96), location: 1.0)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [secondary.opacity(0.42), .clear],
+                center: .topTrailing,
+                startRadius: 0,
+                endRadius: 620
+            )
+
+            RadialGradient(
+                colors: [primary.opacity(0.24), .clear],
+                center: .leading,
+                startRadius: 0,
+                endRadius: 760
+            )
+        }
+        .compositingGroup()
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.85), value: colors)
+    }
+
+'''
+          text = text[:start] + replacement + text[end:]
+
+          pattern = re.compile(r'''            // Compact Video-Shot / Artwork Toggle Pill.*?                \.padding\(\.bottom, -6\)\n            \}\n\n            // Track Metadata''', re.S)
+          text, count = pattern.subn('''            // VideoShot remains available from the More menu. Keeping the
+            // switch out of the main deck prevents a large capsule from shifting
+            // the artwork and transport layout on compact devices.
+
+            // Track Metadata''', text, count=1)
+          if count != 1:
+              raise SystemExit('videoshot toggle block not found')
+
+          player.write_text(text)
+
+          core = Path('Aurora/playercore.swift')
+          text = core.read_text()
+          text = text.replace('''    private(set) var currentTrack: Track?
+    private(set) var progress: Double = 0
+''', '''    private(set) var currentTrack: Track?
+    private(set) var transitionTargetTrack: Track?
+    private(set) var progress: Double = 0
+''')
+          text = text.replace('''    private var nowPlayingActivationInFlight = false
+    private var lastRemoteCommand: (name: String, date: Date)?
+''', '''    private var nowPlayingActivationInFlight = false
+    private var lastRemoteCommand: (name: String, date: Date)?
+    private var applicationIsActive = true
+''')
+          text = text.replace('''    func activateNowPlayingSessionIfNeeded() {
+        guard let session = nowPlayingSession else { return }
+''', '''    func activateNowPlayingSessionIfNeeded() {
+        guard !applicationIsActive else { return }
+        guard let session = nowPlayingSession else { return }
+''')
+          old_publish = '''    private func publishNowPlaying(_ info: [String: Any]?, state: MPNowPlayingPlaybackState) {
+        let defaultCenter = MPNowPlayingInfoCenter.default()
+        defaultCenter.nowPlayingInfo = info
+        defaultCenter.playbackState = state
+
+        if let sessionCenter = nowPlayingSession?.nowPlayingInfoCenter, sessionCenter !== defaultCenter {
+            sessionCenter.nowPlayingInfo = info
+            sessionCenter.playbackState = state
+        }
+    }
+'''
+          new_publish = '''    private func publishNowPlaying(_ info: [String: Any]?, state: MPNowPlayingPlaybackState) {
+        let defaultCenter = MPNowPlayingInfoCenter.default()
+        let sessionCenter = nowPlayingSession?.nowPlayingInfoCenter
+
+        // iOS owns Dynamic Island. While Sonivo is foregrounded, withdraw the
+        // published card instead of competing with the full in-app player.
+        if applicationIsActive {
+            defaultCenter.nowPlayingInfo = nil
+            defaultCenter.playbackState = .stopped
+            if let sessionCenter, sessionCenter !== defaultCenter {
+                sessionCenter.nowPlayingInfo = nil
+                sessionCenter.playbackState = .stopped
+            }
+            return
+        }
+
+        defaultCenter.nowPlayingInfo = info
+        defaultCenter.playbackState = state
+        if let sessionCenter, sessionCenter !== defaultCenter {
+            sessionCenter.nowPlayingInfo = info
+            sessionCenter.playbackState = state
+        }
+    }
+
+    func setApplicationSceneActive(_ active: Bool) {
+        guard applicationIsActive != active else { return }
+        applicationIsActive = active
+        if active {
+            publishNowPlaying(nil, state: .stopped)
+        } else {
+            updateNowPlayingInfo()
+        }
+    }
+'''
+          if old_publish not in text:
+              raise SystemExit('publish block not found')
+          text = text.replace(old_publish, new_publish)
+          text = text.replace('''        incomingTrack = nextTrack
+        currentAutoMixStyle''', '''        incomingTrack = nextTrack
+        transitionTargetTrack = nextTrack
+        currentAutoMixStyle''')
+          text = text.replace('''        incomingTrack = nil
+        prebufferedTrackId = nil
+        currentTrack = nextTrack
+''', '''        incomingTrack = nil
+        prebufferedTrackId = nil
+        currentTrack = nextTrack
+        transitionTargetTrack = nil
+''')
+          text = text.replace('''        transitionScheduled = false
+        activeTransitionPlan = nil
+        planIsProvisional = false
+        guard isTransitioning else { return }
+''', '''        transitionScheduled = false
+        activeTransitionPlan = nil
+        planIsProvisional = false
+        transitionTargetTrack = nil
+        guard isTransitioning else { return }
+''')
+          core.write_text(text)
+
+          app = Path('Aurora/auroraapp.swift')
+          text = app.read_text()
+          text = text.replace('''struct RootView: View {
+    @State private var player = PlayerCore.shared
+''', '''struct RootView: View {
+    @Environment(\\.scenePhase) private var scenePhase
+    @State private var player = PlayerCore.shared
+''')
+          text = text.replace('''        .onAppear {
+            PlaybackAudioSessionCoordinator.shared.install()
+        }
+''', '''        .onAppear {
+            PlaybackAudioSessionCoordinator.shared.install()
+            player.setApplicationSceneActive(scenePhase == .active)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            player.setApplicationSceneActive(phase == .active)
+        }
+''')
+          app.write_text(text)
+
+          overlay = Path('Aurora/AutoMixTransitionOverlay.swift')
+          overlay.write_text(r'''import SwiftUI
+
+// MARK: - AutoMix visual hand-off
+
+struct AutoMixTransitionOverlay: View {
+    @State private var player = PlayerCore.shared
+    @State private var dj = AutoMixDJEngine.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var palette: [Color] {
+        let incoming = player.transitionTargetTrack?.palette ?? []
+        let current = player.currentTrack?.palette ?? []
+        let values = incoming.isEmpty ? current : incoming
+        return values.isEmpty ? [AG.amber, AG.ember] : values
+    }
+
+    var body: some View {
+        if dj.isTransitionActive {
+            GeometryReader { proxy in
+                let progress = min(1, max(0, dj.transitionProgress))
+                let handOff = flashIntensity(progress)
+                let accent = palette.first ?? AG.amber
+                let companion = palette.dropFirst().first ?? AG.ember
+                let side = min(proxy.size.width - 64, proxy.size.height * 0.39, 360)
+
+                ZStack {
+                    RadialGradient(
+                        colors: [companion.opacity(0.24 * progress), accent.opacity(0.12), .clear],
+                        center: .center,
+                        startRadius: 8,
+                        endRadius: max(proxy.size.width, proxy.size.height) * 0.72
+                    )
+                    .blendMode(.plusLighter)
+
+                    if let incoming = player.transitionTargetTrack {
+                        incomingArtwork(incoming)
+                            .frame(width: side, height: side)
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.16 + handOff * 0.34), lineWidth: 0.8)
+                            }
+                            .shadow(color: accent.opacity(0.50 * handOff), radius: 34 + 28 * handOff)
+                            .scaleEffect(reduceMotion ? 1 : 0.94 + 0.06 * progress)
+                            .opacity(min(1, progress * 1.65))
+                            .position(x: proxy.size.width / 2, y: proxy.size.height * 0.36)
+
+                        VStack(spacing: 4) {
+                            Text(incoming.title)
+                                .font(.headline.weight(.bold))
+                                .lineLimit(1)
+                            Text(incoming.artist)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.68))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 32)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height * 0.585)
+                        .opacity(min(1, max(0, (progress - 0.28) * 2.3)))
+                    }
+
+                    RadialGradient(
+                        colors: [.white.opacity(handOff * 0.46), accent.opacity(handOff * 0.22), .clear],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: max(proxy.size.width, proxy.size.height) * (0.20 + handOff * 0.25)
+                    )
+                    .blendMode(.screen)
+                    .opacity(reduceMotion ? handOff * 0.30 : handOff)
+                }
+                .ignoresSafeArea()
+                .transition(.opacity)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func incomingArtwork(_ track: Track) -> some View {
+        if let image = LibraryStore.cachedArtworkImage(for: track) {
+            Image(uiImage: image).resizable().scaledToFill()
+        } else if let cover = track.coverURL, let url = URL(string: cover) {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    fallback(track)
+                }
+            }
+        } else {
+            fallback(track)
+        }
+    }
+
+    private func fallback(_ track: Track) -> some View {
+        ZStack {
+            LinearGradient(colors: track.palette.isEmpty ? [AG.amber, AG.ember] : track.palette,
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(.system(size: 68, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.82))
+        }
+    }
+
+    private func flashIntensity(_ progress: Double) -> Double {
+        let distance = abs(progress - 0.5) / 0.15
+        return max(0, 1 - distance * distance)
+    }
+}
+''')
+          PY
+
+      - name: Commit focused changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Aurora/PlayerScreenV2.swift
+          git commit -m "Fix full-screen VideoShot and player dismissal [skip ci]"
+          git add Aurora/playercore.swift
+          git commit -m "Expose AutoMix hand-off and gate foreground Now Playing [skip ci]"
+          git add Aurora/AutoMixTransitionOverlay.swift
+          git commit -m "Animate incoming AutoMix artwork [skip ci]"
+          git add Aurora/auroraapp.swift
+          git commit -m "Sync Now Playing publication with scene state"
+          git push origin HEAD:main
