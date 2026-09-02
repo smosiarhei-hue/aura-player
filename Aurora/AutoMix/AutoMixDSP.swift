@@ -22,6 +22,9 @@ nonisolated struct AudioFeatures: Sendable {
     let rms: [Float]
     /// 12 semitone bins, normalized to 0...1.
     let chroma: [Float]
+    /// Per-frame share of spectral energy inside the vocal band (180 Hz - 1.1 kHz).
+    /// An honest physical proxy for vocal activity, not a fake label.
+    let vocalRatio: [Float]
 
     var frameRate: Double { sampleRate / Double(hopSize) }
 }
@@ -123,6 +126,8 @@ nonisolated enum AutoMixDSP {
         pending.reserveCapacity(fftSize * 8)
         var onset: [Float] = []
         var rms: [Float] = []
+        var vocalRatio: [Float] = []
+        vocalRatio.reserveCapacity(4096)
         var chroma = [Float](repeating: 0, count: 12)
         var previous = [Float](repeating: 0, count: half)
         var totalSamples = 0
@@ -161,7 +166,8 @@ nonisolated enum AutoMixDSP {
                     if difference > 0 { flux += difference }
                 }
                 onset.append(flux)
-                accumulateChroma(&chroma, magnitudes: magnitudes)
+                let bands = accumulateChroma(&chroma, magnitudes: magnitudes)
+                vocalRatio.append(bands.vocalEnergy / (bands.fullEnergy + 1e-9))
                 previous = magnitudes
 
                 pending.removeFirst(hopSize)
@@ -181,20 +187,32 @@ nonisolated enum AutoMixDSP {
             hopSize: hopSize,
             onset: onset,
             rms: rms,
-            chroma: normalizedChroma
+            chroma: normalizedChroma,
+            vocalRatio: vocalRatio
         )
     }
 
-    /// Fold the spectrum into 12 semitone bins (HPCP style, 65 Hz - 2 kHz).
-    nonisolated private static func accumulateChroma(_ chroma: inout [Float], magnitudes: [Float]) {
+    /// Fold the spectrum into 12 semitone bins (HPCP style, 65 Hz - 2 kHz) and
+    /// measure how much energy sits inside the vocal band.
+    nonisolated private static func accumulateChroma(
+        _ chroma: inout [Float],
+        magnitudes: [Float]
+    ) -> (vocalEnergy: Float, fullEnergy: Float) {
         let binCount = magnitudes.count
-        guard binCount > 1 else { return }
+        guard binCount > 1 else { return (0, 0) }
+        var vocalEnergy: Float = 0
+        var fullEnergy: Float = 0
         for bin in 1..<binCount {
             let frequency = Double(bin) * analysisSampleRate / Double(fftSize)
             guard frequency >= 65, frequency <= 2_000 else { continue }
+            fullEnergy += magnitudes[bin]
+            if frequency >= 180, frequency <= 1_100 {
+                vocalEnergy += magnitudes[bin]
+            }
             let midi = 69.0 + 12.0 * log2(frequency / 440.0)
             let pitchClass = ((Int(midi.rounded()) % 12) + 12) % 12
             chroma[pitchClass] += magnitudes[bin]
         }
+        return (vocalEnergy, fullEnergy)
     }
 }

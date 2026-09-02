@@ -81,7 +81,7 @@ nonisolated struct CuePoint: Codable, Sendable {
 }
 
 nonisolated struct TrackAnalysis: Codable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     let trackID: String
     var duration: Double
@@ -121,6 +121,76 @@ nonisolated struct TrackAnalysis: Codable, Sendable {
 
     var hasSteadyBeat: Bool {
         (bpmConfidence >= 0.35) && (bpm ?? 0) >= 60 && (bpm ?? 0) <= 200 && beats.count > 8
+    }
+
+    /// Honest placeholder when no audio could be decoded: no invented BPM, key
+    /// or structure - planners must treat it as "unknown", not as data.
+    nonisolated static func minimal(trackID: String, duration: Double) -> TrackAnalysis {
+        TrackAnalysis(
+            trackID: trackID,
+            duration: max(1, duration),
+            bpm: nil,
+            bpmConfidence: 0,
+            musicalKey: nil,
+            keyConfidence: 0,
+            energy: 0.5,
+            danceability: nil,
+            introStart: 0,
+            introEnd: 0,
+            outroStart: max(0, duration - 16),
+            outroEnd: duration,
+            firstBeat: nil,
+            lastBeat: nil,
+            beats: [],
+            downbeats: [],
+            sections: [],
+            silenceRegions: [],
+            vocalRegions: [],
+            instrumentalRegions: [],
+            drops: [],
+            buildUps: [],
+            energyCurve: [],
+            analysisVersion: currentVersion
+        )
+    }
+
+    /// Parse the stored "C maj" / "A min" display name into a Camelot position.
+    var camelotPosition: CamelotPosition? {
+        guard let musicalKey else { return nil }
+        let parts = musicalKey.split(separator: " ")
+        guard let name = parts.first.map(String.init),
+              let pitchClass = MusicalKey.pitchNames.firstIndex(of: name.uppercased()) else { return nil }
+        let isMajor = parts.count > 1 ? parts[1].lowercased().hasPrefix("maj") : true
+        return CamelotPosition(
+            key: MusicalKey(pitchClass: pitchClass, mode: isMajor ? .major : .minor, confidence: Float(keyConfidence))
+        )
+    }
+
+    /// Trailing silence region overlapping the very end of the track.
+    var trailingSilence: TimeRange? {
+        silenceRegions.last { $0.end >= duration - 1.0 && $0.duration >= 0.4 }
+    }
+
+    var lastVocalEnd: TimeInterval? {
+        vocalRegions.last(where: { $0.end <= duration })?.end
+    }
+
+    var firstVocalStart: TimeInterval? {
+        vocalRegions.first?.start
+    }
+
+    func vocalActive(at time: TimeInterval) -> Bool {
+        vocalRegions.contains { time >= $0.start - 0.5 && time <= $0.end + 0.5 }
+    }
+
+    /// Average energy of a time window from the measured curve.
+    func averageEnergy(from start: TimeInterval, to end: TimeInterval) -> Double {
+        guard !energyCurve.isEmpty, end > start else { return energy }
+        let first = max(0, Int(start * Self.energyWindowsPerSecond))
+        let last = min(energyCurve.count - 1, Int(end * Self.energyWindowsPerSecond))
+        guard last > first else { return Double(energyCurve[max(0, min(energyCurve.count - 1, first))]) }
+        let slice = energyCurve[first...last]
+        return Double(slice.reduce(0, +) / Float(slice.count))
     }
 
     var barDuration: Double? {

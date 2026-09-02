@@ -1,13 +1,29 @@
 import Foundation
 
-// MARK: - Transition Plan Schema (Structured JSON from Gemini 3.7 Flash & Local DSP)
+// MARK: - Transition Plan Schema (Structured JSON from Gemini & Local DSP)
 
 nonisolated struct TransitionAction: Codable, Sendable {
     let time: Double
     let target: String       // "source" | "target"
-    let parameter: String    // "volume" | "lowEQ" | "midEQ" | "highEQ" | "filter" | "pan" | "pitch"
+    let parameter: String    // "volume" | "lowEQ" | "midEQ" | "highEQ" | "filter" | "pan" | "pitch" | "reverb"
     let value: Double
     let duration: Double
+}
+
+/// Per-plan DSP character, chosen from the measured audio of the pair.
+nonisolated struct TransitionEffects: Codable, Sendable {
+    /// Factory reverb character for the outgoing lane's tail, e.g. "plate".
+    var reverbPreset: String = "plate"
+
+    static let reverbPresets = [
+        "smallRoom", "mediumRoom", "largeRoom", "mediumHall", "largeHall",
+        "plate", "mediumChamber", "largeChamber", "cathedral", "largeRoom2",
+        "mediumHall2", "mediumHall3", "largeHall2"
+    ]
+
+    var resolvedReverbPreset: String {
+        Self.reverbPresets.contains(reverbPreset) ? reverbPreset : "plate"
+    }
 }
 
 nonisolated struct TransitionDecisionInfo: Codable, Sendable {
@@ -43,6 +59,8 @@ nonisolated struct TransitionPlan: Codable, Sendable {
     let tempo: TransitionTempoInfo
     let actions: [TransitionAction]
     let fallback: TransitionFallbackInfo
+    /// Optional DSP character (reverb choice); local plans always set it.
+    var effects: TransitionEffects = TransitionEffects()
 
     var strategy: TransitionStrategy {
         TransitionStrategy(rawValue: decision.transitionType) ?? .BASS_SWAP
@@ -57,10 +75,13 @@ nonisolated struct TransitionPlan: Codable, Sendable {
     }
 }
 
-// MARK: - Gemini 3.7 Flash AI AutoMix Planner
+// MARK: - Gemini AI AutoMix Planner
 
 actor GeminiAutoMixPlanner {
     static let shared = GeminiAutoMixPlanner()
+
+    /// Bump when the prompt/schema changes so stale cached plans are dropped.
+    private static let planCacheVersion = 4
 
     private var cache: [String: TransitionPlan] = [:]
     private var inFlightTasks: [String: Task<TransitionPlan, Never>] = [:]
@@ -76,7 +97,7 @@ actor GeminiAutoMixPlanner {
         targetAnalysis: TrackAnalysis,
         currentPosition: Double
     ) async -> TransitionPlan {
-        let cacheKey = "\(sourceTrack.id.uuidString)_\(targetTrack.id.uuidString)"
+        let cacheKey = "v\(Self.planCacheVersion)_\(sourceTrack.id.uuidString)_\(targetTrack.id.uuidString)"
 
         if let cached = cache[cacheKey] {
             return cached
@@ -87,26 +108,37 @@ actor GeminiAutoMixPlanner {
         }
 
         let task = Task<TransitionPlan, Never> {
-            // 1. Try Gemini 3.7 Flash Background AI Planning
-            if let aiPlan = await self.requestGeminiPlan(
+            // 1. Try Gemini background AI planning (never on the realtime path).
+            if var aiPlan = await requestGeminiPlan(
                 sourceTrack: sourceTrack,
                 sourceAnalysis: sourceAnalysis,
                 targetTrack: targetTrack,
                 targetAnalysis: targetAnalysis,
                 currentPosition: currentPosition
             ) {
-                SonivoDiagnostics.log("[AutoMix AI] Gemini 3.7 Flash plan generated: \(aiPlan.decision.transitionType) (conf: \(String(format: "%.2f", aiPlan.decision.confidence))), reason: \(aiPlan.decision.reason)", tag: "AUTOMIX")
+                aiPlan = TransitionPlanner.sanitize(
+                    aiPlan,
+                    sourceAnalysis: sourceAnalysis,
+                    targetAnalysis: targetAnalysis
+                )
+                SonivoDiagnostics.log(
+                    "[AutoMix AI] Gemini plan: \(aiPlan.decision.transitionType) (conf: \(String(format: "%.2f", aiPlan.decision.confidence))), reason: \(aiPlan.decision.reason)",
+                    tag: "AUTOMIX"
+                )
                 return aiPlan
             }
 
-            // 2. Offline / API Error Fallback (Local DSP Decision Engine)
+            // 2. Offline / API error fallback (local DSP decision engine).
             let fallbackPlan = TransitionPlanner.planLocalFallback(
-                sourceTrack: sourceTrack,
+                sourceTrackID: sourceTrack.id,
                 sourceAnalysis: sourceAnalysis,
-                targetTrack: targetTrack,
+                targetTrackID: targetTrack.id,
                 targetAnalysis: targetAnalysis
             )
-            SonivoDiagnostics.log("[AutoMix Local] Local DSP plan generated: \(fallbackPlan.decision.transitionType), cue: \(String(format: "%.1f", fallbackPlan.cueTime))s, dur: \(String(format: "%.1f", fallbackPlan.leadTime))s", tag: "AUTOMIX")
+            SonivoDiagnostics.log(
+                "[AutoMix Local] DSP plan: \(fallbackPlan.decision.transitionType), cue: \(String(format: "%.1f", fallbackPlan.cueTime))s, dur: \(String(format: "%.1f", fallbackPlan.leadTime))s",
+                tag: "AUTOMIX"
+            )
             return fallbackPlan
         }
 
@@ -117,7 +149,7 @@ actor GeminiAutoMixPlanner {
         return plan
     }
 
-    // MARK: - Gemini 3.7 Flash API Request
+    // MARK: - Gemini API Request
 
     private func requestGeminiPlan(
         sourceTrack: Track,
@@ -147,6 +179,25 @@ actor GeminiAutoMixPlanner {
         return nil
     }
 
+    /// Compact section summary so the prompt stays small but still describes
+    /// the musical structure the planner needs for phrase-aware decisions.
+    nonisolated private static func describeSections(_ analysis: TrackAnalysis) -> String {
+        guard !analysis.sections.isEmpty else { return "none detected" }
+        return analysis.sections.prefix(20).map { section in
+            String(format: "%.0f-%.0fs %@ (energy %.2f)", section.start, section.end, section.type.rawValue, section.energy)
+        }.joined(separator: "; ")
+    }
+
+    nonisolated private static func describeRanges(_ ranges: [TimeRange], limit: Int = 12) -> String {
+        guard !ranges.isEmpty else { return "none" }
+        return ranges.prefix(limit).map { String(format: "%.1f-%.1fs", $0.start, $0.end) }.joined(separator: ", ")
+    }
+
+    nonisolated private static func describeTimes(_ times: [Double], limit: Int = 8) -> String {
+        guard !times.isEmpty else { return "none" }
+        return times.prefix(limit).map { String(format: "%.1fs", $0) }.joined(separator: ", ")
+    }
+
     private func executeGeminiRequest(
         url: URL,
         sourceTrack: Track,
@@ -168,57 +219,77 @@ Avoid overlapping vocals whenever possible.
 Avoid simultaneous full low-end from both tracks.
 Transitions should align with musical phrases, bars, beats, drops, breakdowns, intros and outros.
 Prefer 8, 16 or 32 bar musical structures.
-Use time stretching only when the resulting speed change is musically reasonable.
+Use time stretching only when the resulting speed change is musically reasonable (stay within 0.94-1.06 playback rate).
 If a complex transition would sound worse than a simple transition, choose the simple transition.
 If the tracks are incompatible, choose a safe fallback such as silence trimming, short crossfade, echo-out or hard cut at a musical boundary.
+Use only the analysis data provided. All numbers you output (transitionStart, transitionEnd, rates) must be physically valid for these tracks.
 Return ONLY valid JSON matching the supplied schema.
 Never return markdown.
 Never return explanations outside the JSON.
-Never invent unavailable audio-analysis data.
 Use confidence values between 0 and 1.
 Your transition plan must always contain a fallback strategy.
 """
 
+        // Privacy (TZ Section 33): only musical facts, no user identifiers.
         let prompt = """
 CURRENT TRACK:
 - Title: \(sourceTrack.title)
 - Artist: \(sourceTrack.artist)
-- Duration: \(sourceAnalysis.duration)
-- BPM: \(sourceAnalysis.bpm ?? 120.0) (confidence: \(sourceAnalysis.bpmConfidence))
-- Key: \(sourceAnalysis.musicalKey ?? "Unknown") (confidence: \(sourceAnalysis.keyConfidence))
-- Energy: \(sourceAnalysis.energy)
-- Outro Start: \(sourceAnalysis.outroStart)
-- Beats Count: \(sourceAnalysis.beats.count)
+- Duration: \(String(format: "%.1f", sourceAnalysis.duration))s
+- BPM: \(sourceAnalysis.bpm.map { String(format: "%.1f", $0) } ?? "unknown") (confidence: \(String(format: "%.2f", sourceAnalysis.bpmConfidence)))
+- Key: \(sourceAnalysis.musicalKey ?? "unknown") (confidence: \(String(format: "%.2f", sourceAnalysis.keyConfidence)))
+- Energy: \(String(format: "%.2f", sourceAnalysis.energy))
+- Intro ends at: \(String(format: "%.1f", sourceAnalysis.introEnd))s
+- Outro starts at: \(String(format: "%.1f", sourceAnalysis.outroStart))s
+- Sections: \(Self.describeSections(sourceAnalysis))
+- Vocal regions: \(Self.describeRanges(sourceAnalysis.vocalRegions))
+- Instrumental regions: \(Self.describeRanges(sourceAnalysis.instrumentalRegions))
+- Silence regions: \(Self.describeRanges(sourceAnalysis.silenceRegions))
+- Drops: \(Self.describeTimes(sourceAnalysis.drops))
+- Build-ups: \(Self.describeRanges(sourceAnalysis.buildUps))
+- Last beat: \(sourceAnalysis.lastBeat.map { String(format: "%.1fs", $0) } ?? "unknown")
+- Last downbeat: \(sourceAnalysis.downbeats.last.map { String(format: "%.1fs", $0) } ?? "unknown")
 
 NEXT TRACK:
 - Title: \(targetTrack.title)
 - Artist: \(targetTrack.artist)
-- Duration: \(targetAnalysis.duration)
-- BPM: \(targetAnalysis.bpm ?? 120.0) (confidence: \(targetAnalysis.bpmConfidence))
-- Key: \(targetAnalysis.musicalKey ?? "Unknown") (confidence: \(targetAnalysis.keyConfidence))
-- Energy: \(targetAnalysis.energy)
-- Intro End: \(targetAnalysis.introEnd)
+- Duration: \(String(format: "%.1f", targetAnalysis.duration))s
+- BPM: \(targetAnalysis.bpm.map { String(format: "%.1f", $0) } ?? "unknown") (confidence: \(String(format: "%.2f", targetAnalysis.bpmConfidence)))
+- Key: \(targetAnalysis.musicalKey ?? "unknown") (confidence: \(String(format: "%.2f", targetAnalysis.keyConfidence)))
+- Energy: \(String(format: "%.2f", targetAnalysis.energy))
+- Intro ends at: \(String(format: "%.1f", targetAnalysis.introEnd))s
+- Outro starts at: \(String(format: "%.1f", targetAnalysis.outroStart))s
+- Sections: \(Self.describeSections(targetAnalysis))
+- Vocal regions: \(Self.describeRanges(targetAnalysis.vocalRegions))
+- Instrumental regions: \(Self.describeRanges(targetAnalysis.instrumentalRegions))
+- Drops: \(Self.describeTimes(targetAnalysis.drops))
+- Build-ups: \(Self.describeRanges(targetAnalysis.buildUps))
+- First beat: \(targetAnalysis.firstBeat.map { String(format: "%.1fs", $0) } ?? "unknown")
+- First downbeat: \(targetAnalysis.downbeats.first.map { String(format: "%.1fs", $0) } ?? "unknown")
 
 PLAYER STATE:
-- Current Position: \(currentPosition)
-- Remaining Duration: \(sourceAnalysis.duration - currentPosition)
+- Current position: \(String(format: "%.1f", currentPosition))s
+- Remaining duration: \(String(format: "%.1f", max(0, sourceAnalysis.duration - currentPosition)))s
+
+The effects.reverbPreset describes the reverb character for the outgoing track's tail. Pick it from the measured audio: short bright tails (plate, smallRoom, mediumRoom) for upbeat club material so the kick stays readable; long lush tails (largeHall, cathedral, largeRoom) for slow or quiet material; chambers and halls for vocal-heavy pairs. You may also add "reverb" action keyframes (0...1 wetness over time) on the source lane.
+Every plan should feel individual: vary blend lengths, curve shapes and effect depths based on what the analysis actually shows about THIS pair of tracks.
 
 Respond ONLY with a JSON object matching this schema:
 {
   "decision": {
-    "transitionType": "BASS_SWAP | BEAT_MATCH | BEAT_MATCH_EQ | FILTER_TRANSITION | BUILDUP_TO_DROP | DROP_SWITCH | ECHO_OUT | LOOP_TRANSITION | SILENCE_TRIM | SIMPLE_CROSSFADE | HARD_CUT",
+    "transitionType": "BASS_SWAP | BEAT_MATCH | BEAT_MATCH_EQ | FILTER_TRANSITION | BUILDUP_TO_DROP | DROP_SWITCH | ECHO_OUT | LOOP_TRANSITION | SILENCE_TRIM | SIMPLE_CROSSFADE | VOCAL_CUT | INSTRUMENTAL_OVERLAY | ENERGY_BLEND | HARD_CUT",
     "confidence": 0.92,
     "reason": "Harmonic bass swap on bar boundary with tempo sync"
   },
   "sourceTrack": {
-    "transitionStart": \(max(0, sourceAnalysis.duration - 16.0)),
-    "transitionEnd": \(sourceAnalysis.duration)
+    "transitionStart": \(String(format: "%.1f", max(0, sourceAnalysis.duration - 16.0))),
+    "transitionEnd": \(String(format: "%.1f", sourceAnalysis.duration))
   },
   "targetTrack": {
     "startPosition": 0.0
   },
   "tempo": {
-    "targetBPM": \(targetAnalysis.bpm ?? 120.0),
+    "targetBPM": \(targetAnalysis.bpm.map { String(format: "%.1f", $0) } ?? "120.0"),
     "sourcePlaybackRate": 1.0,
     "targetPlaybackRate": 1.0
   },
@@ -229,7 +300,10 @@ Respond ONLY with a JSON object matching this schema:
     { "time": 4.0, "target": "target", "parameter": "volume", "value": 0.8, "duration": 8.0 }
   ],
   "fallback": {
-    "type": "BASS_SWAP"
+    "type": "SIMPLE_CROSSFADE"
+  },
+  "effects": {
+    "reverbPreset": "plate"
   }
 }
 """
@@ -256,7 +330,7 @@ Respond ONLY with a JSON object matching this schema:
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = payload
-        request.timeoutInterval = 5.0
+        request.timeoutInterval = 6.0
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -292,12 +366,35 @@ Respond ONLY with a JSON object matching this schema:
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard let jsonData = cleanedJson.data(using: .utf8),
-                  let plan = try? JSONDecoder().decode(TransitionPlan.self, from: jsonData) else {
+                  let rawPlan = try? JSONDecoder().decode(TransitionPlan.self, from: jsonData) else {
                 SonivoDiagnostics.log("[AutoMix AI] JSON decode failed: \(cleanedJson.prefix(80))", tag: "AUTOMIX")
                 return nil
             }
 
-            SonivoDiagnostics.log("[AutoMix AI] Plan: \(plan.decision.transitionType) (cue: \(String(format: "%.1f", plan.cueTime))s, dur: \(String(format: "%.1f", plan.leadTime))s, rate: \(String(format: "%.2f", plan.tempo.targetPlaybackRate)))", tag: "AUTOMIX")
+            // Trust, but verify: reject plans that contradict measured audio.
+            let cueValid = rawPlan.sourceTrack.transitionStart.isFinite
+                && rawPlan.sourceTrack.transitionStart >= 0
+                && rawPlan.sourceTrack.transitionStart <= sourceAnalysis.duration + 1
+            guard cueValid else {
+                SonivoDiagnostics.log("[AutoMix AI] Plan rejected: invalid cue \(rawPlan.sourceTrack.transitionStart)", tag: "AUTOMIX")
+                return nil
+            }
+
+            let confidence = rawPlan.decision.confidence.isFinite
+                ? min(1, max(0, rawPlan.decision.confidence))
+                : 0.5
+            let plan = TransitionPlan(
+                decision: TransitionDecisionInfo(
+                    transitionType: rawPlan.decision.transitionType,
+                    confidence: confidence,
+                    reason: rawPlan.decision.reason
+                ),
+                sourceTrack: rawPlan.sourceTrack,
+                targetTrack: rawPlan.targetTrack,
+                tempo: rawPlan.tempo,
+                actions: rawPlan.actions,
+                fallback: rawPlan.fallback
+            )
             return plan
         } catch {
             SonivoDiagnostics.log("[AutoMix AI] Network error: \(error.localizedDescription)", tag: "AUTOMIX")
