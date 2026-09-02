@@ -723,6 +723,7 @@ final class PlayerCore {
 
     func play(_ track: Track, newQueue: [Track]? = nil) {
         flushListeningStats()
+        reportWaveSkipIfNeeded()
         if let q = newQueue, q != queue { queue = q }
         currentTrack = track
         playError = nil
@@ -804,6 +805,7 @@ final class PlayerCore {
 
     func next() {
         cancelTransition()
+        reportWaveSkipIfNeeded()
         if let nextTrack = peekNext(auto: false) {
             currentTrack = nextTrack
             streamDuration = nextTrack.duration
@@ -828,6 +830,7 @@ final class PlayerCore {
             seek(to: 0)
             return
         }
+        reportWaveSkipIfNeeded()
         currentTrack = q[idx - 1]
         streamDuration = q[idx - 1].duration
         start(at: 0)
@@ -1543,6 +1546,7 @@ final class PlayerCore {
         isPlanningTransition = false
         planningStartedAt = nil
         flushListeningStats()
+        reportWaveFinishedIfNeeded()
 
         // After a mixed-pair blend the ACTIVE engine changes (AVPlayer <->
         // AVAudioEngine). Park every non-playing lane first, then promote the
@@ -1799,6 +1803,7 @@ final class PlayerCore {
         // (the outgoing track's segment also fires its completion mid-crossfade).
         guard !isTransitioning, !transitionScheduled else { return }
         flushListeningStats()
+        reportWaveFinishedIfNeeded()
         progress = duration
         anchorDate = nil
         isPlaying = false
@@ -1844,6 +1849,27 @@ final class PlayerCore {
             listenedSeconds: min(progress, track.duration),
             totalDuration: track.duration
         )
+    }
+
+    /// Tells the active "Моя волна" rotor session that the outgoing track was
+    /// skipped rather than finished, so the next batches steer away from
+    /// similar picks. This closes the gap that used to make repeats show up:
+    /// the app never reported skip/finish events to Yandex at all, so the
+    /// server-side rotor had nothing to learn from beyond client-side history.
+    private func reportWaveSkipIfNeeded() {
+        guard let track = currentTrack, track.isStream else { return }
+        let ymID = Self.yandexTrackID(from: track)
+        guard !ymID.isEmpty else { return }
+        YandexMusicService.shared.reportSkip(trackId: ymID)
+    }
+
+    /// The outgoing track played through to completion (or was carried into an
+    /// AutoMix blend) — reinforces the rotor's pick instead of leaving it silent.
+    private func reportWaveFinishedIfNeeded() {
+        guard let track = currentTrack, track.isStream, track.duration > 5 else { return }
+        let ymID = Self.yandexTrackID(from: track)
+        guard !ymID.isEmpty else { return }
+        YandexMusicService.shared.reportTrackFinished(trackId: ymID, totalPlayedSeconds: track.duration)
     }
 
     private func effectiveQueue() -> [Track] {
