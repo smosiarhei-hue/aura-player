@@ -44,7 +44,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Главная"
         case .new: return "Новое"
-        case .radio: return "Радио"
+        case .radio: return "Моя волна"
         case .library: return "Библиотека"
         case .search: return "Поиск"
         }
