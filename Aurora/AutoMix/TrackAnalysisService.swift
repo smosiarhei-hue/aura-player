@@ -31,11 +31,7 @@ actor TrackAnalysisService {
     func cached(for url: URL) -> TrackAnalysis? {
         let key = Self.cacheKey(for: url)
         if let value = memory[key] { return value }
-
-        let file = Self.cacheDirectory().appendingPathComponent(key + ".json")
-        guard let data = try? Data(contentsOf: file),
-              let decoded = try? JSONDecoder().decode(TrackAnalysis.self, from: data),
-              decoded.analysisVersion == TrackAnalysis.currentVersion else { return nil }
+        guard let decoded = diskCached(key: key) else { return nil }
         memory[key] = decoded
         return decoded
     }
@@ -49,6 +45,32 @@ actor TrackAnalysisService {
 
         let task = Task.detached(priority: .utility) {
             await Self.compute(trackID: trackID, url: url)
+        }
+        inFlight[key] = task
+        let result = await task.value
+        inFlight[key] = nil
+
+        if let result { store(result, key: key) }
+        return result
+    }
+
+    /// Analyse a remote stream (no local file, e.g. a Yandex Music track).
+    /// A small quality copy is downloaded once so the exact same DSP pipeline
+    /// used for local files can extract a real BPM, beat grid, key and
+    /// structure instead of AutoMix falling back to a generic energy blend.
+    /// The cache key is the stable per-track UUID, so the analysis is reused
+    /// across app launches without re-downloading anything.
+    func analysis(trackID: UUID, streamURL: URL) async -> TrackAnalysis? {
+        let key = Self.streamCacheKey(for: trackID)
+        if let value = memory[key] { return value }
+        if let decoded = diskCached(key: key) {
+            memory[key] = decoded
+            return decoded
+        }
+        if let running = inFlight[key] { return await running.value }
+
+        let task = Task.detached(priority: .utility) {
+            await Self.computeFromRemote(trackID: trackID, remoteURL: streamURL)
         }
         inFlight[key] = task
         let result = await task.value
@@ -106,6 +128,14 @@ actor TrackAnalysisService {
         try? data.write(to: file, options: .atomic)
     }
 
+    private func diskCached(key: String) -> TrackAnalysis? {
+        let file = Self.cacheDirectory().appendingPathComponent(key + ".json")
+        guard let data = try? Data(contentsOf: file),
+              let decoded = try? JSONDecoder().decode(TrackAnalysis.self, from: data),
+              decoded.analysisVersion == TrackAnalysis.currentVersion else { return nil }
+        return decoded
+    }
+
     nonisolated private static func compute(trackID: UUID, url: URL) async -> TrackAnalysis? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         guard let features = await AutoMixDSP.features(for: url) else { return nil }
@@ -149,6 +179,29 @@ actor TrackAnalysisService {
         )
     }
 
+    /// Downloads a remote stream to a private temp file and reuses the exact
+    /// same decode/feature pipeline as local files. The temp file is removed
+    /// as soon as the analysis is done, regardless of success or failure.
+    nonisolated private static func computeFromRemote(trackID: UUID, remoteURL: URL) async -> TrackAnalysis? {
+        guard let localURL = await downloadToTemp(remoteURL) else { return nil }
+        defer { try? FileManager.default.removeItem(at: localURL) }
+        return await compute(trackID: trackID, url: localURL)
+    }
+
+    nonisolated private static func downloadToTemp(_ url: URL) async -> URL? {
+        guard let (tempFile, _) = try? await URLSession.shared.download(from: url) else { return nil }
+        let ext = url.pathExtension.isEmpty ? "audio" : url.pathExtension
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AutoMixAnalysis-" + UUID().uuidString)
+            .appendingPathExtension(ext)
+        do {
+            try FileManager.default.moveItem(at: tempFile, to: destination)
+            return destination
+        } catch {
+            return nil
+        }
+    }
+
     nonisolated private static func cacheDirectory() -> URL {
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -169,5 +222,9 @@ actor TrackAnalysisService {
             hash = (hash ^ UInt64(byte)) &* 1099511628211
         }
         return String(hash, radix: 36)
+    }
+
+    nonisolated private static func streamCacheKey(for trackID: UUID) -> String {
+        "stream-" + trackID.uuidString + "-v" + String(TrackAnalysis.currentVersion)
     }
 }
