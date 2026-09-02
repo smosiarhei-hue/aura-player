@@ -1417,18 +1417,20 @@ final class PlayerCore {
         if isBrakeStrategy {
             if p > 0.35 {
                 let brakeP = Float((p - 0.35) / 0.65)
+                let brakeRate = max(0.05, Float(1.0 - brakeP * 0.95))
                 if !isUsingStreamPlayer {
-                    let brakeRate = max(0.08, 1.0 - brakeP * 0.90)
                     activeTimePitch.rate = brakeRate
-                    activeTimePitch.pitch = Float(-1500.0 * (brakeP * brakeP))
+                    activeTimePitch.pitch = Float(-1800.0 * (brakeP * brakeP))
                 } else if isPlaying {
-                    activeStreamingPlayer.rate = 1.0
+                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .varispeed
+                    activeStreamingPlayer.rate = brakeRate
                 }
             } else {
                 if !isUsingStreamPlayer {
                     activeTimePitch.rate = 1.0
                     activeTimePitch.pitch = 0
                 } else if isPlaying {
+                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
                     activeStreamingPlayer.rate = 1.0
                 }
             }
@@ -1645,6 +1647,7 @@ final class PlayerCore {
                 player.rate = value
                 self.nudgePlaybackAnchor(by: (Double(value) - 1.0) * tick)
                 if progress >= 1 {
+                    player.currentItem?.audioTimePitchAlgorithm = .timeDomain
                     player.rate = self.isPlaying ? 1.0 : 0
                     self.rateReleaseTimer?.invalidate()
                     self.rateReleaseTimer = nil

@@ -265,6 +265,19 @@ enum SonivoPlay {
 
         Task {
             ym.beginStationSession(station.stationId)
+
+            // FAST START: fetch first quick batch (~200ms) and launch immediately!
+            let firstBatch = await ym.fetchRotorBatch(stationId: station.stationId, queueSeed: nil)
+            let initial = firstBatch.isEmpty ? (try? await ym.getChart()) ?? [] : firstBatch
+            if !initial.isEmpty {
+                let convertedInitial = initial.map { ym.convertToTrack($0) }
+                let rankedInitial = UserTasteEngine.shared.filterAndRankWave(tracks: convertedInitial)
+                if let first = rankedInitial.first {
+                    PlayerCore.shared.play(first, newQueue: rankedInitial)
+                }
+            }
+
+            // BACKGROUND EXPANSION: load full queue without blocking audio
             var tracks = await ym.buildWaveQueue(stationId: station.stationId, target: 45)
             if tracks.isEmpty {
                 tracks = (try? await ym.getChart()) ?? []
@@ -272,18 +285,6 @@ enum SonivoPlay {
             guard !tracks.isEmpty else { return }
             var converted = tracks.map { ym.convertToTrack($0) }
 
-            // Как в Спотифае: жанровая станция подмешивает треки
-            // исполнителей, которых пользователь реально слушает и любит —
-            // но только для нейтральных к настроению жанровых станций
-            // (genre:*). Настроенческие/активностные станции ("Энергия",
-            // "Релакс", "В дорогу", "Время помечтать", "Вечеринка" — mood:*
-            // и activity:*) раньше получали ту же подмесь избранных
-            // исполнителей независимо от того, звучит ли конкретный трек
-            // этого исполнителя энергично или грустно: из-за этого
-            // «энергичная» волна реально включала медленные, грустные
-            // треки любимого артиста. Теперь подмесь по вкусу исполнителя
-            // работает только там, где она не рискует сломать заявленное
-            // настроение волны.
             let isMoodOrActivitySpecific = station.stationId.hasPrefix("mood:") || station.stationId.hasPrefix("activity:")
             if station.stationId != "user:onyourwave" && !isMoodOrActivitySpecific {
                 let favourite = await ym.personalPicks(limit: 8)
@@ -296,8 +297,15 @@ enum SonivoPlay {
             }
 
             let rankedQueue = UserTasteEngine.shared.filterAndRankWave(tracks: converted)
-            guard let first = rankedQueue.first else { return }
-            PlayerCore.shared.play(first, newQueue: rankedQueue)
+            if let current = PlayerCore.shared.currentTrack {
+                if !rankedQueue.contains(where: { $0.id == current.id }) {
+                    PlayerCore.shared.queue = [current] + rankedQueue
+                } else {
+                    PlayerCore.shared.queue = rankedQueue
+                }
+            } else if let first = rankedQueue.first {
+                PlayerCore.shared.play(first, newQueue: rankedQueue)
+            }
         }
     }
 
