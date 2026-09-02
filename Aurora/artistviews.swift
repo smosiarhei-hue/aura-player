@@ -26,7 +26,7 @@ struct ArtistView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.bottom, 24)
+                .padding(.bottom, 96)
             }
         }
         .navigationTitle(artist?.name ?? "Артист")
