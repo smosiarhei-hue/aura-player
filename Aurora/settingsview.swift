@@ -8,6 +8,10 @@ struct SettingsView: View {
     @State private var socialAuth = SocialAuthStore.shared
     @State private var tokenInput = ""
 
+    @State private var isCheckingGemini = false
+    @State private var geminiCheckResult: String? = nil
+    @State private var geminiCheckIsError = false
+
     var body: some View {
         NavigationStack {
             Form {
@@ -92,6 +96,49 @@ struct SettingsView: View {
                     }
                 } header: { Text("Переходы между песнями") } footer: {
                     Text("В AutoMix нет ручной длины и стиля: он сам анализирует BPM, такты, структуру и тональность, выбирает 4/8/16 тактов, синхронизирует темп и автоматически применяет beat-loop, фильтры и reverb.")
+                }
+
+                Section {
+                    Button {
+                        Task {
+                            isCheckingGemini = true
+                            geminiCheckResult = nil
+                            let status = await GeminiAutoMixPlanner.shared.testConnectivity()
+                            isCheckingGemini = false
+                            switch status {
+                            case .ok(let model):
+                                geminiCheckIsError = false
+                                geminiCheckResult = "✅ Gemini отвечает (\(model)). AutoMix сейчас будет использовать AI-план."
+                            case .regionBlocked(let message):
+                                geminiCheckIsError = true
+                                geminiCheckResult = "🚫 Google заблокировал запрос по региону/ключу: \(message)"
+                            case .httpError(let code, let message):
+                                geminiCheckIsError = true
+                                geminiCheckResult = "⚠️ Ошибка Gemini (HTTP \(code)): \(message)"
+                            case .networkError(let message):
+                                geminiCheckIsError = true
+                                geminiCheckResult = "⚠️ Сетевая ошибка: \(message)"
+                            case .noApiKey:
+                                geminiCheckIsError = true
+                                geminiCheckResult = "⚠️ API-ключ Gemini не настроен."
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text("Проверить подключение к Gemini")
+                            Spacer()
+                            if isCheckingGemini { ProgressView() }
+                        }
+                    }
+                    .disabled(isCheckingGemini)
+
+                    if let geminiCheckResult {
+                        Text(geminiCheckResult)
+                            .font(.caption)
+                            .foregroundStyle(geminiCheckIsError ? .red : .green)
+                    }
+                } header: { Text("Диагностика Gemini AI") } footer: {
+                    Text("Отправляет прямо сейчас короткий тестовый запрос в Gemini API. Включите или выключите VPN и нажмите ещё раз, чтобы увидеть актуальный результат для текущего подключения.")
                 }
 
                 Section("Тактильный отклик") {
