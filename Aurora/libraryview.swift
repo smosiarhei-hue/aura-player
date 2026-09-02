@@ -81,11 +81,17 @@ struct LibraryView: View {
                             Label("Пересканировать память", systemImage: "arrow.clockwise")
                         }
                     } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
+                        if library.isImportingFiles {
+                            ProgressView()
+                                .frame(minWidth: 44, minHeight: 44)
+                        } else {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
                     }
+                    .disabled(library.isImportingFiles)
                     .accessibilityLabel("Добавить")
                 }
             }
@@ -97,6 +103,14 @@ struct LibraryView: View {
                 }
                 Button("Отмена", role: .cancel) { newPlaylistTitle = "" }
             }
+            .alert("Ошибка импорта", isPresented: Binding(
+                get: { library.lastError != nil },
+                set: { isPresented in if !isPresented { library.clearLastError() } }
+            )) {
+                Button("ОК", role: .cancel) { library.clearLastError() }
+            } message: {
+                Text(library.lastError ?? "")
+            }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
@@ -105,8 +119,11 @@ struct LibraryView: View {
                 allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav, .aiff],
                 allowsMultipleSelection: true
             ) { result in
-                if case .success(let urls) = result {
+                switch result {
+                case .success(let urls):
                     library.importFromPicker(urls: urls)
+                case .failure(let error):
+                    library.lastError = "Не удалось открыть «Файлы»: \(error.localizedDescription)"
                 }
             }
         }
@@ -171,7 +188,7 @@ struct LibraryView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Импорт музыки с телефона")
                 .font(.subheadline.weight(.semibold))
-            Text("Выберите аудиофайлы через «Файлы»")
+            Text(library.isImportingFiles ? "Импортируем файлы…" : "Выберите аудиофайлы через «Файлы»")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -182,14 +199,20 @@ struct LibraryView: View {
         Button {
             showFilePicker = true
         } label: {
-            Text("Выбрать файлы")
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .frame(minHeight: 44)
+            HStack(spacing: 6) {
+                if library.isImportingFiles {
+                    ProgressView().controlSize(.mini)
+                }
+                Text(library.isImportingFiles ? "Импорт…" : "Выбрать файлы")
+                    .font(.caption.weight(.bold))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .frame(minHeight: 44)
         }
         .buttonStyle(.borderedProminent)
         .tint(settings.accentColor)
+        .disabled(library.isImportingFiles)
     }
 
     // MARK: - Playlists Section
