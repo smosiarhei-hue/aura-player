@@ -132,6 +132,7 @@ final class PlayerCore {
     private var nowPlayingSessionObserver: NowPlayingSessionObserver?
     private var nowPlayingActivationInFlight = false
     private var lastRemoteCommand: (name: String, date: Date)?
+    private var applicationIsActive = true
 
     // Instant Streaming Engine (Dual AVPlayers for Seamless DJ Transitions & Pre-buffering)
     private let streamingPlayerA = AVPlayer()
@@ -166,6 +167,7 @@ final class PlayerCore {
     private var activeAudioFile: AVAudioFile?
     private var incomingAudioFile: AVAudioFile?
     private var incomingTrack: Track?
+    private var transitionDisplayDidSwitch = false
     private var generation = 0
     private var anchorDate: Date?
     private var anchorOffset: Double = 0
@@ -469,6 +471,7 @@ final class PlayerCore {
     /// Requests ownership of the system playback card. Safe to call often: it is a
     /// no-op while the session is already active or a request is in flight.
     func activateNowPlayingSessionIfNeeded() {
+        guard !applicationIsActive else { return }
         guard let session = nowPlayingSession else { return }
         guard !session.isActive, !nowPlayingActivationInFlight else { return }
         guard session.canBecomeActive else { return }
@@ -486,12 +489,33 @@ final class PlayerCore {
     /// kept in sync because the AVAudioEngine path is invisible to the session.
     private func publishNowPlaying(_ info: [String: Any]?, state: MPNowPlayingPlaybackState) {
         let defaultCenter = MPNowPlayingInfoCenter.default()
+        let sessionCenter = nowPlayingSession?.nowPlayingInfoCenter
+
+        if applicationIsActive {
+            defaultCenter.nowPlayingInfo = nil
+            defaultCenter.playbackState = .stopped
+            if let sessionCenter, sessionCenter !== defaultCenter {
+                sessionCenter.nowPlayingInfo = nil
+                sessionCenter.playbackState = .stopped
+            }
+            return
+        }
+
         defaultCenter.nowPlayingInfo = info
         defaultCenter.playbackState = state
-
-        if let sessionCenter = nowPlayingSession?.nowPlayingInfoCenter, sessionCenter !== defaultCenter {
+        if let sessionCenter, sessionCenter !== defaultCenter {
             sessionCenter.nowPlayingInfo = info
             sessionCenter.playbackState = state
+        }
+    }
+
+    func setApplicationSceneActive(_ active: Bool) {
+        guard applicationIsActive != active else { return }
+        applicationIsActive = active
+        if active {
+            publishNowPlaying(nil, state: .stopped)
+        } else {
+            updateNowPlayingInfo()
         }
     }
 
@@ -1153,6 +1177,7 @@ final class PlayerCore {
         isTransitioning = true
         transitionDuration = max(0.1, plan.leadTime)
         incomingTrack = nextTrack
+        transitionDisplayDidSwitch = false
         currentAutoMixStyle = .bassSwapBlend(duration: transitionDuration)
 
         let strategy = plan.strategy
@@ -1463,6 +1488,13 @@ final class PlayerCore {
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
 
+        // Hand the visible player to the incoming song at the musical midpoint,
+        // while both audio decks continue their real crossfade to completion.
+        if p >= 0.5, !transitionDisplayDidSwitch, let incomingTrack {
+            currentTrack = incomingTrack
+            transitionDisplayDidSwitch = true
+        }
+
         let strategy = AutoMixDJEngine.shared.activePlan?.strategy ?? .BASS_SWAP
         let fx = automation(progress: p, strategy: strategy)
 
@@ -1554,6 +1586,7 @@ final class PlayerCore {
         }
 
         incomingTrack = nil
+        transitionDisplayDidSwitch = false
         prebufferedTrackId = nil
         currentTrack = nextTrack
         streamDuration = nextTrack.duration
@@ -1578,6 +1611,7 @@ final class PlayerCore {
         transitionScheduled = false
         activeTransitionPlan = nil
         planIsProvisional = false
+        transitionDisplayDidSwitch = false
         guard isTransitioning else { return }
         transitionTimer?.invalidate()
         transitionTimer = nil

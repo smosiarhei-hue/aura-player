@@ -14,11 +14,12 @@ struct PlayerScreenV2: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
-    // Controls scale with the system font size and never go below 44x44 pt.
-    @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
-    @ScaledMetric(relativeTo: .body) private var iconGlyph: CGFloat = 20
-    @ScaledMetric(relativeTo: .title) private var skipGlyph: CGFloat = 34
-    @ScaledMetric(relativeTo: .largeTitle) private var playGlyph: CGFloat = 46
+    // Native medium control metrics. Touch targets remain 44 pt while glyphs
+    // stay at standard iOS sizes instead of growing across the complete player.
+    private let tapSide: CGFloat = 44
+    private let iconGlyph: CGFloat = 19
+    private let skipGlyph: CGFloat = 30
+    private let playGlyph: CGFloat = 40
 
     @State private var dragY: CGFloat = 0
     @State private var artistChoices: [PlayerArtistLink] = []
@@ -59,9 +60,6 @@ struct PlayerScreenV2: View {
     @State private var paletteTrackId: UUID? = nil
 
     private var track: Track? { player.currentTrack }
-
-    /// Minimum comfortable touch target, grown with Dynamic Type but never shrunk.
-    private var tapSide: CGFloat { max(44, min(controlSide, 64)) }
 
     /// The video canvas only runs while it can actually be seen and playback is
     /// live. On pause, on stop, or once the app leaves the foreground it is torn
@@ -120,8 +118,18 @@ struct PlayerScreenV2: View {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
                 //    gradient built from the colours of the current artwork.
                 if videoShotActive, let videoShotUrl {
+                    // Extend the AVPlayerLayer through every safe-area inset.
+                    // Geometry is taken from the current device, with no fixed model sizes.
                     VideoShotPlayerView(url: videoShotUrl, isActive: true)
-                        .scaleEffect(1.02)
+                        .frame(
+                            width: geo.size.width + geo.safeAreaInsets.leading + geo.safeAreaInsets.trailing,
+                            height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+                        )
+                        .offset(
+                            x: (geo.safeAreaInsets.trailing - geo.safeAreaInsets.leading) / 2,
+                            y: (geo.safeAreaInsets.bottom - geo.safeAreaInsets.top) / 2
+                        )
+                        .clipped()
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
 
@@ -238,9 +246,15 @@ struct PlayerScreenV2: View {
                         }
                 )
             }
+            // Follow the finger at native resolution. Never rescale the complete
+            // AVPlayerLayer: that caused softness and dirty edges while dismissing.
             .offset(y: max(0, dragY))
-            .scaleEffect(1.0 - (dragProgress * 0.10), anchor: .bottom)
-            .clipShape(RoundedRectangle(cornerRadius: dragY > 0 ? (22 + dragProgress * 20) : 0, style: .continuous))
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: dragY > 0 ? min(28, 8 + dragProgress * 20) : 0,
+                    style: .continuous
+                )
+            )
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
@@ -285,75 +299,41 @@ struct PlayerScreenV2: View {
     // mask, so SwiftUI can interpolate the colours when the artwork changes.
     // The drift is driven by a 12 Hz timeline and stops on pause.
 
-    private static let blobAnchors: [UnitPoint] = [.topLeading, .topTrailing, .bottomLeading, .bottomTrailing]
-
     private var backgroundColors: [Color] {
         let source = palette
-        return source.isEmpty ? [AG.amber, AG.ember] : Array(source.prefix(4))
+        return source.isEmpty ? [AG.amber, AG.ember] : Array(source.prefix(3))
     }
 
+    /// A single edge-to-edge cover-derived surface. There are no independently
+    /// moving rectangles, masks or low-frequency timelines that can reveal seams.
     private var artworkGradientBackground: some View {
         let colors = backgroundColors
-        let top = colors[0]
-        let mid = colors.count > 1 ? colors[1] : colors[0]
-        let drifting = player.isPlaying && !reduceMotion
+        let primary = colors[0]
+        let secondary = colors.count > 1 ? colors[1] : primary
+        let tertiary = colors.count > 2 ? colors[2] : secondary
 
         return ZStack {
-            Color.black
-
             LinearGradient(
                 stops: [
-                    .init(color: top.opacity(0.62), location: 0.0),
-                    .init(color: mid.opacity(0.34), location: 0.45),
-                    .init(color: .black, location: 1.0)
+                    .init(color: primary.opacity(0.62), location: 0.00),
+                    .init(color: secondary.opacity(0.42), location: 0.36),
+                    .init(color: tertiary.opacity(0.20), location: 0.66),
+                    .init(color: .black.opacity(0.96), location: 1.00)
                 ],
-                startPoint: .top,
-                endPoint: .bottom
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
-
-            GeometryReader { geo in
-                if drifting {
-                    TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: false)) { context in
-                        colorPools(colors: colors, size: geo.size, phase: context.date.timeIntervalSinceReferenceDate)
-                    }
-                } else {
-                    colorPools(colors: colors, size: geo.size, phase: 0)
-                }
-            }
+            RadialGradient(
+                colors: [secondary.opacity(0.28), .clear],
+                center: .topTrailing,
+                startRadius: 0,
+                endRadius: 720
+            )
         }
+        .compositingGroup()
         .ignoresSafeArea()
         .allowsHitTesting(false)
-        .animation(.easeInOut(duration: 0.85), value: colors)
-    }
-
-    private func colorPools(colors: [Color], size: CGSize, phase: TimeInterval) -> some View {
-        ZStack {
-            ForEach(Array(colors.enumerated()), id: \.offset) { entry in
-                colorPool(color: entry.element, index: entry.offset, size: size, phase: phase)
-            }
-        }
-        .blendMode(.plusLighter)
-    }
-
-    private func colorPool(color: Color, index: Int, size: CGSize, phase: TimeInterval) -> some View {
-        let seed = Double(index)
-        let speed = 0.055 + seed * 0.014
-        let dx = CGFloat(sin(phase * speed + seed * 1.7)) * size.width * 0.15
-        let dy = CGFloat(cos(phase * speed * 0.85 + seed * 2.3)) * size.height * 0.11
-        let anchor = Self.blobAnchors[index % Self.blobAnchors.count]
-
-        return Rectangle()
-            .fill(color)
-            .mask(
-                RadialGradient(
-                    colors: [.white, .white.opacity(0.30), .clear],
-                    center: anchor,
-                    startRadius: 0,
-                    endRadius: max(size.width, size.height) * 0.78
-                )
-            )
-            .offset(x: dx, y: dy)
-            .opacity(0.52)
+        .animation(.easeInOut(duration: 0.70), value: colors)
     }
 
     // MARK: - Contrast Protection Vignette
@@ -511,38 +491,8 @@ struct PlayerScreenV2: View {
 
     private var appleMusicLowerDeck: some View {
         VStack(spacing: 14) {
-            // Compact Video-Shot / Artwork Toggle Pill (only when a clip really exists)
-            if videoShotUrl != nil {
-                HStack {
-                    Spacer()
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
-                            isVideoShotMode.toggle()
-                            UserDefaults.standard.set(isVideoShotMode, forKey: "player.videoshot")
-                        }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: isVideoShotMode ? "video.fill" : "photo.fill")
-                                .font(.system(size: 11, weight: .bold))
-                            Text(isVideoShotMode ? "Видеошот" : "Обложка")
-                                .font(AG.text(11, .semibold))
-                        }
-                        .foregroundStyle(isVideoShotMode ? AG.amber : .white.opacity(0.85))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .frame(minHeight: 44)
-                        .background(
-                            Capsule()
-                                .fill(.ultraThinMaterial)
-                                .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.8))
-                        )
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(GlassPressStyle())
-                }
-                .padding(.bottom, -6)
-            }
+            // VideoShot remains in the More menu. Keeping this switch out of
+            // the main deck prevents it from shifting metadata and controls.
 
             // Track Metadata (Title, Artist, Like, Track Wave, 3-Dots)
             metadataRow
@@ -605,7 +555,7 @@ struct PlayerScreenV2: View {
                         taste.recordLike(track: track)
                     } label: {
                         Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
-                            .font(.system(size: max(19, iconGlyph), weight: .semibold))
+                            .font(.system(size: iconGlyph, weight: .semibold))
                             .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white.opacity(0.80))
                             .frame(width: tapSide, height: tapSide)
                             .contentShape(Circle())
@@ -616,7 +566,7 @@ struct PlayerScreenV2: View {
                     // "Моя волна по треку" (Track Wave / Infinite Flow related to song)
                     Button(action: startTrackWave) {
                         Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: max(18, iconGlyph * 0.95), weight: .semibold))
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(waveActive ? AG.amber : .white.opacity(0.80))
                             .frame(width: tapSide, height: tapSide)
                             .contentShape(Circle())
@@ -687,7 +637,7 @@ struct PlayerScreenV2: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: max(19, iconGlyph), weight: .bold))
+                        .font(.system(size: iconGlyph, weight: .bold))
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(width: tapSide, height: tapSide)
                         .contentShape(Circle())
@@ -747,9 +697,9 @@ struct PlayerScreenV2: View {
         HStack(spacing: 0) {
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: max(30, min(skipGlyph, 44)), weight: .bold))
+                    .font(.system(size: skipGlyph, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: max(52, tapSide))
+                    .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.90))
@@ -757,9 +707,9 @@ struct PlayerScreenV2: View {
 
             Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: max(40, min(playGlyph, 58)), weight: .black))
+                    .font(.system(size: playGlyph, weight: .black))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: max(60, tapSide))
+                    .frame(maxWidth: .infinity, minHeight: 56)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.88))
@@ -767,15 +717,15 @@ struct PlayerScreenV2: View {
 
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: max(30, min(skipGlyph, 44)), weight: .bold))
+                    .font(.system(size: skipGlyph, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: max(52, tapSide))
+                    .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
             .buttonStyle(GlassPressStyle(scale: 0.90))
             .accessibilityLabel("Следующий трек")
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
     // MARK: Volume Slider (Apple Music Native System MPVolumeView)
@@ -807,7 +757,7 @@ struct PlayerScreenV2: View {
                 }
             } label: {
                 Image(systemName: showLyricsMode ? "quote.bubble.fill" : "quote.bubble")
-                    .font(.system(size: max(19, iconGlyph), weight: .semibold))
+                    .font(.system(size: iconGlyph, weight: .semibold))
                     .foregroundStyle(showLyricsMode ? AG.amber : .white.opacity(0.65))
                     .frame(width: tapSide, height: tapSide)
                     .contentShape(Rectangle())
@@ -830,7 +780,7 @@ struct PlayerScreenV2: View {
                 openModal(.queue)
             } label: {
                 Image(systemName: activeModal == .queue ? "list.bullet.rectangle.portrait.fill" : "list.bullet")
-                    .font(.system(size: max(19, iconGlyph), weight: .semibold))
+                    .font(.system(size: iconGlyph, weight: .semibold))
                     .foregroundStyle(activeModal == .queue ? AG.amber : .white.opacity(0.65))
                     .frame(width: tapSide, height: tapSide)
                     .contentShape(Rectangle())

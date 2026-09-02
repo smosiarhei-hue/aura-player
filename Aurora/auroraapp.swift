@@ -62,6 +62,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
     @State private var tab: AppTab = .home
     @State private var showPlayer = false
@@ -104,6 +105,10 @@ struct RootView: View {
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
+            player.setApplicationSceneActive(scenePhase == .active)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            player.setApplicationSceneActive(phase == .active)
         }
         .onChange(of: player.currentTrack?.id) { _, _ in
             rememberCurrentTrack()
