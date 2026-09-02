@@ -118,20 +118,18 @@ struct PlayerScreenV2: View {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
                 //    gradient built from the colours of the current artwork.
                 if videoShotActive, let videoShotUrl {
-                    // Extend the AVPlayerLayer through every safe-area inset.
-                    // Geometry is taken from the current device, with no fixed model sizes.
-                    VideoShotPlayerView(url: videoShotUrl, isActive: true)
-                        .frame(
-                            width: geo.size.width + geo.safeAreaInsets.leading + geo.safeAreaInsets.trailing,
-                            height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
-                        )
-                        .offset(
-                            x: (geo.safeAreaInsets.trailing - geo.safeAreaInsets.leading) / 2,
-                            y: (geo.safeAreaInsets.bottom - geo.safeAreaInsets.top) / 2
-                        )
-                        .clipped()
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
+                    // A dedicated full-bleed reader: ignoresSafeArea is applied to the
+                    // GeometryReader itself, so it reports the true device bounds
+                    // (status bar, Dynamic Island and home indicator all included)
+                    // directly, instead of the safe-area-reduced frame. This replaces
+                    // the old manual inset arithmetic, which could leave a gap or
+                    // misplace the canvas depending on device geometry.
+                    GeometryReader { fullBleed in
+                        VideoShotPlayerView(url: videoShotUrl, isActive: true)
+                            .frame(width: fullBleed.size.width, height: fullBleed.size.height)
+                    }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
 
                     // Progressive Apple Music Gradient & Frosted Blur Fog over the lower half
                     VStack(spacing: 0) {
@@ -681,12 +679,22 @@ struct PlayerScreenV2: View {
         .accessibilityLabel("Качество звука: \(qualityBadgeLabel)")
     }
 
+    /// Only a real FLAC stream is ever called Lossless / Hi-Res Lossless. A
+    /// high-bitrate MP3/AAC fallback (which is what the server actually sends
+    /// for some tracks even when Hi-Res Lossless is selected) is labelled
+    /// honestly by its real bitrate instead, so the badge never claims a
+    /// quality that was not actually delivered.
     private var qualityBadgeLabel: String {
-        if let codec = player.currentCodec?.lowercased(), codec.contains("flac") {
-            return "Hi-Res Lossless"
+        let codec = player.currentCodec?.lowercased() ?? ""
+        let bitrate = player.currentBitrate ?? 0
+        if codec.contains("flac") {
+            return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
         }
-        if (player.currentBitrate ?? 0) >= 320 {
-            return "Lossless"
+        if bitrate >= 320 {
+            return "HQ \(bitrate) kbps"
+        }
+        if bitrate > 0 {
+            return "\(bitrate) kbps"
         }
         return player.audioQuality.badgeText
     }
@@ -827,7 +835,7 @@ struct PlayerScreenV2: View {
             } header: {
                 Text("Качество звука и кодеки")
             } footer: {
-                Text("Для треков из Яндекс Музыки стриминг во FLAC Lossless активируется автоматически при стабильном интернет-соединении.")
+                Text("Для треков из Яндекс Музыки стриминг во FLAC Lossless активируется автоматически при стабильном интернет-соединении. Если у конкретного трека на сервере нет FLAC, используется лучший из доступных потоков, и это будет показано в значке качества во время воспроизведения.")
             }
         }
         .navigationTitle("Качество звука")
