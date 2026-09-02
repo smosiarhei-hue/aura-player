@@ -4,6 +4,7 @@ import SwiftUI
 
 struct AnimatedMeshBackground: View {
     let palette: [Color]
+    @State private var analyzer = SpectrumAnalyzer.shared
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
@@ -14,13 +15,24 @@ struct AnimatedMeshBackground: View {
 
                 let colors = palette.isEmpty ? [Color.teal, Color.indigo, Color.purple] : palette
 
+                // Live audio energy (bass-weighted) pulses the blobs so the
+                // backdrop actually breathes with the music instead of just
+                // drifting on a fixed, silent sine wave.
+                let bands = analyzer.bands
+                let bassEnergy: Double = bands.isEmpty ? 0 : {
+                    let count = min(6, bands.count)
+                    let sum = bands.prefix(count).reduce(Float(0), +)
+                    return Double(sum / Float(count))
+                }()
+                let pulse = 1.0 + min(0.22, bassEnergy * 0.45)
+
                 for i in 0..<6 {
                     let fi = Double(i)
                     let speed = 0.08 + 0.03 * (fi.truncatingRemainder(dividingBy: 3))
                     let phase = fi * 1.05 + t * speed
                     let cx = w * (0.5 + 0.38 * sin(phase + fi * 0.7))
                     let cy = h * (0.5 + 0.35 * cos(phase * 0.8 + fi * 1.2))
-                    let r = min(w, h) * (0.35 + 0.08 * sin(t * 0.5 + fi * 1.8))
+                    let r = min(w, h) * (0.35 + 0.08 * sin(t * 0.5 + fi * 1.8)) * pulse
 
                     let color = colors[i % colors.count]
                     let rect = CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
