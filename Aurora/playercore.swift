@@ -57,6 +57,30 @@ enum AudioQuality: Int, CaseIterable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Now Playing session delegate
+
+/// MPNowPlayingSession reports activation changes through a delegate. The
+/// callbacks come from MediaPlayer, so every value is read out before hopping
+/// onto the main actor.
+nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSessionDelegate {
+    @objc func nowPlayingSessionDidChangeActive(_ nowPlayingSession: MPNowPlayingSession) {
+        let active = nowPlayingSession.isActive
+        Task { @MainActor in
+            SonivoDiagnostics.log("[NowPlaying] Session active: \(active)", tag: "NOWPLAYING")
+        }
+    }
+
+    @objc func nowPlayingSessionDidChangeCanBecomeActive(_ nowPlayingSession: MPNowPlayingSession) {
+        let canBecomeActive = nowPlayingSession.canBecomeActive
+        Task { @MainActor in
+            SonivoDiagnostics.log("[NowPlaying] Session canBecomeActive: \(canBecomeActive)", tag: "NOWPLAYING")
+            if canBecomeActive {
+                PlayerCore.shared.activateNowPlayingSessionIfNeeded()
+            }
+        }
+    }
+}
+
 // MARK: - Fast Progressive Audio & Local Playback Engine (PlayerCore)
 
 @Observable
@@ -100,6 +124,14 @@ final class PlayerCore {
     private var sleepDeadline: Date?
 
     private let defaults = UserDefaults.standard
+
+    // Now Playing session: makes this app the explicit owner of the system
+    // playback card, which is what allows tapping the title on the lock screen,
+    // in Dynamic Island or in Control Center to open Sonivo.
+    private var nowPlayingSession: MPNowPlayingSession?
+    private var nowPlayingSessionObserver: NowPlayingSessionObserver?
+    private var nowPlayingActivationInFlight = false
+    private var lastRemoteCommand: (name: String, date: Date)?
 
     // Instant Streaming Engine (Dual AVPlayers for Seamless DJ Transitions & Pre-buffering)
     private let streamingPlayerA = AVPlayer()
@@ -193,6 +225,7 @@ final class PlayerCore {
         configureSession()
         setupAudioEngine()
         setupStreamingPlayer()
+        setupNowPlayingSession()
         loadSettings()
         setupRemoteCommandCenter()
         // Required for the system to route lock screen / Control Center events here.
@@ -413,11 +446,79 @@ final class PlayerCore {
     private var activeReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbA : reverbB }
     private var idleReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbB : reverbA }
 
+    // MARK: - Now Playing Session (lock screen / Dynamic Island / Control Center)
+
+    /// The system opens the app whose Now Playing session owns the card. Declaring
+    /// info and playback state through the singletons alone is not enough, so the
+    /// app registers an explicit session over its AVPlayers and asks for priority.
+    private func setupNowPlayingSession() {
+        let session = MPNowPlayingSession(players: [streamingPlayerA, streamingPlayerB])
+        // Local files play through AVAudioEngine, which the session cannot observe.
+        // Automatic publishing would therefore overwrite correct metadata with the
+        // idle state of the AVPlayers, so everything is published manually instead.
+        session.automaticallyPublishesNowPlayingInfo = false
+
+        let observer = NowPlayingSessionObserver()
+        session.delegate = observer
+        nowPlayingSessionObserver = observer
+        nowPlayingSession = session
+
+        SonivoDiagnostics.log("[NowPlaying] Session created over 2 AVPlayers, canBecomeActive=\(session.canBecomeActive)", tag: "NOWPLAYING")
+    }
+
+    /// Requests ownership of the system playback card. Safe to call often: it is a
+    /// no-op while the session is already active or a request is in flight.
+    func activateNowPlayingSessionIfNeeded() {
+        guard let session = nowPlayingSession else { return }
+        guard !session.isActive, !nowPlayingActivationInFlight else { return }
+        guard session.canBecomeActive else { return }
+
+        nowPlayingActivationInFlight = true
+        session.becomeActiveIfPossible { [weak self] didBecomeActive in
+            Task { @MainActor in
+                self?.nowPlayingActivationInFlight = false
+                SonivoDiagnostics.log("[NowPlaying] becomeActiveIfPossible -> \(didBecomeActive)", tag: "NOWPLAYING")
+            }
+        }
+    }
+
+    /// Publishes metadata to the session's center and to the default one. Both are
+    /// kept in sync because the AVAudioEngine path is invisible to the session.
+    private func publishNowPlaying(_ info: [String: Any]?, state: MPNowPlayingPlaybackState) {
+        let defaultCenter = MPNowPlayingInfoCenter.default()
+        defaultCenter.nowPlayingInfo = info
+        defaultCenter.playbackState = state
+
+        if let sessionCenter = nowPlayingSession?.nowPlayingInfoCenter, sessionCenter !== defaultCenter {
+            sessionCenter.nowPlayingInfo = info
+            sessionCenter.playbackState = state
+        }
+    }
+
     // MARK: - Lockscreen & Remote Commands
 
-    private func setupRemoteCommandCenter() {
-        let commandCenter = MPRemoteCommandCenter.shared()
+    /// The same handlers are installed on the shared command center and on the
+    /// session's one, so a single system event must only be acted on once.
+    private func shouldHandleRemote(_ name: String) -> Bool {
+        let now = Date()
+        if let last = lastRemoteCommand, last.name == name, now.timeIntervalSince(last.date) < 0.3 {
+            return false
+        }
+        lastRemoteCommand = (name, now)
+        return true
+    }
 
+    private func setupRemoteCommandCenter() {
+        var centers: [MPRemoteCommandCenter] = [MPRemoteCommandCenter.shared()]
+        if let sessionCenter = nowPlayingSession?.remoteCommandCenter, sessionCenter !== MPRemoteCommandCenter.shared() {
+            centers.append(sessionCenter)
+        }
+        for center in centers {
+            configureRemoteCommands(center)
+        }
+    }
+
+    private func configureRemoteCommands(_ commandCenter: MPRemoteCommandCenter) {
         // Standard music-player layout: transport + scrubbing only.
         commandCenter.playCommand.isEnabled = true
         commandCenter.pauseCommand.isEnabled = true
@@ -438,29 +539,47 @@ final class PlayerCore {
         commandCenter.ratingCommand.isEnabled = false
 
         commandCenter.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.resume() }
+            Task { @MainActor in
+                guard let self, self.shouldHandleRemote("play") else { return }
+                self.resume()
+            }
             return .success
         }
         commandCenter.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.pause() }
+            Task { @MainActor in
+                guard let self, self.shouldHandleRemote("pause") else { return }
+                self.pause()
+            }
             return .success
         }
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.togglePlay() }
+            Task { @MainActor in
+                guard let self, self.shouldHandleRemote("toggle") else { return }
+                self.togglePlay()
+            }
             return .success
         }
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.next() }
+            Task { @MainActor in
+                guard let self, self.shouldHandleRemote("next") else { return }
+                self.next()
+            }
             return .success
         }
         commandCenter.previousTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.previous() }
+            Task { @MainActor in
+                guard let self, self.shouldHandleRemote("previous") else { return }
+                self.previous()
+            }
             return .success
         }
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             let target = event.positionTime
-            Task { @MainActor in self?.seek(to: target) }
+            Task { @MainActor in
+                guard let self, self.shouldHandleRemote("seek") else { return }
+                self.seek(to: target)
+            }
             return .success
         }
     }
@@ -476,11 +595,8 @@ final class PlayerCore {
     }
 
     private func updateNowPlayingInfo() {
-        let center = MPNowPlayingInfoCenter.default()
-
         guard let track = currentTrack else {
-            center.nowPlayingInfo = nil
-            center.playbackState = .stopped
+            publishNowPlaying(nil, state: .stopped)
             return
         }
 
@@ -514,12 +630,12 @@ final class PlayerCore {
             info[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
         }
 
-        center.nowPlayingInfo = info
         // Declaring the playback state is what makes iOS treat this app as the
-        // active Now Playing app, so tapping the title on the lock screen or in
-        // Control Center opens it instead of doing nothing.
-        center.playbackState = isPlaying ? .playing : .paused
+        // active Now Playing app; the session on top of it is what makes the card
+        // itself open the app when tapped.
+        publishNowPlaying(info, state: isPlaying ? .playing : .paused)
         lastNowPlayingSync = Date()
+        activateNowPlayingSessionIfNeeded()
 
         // Fetch remote artwork once per track, then cache (prevents flicker)
         if let cover = track.coverURL, let url = URL(string: cover),
@@ -532,7 +648,7 @@ final class PlayerCore {
                 self.remoteArtworkCache[track.id] = image
                 var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 current[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = current
+                self.publishNowPlaying(current, state: self.isPlaying ? .playing : .paused)
             }
         }
     }
@@ -544,16 +660,15 @@ final class PlayerCore {
         if let last = lastNowPlayingSync, now.timeIntervalSince(last) < 2.0 { return }
         lastNowPlayingSync = now
 
-        let center = MPNowPlayingInfoCenter.default()
-        guard var info = center.nowPlayingInfo, !info.isEmpty else {
+        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo, !info.isEmpty else {
             updateNowPlayingInfo()
             return
         }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = isUsingStreamPlayer ? progress : liveProgress()
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         info[MPMediaItemPropertyPlaybackDuration] = duration
-        center.nowPlayingInfo = info
-        center.playbackState = isPlaying ? .playing : .paused
+        publishNowPlaying(info, state: isPlaying ? .playing : .paused)
+        activateNowPlayingSessionIfNeeded()
     }
 
     // MARK: - Playback Controls
