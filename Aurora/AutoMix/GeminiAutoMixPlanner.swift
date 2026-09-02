@@ -96,6 +96,15 @@ actor GeminiAutoMixPlanner {
     private var geminiRegionBlocked = false
     private static let regionBlockCooldown: TimeInterval = 6 * 3600
 
+    /// Which engine produced the most recently returned transition plan -
+    /// exposed so the on-screen AutoMix mark can show whether Gemini
+    /// actually answered or the local DSP took over (region block, offline,
+    /// or any other API failure). Only ever written from this actor and
+    /// read as a quick, best-effort status peek from the main-thread UI,
+    /// which is why it deliberately opts out of actor isolation instead of
+    /// forcing every render to await the actor just for a label.
+    nonisolated(unsafe) static var lastPlanUsedGemini = false
+
     private init() {}
 
     // MARK: - Public Planner API
@@ -151,6 +160,7 @@ actor GeminiAutoMixPlanner {
                     "[AutoMix AI] Gemini plan: \(aiPlan.decision.transitionType) (conf: \(String(format: "%.2f", aiPlan.decision.confidence))), reason: \(aiPlan.decision.reason)",
                     tag: "AUTOMIX"
                 )
+                Self.lastPlanUsedGemini = true
                 return aiPlan
             }
 
@@ -165,6 +175,7 @@ actor GeminiAutoMixPlanner {
                 "[AutoMix Local] DSP plan: \(fallbackPlan.decision.transitionType), cue: \(String(format: "%.1f", fallbackPlan.cueTime))s, dur: \(String(format: "%.1f", fallbackPlan.leadTime))s",
                 tag: "AUTOMIX"
             )
+            Self.lastPlanUsedGemini = false
             return fallbackPlan
         }
 
