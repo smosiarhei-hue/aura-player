@@ -394,8 +394,15 @@ nonisolated enum TransitionPlanner {
         if shift < -targetPeriod / 2 { shift += targetPeriod }
 
         let aligned = max(0, targetStart + shift)
-        // Never start absurdly deep into the track just for phase.
-        return min(aligned, max(0, target.duration - blendDuration - 2))
+        // Phase alignment is a nicety, not a goal: never dive deep into the
+        // target just to line up grids. DJs bring a track in at its intro; a
+        // mid-track entry sounds like the player skipped into the song.
+        let maxEntry: Double = 8.0
+        let clamped = min(aligned, maxEntry)
+        // If the phase shift points before the intro ends, start at the intro
+        // boundary instead (phase alignment gives up, musicality wins).
+        let introFloor = target.introEnd > 2 ? min(target.introEnd, maxEntry) : 0
+        return max(clamped, introFloor)
     }
 
     /// Adaptive transition duration (TZ Section 24): strategy-driven, then

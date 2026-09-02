@@ -118,17 +118,30 @@ struct PlayerScreenV2: View {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
                 //    gradient built from the colours of the current artwork.
                 if videoShotActive, let videoShotUrl {
-                    // A dedicated full-bleed reader: ignoresSafeArea is applied to the
-                    // GeometryReader itself, so it reports the true device bounds
-                    // (status bar, Dynamic Island and home indicator all included)
-                    // directly, instead of the safe-area-reduced frame. This replaces
-                    // the old manual inset arithmetic, which could leave a gap or
-                    // misplace the canvas depending on device geometry.
+                    // Full-bleed video canvas: sized to the COMPLETE device screen
+                    // including the Dynamic Island cutout and the home indicator.
+                    // GeometryReader centres its content, so the frame is aligned
+                    // to the top-leading edge of the extended (safe-area-ignored)
+                    // bounds; otherwise the video would sit below the island with
+                    // a black gap above it.
                     GeometryReader { fullBleed in
                         VideoShotPlayerView(url: videoShotUrl, isActive: true)
-                            .frame(width: fullBleed.size.width, height: fullBleed.size.height)
+                            .frame(
+                                width: fullBleed.size.width,
+                                height: fullBleed.size.height,
+                                alignment: .topLeading
+                            )
+                            .position(
+                                x: fullBleed.size.width / 2,
+                                y: fullBleed.size.height / 2
+                            )
                     }
-                    .ignoresSafeArea()
+                    .frame(
+                        width: geo.size.width,
+                        height: geo.size.height,
+                        alignment: .topLeading
+                    )
+                    .ignoresSafeArea(edges: .all)
                     .allowsHitTesting(false)
 
                     // Progressive Apple Music Gradient & Frosted Blur Fog over the lower half
@@ -166,8 +179,17 @@ struct PlayerScreenV2: View {
                     }
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
-                } else {
+                } else if reduceMotion || scenePhase != .active {
+                    // Accessibility / background: a static, artwork-derived
+                    // gradient without continuous animation. TimelineView is
+                    // paused off-screen anyway, but the static path costs
+                    // nothing while the app is not visible.
                     artworkGradientBackground
+                    contrastProtectionVignette
+                } else {
+                    // Live liquid-mesh background breathing in the artwork's own
+                    // colours - the animated take on the standard cover gradient.
+                    AnimatedMeshBackground(palette: backgroundColors)
                     contrastProtectionVignette
                 }
 

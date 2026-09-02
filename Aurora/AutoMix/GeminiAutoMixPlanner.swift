@@ -86,6 +86,16 @@ actor GeminiAutoMixPlanner {
     private var cache: [String: TransitionPlan] = [:]
     private var inFlightTasks: [String: Task<TransitionPlan, Never>] = [:]
 
+    /// Circuit breaker: after a regional/billing API refusal (HTTP 400 with
+    /// "location is not supported") every further call would fail the same
+    /// way for hours. Stop calling the API until the cool-down passes so the
+    /// planner answers instantly from the local DSP instead of burning ~10 s
+    /// per pair on doomed network round-trips.
+    private var geminiDisabledUntil: Date?
+    /// True when the failure was a regional block (worth skipping entirely).
+    private var geminiRegionBlocked = false
+    private static let regionBlockCooldown: TimeInterval = 6 * 3600
+
     private init() {}
 
     // MARK: - Public Planner API
@@ -108,14 +118,30 @@ actor GeminiAutoMixPlanner {
         }
 
         let task = Task<TransitionPlan, Never> {
+            // 0. Circuit breaker: skip the doomed network call entirely while
+            //    the API is known to refuse this region.
+            let geminiAvailable: Bool
+            if let blocked = geminiDisabledUntil {
+                if Date() < blocked {
+                    geminiAvailable = false
+                } else {
+                    geminiDisabledUntil = nil
+                    geminiRegionBlocked = false
+                    geminiAvailable = true
+                }
+            } else {
+                geminiAvailable = true
+            }
+
             // 1. Try Gemini background AI planning (never on the realtime path).
-            if var aiPlan = await requestGeminiPlan(
+            if geminiAvailable,
+               var aiPlan = await requestGeminiPlan(
                 sourceTrack: sourceTrack,
                 sourceAnalysis: sourceAnalysis,
                 targetTrack: targetTrack,
                 targetAnalysis: targetAnalysis,
                 currentPosition: currentPosition
-            ) {
+               ) {
                 aiPlan = TransitionPlanner.sanitize(
                     aiPlan,
                     sourceAnalysis: sourceAnalysis,
@@ -175,6 +201,9 @@ actor GeminiAutoMixPlanner {
             ) {
                 return plan
             }
+            // A regional refusal is not model-specific: do not retry the
+            // remaining candidate models on a breaker-worthy failure.
+            if geminiRegionBlocked { return nil }
         }
         return nil
     }
@@ -339,6 +368,25 @@ Respond ONLY with a JSON object matching this schema:
             if http.statusCode != 200 {
                 let errStr = String(data: data, encoding: .utf8) ?? ""
                 SonivoDiagnostics.log("[AutoMix AI] HTTP \(http.statusCode): \(errStr.prefix(90))", tag: "AUTOMIX")
+                // Regional / policy refusal: every call from this device will
+                // fail identically. Open the circuit breaker so the local DSP
+                // answers instantly instead of stalling every pair for seconds.
+                if http.statusCode == 400 || http.statusCode == 403 {
+                    let lowered = errStr.lowercased()
+                    if lowered.contains("location is not supported")
+                        || lowered.contains("user location")
+                        || lowered.contains("not available in your country")
+                        || lowered.contains("billing")
+                        || lowered.contains("api key not valid") {
+                        geminiRegionBlocked = true
+                        geminiDisabledUntil = Date().addingTimeInterval(Self.regionBlockCooldown)
+                        SonivoDiagnostics.log(
+                            "[AutoMix AI] Region/key refusal detected - local DSP planning takes over for \(Int(Self.regionBlockCooldown / 3600))h",
+                            tag: "AUTOMIX"
+                        )
+                        return nil
+                    }
+                }
                 return nil
             }
 
