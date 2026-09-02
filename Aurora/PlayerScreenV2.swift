@@ -29,11 +29,10 @@ struct PlayerScreenV2: View {
     @State private var library = LibraryStore.shared
     @State private var taste = UserTasteEngine.shared
     @Binding var isPresented: Bool
-    @Binding var dragOffsetY: CGFloat
+    @State private var dragY: CGFloat = 0
 
     init(isPresented: Binding<Bool>, dragOffsetY: Binding<CGFloat> = .constant(0)) {
         self._isPresented = isPresented
-        self._dragOffsetY = dragOffsetY
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -163,9 +162,8 @@ struct PlayerScreenV2: View {
     var body: some View {
         GeometryReader { geo in
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
-            let dismissThreshold = max(geo.size.height * 0.38, 240)
-            let dragProgress = min(max(dragOffsetY / dismissThreshold, 0), 1)
-            let artworkMicroScale = 1.0 - min(1, dragOffsetY / 60) * 0.04
+            let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
+            let artworkMicroScale = 1.0 - min(1, dragY / 60) * 0.04
 
             ZStack {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
@@ -215,7 +213,7 @@ struct PlayerScreenV2: View {
                     }
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
-                } else if reduceMotion || scenePhase != .active || dragOffsetY > 0 {
+                } else if reduceMotion || scenePhase != .active || dragY > 0 {
                     // Accessibility / background / active dismiss drag: a
                     // static, artwork-derived gradient without continuous
                     // animation. Freezing the animated mesh the moment the
@@ -324,29 +322,29 @@ struct PlayerScreenV2: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 10)
+                    DragGesture(minimumDistance: 8)
                         .onChanged { val in
                             let isVerticalDrag = abs(val.translation.height) > abs(val.translation.width)
                             if val.translation.height > 0, isVerticalDrag {
-                                dragOffsetY = val.translation.height
+                                dragY = val.translation.height
                             }
                         }
                         .onEnded { val in
                             let isVerticalDrag = abs(val.translation.height) > abs(val.translation.width)
                             let displacement = val.translation.height
                             let predicted = val.predictedEndTranslation.height
-                            if isVerticalDrag && (displacement > 80 || predicted > 180) {
+                            if isVerticalDrag && (displacement > 60 || predicted > 150) {
                                 dismissWithAnimation(dismissHeight: geo.size.height)
                             } else {
-                                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                                    dragOffsetY = 0
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    dragY = 0
                                 }
                             }
                         }
                 )
             }
-            .offset(y: max(0, dragOffsetY))
-            .modifier(DismissClipModifier(active: dragOffsetY > 0, cornerRadius: min(36, 12 + dragProgress * 24)))
+            .offset(y: max(0, dragY))
+            .modifier(DismissClipModifier(active: dragY > 0, cornerRadius: min(36, 12 + dragProgress * 24)))
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
@@ -499,42 +497,62 @@ struct PlayerScreenV2: View {
             .scaleEffect((player.isPlaying ? 1.0 : 0.85) * microScale)
             .offset(x: coverDragX)
             .rotationEffect(.degrees(Double(coverDragX / 24)), anchor: .center)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 10)
+            .gesture(
+                DragGesture(minimumDistance: 8)
                     .onChanged { val in
-                        let translation = val.translation.width
-                        let damping: CGFloat = 1.0 + (abs(translation) * 0.003)
-                        coverDragX = translation / damping
+                        let isVertical = abs(val.translation.height) > abs(val.translation.width)
+                        if isVertical {
+                            if val.translation.height > 0 {
+                                dragY = val.translation.height
+                            }
+                        } else {
+                            let translation = val.translation.width
+                            let damping: CGFloat = 1.0 + (abs(translation) * 0.003)
+                            coverDragX = translation / damping
+                        }
                     }
                     .onEnded { val in
-                        let threshold: CGFloat = 60
-                        if val.translation.width < -threshold {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                coverDragX = -side * 1.2
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                nextTrack()
-                                coverDragX = side * 1.2
-                                withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                                    coverDragX = 0
-                                }
-                            }
-                        } else if val.translation.width > threshold {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                coverDragX = side * 1.2
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                previousTrack()
-                                coverDragX = -side * 1.2
-                                withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                                    coverDragX = 0
+                        let isVertical = abs(val.translation.height) > abs(val.translation.width)
+                        if isVertical {
+                            let displacement = val.translation.height
+                            let predicted = val.predictedEndTranslation.height
+                            if displacement > 60 || predicted > 150 {
+                                dismissWithAnimation(dismissHeight: 700)
+                            } else {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    dragY = 0
                                 }
                             }
                         } else {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
-                                coverDragX = 0
+                            let threshold: CGFloat = 50
+                            if val.translation.width < -threshold {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                    coverDragX = -side * 1.2
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    nextTrack()
+                                    coverDragX = side * 1.2
+                                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                                        coverDragX = 0
+                                    }
+                                }
+                            } else if val.translation.width > threshold {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                    coverDragX = side * 1.2
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    previousTrack()
+                                    coverDragX = -side * 1.2
+                                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                                        coverDragX = 0
+                                    }
+                                }
+                            } else {
+                                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                                    coverDragX = 0
+                                }
                             }
                         }
                     }
@@ -1077,18 +1095,24 @@ struct PlayerScreenV2: View {
     }
 
     private func close() {
-        dismissWithAnimation(dismissHeight: 400)
+        dismissWithAnimation(dismissHeight: 700)
     }
 
     private func dismissWithAnimation(dismissHeight: CGFloat) {
         guard !dismissing else { return }
         dismissing = true
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
-            isPresented = false
-            dragOffsetY = 0
+        let target = max(dismissHeight, 700)
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.88)) {
+            dragY = target
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                isPresented = false
+            }
+            dragY = 0
             dismissing = false
         }
     }
@@ -1097,16 +1121,16 @@ struct PlayerScreenV2: View {
         DragGesture(minimumDistance: 6)
             .onChanged { value in
                 guard value.translation.height > 0 else { return }
-                dragOffsetY = value.translation.height
+                dragY = value.translation.height
             }
             .onEnded { value in
                 let displacement = value.translation.height
                 let predicted = value.predictedEndTranslation.height
-                if displacement > 80 || predicted > 180 {
+                if displacement > 60 || predicted > 150 {
                     dismissWithAnimation(dismissHeight: dismissHeight)
                 } else {
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                        dragOffsetY = 0
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        dragY = 0
                     }
                 }
             }

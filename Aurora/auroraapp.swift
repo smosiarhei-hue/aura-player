@@ -60,69 +60,29 @@ struct RootView: View {
     @State private var player = PlayerCore.shared
     @State private var tab: AppTab = .wave
     @State private var showPlayer = false
-    @State private var playerDragOffsetY: CGFloat = 0
 
     private var miniVisible: Bool {
         guard let track = player.currentTrack else { return false }
         return !track.title.isEmpty || track.isStream || track.duration > 0
     }
 
-    private func rootScale(for height: CGFloat) -> CGFloat {
-        guard showPlayer else { return 1.0 }
-        let progress = max(0, min(1, 1.0 - (playerDragOffsetY / max(1, height * 0.8))))
-        return 1.0 - (progress * 0.07)
-    }
-
-    private func rootCornerRadius(for height: CGFloat) -> CGFloat {
-        guard showPlayer else { return 0 }
-        let progress = max(0, min(1, 1.0 - (playerDragOffsetY / max(1, height * 0.8))))
-        return progress * 36
-    }
-
-    private func rootDimOpacity(for height: CGFloat) -> CGFloat {
-        guard showPlayer else { return 0.0 }
-        let progress = max(0, min(1, 1.0 - (playerDragOffsetY / max(1, height * 0.8))))
-        return progress * 0.25
-    }
-
     var body: some View {
-        GeometryReader { geometry in
-            let screenHeight = geometry.size.height
-
-            ZStack(alignment: .bottom) {
-                Color.black.ignoresSafeArea()
-
-                TabView(selection: $tab) {
-                    HomeView().tabItem { Label(AppTab.wave.label, systemImage: AppTab.wave.icon) }.tag(AppTab.wave)
-                    LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
-                    SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
-                }
-                .tint(.white)
-                .toolbarColorScheme(.dark, for: .tabBar)
-                .tabBarMinimizeBehavior(.onScrollDown)
-                .tabViewBottomAccessory {
-                    if miniVisible {
-                        NativeMiniPlayer(showPlayer: $showPlayer)
-                    }
-                }
-                .scaleEffect(rootScale(for: screenHeight))
-                .clipShape(RoundedRectangle(cornerRadius: rootCornerRadius(for: screenHeight), style: .continuous))
-                .overlay {
-                    Color.black.opacity(rootDimOpacity(for: screenHeight))
-                        .clipShape(RoundedRectangle(cornerRadius: rootCornerRadius(for: screenHeight), style: .continuous))
-                        .allowsHitTesting(false)
-                }
-
-                if showPlayer {
-                    PlayerScreenV2(isPresented: $showPlayer, dragOffsetY: $playerDragOffsetY)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .bottom),
-                            removal: .move(edge: .bottom)
-                        ))
-                        .zIndex(10)
-                }
+        TabView(selection: $tab) {
+            HomeView().tabItem { Label(AppTab.wave.label, systemImage: AppTab.wave.icon) }.tag(AppTab.wave)
+            LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
+            SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
+        }
+        .tint(.white)
+        .toolbarColorScheme(.dark, for: .tabBar)
+        .tabBarMinimizeBehavior(.onScrollDown)
+        .tabViewBottomAccessory {
+            if miniVisible {
+                NativeMiniPlayer(showPlayer: $showPlayer)
             }
-            .ignoresSafeArea(edges: showPlayer ? .all : [])
+        }
+        .fullScreenCover(isPresented: $showPlayer) {
+            PlayerScreenV2(isPresented: $showPlayer)
+                .ignoresSafeArea()
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
