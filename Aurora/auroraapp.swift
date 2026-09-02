@@ -32,9 +32,7 @@ struct SonivoApp: App {
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case home = "Home"
-    case new = "New"
-    case radio = "Radio"
+    case wave = "Wave"
     case library = "Library"
     case search = "Search"
 
@@ -42,9 +40,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .home: return "Главная"
-        case .new: return "Новое"
-        case .radio: return "Моя волна"
+        case .wave: return "Моя волна"
         case .library: return "Библиотека"
         case .search: return "Поиск"
         }
@@ -52,9 +48,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .home: return "house"
-        case .new: return "sparkles"
-        case .radio: return "dot.radiowaves.left.and.right"
+        case .wave: return "dot.radiowaves.left.and.right"
         case .library: return "music.note.list"
         case .search: return "magnifyingglass"
         }
@@ -64,7 +58,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
-    @State private var tab: AppTab = .home
+    @State private var tab: AppTab = .wave
     @State private var showPlayer = false
 
     private var miniVisible: Bool {
@@ -74,9 +68,7 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            HomeView().tabItem { Label(AppTab.home.label, systemImage: AppTab.home.icon) }.tag(AppTab.home)
-            NewReleasesView().tabItem { Label(AppTab.new.label, systemImage: AppTab.new.icon) }.tag(AppTab.new)
-            RadioStationsView().tabItem { Label(AppTab.radio.label, systemImage: AppTab.radio.icon) }.tag(AppTab.radio)
+            HomeView().tabItem { Label(AppTab.wave.label, systemImage: AppTab.wave.icon) }.tag(AppTab.wave)
             LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
             SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
         }

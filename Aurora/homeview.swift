@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Tab 1: Главная
+// MARK: - Tab 1: Моя волна
 
 struct HomeView: View {
     @State private var player = PlayerCore.shared
@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var albums: [YandexMusicService.YMAlbumItem] = []
     @State private var isLoading = false
     @State private var showSettings = false
+    @State private var showWaveSelector = false
 
     private var greeting: String {
         let h = Calendar.current.component(.hour, from: Date())
@@ -162,10 +163,38 @@ struct HomeView: View {
             }
             .buttonStyle(GlassPressStyle())
 
-            // «Рулетка» настроений — Liquid Glass / Chrome карусель по дуге:
-            // волна перестраивается и запускается мгновенно, когда колесо
-            // остановится на настроении.
-            MoodRouletteView(
+            // Полный выбор волны теперь живёт только в нижней шторке —
+            // никакой постоянно закреплённой рулетки иконок на главном
+            // экране. Открывает WaveSelectorSheet с каплями по макету.
+            Button {
+                showWaveSelector = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.grid.2x2.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Все волны")
+                        .font(AG.text(13, .bold))
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 10, weight: .black))
+                }
+                .foregroundStyle(AG.amber)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(AG.hairline, lineWidth: 0.8)
+                )
+                .padding(.horizontal, 16)
+            }
+            .buttonStyle(GlassPressStyle())
+        }
+        .sheet(isPresented: $showWaveSelector) {
+            WaveSelectorSheet(
                 stations: YandexMusicService.rotorStations,
                 selectedStationId: $ym.waveMoodStationId
             ) { station in
