@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import AudioToolbox
 import CoreMedia
 import MediaPlayer
 import SwiftUI
@@ -176,6 +177,21 @@ final class PlayerCore {
     private var loopBuffer: AVAudioPCMBuffer?
     private var isLoopActive = false
 
+    // Final brick-wall safety net. AutoMix's per-pair EQ/volume automation and
+    // a user's own manual EQ boosts are additive on top of the mixer, so a hot
+    // combination could otherwise clip into distortion ("crackling" in
+    // headphones); this limiter guarantees the signal fed to the output never
+    // exceeds full scale, transparently, without touching normal-level audio.
+    private let outputLimiter = AVAudioUnitEffect(
+        audioComponentDescription: AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: kAudioUnitSubType_PeakLimiter,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+    )
+
     private var activeAudioFile: AVAudioFile?
     private var incomingAudioFile: AVAudioFile?
     private var incomingTrack: Track?
@@ -331,6 +347,13 @@ final class PlayerCore {
         engine.connect(looperReverb, to: engine.mainMixerNode, format: nil)
 
         looperPlayer.volume = 0
+
+        // Route the mixer through a brick-wall limiter instead of leaving the
+        // engine's default implicit mixer -> output wiring, which had nothing
+        // stopping a hot EQ/AutoMix combination from clipping.
+        engine.attach(outputLimiter)
+        engine.connect(engine.mainMixerNode, to: outputLimiter, format: nil)
+        engine.connect(outputLimiter, to: engine.outputNode, format: nil)
 
         engine.mainMixerNode.outputVolume = volume
         try? engine.start()
@@ -1447,10 +1470,14 @@ final class PlayerCore {
             var outLowDB = outBassCut
             var inLowDB = inBassGain
             if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0) {
-                outLowDB = (outLow - 1) * 24.0
+                // The envelope is meant to describe a bass cut on the way out,
+                // never a boost: clamp so a stray AI-authored keyframe above
+                // 1.0 can never turn into extra gain stacked on the user's own
+                // EQ, which is what could push the low end into clipping.
+                outLowDB = max(-30.0, min(0.0, (outLow - 1) * 24.0))
             }
             if let inLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0) {
-                inLowDB = (inLow - 1) * 24.0
+                inLowDB = max(-30.0, min(0.0, (inLow - 1) * 24.0))
             }
             activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outLowDB) : outLowDB
             activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + outLowDB * 0.8) : (outLowDB * 0.8)
