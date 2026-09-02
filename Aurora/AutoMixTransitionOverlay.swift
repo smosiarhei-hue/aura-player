@@ -1,13 +1,14 @@
 import SwiftUI
+import UIKit
 
 // MARK: - AutoMix visual hand-off
 //
 // A real cover-to-cover "show": the incoming track's artwork rises from
-// underneath the outgoing one while an HDR-style specular "blik" sweeps
-// diagonally across the whole stage in sync with the actual DSP blend
-// progress (dj.transitionProgress), not a fixed-length animation of its own.
-// Mounted directly over the artwork stage, so it can never cover the
-// transport controls or the timeline below it.
+// underneath the outgoing one while a soft full-frame HDR-white bloom peaks
+// at the midpoint of the blend, synced with the actual DSP blend progress
+// (dj.transitionProgress) - not a fixed-length animation of its own, and not
+// a moving diagonal line/band. Mounted directly over the artwork stage, so
+// it can never cover the transport controls or the timeline below it.
 
 struct AutoMixTransitionOverlay: View {
     @State private var player = PlayerCore.shared
@@ -17,29 +18,20 @@ struct AutoMixTransitionOverlay: View {
     /// Matches the square side of the artwork stage this overlay sits on top of.
     let side: CGFloat
 
+    @State private var incomingImage: UIImage?
+    @State private var incomingImageTrackId: UUID?
+
     private var outgoingPalette: [Color] {
         let values = player.currentTrack?.palette ?? []
         return values.isEmpty ? [AG.amber, AG.ember] : values
     }
 
-    /// Best-effort look-ahead at the track AutoMix is blending toward. Mirrors
-    /// PlayerCore's own queue-index lookup (shuffle already committed to a pick
-    /// internally before the blend starts, but that pick is not exposed - the
-    /// visual falls back to the light sweep alone when no artwork can be found).
-    private var incomingTrack: Track? {
-        let q = player.queue
-        guard let cur = player.currentTrack, let idx = q.firstIndex(where: { $0.id == cur.id }) else {
-            return q.first
-        }
-        let nextIdx = idx + 1
-        if nextIdx < q.count { return q[nextIdx] }
-        return q.count > 1 ? q.first : nil
-    }
-
-    private var incomingImage: UIImage? {
-        guard let incomingTrack else { return nil }
-        return LibraryStore.cachedArtworkImage(for: incomingTrack)
-    }
+    /// The actual track AutoMix is blending into, read straight from
+    /// PlayerCore. This used to be guessed from queue position, which
+    /// silently disagreed with the real pick whenever shuffle or a Wave
+    /// queue refill was active - the cover crossfade below then had nothing
+    /// (or the wrong artwork) to show and only the light sweep was visible.
+    private var incomingTrack: Track? { player.incomingTrack }
 
     var body: some View {
         if dj.isTransitionActive {
@@ -57,45 +49,22 @@ struct AutoMixTransitionOverlay: View {
                         .scaleEffect(0.97 + 0.03 * progress)
                 }
 
-                // HDR "blik": a bright diagonal band travels corner-to-corner across
-                // the stage over the course of the whole blend, brightened with
-                // .plusLighter so it reads as a light sweep, not a flat wash.
+                // Premium HDR hand-off: a soft, full-frame white bloom that
+                // breathes in and back out right at the midpoint of the blend,
+                // instead of a moving line/band sweeping across the cover.
+                // Reads as one clean flash of light, not a running stripe.
                 if !reduceMotion {
-                    GeometryReader { proxy in
-                        let diagonal = proxy.size.width + proxy.size.height
-                        let band = max(proxy.size.width, proxy.size.height) * 0.5
-                        let travel = diagonal + band * 2
-                        let sweep = CGFloat(progress) * travel - band
-
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.0),
-                                .init(color: .white.opacity(0.55), location: 0.40),
-                                .init(color: .white.opacity(0.95), location: 0.5),
-                                .init(color: .white.opacity(0.55), location: 0.60),
-                                .init(color: .clear, location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(width: band, height: proxy.size.height * 2.4)
-                        .rotationEffect(.degrees(32))
-                        .offset(x: sweep - proxy.size.width * 0.5)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.white)
+                        .opacity(bloomIntensity(progress) * 0.85)
                         .blendMode(.plusLighter)
-                    }
-                    .frame(width: side, height: side)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .opacity(sweepIntensity(progress))
-                    .allowsHitTesting(false)
+                        .allowsHitTesting(false)
                 }
 
-                // A soft HDR bloom peaking mid-mix, so the hand-off feels like a
-                // brief show rather than an abrupt cut - independent of whether an
-                // incoming cover image could be resolved.
                 RadialGradient(
                     colors: [
-                        .white.opacity(bloomIntensity(progress) * 0.34),
-                        (outgoingPalette.first ?? AG.amber).opacity(bloomIntensity(progress) * 0.22),
+                        .white.opacity(bloomIntensity(progress) * 0.40),
+                        (outgoingPalette.first ?? AG.amber).opacity(bloomIntensity(progress) * 0.25),
                         .clear
                     ],
                     center: .center,
@@ -108,19 +77,45 @@ struct AutoMixTransitionOverlay: View {
             .frame(width: side, height: side)
             .allowsHitTesting(false)
             .transition(.opacity)
+            .task(id: incomingTrack?.id) {
+                await loadIncomingImage()
+            }
         }
     }
 
-    private func sweepIntensity(_ progress: Double) -> Double {
-        // Full brightness through the body of the mix, easing in/out at the
-        // very start and end so the sweep never pops.
-        if progress < 0.08 { return progress / 0.08 }
-        if progress > 0.92 { return (1 - progress) / 0.08 }
-        return 1
+    /// Local files already have a cached artwork file the moment they are
+    /// queued. Streamed tracks (the common case) do not - their cover is
+    /// only ever fetched lazily by an AsyncImage elsewhere - so without this,
+    /// the crossfade above had no image to show for almost every real
+    /// AutoMix transition. Downloading it once here, well before the blend
+    /// actually starts (AutoMix picks its target track many seconds ahead),
+    /// gives the crossfade something real to show every time.
+    private func loadIncomingImage() async {
+        guard let incomingTrack else {
+            incomingImage = nil
+            incomingImageTrackId = nil
+            return
+        }
+        guard incomingImageTrackId != incomingTrack.id else { return }
+        if let cached = LibraryStore.cachedArtworkImage(for: incomingTrack) {
+            incomingImageTrackId = incomingTrack.id
+            incomingImage = cached
+            return
+        }
+        guard let cover = incomingTrack.coverURL, let url = URL(string: cover) else {
+            incomingImage = nil
+            incomingImageTrackId = incomingTrack.id
+            return
+        }
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let image = UIImage(data: data) else { return }
+        guard player.incomingTrack?.id == incomingTrack.id else { return }
+        incomingImageTrackId = incomingTrack.id
+        incomingImage = image
     }
 
     private func bloomIntensity(_ progress: Double) -> Double {
-        let distance = abs(progress - 0.5) / 0.22
+        let distance = abs(progress - 0.5) / 0.30
         return max(0, 1 - distance * distance)
     }
 }
