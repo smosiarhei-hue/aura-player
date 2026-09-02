@@ -227,9 +227,9 @@ actor GeminiAutoMixPlanner {
             ) {
                 return plan
             }
-            // A regional refusal is not model-specific: do not retry the
+            // A regional refusal or timeout is not model-specific: do not retry the
             // remaining candidate models on a breaker-worthy failure.
-            if geminiRegionBlocked { return nil }
+            if geminiRegionBlocked || geminiDisabledUntil != nil { return nil }
         }
         return nil
     }
@@ -396,7 +396,7 @@ Respond ONLY with a JSON object matching this schema:
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = payload
-        request.timeoutInterval = 6.0
+        request.timeoutInterval = 2.5
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -482,7 +482,9 @@ Respond ONLY with a JSON object matching this schema:
             )
             return plan
         } catch {
-            SonivoDiagnostics.log("[AutoMix AI] Network error: \(error.localizedDescription)", tag: "AUTOMIX")
+            geminiRegionBlocked = true
+            geminiDisabledUntil = Date().addingTimeInterval(300)
+            SonivoDiagnostics.log("[AutoMix AI] Network error: \(error.localizedDescription) - falling back instantly to Local DSP", tag: "AUTOMIX")
             return nil
         }
     }

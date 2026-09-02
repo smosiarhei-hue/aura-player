@@ -85,14 +85,31 @@ final class AutoMixDJEngine {
         let p = max(0.0, min(1.0, progress))
 
         // 1. Equal-Power Cosine Crossfade Curve (Section 28)
-        let outVol = Float(cos(p * (.pi / 2)))
-        let inVol = Float(sin(p * (.pi / 2)))
+        var outVol = Float(cos(p * (.pi / 2)))
+        var inVol = Float(sin(p * (.pi / 2)))
 
         var outBassCut: Float = 0
         var inBassGain: Float = 0
         var filterCutoff: Float = 1.0
 
         switch strategy {
+        case .DROP_SWITCH, .HARD_CUT, .VOCAL_CUT:
+            // High energy hold on outgoing track, then quick steep drop-off at the vinyl-brake point
+            if p < 0.40 {
+                outVol = 1.0
+                inVol = 0.001
+            } else if p < 0.85 {
+                let dropP = Float((p - 0.40) / 0.45)
+                outVol = max(0.0, 1.0 - (dropP * dropP))
+                inVol = Float(sin(Double(dropP) * (.pi / 2)))
+            } else {
+                outVol = 0.0
+                inVol = 1.0
+            }
+            if p > 0.80 {
+                outBassCut = -36.0
+            }
+
         case .BASS_SWAP, .BEAT_MATCH_EQ:
             if p > 0.18 {
                 let bassP = Float((p - 0.18) / 0.82)
@@ -104,11 +121,18 @@ final class AutoMixDJEngine {
             } else {
                 inBassGain = 0.0
             }
+            // Emulate bass-swap dip in volume for streaming players
+            if p > 0.20 && p < 0.50 {
+                outVol = outVol * 0.72
+            }
 
         case .FILTER_TRANSITION:
             filterCutoff = max(0.1, Float(1.0 - p))
             outBassCut = Float(p) * -32.0
             inBassGain = Float(1.0 - p) * -12.0
+            if p > 0.50 {
+                outVol = outVol * Float(max(0.05, 1.0 - (p - 0.50) * 1.8))
+            }
 
         case .ENERGY_BLEND, .BUILDUP_TO_DROP:
             if p > 0.35 {
@@ -118,15 +142,13 @@ final class AutoMixDJEngine {
                 inBassGain = -18.0 * (1.0 - Float(p / 0.25))
             }
 
-        case .DROP_SWITCH, .HARD_CUT:
-            if p > 0.85 {
-                outBassCut = -36.0
-            }
-
         case .ECHO_OUT:
             outBassCut = Float(p) * -20.0
+            if p > 0.50 {
+                outVol = outVol * Float(max(0.1, 1.0 - (p - 0.50) * 1.5))
+            }
 
-        case .SILENCE_TRIM, .SIMPLE_CROSSFADE, .BEAT_MATCH, .LOOP_TRANSITION, .VOCAL_CUT, .INSTRUMENTAL_OVERLAY, .NONE:
+        case .SILENCE_TRIM, .SIMPLE_CROSSFADE, .BEAT_MATCH, .LOOP_TRANSITION, .INSTRUMENTAL_OVERLAY, .NONE:
             if p > 0.40 {
                 outBassCut = Float((p - 0.40) / 0.60) * -16.0
             }

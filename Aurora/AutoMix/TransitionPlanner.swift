@@ -177,8 +177,8 @@ nonisolated enum TransitionPlanner {
                 strategy = .BUILDUP_TO_DROP
                 reason = "Разгон уходящего трека завершается дропом входящего"
             } else {
-                strategy = .FILTER_TRANSITION
-                reason = "Контрастный темп: фильтрация вместо насильного бит-матча"
+                strategy = .DROP_SWITCH
+                reason = "Контрастный темп: диджейский Power Drop со стоп-эффектом"
             }
         } else if vocalCollision {
             // TZ Section 12: never overlap two active vocals with a long crossfade.
@@ -427,10 +427,10 @@ nonisolated enum TransitionPlanner {
         var base: TimeInterval
         switch strategy {
         case .SILENCE_TRIM: base = 1.5
-        case .HARD_CUT, .DROP_SWITCH: base = 3
-        case .VOCAL_CUT: base = 5.0
-        case .ECHO_OUT: base = 6.0
-        case .FILTER_TRANSITION: base = 12
+        case .HARD_CUT, .DROP_SWITCH: base = 3.5
+        case .VOCAL_CUT: base = 3.5
+        case .ECHO_OUT: base = 5.0
+        case .FILTER_TRANSITION: base = 5.0
         case .BUILDUP_TO_DROP: base = 10
         case .ENERGY_BLEND: base = 14
         case .BEAT_MATCH_EQ: base = sourceDur > 120 ? 20 : 16

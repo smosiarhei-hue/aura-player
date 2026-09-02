@@ -1405,7 +1405,37 @@ final class PlayerCore {
         // pitch-corrected time-pitch nodes. Bypass state is fixed for the
         // whole transition (set once above); only the continuous rate is
         // animated here, so no per-tick bypass flip can click.
-        if let rates, transitionDuration > 0.001 {
+        // Iconic DJ Vinyl Brake / Tape Slowdown ("Зажёвывание" как в Apple Music)
+        let isBrakeStrategy = strategy == .DROP_SWITCH || strategy == .VOCAL_CUT || strategy == .FILTER_TRANSITION || strategy == .HARD_CUT || strategy == .ECHO_OUT
+
+        if isBrakeStrategy {
+            if p > 0.35 {
+                let brakeP = Float((p - 0.35) / 0.65)
+                let brakeRate = max(0.04, 1.0 - (brakeP * brakeP) * 0.96)
+                if isUsingStreamPlayer {
+                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .varispeed
+                    activeStreamingPlayer.rate = isPlaying ? brakeRate : 0
+                } else {
+                    activeTimePitch.rate = max(0.08, 1.0 - brakeP * 0.90)
+                    activeTimePitch.pitch = Float(-1500.0 * (brakeP * brakeP))
+                }
+            } else {
+                if isUsingStreamPlayer {
+                    activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+                } else {
+                    activeTimePitch.rate = 1.0
+                    activeTimePitch.pitch = 0
+                }
+            }
+
+            if incomingIsStream {
+                idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                if isPlaying { idleStreamingPlayer.rate = 1.0 }
+            } else if !isUsingStreamPlayer {
+                idleTimePitch.rate = 1.0
+                idleTimePitch.pitch = 0
+            }
+        } else if let rates, transitionDuration > 0.001 {
             let outTarget = Float(min(1.10, max(0.90, rates.sourcePlaybackRate)))
             let inTarget = Float(min(1.10, max(0.90, rates.targetPlaybackRate)))
             let rampProgress = Float(min(1.0, p / 0.6))
@@ -1413,15 +1443,19 @@ final class PlayerCore {
             let inRate = 1.0 + (inTarget - 1.0) * rampProgress
 
             if isUsingStreamPlayer {
+                activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
                 activeStreamingPlayer.rate = isPlaying ? outRate : 0
             } else {
                 activeTimePitch.rate = outRate
+                activeTimePitch.pitch = 0
             }
 
             if incomingIsStream {
+                idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
                 if isPlaying { idleStreamingPlayer.rate = inRate }
             } else if !isUsingStreamPlayer {
                 idleTimePitch.rate = inRate
+                idleTimePitch.pitch = 0
             }
         }
         _ = filterCutoff
@@ -1461,6 +1495,7 @@ final class PlayerCore {
             activePlayer.stop()
             activePlayer.volume = 1.0
             outgoingNode.rate = 1.0
+            outgoingNode.pitch = 0
             outgoingNode.bypass = true
         }
 
@@ -1472,8 +1507,14 @@ final class PlayerCore {
             activeStreamingPlayer = idleStreamingPlayer
             idleStreamingPlayer = oldActive
             activeStreamingPlayer.volume = volume
+            activeStreamingPlayer.rate = 1.0
+            activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
             idleStreamingPlayer.pause()
             idleStreamingPlayer.volume = 0
+            timePitchA.pitch = 0
+            timePitchB.pitch = 0
+            timePitchA.rate = 1.0
+            timePitchB.rate = 1.0
             playerA.stop()
             playerB.stop()
             applyEQ()

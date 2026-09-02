@@ -123,22 +123,32 @@ nonisolated struct TrackAnalysis: Codable, Sendable {
         (bpmConfidence >= 0.35) && (bpm ?? 0) >= 60 && (bpm ?? 0) <= 200 && beats.count > 8
     }
 
-    /// Honest placeholder when no audio could be decoded: no invented BPM, key
-    /// or structure - planners must treat it as "unknown", not as data.
+    /// Default placeholder when no audio could be decoded yet.
+    /// Uses Apple Music standard outro lengths (~22-26s for typical songs).
     nonisolated static func minimal(trackID: String, duration: Double) -> TrackAnalysis {
-        TrackAnalysis(
+        let dur = max(1, duration)
+        let outroStartSec: Double
+        if dur > 180 {
+            outroStartSec = max(0, dur - 26.0)
+        } else if dur > 90 {
+            outroStartSec = max(0, dur - 22.0)
+        } else {
+            outroStartSec = max(0, dur - 14.0)
+        }
+
+        return TrackAnalysis(
             trackID: trackID,
-            duration: max(1, duration),
+            duration: dur,
             bpm: nil,
             bpmConfidence: 0,
             musicalKey: nil,
             keyConfidence: 0,
-            energy: 0.5,
+            energy: 0.65,
             danceability: nil,
             introStart: 0,
-            introEnd: 0,
-            outroStart: max(0, duration - 16),
-            outroEnd: duration,
+            introEnd: 6.0,
+            outroStart: outroStartSec,
+            outroEnd: dur,
             firstBeat: nil,
             lastBeat: nil,
             beats: [],
