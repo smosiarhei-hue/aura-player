@@ -17,19 +17,6 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Apply pending player repair
-        run: |
-          if ! grep -q 'transitionDisplayDidSwitch' Aurora/playercore.swift; then
-            python3 .github/player_fix.py
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add Aurora/PlayerScreenV2.swift Aurora/playercore.swift Aurora/AutoMixTransitionOverlay.swift Aurora/auroraapp.swift
-            git commit -m "Fix adaptive player, VideoShot and AutoMix hand-off [skip ci]"
-            git push origin HEAD:main
-          fi
 
       - name: Compute version (auto-increment per build)
         id: version
