@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - Library View (Медиатека — Плейлисты, Избранное, Полноценное управление)
+// MARK: - Library View
 
 struct LibraryView: View {
     @State private var library = LibraryStore.shared
@@ -117,22 +117,16 @@ struct LibraryView: View {
     private var mainLibraryContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Quick Media Scan Bar
                 mediaScanActionCard
-
-                // Filter Tabs (Все песни, Избранное, Плейлисты, Недавние)
                 filterChips
 
-                // Playlists Section (if selected)
                 if filter == .playlists {
                     playlistsSection
                 } else {
-                    // Recently Added Albums / Tracks Grid
                     if filter == .all && searchText.isEmpty && library.tracks.count >= 2 {
                         recentlyAddedSection
                     }
 
-                    // Songs List
                     VStack(spacing: 2) {
                         ForEach(filteredTracks) { track in
                             trackRow(track)
@@ -141,8 +135,6 @@ struct LibraryView: View {
                 }
             }
         }
-        // The tab bar accessory already reserves its own space, so the list only
-        // needs a small breathing gap instead of a hard-coded inset.
         .safeAreaPadding(.bottom, 12)
     }
 
@@ -431,3 +423,11 @@ struct LibraryView: View {
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(settings.accentColor)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
