@@ -101,7 +101,7 @@ struct RootView: View {
                 .toolbarColorScheme(.dark, for: .tabBar)
                 .tabBarMinimizeBehavior(.onScrollDown)
                 .tabViewBottomAccessory {
-                    if miniVisible && !showPlayer {
+                    if miniVisible {
                         NativeMiniPlayer(showPlayer: $showPlayer)
                     }
                 }

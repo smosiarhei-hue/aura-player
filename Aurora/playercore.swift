@@ -1411,25 +1411,23 @@ final class PlayerCore {
         if isBrakeStrategy {
             if p > 0.35 {
                 let brakeP = Float((p - 0.35) / 0.65)
-                let brakeRate = max(0.04, 1.0 - (brakeP * brakeP) * 0.96)
-                if isUsingStreamPlayer {
-                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .varispeed
-                    activeStreamingPlayer.rate = isPlaying ? brakeRate : 0
-                } else {
-                    activeTimePitch.rate = max(0.08, 1.0 - brakeP * 0.90)
+                if !isUsingStreamPlayer {
+                    let brakeRate = max(0.08, 1.0 - brakeP * 0.90)
+                    activeTimePitch.rate = brakeRate
                     activeTimePitch.pitch = Float(-1500.0 * (brakeP * brakeP))
+                } else if isPlaying {
+                    activeStreamingPlayer.rate = 1.0
                 }
             } else {
-                if isUsingStreamPlayer {
-                    activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
-                } else {
+                if !isUsingStreamPlayer {
                     activeTimePitch.rate = 1.0
                     activeTimePitch.pitch = 0
+                } else if isPlaying {
+                    activeStreamingPlayer.rate = 1.0
                 }
             }
 
             if incomingIsStream {
-                idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
                 if isPlaying { idleStreamingPlayer.rate = 1.0 }
             } else if !isUsingStreamPlayer {
                 idleTimePitch.rate = 1.0

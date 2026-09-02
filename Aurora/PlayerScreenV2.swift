@@ -165,9 +165,7 @@ struct PlayerScreenV2: View {
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
             let dismissThreshold = max(geo.size.height * 0.38, 240)
             let dragProgress = min(max(dragOffsetY / dismissThreshold, 0), 1)
-            let pullProgress = max(0, min(1, dragOffsetY / 160))
-            let controlsOpacity = pow(1.0 - pullProgress, 2)
-            let artworkMicroScale = 1.0 - min(1, dragOffsetY / 40) * 0.04
+            let artworkMicroScale = 1.0 - min(1, dragOffsetY / 60) * 0.04
 
             ZStack {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
@@ -241,7 +239,6 @@ struct PlayerScreenV2: View {
                     topHeader(dismissHeight: geo.size.height)
                         .padding(.top, 8)
                         .padding(.horizontal, 24)
-                        .opacity(controlsOpacity)
 
                     Spacer(minLength: 4)
 
@@ -323,26 +320,25 @@ struct PlayerScreenV2: View {
                     appleMusicLowerDeck
                         .padding(.horizontal, 24)
                         .padding(.bottom, 10)
-                        .opacity(controlsOpacity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 0)
+                    DragGesture(minimumDistance: 10)
                         .onChanged { val in
-                            let isVerticalDrag = abs(val.translation.height) >= abs(val.translation.width)
+                            let isVerticalDrag = abs(val.translation.height) > abs(val.translation.width)
                             if val.translation.height > 0, isVerticalDrag {
                                 dragOffsetY = val.translation.height
                             }
                         }
                         .onEnded { val in
-                            let isVerticalDrag = abs(val.translation.height) >= abs(val.translation.width)
-                            let velocity = val.velocity.height
+                            let isVerticalDrag = abs(val.translation.height) > abs(val.translation.width)
                             let displacement = val.translation.height
-                            if isVerticalDrag && (displacement > 120 || velocity > 300) {
+                            let predicted = val.predictedEndTranslation.height
+                            if isVerticalDrag && (displacement > 80 || predicted > 180) {
                                 dismissWithAnimation(dismissHeight: geo.size.height)
                             } else {
-                                withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                                     dragOffsetY = 0
                                 }
                             }
@@ -1098,17 +1094,18 @@ struct PlayerScreenV2: View {
     }
 
     private func closeGesture(dismissHeight: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 6)
             .onChanged { value in
                 guard value.translation.height > 0 else { return }
                 dragOffsetY = value.translation.height
             }
             .onEnded { value in
-                let velocity = value.velocity.height
-                if value.translation.height > 120 || velocity > 300 {
+                let displacement = value.translation.height
+                let predicted = value.predictedEndTranslation.height
+                if displacement > 80 || predicted > 180 {
                     dismissWithAnimation(dismissHeight: dismissHeight)
                 } else {
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                         dragOffsetY = 0
                     }
                 }

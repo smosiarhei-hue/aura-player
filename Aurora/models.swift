@@ -93,21 +93,29 @@ final class AutoMixDJEngine {
         var filterCutoff: Float = 1.0
 
         switch strategy {
-        case .DROP_SWITCH, .HARD_CUT, .VOCAL_CUT:
-            // High energy hold on outgoing track, then quick steep drop-off at the vinyl-brake point
-            if p < 0.40 {
+        case .DROP_SWITCH, .HARD_CUT:
+            // High energy hold on outgoing track, then quick punchy hand-off to incoming track.
+            // Absolutely NO SILENCE DIP: incoming track is audible from the start and hits 100% on the drop!
+            let switchPoint = 0.50
+            if p < switchPoint {
                 outVol = 1.0
-                inVol = 0.001
-            } else if p < 0.85 {
-                let dropP = Float((p - 0.40) / 0.45)
-                outVol = max(0.0, 1.0 - (dropP * dropP))
-                inVol = Float(sin(Double(dropP) * (.pi / 2)))
+                let rampIn = Float(p / switchPoint)
+                inVol = Float(sin(Double(rampIn) * (.pi / 2))) * 0.70
             } else {
-                outVol = 0.0
-                inVol = 1.0
+                let exitP = Float((p - switchPoint) / (1.0 - switchPoint))
+                outVol = max(0.0, 1.0 - (exitP * exitP))
+                inVol = 0.70 + (0.30 * exitP)
             }
-            if p > 0.80 {
-                outBassCut = -36.0
+            if p > switchPoint {
+                outBassCut = -24.0 * Float((p - switchPoint) / (1.0 - switchPoint))
+            }
+
+        case .VOCAL_CUT:
+            // Smooth vocal fade-out crossfade
+            outVol = Float(cos(p * (.pi / 2)))
+            inVol = Float(sin(p * (.pi / 2)))
+            if p > 0.40 {
+                outBassCut = -20.0 * Float((p - 0.40) / 0.60)
             }
 
         case .BASS_SWAP, .BEAT_MATCH_EQ:
@@ -121,18 +129,13 @@ final class AutoMixDJEngine {
             } else {
                 inBassGain = 0.0
             }
-            // Emulate bass-swap dip in volume for streaming players
-            if p > 0.20 && p < 0.50 {
-                outVol = outVol * 0.72
-            }
 
         case .FILTER_TRANSITION:
             filterCutoff = max(0.1, Float(1.0 - p))
             outBassCut = Float(p) * -32.0
             inBassGain = Float(1.0 - p) * -12.0
-            if p > 0.50 {
-                outVol = outVol * Float(max(0.05, 1.0 - (p - 0.50) * 1.8))
-            }
+            outVol = Float(cos(p * (.pi / 2)))
+            inVol = Float(sin(p * (.pi / 2)))
 
         case .ENERGY_BLEND, .BUILDUP_TO_DROP:
             if p > 0.35 {
@@ -141,6 +144,8 @@ final class AutoMixDJEngine {
             if p < 0.25 {
                 inBassGain = -18.0 * (1.0 - Float(p / 0.25))
             }
+            outVol = Float(cos(p * (.pi / 2)))
+            inVol = Float(sin(p * (.pi / 2)))
 
         case .ECHO_OUT:
             outBassCut = Float(p) * -20.0
