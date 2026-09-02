@@ -33,6 +33,7 @@ struct SonivoApp: App {
 
 enum AppTab: String, CaseIterable, Identifiable {
     case wave = "Wave"
+    case trends = "Trends"
     case library = "Library"
     case search = "Search"
 
@@ -41,15 +42,17 @@ enum AppTab: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .wave: return "Моя волна"
-        case .library: return "Библиотека"
+        case .trends: return "Тренды"
+        case .library: return "Коллекция"
         case .search: return "Поиск"
         }
     }
 
     var icon: String {
         switch self {
-        case .wave: return "dot.radiowaves.left.and.right"
-        case .library: return "music.note.list"
+        case .wave: return "sparkles"
+        case .trends: return "chart.line.uptrend.xyaxis"
+        case .library: return "books.vertical.fill"
         case .search: return "magnifyingglass"
         }
     }
@@ -69,6 +72,7 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $tab) {
             HomeView().tabItem { Label(AppTab.wave.label, systemImage: AppTab.wave.icon) }.tag(AppTab.wave)
+            TrendsExploreView().tabItem { Label(AppTab.trends.label, systemImage: AppTab.trends.icon) }.tag(AppTab.trends)
             LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
             SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
         }
