@@ -95,6 +95,10 @@ final class LibraryStore {
 
     // MARK: - Favorites (Works for BOTH local and online tracks!)
 
+    var favorites: [Track] {
+        tracks.filter { $0.isFavorite }
+    }
+
     func toggleFavorite(_ track: Track) {
         if let i = tracks.firstIndex(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
             tracks[i].isFavorite.toggle()

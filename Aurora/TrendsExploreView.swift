@@ -17,13 +17,19 @@ struct TrendsExploreView: View {
         newAlbums.first
     }
 
-    private var styleArtists: [YandexMusicService.YMArtistItem] {
+    struct StyleArtist: Identifiable {
+        let id: String
+        let name: String
+        let coverUrlString: String?
+    }
+
+    private var styleArtists: [StyleArtist] {
         var seen = Set<String>()
-        var list: [YandexMusicService.YMArtistItem] = []
+        var list: [StyleArtist] = []
         for track in chart {
             if let a = track.artists?.first, let id = a.id, !seen.contains(String(id)) {
                 seen.insert(String(id))
-                list.append(YandexMusicService.YMArtistItem(id: id, name: a.name ?? "Артист", subtitle: "Популярно в трендах", coverUrlString: track.coverUrlString, popularTracks: [], albums: [], similarArtists: []))
+                list.append(StyleArtist(id: String(id), name: a.name ?? "Артист", coverUrlString: track.coverUrlString))
             }
             if list.count >= 6 { break }
         }
