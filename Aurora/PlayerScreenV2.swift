@@ -7,7 +7,6 @@ import MediaPlayer
 struct PlayerScreenV2: View {
     @State private var player = PlayerCore.shared
     @State private var library = LibraryStore.shared
-    @State private var taste = UserTasteEngine.shared
     @Binding var isPresented: Bool
 
     init(isPresented: Binding<Bool>, dragOffsetY: Binding<CGFloat> = .constant(0)) {
@@ -174,10 +173,7 @@ struct PlayerScreenV2: View {
             NavigationStack {
                 switch modal {
                 case .queue:
-                    QueueModalView(isPresented: Binding(
-                        get: { activeModal == .queue },
-                        set: { if !$0 { activeModal = nil } }
-                    ))
+                    QueueSheetView()
                 case .equalizer:
                     PlayerEQSheetView()
                 case .sleepTimer:
@@ -397,45 +393,40 @@ struct PlayerScreenV2: View {
     }
 
     @ViewBuilder private var artwork: some View {
-        if let track {
-            ArtworkView(track: track)
+        if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else if let cover = track?.coverURL, let url = URL(string: cover) {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    fallbackArtwork
+                }
+            }
         } else {
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .overlay(Image(systemName: "music.note").font(.system(size: 48)).foregroundStyle(.white.opacity(0.35)))
+            fallbackArtwork
+        }
+    }
+
+    private var fallbackArtwork: some View {
+        ZStack {
+            LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(.system(size: 70, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
         }
     }
 
     // MARK: - Lyrics Stage
 
-    @ViewBuilder private var lyricsStage: some View {
-        if lyricsLoading {
-            VStack(spacing: 14) {
-                ProgressView()
-                    .tint(.white)
-                Text("Загрузка текста...")
-                    .font(AG.text(14, .medium))
-                    .foregroundStyle(.white.opacity(0.70))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let lyrics, !lyrics.lines.isEmpty {
-            SyncedLyricsView(lyrics: lyrics, currentTime: player.progress) { seekTime in
-                player.seek(to: seekTime)
-            }
-        } else {
-            VStack(spacing: 12) {
-                Image(systemName: "quote.bubble")
-                    .font(.system(size: 40))
-                    .foregroundStyle(.white.opacity(0.35))
-                Text("Текст песни недоступен")
-                    .font(AG.text(16, .semibold))
-                    .foregroundStyle(.white.opacity(0.75))
-                Text("Для этого трека слова еще не добавлены")
-                    .font(AG.text(13, .regular))
-                    .foregroundStyle(.white.opacity(0.45))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+    private var lyricsStage: some View {
+        LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
+            .padding(.top, 4)
+            .padding(.bottom, 8)
     }
 
     // MARK: - Lower Deck: Standard Apple Music Layout
@@ -465,7 +456,7 @@ struct PlayerScreenV2: View {
 
     private var trackMetadataRow: some View {
         let current = displayedMetadataTrack ?? track
-        let isFav = current.map { taste.isFavorite($0) } ?? false
+        let isFav = current.map { library.isTrackFavorite($0) } ?? false
 
         return HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
@@ -506,7 +497,7 @@ struct PlayerScreenV2: View {
                 Button {
                     guard let current else { return }
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    taste.toggleFavorite(current)
+                    library.toggleFavorite(current)
                 } label: {
                     Image(systemName: isFav ? "heart.fill" : "heart")
                         .font(.system(size: iconGlyph + 2, weight: .bold))
