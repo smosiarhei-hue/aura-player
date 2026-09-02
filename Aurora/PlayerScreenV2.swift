@@ -1055,7 +1055,18 @@ struct PlayerScreenV2: View {
     private func close() {
         guard !dismissing else { return }
         dismissing = true
-        isPresented = false
+        // The card is still fully on-screen here (this is the plain tap-to-
+        // close path, not a drag), but SwiftUI's own fullScreenCover dismiss
+        // transition still runs its default animated transaction. That
+        // competed visually with our other, drag-driven dismiss path and is
+        // what let a stray frame of the plain, un-styled "old" player flash
+        // before the cover actually closed. Disabling the transaction here
+        // makes the close instant and single, with no second transition.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isPresented = false
+        }
     }
 
     /// Animates the card the rest of the way off-screen before flipping
@@ -1072,7 +1083,21 @@ struct PlayerScreenV2: View {
             dragY = target
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-            isPresented = false
+            // By this point our own animation has already carried the card
+            // fully off-screen via `dragY`. Flipping `isPresented` with
+            // SwiftUI's default (animated) transaction let the
+            // fullScreenCover play its own separate, competing dismiss
+            // transition on top of that - visually snapping back to the
+            // plain, un-dragged full player for a frame before sliding it
+            // away, which is exactly what showed up as a second, "old"
+            // looking player flashing during the swipe-down dismiss.
+            // Disabling the transaction keeps the close entirely driven by
+            // the drag animation above, with nothing left to flash.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                isPresented = false
+            }
         }
     }
 
