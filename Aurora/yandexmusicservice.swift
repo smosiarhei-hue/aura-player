@@ -793,8 +793,75 @@ final class YandexMusicService {
         try await getStreamInfo(for: trackId).url
     }
 
+    /// Modern signed endpoint used by current official Yandex Music clients to fetch true
+    /// lossless/FLAC streams. The older /tracks/{id}/download-info list frequently omits FLAC
+    /// entries entirely for third-party OAuth tokens, which is why Hi-Res Lossless selections
+    /// were silently falling back to 320kbps mp3. This tries the real lossless master first.
+    private func getLosslessFileInfo(cleanId: String) async -> StreamInfo? {
+        guard !cleanId.isEmpty else { return nil }
+        let ts = Int(Date().timeIntervalSince1970)
+        let quality = "lossless"
+        let codecs = "flac,aac,he-aac,mp3"
+        let transports = "raw"
+        let codecsNoCommas = codecs.replacingOccurrences(of: ",", with: "")
+        let message = "\(ts)\(cleanId)\(quality)\(codecsNoCommas)\(transports)"
+        let key = SymmetricKey(data: Data("p93jhgh689SBReK6ghtw62".utf8))
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key)
+        let sign = String(Data(signature).base64EncodedString().dropLast())
+
+        guard var comps = URLComponents(string: Self.apiBase + "/get-file-info") else { return nil }
+        comps.queryItems = [
+            URLQueryItem(name: "ts", value: String(ts)),
+            URLQueryItem(name: "trackId", value: cleanId),
+            URLQueryItem(name: "quality", value: quality),
+            URLQueryItem(name: "codecs", value: codecs),
+            URLQueryItem(name: "transports", value: transports),
+            URLQueryItem(name: "sign", value: sign)
+        ]
+        guard let url = comps.url else { return nil }
+
+        guard let (data, response) = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return nil }
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 { return nil }
+
+        struct FileInfoResponse: Decodable {
+            struct Result: Decodable {
+                struct DownloadInfo: Decodable {
+                    let codec: String?
+                    let bitrate: Int?
+                    let url: String?
+                    let urls: [String]?
+                }
+                let downloadInfo: DownloadInfo?
+            }
+            let result: Result?
+        }
+
+        guard let parsed = try? JSONDecoder().decode(FileInfoResponse.self, from: data),
+              let info = parsed.result?.downloadInfo,
+              let codec = info.codec,
+              let urlString = info.url ?? info.urls?.first,
+              let streamURL = URL(string: urlString) else {
+            return nil
+        }
+
+        return StreamInfo(url: streamURL, bitrate: info.bitrate ?? 0, codec: codec)
+    }
+
     func getStreamInfo(for trackId: String, preferredQuality: AudioQuality = .auto, preferredBitrate: Int? = nil) async throws -> StreamInfo {
         let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+
+        // The legacy /download-info endpoint stopped reliably returning FLAC entries for most
+        // third-party OAuth tokens (Yandex now gates real Hi-Res/Lossless behind the signed
+        // get-file-info endpoint). Try that first whenever lossless or automatic quality is
+        // wanted, and only fall back to the legacy list below if this track truly has no
+        // lossless master there.
+        if preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto {
+            if let losslessInfo = await getLosslessFileInfo(cleanId: cleanId) {
+                SonivoDiagnostics.log("get-file-info delivered \(losslessInfo.codec) \(losslessInfo.bitrate)kbps for \(cleanId)", tag: "STREAM")
+                return losslessInfo
+            }
+        }
+
         let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info")!
         let req = authorizedRequest(url: downloadInfoListURL)
         let (data, _) = try await URLSession.shared.data(for: req)
@@ -832,8 +899,9 @@ final class YandexMusicService {
             if let preferred = preferredBitrate {
                 best = list.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
             } else {
-                if let flac = list.first(where: { $0.codec.lowercased() == "flac" }) {
-                    best = flac
+                let flacs = list.filter { $0.codec.lowercased() == "flac" }
+                if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
+                    best = bestFlac
                 } else {
                     best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
                 }
