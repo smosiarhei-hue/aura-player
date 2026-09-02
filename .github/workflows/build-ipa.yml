@@ -22,20 +22,12 @@ jobs:
 
       - name: Apply pending player repair
         run: |
-          if ! grep -q 'transitionTargetTrack' Aurora/playercore.swift; then
-            awk '/python3 <<'"'"'PY'"'"'/{copy=1; next} /^          PY$/{copy=0} copy {sub(/^          /, ""); print}' .github/workflows/apply-player-fix.yml > /tmp/player_fix.py
-            python3 /tmp/player_fix.py
-            python3 <<'PY'
-          from pathlib import Path
-          overlay = Path('Aurora/AutoMixTransitionOverlay.swift')
-          overlay.write_text(overlay.read_text().replace('@Environment(\\\\.accessibility', '@Environment(\\.accessibility')))
-          player = Path('Aurora/PlayerScreenV2.swift')
-          player.write_text(player.read_text().replace('            .drawingGroup(opaque: true, colorMode: .extendedLinear)\n', ''))
-          PY
+          if ! grep -q 'transitionDisplayDidSwitch' Aurora/playercore.swift; then
+            python3 .github/player_fix.py
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add Aurora/PlayerScreenV2.swift Aurora/playercore.swift Aurora/AutoMixTransitionOverlay.swift Aurora/auroraapp.swift
-            git commit -m "Fix player visuals, AutoMix hand-off and foreground Now Playing [skip ci]"
+            git commit -m "Fix adaptive player, VideoShot and AutoMix hand-off [skip ci]"
             git push origin HEAD:main
           fi
 
@@ -125,15 +117,18 @@ jobs:
           ls -lh Sonivo-unsigned.ipa
 
       - name: Send IPA to Telegram
-        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets are not configured; skipping delivery."
+            exit 0
+          fi
           curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
                -F document=@Sonivo-unsigned.ipa \
                -F caption="🎵 Sonivo IPA готов к установке! (Сборка: #${BUILD_NUMBER})" \
-               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" || true
+               "{{https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}}}/sendDocument" || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
