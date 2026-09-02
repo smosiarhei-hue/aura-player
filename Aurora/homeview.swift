@@ -297,7 +297,7 @@ struct HomeView: View {
     private func moodCard(title: String, icon: String, colors: [Color], stationId: String) -> some View {
         Button {
             let station = YandexMusicService.rotorStations.first(where: { $0.stationId == stationId })
-                ?? YandexMusicService.StationOption(title: title.replacingOccurrences(of: "\n", with: " "), subtitle: "Моя волна", icon: icon, gradient: ["0A84FF", "30D158"], stationId: stationId)
+                ?? YandexMusicService.StationOption(id: stationId, title: title.replacingOccurrences(of: "\n", with: " "), subtitle: "Моя волна", stationId: stationId, gradient: ["0A84FF", "30D158"], icon: icon)
             SonivoPlay.wave(station)
         } label: {
             VStack(alignment: .leading, spacing: 10) {

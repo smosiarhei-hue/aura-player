@@ -267,7 +267,7 @@ enum SonivoPlay {
             ym.beginStationSession(station.stationId)
 
             // FAST START: fetch first quick batch (~200ms) and launch immediately!
-            let firstBatch = await ym.fetchRotorBatch(stationId: station.stationId, queueSeed: nil)
+            let firstBatch = (try? await ym.getStationTracks(stationId: station.stationId)) ?? []
             let initial = firstBatch.isEmpty ? (try? await ym.getChart()) ?? [] : firstBatch
             if !initial.isEmpty {
                 let convertedInitial = initial.map { ym.convertToTrack($0) }
