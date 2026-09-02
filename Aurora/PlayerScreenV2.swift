@@ -124,12 +124,28 @@ struct PlayerScreenV2: View {
 
         if let image = LibraryStore.cachedArtworkImage(for: track) {
             await updatePalette(from: image)
-        } else {
-            let fallback = track.palette
-            guard !fallback.isEmpty else { return }
-            withAnimation(.easeInOut(duration: 0.85)) {
-                artworkPaletteColors = fallback
+            return
+        }
+
+        // Streaming tracks never have a locally cached artwork file, so without
+        // this they always fell straight through to the synthetic/seeded
+        // fallback below - which is why the background used to stay a fixed
+        // amber/orange regardless of the track's real cover colour. Downloading
+        // the actual remote cover once and quantizing its real pixels is what
+        // makes the backdrop follow the artwork instead of a guessed palette.
+        if let cover = track.coverURL, let url = URL(string: cover) {
+            if let (data, _) = try? await URLSession.shared.data(from: url),
+               let image = UIImage(data: data) {
+                guard player.currentTrack?.id == track.id else { return }
+                await updatePalette(from: image)
+                return
             }
+        }
+
+        let fallback = track.palette
+        guard !fallback.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.85)) {
+            artworkPaletteColors = fallback
         }
     }
 
@@ -240,21 +256,23 @@ struct PlayerScreenV2: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .contentShape(Rectangle())
                             .offset(x: coverDragX)
-                            .gesture(
-                                DragGesture(minimumDistance: 12)
+                            .highPriorityGesture(
+                                DragGesture(minimumDistance: 16)
                                     .onChanged { val in
-                                        if abs(val.translation.width) > abs(val.translation.height) {
+                                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
+                                        if isHorizontalSwipe {
                                             coverDragX = val.translation.width * 0.60
                                         }
                                     }
                                     .onEnded { val in
                                         let threshold: CGFloat = 45
-                                        if val.translation.width < -threshold {
+                                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
+                                        if isHorizontalSwipe, val.translation.width < -threshold {
                                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                             withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -coverSide }
                                             nextTrack()
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
-                                        } else if val.translation.width > threshold {
+                                        } else if isHorizontalSwipe, val.translation.width > threshold {
                                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                             withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = coverSide }
                                             previousTrack()
@@ -298,13 +316,15 @@ struct PlayerScreenV2: View {
                 .gesture(
                     DragGesture(minimumDistance: 8)
                         .onChanged { val in
-                            if val.translation.height > 0 {
+                            let isVerticalDrag = abs(val.translation.height) >= abs(val.translation.width)
+                            if val.translation.height > 0, isVerticalDrag {
                                 dragY = val.translation.height
                             }
                         }
                         .onEnded { val in
+                            let isVerticalDrag = abs(val.translation.height) >= abs(val.translation.width)
                             let velocity = val.predictedEndTranslation.height
-                            if val.translation.height > 120 || velocity > 280 {
+                            if isVerticalDrag, val.translation.height > 120 || velocity > 280 {
                                 dismissWithAnimation(dismissHeight: geo.size.height)
                             } else {
                                 withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.86)) {
@@ -327,7 +347,7 @@ struct PlayerScreenV2: View {
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(dismissing)
+        .interactiveDismissDisabled(true)
         .animation(.easeInOut(duration: 0.28), value: dj.isTransitionActive)
         .animation(.easeInOut(duration: 0.30), value: videoShotActive)
         .sheet(item: $activeModal) { modal in
@@ -470,21 +490,23 @@ struct PlayerScreenV2: View {
             .shadow(color: Color.black.opacity(0.45), radius: player.isPlaying ? 26 : 14, y: player.isPlaying ? 15 : 8)
             .scaleEffect(player.isPlaying ? 1.0 : 0.88)
             .offset(x: coverDragX)
-            .gesture(
-                DragGesture(minimumDistance: 12)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 16)
                     .onChanged { val in
-                        if abs(val.translation.width) > abs(val.translation.height) {
+                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
+                        if isHorizontalSwipe {
                             coverDragX = val.translation.width * 0.60
                         }
                     }
                     .onEnded { val in
                         let threshold: CGFloat = 45
-                        if val.translation.width < -threshold {
+                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
+                        if isHorizontalSwipe, val.translation.width < -threshold {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -side }
                             nextTrack()
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
-                        } else if val.translation.width > threshold {
+                        } else if isHorizontalSwipe, val.translation.width > threshold {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = side }
                             previousTrack()
@@ -1126,7 +1148,7 @@ struct PlayerTimelineSection<Center: View>: View {
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 0)
+                    DragGesture(minimumDistance: 6)
                         .onChanged { val in
                             if !isScrubbing {
                                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
