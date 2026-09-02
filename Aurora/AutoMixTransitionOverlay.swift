@@ -34,52 +34,67 @@ struct AutoMixTransitionOverlay: View {
     private var incomingTrack: Track? { player.incomingTrack }
 
     var body: some View {
-        if dj.isTransitionActive {
-            let progress = min(1, max(0, dj.transitionProgress))
-            ZStack {
-                // The incoming cover rises underneath the outgoing artwork as the
-                // blend advances, so the hand-off actually reads as cover-to-cover.
-                if let incomingImage {
-                    Image(uiImage: incomingImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: side, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .opacity(progress)
-                        .scaleEffect(0.97 + 0.03 * progress)
-                }
-
-                // Premium HDR hand-off: a soft, full-frame white bloom that
-                // breathes in and back out right at the midpoint of the blend,
-                // instead of a moving line/band sweeping across the cover.
-                // Reads as one clean flash of light, not a running stripe.
-                if !reduceMotion {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Color.white)
-                        .opacity(bloomIntensity(progress) * 0.85)
-                        .blendMode(.plusLighter)
-                        .allowsHitTesting(false)
-                }
-
-                RadialGradient(
-                    colors: [
-                        .white.opacity(bloomIntensity(progress) * 0.40),
-                        (outgoingPalette.first ?? AG.amber).opacity(bloomIntensity(progress) * 0.25),
-                        .clear
-                    ],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: side * 0.75
-                )
-                .blendMode(.screen)
-                .allowsHitTesting(false)
+        ZStack {
+            if dj.isTransitionActive {
+                transitionContent
+                    .transition(.opacity)
             }
-            .frame(width: side, height: side)
+        }
+        .frame(width: side, height: side)
+        .allowsHitTesting(false)
+        // Top-5 fix #2 (screen-recording analysis, [00:11.2]): preload and
+        // fully pre-decode the incoming cover the moment AutoMix picks it -
+        // many seconds before the crossfade's first frame - instead of only
+        // starting the moment the blend becomes active. This `.task` is
+        // attached to the always-mounted container above (not gated behind
+        // `dj.isTransitionActive`), so decoding never lands on the frame
+        // that kicks off the visible blend, which previously produced a
+        // ~160 ms / 2-3 frame stall.
+        .task(id: incomingTrack?.id) {
+            await loadIncomingImage()
+        }
+    }
+
+    @ViewBuilder
+    private var transitionContent: some View {
+        let progress = min(1, max(0, dj.transitionProgress))
+        ZStack {
+            // The incoming cover rises underneath the outgoing artwork as the
+            // blend advances, so the hand-off actually reads as cover-to-cover.
+            if let incomingImage {
+                Image(uiImage: incomingImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: side, height: side)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .opacity(progress)
+                    .scaleEffect(0.97 + 0.03 * progress)
+            }
+
+            // Premium HDR hand-off: a soft, full-frame white bloom that
+            // breathes in and back out right at the midpoint of the blend,
+            // instead of a moving line/band sweeping across the cover.
+            // Reads as one clean flash of light, not a running stripe.
+            if !reduceMotion {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white)
+                    .opacity(bloomIntensity(progress) * 0.85)
+                    .blendMode(.plusLighter)
+                    .allowsHitTesting(false)
+            }
+
+            RadialGradient(
+                colors: [
+                    .white.opacity(bloomIntensity(progress) * 0.40),
+                    (outgoingPalette.first ?? AG.amber).opacity(bloomIntensity(progress) * 0.25),
+                    .clear
+                ],
+                center: .center,
+                startRadius: 0,
+                endRadius: side * 0.75
+            )
+            .blendMode(.screen)
             .allowsHitTesting(false)
-            .transition(.opacity)
-            .task(id: incomingTrack?.id) {
-                await loadIncomingImage()
-            }
         }
     }
 
@@ -89,7 +104,10 @@ struct AutoMixTransitionOverlay: View {
     /// the crossfade above had no image to show for almost every real
     /// AutoMix transition. Downloading it once here, well before the blend
     /// actually starts (AutoMix picks its target track many seconds ahead),
-    /// gives the crossfade something real to show every time.
+    /// gives the crossfade something real to show every time. The decode
+    /// itself is then forced fully off the main thread and finished ahead of
+    /// time via `byPreparingForDisplay()`, so nothing decodes on the frame
+    /// that kicks off the visible blend.
     private func loadIncomingImage() async {
         guard let incomingTrack else {
             incomingImage = nil
@@ -97,21 +115,27 @@ struct AutoMixTransitionOverlay: View {
             return
         }
         guard incomingImageTrackId != incomingTrack.id else { return }
+
+        var rawImage: UIImage?
         if let cached = LibraryStore.cachedArtworkImage(for: incomingTrack) {
-            incomingImageTrackId = incomingTrack.id
-            incomingImage = cached
-            return
+            rawImage = cached
+        } else if let cover = incomingTrack.coverURL, let url = URL(string: cover) {
+            if let (data, _) = try? await URLSession.shared.data(from: url) {
+                rawImage = UIImage(data: data)
+            }
         }
-        guard let cover = incomingTrack.coverURL, let url = URL(string: cover) else {
+
+        guard let rawImage else {
             incomingImage = nil
             incomingImageTrackId = incomingTrack.id
             return
         }
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
-              let image = UIImage(data: data) else { return }
+
+        let decoded = await rawImage.byPreparingForDisplay()
+
         guard player.incomingTrack?.id == incomingTrack.id else { return }
         incomingImageTrackId = incomingTrack.id
-        incomingImage = image
+        incomingImage = decoded ?? rawImage
     }
 
     private func bloomIntensity(_ progress: Double) -> Double {
