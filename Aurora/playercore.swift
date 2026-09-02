@@ -123,6 +123,14 @@ final class PlayerCore {
     private let reverbA = AVAudioUnitReverb()
     private let reverbB = AVAudioUnitReverb()
 
+    // Third deck: bar-aligned outro loop of the outgoing track
+    private let looperPlayer = AVAudioPlayerNode()
+    private let looperTimePitch = AVAudioUnitTimePitch()
+    private let looperEQ = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    private let looperReverb = AVAudioUnitReverb()
+    private var loopBuffer: AVAudioPCMBuffer?
+    private var isLoopActive = false
+
     private var activeAudioFile: AVAudioFile?
     private var incomingAudioFile: AVAudioFile?
     private var incomingTrack: Track?
@@ -253,19 +261,26 @@ final class PlayerCore {
     private func setupAudioEngine() {
         engine.attach(playerA)
         engine.attach(playerB)
+        engine.attach(looperPlayer)
         engine.attach(timePitchA)
         engine.attach(timePitchB)
+        engine.attach(looperTimePitch)
         engine.attach(eqNodeA)
         engine.attach(eqNodeB)
+        engine.attach(looperEQ)
         engine.attach(reverbA)
         engine.attach(reverbB)
+        engine.attach(looperReverb)
 
         configureEQ(eqNodeA)
         configureEQ(eqNodeB)
+        configureEQ(looperEQ)
         configureTimePitch(timePitchA)
         configureTimePitch(timePitchB)
+        configureTimePitch(looperTimePitch)
         configureReverb(reverbA)
         configureReverb(reverbB)
+        configureReverb(looperReverb)
 
         // Deck A: player -> timePitch -> EQ -> reverb -> mixer
         engine.connect(playerA, to: timePitchA, format: nil)
@@ -278,6 +293,14 @@ final class PlayerCore {
         engine.connect(timePitchB, to: eqNodeB, format: nil)
         engine.connect(eqNodeB, to: reverbB, format: nil)
         engine.connect(reverbB, to: engine.mainMixerNode, format: nil)
+
+        // Loop deck: player -> timePitch -> EQ -> reverb -> mixer
+        engine.connect(looperPlayer, to: looperTimePitch, format: nil)
+        engine.connect(looperTimePitch, to: looperEQ, format: nil)
+        engine.connect(looperEQ, to: looperReverb, format: nil)
+        engine.connect(looperReverb, to: engine.mainMixerNode, format: nil)
+
+        looperPlayer.volume = 0
 
         engine.mainMixerNode.outputVolume = volume
         try? engine.start()
@@ -376,6 +399,7 @@ final class PlayerCore {
     private func applyEQ() {
         for (i, band) in eqNodeA.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in eqNodeB.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
+        for (i, band) in looperEQ.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
     }
 
     private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
@@ -549,6 +573,7 @@ final class PlayerCore {
         } else {
             pausedProgress = liveProgress()
             activePlayer.pause()
+            if isLoopActive { looperPlayer.pause() }
             anchorDate = nil
             progress = pausedProgress
         }
@@ -576,6 +601,7 @@ final class PlayerCore {
             }
             if !engine.isRunning { try? engine.start() }
             activePlayer.play()
+            if isLoopActive { looperPlayer.play() }
             isPlaying = true
             anchorDate = Date()
             anchorOffset = pausedProgress
@@ -643,6 +669,7 @@ final class PlayerCore {
         streamingPlayer.replaceCurrentItem(with: nil)
         playerA.stop()
         playerB.stop()
+        stopBeatLoop()
         activeAudioFile = nil
         incomingAudioFile = nil
         currentTrack = nil
@@ -683,6 +710,7 @@ final class PlayerCore {
         idleStreamingPlayer.pause()
         playerA.stop()
         playerB.stop()
+        stopBeatLoop()
         playerA.volume = 1.0
         playerB.volume = 0.0
         activePlayer = playerA
@@ -740,6 +768,7 @@ final class PlayerCore {
         isUsingStreamPlayer = true
         playerA.stop()
         playerB.stop()
+        stopBeatLoop()
 
         let url = track.url
         // Resolved direct stream URL; unresolved Yandex tracks keep only the track id.
@@ -1022,6 +1051,16 @@ final class PlayerCore {
         let startPosition = max(0, plan.targetTrack.startPosition)
         let rate = incomingTempoRate
 
+        // Outro loop: needed when the strategy asks for it, or when the outgoing
+        // track would simply run out of music before the blend is finished.
+        let outgoingURL = currentTrack?.url
+        let outgoingAnalysis = currentTrack.flatMap { analysisCache[$0.id] }
+        let runsOutOfMusic = (duration - plan.cueTime) < transitionDuration * 0.9
+        let wantsLoop = strategy == .LOOP_TRANSITION || strategy == .ECHO_OUT || runsOutOfMusic
+        if wantsLoop, let outgoingURL, outgoingURL.isFileURL, let outgoingAnalysis {
+            startBeatLoop(url: outgoingURL, analysis: outgoingAnalysis, cueTime: plan.cueTime, blend: transitionDuration)
+        }
+
         Task {
             do {
                 let nextFile = try AVAudioFile(forReading: nextTrack.url)
@@ -1049,10 +1088,79 @@ final class PlayerCore {
             } catch {
                 self.isTransitioning = false
                 self.transitionScheduled = false
+                self.stopBeatLoop()
                 AutoMixDJEngine.shared.isTransitionActive = false
                 AutoMixDJEngine.shared.statusBadge = nil
             }
         }
+    }
+
+    // MARK: - Outro Beat Loop (third deck)
+
+    /// Loops the last bars of the outgoing track, aligned to its downbeat grid, so
+    /// the blend always has music underneath and stays in time — the classic DJ
+    /// outro loop. The loop follows the same tempo ramp and effect automation as
+    /// the deck it replaces.
+    private func startBeatLoop(url: URL, analysis: TrackAnalysis, cueTime: Double, blend: Double) {
+        guard analysis.hasSteadyBeat else { return }
+        let bar = analysis.barDuration
+        guard bar.isFinite, bar > 0.3, bar < 8 else { return }
+
+        var bars: Double = 2
+        if bar * bars > blend { bars = 1 }
+        let loopLength = bar * bars
+        let rawStart = cueTime - loopLength
+        guard rawStart > 0.5 else { return }
+        let loopStart = analysis.nearestDownbeat(to: rawStart, tolerance: bar * 0.6) ?? rawStart
+        guard loopStart > 0.2 else { return }
+
+        Task {
+            do {
+                let file = try AVAudioFile(forReading: url)
+                let format = file.processingFormat
+                let sr = format.sampleRate
+                guard sr > 0 else { return }
+
+                let startFrame = AVAudioFramePosition(loopStart * sr)
+                guard startFrame >= 0, startFrame < file.length else { return }
+                let available = file.length - startFrame
+                let wanted = AVAudioFramePosition(loopLength * sr)
+                let frames = AVAudioFrameCount(max(0, min(wanted, available)))
+                guard frames > 2048 else { return }
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return }
+
+                file.framePosition = startFrame
+                try file.read(into: buffer, frameCount: frames)
+
+                guard self.isTransitioning, !self.isUsingStreamPlayer else { return }
+
+                self.loopBuffer = buffer
+                self.looperPlayer.stop()
+                self.looperPlayer.volume = self.volume
+                self.looperTimePitch.rate = 1.0
+                self.looperReverb.wetDryMix = 0
+                for (i, band) in self.looperEQ.bands.enumerated() {
+                    band.gain = self.eqEnabled ? self.eqGains[i] : 0
+                }
+                if !self.engine.isRunning { try? self.engine.start() }
+                self.looperPlayer.scheduleBuffer(buffer, at: nil, options: [.loops])
+                self.looperPlayer.play()
+                self.isLoopActive = true
+
+                SonivoDiagnostics.log("[AutoMix] Outro beat-loop from \(String(format: "%.2f", loopStart))s, \(Int(bars)) bar(s) = \(String(format: "%.2f", loopLength))s", tag: "AUTOMIX")
+            } catch {
+                SonivoDiagnostics.log("[AutoMix] Beat-loop failed: \(error.localizedDescription)", tag: "AUTOMIX")
+            }
+        }
+    }
+
+    private func stopBeatLoop() {
+        looperPlayer.stop()
+        looperPlayer.volume = 0
+        looperTimePitch.rate = 1.0
+        looperReverb.wetDryMix = 0
+        loopBuffer = nil
+        isLoopActive = false
     }
 
     private func startTransitionTimer() {
@@ -1205,19 +1313,30 @@ final class PlayerCore {
                 activeStreamingPlayer.rate = 1 + (outgoingTempoRate - 1) * Float(p)
             }
         } else {
-            activePlayer.volume = fx.outVolume * volume
+            let loopActive = isLoopActive
+
+            // While the outro loop carries the outgoing track, the original deck is
+            // silenced and every effect is applied to the loop deck instead.
+            activePlayer.volume = loopActive ? 0 : fx.outVolume * volume
             idlePlayer.volume = fx.inVolume * volume
 
-            applyBandOffsets(activeEQ, bassDB: fx.outBassDB, highDB: fx.outHighDB)
-            applyBandOffsets(idleEQ, bassDB: fx.inBassDB, highDB: fx.inHighDB)
+            if loopActive {
+                looperPlayer.volume = max(0, min(1, fx.outVolume)) * volume
+                applyBandOffsets(looperEQ, bassDB: fx.outBassDB, highDB: fx.outHighDB)
+                looperReverb.wetDryMix = max(0, min(100, fx.outReverb))
+            } else {
+                applyBandOffsets(activeEQ, bassDB: fx.outBassDB, highDB: fx.outHighDB)
+                activeReverb.wetDryMix = max(0, min(100, fx.outReverb))
+            }
 
-            activeReverb.wetDryMix = max(0, min(100, fx.outReverb))
+            applyBandOffsets(idleEQ, bassDB: fx.inBassDB, highDB: fx.inHighDB)
             idleReverb.wetDryMix = max(0, min(100, fx.inReverb))
 
             // Gradual tempo ramp of the outgoing deck, like a DJ nudging the pitch fader.
             if abs(outgoingTempoRate - 1) > 0.001 {
                 let rate = 1 + (outgoingTempoRate - 1) * Float(p)
                 activeTimePitch.rate = rate
+                if loopActive { looperTimePitch.rate = rate }
                 anchorOffset += Double(rate - 1) * transitionTick
             }
         }
@@ -1238,6 +1357,7 @@ final class PlayerCore {
 
         activeTransitionPlan = nil
         isPlanningTransition = false
+        stopBeatLoop()
 
         if isUsingStreamPlayer {
             activeStreamingPlayer.pause()
@@ -1300,6 +1420,7 @@ final class PlayerCore {
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
+        stopBeatLoop()
         idlePlayer.stop()
         idlePlayer.volume = 0
         activePlayer.volume = volume
@@ -1368,6 +1489,7 @@ final class PlayerCore {
             activeStreamingPlayer.rate = clamped
         } else {
             activeTimePitch.rate = clamped
+            if isLoopActive { looperTimePitch.rate = clamped }
         }
     }
 
@@ -1387,6 +1509,7 @@ final class PlayerCore {
         } else {
             timePitchA.rate = 1.0
             timePitchB.rate = 1.0
+            looperTimePitch.rate = 1.0
         }
     }
 
