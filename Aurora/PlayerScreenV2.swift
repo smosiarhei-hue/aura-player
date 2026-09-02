@@ -162,6 +162,7 @@ struct PlayerScreenV2: View {
     var body: some View {
         GeometryReader { geo in
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
+            let dismissThreshold = max(geo.size.height * 0.38, 240)
             let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
             let artworkMicroScale = 1.0 - min(1, dragY / 60) * 0.04
 
