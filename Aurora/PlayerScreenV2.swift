@@ -1081,13 +1081,6 @@ struct PlayerScreenV2: View {
     }
 
     private func close() {
-        guard !dismissing else { return }
-        dismissing = true
-        // The card is still fully on-screen here (this is the plain tap-to-
-        // close path, not a drag), but SwiftUI's own fullScreenCover dismiss
-        // transition still runs its default animated transaction. That
-        // competed visually with our other, drag-driven dismiss path and is
-    private func close() {
         dismissWithAnimation(dismissHeight: 400)
     }
 
