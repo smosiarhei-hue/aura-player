@@ -171,115 +171,229 @@ struct NewReleasesView: View {
     }
 }
 
-// MARK: - Tab 3: Радио
+// MARK: - Tab 3: Моя волна
+//
+// Rebuilt to match the Yandex Music "Моя волна" screen: a full-bleed dark
+// canvas with a giant soft multi-colour glow behind a big circular play
+// button, the live track pill right under it, and a row of mood/station
+// bubbles - instead of the old flat single-gradient "radio" card.
 
 struct RadioStationsView: View {
     @State private var ym = YandexMusicService.shared
+    @State private var player = PlayerCore.shared
+    @State private var library = LibraryStore.shared
+
+    private var moodStation: YandexMusicService.StationOption { ym.waveMoodStation }
+
+    private var moodColors: [Color] {
+        let colors = moodStation.gradient.compactMap { Color(hex: $0) }
+        return colors.isEmpty ? [AG.amber, AG.flame] : colors
+    }
 
     var body: some View {
         NavigationStack {
             ZStack {
-                SonivoBackdrop()
+                Color.black.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        Button {
-                            SonivoPlay.wave(ym.waveMoodStation)
-                        } label: {
-                            ZStack(alignment: .bottomLeading) {
-                                LinearGradient(colors: [AG.amber, AG.flame], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    VStack(alignment: .leading, spacing: 26) {
+                        waveHero
+                            .riseIn()
 
-                                VStack(alignment: .leading, spacing: 5) {
-                                    HStack {
-                                        Text("ПЕРСОНАЛЬНОЕ РАДИО")
-                                            .font(AG.text(10, .heavy))
-                                            .tracking(1.4)
-                                            .foregroundStyle(Color.black.opacity(0.62))
-                                        Spacer(minLength: 0)
-                                        Image(systemName: "play.circle.fill")
-                                            .font(.system(size: 34, weight: .bold))
-                                            .foregroundStyle(Color.black.opacity(0.78))
-                                    }
-
-                                    Spacer(minLength: 0)
-
-                                    Text("Моя волна")
-                                        .font(AG.display(28, .heavy))
-                                        .foregroundStyle(Color.black.opacity(0.9))
-
-                                    Text(ym.waveSubtitle)
-                                        .font(AG.text(11.5, .semibold))
-                                        .foregroundStyle(Color.black.opacity(0.66))
-                                        .lineLimit(2)
-                                }
-                                .padding(18)
-                            }
-                            .frame(height: 172)
-                            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                    .strokeBorder(AG.hairline, lineWidth: 0.8)
-                            )
-                            .overlay(ShimmerOverlay(corner: 24))
-                            .pulsingGlow(AG.ember)
-                            .padding(.horizontal, 16)
+                        if let track = player.currentTrack {
+                            currentTrackPill(track)
+                                .padding(.horizontal, 16)
+                                .riseIn(delay: 0.05)
                         }
-                        .buttonStyle(GlassPressStyle())
-                        .riseIn()
+
+                        moodBubbleRow
+                            .riseIn(delay: 0.08)
 
                         SonivoHeader(title: "Станции", accent: "по жанрам")
                             .padding(.horizontal, 16)
-                            .riseIn(delay: 0.05)
+                            .riseIn(delay: 0.12)
 
-                        LazyVGrid(
-                            columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
-                            spacing: 14
-                        ) {
-                            ForEach(YandexMusicService.rotorStations.dropFirst()) { station in
-                                Button {
-                                    SonivoPlay.wave(station)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        ZStack {
-                                            LinearGradient(
-                                                colors: station.gradient.compactMap { Color(hex: $0) },
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                            Image(systemName: station.icon)
-                                                .font(.system(size: 32, weight: .semibold))
-                                                .foregroundStyle(Color.black.opacity(0.72))
-                                        }
-                                        .frame(height: 108)
-                                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                .strokeBorder(AG.hairline, lineWidth: 0.8)
-                                        )
-
-                                        Text(station.title)
-                                            .font(AG.text(13.5, .semibold))
-                                            .foregroundStyle(AG.ink)
-                                            .lineLimit(1)
-
-                                        Text(station.subtitle)
-                                            .font(AG.text(10.5, .regular))
-                                            .foregroundStyle(AG.inkMuted)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                .buttonStyle(GlassPressStyle())
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .riseIn(delay: 0.10)
+                        stationsGrid
+                            .riseIn(delay: 0.16)
                     }
-                    .padding(.top, 6)
-                    .padding(.bottom, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 22)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .preferredColorScheme(.dark)
         }
+    }
+
+    // Giant radial glow behind a big circular play button, matching the
+    // reference screen's hero layout. Colour comes from the real mood
+    // station gradient (the same source homeview's small waveHero card
+    // already uses), not a fixed amber card.
+    private var waveHero: some View {
+        ZStack {
+            RadialGradient(
+                colors: [moodColors.first ?? AG.amber, .clear],
+                center: UnitPoint(x: 0.5, y: 0.42),
+                startRadius: 6,
+                endRadius: 230
+            )
+            .blur(radius: 6)
+
+            RadialGradient(
+                colors: [(moodColors.count > 1 ? moodColors[1] : AG.flame).opacity(0.9), .clear],
+                center: UnitPoint(x: 0.28, y: 0.30),
+                startRadius: 4,
+                endRadius: 160
+            )
+            .blendMode(.plusLighter)
+
+            RadialGradient(
+                colors: [(moodColors.count > 2 ? moodColors[2] : AG.amber).opacity(0.7), .clear],
+                center: UnitPoint(x: 0.74, y: 0.34),
+                startRadius: 4,
+                endRadius: 150
+            )
+            .blendMode(.plusLighter)
+
+            VStack(spacing: 22) {
+                Text("Моя волна")
+                    .font(AG.display(38, .heavy))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.4), radius: 14, y: 4)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    SonivoPlay.wave(moodStation)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 30, weight: .black))
+                        .foregroundStyle(.black.opacity(0.82))
+                        .frame(width: 86, height: 86)
+                        .background(Circle().fill(moodColors.first ?? AG.amber))
+                        .shadow(color: (moodColors.first ?? AG.amber).opacity(0.55), radius: 22, y: 8)
+                }
+                .buttonStyle(GlassPressStyle())
+                .accessibilityLabel("Запустить Мою волну")
+            }
+        }
+        .frame(height: 320)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func currentTrackPill(_ track: Track) -> some View {
+        HStack(spacing: 10) {
+            SmallArtwork(track: track, size: 34)
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            Text("\(track.artist) — \(track.title)")
+                .font(AG.text(13.5, .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                library.toggleFavorite(track)
+            } label: {
+                Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white.opacity(0.75))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(Capsule().fill(Color.white.opacity(0.08)))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.8))
+    }
+
+    // Colourful mood/station bubbles under the hero, echoing the reference
+    // screen's row of quick-pick chips.
+    private var moodBubbleRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(YandexMusicService.rotorStations) { station in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        SonivoPlay.wave(station)
+                    } label: {
+                        VStack(spacing: 7) {
+                            ZStack {
+                                Circle().fill(
+                                    LinearGradient(
+                                        colors: station.gradient.compactMap { Color(hex: $0) },
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                Image(systemName: station.icon)
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(.black.opacity(0.72))
+                            }
+                            .frame(width: 64, height: 64)
+
+                            Text(station.title)
+                                .font(AG.text(11, .semibold))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1)
+                                .frame(width: 74)
+                        }
+                    }
+                    .buttonStyle(GlassPressStyle())
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private var stationsGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
+            spacing: 14
+        ) {
+            ForEach(YandexMusicService.rotorStations.dropFirst()) { station in
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    SonivoPlay.wave(station)
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ZStack {
+                            LinearGradient(
+                                colors: station.gradient.compactMap { Color(hex: $0) },
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                            Image(systemName: station.icon)
+                                .font(.system(size: 32, weight: .semibold))
+                                .foregroundStyle(Color.black.opacity(0.72))
+                        }
+                        .frame(height: 108)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8)
+                        )
+
+                        Text(station.title)
+                            .font(AG.text(13.5, .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+
+                        Text(station.subtitle)
+                            .font(AG.text(10.5, .regular))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                    }
+                }
+                .buttonStyle(GlassPressStyle())
+            }
+        }
+        .padding(.horizontal, 16)
     }
 }
