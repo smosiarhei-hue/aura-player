@@ -11,6 +11,9 @@ final class LibraryStore {
     private(set) var tracks: [Track] = [] { didSet { persistTracks() } }
     private(set) var playlists: [Playlist] = [] { didSet { persistPlaylists() } }
     private(set) var isScanning = false
+    /// True while a local file-picker import is copying/reading files, so the
+    /// UI can show a spinner instead of looking like nothing happened.
+    private(set) var isImportingFiles = false
     var importProgress: Double? = nil
     var lastError: String? = nil
 
@@ -178,7 +181,12 @@ final class LibraryStore {
 
     func importFiles(from urls: [URL]) async {
         lastError = nil
+        guard !urls.isEmpty else { return }
+        isImportingFiles = true
+        defer { isImportingFiles = false }
+
         let targetDir = musicDirectoryURL()
+        var failures: [String] = []
 
         for url in urls {
             let isScoped = url.startAccessingSecurityScopedResource()
@@ -191,10 +199,29 @@ final class LibraryStore {
                 }
                 try FileManager.default.copyItem(at: url, to: dest)
                 try await addLocalFile(at: dest)
+                SonivoDiagnostics.log("Imported local file: \(url.lastPathComponent)", tag: "LIBRARY")
             } catch {
-                lastError = "Не удалось импортировать: \(url.lastPathComponent)"
+                // Surface the real underlying reason (permission denied, file
+                // not found, iCloud file not downloaded, etc.) instead of a
+                // generic message - this is what previously made a failed
+                // import look like it silently did nothing.
+                SonivoDiagnostics.log("Import failed for \(url.lastPathComponent): \(error.localizedDescription)", tag: "LIBRARY")
+                failures.append("\(url.lastPathComponent) — \(error.localizedDescription)")
             }
         }
+
+        if !failures.isEmpty {
+            lastError = failures.count == 1
+                ? "Не удалось импортировать «\(failures[0])»"
+                : "Не удалось импортировать \(failures.count) файл(ов):\n" + failures.joined(separator: "\n")
+        }
+    }
+
+    /// Dismiss the currently shown import error. Kept as an explicit method
+    /// (rather than a public setter) because `lastError` itself stays
+    /// private(set) like the rest of this store's published state.
+    func clearLastError() {
+        lastError = nil
     }
 
     // MARK: - Save Online Track for Offline Playback
