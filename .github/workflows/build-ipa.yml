@@ -17,6 +17,27 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply pending player repair
+        run: |
+          if ! grep -q 'transitionTargetTrack' Aurora/playercore.swift; then
+            awk '/python3 <<'"'"'PY'"'"'/{copy=1; next} /^          PY$/{copy=0} copy {sub(/^          /, ""); print}' .github/workflows/apply-player-fix.yml > /tmp/player_fix.py
+            python3 /tmp/player_fix.py
+            python3 <<'PY'
+          from pathlib import Path
+          overlay = Path('Aurora/AutoMixTransitionOverlay.swift')
+          overlay.write_text(overlay.read_text().replace('@Environment(\\\\.accessibility', '@Environment(\\.accessibility')))
+          player = Path('Aurora/PlayerScreenV2.swift')
+          player.write_text(player.read_text().replace('            .drawingGroup(opaque: true, colorMode: .extendedLinear)\n', ''))
+          PY
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Aurora/PlayerScreenV2.swift Aurora/playercore.swift Aurora/AutoMixTransitionOverlay.swift Aurora/auroraapp.swift
+            git commit -m "Fix player visuals, AutoMix hand-off and foreground Now Playing [skip ci]"
+            git push origin HEAD:main
+          fi
 
       - name: Compute version (auto-increment per build)
         id: version
@@ -104,11 +125,11 @@ jobs:
           ls -lh Sonivo-unsigned.ipa
 
       - name: Send IPA to Telegram
+        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA' }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          CAPTION="🎵 <b>Sonivo IPA готов к установке!</b>%0A%0A📦 Версия: <code>${MARKETING_VERSION}</code> (build #${BUILD_NUMBER})%0A🔖 Коммит: <code>${GITHUB_SHA:0:7}</code>"
           curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
                -F document=@Sonivo-unsigned.ipa \
                -F caption="🎵 Sonivo IPA готов к установке! (Сборка: #${BUILD_NUMBER})" \
