@@ -601,27 +601,44 @@ final class YandexMusicService {
     }
 
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
+        beginStationSession(stationId)
         let batch = await fetchRotorBatch(stationId: stationId, queueSeed: nil)
         if !batch.isEmpty { return batch }
         return try await getChart()
     }
 
     /// Собирает длинную очередь волны без повторов под выбранное настроение.
+    ///
+    /// Два реальных источника повторов, которые чинит этот метод (сверено с
+    /// официальными клиентами из MarshalX/yandex-music-api):
+    /// 1. Сессия ротора никогда не начиналась (`activeStationId` оставался
+    ///    nil), поэтому обратная связь "trackStarted" в `remember(...)`
+    ///    физически не могла уйти на сервер — Яндекс не понимал, что мы
+    ///    что-то прослушали, и не мог учиться избегать повторов на своей
+    ///    стороне.
+    /// 2. Параметр `queue` в запрос уходил только с ОДНИМ последним id вместо
+    ///    полного списка уже показанных треков этой сессии (так делают все
+    ///    сторонние клиенты — `queue` это история, а не курсор). Сервер
+    ///    получал почти нулевой контекст и мог присылать тот же трек в
+    ///    следующей пачке.
     func buildWaveQueue(stationId: String = "user:onyourwave", target: Int = 45) async -> [YMTrackItem] {
+        beginStationSession(stationId)
+
         var collected: [YMTrackItem] = []
         var seen = Set<String>()
-        var seed: String?
+        var seenOrder: [String] = []
 
         for _ in 0..<7 {
-            let batch = await fetchRotorBatch(stationId: stationId, queueSeed: seed)
+            let queueParam = seenOrder.isEmpty ? nil : seenOrder.suffix(400).joined(separator: ",")
+            let batch = await fetchRotorBatch(stationId: stationId, queueSeed: queueParam)
             if batch.isEmpty { break }
             for item in batch {
+                seenOrder.append(item.id)
                 if seen.contains(item.id) { continue }
                 seen.insert(item.id)
                 if isRecentlyPlayed(ymTrackId: item.id) { continue }
                 collected.append(item)
             }
-            seed = batch.last?.id
             if collected.count >= target { break }
         }
 
@@ -717,6 +734,22 @@ final class YandexMusicService {
 
     func endStationSession() {
         activeStationId = nil
+    }
+
+    /// Явный сигнал "трек пропущен" — ротор учится не предлагать похожее в
+    /// следующих пачках. До этого исправления такой сигнал в принципе никогда
+    /// не отправлялся: ни один экран его не вызывал, поэтому «Моя волна» вела
+    /// себя так, будто пользователь дослушивает всё подряд, и не подстраивалась
+    /// под то, что реально пропускается.
+    func reportSkip(trackId: String) {
+        guard let station = activeStationId else { return }
+        Task { await sendRotorFeedback(stationId: station, type: "skip", trackId: trackId) }
+    }
+
+    /// Трек доиграл до конца — подкрепляет выбор ротора.
+    func reportTrackFinished(trackId: String, totalPlayedSeconds: Double) {
+        guard let station = activeStationId else { return }
+        Task { await sendRotorFeedback(stationId: station, type: "trackFinished", trackId: trackId, totalPlayedSeconds: totalPlayedSeconds) }
     }
 
     // MARK: - Память прослушиваний
