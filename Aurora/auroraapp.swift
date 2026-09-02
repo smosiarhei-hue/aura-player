@@ -87,9 +87,12 @@ struct RootView: View {
                 NativeMiniPlayer(showPlayer: $showPlayer)
             }
         }
+        // Do not make the full-screen player transparent. A clear presentation
+        // background lets the TabView flash through during UIKit's presentation
+        // transaction, which was visible as a flicker while opening or closing.
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreenV2(isPresented: $showPlayer)
-                .presentationBackground(.clear)
+                .background(Color.black.ignoresSafeArea())
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
@@ -135,6 +138,8 @@ struct NativeMiniPlayer: View {
                 Button(action: open) {
                     HStack(spacing: 10) {
                         MiniArtworkPulse(track: player.currentTrack, isPlaying: player.isPlaying)
+                            .frame(width: 44, height: 44)
+                            .clipped()
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(player.currentTrack?.title ?? "")
@@ -226,18 +231,21 @@ struct MiniArtworkPulse: View {
     let track: Track?
     let isPlaying: Bool
 
-    @ScaledMetric(relativeTo: .body) private var artworkSide: CGFloat = 42
+    // The artwork itself is capped below the 44pt slot. That leaves a fixed
+    // clipping margin for the material accessory even at large Dynamic Type.
+    @ScaledMetric(relativeTo: .body) private var artworkSide: CGFloat = 40
 
-    private var side: CGFloat { max(42, min(artworkSide, 54)) }
+    private var side: CGFloat { min(40, max(36, artworkSide)) }
 
     var body: some View {
         SmallArtwork(track: track, size: side)
             .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .strokeBorder(.white.opacity(isPlaying ? 0.35 : 0.15), lineWidth: 0.8)
             }
+            .frame(width: 44, height: 44)
             .clipped()
             .compositingGroup()
     }
