@@ -156,6 +156,9 @@ final class PlayerCore {
 
     // AutoMix planning (offline first, AI refinement only when it arrives in time)
     private var activeTransitionPlan: TransitionPlan? = nil
+    /// True while the current plan is only a stop-gap because the DSP analysis has
+    /// not finished yet. Provisional plans are rebuilt as soon as the real grid lands.
+    private var planIsProvisional = false
     private var isPlanningTransition = false
     private var analysisCache: [UUID: TrackAnalysis] = [:]
     private var analysisRequested: Set<UUID> = []
@@ -496,6 +499,15 @@ final class PlayerCore {
             MPNowPlayingInfoPropertyIsLiveStream: false
         ]
 
+        // A stable per-track identity helps the system treat this as a real media
+        // item, which is what makes the lock screen / Control Center card tappable.
+        info[MPNowPlayingInfoPropertyExternalContentIdentifier] = track.id.uuidString
+        if !track.isStream, track.url.isFileURL {
+            info[MPNowPlayingInfoPropertyAssetURL] = track.url
+        } else if let stream = track.streamUrlString, let url = URL(string: stream) {
+            info[MPNowPlayingInfoPropertyAssetURL] = url
+        }
+
         if let image = LibraryStore.cachedArtworkImage(for: track) {
             info[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
         } else if let image = remoteArtworkCache[track.id] {
@@ -691,6 +703,7 @@ final class PlayerCore {
         generation += 1
         let token = generation
         activeTransitionPlan = nil
+        planIsProvisional = false
         isPlanningTransition = false
 
         // Analysis takes seconds, so it starts the moment a track starts playing.
@@ -874,18 +887,28 @@ final class PlayerCore {
 
         let remaining = totalDur - currentPos
 
-        if remaining <= 120 {
+        // Analysis is kicked off very early so the grid is ready long before the cue.
+        if remaining <= 150 {
             prewarmAnalysis(for: current)
             prewarmAnalysis(for: nextTrack)
         }
 
-        // 1. Offline plan — instant, no network, built from the real analysis.
-        if activeTransitionPlan == nil, remaining <= 60 {
-            activeTransitionPlan = buildPlan(current: current, currentDuration: totalDur, next: nextTrack)
+        // 1. Offline plan from the real analysis. A provisional plan is never final:
+        //    it is replaced the moment the analysis of both tracks lands, so a slow
+        //    analysis can no longer lock the mix into a bare short fade.
+        if remaining <= 90, activeTransitionPlan == nil || planIsProvisional {
+            if let built = buildPlan(current: current, currentDuration: totalDur, next: nextTrack, remaining: remaining) {
+                let wasProvisional = planIsProvisional
+                activeTransitionPlan = built.plan
+                planIsProvisional = built.provisional
+                if !built.provisional && (activeTransitionPlan == nil || wasProvisional) {
+                    SonivoDiagnostics.log("[AutoMix] Plan ready: \(built.plan.decision.transitionType), cue \(String(format: "%.1f", built.plan.cueTime))s, blend \(String(format: "%.1f", built.plan.leadTime))s", tag: "AUTOMIX")
+                }
+            }
         }
 
         // 2. Optional AI refinement — requested early, applied only if it returns before the cue.
-        if transitionMode == .automix, remaining <= 55 {
+        if transitionMode == .automix, remaining <= 70 {
             requestAIRefinement(current: current, next: nextTrack, position: currentPos)
         }
 
@@ -918,28 +941,43 @@ final class PlayerCore {
         beginTransition(plan: plan, to: nextTrack)
     }
 
-    /// Offline decision. Uses the real analysis when it is ready and degrades to an
-    /// honest short crossfade when it is not — never to invented tempo values.
-    private func buildPlan(current: Track, currentDuration: Double, next: Track) -> TransitionPlan {
+    /// Offline decision. Returns `nil` while it is still worth waiting for the real
+    /// analysis — that wait is what keeps a long, musical DJ blend possible instead
+    /// of collapsing into a short fade at the very end of every track.
+    private func buildPlan(current: Track, currentDuration: Double, next: Track, remaining: Double) -> (plan: TransitionPlan, provisional: Bool)? {
         switch transitionMode {
         case .off:
-            return neutralPlan(duration: currentDuration, blend: 0.05, strategy: .HARD_CUT, reason: "Переходы выключены")
+            return (neutralPlan(duration: currentDuration, blend: 0.05, strategy: .HARD_CUT, reason: "Переходы выключены"), false)
         case .gapless:
-            return neutralPlan(duration: currentDuration, blend: 0.12, strategy: .HARD_CUT, reason: "Gapless: без паузы между треками")
+            return (neutralPlan(duration: currentDuration, blend: 0.12, strategy: .HARD_CUT, reason: "Gapless: без паузы между треками"), false)
         case .crossfade:
             let blend = max(1.0, crossfadeDuration)
-            return neutralPlan(duration: currentDuration, blend: blend, strategy: .SIMPLE_CROSSFADE, reason: "Кроссфейд \(Int(blend)) с")
+            return (neutralPlan(duration: currentDuration, blend: blend, strategy: .SIMPLE_CROSSFADE, reason: "Кроссфейд \(Int(blend)) с"), false)
         case .automix:
-            guard let source = analysisCache[current.id], let target = analysisCache[next.id] else {
-                return neutralPlan(duration: currentDuration, blend: 6.0, strategy: .SIMPLE_CROSSFADE, reason: "Анализ трека ещё не готов — мягкий кроссфейд")
+            if let source = analysisCache[current.id], let target = analysisCache[next.id] {
+                let plan = TransitionPlanner.planLocalFallback(
+                    sourceTrack: current,
+                    sourceAnalysis: source,
+                    targetTrack: next,
+                    targetAnalysis: target
+                )
+                return (snappedToDownbeat(plan, analysis: source), false)
             }
-            let plan = TransitionPlanner.planLocalFallback(
-                sourceTrack: current,
-                sourceAnalysis: source,
-                targetTrack: next,
-                targetAnalysis: target
+
+            // No grid yet. Keep waiting instead of committing to a short fade, and
+            // only fall back at the last possible moment — with a long, fully
+            // automated energy blend so the DJ effects are always audible.
+            let blend = min(max(14.0, crossfadeDuration), max(6.0, currentDuration * 0.3))
+            guard remaining <= blend + 1.0 else { return nil }
+            return (
+                neutralPlan(
+                    duration: currentDuration,
+                    blend: blend,
+                    strategy: .ENERGY_BLEND,
+                    reason: "Без бит-сетки: энергетический переход \(Int(blend)) с"
+                ),
+                true
             )
-            return snappedToDownbeat(plan, analysis: source)
         }
     }
 
@@ -990,6 +1028,7 @@ final class PlayerCore {
             let livePosition = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
             guard plan.cueTime > livePosition + 1.0 else { return }
             self.activeTransitionPlan = self.snappedToDownbeat(plan, analysis: source)
+            self.planIsProvisional = false
             SonivoDiagnostics.log("[AutoMix AI] Plan adopted: \(plan.decision.transitionType) at \(String(format: "%.1f", plan.cueTime))s", tag: "AUTOMIX")
         }
     }
@@ -1052,10 +1091,15 @@ final class PlayerCore {
         let rate = incomingTempoRate
 
         // Outro loop: needed when the strategy asks for it, or when the outgoing
-        // track would simply run out of music before the blend is finished.
+        // track has no real music left under the blend (silent tail included).
         let outgoingURL = currentTrack?.url
         let outgoingAnalysis = currentTrack.flatMap { analysisCache[$0.id] }
-        let runsOutOfMusic = (duration - plan.cueTime) < transitionDuration * 0.9
+        var tailSilence: Double = 0
+        if let outgoingAnalysis, let last = outgoingAnalysis.silenceRegions.last, last.end >= duration - 1.0 {
+            tailSilence = last.duration
+        }
+        let musicRunway = duration - tailSilence - plan.cueTime
+        let runsOutOfMusic = musicRunway < transitionDuration * 0.9
         let wantsLoop = strategy == .LOOP_TRANSITION || strategy == .ECHO_OUT || runsOutOfMusic
         if wantsLoop, let outgoingURL, outgoingURL.isFileURL, let outgoingAnalysis {
             startBeatLoop(url: outgoingURL, analysis: outgoingAnalysis, cueTime: plan.cueTime, blend: transitionDuration)
@@ -1103,8 +1147,7 @@ final class PlayerCore {
     /// the deck it replaces.
     private func startBeatLoop(url: URL, analysis: TrackAnalysis, cueTime: Double, blend: Double) {
         guard analysis.hasSteadyBeat else { return }
-        let bar = analysis.barDuration
-        guard bar.isFinite, bar > 0.3, bar < 8 else { return }
+        guard let bar = analysis.barDuration, bar.isFinite, bar > 0.3, bar < 8 else { return }
 
         var bars: Double = 2
         if bar * bars > blend { bars = 1 }
@@ -1271,14 +1314,16 @@ final class PlayerCore {
             )
 
         case .SILENCE_TRIM, .SIMPLE_CROSSFADE, .INSTRUMENTAL_OVERLAY, .NONE:
+            // Even the simplest blend gets real DJ treatment: the outgoing bass is
+            // ducked, the top end is rolled off and a reverb tail carries it away.
             return TransitionFX(
                 outVolume: outVol,
                 inVolume: inVol,
-                outBassDB: -10 * p,
-                inBassDB: -8 * (1 - p),
-                outHighDB: 0,
-                inHighDB: 0,
-                outReverb: 0,
+                outBassDB: -22 * p,
+                inBassDB: -14 * (1 - min(1, p / 0.35)),
+                outHighDB: -16 * p * p,
+                inHighDB: -6 * (1 - p),
+                outReverb: 34 * p,
                 inReverb: 0
             )
         }
@@ -1356,6 +1401,7 @@ final class PlayerCore {
         let promoted = max(0, startPosition + blend * Double(incomingTempoRate))
 
         activeTransitionPlan = nil
+        planIsProvisional = false
         isPlanningTransition = false
         stopBeatLoop()
 
@@ -1416,6 +1462,7 @@ final class PlayerCore {
     private func cancelTransition() {
         transitionScheduled = false
         activeTransitionPlan = nil
+        planIsProvisional = false
         guard isTransitioning else { return }
         transitionTimer?.invalidate()
         transitionTimer = nil
