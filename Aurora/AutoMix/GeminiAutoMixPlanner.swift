@@ -75,6 +75,21 @@ nonisolated struct TransitionPlan: Codable, Sendable {
     }
 }
 
+// MARK: - Connectivity Diagnostics
+
+/// Result of a direct, on-demand connectivity check against the Gemini API.
+/// Used by the Settings screen so the user can toggle a VPN/proxy on or off
+/// and immediately see whether Gemini is actually reachable from this
+/// device right now - independent of AutoMix's own plan cache and circuit
+/// breaker, which could otherwise mask a fresh, successful retry for hours.
+nonisolated enum GeminiConnectivityStatus: Sendable {
+    case ok(model: String)
+    case regionBlocked(message: String)
+    case httpError(code: Int, message: String)
+    case networkError(String)
+    case noApiKey
+}
+
 // MARK: - Gemini AI AutoMix Planner
 
 actor GeminiAutoMixPlanner {
@@ -458,6 +473,70 @@ Respond ONLY with a JSON object matching this schema:
         } catch {
             SonivoDiagnostics.log("[AutoMix AI] Network error: \(error.localizedDescription)", tag: "AUTOMIX")
             return nil
+        }
+    }
+
+    // MARK: - On-Demand Connectivity Test (Settings Diagnostic)
+
+    /// Fires one small, real request straight at the Gemini API right now,
+    /// completely bypassing the plan cache and the circuit breaker, so a
+    /// user toggling a VPN/proxy on or off gets an immediate, trustworthy
+    /// answer instead of a stale cached result from hours ago.
+    func testConnectivity() async -> GeminiConnectivityStatus {
+        let apiKey = SonivoAIConfig.geminiApiKey
+        guard !apiKey.isEmpty else { return .noApiKey }
+
+        guard let model = SonivoAIConfig.candidateModels.first,
+              let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)") else {
+            return .networkError("Некорректный адрес Gemini API")
+        }
+
+        let body: [String: Any] = [
+            "contents": [
+                ["role": "user", "parts": [["text": "ping"]]]
+            ],
+            "generationConfig": ["maxOutputTokens": 8]
+        ]
+
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else {
+            return .networkError("Не удалось сформировать запрос")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = payload
+        request.timeoutInterval = 8.0
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                SonivoDiagnostics.log("[AutoMix AI] Diagnostic ping: no HTTP response", tag: "AUTOMIX")
+                return .networkError("Сервер не ответил")
+            }
+
+            if http.statusCode == 200 {
+                SonivoDiagnostics.log("[AutoMix AI] Diagnostic ping succeeded (\(model))", tag: "AUTOMIX")
+                return .ok(model: model)
+            }
+
+            let errStr = String(data: data, encoding: .utf8) ?? ""
+            let lowered = errStr.lowercased()
+            if (http.statusCode == 400 || http.statusCode == 403),
+               lowered.contains("location is not supported")
+                || lowered.contains("user location")
+                || lowered.contains("not available in your country")
+                || lowered.contains("billing")
+                || lowered.contains("api key not valid") {
+                SonivoDiagnostics.log("[AutoMix AI] Diagnostic ping: region/key refusal", tag: "AUTOMIX")
+                return .regionBlocked(message: errStr.isEmpty ? "Регион не поддерживается" : String(errStr.prefix(160)))
+            }
+
+            SonivoDiagnostics.log("[AutoMix AI] Diagnostic ping: HTTP \(http.statusCode)", tag: "AUTOMIX")
+            return .httpError(code: http.statusCode, message: String(errStr.prefix(160)))
+        } catch {
+            SonivoDiagnostics.log("[AutoMix AI] Diagnostic ping network error: \(error.localizedDescription)", tag: "AUTOMIX")
+            return .networkError(error.localizedDescription)
         }
     }
 }
