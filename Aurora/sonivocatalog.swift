@@ -246,6 +246,23 @@ enum SonivoPlay {
 
     static func wave(_ station: YandexMusicService.StationOption) {
         let ym = YandexMusicService.shared
+
+        // «Итоги» — не ротор Яндекса, а персональный рекап по реальному
+        // вкусу пользователя (см. YandexMusicService.buildRecapQueue).
+        if station.stationId == "app:recap" {
+            ym.endStationSession()
+            Task {
+                var tracks = await ym.buildRecapQueue(target: 40)
+                if tracks.isEmpty { tracks = (try? await ym.getChart()) ?? [] }
+                guard !tracks.isEmpty else { return }
+                let converted = tracks.map { ym.convertToTrack($0) }
+                let rankedQueue = UserTasteEngine.shared.filterAndRankWave(tracks: converted)
+                guard let first = rankedQueue.first else { return }
+                PlayerCore.shared.play(first, newQueue: rankedQueue)
+            }
+            return
+        }
+
         Task {
             ym.beginStationSession(station.stationId)
             var tracks = await ym.buildWaveQueue(stationId: station.stationId, target: 45)
@@ -253,7 +270,22 @@ enum SonivoPlay {
                 tracks = (try? await ym.getChart()) ?? []
             }
             guard !tracks.isEmpty else { return }
-            let converted = tracks.map { ym.convertToTrack($0) }
+            var converted = tracks.map { ym.convertToTrack($0) }
+
+            // Как в Спотифае: даже жанровая/настроенческая станция подмешивает
+            // треки исполнителей, которых пользователь реально слушает и
+            // любит в своей Яндекс-библиотеке — а не только общий поток
+            // ротора по одному ключевому слову.
+            if station.stationId != "user:onyourwave" {
+                let favourite = await ym.personalPicks(limit: 8)
+                if !favourite.isEmpty {
+                    var seenIds = Set(tracks.map(\.id))
+                    let extra = favourite.filter { !seenIds.contains($0.id) }
+                    for item in extra { seenIds.insert(item.id) }
+                    converted.append(contentsOf: extra.map { ym.convertToTrack($0) })
+                }
+            }
+
             let rankedQueue = UserTasteEngine.shared.filterAndRankWave(tracks: converted)
             guard let first = rankedQueue.first else { return }
             PlayerCore.shared.play(first, newQueue: rankedQueue)

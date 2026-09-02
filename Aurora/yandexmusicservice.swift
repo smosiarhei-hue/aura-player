@@ -592,7 +592,10 @@ final class YandexMusicService {
         StationOption(id: "rap", title: "Рэп и хип-хоп", subtitle: "Свежие биты", stationId: "genre:rap", gradient: ["#F59E0B", "#7C2D12"], icon: "mic.fill"),
         StationOption(id: "electronic", title: "Электроника", subtitle: "Клубный настрой", stationId: "genre:electronics", gradient: ["#FDE68A", "#EA580C"], icon: "waveform.path.ecg"),
         StationOption(id: "rock", title: "Рок", subtitle: "Гитары и драйв", stationId: "genre:rock", gradient: ["#F97316", "#450A0A"], icon: "guitars.fill"),
-        StationOption(id: "party", title: "Вечеринка", subtitle: "Танцевальное", stationId: "activity:party", gradient: ["#FBBF24", "#9A3412"], icon: "party.popper.fill")
+        StationOption(id: "party", title: "Вечеринка", subtitle: "Танцевальное", stationId: "activity:party", gradient: ["#FBBF24", "#9A3412"], icon: "party.popper.fill"),
+        StationOption(id: "road", title: "В дорогу", subtitle: "Ритм для движения вперёд", stationId: "activity:driving", gradient: ["#E8EDF2", "#8A94A6"], icon: "car.fill"),
+        StationOption(id: "dreamy", title: "Время помечтать", subtitle: "Воздушное и атмосферное", stationId: "mood:dreamy", gradient: ["#EAF6FF", "#93A9C7"], icon: "cloud.fill"),
+        StationOption(id: "recap", title: "Итоги", subtitle: "Личный итог: что вы слушали", stationId: "app:recap", gradient: ["#F4E9FF", "#B79CE0"], icon: "sparkles")
     ]
 
     /// Станция текущего настроения волны.
@@ -679,6 +682,49 @@ final class YandexMusicService {
         }
 
         return out
+    }
+
+    /// «Итоги» — персональный рекап в духе Spotify Wrapped: собирает треки
+    /// реально любимых исполнителей пользователя (лайки и дослушивания —
+    /// вес из UserTasteEngine, частота прослушиваний — вес из памяти этого
+    /// сервиса), а не случайную выдачу общего ротора. Явно дизлайкнутые
+    /// исполнители исключаются.
+    func buildRecapQueue(target: Int = 40) async -> [YMTrackItem] {
+        let engineScores = UserTasteEngine.shared.artistScores
+        var pool = Set(topArtists)
+        pool.formUnion(engineScores.keys)
+        var ranked = Array(pool)
+        ranked.sort { a, b in
+            let scoreA = engineScores[a, default: 0] + Double(artistCounts[a, default: 0])
+            let scoreB = engineScores[b, default: 0] + Double(artistCounts[b, default: 0])
+            if scoreA != scoreB { return scoreA > scoreB }
+            return a < b
+        }
+
+        var out: [YMTrackItem] = []
+        var seen = Set<String>()
+        for artist in ranked.prefix(12) {
+            if out.count >= target { break }
+            if engineScores[artist, default: 0] < -5 { continue }
+            let found = await searchAll(query: artist).tracks
+            for item in found.prefix(6) {
+                if out.count >= target { break }
+                if seen.contains(item.id) { continue }
+                seen.insert(item.id)
+                out.append(item)
+            }
+        }
+
+        if out.count < target {
+            let extra = await personalPicks(limit: target - out.count, excluding: seen)
+            out.append(contentsOf: extra)
+        }
+
+        if out.isEmpty {
+            out = (try? await getChart()) ?? []
+        }
+
+        return Array(out.prefix(target))
     }
 
     private func fetchRotorBatch(stationId: String, queueSeed: String?) async -> [YMTrackItem] {

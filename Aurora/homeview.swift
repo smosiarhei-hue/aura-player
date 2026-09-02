@@ -162,27 +162,14 @@ struct HomeView: View {
             }
             .buttonStyle(GlassPressStyle())
 
-            // Чипы настроения — волна перестраивается и запускается мгновенно
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(YandexMusicService.rotorStations) { station in
-                        Button {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(AG.fastSpring) {
-                                ym.waveMoodStationId = station.stationId
-                            }
-                            SonivoPlay.wave(station)
-                        } label: {
-                            SonivoChip(
-                                title: station.title,
-                                icon: station.icon,
-                                isActive: ym.waveMoodStationId == station.stationId
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
+            // «Рулетка» настроений — Liquid Glass / Chrome карусель по дуге:
+            // волна перестраивается и запускается мгновенно, когда колесо
+            // остановится на настроении.
+            MoodRouletteView(
+                stations: YandexMusicService.rotorStations,
+                selectedStationId: $ym.waveMoodStationId
+            ) { station in
+                SonivoPlay.wave(station)
             }
         }
     }
