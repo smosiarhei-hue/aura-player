@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   repair:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,5 +41,3 @@ jobs:
           git add Aurora/auroraapp.swift
           git commit -m "Sync Now Playing publication with scene state"
           git push origin HEAD:main
-
-# Triggered after review.
