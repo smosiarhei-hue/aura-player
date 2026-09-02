@@ -5,6 +5,25 @@ import MediaPlayer
 
 // MARK: - Sonivo Native Full Player (Apple Music iOS Standard & Video-Shot Live Canvas)
 
+/// Applies the dismiss-drag rounded-corner clip only while the card is
+/// actually being dragged. Leaving the modifier off entirely while idle is
+/// what lets the full-bleed background/video layers (which already opt out
+/// of the safe area themselves) actually reach the true screen edges,
+/// including behind the Dynamic Island - an always-on clip here would clamp
+/// them back down to this screen's safe-area-reduced frame.
+private struct DismissClipModifier: ViewModifier {
+    let active: Bool
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        if active {
+            content.clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            content
+        }
+    }
+}
+
 struct PlayerScreenV2: View {
     @State private var player = PlayerCore.shared
     @State private var library = LibraryStore.shared
@@ -78,8 +97,14 @@ struct PlayerScreenV2: View {
         return Palette.seeded(42).colors
     }
 
-    private func updatePalette(from image: UIImage) {
-        let hexes = LibraryStore.artworkPalette(from: image)
+    private func updatePalette(from image: UIImage) async {
+        // Quantizing a bitmap into a palette is a real CPU spike. Running it
+        // inline on the main actor is what made switching covers (and the
+        // gesture driving that switch) stutter, so the heavy part runs off
+        // the main thread and only the resulting colours come back to it.
+        let hexes = await Task.detached(priority: .utility) {
+            LibraryStore.artworkPalette(from: image)
+        }.value
         let colors = hexes.compactMap { Color(hex: $0) }
         guard !colors.isEmpty else { return }
         withAnimation(.easeInOut(duration: 0.85)) {
@@ -98,7 +123,7 @@ struct PlayerScreenV2: View {
         paletteTrackId = track.id
 
         if let image = LibraryStore.cachedArtworkImage(for: track) {
-            updatePalette(from: image)
+            await updatePalette(from: image)
         } else {
             let fallback = track.palette
             guard !fallback.isEmpty else { return }
@@ -162,11 +187,13 @@ struct PlayerScreenV2: View {
                     }
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
-                } else if reduceMotion || scenePhase != .active {
-                    // Accessibility / background: a static, artwork-derived
-                    // gradient without continuous animation. TimelineView is
-                    // paused off-screen anyway, but the static path costs
-                    // nothing while the app is not visible.
+                } else if reduceMotion || scenePhase != .active || dragY > 0 {
+                    // Accessibility / background / active dismiss drag: a
+                    // static, artwork-derived gradient without continuous
+                    // animation. Freezing the animated mesh the moment the
+                    // card starts moving is what keeps the swipe-to-dismiss
+                    // gesture itself smooth instead of fighting the shader
+                    // for frames while it is also being dragged and clipped.
                     artworkGradientBackground
                     contrastProtectionVignette
                 } else {
@@ -254,13 +281,14 @@ struct PlayerScreenV2: View {
             }
             // Follow the finger at native resolution. Never rescale the complete
             // AVPlayerLayer: that caused softness and dirty edges while dismissing.
+            // The rounded-corner clip only exists while the card is actually
+            // being dragged away. An always-on clip here would permanently
+            // clamp every full-bleed background/video layer back down to this
+            // GeometryReader's safe-area-reduced frame, cancelling their
+            // `.ignoresSafeArea()` and re-cropping the player right at the
+            // Dynamic Island - which is exactly the residual crop this fixes.
             .offset(y: max(0, dragY))
-            .clipShape(
-                RoundedRectangle(
-                    cornerRadius: dragY > 0 ? min(28, 8 + dragProgress * 20) : 0,
-                    style: .continuous
-                )
-            )
+            .modifier(DismissClipModifier(active: dragY > 0, cornerRadius: min(28, 8 + dragProgress * 20)))
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
