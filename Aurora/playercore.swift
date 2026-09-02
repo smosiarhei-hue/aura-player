@@ -966,6 +966,7 @@ final class PlayerCore {
 
     private func beginStream(_ url: URL, at seconds: Double) {
         let item = AVPlayerItem(url: url)
+        item.audioTimePitchAlgorithm = .timeDomain
         StreamBeatTap.shared.attach(to: item)
         activeStreamingPlayer.replaceCurrentItem(with: item)
         activeStreamingPlayer.volume = volume
@@ -1014,7 +1015,7 @@ final class PlayerCore {
             return
         }
 
-        if remaining <= 42.0, activeTransitionPlan == nil, !isPlanningTransition {
+        if remaining <= 55.0, activeTransitionPlan == nil, !isPlanningTransition {
             isPlanningTransition = true
             planningStartedAt = Date()
             Task {
@@ -1041,8 +1042,8 @@ final class PlayerCore {
             }
         }
 
-        let leadTime = activeTransitionPlan?.leadTime ?? 18.0
-        let prebufferThreshold = leadTime + 14.0
+        let cueRemaining = max(totalDur - (activeTransitionPlan?.cueTime ?? (totalDur - 20.0)), activeTransitionPlan?.leadTime ?? 18.0)
+        let prebufferThreshold = cueRemaining + 16.0
         if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream {
             isPrebufferingNextStream = true
             let ymID = Self.yandexTrackID(from: nextTrack)
@@ -1052,6 +1053,7 @@ final class PlayerCore {
                     let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                     let resolvedStart = self.activeTransitionPlan != nil ? targetStart : 0
                     let nextItem = AVPlayerItem(url: info.url)
+                    nextItem.audioTimePitchAlgorithm = .timeDomain
                     StreamBeatTap.shared.attach(to: nextItem)
                     self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                     self.idleStreamingPlayer.volume = 0
@@ -1070,7 +1072,6 @@ final class PlayerCore {
         guard currentPos >= plan.cueTime, (totalDur - currentPos) > 0.05 else { return }
 
         if plan.cueTime > currentPos + 1.0 { return }
-        guard totalDur - currentPos <= plan.leadTime + 2.5 else { return }
 
         transitionScheduled = true
         isTransitioning = true

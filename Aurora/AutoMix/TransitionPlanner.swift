@@ -237,11 +237,19 @@ nonisolated enum TransitionPlanner {
         }
 
         var cueTime: TimeInterval
+        var hasExplicitOutro = false
+
         switch strategy {
         case .VOCAL_CUT:
-            cueTime = sourceAnalysis.lastVocalEnd ?? max(0, sourceDur - blendDuration)
+            if let vocal = sourceAnalysis.lastVocalEnd, (sourceDur - vocal) >= 4.0 {
+                cueTime = vocal
+                hasExplicitOutro = true
+            } else {
+                cueTime = max(0, sourceDur - blendDuration)
+            }
         case .SILENCE_TRIM:
             cueTime = max(0, (sourceAnalysis.trailingSilence?.start ?? sourceDur) - 1.0)
+            hasExplicitOutro = true
         case .BUILDUP_TO_DROP:
             if let buildUp = sourceAnalysis.buildUps.last {
                 cueTime = max(buildUp.start, sourceDur - blendDuration - 2)
@@ -251,19 +259,23 @@ nonisolated enum TransitionPlanner {
         case .DROP_SWITCH:
             cueTime = max(0, sourceDur - min(blendDuration, 4))
         default:
-            // Prefer the detected outro; keep at least 60 % of the blend inside.
-            let outroCue = sourceAnalysis.outroStart > 1 ? sourceAnalysis.outroStart : sourceDur - blendDuration
-            cueTime = min(outroCue, sourceDur - blendDuration * 0.6)
+            // Prefer the detected outro (can start 15-32s before track end to skip dead repetitive outro)
+            if sourceAnalysis.outroStart > 1 && (sourceDur - sourceAnalysis.outroStart) >= 6.0 {
+                cueTime = sourceAnalysis.outroStart
+                hasExplicitOutro = true
+            } else {
+                cueTime = max(0, sourceDur - blendDuration)
+            }
         }
 
         // Snap the cue to the nearest downbeat so the switch lands on the grid.
         if strategy != .SILENCE_TRIM, let snapped = sourceAnalysis.nearestDownbeat(to: cueTime) {
             cueTime = snapped
         }
-        // The blend must END with the track: the cue may never sit further from
-        // the end than the blend length (+ a 2 s safety). Otherwise the source
-        // would go silent tens of seconds before its file actually ends.
-        cueTime = max(cueTime, sourceDur - blendDuration - 2)
+        // Only clamp to the tail if no explicit vocal/outro boundary was detected
+        if !hasExplicitOutro {
+            cueTime = max(cueTime, sourceDur - blendDuration - 2)
+        }
         cueTime = min(max(0, cueTime), max(0, sourceDur - 1.5))
 
         // --- 4. Action envelopes (TZ Sections 11, 15, 16) ---
@@ -416,13 +428,13 @@ nonisolated enum TransitionPlanner {
         switch strategy {
         case .SILENCE_TRIM: base = 1.5
         case .HARD_CUT, .DROP_SWITCH: base = 3
-        case .VOCAL_CUT: base = 8
-        case .ECHO_OUT: base = 8
+        case .VOCAL_CUT: base = 5.0
+        case .ECHO_OUT: base = 6.0
         case .FILTER_TRANSITION: base = 12
         case .BUILDUP_TO_DROP: base = 10
         case .ENERGY_BLEND: base = 14
-        case .BEAT_MATCH_EQ: base = 16
-        case .BASS_SWAP: base = 18
+        case .BEAT_MATCH_EQ: base = sourceDur > 120 ? 20 : 16
+        case .BASS_SWAP: base = sourceDur > 120 ? 22 : 18
         default: base = 9
         }
 
@@ -579,12 +591,14 @@ nonisolated enum TransitionPlanner {
         cue = min(max(0, cue), max(0, sourceDur - 1.5))
         var end = min(plan.sourceTrack.transitionEnd.isFinite ? plan.sourceTrack.transitionEnd : sourceDur, sourceDur)
         if end - cue < 2 { end = min(sourceDur, cue + 4) }
-        // The blend must end WITH the track: an early cue would mute the
-        // source long before its file ends. Keep at most a 2 s safety gap.
+        // Keep blend length intact; only clamp to track end if not an early outro
         if sourceDur - end > 2 {
             let blendLength = end - cue
-            end = sourceDur
-            cue = min(cue, max(0, sourceDur - blendLength - 2))
+            let isEarlyOutro = cue < sourceDur - blendLength - 3
+            if !isEarlyOutro {
+                end = sourceDur
+                cue = min(cue, max(0, sourceDur - blendLength - 2))
+            }
         }
 
         // 2. Tempo: clamp rates to the musical stretch window; drop invented rates.

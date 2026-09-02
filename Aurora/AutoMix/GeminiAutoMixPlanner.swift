@@ -273,6 +273,8 @@ Do not force beat matching when the BPM difference, structure, genre, energy or 
 Avoid overlapping vocals whenever possible.
 Avoid simultaneous full low-end from both tracks.
 Transitions should align with musical phrases, bars, beats, drops, breakdowns, intros and outros.
+Transitions should begin at the start of the outro or right after the final vocal phrase ends (which can be 15 to 32 seconds before track end, skipping dead/repetitive outros like Apple Music iOS 27). Do not force waiting until the last 10 seconds if the song has an extended outro.
+Blend duration should match the strategy: 3-8s for VOCAL_CUT, ECHO_OUT, DROP_SWITCH, or 12-28s for BASS_SWAP, BEAT_MATCH_EQ.
 Prefer 8, 16 or 32 bar musical structures.
 Use time stretching only when the resulting speed change is musically reasonable (stay within 0.94-1.06 playback rate).
 If a complex transition would sound worse than a simple transition, choose the simple transition.
@@ -284,6 +286,15 @@ Never return explanations outside the JSON.
 Use confidence values between 0 and 1.
 Your transition plan must always contain a fallback strategy.
 """
+
+        let defaultStart: Double
+        if let vocalEnd = sourceAnalysis.lastVocalEnd, sourceAnalysis.duration - vocalEnd >= 6.0 {
+            defaultStart = vocalEnd
+        } else if sourceAnalysis.outroStart > 1 && sourceAnalysis.duration - sourceAnalysis.outroStart >= 8.0 {
+            defaultStart = sourceAnalysis.outroStart
+        } else {
+            defaultStart = max(0, sourceAnalysis.duration - 18.0)
+        }
 
         // Privacy (TZ Section 33): only musical facts, no user identifiers.
         let prompt = """
@@ -337,8 +348,8 @@ Respond ONLY with a JSON object matching this schema:
     "reason": "Harmonic bass swap on bar boundary with tempo sync"
   },
   "sourceTrack": {
-    "transitionStart": \(String(format: "%.1f", max(0, sourceAnalysis.duration - 16.0))),
-    "transitionEnd": \(String(format: "%.1f", sourceAnalysis.duration))
+    "transitionStart": \(String(format: "%.1f", defaultStart)),
+    "transitionEnd": \(String(format: "%.1f", min(sourceAnalysis.duration, defaultStart + 16.0)))
   },
   "targetTrack": {
     "startPosition": 0.0
