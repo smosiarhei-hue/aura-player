@@ -1155,6 +1155,15 @@ final class PlayerCore {
         incomingLaneReady = false
         transitionDuration = plan.leadTime
         incomingTrack = nextTrack
+        // Critical: without this, the tickTransition volume/rate branches below
+        // ("if incomingIsStream { idleStreamingPlayer... } else { idlePlayer... }")
+        // always fell into the AVAudioEngine branch for a track that was
+        // actually playing on the AVPlayer streaming lane. The engine's idle
+        // node was silent and unused, so the real incoming stream's volume
+        // never left the near-zero value it was parked at during pre-buffer,
+        // and its rate never ramped for beat matching either - the blend ran
+        // completely inaudibly until the hard cut in completeTransition().
+        incomingIsStream = nextTrack.isStream
         incomingStartPosition = max(0, plan.targetTrack.startPosition)
         AutoMixDJEngine.shared.isTransitionActive = true
         AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
@@ -1197,6 +1206,16 @@ final class PlayerCore {
         // Local multi-node AVAudioEngine AutoMix: the incoming lane enters at
         // the plan's target position, tempo stretch comes from pitch-corrected
         // AVAudioUnitTimePitch nodes.
+        //
+        // Both lanes are switched into the signal path once, up front, instead
+        // of flipping AVAudioUnitTimePitch.bypass on and off every animation
+        // tick as the rate crosses 1.0. Toggling an Audio Unit's bypass state
+        // while audio is actively flowing through it produces an audible
+        // click/pop right at that instant - that pop, happening exactly when
+        // AutoMix engaged, is what made every transition sound broken even
+        // though the actual blend logic underneath was already running.
+        activeTimePitch.bypass = false
+        idleTimePitch.bypass = false
         let targetIdlePlayer = idlePlayer
         let targetIsPlayerA = targetIdlePlayer === playerA
         let targetStart = max(0, plan.targetTrack.startPosition)
@@ -1507,7 +1526,9 @@ final class PlayerCore {
         // Tempo ramps for beat matching (TZ Section 8): the stretch eases in
         // with the blend progress instead of snapping. Streamed lanes ride
         // AVPlayer.rate (audioTimePitchAlgorithm keeps the pitch); engine lanes
-        // use the pitch-corrected time-pitch nodes.
+        // use the pitch-corrected time-pitch nodes. Bypass state is fixed for
+        // the whole transition (set once above); only the continuous rate is
+        // animated here, so no per-tick bypass flip can click.
         if let rates, transitionDuration > 0.001 {
             let outTarget = Float(min(1.10, max(0.90, rates.sourcePlaybackRate)))
             let inTarget = Float(min(1.10, max(0.90, rates.targetPlaybackRate)))
@@ -1519,14 +1540,12 @@ final class PlayerCore {
             if isUsingStreamPlayer {
                 activeStreamingPlayer.rate = isPlaying ? outRate : 0
             } else {
-                activeTimePitch.bypass = abs(outRate - 1) < 0.0005
                 activeTimePitch.rate = outRate
             }
 
             if incomingIsStream {
                 if isPlaying { idleStreamingPlayer.rate = inRate }
             } else if !isUsingStreamPlayer {
-                idleTimePitch.bypass = abs(inRate - 1) < 0.0005
                 idleTimePitch.rate = inRate
             }
         }
@@ -1670,7 +1689,6 @@ final class PlayerCore {
                 let eased = Float(progress * progress * (3 - 2 * progress))
                 let value = from + (1.0 - from) * eased
                 node.rate = value
-                node.bypass = abs(value - 1) < 0.0005
                 if progress >= 1 {
                     self.rateReleaseTimer?.invalidate()
                     self.rateReleaseTimer = nil
@@ -1735,6 +1753,7 @@ final class PlayerCore {
         planningStartedAt = nil
         plannedNextTrack = nil
         incomingTrack = nil
+        incomingIsStream = false
         incomingLaneReady = false
         transitionPausedAt = nil
         transitionScheduledAt = nil
@@ -1891,96 +1910,4 @@ final class PlayerCore {
         }
         guard let cur = currentTrack, let idx = q.firstIndex(where: { $0.id == cur.id }) else { return q.first }
         let nextIdx = idx + 1
-        if nextIdx < q.count { return q[nextIdx] }
-        if repeatMode == .all { return q.first }
-        return auto ? nil : q.first
-    }
-
-    // MARK: - Progress & Timer
-
-    private func liveProgress() -> Double {
-        if let anchor = anchorDate {
-            return min(max(0, anchorOffset + (-anchor.timeIntervalSinceNow)), duration)
-        }
-        return pausedProgress
-    }
-
-    private func startTimer() {
-        progressTimer?.invalidate()
-        let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tickProgress() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        progressTimer = timer
-    }
-
-    private func tickProgress() {
-        guard isPlaying, !isUsingStreamPlayer else { return }
-        progress = liveProgress()
-        syncNowPlayingElapsedIfNeeded()
-        scheduleTransitionIfNeeded()
-    }
-
-    func formatted(_ t: Double) -> String {
-        guard t.isFinite, t >= 0 else { return "0:00" }
-        let m = Int(t) / 60
-        let s = Int(t) % 60
-        return String(format: "%d:%02d", m, s)
-    }
-
-    // MARK: - Sleep Timer
-
-    func setSleepTimer(minutes: Int?) {
-        sleepTimer?.invalidate()
-        sleepTimer = nil
-        sleepDeadline = nil
-        sleepTimerRemaining = nil
-        sleepTimerMinutes = nil
-        guard let minutes, minutes > 0 else { return }
-        sleepDeadline = Date().addingTimeInterval(Double(minutes) * 60)
-        sleepTimerRemaining = Double(minutes) * 60
-        sleepTimerMinutes = minutes
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tickSleepTimer() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        sleepTimer = timer
-    }
-
-    private func tickSleepTimer() {
-        guard let deadline = sleepDeadline else { return }
-        let remaining = deadline.timeIntervalSinceNow
-        if remaining <= 0 {
-            pause()
-            cancelSleepTimer()
-        } else {
-            sleepTimerRemaining = remaining
-        }
-    }
-
-    private func cancelSleepTimer() {
-        sleepTimer?.invalidate()
-        sleepTimer = nil
-        sleepDeadline = nil
-        sleepTimerRemaining = nil
-        sleepTimerMinutes = nil
-    }
-
-    // MARK: - Spectrum tap
-
-    private var spectrumTapInstalled = false
-
-    nonisolated private static func handleSpectrumTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
-        SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
-    }
-
-    func installSpectrumTap() {
-        guard !spectrumTapInstalled else { return }
-        let mixer = engine.mainMixerNode
-        let format = mixer.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { return }
-
-        mixer.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.handleSpectrumTap)
-        spectrumTapInstalled = true
-    }
-}
+        if next
