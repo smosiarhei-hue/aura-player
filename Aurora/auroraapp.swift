@@ -80,9 +80,12 @@ struct RootView: View {
                 NativeMiniPlayer(showPlayer: $showPlayer)
             }
         }
-        .fullScreenCover(isPresented: $showPlayer) {
+        .sheet(isPresented: $showPlayer) {
             PlayerScreenV2(isPresented: $showPlayer)
-                .ignoresSafeArea()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(38)
+                .presentationBackground(.clear)
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
@@ -114,8 +117,6 @@ struct RootView: View {
 struct NativeMiniPlayer: View {
     @State private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
-    @State private var opening = false
-
     // Controls follow the system font size but stay inside the bottom accessory.
     @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
 
@@ -152,7 +153,6 @@ struct NativeMiniPlayer: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(opening || showPlayer)
 
                 Button(action: togglePlayback) {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -187,25 +187,11 @@ struct NativeMiniPlayer: View {
         .padding(.vertical, 3)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 12)
-                .onEnded { val in
-                    if val.translation.height < -25 {
-                        open()
-                    }
-                }
-        )
     }
 
     private func open() {
-        guard !showPlayer, !opening else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        opening = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         showPlayer = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            opening = false
-        }
     }
 
     private func togglePlayback() {

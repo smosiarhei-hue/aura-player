@@ -169,17 +169,9 @@ nonisolated enum TransitionPlanner {
             strategy = .SILENCE_TRIM
             reason = "Хвостовая тишина \(String(format: "%.1f", trailingSilence)) с — убираем паузу вместо сведения"
         } else if !bothTempiKnown || bpmRatio > 1.28 {
-            // Huge or unknown tempo gap: never force a beatmatch (TZ Section 8).
-            if targetAnalysis.drops.first(where: { $0 < targetDur * 0.45 }) != nil && targetAnalysis.energy > sourceAnalysis.energy + 0.15 {
-                strategy = .DROP_SWITCH
-                reason = "Темпы несовместимы: резкий вход на дропе нового трека"
-            } else if sourceAnalysis.buildUps.last != nil {
-                strategy = .BUILDUP_TO_DROP
-                reason = "Разгон уходящего трека завершается дропом входящего"
-            } else {
-                strategy = .DROP_SWITCH
-                reason = "Контрастный темп: диджейский Power Drop со стоп-эффектом"
-            }
+            // Apple Music AutoMix: smooth frequency-separated energy blend instead of an abrupt cut
+            strategy = .ENERGY_BLEND
+            reason = "Плавный частотно-разделенный AutoMix кроссфейд (Apple Music Style)"
         } else if vocalCollision {
             // TZ Section 12: never overlap two active vocals with a long crossfade.
             if let vocalEnd = sourceAnalysis.lastVocalEnd, sourceDur - vocalEnd >= 6 {

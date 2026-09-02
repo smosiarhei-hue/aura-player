@@ -1,35 +1,14 @@
 import SwiftUI
 import UIKit
-import AVKit
 import MediaPlayer
 
-// MARK: - Sonivo Native Full Player (Apple Music iOS Standard & Video-Shot Live Canvas)
-
-/// Applies the dismiss-drag rounded-corner clip only while the card is
-/// actually being dragged. Leaving the modifier off entirely while idle is
-/// what lets the full-bleed background/video layers (which already opt out
-/// of the safe area themselves) actually reach the true screen edges,
-/// including behind the Dynamic Island - an always-on clip here would clamp
-/// them back down to this screen's safe-area-reduced frame.
-private struct DismissClipModifier: ViewModifier {
-    let active: Bool
-    let cornerRadius: CGFloat
-
-    func body(content: Content) -> some View {
-        if active {
-            content.clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        } else {
-            content
-        }
-    }
-}
+// MARK: - Sonivo Native Full Player (Apple Music iOS 26/27 Standard)
 
 struct PlayerScreenV2: View {
     @State private var player = PlayerCore.shared
     @State private var library = LibraryStore.shared
     @State private var taste = UserTasteEngine.shared
     @Binding var isPresented: Bool
-    @State private var dragY: CGFloat = 0
 
     init(isPresented: Binding<Bool>, dragOffsetY: Binding<CGFloat> = .constant(0)) {
         self._isPresented = isPresented
@@ -38,8 +17,7 @@ struct PlayerScreenV2: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
-    // Native medium control metrics. Touch targets remain 44 pt while glyphs
-    // stay at standard iOS sizes instead of growing across the complete player.
+    // Native medium control metrics.
     private let tapSide: CGFloat = 44
     private let iconGlyph: CGFloat = 19
     private let skipGlyph: CGFloat = 30
@@ -48,9 +26,8 @@ struct PlayerScreenV2: View {
     @State private var artistChoices: [PlayerArtistLink] = []
     @State private var selectedArtist: PlayerArtistLink?
     @State private var resolvingArtist = false
-    @State private var dismissing = false
 
-    // Unified Modal State Machine to eliminate CATransaction sheet conflicts
+    // Unified Modal State Machine
     enum ActivePlayerModal: String, Identifiable {
         case queue, equalizer, sleepTimer, settings, quality, artistSelection
         var id: String { rawValue }
@@ -59,12 +36,7 @@ struct PlayerScreenV2: View {
 
     // Player Display Modes
     @State private var showLyricsMode = false
-    @State private var isVideoShotMode = UserDefaults.standard.bool(forKey: "player.videoshot")
     @State private var dj = AutoMixDJEngine.shared
-
-    // Video Shot state
-    @State private var videoShotUrl: URL? = nil
-    @State private var videoShotLoading = false
 
     // Track Wave state
     @State private var waveLoading = false
@@ -83,23 +55,7 @@ struct PlayerScreenV2: View {
     @State private var paletteTrackId: UUID? = nil
 
     private var track: Track? { player.currentTrack }
-
-    /// Title/artist read from this instead of `track` - it flips ~250 ms
-    /// ahead of `currentTrack` during an AutoMix hand-off (screen-recording
-    /// analysis top-5 fix #3), while artwork/palette continue to follow the
-    /// crossfade's own visual timeline via `track`.
     private var displayedMetadataTrack: Track? { player.displayTrack }
-
-    /// The video canvas only runs while it can actually be seen and playback is
-    /// live. On pause, on stop, or once the app leaves the foreground it is torn
-    /// down and the standard artwork comes back, so nothing decodes video in the
-    /// background and the battery is left alone.
-    private var videoShotActive: Bool {
-        isVideoShotMode
-            && videoShotUrl != nil
-            && player.isPlaying
-            && scenePhase == .active
-    }
 
     private var palette: [Color] {
         if !artworkPaletteColors.isEmpty { return artworkPaletteColors }
@@ -108,10 +64,6 @@ struct PlayerScreenV2: View {
     }
 
     private func updatePalette(from image: UIImage) async {
-        // Quantizing a bitmap into a palette is a real CPU spike. Running it
-        // inline on the main actor is what made switching covers (and the
-        // gesture driving that switch) stutter, so the heavy part runs off
-        // the main thread and only the resulting colours come back to it.
         let hexes = await Task.detached(priority: .utility) {
             LibraryStore.artworkPalette(from: image)
         }.value
@@ -122,13 +74,11 @@ struct PlayerScreenV2: View {
         }
     }
 
-    /// Reading colours out of a bitmap is a CPU spike, so it is kept away from the
-    /// presentation animation and never repeated for a track that is already known.
     private func refreshPalette() async {
         guard let track else { return }
         guard paletteTrackId != track.id else { return }
 
-        try? await Task.sleep(nanoseconds: 280_000_000)
+        try? await Task.sleep(nanoseconds: 200_000_000)
         guard player.currentTrack?.id == track.id else { return }
         paletteTrackId = track.id
 
@@ -137,12 +87,6 @@ struct PlayerScreenV2: View {
             return
         }
 
-        // Streaming tracks never have a locally cached artwork file, so without
-        // this they always fell straight through to the synthetic/seeded
-        // fallback below - which is why the background used to stay a fixed
-        // amber/orange regardless of the track's real cover colour. Downloading
-        // the actual remote cover once and quantizing its real pixels is what
-        // makes the backdrop follow the artwork instead of a guessed palette.
         if let cover = track.coverURL, let url = URL(string: cover) {
             if let (data, _) = try? await URLSession.shared.data(from: url),
                let image = UIImage(data: data) {
@@ -161,144 +105,44 @@ struct PlayerScreenV2: View {
 
     var body: some View {
         GeometryReader { geo in
-            let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
-            let dismissThreshold = max(geo.size.height * 0.38, 240)
-            let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
-            let artworkMicroScale = 1.0 - min(1, dragY / 60) * 0.04
+            let coverSide = min(geo.size.width - 64, geo.size.height * 0.40, 360)
 
             ZStack {
-                // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
-                //    gradient built from the colours of the current artwork.
-                if videoShotActive, let videoShotUrl {
-                    // Full-bleed video canvas: ignoresSafeArea is applied directly to
-                    // the player view with no fixed-size frame ahead of it, so it
-                    // actually expands into the true device bounds (including under
-                    // the Dynamic Island) instead of being pre-clamped to the
-                    // safe-area-reduced outer `geo` before the modifier can run.
-                    VideoShotPlayerView(url: videoShotUrl, isActive: true)
-                        .ignoresSafeArea(edges: .all)
-                        .allowsHitTesting(false)
-
-                    // Progressive Apple Music Gradient & Frosted Blur Fog over the lower half
-                    VStack(spacing: 0) {
-                        Spacer()
-                        ZStack(alignment: .bottom) {
-                            // Real progressive frosted blur material behind the gradient
-                            Rectangle()
-                                .fill(.ultraThinMaterial)
-                                .mask(
-                                    LinearGradient(
-                                        stops: [
-                                            .init(color: .clear, location: 0.0),
-                                            .init(color: .black.opacity(0.35), location: 0.25),
-                                            .init(color: .black.opacity(0.85), location: 0.65),
-                                            .init(color: .black, location: 1.0)
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .clear, location: 0.0),
-                                    .init(color: Color.black.opacity(0.30), location: 0.20),
-                                    .init(color: Color.black.opacity(0.70), location: 0.58),
-                                    .init(color: Color.black.opacity(0.95), location: 1.0)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        }
-                        .frame(height: geo.size.height * 0.60)
-                    }
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                } else if reduceMotion || scenePhase != .active || dragY > 0 {
-                    // Accessibility / background / active dismiss drag: a
-                    // static, artwork-derived gradient without continuous
-                    // animation. Freezing the animated mesh the moment the
-                    // card starts moving is what keeps the swipe-to-dismiss
-                    // gesture itself smooth instead of fighting the shader
-                    // for frames while it is also being dragged and clipped.
+                // 1. Apple Music Ambient Liquid Mesh Background
+                if reduceMotion || scenePhase != .active {
                     artworkGradientBackground
                     contrastProtectionVignette
                 } else {
-                    // Live liquid-mesh background breathing in the artwork's own
-                    // colours - the animated take on the standard cover gradient.
                     AnimatedMeshBackground(palette: backgroundColors)
                     contrastProtectionVignette
                 }
 
-                // 2. Main Player Container (Controls ALWAYS pinned on top).
-                //    Only the background layers ignore the safe area, so no control
-                //    can escape it on devices with a large sensor housing.
+                // 2. Main Player Container (Controls ALWAYS pinned on top)
                 VStack(spacing: 0) {
-                    // Top Bar (Grabber Pill) - Smoothly fades out during drag
-                    topHeader(dismissHeight: geo.size.height)
-                        .padding(.top, 8)
+                    // Top Bar (Grabber Pill & Dismiss Chevron)
+                    topHeader
+                        .padding(.top, 12)
                         .padding(.horizontal, 24)
 
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 8)
 
                     // Center Stage: Standard Square Artwork or Synced Lyrics
                     if showLyricsMode {
                         lyricsStage
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(.opacity)
-                    } else if !videoShotActive {
-                        artworkStage(side: coverSide, microScale: artworkMicroScale)
+                    } else {
+                        artworkStage(side: coverSide)
                             .frame(maxWidth: .infinity)
                             .overlay(
                                 AutoMixTransitionOverlay(side: coverSide)
                             )
                             .transition(.opacity)
-                    } else {
-                        // Open space in VideoShot mode so the background video stays
-                        // clearly visible - but it must still carry the exact same
-                        // swipe-to-change-track gesture as the standard artwork above.
-                        // Without an explicit hit target here, a horizontal swipe had
-                        // nothing to land on and bled into the vertical dismiss-drag
-                        // gesture instead, which is what made the video appear to get
-                        // clipped (the dismiss rounded-corner clip kicking in) instead
-                        // of the track actually changing.
-                        Color.clear
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .contentShape(Rectangle())
-                            .offset(x: coverDragX)
-                            .highPriorityGesture(
-                                DragGesture(minimumDistance: 16)
-                                    .onChanged { val in
-                                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
-                                        if isHorizontalSwipe {
-                                            coverDragX = val.translation.width * 0.60
-                                        }
-                                    }
-                                    .onEnded { val in
-                                        let threshold: CGFloat = 45
-                                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
-                                        if isHorizontalSwipe, val.translation.width < -threshold {
-                                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -coverSide }
-                                            nextTrack()
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
-                                        } else if isHorizontalSwipe, val.translation.width > threshold {
-                                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = coverSide }
-                                            previousTrack()
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
-                                        } else {
-                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = 0 }
-                                        }
-                                    }
-                            )
-                            .transition(.opacity)
                     }
 
-                    Spacer(minLength: 6)
+                    Spacer(minLength: 8)
 
-                    // Floating status line: Track Wave toast only.
-                    // The AutoMix mark lives in the center slot under the timeline.
+                    // Floating status line: Track Wave toast only
                     if let waveMessage {
                         HStack(spacing: 6) {
                             Image(systemName: "dot.radiowaves.left.and.right")
@@ -315,48 +159,25 @@ struct PlayerScreenV2: View {
                         .padding(.bottom, 4)
                     }
 
-                    // Lower Controls Section (Apple Music Standard Layout) - ALWAYS ON SCREEN
+                    // Lower Controls Section (Apple Music Standard Layout)
                     appleMusicLowerDeck
                         .padding(.horizontal, 24)
-                        .padding(.bottom, 10)
+                        .padding(.bottom, 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 8)
-                        .onChanged { val in
-                            let isVerticalDrag = abs(val.translation.height) > abs(val.translation.width)
-                            if val.translation.height > 0, isVerticalDrag {
-                                dragY = val.translation.height
-                            }
-                        }
-                        .onEnded { val in
-                            let isVerticalDrag = abs(val.translation.height) > abs(val.translation.width)
-                            let displacement = val.translation.height
-                            let predicted = val.predictedEndTranslation.height
-                            if isVerticalDrag && (displacement > 60 || predicted > 150) {
-                                dismissWithAnimation(dismissHeight: geo.size.height)
-                            } else {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                    dragY = 0
-                                }
-                            }
-                        }
-                )
             }
-            .offset(y: max(0, dragY))
-            .modifier(DismissClipModifier(active: dragY > 0, cornerRadius: min(36, 12 + dragProgress * 24)))
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(true)
-        .animation(.easeInOut(duration: 0.40), value: dj.isTransitionActive)
-        .animation(.easeInOut(duration: 0.30), value: videoShotActive)
+        .animation(.easeInOut(duration: 0.35), value: dj.isTransitionActive)
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
                 case .queue:
-                    QueueSheetView()
+                    QueueModalView(isPresented: Binding(
+                        get: { activeModal == .queue },
+                        set: { if !$0 { activeModal = nil } }
+                    ))
                 case .equalizer:
                     PlayerEQSheetView()
                 case .sleepTimer:
@@ -378,25 +199,16 @@ struct PlayerScreenV2: View {
         .task(id: track?.id) {
             await refreshPalette()
             await loadLyrics()
-            await loadVideoShot()
         }
     }
 
     // MARK: - Artwork Gradient Background
-    //
-    // The backdrop is derived from the cover: a base wash plus a few soft radial
-    // pools of colour. Nothing is blurred here, which is what used to make opening
-    // the player stutter, and every pool is a plain colour fill behind a static
-    // mask, so SwiftUI can interpolate the colours when the artwork changes.
-    // The drift is driven by a 12 Hz timeline and stops on pause.
 
     private var backgroundColors: [Color] {
         let source = palette
         return source.isEmpty ? [AG.amber, AG.ember] : Array(source.prefix(3))
     }
 
-    /// A single edge-to-edge cover-derived surface. There are no independently
-    /// moving rectangles, masks or low-frequency timelines that can reveal seams.
     private var artworkGradientBackground: some View {
         let colors = backgroundColors
         let primary = colors[0]
@@ -447,12 +259,11 @@ struct PlayerScreenV2: View {
 
     // MARK: - Top Header (Grabber & Dismiss)
 
-    private func topHeader(dismissHeight: CGFloat) -> some View {
+    private var topHeader: some View {
         HStack(alignment: .center) {
-            // Dismiss button
             Button(action: close) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: max(15, iconGlyph * 0.75), weight: .bold))
+                    .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.white.opacity(0.70))
                     .frame(width: tapSide, height: tapSide)
                     .contentShape(Circle())
@@ -462,26 +273,74 @@ struct PlayerScreenV2: View {
 
             Spacer()
 
-            // Center Grabber Pill
             Capsule()
                 .fill(Color.white.opacity(0.35))
                 .frame(width: 42, height: 5)
-                .frame(width: 120, height: tapSide)
-                .contentShape(Rectangle())
-                .gesture(closeGesture(dismissHeight: dismissHeight))
 
             Spacer()
 
-            // Right spacer for visual balance
-            Color.clear
-                .frame(width: tapSide, height: tapSide)
+            Menu {
+                Section("Плеер") {
+                    Button {
+                        withAnimation(AG.spring) { showLyricsMode.toggle() }
+                    } label: {
+                        Label(showLyricsMode ? "Скрыть текст песни" : "Текст песни", systemImage: "quote.bubble")
+                    }
+                }
+
+                Section("Звук и очередь") {
+                    Button { openModal(.queue) } label: {
+                        Label("Очередь воспроизведения", systemImage: "list.bullet")
+                    }
+                    Button { openModal(.equalizer) } label: {
+                        Label("Эквалайзер", systemImage: "slider.vertical.3")
+                    }
+                    Button { openModal(.sleepTimer) } label: {
+                        Label("Таймер сна", systemImage: "timer")
+                    }
+                }
+
+                Section("Приложение") {
+                    Button { openModal(.settings) } label: {
+                        Label("Настройки", systemImage: "gearshape")
+                    }
+                    Button {
+                        Task {
+                            let ok = await SonivoDiagnostics.shared.sendReportToTelegram()
+                            if ok {
+                                waveMessage = "✅ Диагностика отправлена в Telegram"
+                                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                                if waveMessage?.contains("Диагностика") == true { waveMessage = nil }
+                            }
+                        }
+                    } label: {
+                        Label("Отправить логи в Telegram", systemImage: "paperplane")
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        player.stopAndClear()
+                        close()
+                    } label: {
+                        Label("Остановить и очистить", systemImage: "stop.fill")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: iconGlyph, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.70))
+                    .frame(width: tapSide, height: tapSide)
+                    .contentShape(Circle())
+            }
+            .accessibilityLabel("Ещё")
         }
         .frame(minHeight: tapSide)
     }
 
     // MARK: - Center Stage: Standard Artwork
 
-    private func artworkStage(side: CGFloat, microScale: CGFloat = 1.0) -> some View {
+    private func artworkStage(side: CGFloat) -> some View {
         artwork
             .frame(width: side, height: side)
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -495,294 +354,176 @@ struct PlayerScreenV2: View {
                 x: 0,
                 y: player.isPlaying ? 18 : 6
             )
-            .scaleEffect((player.isPlaying ? 1.0 : 0.85) * microScale)
+            .scaleEffect(player.isPlaying ? 1.0 : 0.85)
             .offset(x: coverDragX)
             .rotationEffect(.degrees(Double(coverDragX / 24)), anchor: .center)
             .gesture(
-                DragGesture(minimumDistance: 8)
+                DragGesture(minimumDistance: 15)
                     .onChanged { val in
-                        let isVertical = abs(val.translation.height) > abs(val.translation.width)
-                        if isVertical {
-                            if val.translation.height > 0 {
-                                dragY = val.translation.height
-                            }
-                        } else {
-                            let translation = val.translation.width
-                            let damping: CGFloat = 1.0 + (abs(translation) * 0.003)
-                            coverDragX = translation / damping
-                        }
+                        guard abs(val.translation.width) > abs(val.translation.height) else { return }
+                        let translation = val.translation.width
+                        let damping: CGFloat = 1.0 + (abs(translation) * 0.003)
+                        coverDragX = translation / damping
                     }
                     .onEnded { val in
-                        let isVertical = abs(val.translation.height) > abs(val.translation.width)
-                        if isVertical {
-                            let displacement = val.translation.height
-                            let predicted = val.predictedEndTranslation.height
-                            if displacement > 60 || predicted > 150 {
-                                dismissWithAnimation(dismissHeight: 700)
-                            } else {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                    dragY = 0
-                                }
+                        guard abs(val.translation.width) > abs(val.translation.height) else {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
+                            return
+                        }
+                        let threshold: CGFloat = 50
+                        if val.translation.width < -threshold {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = -side * 1.2 }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                nextTrack()
+                                coverDragX = side * 1.2
+                                withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
+                            }
+                        } else if val.translation.width > threshold {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = side * 1.2 }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                previousTrack()
+                                coverDragX = -side * 1.2
+                                withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
                             }
                         } else {
-                            let threshold: CGFloat = 50
-                            if val.translation.width < -threshold {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                    coverDragX = -side * 1.2
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                    nextTrack()
-                                    coverDragX = side * 1.2
-                                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                                        coverDragX = 0
-                                    }
-                                }
-                            } else if val.translation.width > threshold {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                    coverDragX = side * 1.2
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                    previousTrack()
-                                    coverDragX = -side * 1.2
-                                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                                        coverDragX = 0
-                                    }
-                                }
-                            } else {
-                                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
-                                    coverDragX = 0
-                                }
-                            }
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
                         }
                     }
             )
             .frame(width: side, height: side)
-            .animation(.spring(response: 0.38, dampingFraction: 0.72), value: player.isPlaying)
+            .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
     }
 
     @ViewBuilder private var artwork: some View {
-        if videoShotActive, let videoShotUrl {
-            VideoShotPlayerView(url: videoShotUrl, isActive: true)
-                .transition(.opacity)
-        } else if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-        } else if let cover = track?.coverURL, let url = URL(string: cover) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    fallbackArtwork
-                }
+        if let track {
+            ArtworkView(track: track)
+        } else {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .overlay(Image(systemName: "music.note").font(.system(size: 48)).foregroundStyle(.white.opacity(0.35)))
+        }
+    }
+
+    // MARK: - Lyrics Stage
+
+    @ViewBuilder private var lyricsStage: some View {
+        if lyricsLoading {
+            VStack(spacing: 14) {
+                ProgressView()
+                    .tint(.white)
+                Text("Загрузка текста...")
+                    .font(AG.text(14, .medium))
+                    .foregroundStyle(.white.opacity(0.70))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let lyrics, !lyrics.lines.isEmpty {
+            SyncedLyricsView(lyrics: lyrics, currentTime: player.progress) { seekTime in
+                player.seek(to: seekTime)
             }
         } else {
-            fallbackArtwork
-        }
-    }
-
-    private var fallbackArtwork: some View {
-        ZStack {
-            LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
-            Image(systemName: "music.note")
-                .font(.system(size: 70, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-        }
-    }
-
-    /// Finding a clip never switches the mode on by itself: the video canvas is
-    /// opt-in and only the toggle (or the last remembered choice) enables it.
-    private func loadVideoShot() async {
-        videoShotUrl = nil
-        guard let track else { return }
-        let ymId = YandexMusicService.ymId(fromFileName: track.fileName) ?? (track.isStream ? track.streamUrlString : nil) ?? ""
-        guard !ymId.isEmpty else { return }
-
-        videoShotLoading = true
-        let url = await YandexMusicService.shared.getVideoShotUrl(for: ymId)
-        if player.currentTrack?.id == track.id {
-            withAnimation(.easeInOut(duration: 0.30)) {
-                videoShotUrl = url
+            VStack(spacing: 12) {
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.white.opacity(0.35))
+                Text("Текст песни недоступен")
+                    .font(AG.text(16, .semibold))
+                    .foregroundStyle(.white.opacity(0.75))
+                Text("Для этого трека слова еще не добавлены")
+                    .font(AG.text(13, .regular))
+                    .foregroundStyle(.white.opacity(0.45))
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        videoShotLoading = false
     }
 
-    // MARK: - Center Stage: Live Synced Lyrics
-
-    private var lyricsStage: some View {
-        LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
-    }
-
-    // MARK: - Apple Music Standard Lower Controls Deck
+    // MARK: - Lower Deck: Standard Apple Music Layout
 
     private var appleMusicLowerDeck: some View {
-        VStack(spacing: 14) {
-            // VideoShot remains in the More menu. Keeping this switch out of
-            // the main deck prevents it from shifting metadata and controls.
+        VStack(spacing: 16) {
+            // 1. Track Info (Title, Artist, Like button)
+            trackMetadataRow
 
-            // Track Metadata (Title, Artist, Like, Track Wave, 3-Dots)
-            metadataRow
-
-            // Scrubber, timings and the center status slot. Kept in a separate view
-            // so its high frequency updates do not rebuild the whole player.
+            // 2. Scrubber Timeline & Center Status Slot
             PlayerTimelineSection {
                 centerStatusLabel
             }
 
-            // Large Native Transport Controls (Backward, Play/Pause, Forward)
+            // 3. Playback Controls (Previous, Play/Pause, Next)
             transportControls
 
-            // System Volume Slider
+            // 4. Volume Slider (Native iOS)
             volumeBar
 
-            // Apple Music Bottom Bar (Lyrics, AirPlay, Queue)
+            // 5. Bottom Accessory Bar (Lyrics, AirPlay, Queue)
             appleMusicBottomBar
         }
     }
 
-    // MARK: Metadata Row (Left: Title & Artist, Right: Like + Track Wave + 3-Dots)
+    // MARK: - Track Metadata Row
 
-    private var metadataRow: some View {
-        HStack(alignment: .center, spacing: 12) {
+    private var trackMetadataRow: some View {
+        let current = displayedMetadataTrack ?? track
+        let isFav = current.map { taste.isFavorite($0) } ?? false
+
+        return HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(displayedMetadataTrack?.title ?? "Sonivo")
-                    .font(AG.display(22, .bold))
+                Text(current?.title ?? "Не играет")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.80)
+                    .contentTransition(.numericText())
 
                 Button(action: openArtist) {
-                    HStack(spacing: 4) {
-                        Text(displayedMetadataTrack?.artist ?? "")
-                            .font(AG.text(17, .semibold))
-                            .foregroundStyle(.white.opacity(0.68))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                        if resolvingArtist {
-                            ProgressView().controlSize(.mini).tint(.white)
-                        }
-                    }
-                    .frame(minHeight: 30)
-                    .contentShape(Rectangle())
+                    Text(current?.artist ?? "")
+                        .font(.system(size: 17, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
                 .buttonStyle(.plain)
-                .disabled(track == nil || resolvingArtist)
+                .disabled(current == nil)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 8)
-
-            // Right Action Icons: Like (Heart) + Track Wave + 3-Dots Menu
-            HStack(spacing: 6) {
-                if let track {
-                    // Like Button (Heart: Adds to Library & Favorites)
-                    Button {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        library.toggleFavorite(track)
-                        taste.recordLike(track: track)
-                    } label: {
-                        Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
-                            .font(.system(size: iconGlyph, weight: .semibold))
-                            .foregroundStyle(library.isTrackFavorite(track) ? Color.pink : .white.opacity(0.80))
-                            .frame(width: tapSide, height: tapSide)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(GlassPressStyle())
-                    .accessibilityLabel(library.isTrackFavorite(track) ? "Убрать из избранного" : "В избранное")
-
-                    // "Моя волна по треку" (Track Wave / Infinite Flow related to song)
+            // Right accessories: Wave button & Favorite heart
+            HStack(spacing: 12) {
+                if let current, current.isStream {
                     Button(action: startTrackWave) {
                         Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(waveActive ? AG.amber : .white.opacity(0.80))
+                            .font(.system(size: iconGlyph, weight: .bold))
+                            .foregroundStyle(waveActive ? AG.amber : .white.opacity(0.75))
                             .frame(width: tapSide, height: tapSide)
                             .contentShape(Circle())
                     }
                     .buttonStyle(GlassPressStyle())
+                    .disabled(waveLoading)
                     .accessibilityLabel("Моя волна по треку")
                 }
 
-                Menu {
-                    Section("Воспроизведение") {
-                        Button(action: startTrackWave) {
-                            Label("Моя волна по треку", systemImage: "dot.radiowaves.left.and.right")
-                        }
-                        if videoShotUrl != nil {
-                            Button {
-                                withAnimation(AG.spring) {
-                                    isVideoShotMode.toggle()
-                                    UserDefaults.standard.set(isVideoShotMode, forKey: "player.videoshot")
-                                }
-                            } label: {
-                                Label(isVideoShotMode ? "Стандартная обложка" : "Видео-шоты / Live Canvas", systemImage: isVideoShotMode ? "photo" : "play.rectangle.fill")
-                            }
-                        }
-                        Button {
-                            withAnimation(AG.spring) { showLyricsMode.toggle() }
-                        } label: {
-                            Label(showLyricsMode ? "Скрыть текст песни" : "Текст песни", systemImage: "quote.bubble")
-                        }
-                    }
-
-                    Section("Звук и очередь") {
-                        Button { openModal(.queue) } label: {
-                            Label("Очередь воспроизведения", systemImage: "list.bullet")
-                        }
-                        Button { openModal(.equalizer) } label: {
-                            Label("Эквалайзер", systemImage: "slider.vertical.3")
-                        }
-                        Button { openModal(.sleepTimer) } label: {
-                            Label("Таймер сна", systemImage: "timer")
-                        }
-                    }
-
-                    Section("Приложение") {
-                        Button { openModal(.settings) } label: {
-                            Label("Настройки", systemImage: "gearshape")
-                        }
-                        Button {
-                            Task {
-                                let ok = await SonivoDiagnostics.shared.sendReportToTelegram()
-                                if ok {
-                                    waveMessage = "✅ Диагностика отправлена в Telegram"
-                                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                                    if waveMessage?.contains("Диагностика") == true { waveMessage = nil }
-                                }
-                            }
-                        } label: {
-                            Label("Отправить логи в Telegram", systemImage: "paperplane")
-                        }
-                    }
-
-                    Section {
-                        Button(role: .destructive) {
-                            player.stopAndClear()
-                            close()
-                        } label: {
-                            Label("Остановить и очистить", systemImage: "stop.fill")
-                        }
-                    }
+                Button {
+                    guard let current else { return }
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    taste.toggleFavorite(current)
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: iconGlyph, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.85))
+                    Image(systemName: isFav ? "heart.fill" : "heart")
+                        .font(.system(size: iconGlyph + 2, weight: .bold))
+                        .foregroundStyle(isFav ? Color.pink : Color.white.opacity(0.75))
+                        .contentTransition(.symbolEffect(.replace))
                         .frame(width: tapSide, height: tapSide)
                         .contentShape(Circle())
                 }
-                .accessibilityLabel("Ещё")
+                .buttonStyle(GlassPressStyle())
+                .disabled(current == nil)
+                .accessibilityLabel(isFav ? "Удалить из избранного" : "В избранное")
             }
         }
     }
 
-    /// Apple Music places a single caption in the center slot under the timeline.
-    /// While AutoMix is blending two tracks it shows the shimmering AutoMix mark,
-    /// the rest of the time the interactive audio quality badge.
+    // MARK: - Center Status Slot (AutoMix mark or Quality badge)
+
     @ViewBuilder private var centerStatusLabel: some View {
         if dj.isTransitionActive {
             AutoMixBadge()
@@ -814,11 +555,6 @@ struct PlayerScreenV2: View {
         .accessibilityLabel("Качество звука: \(qualityBadgeLabel)")
     }
 
-    /// Only a real FLAC stream is ever called Lossless / Hi-Res Lossless. A
-    /// high-bitrate MP3/AAC fallback (which is what the server actually sends
-    /// for some tracks even when Hi-Res Lossless is selected) is labelled
-    /// honestly by its real bitrate instead, so the badge never claims a
-    /// quality that was not actually delivered.
     private var qualityBadgeLabel: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
@@ -834,7 +570,7 @@ struct PlayerScreenV2: View {
         return player.audioQuality.badgeText
     }
 
-    // MARK: Transport Controls (Large Apple Music Symbols)
+    // MARK: - Transport Controls
 
     private var transportControls: some View {
         HStack(spacing: 0) {
@@ -872,7 +608,7 @@ struct PlayerScreenV2: View {
         .padding(.vertical, 4)
     }
 
-    // MARK: Volume Slider (Apple Music Native System MPVolumeView)
+    // MARK: - Volume Slider
 
     private var volumeBar: some View {
         HStack(spacing: 12) {
@@ -890,11 +626,10 @@ struct PlayerScreenV2: View {
         .padding(.horizontal, 4)
     }
 
-    // MARK: Apple Music Bottom Bar (Lyrics, AirPlay, Queue)
+    // MARK: - Bottom Bar (Lyrics, AirPlay, Queue)
 
     private var appleMusicBottomBar: some View {
         HStack(alignment: .center) {
-            // Left: Lyrics / Sing
             Button {
                 withAnimation(AG.spring) {
                     showLyricsMode.toggle()
@@ -911,7 +646,6 @@ struct PlayerScreenV2: View {
 
             Spacer()
 
-            // Center: AirPlay route picker (Standard native size)
             AirPlayButtonView()
                 .frame(width: tapSide, height: tapSide)
                 .contentShape(Rectangle())
@@ -919,7 +653,6 @@ struct PlayerScreenV2: View {
 
             Spacer()
 
-            // Right: Queue sheet
             Button {
                 openModal(.queue)
             } label: {
@@ -936,7 +669,7 @@ struct PlayerScreenV2: View {
         .frame(minHeight: tapSide)
     }
 
-    // MARK: - Active Modal Views
+    // MARK: - Modal Contents
 
     private var audioQualitySheetContent: some View {
         List {
@@ -971,7 +704,7 @@ struct PlayerScreenV2: View {
             } header: {
                 Text("Качество звука и кодеки")
             } footer: {
-                Text("Для треков из Яндекс Музыки стриминг во FLAC Lossless активируется автоматически при стабильном интернет-соединении. Если у конкретного трека на сервере нет FLAC, используется лучший из доступных потоков, и это будет показано в значке качества во время воспроизведения.")
+                Text("Для треков из Яндекс Музыки стриминг во FLAC Lossless активируется автоматически при стабильном интернет-соединении.")
             }
         }
         .navigationTitle("Качество звука")
@@ -1020,7 +753,7 @@ struct PlayerScreenV2: View {
 
     private func openModal(_ modal: ActivePlayerModal) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             activeModal = modal
         }
     }
@@ -1096,54 +829,12 @@ struct PlayerScreenV2: View {
     }
 
     private func close() {
-        dismissWithAnimation(dismissHeight: 700)
-    }
-
-    private func dismissWithAnimation(dismissHeight: CGFloat) {
-        guard !dismissing else { return }
-        dismissing = true
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        let target = max(dismissHeight, 700)
-        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.88)) {
-            dragY = target
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                isPresented = false
-            }
-            dragY = 0
-            dismissing = false
-        }
-    }
-
-    private func closeGesture(dismissHeight: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 6)
-            .onChanged { value in
-                guard value.translation.height > 0 else { return }
-                dragY = value.translation.height
-            }
-            .onEnded { value in
-                let displacement = value.translation.height
-                let predicted = value.predictedEndTranslation.height
-                if displacement > 60 || predicted > 150 {
-                    dismissWithAnimation(dismissHeight: dismissHeight)
-                } else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                        dragY = 0
-                    }
-                }
-            }
+        isPresented = false
     }
 }
 
 // MARK: - Timeline Section (scrubber, timings and center status slot)
-//
-// This lives in its own view on purpose. The playback position changes many times
-// per second, and while it was read directly by the player body every tick threw
-// away and rebuilt the entire screen, which is what made the player feel sticky.
-// Now only this small view is invalidated.
 
 struct PlayerTimelineSection<Center: View>: View {
     @State private var player = PlayerCore.shared
@@ -1181,7 +872,7 @@ struct PlayerTimelineSection<Center: View>: View {
                         .fill(Color.white)
                         .frame(width: max(barHeight, activeWidth), height: barHeight)
 
-                    // Thumb knob (grows out of the bar while scrubbing)
+                    // Thumb knob
                     if isScrubbing {
                         Circle()
                             .fill(Color.white)
@@ -1222,7 +913,7 @@ struct PlayerTimelineSection<Center: View>: View {
             .frame(height: 24)
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
 
-            // Timings and center status line (AutoMix mark while mixing, otherwise quality badge)
+            // Timings and center status line
             HStack(alignment: .center) {
                 Text(player.formatted(effectiveProgress))
                     .font(AG.text(12, .semibold).monospacedDigit())
@@ -1244,16 +935,6 @@ struct PlayerTimelineSection<Center: View>: View {
 }
 
 // MARK: - AutoMix mark (Apple Music "Mixing" style)
-//
-// Plain system text, no frame, no stroke, no material or solid backdrop of any kind.
-// A soft glow sits under the glyphs and a white HDR highlight sweeps across the
-// letters from left to right, driven by TimelineView instead of repeatForever.
-// With Reduce Motion the mark stays static and only keeps the glow. A small
-// secondary tag beside it names which engine actually produced the plan that
-// is currently playing: green "AI" once Gemini answered for this pair, grey
-// "DSP" whenever the region-block/offline/error circuit breaker made the
-// local planner take over - the direct, always-visible answer to whether
-// Gemini is actually reachable right now.
 
 struct AutoMixBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1322,118 +1003,6 @@ struct AutoMixBadge: View {
             .shadow(color: .white.opacity(0.18), radius: 11)
             .fixedSize()
             .compositingGroup()
-    }
-}
-
-// MARK: - VideoShot Player View (Native Looping Canvas - Pure AVPlayerLayer, No PiP)
-
-struct VideoShotPlayerView: UIViewRepresentable {
-    let url: URL
-    var isActive: Bool = true
-
-    func makeUIView(context: Context) -> VideoShotUIView {
-        let view = VideoShotUIView()
-        view.configure(with: url)
-        view.setActive(isActive)
-        return view
-    }
-
-    func updateUIView(_ uiView: VideoShotUIView, context: Context) {
-        uiView.configure(with: url)
-        uiView.setActive(isActive)
-    }
-
-    static func dismantleUIView(_ uiView: VideoShotUIView, coordinator: Coordinator) {
-        uiView.teardown()
-    }
-}
-
-final class VideoShotUIView: UIView {
-    private var playerLayer: AVPlayerLayer?
-    private var looper: AVPlayerLooper?
-    private var queuePlayer: AVQueuePlayer?
-    private var currentURL: URL?
-    private var wantsPlayback = true
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = .clear
-        clipsToBounds = true
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        backgroundColor = .clear
-        clipsToBounds = true
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        playerLayer?.frame = bounds
-    }
-
-    /// Video decoding is expensive, so the loop is stopped the moment the canvas
-    /// leaves the screen instead of quietly running behind the artwork.
-    override func willMove(toWindow newWindow: UIWindow?) {
-        super.willMove(toWindow: newWindow)
-        if newWindow == nil {
-            queuePlayer?.pause()
-        } else if wantsPlayback {
-            queuePlayer?.play()
-        }
-    }
-
-    func configure(with url: URL) {
-        guard currentURL != url else { return }
-        currentURL = url
-
-        queuePlayer?.pause()
-        queuePlayer = nil
-        looper = nil
-        playerLayer?.removeFromSuperlayer()
-
-        let item = AVPlayerItem(url: url)
-        let player = AVQueuePlayer(playerItem: item)
-        player.isMuted = true
-        player.automaticallyWaitsToMinimizeStalling = false
-        player.actionAtItemEnd = .none
-        player.preventsDisplaySleepDuringVideoPlayback = false
-
-        looper = AVPlayerLooper(player: player, templateItem: item)
-        queuePlayer = player
-
-        let layer = AVPlayerLayer(player: player)
-        layer.videoGravity = .resizeAspectFill
-        layer.frame = bounds
-        self.layer.addSublayer(layer)
-        self.playerLayer = layer
-
-        if wantsPlayback {
-            player.play()
-        }
-    }
-
-    func setActive(_ active: Bool) {
-        wantsPlayback = active
-        guard let queuePlayer else { return }
-        if active {
-            if queuePlayer.rate == 0 { queuePlayer.play() }
-        } else if queuePlayer.rate != 0 {
-            queuePlayer.pause()
-        }
-    }
-
-    func teardown() {
-        wantsPlayback = false
-        queuePlayer?.pause()
-        queuePlayer?.removeAllItems()
-        looper?.disableLooping()
-        looper = nil
-        queuePlayer = nil
-        playerLayer?.player = nil
-        playerLayer?.removeFromSuperlayer()
-        playerLayer = nil
-        currentURL = nil
     }
 }
 

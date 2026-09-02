@@ -995,7 +995,11 @@ final class PlayerCore {
 
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let totalDur = duration
-        guard totalDur > 10 else { return }
+        guard totalDur >= 30.0 else { return }
+
+        // Apple Music AutoMix strictly triggers during the outro of a track.
+        // Never trigger or plan during the first 35s or before the halfway mark!
+        guard currentPos >= min(35.0, totalDur * 0.50) else { return }
 
         let nextTrack: Track
         if let planned = plannedNextTrack, planned.id != current.id {
@@ -1008,6 +1012,7 @@ final class PlayerCore {
         }
 
         let remaining = totalDur - currentPos
+        guard remaining <= 45.0 else { return }
 
         if let queued = queue.firstIndex(where: { $0.id == nextTrack.id }), !nextTrack.isStream, !FileManager.default.fileExists(atPath: nextTrack.url.path) {
             _ = queued
@@ -1069,9 +1074,10 @@ final class PlayerCore {
         }
 
         guard let plan = activeTransitionPlan else { return }
-        guard currentPos >= plan.cueTime, (totalDur - currentPos) > 0.05 else { return }
+        let effectiveCueTime = max(plan.cueTime, totalDur - 35.0)
+        guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
 
-        if plan.cueTime > currentPos + 1.0 { return }
+        if effectiveCueTime > currentPos + 1.0 { return }
 
         transitionScheduled = true
         isTransitioning = true
