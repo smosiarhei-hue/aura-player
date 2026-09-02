@@ -173,6 +173,13 @@ final class PlayerCore {
     private var activeAudioFile: AVAudioFile?
     private var incomingAudioFile: AVAudioFile?
     private(set) var incomingTrack: Track?
+    /// Mirrors `currentTrack` but flips ~250 ms before the audio engine
+    /// actually completes the AutoMix hand-off, so the on-screen title/
+    /// artist swap lines up with the perceived downbeat of the incoming
+    /// track instead of visibly lagging behind it (screen-recording
+    /// analysis: ~300 ms late at the actual hand-off).
+    private(set) var metadataTrack: Track?
+    private var metadataSwapped = false
     private var incomingStartPosition: Double = 0
     private var generation = 0
     private var anchorDate: Date?
@@ -189,6 +196,11 @@ final class PlayerCore {
     private var transitionDuration: Double = 3.0
     private var transitionTimer: Timer?
     private var rateReleaseTimer: Timer?
+
+    /// Title/artist UI should read from this instead of `currentTrack`
+    /// directly - it flips slightly ahead of the engine to fix the AutoMix
+    /// metadata-sync lag noted in the screen-recording analysis.
+    var displayTrack: Track? { metadataTrack ?? currentTrack }
 
     var duration: Double {
         if isUsingStreamPlayer {
@@ -802,6 +814,8 @@ final class PlayerCore {
         activeAudioFile = nil
         incomingAudioFile = nil
         currentTrack = nil
+        metadataTrack = nil
+        metadataSwapped = false
         isPlaying = false
         progress = 0
         pausedProgress = 0
@@ -1063,6 +1077,8 @@ final class PlayerCore {
         incomingLaneReady = false
         transitionDuration = plan.leadTime
         incomingTrack = nextTrack
+        metadataSwapped = false
+        metadataTrack = nil
         // Critical: without this, the tickTransition volume/rate branches below
         // ("if incomingIsStream { idleStreamingPlayer... } else { idlePlayer... }")
         // always fell into the AVAudioEngine branch for a track that was
@@ -1227,6 +1243,8 @@ final class PlayerCore {
         incomingIsStream = nextTrack.isStream
         transitionDuration = blendDuration
         incomingTrack = nextTrack
+        metadataSwapped = false
+        metadataTrack = nil
         incomingStartPosition = 0
         AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade
         AutoMixDJEngine.shared.activeStrategyName = transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS"
@@ -1407,6 +1425,16 @@ final class PlayerCore {
         }
         _ = filterCutoff
 
+        // Top-5 fix #3: flip the metadata (title/artist) ~250 ms before the
+        // engine actually completes the hand-off instead of waiting for
+        // `completeTransition`, so the on-screen text lines up with the
+        // perceived beat of the incoming track (previously ~300 ms late,
+        // per the screen-recording analysis).
+        if !metadataSwapped, let incomingTrack, transitionDuration * (1.0 - p) <= 0.25 {
+            metadataSwapped = true
+            metadataTrack = incomingTrack
+        }
+
         if p >= 1.0, let incomingTrack {
             completeTransition(to: incomingTrack)
         }
@@ -1470,6 +1498,8 @@ final class PlayerCore {
         reverbA.wetDryMix = 0
         reverbB.wetDryMix = 0
         currentTrack = nextTrack
+        metadataTrack = nil
+        metadataSwapped = false
         streamDuration = nextTrack.duration
         anchorDate = Date()
         anchorOffset = incomingStartPosition
@@ -1592,6 +1622,8 @@ final class PlayerCore {
         planningStartedAt = nil
         plannedNextTrack = nil
         incomingTrack = nil
+        metadataTrack = nil
+        metadataSwapped = false
         incomingIsStream = false
         incomingLaneReady = false
         transitionPausedAt = nil
