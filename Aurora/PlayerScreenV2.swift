@@ -29,6 +29,12 @@ struct PlayerScreenV2: View {
     @State private var library = LibraryStore.shared
     @State private var taste = UserTasteEngine.shared
     @Binding var isPresented: Bool
+    @Binding var dragOffsetY: CGFloat
+
+    init(isPresented: Binding<Bool>, dragOffsetY: Binding<CGFloat> = .constant(0)) {
+        self._isPresented = isPresented
+        self._dragOffsetY = dragOffsetY
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -40,7 +46,6 @@ struct PlayerScreenV2: View {
     private let skipGlyph: CGFloat = 30
     private let playGlyph: CGFloat = 40
 
-    @State private var dragY: CGFloat = 0
     @State private var artistChoices: [PlayerArtistLink] = []
     @State private var selectedArtist: PlayerArtistLink?
     @State private var resolvingArtist = false
@@ -159,19 +164,10 @@ struct PlayerScreenV2: View {
         GeometryReader { geo in
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
             let dismissThreshold = max(geo.size.height * 0.38, 240)
-            let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
-            // Top-5 fix #4: replace the old linear opacity ramp (which read
-            // as an abrupt jump-cut) with a quadratic ease fully resolved by
-            // 15% of the dismiss gesture, matching the screen-recording
-            // analysis's recommended `pow(1 - progress, 2)` curve mapped to
-            // the interactive progress range 0.0-0.15.
-            let controlsFadeProgress = min(1, dragProgress / 0.15)
-            let controlsOpacity = pow(1 - controlsFadeProgress, 2)
-            // Checklist item 3: a tiny, immediate scale-down of the artwork
-            // the instant the swipe starts, well before the dismiss
-            // threshold, for kinesthetic feedback before the sheet actually
-            // detaches.
-            let artworkMicroScale = 1.0 - min(1, dragY / 40) * 0.04
+            let dragProgress = min(max(dragOffsetY / dismissThreshold, 0), 1)
+            let pullProgress = max(0, min(1, dragOffsetY / 160))
+            let controlsOpacity = pow(1.0 - pullProgress, 2)
+            let artworkMicroScale = 1.0 - min(1, dragOffsetY / 40) * 0.04
 
             ZStack {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
@@ -221,7 +217,7 @@ struct PlayerScreenV2: View {
                     }
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
-                } else if reduceMotion || scenePhase != .active || dragY > 0 {
+                } else if reduceMotion || scenePhase != .active || dragOffsetY > 0 {
                     // Accessibility / background / active dismiss drag: a
                     // static, artwork-derived gradient without continuous
                     // animation. Freezing the animated mesh the moment the
@@ -332,36 +328,29 @@ struct PlayerScreenV2: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 8)
+                    DragGesture(minimumDistance: 0)
                         .onChanged { val in
                             let isVerticalDrag = abs(val.translation.height) >= abs(val.translation.width)
                             if val.translation.height > 0, isVerticalDrag {
-                                dragY = val.translation.height
+                                dragOffsetY = val.translation.height
                             }
                         }
                         .onEnded { val in
                             let isVerticalDrag = abs(val.translation.height) >= abs(val.translation.width)
-                            let velocity = val.predictedEndTranslation.height
-                            if isVerticalDrag, val.translation.height > 120 || velocity > 280 {
+                            let velocity = val.velocity.height
+                            let displacement = val.translation.height
+                            if isVerticalDrag && (displacement > 120 || velocity > 300) {
                                 dismissWithAnimation(dismissHeight: geo.size.height)
                             } else {
-                                withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.86)) {
-                                    dragY = 0
+                                withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                                    dragOffsetY = 0
                                 }
                             }
                         }
                 )
             }
-            // Follow the finger at native resolution. Never rescale the complete
-            // AVPlayerLayer: that caused softness and dirty edges while dismissing.
-            // The rounded-corner clip only exists while the card is actually
-            // being dragged away. An always-on clip here would permanently
-            // clamp every full-bleed background/video layer back down to this
-            // GeometryReader's safe-area-reduced frame, cancelling their
-            // `.ignoresSafeArea()` and re-cropping the player right at the
-            // Dynamic Island - which is exactly the residual crop this fixes.
-            .offset(y: max(0, dragY))
-            .modifier(DismissClipModifier(active: dragY > 0, cornerRadius: min(28, 8 + dragProgress * 20)))
+            .offset(y: max(0, dragOffsetY))
+            .modifier(DismissClipModifier(active: dragOffsetY > 0, cornerRadius: min(36, 12 + dragProgress * 24)))
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
@@ -500,42 +489,62 @@ struct PlayerScreenV2: View {
     private func artworkStage(side: CGFloat, microScale: CGFloat = 1.0) -> some View {
         artwork
             .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
             )
-            .shadow(color: Color.black.opacity(0.45), radius: player.isPlaying ? 26 : 14, y: player.isPlaying ? 15 : 8)
-            .scaleEffect((player.isPlaying ? 1.0 : 0.88) * microScale)
+            .shadow(
+                color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.55 : 0.15),
+                radius: player.isPlaying ? 32 : 10,
+                x: 0,
+                y: player.isPlaying ? 18 : 6
+            )
+            .scaleEffect((player.isPlaying ? 1.0 : 0.85) * microScale)
             .offset(x: coverDragX)
+            .rotationEffect(.degrees(Double(coverDragX / 24)), anchor: .center)
             .highPriorityGesture(
-                DragGesture(minimumDistance: 16)
+                DragGesture(minimumDistance: 10)
                     .onChanged { val in
-                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
-                        if isHorizontalSwipe {
-                            coverDragX = val.translation.width * 0.60
-                        }
+                        let translation = val.translation.width
+                        let damping: CGFloat = 1.0 + (abs(translation) * 0.003)
+                        coverDragX = translation / damping
                     }
                     .onEnded { val in
-                        let threshold: CGFloat = 45
-                        let isHorizontalSwipe = abs(val.translation.width) > abs(val.translation.height) * 1.5
-                        if isHorizontalSwipe, val.translation.width < -threshold {
+                        let threshold: CGFloat = 60
+                        if val.translation.width < -threshold {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -side }
-                            nextTrack()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
-                        } else if isHorizontalSwipe, val.translation.width > threshold {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                coverDragX = -side * 1.2
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                nextTrack()
+                                coverDragX = side * 1.2
+                                withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                                    coverDragX = 0
+                                }
+                            }
+                        } else if val.translation.width > threshold {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = side }
-                            previousTrack()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                coverDragX = side * 1.2
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                previousTrack()
+                                coverDragX = -side * 1.2
+                                withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                                    coverDragX = 0
+                                }
+                            }
                         } else {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = 0 }
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                                coverDragX = 0
+                            }
                         }
                     }
             )
             .frame(width: side, height: side)
-            .animation(.spring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
+            .animation(.spring(response: 0.38, dampingFraction: 0.72), value: player.isPlaying)
     }
 
     @ViewBuilder private var artwork: some View {
@@ -821,17 +830,18 @@ struct PlayerScreenV2: View {
                     .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(GlassPressStyle(scale: 0.90))
+            .buttonStyle(TactileButtonStyle(scale: 0.88))
             .accessibilityLabel("Предыдущий трек")
 
             Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: playGlyph, weight: .black))
                     .foregroundStyle(.white)
+                    .contentTransition(.symbolEffect(.replace.downUp))
                     .frame(maxWidth: .infinity, minHeight: 56)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(GlassPressStyle(scale: 0.88))
+            .buttonStyle(TactileButtonStyle(scale: 0.82))
             .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизвести")
 
             Button(action: nextTrack) {
@@ -841,7 +851,7 @@ struct PlayerScreenV2: View {
                     .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(GlassPressStyle(scale: 0.90))
+            .buttonStyle(TactileButtonStyle(scale: 0.88))
             .accessibilityLabel("Следующий трек")
         }
         .padding(.vertical, 4)
@@ -1077,61 +1087,36 @@ struct PlayerScreenV2: View {
         // close path, not a drag), but SwiftUI's own fullScreenCover dismiss
         // transition still runs its default animated transaction. That
         // competed visually with our other, drag-driven dismiss path and is
-        // what let a stray frame of the plain, un-styled "old" player flash
-        // before the cover actually closed. Disabling the transaction here
-        // makes the close instant and single, with no second transition.
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            isPresented = false
-        }
+    private func close() {
+        dismissWithAnimation(dismissHeight: 400)
     }
 
-    /// Animates the card the rest of the way off-screen before flipping
-    /// `isPresented`, instead of jumping straight from a half-dragged offset
-    /// to whatever the system's own dismiss transition starts from. That
-    /// mismatch between the drag's paused position and the sheet's default
-    /// dismiss animation is what produced the visible seam/lag when closing
-    /// the player mid-swipe.
     private func dismissWithAnimation(dismissHeight: CGFloat) {
         guard !dismissing else { return }
         dismissing = true
-        let target = max(dismissHeight, 400)
-        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.90)) {
-            dragY = target
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+            isPresented = false
+            dragOffsetY = 0
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-            // By this point our own animation has already carried the card
-            // fully off-screen via `dragY`. Flipping `isPresented` with
-            // SwiftUI's default (animated) transaction let the
-            // fullScreenCover play its own separate, competing dismiss
-            // transition on top of that - visually snapping back to the
-            // plain, un-dragged full player for a frame before sliding it
-            // away, which is exactly what showed up as a second, "old"
-            // looking player flashing during the swipe-down dismiss.
-            // Disabling the transaction keeps the close entirely driven by
-            // the drag animation above, with nothing left to flash.
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                isPresented = false
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            dismissing = false
         }
     }
 
     private func closeGesture(dismissHeight: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 6)
+        DragGesture(minimumDistance: 0)
             .onChanged { value in
                 guard value.translation.height > 0 else { return }
-                dragY = value.translation.height
+                dragOffsetY = value.translation.height
             }
             .onEnded { value in
-                let velocity = value.predictedEndTranslation.height
-                if value.translation.height > 120 || velocity > 280 {
+                let velocity = value.velocity.height
+                if value.translation.height > 120 || velocity > 300 {
                     dismissWithAnimation(dismissHeight: dismissHeight)
                 } else {
-                    withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.86)) {
-                        dragY = 0
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                        dragOffsetY = 0
                     }
                 }
             }
@@ -1149,7 +1134,9 @@ struct PlayerTimelineSection<Center: View>: View {
     @State private var player = PlayerCore.shared
     @State private var isScrubbing = false
     @State private var scrubProgress: Double = 0
+    @State private var lastFeedbackProgress: Double = 0.0
 
+    private let selectionFeedback = UISelectionFeedbackGenerator()
     private let center: Center
 
     init(@ViewBuilder center: () -> Center) {
@@ -1161,66 +1148,70 @@ struct PlayerTimelineSection<Center: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 8) {
             GeometryReader { geo in
                 let maxDuration = max(player.duration, 0.01)
                 let currentFraction = min(1.0, max(0.0, effectiveProgress / maxDuration))
-                let barHeight: CGFloat = isScrubbing ? 11 : 7
-                let knob: CGFloat = isScrubbing ? 19 : 0
+                let activeWidth = max(0, min(geo.size.width, geo.size.width * currentFraction))
+                let barHeight: CGFloat = isScrubbing ? 10 : 4
 
                 ZStack(alignment: .leading) {
                     // Track background line
                     Capsule()
-                        .fill(Color.white.opacity(0.24))
+                        .fill(Color.white.opacity(0.20))
                         .frame(height: barHeight)
 
                     // Filled progress line
                     Capsule()
-                        .fill(Color.white.opacity(isScrubbing ? 1.0 : 0.85))
-                        .frame(width: max(barHeight, geo.size.width * currentFraction), height: barHeight)
+                        .fill(Color.white)
+                        .frame(width: max(barHeight, activeWidth), height: barHeight)
 
                     // Thumb knob (grows out of the bar while scrubbing)
                     if isScrubbing {
                         Circle()
                             .fill(Color.white)
-                            .frame(width: knob, height: knob)
-                            .shadow(color: Color.black.opacity(0.45), radius: 5)
-                            .offset(x: max(0, min(geo.size.width * currentFraction - knob / 2, geo.size.width - knob)))
+                            .frame(width: 22, height: 22)
+                            .shadow(color: Color.black.opacity(0.45), radius: 6, x: 0, y: 3)
+                            .offset(x: activeWidth - 11)
+                            .transition(.scale.combined(with: .opacity))
                     }
                 }
-                .frame(maxHeight: .infinity)
+                .frame(maxHeight: .infinity, alignment: .center)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 6)
+                    DragGesture(minimumDistance: 0)
                         .onChanged { val in
                             if !isScrubbing {
+                                isScrubbing = true
+                                selectionFeedback.prepare()
                                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                                withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
-                                    isScrubbing = true
-                                }
                             }
                             let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
                             scrubProgress = fraction * maxDuration
+
+                            if abs(fraction - lastFeedbackProgress) > 0.04 {
+                                selectionFeedback.selectionChanged()
+                                lastFeedbackProgress = fraction
+                            }
                         }
                         .onEnded { val in
                             let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
                             let target = fraction * maxDuration
                             player.seek(to: target)
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                                 isScrubbing = false
                             }
                         }
                 )
             }
-            .frame(height: 44)
+            .frame(height: 24)
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
 
             // Timings and center status line (AutoMix mark while mixing, otherwise quality badge)
             HStack(alignment: .center) {
                 Text(player.formatted(effectiveProgress))
-                    .font(AG.text(12, .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
+                    .font(AG.text(12, .semibold).monospacedDigit())
+                    .foregroundStyle(.white.opacity(isScrubbing ? 1.0 : 0.60))
 
                 Spacer()
 
@@ -1229,9 +1220,10 @@ struct PlayerTimelineSection<Center: View>: View {
                 Spacer()
 
                 Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
-                    .font(AG.text(12, .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(isScrubbing ? 0.95 : 0.55))
+                    .font(AG.text(12, .semibold).monospacedDigit())
+                    .foregroundStyle(.white.opacity(isScrubbing ? 1.0 : 0.60))
             }
+            .animation(.easeInOut(duration: 0.2), value: isScrubbing)
         }
     }
 }

@@ -250,3 +250,19 @@ struct BandSlider: View {
         }
     }
 }
+
+// MARK: - Tactile Spring Bounce Button Style (Apple Music iOS Standard)
+
+struct TactileButtonStyle: ButtonStyle {
+    let scaleAmount: CGFloat
+
+    init(scale: CGFloat = 0.86) {
+        self.scaleAmount = scale
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scaleAmount : 1.0)
+            .animation(.spring(response: 0.28, dampingFraction: 0.65), value: configuration.isPressed)
+    }
+}

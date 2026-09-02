@@ -60,35 +60,69 @@ struct RootView: View {
     @State private var player = PlayerCore.shared
     @State private var tab: AppTab = .wave
     @State private var showPlayer = false
+    @State private var playerDragOffsetY: CGFloat = 0
 
     private var miniVisible: Bool {
         guard let track = player.currentTrack else { return false }
         return !track.title.isEmpty || track.isStream || track.duration > 0
     }
 
+    private func rootScale(for height: CGFloat) -> CGFloat {
+        guard showPlayer else { return 1.0 }
+        let progress = max(0, min(1, 1.0 - (playerDragOffsetY / max(1, height * 0.8))))
+        return 1.0 - (progress * 0.07)
+    }
+
+    private func rootCornerRadius(for height: CGFloat) -> CGFloat {
+        guard showPlayer else { return 0 }
+        let progress = max(0, min(1, 1.0 - (playerDragOffsetY / max(1, height * 0.8))))
+        return progress * 36
+    }
+
+    private func rootDimOpacity(for height: CGFloat) -> CGFloat {
+        guard showPlayer else { return 0.0 }
+        let progress = max(0, min(1, 1.0 - (playerDragOffsetY / max(1, height * 0.8))))
+        return progress * 0.25
+    }
+
     var body: some View {
-        TabView(selection: $tab) {
-            HomeView().tabItem { Label(AppTab.wave.label, systemImage: AppTab.wave.icon) }.tag(AppTab.wave)
-            LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
-            SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
-        }
-        .tint(.white)
-        .toolbarColorScheme(.dark, for: .tabBar)
-        .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory {
-            if miniVisible {
-                NativeMiniPlayer(showPlayer: $showPlayer)
+        GeometryReader { geometry in
+            let screenHeight = geometry.size.height
+
+            ZStack(alignment: .bottom) {
+                Color.black.ignoresSafeArea()
+
+                TabView(selection: $tab) {
+                    HomeView().tabItem { Label(AppTab.wave.label, systemImage: AppTab.wave.icon) }.tag(AppTab.wave)
+                    LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
+                    SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
+                }
+                .tint(.white)
+                .toolbarColorScheme(.dark, for: .tabBar)
+                .tabBarMinimizeBehavior(.onScrollDown)
+                .tabViewBottomAccessory {
+                    if miniVisible && !showPlayer {
+                        NativeMiniPlayer(showPlayer: $showPlayer)
+                    }
+                }
+                .scaleEffect(rootScale(for: screenHeight))
+                .clipShape(RoundedRectangle(cornerRadius: rootCornerRadius(for: screenHeight), style: .continuous))
+                .overlay {
+                    Color.black.opacity(rootDimOpacity(for: screenHeight))
+                        .clipShape(RoundedRectangle(cornerRadius: rootCornerRadius(for: screenHeight), style: .continuous))
+                        .allowsHitTesting(false)
+                }
+
+                if showPlayer {
+                    PlayerScreenV2(isPresented: $showPlayer, dragOffsetY: $playerDragOffsetY)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .bottom),
+                            removal: .move(edge: .bottom)
+                        ))
+                        .zIndex(10)
+                }
             }
-        }
-        // Do not make the full-screen player transparent. A clear presentation
-        // background lets the TabView flash through during UIKit's presentation
-        // transaction, which was visible as a flicker while opening or closing.
-        .fullScreenCover(isPresented: $showPlayer) {
-            // The AutoMix hand-off visual now lives inside PlayerScreenV2 itself,
-            // sized and positioned exactly over the artwork stage (cover-to-cover
-            // glare), instead of a detached full-screen glow mounted here.
-            PlayerScreenV2(isPresented: $showPlayer)
-                .background(Color.black.ignoresSafeArea())
+            .ignoresSafeArea(edges: showPlayer ? .all : [])
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
