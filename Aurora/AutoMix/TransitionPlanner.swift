@@ -457,6 +457,15 @@ nonisolated enum TransitionPlanner {
             actions.append(TransitionAction(time: half, target: "source", parameter: "lowEQ", value: 0.05, duration: half))
             actions.append(TransitionAction(time: duration * 0.5, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.4))
             actions.append(TransitionAction(time: duration * 0.9, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.1))
+            // Reverb swell on the outgoing bass hand-off (TZ Section 29): this was
+            // previously only ever set for ECHO_OUT, so every bass-swap / beat-match
+            // transition ran with the reverb wetness pinned at 0 despite loading a
+            // preset - the mix sounded completely dry no matter what character was
+            // chosen. A short swell right on the low-end swap makes the DJ-style
+            // "tuck under" audible.
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "reverb", value: 0.0, duration: 0))
+            actions.append(TransitionAction(time: half * 0.4, target: "source", parameter: "reverb", value: 0.35, duration: half * 0.6))
+            actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "reverb", value: 0.0, duration: duration * 0.15))
 
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: duration * 0.55))
             actions.append(TransitionAction(time: duration * 0.55, target: "target", parameter: "volume", value: 0.7, duration: duration * 0.45))
@@ -468,6 +477,10 @@ nonisolated enum TransitionPlanner {
             actions.append(TransitionAction(time: half, target: "source", parameter: "volume", value: 0.35, duration: half))
             actions.append(TransitionAction(time: 0, target: "source", parameter: "filter", value: 1.0, duration: 0))
             actions.append(TransitionAction(time: half, target: "source", parameter: "filter", value: 0.1, duration: half))
+            // The filter sweep reads as a real DJ filter-out when a matching reverb
+            // tail rises behind it instead of running bone dry.
+            actions.append(TransitionAction(time: 0, target: "source", parameter: "reverb", value: 0.0, duration: 0))
+            actions.append(TransitionAction(time: half, target: "source", parameter: "reverb", value: 0.5, duration: half))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.1, duration: 0))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 1.0, duration: half * 1.2))
 
@@ -484,6 +497,9 @@ nonisolated enum TransitionPlanner {
             actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.55))
             actions.append(TransitionAction(time: duration * 0.55, target: "source", parameter: "volume", value: 0.45, duration: duration * 0.3))
             actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.15))
+            // A light reverb tail masks the vocal cut instead of it landing dry.
+            actions.append(TransitionAction(time: duration * 0.6, target: "source", parameter: "reverb", value: 0.3, duration: duration * 0.25))
+            actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "reverb", value: 0.0, duration: duration * 0.15))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: 0))
             actions.append(TransitionAction(time: duration * 0.45, target: "target", parameter: "volume", value: 0.75, duration: duration * 0.45))
 
@@ -507,6 +523,9 @@ nonisolated enum TransitionPlanner {
             actions.append(TransitionAction(time: duration * 0.7, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.3))
             actions.append(TransitionAction(time: 0, target: "source", parameter: "lowEQ", value: 0.8, duration: duration * 0.5))
             actions.append(TransitionAction(time: duration * 0.5, target: "source", parameter: "lowEQ", value: 0.05, duration: duration * 0.5))
+            // Reverb crossover sits right where the energy actually hands off.
+            actions.append(TransitionAction(time: duration * 0.5, target: "source", parameter: "reverb", value: 0.0, duration: duration * 0.2))
+            actions.append(TransitionAction(time: duration * 0.7, target: "source", parameter: "reverb", value: 0.4, duration: duration * 0.3))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: duration * 0.8))
             actions.append(TransitionAction(time: duration * 0.8, target: "target", parameter: "volume", value: 1.0, duration: duration * 0.2))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "lowEQ", value: 0.0, duration: duration * 0.4))
@@ -524,6 +543,11 @@ nonisolated enum TransitionPlanner {
         default:
             actions.append(TransitionAction(time: 0, target: "source", parameter: "volume", value: 1.0, duration: duration * 0.85))
             actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "volume", value: 0.0, duration: duration * 0.15))
+            // Even the plain crossfade gets a small reverb lift right as it fades
+            // out, so a simple transition still reads as a deliberate DJ blend
+            // instead of two tracks with silent, unrelated reverb units.
+            actions.append(TransitionAction(time: duration * 0.75, target: "source", parameter: "reverb", value: 0.0, duration: duration * 0.1))
+            actions.append(TransitionAction(time: duration * 0.85, target: "source", parameter: "reverb", value: 0.28, duration: duration * 0.15))
             actions.append(TransitionAction(time: 0, target: "target", parameter: "volume", value: 0.0, duration: duration))
             actions.append(TransitionAction(time: duration, target: "target", parameter: "volume", value: 1.0, duration: 0))
         }
