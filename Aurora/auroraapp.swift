@@ -92,16 +92,11 @@ struct RootView: View {
         // background lets the TabView flash through during UIKit's presentation
         // transaction, which was visible as a flicker while opening or closing.
         .fullScreenCover(isPresented: $showPlayer) {
-            ZStack {
-                PlayerScreenV2(isPresented: $showPlayer)
-                    .background(Color.black.ignoresSafeArea())
-
-                // This is separate from the player layout, so the 60 Hz audio
-                // transition never causes the artwork, controls, or cover layout
-                // to be recreated. It is fully absent outside an active AutoMix.
-                AutoMixTransitionOverlay()
-                    .allowsHitTesting(false)
-            }
+            // The AutoMix hand-off visual now lives inside PlayerScreenV2 itself,
+            // sized and positioned exactly over the artwork stage (cover-to-cover
+            // glare), instead of a detached full-screen glow mounted here.
+            PlayerScreenV2(isPresented: $showPlayer)
+                .background(Color.black.ignoresSafeArea())
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
