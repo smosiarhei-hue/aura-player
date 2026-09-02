@@ -118,31 +118,14 @@ struct PlayerScreenV2: View {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
                 //    gradient built from the colours of the current artwork.
                 if videoShotActive, let videoShotUrl {
-                    // Full-bleed video canvas: sized to the COMPLETE device screen
-                    // including the Dynamic Island cutout and the home indicator.
-                    // GeometryReader centres its content, so the frame is aligned
-                    // to the top-leading edge of the extended (safe-area-ignored)
-                    // bounds; otherwise the video would sit below the island with
-                    // a black gap above it.
-                    GeometryReader { fullBleed in
-                        VideoShotPlayerView(url: videoShotUrl, isActive: true)
-                            .frame(
-                                width: fullBleed.size.width,
-                                height: fullBleed.size.height,
-                                alignment: .topLeading
-                            )
-                            .position(
-                                x: fullBleed.size.width / 2,
-                                y: fullBleed.size.height / 2
-                            )
-                    }
-                    .frame(
-                        width: geo.size.width,
-                        height: geo.size.height,
-                        alignment: .topLeading
-                    )
-                    .ignoresSafeArea(edges: .all)
-                    .allowsHitTesting(false)
+                    // Full-bleed video canvas: ignoresSafeArea is applied directly to
+                    // the player view with no fixed-size frame ahead of it, so it
+                    // actually expands into the true device bounds (including under
+                    // the Dynamic Island) instead of being pre-clamped to the
+                    // safe-area-reduced outer `geo` before the modifier can run.
+                    VideoShotPlayerView(url: videoShotUrl, isActive: true)
+                        .ignoresSafeArea(edges: .all)
+                        .allowsHitTesting(false)
 
                     // Progressive Apple Music Gradient & Frosted Blur Fog over the lower half
                     VStack(spacing: 0) {
@@ -213,6 +196,9 @@ struct PlayerScreenV2: View {
                     } else if !videoShotActive {
                         artworkStage(side: coverSide)
                             .frame(maxWidth: .infinity)
+                            .overlay(
+                                AutoMixTransitionOverlay(side: coverSide)
+                            )
                             .transition(.opacity)
                     } else {
                         // Open space in VideoShot mode so background video is clearly visible
