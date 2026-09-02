@@ -228,8 +228,43 @@ struct PlayerScreenV2: View {
                             )
                             .transition(.opacity)
                     } else {
-                        // Open space in VideoShot mode so background video is clearly visible
-                        Spacer(minLength: 20)
+                        // Open space in VideoShot mode so the background video stays
+                        // clearly visible - but it must still carry the exact same
+                        // swipe-to-change-track gesture as the standard artwork above.
+                        // Without an explicit hit target here, a horizontal swipe had
+                        // nothing to land on and bled into the vertical dismiss-drag
+                        // gesture instead, which is what made the video appear to get
+                        // clipped (the dismiss rounded-corner clip kicking in) instead
+                        // of the track actually changing.
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .offset(x: coverDragX)
+                            .gesture(
+                                DragGesture(minimumDistance: 12)
+                                    .onChanged { val in
+                                        if abs(val.translation.width) > abs(val.translation.height) {
+                                            coverDragX = val.translation.width * 0.60
+                                        }
+                                    }
+                                    .onEnded { val in
+                                        let threshold: CGFloat = 45
+                                        if val.translation.width < -threshold {
+                                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = -coverSide }
+                                            nextTrack()
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
+                                        } else if val.translation.width > threshold {
+                                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = coverSide }
+                                            previousTrack()
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { coverDragX = 0 }
+                                        } else {
+                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) { coverDragX = 0 }
+                                        }
+                                    }
+                            )
+                            .transition(.opacity)
                     }
 
                     Spacer(minLength: 6)
