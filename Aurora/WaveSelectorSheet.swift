@@ -85,7 +85,7 @@ private struct WaveBlobCard: View {
                     )
                     .overlay(
                         BlobShape()
-                            .strokeBorder(
+                            .stroke(
                                 isSelected ? Color.white.opacity(0.92) : Color.white.opacity(0.16),
                                 lineWidth: isSelected ? 2.6 : 0.9
                             )
