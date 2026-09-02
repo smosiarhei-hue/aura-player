@@ -208,7 +208,7 @@ struct PlayerScreenV2: View {
                 //    can escape it on devices with a large sensor housing.
                 VStack(spacing: 0) {
                     // Top Bar (Grabber Pill) - Smoothly fades out during drag
-                    topHeader
+                    topHeader(dismissHeight: geo.size.height)
                         .padding(.top, 8)
                         .padding(.horizontal, 24)
                         .opacity(max(0, 1.0 - Double(dragProgress * 2.2)))
@@ -305,7 +305,7 @@ struct PlayerScreenV2: View {
                         .onEnded { val in
                             let velocity = val.predictedEndTranslation.height
                             if val.translation.height > 120 || velocity > 280 {
-                                close()
+                                dismissWithAnimation(dismissHeight: geo.size.height)
                             } else {
                                 withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.86)) {
                                     dragY = 0
@@ -425,7 +425,7 @@ struct PlayerScreenV2: View {
 
     // MARK: - Top Header (Grabber & Dismiss)
 
-    private var topHeader: some View {
+    private func topHeader(dismissHeight: CGFloat) -> some View {
         HStack(alignment: .center) {
             // Dismiss button
             Button(action: close) {
@@ -446,7 +446,7 @@ struct PlayerScreenV2: View {
                 .frame(width: 42, height: 5)
                 .frame(width: 120, height: tapSide)
                 .contentShape(Rectangle())
-                .gesture(closeGesture)
+                .gesture(closeGesture(dismissHeight: dismissHeight))
 
             Spacer()
 
@@ -1036,7 +1036,25 @@ struct PlayerScreenV2: View {
         isPresented = false
     }
 
-    private var closeGesture: some Gesture {
+    /// Animates the card the rest of the way off-screen before flipping
+    /// `isPresented`, instead of jumping straight from a half-dragged offset
+    /// to whatever the system's own dismiss transition starts from. That
+    /// mismatch between the drag's paused position and the sheet's default
+    /// dismiss animation is what produced the visible seam/lag when closing
+    /// the player mid-swipe.
+    private func dismissWithAnimation(dismissHeight: CGFloat) {
+        guard !dismissing else { return }
+        dismissing = true
+        let target = max(dismissHeight, 400)
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.90)) {
+            dragY = target
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+            isPresented = false
+        }
+    }
+
+    private func closeGesture(dismissHeight: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 6)
             .onChanged { value in
                 guard value.translation.height > 0 else { return }
@@ -1045,7 +1063,7 @@ struct PlayerScreenV2: View {
             .onEnded { value in
                 let velocity = value.predictedEndTranslation.height
                 if value.translation.height > 120 || velocity > 280 {
-                    close()
+                    dismissWithAnimation(dismissHeight: dismissHeight)
                 } else {
                     withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.86)) {
                         dragY = 0
