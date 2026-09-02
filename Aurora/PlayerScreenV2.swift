@@ -1223,7 +1223,12 @@ struct PlayerTimelineSection<Center: View>: View {
 // Plain system text, no frame, no stroke, no material or solid backdrop of any kind.
 // A soft glow sits under the glyphs and a white HDR highlight sweeps across the
 // letters from left to right, driven by TimelineView instead of repeatForever.
-// With Reduce Motion the mark stays static and only keeps the glow.
+// With Reduce Motion the mark stays static and only keeps the glow. A small
+// secondary tag beside it names which engine actually produced the plan that
+// is currently playing: green "AI" once Gemini answered for this pair, grey
+// "DSP" whenever the region-block/offline/error circuit breaker made the
+// local planner take over - the direct, always-visible answer to whether
+// Gemini is actually reachable right now.
 
 struct AutoMixBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1234,17 +1239,30 @@ struct AutoMixBadge: View {
     var body: some View {
         Group {
             if reduceMotion {
-                mark(sweep: nil)
+                fullMark(sweep: nil)
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
                     let time = context.date.timeIntervalSinceReferenceDate
                     let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
-                    mark(sweep: CGFloat(phase))
+                    fullMark(sweep: CGFloat(phase))
                 }
             }
         }
         .accessibilityLabel(Text(title))
         .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func fullMark(sweep: CGFloat?) -> some View {
+        let usingGemini = GeminiAutoMixPlanner.lastPlanUsedGemini
+        HStack(spacing: 4) {
+            mark(sweep: sweep)
+            Text(usingGemini ? "AI" : "DSP")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(usingGemini ? Color.green.opacity(0.85) : Color.white.opacity(0.45))
+                .fixedSize()
+                .accessibilityLabel(Text(usingGemini ? "План Gemini AI" : "Локальный DSP-движок"))
+        }
     }
 
     private func mark(sweep: CGFloat?) -> some View {
