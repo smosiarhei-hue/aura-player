@@ -80,6 +80,12 @@ struct PlayerScreenV2: View {
 
     private var track: Track? { player.currentTrack }
 
+    /// Title/artist read from this instead of `track` - it flips ~250 ms
+    /// ahead of `currentTrack` during an AutoMix hand-off (screen-recording
+    /// analysis top-5 fix #3), while artwork/palette continue to follow the
+    /// crossfade's own visual timeline via `track`.
+    private var displayedMetadataTrack: Track? { player.displayTrack }
+
     /// The video canvas only runs while it can actually be seen and playback is
     /// live. On pause, on stop, or once the app leaves the foreground it is torn
     /// down and the standard artwork comes back, so nothing decodes video in the
@@ -154,6 +160,18 @@ struct PlayerScreenV2: View {
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.39, 360)
             let dismissThreshold = max(geo.size.height * 0.38, 240)
             let dragProgress = min(max(dragY / dismissThreshold, 0), 1)
+            // Top-5 fix #4: replace the old linear opacity ramp (which read
+            // as an abrupt jump-cut) with a quadratic ease fully resolved by
+            // 15% of the dismiss gesture, matching the screen-recording
+            // analysis's recommended `pow(1 - progress, 2)` curve mapped to
+            // the interactive progress range 0.0-0.15.
+            let controlsFadeProgress = min(1, dragProgress / 0.15)
+            let controlsOpacity = pow(1 - controlsFadeProgress, 2)
+            // Checklist item 3: a tiny, immediate scale-down of the artwork
+            // the instant the swipe starts, well before the dismiss
+            // threshold, for kinesthetic feedback before the sheet actually
+            // detaches.
+            let artworkMicroScale = 1.0 - min(1, dragY / 40) * 0.04
 
             ZStack {
                 // 1. Dynamic Background: Fullscreen Live VideoShot Canvas OR the
@@ -227,7 +245,7 @@ struct PlayerScreenV2: View {
                     topHeader(dismissHeight: geo.size.height)
                         .padding(.top, 8)
                         .padding(.horizontal, 24)
-                        .opacity(max(0, 1.0 - Double(dragProgress * 2.2)))
+                        .opacity(controlsOpacity)
 
                     Spacer(minLength: 4)
 
@@ -237,7 +255,7 @@ struct PlayerScreenV2: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(.opacity)
                     } else if !videoShotActive {
-                        artworkStage(side: coverSide)
+                        artworkStage(side: coverSide, microScale: artworkMicroScale)
                             .frame(maxWidth: .infinity)
                             .overlay(
                                 AutoMixTransitionOverlay(side: coverSide)
@@ -309,7 +327,7 @@ struct PlayerScreenV2: View {
                     appleMusicLowerDeck
                         .padding(.horizontal, 24)
                         .padding(.bottom, 10)
-                        .opacity(max(0, 1.0 - Double(dragProgress * 1.7)))
+                        .opacity(controlsOpacity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
@@ -348,7 +366,7 @@ struct PlayerScreenV2: View {
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(true)
-        .animation(.easeInOut(duration: 0.28), value: dj.isTransitionActive)
+        .animation(.easeInOut(duration: 0.40), value: dj.isTransitionActive)
         .animation(.easeInOut(duration: 0.30), value: videoShotActive)
         .sheet(item: $activeModal) { modal in
             NavigationStack {
@@ -479,7 +497,7 @@ struct PlayerScreenV2: View {
 
     // MARK: - Center Stage: Standard Artwork
 
-    private func artworkStage(side: CGFloat) -> some View {
+    private func artworkStage(side: CGFloat, microScale: CGFloat = 1.0) -> some View {
         artwork
             .frame(width: side, height: side)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -488,7 +506,7 @@ struct PlayerScreenV2: View {
                     .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
             )
             .shadow(color: Color.black.opacity(0.45), radius: player.isPlaying ? 26 : 14, y: player.isPlaying ? 15 : 8)
-            .scaleEffect(player.isPlaying ? 1.0 : 0.88)
+            .scaleEffect((player.isPlaying ? 1.0 : 0.88) * microScale)
             .offset(x: coverDragX)
             .highPriorityGesture(
                 DragGesture(minimumDistance: 16)
@@ -610,7 +628,7 @@ struct PlayerScreenV2: View {
     private var metadataRow: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(track?.title ?? "Sonivo")
+                Text(displayedMetadataTrack?.title ?? "Sonivo")
                     .font(AG.display(22, .bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -618,7 +636,7 @@ struct PlayerScreenV2: View {
 
                 Button(action: openArtist) {
                     HStack(spacing: 4) {
-                        Text(track?.artist ?? "")
+                        Text(displayedMetadataTrack?.artist ?? "")
                             .font(AG.text(17, .semibold))
                             .foregroundStyle(.white.opacity(0.68))
                             .lineLimit(1)
