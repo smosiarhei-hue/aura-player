@@ -106,12 +106,12 @@ final class LibraryStore {
             let isFav = tracks[i].isFavorite
             if isFav {
                 MoodRadioEngine.shared.recordFeedback(track: tracks[i], action: .like)
-                if let yId = ymId {
-                    Task { await YandexMusicService.shared.likeTrackOnServer(trackId: yId) }
+                if !ymId.isEmpty {
+                    Task { await YandexMusicService.shared.likeTrackOnServer(trackId: ymId) }
                 }
             } else {
-                if let yId = ymId {
-                    Task { await YandexMusicService.shared.unlikeTrackOnServer(trackId: yId) }
+                if !ymId.isEmpty {
+                    Task { await YandexMusicService.shared.unlikeTrackOnServer(trackId: ymId) }
                 }
             }
         } else {
@@ -120,8 +120,8 @@ final class LibraryStore {
             newFavorite.isFavorite = true
             tracks.insert(newFavorite, at: 0)
             MoodRadioEngine.shared.recordFeedback(track: newFavorite, action: .like)
-            if let yId = ymId {
-                Task { await YandexMusicService.shared.likeTrackOnServer(trackId: yId) }
+            if !ymId.isEmpty {
+                Task { await YandexMusicService.shared.likeTrackOnServer(trackId: ymId) }
             }
         }
     }
