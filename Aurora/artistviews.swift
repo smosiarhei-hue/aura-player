@@ -97,19 +97,34 @@ struct ArtistView: View {
                             .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 2)
                     }
 
-                    if let first = artist.popularTracks.first {
-                        Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
-                            Label("Слушать", systemImage: "play.fill")
-                                .font(AG.text(15, .bold))
-                                .foregroundStyle(.black.opacity(0.92))
-                                .padding(.horizontal, 30)
-                                .padding(.vertical, 14)
-                                .background(AG.emberGradient, in: Capsule())
+                    HStack(spacing: 12) {
+                        if let first = artist.popularTracks.first {
+                            Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
+                                Label("Слушать", systemImage: "play.fill")
+                                    .font(AG.text(14, .bold))
+                                    .foregroundStyle(.black.opacity(0.92))
+                                    .padding(.horizontal, 22)
+                                    .padding(.vertical, 12)
+                                    .background(AG.emberGradient, in: Capsule())
+                            }
+                            .buttonStyle(GlassPressStyle())
+                            .pulsingGlow(AG.ember)
+                        }
+
+                        Button {
+                            playArtistWave(artist)
+                        } label: {
+                            Label("Волна", systemImage: "dot.radiowaves.left.and.right")
+                                .font(AG.text(14, .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 12)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1.0))
                         }
                         .buttonStyle(GlassPressStyle())
-                        .pulsingGlow(AG.ember)
-                        .padding(.top, 4)
                     }
+                    .padding(.top, 4)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 20)
@@ -119,6 +134,15 @@ struct ArtistView: View {
             .offset(y: minY > 0 ? -minY : 0)
         }
         .frame(height: 460)
+    }
+
+    private func playArtistWave(_ artist: YandexMusicService.YMArtistItem) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task {
+            let tracks = await YandexMusicService.shared.buildArtistWave(artistId: artist.id, target: 45)
+            guard let first = tracks.first else { return }
+            PlayerCore.shared.play(first, newQueue: tracks)
+        }
     }
 
     private func popularTracksSection(_ artist: YandexMusicService.YMArtistItem) -> some View {

@@ -93,11 +93,17 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { oldPhase, phase in
             player.setApplicationSceneActive(phase == .active)
-            if phase == .active, oldPhase == .background, player.isPlaying {
+            if phase == .active, oldPhase != .active, player.isPlaying {
                 showPlayer = true
             }
         }
         .onOpenURL { _ in
+            showPlayer = true
+        }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in
+            showPlayer = true
+        }
+        .onContinueUserActivity("com.apple.mediaitem") { _ in
             showPlayer = true
         }
         .onChange(of: player.currentTrack?.id) { _, _ in

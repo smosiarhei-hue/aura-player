@@ -35,13 +35,13 @@ extension YandexMusicService {
                     .compactMap { $0.name?.lowercased() }
             )
             if !normalizedSeedArtists.isDisjoint(with: candidateArtists) {
-                score += 24
+                score += 4
             }
 
             let seedAlbum = seed.album.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if !seedAlbum.isEmpty,
                item.albums?.contains(where: { ($0.title ?? "").lowercased() == seedAlbum }) == true {
-                score += 14
+                score += 8
             }
 
             if seed.duration > 0, item.duration > 0 {
@@ -88,22 +88,30 @@ extension YandexMusicService {
             }
         }
 
-        // 3. Popular songs by the seed artist and songs by similar artists.
+        // 3. Радио волна по артисту из Яндекса и похожие исполнители с тем же вайбом
         let artistIDs = (seedItem?.artists ?? []).compactMap { $0.id }.map(String.init)
         for artistID in artistIDs.prefix(2) {
+            // Нативная станция Яндекса artist:<id> подбирает идеальный вайб и похожих артистов
+            let artistRadio = (try? await getStationTracks(stationId: "artist:\(artistID)")) ?? []
+            for (index, item) in artistRadio.prefix(20).enumerated() {
+                add(item, baseScore: 105, rank: index)
+            }
+
             if let profile = try? await getArtistFixed(artistId: artistID) {
-                for (index, item) in profile.popularTracks.prefix(16).enumerated() {
-                    add(item, baseScore: 76, rank: index)
+                // Добавляем только 2 главных трека самого артиста, чтобы не забивать эфир одним певцом
+                for (index, item) in profile.popularTracks.prefix(2).enumerated() {
+                    add(item, baseScore: 85, rank: index)
                 }
 
-                for similar in profile.similarArtists.prefix(5) {
+                // И треки похожих исполнителей с тем же настроением
+                for similar in profile.similarArtists.prefix(6) {
                     let tracks = (try? await getArtistTracks(
                         artistId: similar.id,
                         page: 0,
-                        pageSize: 12
+                        pageSize: 8
                     )) ?? []
                     for (index, item) in tracks.enumerated() {
-                        add(item, baseScore: 70, rank: index)
+                        add(item, baseScore: 98, rank: index)
                     }
                 }
             }
@@ -182,5 +190,58 @@ extension YandexMusicService {
         }
 
         return result
+    }
+
+    /// Персональная волна по артисту в духе Яндекс Музыки:
+    /// подбирает 1-2 главных хита артиста, а далее разворачивает полноценный поток
+    /// из похожих исполнителей с тем же вайбом, жанром и настроением без монотонных повторов.
+    func buildArtistWave(artistId: String, target: Int = 45) async -> [Track] {
+        beginStationSession("artist:\(artistId)")
+        var candidates: [TrackWaveCandidate] = []
+        var seen = Set<String>()
+        var artistCounts: [String: Int] = [:]
+
+        // 1. Нативная станция Яндекса по артисту (ротор отдает треки похожих артистов того же настроения)
+        let rotor = (try? await getStationTracks(stationId: "artist:\(artistId)")) ?? []
+        for (idx, item) in rotor.enumerated() {
+            guard !seen.contains(item.id), !isRecentlyPlayed(ymTrackId: item.id) else { continue }
+            seen.insert(item.id)
+            candidates.append(TrackWaveCandidate(item: item, score: 120.0 - Double(idx) * 0.5))
+        }
+
+        // 2. Каталог артиста и похожие музыканты
+        if let profile = try? await getArtistFixed(artistId: artistId) {
+            // Добавляем 2 визитные карточки артиста в начало
+            for (idx, item) in profile.popularTracks.prefix(2).enumerated() {
+                if !seen.contains(item.id) {
+                    seen.insert(item.id)
+                    candidates.append(TrackWaveCandidate(item: item, score: 130.0 - Double(idx) * 2.0))
+                }
+            }
+
+            // Похожие артисты
+            for similar in profile.similarArtists.prefix(7) {
+                let tracks = (try? await getArtistTracks(artistId: similar.id, page: 0, pageSize: 6)) ?? []
+                for (idx, item) in tracks.prefix(3).enumerated() {
+                    guard !seen.contains(item.id), !isRecentlyPlayed(ymTrackId: item.id) else { continue }
+                    seen.insert(item.id)
+                    candidates.append(TrackWaveCandidate(item: item, score: 110.0 - Double(idx) * 1.5))
+                }
+            }
+        }
+
+        // Сортируем с ограничением повторов одного артиста (максимум 2 трека)
+        candidates.sort { $0.score > $1.score }
+        var result: [Track] = []
+        for c in candidates {
+            let primary = c.item.artists?.first?.name?.lowercased() ?? "unknown"
+            if artistCounts[primary, default: 0] < 2 {
+                artistCounts[primary, default: 0] += 1
+                result.append(convertToTrack(c.item))
+                if result.count >= target { break }
+            }
+        }
+
+        return UserTasteEngine.shared.filterAndRankWave(tracks: result)
     }
 }

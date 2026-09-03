@@ -379,129 +379,134 @@ struct PlayerScreenV2: View {
     private func artworkStage(side: CGFloat) -> some View {
         Group {
             if isVideoShotEnabled, let vp = videoLooperPlayer {
-                // Apple Vision Pro Spatial Video Canvas (Плавные преломляющие края как на фото 1)
-                let canvasW = side
-                let canvasH = min(side * 1.18, 360)
+                // Apple Vision Pro Spatial Video Canvas (Полностью размытые края без границ)
+                let canvasW = min(side * 1.14, 370)
+                let canvasH = min(side * 1.26, 420)
                 ZStack {
-                    // 1. Широкий атмосферный ореол рассеянного света
+                    // 1. Широкий атмосферный ореол
                     VideoShotPlayerView(player: vp)
                         .frame(width: canvasW, height: canvasH)
-                        .blur(radius: 36)
-                        .scaleEffect(1.15)
-                        .opacity(0.70)
+                        .blur(radius: 40)
+                        .scaleEffect(1.18)
+                        .opacity(0.65)
+                        .mask(featheredDissolveMask(vf: 0.08, hf: 0.08))
 
-                    // 2. Объемное преломляющее гауссово размытие по контуру
+                    // 2. Объемное преломляющее гауссово размытие
                     VideoShotPlayerView(player: vp)
                         .frame(width: canvasW, height: canvasH)
-                        .blur(radius: 16)
-                        .scaleEffect(1.04)
-                        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-                        .opacity(0.90)
+                        .blur(radius: 18)
+                        .scaleEffect(1.05)
+                        .opacity(0.88)
+                        .mask(featheredDissolveMask(vf: 0.14, hf: 0.12))
 
-                    // 3. Четкое видео по центру с плавным растворением к краям (без резких срезов)
+                    // 3. Четкое видео по центру с плавным 100% растворением к краям
                     VideoShotPlayerView(player: vp)
                         .frame(width: canvasW, height: canvasH)
-                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                        .mask(
-                            RadialGradient(
-                                stops: [
-                                    .init(color: .white, location: 0.60),
-                                    .init(color: .white.opacity(0.85), location: 0.76),
-                                    .init(color: .white.opacity(0.20), location: 0.90),
-                                    .init(color: .clear, location: 1.0)
-                                ],
-                                center: .center,
-                                startRadius: min(canvasW, canvasH) * 0.28,
-                                endRadius: max(canvasW, canvasH) * 0.56
-                            )
-                        )
+                        .mask(featheredDissolveMask(vf: 0.20, hf: 0.18))
                 }
                 .frame(width: canvasW, height: canvasH)
             } else {
-                // Apple Vision Pro Spatial Album Cover (Мягкое растворение краев как на фото 1)
+                // Apple Vision Pro Spatial Album Cover (Плавное растворение краев в пространство)
+                let coverW = min(side * 1.06, 350)
+                let coverH = coverW
                 ZStack {
                     // 1. Атмосферный ореол обложки
                     artwork
-                        .frame(width: side, height: side)
-                        .blur(radius: 32)
-                        .scaleEffect(1.15)
-                        .opacity(player.isPlaying ? 0.75 : 0.20)
+                        .frame(width: coverW, height: coverH)
+                        .blur(radius: 36)
+                        .scaleEffect(1.16)
+                        .opacity(player.isPlaying ? 0.75 : 0.22)
+                        .mask(featheredDissolveMask(vf: 0.08, hf: 0.08))
 
-                    // 2. Объемное преломляющее размытие по периметру
+                    // 2. Объемное гауссово размытие по периметру
                     artwork
-                        .frame(width: side, height: side)
-                        .blur(radius: 16)
-                        .scaleEffect(1.04)
-                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                        .opacity(0.92)
+                        .frame(width: coverW, height: coverH)
+                        .blur(radius: 18)
+                        .scaleEffect(1.05)
+                        .opacity(0.90)
+                        .mask(featheredDissolveMask(vf: 0.14, hf: 0.12))
 
-                    // 3. Четкая обложка по центру с плавным гауссовым переходом в размытие
+                    // 3. Четкая обложка по центру с плавным переходом в размытие
                     artwork
-                        .frame(width: side, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .mask(
-                            RadialGradient(
-                                stops: [
-                                    .init(color: .white, location: 0.60),
-                                    .init(color: .white.opacity(0.85), location: 0.76),
-                                    .init(color: .white.opacity(0.20), location: 0.90),
-                                    .init(color: .clear, location: 1.0)
-                                ],
-                                center: .center,
-                                startRadius: side * 0.28,
-                                endRadius: side * 0.56
-                            )
-                        )
+                        .frame(width: coverW, height: coverH)
+                        .mask(featheredDissolveMask(vf: 0.20, hf: 0.18))
                 }
-                .frame(width: side, height: side)
+                .frame(width: coverW, height: coverH)
             }
         }
         .shadow(
-            color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.45 : 0.15),
-            radius: player.isPlaying ? 24 : 8,
+            color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.40 : 0.15),
+            radius: player.isPlaying ? 28 : 8,
             x: 0,
             y: player.isPlaying ? 14 : 4
         )
         .scaleEffect(player.isPlaying ? 1.0 : 0.86)
-            .offset(x: coverDragX)
-            .rotationEffect(.degrees(Double(coverDragX / 24)), anchor: .center)
-            .gesture(
-                DragGesture(minimumDistance: 15)
-                    .onChanged { val in
-                        guard abs(val.translation.width) > abs(val.translation.height) else { return }
-                        let translation = val.translation.width
-                        let damping: CGFloat = 1.0 + (abs(translation) * 0.003)
-                        coverDragX = translation / damping
+        .offset(x: coverDragX)
+        .rotationEffect(.degrees(Double(coverDragX / 24)), anchor: .center)
+        .gesture(
+            DragGesture(minimumDistance: 15)
+                .onChanged { val in
+                    guard abs(val.translation.width) > abs(val.translation.height) else { return }
+                    let translation = val.translation.width
+                    let damping: CGFloat = 1.0 + (abs(translation) * 0.003)
+                    coverDragX = translation / damping
+                }
+                .onEnded { val in
+                    guard abs(val.translation.width) > abs(val.translation.height) else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
+                        return
                     }
-                    .onEnded { val in
-                        guard abs(val.translation.width) > abs(val.translation.height) else {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
-                            return
+                    let threshold: CGFloat = 50
+                    if val.translation.width < -threshold {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = -side * 1.2 }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            nextTrack()
+                            coverDragX = side * 1.2
+                            withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
                         }
-                        let threshold: CGFloat = 50
-                        if val.translation.width < -threshold {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = -side * 1.2 }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                nextTrack()
-                                coverDragX = side * 1.2
-                                withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
-                            }
-                        } else if val.translation.width > threshold {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = side * 1.2 }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                previousTrack()
-                                coverDragX = -side * 1.2
-                                withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
+                    } else if val.translation.width > threshold {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = side * 1.2 }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            previousTrack()
+                            coverDragX = -side * 1.2
+                            withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
                         }
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
                     }
+                }
+        )
+        .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
+    }
+
+    private func featheredDissolveMask(vf: CGFloat, hf: CGFloat) -> some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .white, location: vf),
+                        .init(color: .white, location: 1.0 - vf),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             )
-            .frame(width: side, height: side)
-            .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .white, location: hf),
+                        .init(color: .white, location: 1.0 - hf),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
     }
 
     @ViewBuilder private var artwork: some View {

@@ -246,10 +246,9 @@ struct HomeView: View {
     }
 
     private func handlePlayTap() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if player.isPlaying {
             player.pause()
-        } else if player.currentTrack != nil {
-            player.resume()
         } else {
             SonivoPlay.wave(moodStation)
         }
