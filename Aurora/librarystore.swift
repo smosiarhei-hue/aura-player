@@ -100,10 +100,19 @@ final class LibraryStore {
     }
 
     func toggleFavorite(_ track: Track) {
+        let ymId = PlayerCore.yandexTrackID(from: track)
         if let i = tracks.firstIndex(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
             tracks[i].isFavorite.toggle()
-            if tracks[i].isFavorite {
+            let isFav = tracks[i].isFavorite
+            if isFav {
                 MoodRadioEngine.shared.recordFeedback(track: tracks[i], action: .like)
+                if let yId = ymId {
+                    Task { await YandexMusicService.shared.likeTrackOnServer(trackId: yId) }
+                }
+            } else {
+                if let yId = ymId {
+                    Task { await YandexMusicService.shared.unlikeTrackOnServer(trackId: yId) }
+                }
             }
         } else {
             // Track is an online stream or not yet saved -> add to library as favorite!
@@ -111,7 +120,32 @@ final class LibraryStore {
             newFavorite.isFavorite = true
             tracks.insert(newFavorite, at: 0)
             MoodRadioEngine.shared.recordFeedback(track: newFavorite, action: .like)
+            if let yId = ymId {
+                Task { await YandexMusicService.shared.likeTrackOnServer(trackId: yId) }
+            }
         }
+    }
+
+    func setFavoritesFromCloud(_ cloudTracks: [Track]) {
+        var updated = tracks
+        for ct in cloudTracks {
+            if let idx = updated.firstIndex(where: { $0.id == ct.id || ($0.fileName == ct.fileName && !ct.fileName.isEmpty) }) {
+                updated[idx].isFavorite = true
+            } else {
+                var newFav = ct
+                newFav.isFavorite = true
+                updated.append(newFav)
+            }
+        }
+        self.tracks = updated
+    }
+
+    func clearFavorites() {
+        var updated = tracks
+        for i in 0..<updated.count {
+            updated[i].isFavorite = false
+        }
+        self.tracks = updated
     }
 
     func isTrackFavorite(_ track: Track) -> Bool {

@@ -22,6 +22,10 @@ final class YandexMusicService {
         }
     }
     var isAuthorized: Bool = true
+    private(set) var currentUser: YMUserProfile? = nil
+    var isUserLoggedIn: Bool {
+        currentUser != nil
+    }
 
     // MARK: - Персональная память прослушиваний
     private(set) var recentKeys: [String] = []
@@ -66,9 +70,23 @@ final class YandexMusicService {
         self.artistCounts = (defaults.dictionary(forKey: Self.keyArtists) as? [String: Int]) ?? [:]
         self.totalPlays = defaults.integer(forKey: Self.keyPlays)
         self.waveMoodStationId = defaults.string(forKey: "ym.waveMood") ?? "user:onyourwave"
+
+        if let uData = defaults.data(forKey: "ym.user_profile"),
+           let savedProfile = try? JSONDecoder().decode(YMUserProfile.self, from: uData) {
+            self.currentUser = savedProfile
+        }
     }
 
     // MARK: - Models
+
+    struct YMUserProfile: Codable, Equatable, Sendable {
+        let uid: Int
+        let login: String
+        let displayName: String?
+        let fullName: String?
+        let avatarUrl: String?
+        let hasPlus: Bool
+    }
 
     struct YMArtist: Codable, Equatable {
         let id: Int?
@@ -1137,6 +1155,199 @@ final class YandexMusicService {
             bytes[8], bytes[9], bytes[10], bytes[11],
             bytes[12], bytes[13], bytes[14], bytes[15]
         ))
+    }
+
+    // MARK: - Account, Profile & Cloud Sync
+
+    func fetchAccountStatus() async -> YMUserProfile? {
+        guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let url = URL(string: Self.apiBase + "/account/status") else { return nil }
+
+        let req = authorizedRequest(url: url)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return nil
+            }
+
+            struct AccountData: Decodable {
+                let uid: Int?
+                let login: String?
+                let fullName: String?
+                let displayName: String?
+                let default_avatar_id: String?
+            }
+            struct PlusData: Decodable {
+                let hasPlus: Bool?
+            }
+            struct StatusResult: Decodable {
+                let account: AccountData?
+                let plus: PlusData?
+                let default_avatar_id: String?
+            }
+            struct ResponseWrapper: Decodable {
+                let result: StatusResult?
+            }
+
+            let decoded = try JSONDecoder().decode(ResponseWrapper.self, from: data)
+            guard let acc = decoded.result?.account, let uid = acc.uid else { return nil }
+
+            let avatarId = acc.default_avatar_id ?? decoded.result?.default_avatar_id
+            let avatarUrl: String? = avatarId != nil ? "https://avatars.yandex.net/get-yapic/\(avatarId!)/islands-200" : nil
+            let hasPlus = decoded.result?.plus?.hasPlus ?? true
+
+            let profile = YMUserProfile(
+                uid: uid,
+                login: acc.login ?? "user\(uid)",
+                displayName: acc.displayName ?? acc.fullName ?? acc.login,
+                fullName: acc.fullName,
+                avatarUrl: avatarUrl,
+                hasPlus: hasPlus
+            )
+
+            self.currentUser = profile
+            if let enc = try? JSONEncoder().encode(profile) {
+                UserDefaults.standard.set(enc, forKey: "ym.user_profile")
+            }
+            return profile
+        } catch {
+            return nil
+        }
+    }
+
+    func fetchTracksBatch(ids: [String]) async -> [YMTrackItem] {
+        guard !ids.isEmpty else { return [] }
+        guard let url = URL(string: Self.apiBase + "/tracks") else { return [] }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        let activeToken = token.isEmpty ? Self.defaultToken : token
+        req.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue("ru", forHTTPHeaderField: "Accept-Language")
+        req.setValue("YandexMusic/2024.1", forHTTPHeaderField: "User-Agent")
+        req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
+
+        let body = "track-ids=" + ids.joined(separator: ",")
+        req.httpBody = body.data(using: .utf8)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return []
+            }
+            struct ResponseWrapper: Decodable {
+                let result: [YMTrackItem]?
+            }
+            let decoded = try JSONDecoder().decode(ResponseWrapper.self, from: data)
+            return decoded.result ?? []
+        } catch {
+            return []
+        }
+    }
+
+    func fetchUserLikes(uid: Int, limit: Int = 120) async -> [YMTrackItem] {
+        guard let url = URL(string: Self.apiBase + "/users/\(uid)/likes/tracks") else { return [] }
+        let req = authorizedRequest(url: url)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return []
+            }
+
+            struct LikeTrackItem: Decodable {
+                let id: String?
+            }
+            struct LibraryWrapper: Decodable {
+                let tracks: [LikeTrackItem]?
+            }
+            struct ResultWrapper: Decodable {
+                let library: LibraryWrapper?
+            }
+            struct ResponseWrapper: Decodable {
+                let result: ResultWrapper?
+            }
+
+            let decoded = try JSONDecoder().decode(ResponseWrapper.self, from: data)
+            let rawIds = (decoded.result?.library?.tracks ?? []).compactMap { $0.id }
+            let prefixIds = Array(rawIds.prefix(limit))
+            guard !prefixIds.isEmpty else { return [] }
+
+            return await fetchTracksBatch(ids: prefixIds)
+        } catch {
+            return []
+        }
+    }
+
+    func syncAccountData() async {
+        guard let profile = await fetchAccountStatus() else { return }
+        let likedItems = await fetchUserLikes(uid: profile.uid, limit: 120)
+        let tracks = likedItems.map { convertToTrack($0) }
+        LibraryStore.shared.setFavoritesFromCloud(tracks)
+    }
+
+    func loginWithToken(_ newToken: String) async -> Bool {
+        let clean = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return false }
+        self.token = clean
+        guard let profile = await fetchAccountStatus() else {
+            return false
+        }
+        _ = profile
+        await syncAccountData()
+        return true
+    }
+
+    func likeTrackOnServer(trackId: String) async {
+        guard let uid = currentUser?.uid else { return }
+        guard let url = URL(string: Self.apiBase + "/users/\(uid)/likes/tracks/add-multiple") else { return }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        let activeToken = token.isEmpty ? Self.defaultToken : token
+        req.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue("ru", forHTTPHeaderField: "Accept-Language")
+        req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
+        req.httpBody = "track-ids=\(trackId)".data(using: .utf8)
+
+        _ = try? await URLSession.shared.data(for: req)
+    }
+
+    func unlikeTrackOnServer(trackId: String) async {
+        guard let uid = currentUser?.uid else { return }
+        guard let url = URL(string: Self.apiBase + "/users/\(uid)/likes/tracks/remove") else { return }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        let activeToken = token.isEmpty ? Self.defaultToken : token
+        req.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue("ru", forHTTPHeaderField: "Accept-Language")
+        req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
+        req.httpBody = "track-ids=\(trackId)".data(using: .utf8)
+
+        _ = try? await URLSession.shared.data(for: req)
+    }
+
+    func logout() {
+        self.token = Self.defaultToken
+        self.currentUser = nil
+        self.recentKeys = []
+        self.recentYmIDs = []
+        self.artistCounts = [:]
+        self.totalPlays = 0
+
+        UserDefaults.standard.removeObject(forKey: "ym.token")
+        UserDefaults.standard.removeObject(forKey: "ym.user_profile")
+        UserDefaults.standard.removeObject(forKey: Self.keyRecent)
+        UserDefaults.standard.removeObject(forKey: Self.keyRecentYm)
+        UserDefaults.standard.removeObject(forKey: Self.keyArtists)
+        UserDefaults.standard.removeObject(forKey: Self.keyPlays)
+        UserDefaults.standard.removeObject(forKey: "sonivo_recent_searches")
+
+        LibraryStore.shared.clearFavorites()
     }
 
     private func authorizedRequest(url: URL) -> URLRequest {

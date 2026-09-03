@@ -69,15 +69,33 @@ struct HomeView: View {
             Button {
                 showSettings = true
             } label: {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(LinearGradient(colors: [Color(hex: "#FF6B00") ?? .orange, Color(hex: "#FF1361") ?? .red], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 34, height: 34)
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white)
+                if let user = ym.currentUser {
+                    if let avatar = user.avatarUrl {
+                        RemoteArtwork(urlString: avatar, corner: 10)
+                            .frame(width: 34, height: 34)
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.35), lineWidth: 1))
+                    } else {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(LinearGradient(colors: [Color(hex: "#FF334B")!, Color(hex: "#FF6A00")!], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 34, height: 34)
+                            Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased())
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.35), lineWidth: 1))
+                    }
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(LinearGradient(colors: [Color(hex: "#FF6B00") ?? .orange, Color(hex: "#FF1361") ?? .red], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 34, height: 34)
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.25), lineWidth: 0.8))
                 }
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.25), lineWidth: 0.8))
             }
             .buttonStyle(GlassPressStyle())
 

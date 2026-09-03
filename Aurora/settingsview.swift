@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var ym = YandexMusicService.shared
     @State private var socialAuth = SocialAuthStore.shared
     @State private var tokenInput = ""
+    @State private var showYandexAuthSheet = false
+    @State private var isSyncingLikes = false
 
     @State private var isCheckingGemini = false
     @State private var geminiCheckResult: String? = nil
@@ -15,20 +17,89 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Яндекс Музыка (YM-API)") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("OAuth токен аккаунта").font(.subheadline.weight(.medium))
-                        SecureField("Вставьте токен Яндекс Музыки", text: $tokenInput)
-                            .textFieldStyle(.roundedBorder)
-                            .onAppear { tokenInput = ym.token }
-                        Button { ym.token = tokenInput } label: {
-                            Text(ym.isAuthorized ? "Токен сохранен ✓" : "Сохранить токен").frame(maxWidth: .infinity)
+                Section("Яндекс Музыка") {
+                    if let user = ym.currentUser {
+                        HStack(spacing: 14) {
+                            if let avatar = user.avatarUrl {
+                                RemoteArtwork(urlString: avatar, corner: 999)
+                                    .frame(width: 52, height: 52)
+                            } else {
+                                ZStack {
+                                    Circle()
+                                        .fill(LinearGradient(colors: [Color(hex: "#FF334B")!, Color(hex: "#FF6A00")!], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        .frame(width: 52, height: 52)
+                                    Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased())
+                                        .font(.system(size: 20, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(user.displayName ?? user.login)
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(.primary)
+
+                                Text("@\(user.login)")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+
+                                if user.hasPlus {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "checkmark.seal.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(Color(hex: "#FF334B")!)
+                                        Text("Яндекс Плюс (320 kbps & FLAC)")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(Color(hex: "#FF334B")!)
+                                    }
+                                    .padding(.top, 2)
+                                }
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color(hex: "#FF455B") ?? .pink)
-                        Text("Токен позволяет слушать музыку в максимальном качестве 320 kbps и запускать персональную «Мою волну».")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }.padding(.vertical, 4)
+                        .padding(.vertical, 4)
+
+                        Button {
+                            Task {
+                                isSyncingLikes = true
+                                await ym.syncAccountData()
+                                isSyncingLikes = false
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text(isSyncingLikes ? "Синхронизация..." : "Синхронизировать медиатеку")
+                            }
+                        }
+                        .disabled(isSyncingLikes)
+
+                        Button(role: .destructive) {
+                            ym.logout()
+                        } label: {
+                            Text("Выйти из Яндекс ID")
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Войдите в свой Яндекс ID, чтобы слушать персональную Мою волну, синхронизировать всю любимую музыку и сохранять историю.")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+
+                            Button {
+                                showYandexAuthSheet = true
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "person.badge.key.fill")
+                                        .font(.system(size: 15, weight: .bold))
+                                    Text("Войти с Яндекс ID")
+                                        .font(.system(size: 15, weight: .bold))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color(hex: "#FF334B")!)
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
 
                 Section("Аккаунт") {
@@ -170,7 +241,11 @@ struct SettingsView: View {
                     LabeledContent("Сборка", value: "Build #\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")")
                     LabeledContent("Дизайн", value: "iOS 27 Liquid Glass")
                 }
-            }.navigationTitle("Настройки")
+            }
+            .navigationTitle("Настройки")
+            .sheet(isPresented: $showYandexAuthSheet) {
+                YandexAuthSheet()
+            }
         }
     }
 
