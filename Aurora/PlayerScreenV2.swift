@@ -152,7 +152,7 @@ struct PlayerScreenV2: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(.opacity)
                     } else {
-                        artworkStage(side: coverSide)
+                        artworkStage(side: coverSide, geo: geo)
                             .frame(maxWidth: .infinity)
                             .overlay(
                                 Group {
@@ -374,35 +374,35 @@ struct PlayerScreenV2: View {
         .frame(minHeight: tapSide)
     }
 
-    // MARK: - Center Stage: Standard Artwork
+    // MARK: - Center Stage: Standard Artwork / Immersive Video-Shot
 
-    private func artworkStage(side: CGFloat) -> some View {
+    private func artworkStage(side: CGFloat, geo: GeometryProxy) -> some View {
         Group {
             if isVideoShotEnabled, let vp = videoLooperPlayer {
-                // Apple Vision Pro Spatial Video Canvas (Полностью размытые края без границ)
-                let canvasW = min(side * 1.14, 370)
-                let canvasH = min(side * 1.26, 420)
+                // Кинематографичный пространственный видео-шот во всю ширину и высоту
+                let canvasW = geo.size.width
+                let canvasH = min(geo.size.height * 0.58, 520)
                 ZStack {
                     // 1. Широкий атмосферный ореол
                     VideoShotPlayerView(player: vp)
                         .frame(width: canvasW, height: canvasH)
-                        .blur(radius: 40)
-                        .scaleEffect(1.18)
-                        .opacity(0.65)
-                        .mask(featheredDissolveMask(vf: 0.08, hf: 0.08))
+                        .blur(radius: 46)
+                        .scaleEffect(1.22)
+                        .opacity(0.68)
+                        .mask(featheredDissolveMask(topF: 0.06, bottomF: 0.20, hF: 0.05))
 
                     // 2. Объемное преломляющее гауссово размытие
                     VideoShotPlayerView(player: vp)
                         .frame(width: canvasW, height: canvasH)
-                        .blur(radius: 18)
-                        .scaleEffect(1.05)
-                        .opacity(0.88)
-                        .mask(featheredDissolveMask(vf: 0.14, hf: 0.12))
+                        .blur(radius: 20)
+                        .scaleEffect(1.06)
+                        .opacity(0.90)
+                        .mask(featheredDissolveMask(topF: 0.10, bottomF: 0.26, hF: 0.08))
 
-                    // 3. Четкое видео по центру с плавным 100% растворением к краям
+                    // 3. Четкое видео по центру с глубоким мягким растворением в кнопки снизу
                     VideoShotPlayerView(player: vp)
                         .frame(width: canvasW, height: canvasH)
-                        .mask(featheredDissolveMask(vf: 0.20, hf: 0.18))
+                        .mask(featheredDissolveMask(topF: 0.12, bottomF: 0.32, hF: 0.10))
                 }
                 .frame(width: canvasW, height: canvasH)
             } else {
@@ -416,7 +416,7 @@ struct PlayerScreenV2: View {
                         .blur(radius: 36)
                         .scaleEffect(1.16)
                         .opacity(player.isPlaying ? 0.75 : 0.22)
-                        .mask(featheredDissolveMask(vf: 0.08, hf: 0.08))
+                        .mask(featheredDissolveMask(topF: 0.08, bottomF: 0.08, hF: 0.08))
 
                     // 2. Объемное гауссово размытие по периметру
                     artwork
@@ -424,12 +424,12 @@ struct PlayerScreenV2: View {
                         .blur(radius: 18)
                         .scaleEffect(1.05)
                         .opacity(0.90)
-                        .mask(featheredDissolveMask(vf: 0.14, hf: 0.12))
+                        .mask(featheredDissolveMask(topF: 0.14, bottomF: 0.14, hF: 0.12))
 
                     // 3. Четкая обложка по центру с плавным переходом в размытие
                     artwork
                         .frame(width: coverW, height: coverH)
-                        .mask(featheredDissolveMask(vf: 0.20, hf: 0.18))
+                        .mask(featheredDissolveMask(topF: 0.18, bottomF: 0.18, hF: 0.16))
                 }
                 .frame(width: coverW, height: coverH)
             }
@@ -481,14 +481,14 @@ struct PlayerScreenV2: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
     }
 
-    private func featheredDissolveMask(vf: CGFloat, hf: CGFloat) -> some View {
+    private func featheredDissolveMask(topF: CGFloat, bottomF: CGFloat, hF: CGFloat) -> some View {
         Rectangle()
             .fill(
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: .white, location: vf),
-                        .init(color: .white, location: 1.0 - vf),
+                        .init(color: .white, location: topF),
+                        .init(color: .white, location: max(topF, 1.0 - bottomF)),
                         .init(color: .clear, location: 1.0)
                     ],
                     startPoint: .top,
@@ -499,8 +499,8 @@ struct PlayerScreenV2: View {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: .white, location: hf),
-                        .init(color: .white, location: 1.0 - hf),
+                        .init(color: .white, location: hF),
+                        .init(color: .white, location: 1.0 - hF),
                         .init(color: .clear, location: 1.0)
                     ],
                     startPoint: .leading,

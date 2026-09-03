@@ -30,7 +30,7 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                SonivoBackdrop()
+                solidMoodBackdrop
 
                 ScrollView {
                     VStack(spacing: 22) {
@@ -254,20 +254,28 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Карточки снизу (Liquid Glass Mood Capsules по фото media_1788447855900.png)
+    private var solidMoodBackdrop: some View {
+        let accent = moodColors.first ?? Color(hex: "#FF334B")!
+        return ZStack {
+            Color(hex: "#09090B")!.ignoresSafeArea()
+            accent.opacity(0.12).ignoresSafeArea()
+        }
+    }
+
+    // MARK: - Карточки настроения (Компактные аккуратные кнопки)
 
     private var moodCardsSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 ForEach(MoodPreset.allCases) { preset in
                     LiquidGlassMoodCapsule(preset: preset) {
                         MoodRadioEngine.shared.start(mood: preset)
                     }
-                    .frame(width: 320, height: 96)
+                    .frame(height: 48)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 4)
         }
     }
 

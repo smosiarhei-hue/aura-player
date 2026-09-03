@@ -455,7 +455,6 @@ final class PlayerCore {
     }
 
     func activateNowPlayingSessionIfNeeded() {
-        guard !applicationIsActive else { return }
         guard let session = nowPlayingSession else { return }
         guard !session.isActive, !nowPlayingActivationInFlight else { return }
         guard session.canBecomeActive else { return }
@@ -484,11 +483,7 @@ final class PlayerCore {
     func setApplicationSceneActive(_ active: Bool) {
         guard applicationIsActive != active else { return }
         applicationIsActive = active
-        if active {
-            publishNowPlaying(nil, state: .stopped)
-        } else {
-            updateNowPlayingInfo()
-        }
+        updateNowPlayingInfo()
     }
 
     private func shouldHandleRemote(_ name: String) -> Bool {

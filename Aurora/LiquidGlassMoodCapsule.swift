@@ -14,29 +14,26 @@ struct LiquidGlassMoodCapsule: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 16) {
-                // 1. Левая выпуклая 3D-сфера из стекла с тисненой иконкой
+            HStack(spacing: 12) {
+                // 1. Левая стеклянная сфера с тисненой иконкой
                 glassOrbView
-                    .frame(width: 74, height: 74)
+                    .frame(width: 36, height: 36)
                     .padding(.leading, 6)
 
-                // 2. Двустрочный текст настроения (всегда целиком без обрезаний)
-                Text(preset.title)
-                    .font(.system(size: 16.5, weight: .bold, design: .rounded))
+                // 2. Текст настроения
+                Text(preset.title.replacingOccurrences(of: "\n", with: " "))
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
-                    .lineSpacing(3)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
 
-                Spacer(minLength: 6)
+                Spacer(minLength: 4)
 
-                // 3. Правая круглая стеклянная кнопка с шевроном >
+                // 3. Правый аккуратный шеврон >
                 glassChevronButton
-                    .frame(width: 42, height: 42)
-                    .padding(.trailing, 12)
+                    .frame(width: 24, height: 24)
+                    .padding(.trailing, 8)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .background(capsuleGlassBackground)
             .clipShape(Capsule())
             .overlay(
@@ -128,7 +125,7 @@ struct LiquidGlassMoodCapsule: View {
 
             // Тисненая иконка в центре сферы
             Image(systemName: preset.iconName)
-                .font(.system(size: 32, weight: .bold))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(
                     LinearGradient(
                         colors: [
@@ -139,8 +136,8 @@ struct LiquidGlassMoodCapsule: View {
                         endPoint: .bottom
                     )
                 )
-                .shadow(color: Color.white.opacity(0.6), radius: 8, x: 0, y: 0)
-                .shadow(color: Color.black.opacity(0.5), radius: 3, x: 0, y: 2)
+                .shadow(color: Color.white.opacity(0.6), radius: 4, x: 0, y: 0)
+                .shadow(color: Color.black.opacity(0.5), radius: 2, x: 0, y: 1)
         }
     }
 
@@ -152,7 +149,7 @@ struct LiquidGlassMoodCapsule: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.25),
+                            Color.white.opacity(0.20),
                             Color.white.opacity(0.05)
                         ],
                         startPoint: .topLeading,
@@ -163,17 +160,17 @@ struct LiquidGlassMoodCapsule: View {
                     Circle()
                         .strokeBorder(
                             LinearGradient(
-                                colors: [Color.white.opacity(0.65), Color.white.opacity(0.15)],
+                                colors: [Color.white.opacity(0.50), Color.white.opacity(0.10)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
-                            lineWidth: 1.2
+                            lineWidth: 0.8
                         )
                 )
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(.white)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white.opacity(0.85))
         }
     }
 
