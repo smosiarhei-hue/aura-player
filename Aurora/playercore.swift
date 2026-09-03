@@ -146,6 +146,7 @@ final class PlayerCore {
     private var isPlanningTransition: Bool = false
     private var planningStartedAt: Date? = nil
     private var plannedNextTrack: Track? = nil
+    private var isSelectingNextTrack: Bool = false
     private var incomingIsStream: Bool = false
     private var incomingLaneReady: Bool = false
     private var transitionScheduledAt: Date? = nil
@@ -810,6 +811,7 @@ final class PlayerCore {
         playError = nil
         activeTransitionPlan = nil
         plannedNextTrack = nil
+        isSelectingNextTrack = false
         generation += 1
         let token = generation
         isPlanningTransition = false
@@ -988,6 +990,11 @@ final class PlayerCore {
         } else if let peeked = peekNext(auto: true) {
             plannedNextTrack = peeked
             nextTrack = peeked
+            // AutoMix-only: look ahead at a bounded window of upcoming songs
+            // and, if one meshes with the current track's key/tempo clearly
+            // better than the plain next-in-queue pick, promote it in the
+            // background so the actual transition targets a real match.
+            selectHarmonicNextTrackIfNeeded(current: current, defaultNext: peeked)
         } else {
             return
         }
@@ -1317,7 +1324,16 @@ final class PlayerCore {
 
     private func startTransitionTimer() {
         transitionTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        // Throttled from 60Hz: every tick here writes several AVAudioUnit
+        // parameters (EQ bands, reverb wet/dry, time-pitch/rate ramps) plus
+        // the @Observable transitionProgress that drives the crossfade
+        // overlay UI - exactly the moment two audio graphs and two sets of
+        // visuals are active at once, the highest-load moment for the
+        // player. This is the same class of main-thread overload as the
+        // 120Hz/60Hz timers fixed earlier; 30Hz is still smooth for both the
+        // DSP ramps and the crossfade UI, and removes the extra load right
+        // when AutoMix is most likely to stutter.
+        let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickTransition() }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -1678,6 +1694,7 @@ final class PlayerCore {
         isPlanningTransition = false
         planningStartedAt = nil
         plannedNextTrack = nil
+        isSelectingNextTrack = false
         incomingTrack = nil
         metadataTrack = nil
         metadataSwapped = false
@@ -1835,6 +1852,95 @@ final class PlayerCore {
         if nextIdx < q.count { return q[nextIdx] }
         if repeatMode == .all { return q.first }
         return auto ? nil : q.first
+    }
+
+    /// Bounded lookahead pool for AutoMix's harmonic/tempo track pick: the
+    /// next few queued tracks in order mode, or a random sample of the
+    /// remaining queue in shuffle mode (so shuffle still benefits from a
+    /// musical pick instead of a purely random one).
+    private func automixCandidatePool(excluding current: Track, limit: Int = 6) -> [Track] {
+        let q = effectiveQueue()
+        guard q.count > 1 else { return [] }
+        if shuffle {
+            let remaining = q.filter { $0.id != current.id }
+            return Array(remaining.shuffled().prefix(limit))
+        }
+        guard let idx = q.firstIndex(where: { $0.id == current.id }) else { return [] }
+        var window: [Track] = []
+        var i = idx + 1
+        while i < q.count && window.count < limit {
+            window.append(q[i])
+            i += 1
+        }
+        if window.isEmpty, repeatMode == .all, let first = q.first, first.id != current.id {
+            window.append(first)
+        }
+        return window
+    }
+
+    /// Moves an upcoming queue track to sit immediately after `current`, so
+    /// the harmonically/tempo-matched pick AutoMix chose actually plays next
+    /// instead of only being used for this one transition plan.
+    private func reorderQueue(bringForward track: Track, after current: Track) {
+        guard let trackIdx = queue.firstIndex(where: { $0.id == track.id }) else { return }
+        let item = queue.remove(at: trackIdx)
+        guard let curIdx = queue.firstIndex(where: { $0.id == current.id }) else {
+            queue.insert(item, at: min(trackIdx, queue.count))
+            return
+        }
+        queue.insert(item, at: min(curIdx + 1, queue.count))
+    }
+
+    /// Runs once per track, well ahead of the actual hand-off: analyses a
+    /// bounded lookahead window of upcoming songs and, if one of them
+    /// meshes with the current track's key and tempo clearly better than
+    /// the plain next-in-queue pick, promotes it to be the AutoMix target -
+    /// a real "find a track in the same key" pick out of a varied queue,
+    /// instead of always blending into whatever happens to sit next.
+    private func selectHarmonicNextTrackIfNeeded(current: Track, defaultNext: Track) {
+        guard !isSelectingNextTrack, transitionMode == .automix else { return }
+        let pool = automixCandidatePool(excluding: current).filter { $0.id != defaultNext.id }
+        guard !pool.isEmpty else { return }
+
+        isSelectingNextTrack = true
+        let token = generation
+        let currentDuration = duration
+
+        Task {
+            let currentAnalysis = await TrackAnalysisService.shared.analysis(for: current)
+                ?? TrackAnalysis.minimal(trackID: current.id.uuidString, duration: currentDuration)
+
+            var scored: [(track: Track, analysis: TrackAnalysis)] = []
+            if let defaultAnalysis = await TrackAnalysisService.shared.analysis(for: defaultNext) {
+                scored.append((defaultNext, defaultAnalysis))
+            }
+            for candidate in pool {
+                if let analysis = await TrackAnalysisService.shared.analysis(for: candidate) {
+                    scored.append((candidate, analysis))
+                }
+            }
+
+            await MainActor.run {
+                self.isSelectingNextTrack = false
+                guard self.generation == token,
+                      self.currentTrack?.id == current.id,
+                      !self.isTransitioning,
+                      self.activeTransitionPlan == nil,
+                      self.plannedNextTrack?.id == defaultNext.id else { return }
+
+                guard let winner = TransitionPlanner.bestAutoMixCandidate(current: currentAnalysis, candidates: scored),
+                      winner.id != defaultNext.id else { return }
+
+                if !self.shuffle {
+                    self.reorderQueue(bringForward: winner, after: current)
+                }
+                self.plannedNextTrack = winner
+                SonivoDiagnostics.log(
+                    "[AutoMix] Smart pick: \(winner.title) chosen for harmonic/tempo match over \(defaultNext.title)",
+                    tag: "AUTOMIX"
+                )
+            }
+        }
     }
 
     private func liveProgress() -> Double {
