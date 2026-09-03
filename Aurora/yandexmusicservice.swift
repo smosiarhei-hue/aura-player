@@ -44,7 +44,7 @@ final class YandexMusicService {
     private static let memoryLimit = 600
     private static let noRepeatWindow = 180
 
-    private var chartCache: [YMTrackItem] = []
+    private(set) var chartCache: [YMTrackItem] = []
     private var chartCacheAt: Date?
     private var newAlbumsCache: [YMAlbumItem] = []
     private var newAlbumsCacheAt: Date?

@@ -1810,6 +1810,10 @@ final class PlayerCore {
         queue.removeAll { $0.id == track.id }
     }
 
+    func appendToQueue(_ tracks: [Track]) {
+        queue.append(contentsOf: tracks)
+    }
+
     private func peekNext(auto: Bool) -> Track? {
         let q = effectiveQueue()
         guard !q.isEmpty else { return nil }
