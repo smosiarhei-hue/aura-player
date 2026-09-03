@@ -118,14 +118,30 @@ struct PlayerScreenV2: View {
                 // 1. Spatial Ambient Background (Strictly bounded to screen geometry)
                 ZStack {
                     if isVideoShotEnabled, let vp = videoLooperPlayer {
+                        // FULL-SCREEN VIDEO SHOT (На весь экран без рамок и обрезаний)
                         VideoShotPlayerView(player: vp)
                             .frame(width: geo.size.width, height: geo.size.height)
-                            .blur(radius: 48)
-                            .scaleEffect(1.15)
-                            .overlay(Color.black.opacity(0.42))
+                            .clipped()
+                            .overlay(
+                                // Мягкое преломляющее затемнение сверху и снизу для идеальной читаемости
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: Color.black.opacity(0.70), location: 0.0),
+                                        .init(color: Color.black.opacity(0.15), location: 0.18),
+                                        .init(color: Color.clear, location: 0.35),
+                                        .init(color: Color.clear, location: 0.55),
+                                        .init(color: Color.black.opacity(0.65), location: 0.78),
+                                        .init(color: Color.black.opacity(0.92), location: 1.0)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
                     } else if reduceMotion || scenePhase != .active {
                         artworkGradientBackground
+                        contrastProtectionVignette
                     } else {
+                        // Мягкое пространственное размытие обложки по краям
                         artwork
                             .frame(width: geo.size.width, height: geo.size.height)
                             .blur(radius: 54)
@@ -133,8 +149,8 @@ struct PlayerScreenV2: View {
                             .opacity(0.48)
                         AnimatedMeshBackground(palette: backgroundColors)
                             .opacity(0.65)
+                        contrastProtectionVignette
                     }
-                    contrastProtectionVignette
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
@@ -160,7 +176,11 @@ struct PlayerScreenV2: View {
                         artworkStage(side: coverSide)
                             .frame(maxWidth: .infinity)
                             .overlay(
-                                AutoMixTransitionOverlay(side: coverSide)
+                                Group {
+                                    if !isVideoShotEnabled {
+                                        AutoMixTransitionOverlay(side: coverSide)
+                                    }
+                                }
                             )
                             .transition(.opacity)
                     }
@@ -379,58 +399,32 @@ struct PlayerScreenV2: View {
 
     private func artworkStage(side: CGFloat) -> some View {
         Group {
-            if isVideoShotEnabled, let vp = videoLooperPlayer {
-                // Spatial Video Shot Canvas (Contained card with ambient glow)
-                ZStack {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    (artworkPaletteColors.first ?? AG.amber).opacity(0.35),
-                                    (artworkPaletteColors.last ?? Color.purple).opacity(0.20)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: side * 0.85, height: side)
-                        .blur(radius: 20)
-
-                    VideoShotPlayerView(player: vp)
-                        .frame(width: side * 0.82, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .strokeBorder(
-                                    LinearGradient(
-                                        stops: [
-                                            .init(color: Color.white.opacity(0.40), location: 0.0),
-                                            .init(color: Color.white.opacity(0.10), location: 0.5),
-                                            .init(color: Color.clear, location: 1.0)
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    ),
-                                    lineWidth: 1.0
-                                )
-                        )
-                }
+            if isVideoShotEnabled {
+                // Видео-шот уже полноэкранный на всем плеере — окно и рамка убраны!
+                // Прозрачная сенсорная область для свайпов треков вперед/назад
+                Color.clear
+                    .frame(width: side, height: side)
             } else {
-                // Spatial Album Cover with subtle depth halo
+                // Пространственная обложка: мягкое гауссово свечение БЕЗ ободка (no stroke)
                 ZStack {
+                    // 1. Пространственный рассеянный гауссов ореол сзади
                     artwork
                         .frame(width: side, height: side)
-                        .blur(radius: 20)
-                        .opacity(player.isPlaying ? 0.55 : 0.15)
+                        .blur(radius: 26)
+                        .scaleEffect(1.05)
+                        .opacity(player.isPlaying ? 0.70 : 0.16)
 
+                    // 2. Обложка с мягким скруглением без ободка
                     artwork
                         .frame(width: side, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1.0)
-                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 }
+                .shadow(
+                    color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.45 : 0.15),
+                    radius: player.isPlaying ? 28 : 8,
+                    x: 0,
+                    y: player.isPlaying ? 14 : 4
+                )
             }
         }
         .shadow(
