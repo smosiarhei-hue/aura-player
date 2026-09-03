@@ -115,24 +115,30 @@ struct PlayerScreenV2: View {
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.40, 360)
 
             ZStack {
-                // 1. Spatial Ambient Background (Full-Screen blurred atmosphere)
-                if isVideoShotEnabled, let vp = videoLooperPlayer {
-                    VideoShotPlayerView(player: vp)
-                        .blur(radius: 52)
-                        .scaleEffect(1.35)
-                        .opacity(0.85)
-                        .overlay(Color.black.opacity(0.40))
-                } else if reduceMotion || scenePhase != .active {
-                    artworkGradientBackground
-                } else {
-                    artwork
-                        .blur(radius: 60)
-                        .scaleEffect(1.40)
-                        .opacity(0.50)
-                    AnimatedMeshBackground(palette: backgroundColors)
-                        .opacity(0.70)
+                // 1. Spatial Ambient Background (Strictly bounded to screen geometry)
+                ZStack {
+                    if isVideoShotEnabled, let vp = videoLooperPlayer {
+                        VideoShotPlayerView(player: vp)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .blur(radius: 48)
+                            .scaleEffect(1.15)
+                            .overlay(Color.black.opacity(0.42))
+                    } else if reduceMotion || scenePhase != .active {
+                        artworkGradientBackground
+                    } else {
+                        artwork
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .blur(radius: 54)
+                            .scaleEffect(1.15)
+                            .opacity(0.48)
+                        AnimatedMeshBackground(palette: backgroundColors)
+                            .opacity(0.65)
+                    }
+                    contrastProtectionVignette
                 }
-                contrastProtectionVignette
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+                .ignoresSafeArea()
 
                 let topInset = max(geo.safeAreaInsets.top, 48)
 
@@ -183,8 +189,10 @@ struct PlayerScreenV2: View {
                         .padding(.horizontal, 24)
                         .padding(.bottom, 12)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: geo.size.width, height: geo.size.height)
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
@@ -372,29 +380,27 @@ struct PlayerScreenV2: View {
     private func artworkStage(side: CGFloat) -> some View {
         Group {
             if isVideoShotEnabled, let vp = videoLooperPlayer {
-                // Spatial Video Shot Canvas (Vertical floating card with ambient aura)
+                // Spatial Video Shot Canvas (Contained card with ambient glow)
                 ZStack {
-                    // Soft ambient glow behind canvas
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    (artworkPaletteColors.first ?? AG.amber).opacity(0.40),
+                                    (artworkPaletteColors.first ?? AG.amber).opacity(0.35),
                                     (artworkPaletteColors.last ?? Color.purple).opacity(0.20)
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: side * 0.90, height: side * 1.28)
-                        .blur(radius: 28)
+                        .frame(width: side * 0.85, height: side)
+                        .blur(radius: 20)
 
-                    // Vertical Video Shot Player View
                     VideoShotPlayerView(player: vp)
-                        .frame(width: side * 0.88, height: side * 1.26)
-                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        .frame(width: side * 0.82, height: side)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
                                 .strokeBorder(
                                     LinearGradient(
                                         stops: [
@@ -405,18 +411,17 @@ struct PlayerScreenV2: View {
                                         startPoint: .top,
                                         endPoint: .bottom
                                     ),
-                                    lineWidth: 1.2
+                                    lineWidth: 1.0
                                 )
                         )
                 }
             } else {
-                // Spatial Album Cover with floating halo
+                // Spatial Album Cover with subtle depth halo
                 ZStack {
                     artwork
                         .frame(width: side, height: side)
-                        .blur(radius: 26)
-                        .scaleEffect(1.08)
-                        .opacity(player.isPlaying ? 0.70 : 0.20)
+                        .blur(radius: 20)
+                        .opacity(player.isPlaying ? 0.55 : 0.15)
 
                     artwork
                         .frame(width: side, height: side)
@@ -429,10 +434,10 @@ struct PlayerScreenV2: View {
             }
         }
         .shadow(
-            color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.55 : 0.15),
-            radius: player.isPlaying ? 34 : 10,
+            color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.45 : 0.15),
+            radius: player.isPlaying ? 24 : 8,
             x: 0,
-            y: player.isPlaying ? 18 : 6
+            y: player.isPlaying ? 14 : 4
         )
         .scaleEffect(player.isPlaying ? 1.0 : 0.86)
             .offset(x: coverDragX)
@@ -607,6 +612,7 @@ struct PlayerScreenV2: View {
                 .disabled(current == nil)
                 .accessibilityLabel(isFav ? "Удалить из избранного" : "В избранное")
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
     }
 

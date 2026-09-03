@@ -89,36 +89,50 @@ struct MarqueeText: View {
     @State private var animationTask: Task<Void, Never>? = nil
 
     var body: some View {
-        GeometryReader { geo in
-            let cWidth = geo.size.width
-            ZStack(alignment: .leading) {
-                Text(text)
-                    .font(font)
-                    .foregroundStyle(color)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .background(
-                        GeometryReader { tGeo in
-                            Color.clear.preference(key: TextWidthPreferenceKey.self, value: tGeo.size.width)
-                        }
-                    )
-                    .offset(x: offset)
-            }
-            .frame(width: cWidth, height: height, alignment: .leading)
-            .clipped()
-            .onPreferenceChange(TextWidthPreferenceKey.self) { newWidth in
-                self.textWidth = newWidth
-                self.containerWidth = cWidth
-                restartAnimation()
-            }
-            .onChange(of: text) { _, _ in
-                restartAnimation()
-            }
-            .onDisappear {
-                animationTask?.cancel()
-            }
+        ZStack(alignment: .leading) {
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: height)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .preference(key: TextWidthPreferenceKey.self, value: geo.size.width)
+                    }
+                )
+
+            Text(text)
+                .font(font)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .background(
+                    GeometryReader { tGeo in
+                        Color.clear
+                            .onAppear {
+                                textWidth = tGeo.size.width
+                                restartAnimation()
+                            }
+                            .onChange(of: tGeo.size.width) { _, newWidth in
+                                textWidth = newWidth
+                                restartAnimation()
+                            }
+                    }
+                )
+                .offset(x: offset)
         }
         .frame(height: height)
+        .clipped()
+        .onPreferenceChange(TextWidthPreferenceKey.self) { containerW in
+            if containerW > 0 {
+                self.containerWidth = containerW
+                restartAnimation()
+            }
+        }
+        .onChange(of: text) { _, _ in
+            restartAnimation()
+        }
+        .onDisappear {
+            animationTask?.cancel()
+        }
         .accessibilityLabel(text)
     }
 
