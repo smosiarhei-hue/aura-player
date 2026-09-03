@@ -1770,12 +1770,21 @@ final class PlayerCore {
     }
 
     private func flushListeningStats() {
-        guard let track = currentTrack, track.duration > 0, progress > 5 else { return }
-        UserTasteEngine.shared.recordPlayback(
-            track: track,
-            listenedSeconds: min(progress, track.duration),
-            totalDuration: track.duration
-        )
+        guard let track = currentTrack, track.duration > 0 else { return }
+        let listened = min(progress, track.duration)
+        if progress > 5 {
+            UserTasteEngine.shared.recordPlayback(
+                track: track,
+                listenedSeconds: listened,
+                totalDuration: track.duration
+            )
+        }
+        let pct = listened / track.duration
+        if pct >= 0.75 {
+            MoodRadioEngine.shared.recordFeedback(track: track, action: .listenThrough)
+        } else if pct <= 0.35 && progress < 30 {
+            MoodRadioEngine.shared.recordFeedback(track: track, action: .skipEarly(percent: pct))
+        }
     }
 
     private func reportWaveSkipIfNeeded() {

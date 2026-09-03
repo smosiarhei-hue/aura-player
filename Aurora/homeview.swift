@@ -120,15 +120,14 @@ struct HomeView: View {
 
     private var waveCenterStage: some View {
         ZStack(alignment: .center) {
-            // 1. Анимированная плазма / аура (Magenta / Yellow / Amber)
+            // 1. Анимированная плазма / аура с каустикой, спекулярными бликами и реакцией на звук
             FluidWaveView(
                 colors: moodColors,
-                isBackgroundMode: true
+                isBackgroundMode: false
             )
             .frame(height: 380)
-            .scaleEffect(1.15)
-            .blur(radius: 20)
-            .opacity(0.85)
+            .scaleEffect(1.08)
+            .opacity(0.95)
 
             // 2. Радиальный градиентный свет
             RadialGradient(
@@ -229,6 +228,9 @@ struct HomeView: View {
     }
 
     private var currentAiSubtitle: String {
+        if let mood = MoodRadioEngine.shared.activeMood {
+            return "Радио настроения: \(mood.title.replacingOccurrences(of: "\n", with: " "))"
+        }
         if let current = player.currentTrack {
             return "Поток настроен под \(current.artist)"
         }
@@ -245,114 +247,21 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Карточки снизу (Настроения и занятия как на скриншоте)
+    // MARK: - Карточки снизу (Liquid Glass Mood Capsules по фото media_1788447855900.png)
 
     private var moodCardsSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                // 1. Время помечтать
-                moodCard(
-                    title: "Время помечтать",
-                    icon: "sparkle",
-                    colors: [Color(hex: "#E040FB") ?? .pink, Color(hex: "#9C27B0") ?? .purple],
-                    stationId: "mood:dream"
-                )
-
-                // 2. Бежать быстрее ветра
-                moodCard(
-                    title: "Бежать быстрее\nветра",
-                    icon: "figure.run",
-                    colors: [Color(hex: "#00B0FF") ?? .blue, Color(hex: "#0055FF") ?? .indigo],
-                    stationId: "activity:running"
-                )
-
-                // 3. Распаковать итоги лета
-                moodCard(
-                    title: "Распаковать\nитоги ↗",
-                    icon: "gift.fill",
-                    colors: [Color(hex: "#FF9100") ?? .orange, Color(hex: "#FF3D00") ?? .red],
-                    stationId: "app:recap"
-                )
-
-                // 4. Заряд энергии
-                moodCard(
-                    title: "Заряд\nэнергии",
-                    icon: "bolt.fill",
-                    colors: [Color(hex: "#AEEA00") ?? .green, Color(hex: "#64DD17") ?? .yellow],
-                    stationId: "mood:energy"
-                )
-
-                // 5. Спокойствие
-                moodCard(
-                    title: "Спокойствие\nи баланс",
-                    icon: "leaf.fill",
-                    colors: [Color(hex: "#00E5FF") ?? .cyan, Color(hex: "#1DE9B6") ?? .teal],
-                    stationId: "mood:calm"
-                )
+            HStack(spacing: 16) {
+                ForEach(MoodPreset.allCases) { preset in
+                    LiquidGlassMoodCapsule(preset: preset) {
+                        MoodRadioEngine.shared.start(mood: preset)
+                    }
+                    .frame(width: 290, height: 104)
+                }
             }
             .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-    }
-
-    private func moodCard(title: String, icon: String, colors: [Color], stationId: String) -> some View {
-        Button {
-            let station = YandexMusicService.rotorStations.first(where: { $0.stationId == stationId })
-                ?? YandexMusicService.StationOption(id: stationId, title: title.replacingOccurrences(of: "\n", with: " "), subtitle: "Моя волна", stationId: stationId, gradient: ["0A84FF", "30D158"], icon: icon)
-            SonivoPlay.wave(station)
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                // 3D светящаяся сфера
-                ZStack {
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [colors.first?.opacity(0.95) ?? .pink, colors.last?.opacity(0.40) ?? .purple, Color.clear],
-                                center: .center,
-                                startRadius: 4,
-                                endRadius: 36
-                            )
-                        )
-                        .frame(width: 60, height: 60)
-                        .blur(radius: 4)
-
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: colors,
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 48, height: 48)
-                        .shadow(color: (colors.first ?? .blue).opacity(0.50), radius: 10, x: 0, y: 4)
-
-                    Image(systemName: icon)
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Spacer(minLength: 0)
-
-                // Текст названия карточки
-                Text(title)
-                    .font(.system(size: 13.5, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-            .padding(14)
-            .frame(width: 136, height: 140)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color(hex: "#1A1A1E")?.opacity(0.85) ?? Color.black.opacity(0.75))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
-            )
-        }
-        .buttonStyle(GlassPressStyle())
     }
 
     // MARK: - Чарт

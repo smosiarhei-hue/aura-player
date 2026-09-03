@@ -102,11 +102,15 @@ final class LibraryStore {
     func toggleFavorite(_ track: Track) {
         if let i = tracks.firstIndex(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
             tracks[i].isFavorite.toggle()
+            if tracks[i].isFavorite {
+                MoodRadioEngine.shared.recordFeedback(track: tracks[i], action: .like)
+            }
         } else {
             // Track is an online stream or not yet saved -> add to library as favorite!
             var newFavorite = track
             newFavorite.isFavorite = true
             tracks.insert(newFavorite, at: 0)
+            MoodRadioEngine.shared.recordFeedback(track: newFavorite, action: .like)
         }
     }
 

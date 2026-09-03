@@ -9,6 +9,7 @@ struct TrendsExploreView: View {
 
     @State private var chart: [YandexMusicService.YMTrackItem] = []
     @State private var newAlbums: [YandexMusicService.YMAlbumItem] = []
+    @State private var premiereTracks: [YandexMusicService.YMTrackItem] = []
     @State private var isLoading = true
     @State private var selectedFilter: String = "top"
     @State private var selectedArtistStyleId: String = ""
@@ -519,9 +520,10 @@ struct TrendsExploreView: View {
                 .padding(.top, -8)
 
             LazyVStack(spacing: 2) {
-                ForEach(Array(chart.suffix(15).enumerated()), id: \.element.id) { index, item in
+                let displayTracks = premiereTracks.isEmpty ? Array(chart.prefix(15)) : premiereTracks
+                ForEach(Array(displayTracks.enumerated()), id: \.element.id) { index, item in
                     ChartRowView(rank: nil, item: item) {
-                        SonivoPlay.track(item, in: chart)
+                        SonivoPlay.track(item, in: displayTracks)
                     }
                 }
             }
@@ -540,6 +542,7 @@ struct TrendsExploreView: View {
         } catch {
             newAlbums = []
         }
+        premiereTracks = await ym.getNewTracks(limit: 20, force: force)
         isLoading = false
     }
 }

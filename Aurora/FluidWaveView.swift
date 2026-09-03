@@ -1,6 +1,7 @@
 import SwiftUI
 
 // MARK: - Fluid Aura Wave (Organic SDF Morphing & Chromatic Dispersion Visualizer)
+// Музыкально-чувствительная волна с HDR Glow бликами, каустикой и хроматической дисперсией
 
 struct FluidWaveView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -15,7 +16,7 @@ struct FluidWaveView: View {
     @State private var touchScale: CGFloat = 1.0
 
     init(
-        colors: [Color] = [.pink, .cyan, .yellow],
+        colors: [Color] = [.pink, .orange, .yellow],
         bass: Float? = nil,
         mid: Float? = nil,
         high: Float? = nil,
@@ -29,15 +30,15 @@ struct FluidWaveView: View {
     }
 
     private var effectiveBass: Float {
-        bassIntensity ?? analyzer.bass
+        bassIntensity ?? max(analyzer.bass, analyzer.streamLevel * 0.95)
     }
 
     private var effectiveMids: Float {
-        midIntensity ?? analyzer.mids
+        midIntensity ?? max(analyzer.mids, analyzer.streamLevel * 0.70)
     }
 
     private var effectiveHighs: Float {
-        highIntensity ?? analyzer.highs
+        highIntensity ?? max(analyzer.highs, analyzer.streamLevel * 0.50)
     }
 
     public var body: some View {
@@ -48,9 +49,11 @@ struct FluidWaveView: View {
                 let w = Float(proxy.size.width)
                 let h = Float(proxy.size.height)
 
-                let c1 = colors.indices.contains(0) ? colors[0] : (Color(hex: "#FBBF24") ?? .yellow)
-                let c2 = colors.indices.contains(1) ? colors[1] : (Color(hex: "#F97316") ?? .orange)
-                let c3 = colors.indices.contains(2) ? colors[2] : (Color(hex: "#FF8AD1") ?? .pink)
+                let c1 = colors.indices.contains(0) ? colors[0] : (Color(hex: "#FF2A85") ?? .pink)
+                let c2 = colors.indices.contains(1) ? colors[1] : (Color(hex: "#FF8A00") ?? .orange)
+                let c3 = colors.indices.contains(2) ? colors[2] : (Color(hex: "#FFE000") ?? .yellow)
+
+                let bassPulse = 1.0 + CGFloat(effectiveBass) * 0.14
 
                 if reduceMotion {
                     // Fallback for accessibility reduce motion
@@ -63,23 +66,43 @@ struct FluidWaveView: View {
                         )
                     }
                 } else {
-                    Rectangle()
-                        .colorEffect(
-                            ShaderLibrary.fluidAuraWave(
-                                .float4(0, 0, w, h),
-                                .float(elapsedTime),
-                                .float(effectiveBass),
-                                .float(effectiveMids),
-                                .float(effectiveHighs),
-                                .color(c1),
-                                .color(c2),
-                                .color(c3)
+                    ZStack {
+                        // 1. Мягкая фоновая аура (Ambient Glow)
+                        Rectangle()
+                            .colorEffect(
+                                ShaderLibrary.fluidAuraWave(
+                                    .float4(0, 0, w, h),
+                                    .float(elapsedTime),
+                                    .float(effectiveBass),
+                                    .float(effectiveMids),
+                                    .float(effectiveHighs),
+                                    .color(c1),
+                                    .color(c2),
+                                    .color(c3)
+                                )
                             )
-                        )
-                        .blur(radius: isBackgroundMode ? 50 : 0)
-                        .opacity(isBackgroundMode ? 0.65 : 1.0)
-                        .blendMode(isBackgroundMode ? .plusLighter : .normal)
-                        .scaleEffect(touchScale)
+                            .blur(radius: isBackgroundMode ? 36 : 18)
+                            .opacity(0.65)
+                            .blendMode(.plusLighter)
+
+                        // 2. Четкое сияющее ядро с HDR-лучами и спекулярными бликами
+                        Rectangle()
+                            .colorEffect(
+                                ShaderLibrary.fluidAuraWave(
+                                    .float4(0, 0, w, h),
+                                    .float(elapsedTime),
+                                    .float(effectiveBass),
+                                    .float(effectiveMids),
+                                    .float(effectiveHighs),
+                                    .color(c1),
+                                    .color(c2),
+                                    .color(c3)
+                                )
+                            )
+                            .opacity(isBackgroundMode ? 0.70 : 1.0)
+                    }
+                    .scaleEffect(bassPulse * touchScale)
+                    .animation(.spring(response: 0.22, dampingFraction: 0.65), value: effectiveBass)
                 }
             }
         }

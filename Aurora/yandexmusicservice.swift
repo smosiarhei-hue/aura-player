@@ -49,6 +49,7 @@ final class YandexMusicService {
     private var newAlbumsCache: [YMAlbumItem] = []
     private var newAlbumsCacheAt: Date?
     private var newTracksCache: [YMTrackItem] = []
+    private var newTracksCacheAt: Date?
     private var artistCache: [String: YMArtistItem] = [:]
     private var artistTracksCache: [String: [YMTrackItem]] = [:]
 
@@ -552,14 +553,16 @@ final class YandexMusicService {
         return Self.playable(volumes.flatMap { $0 })
     }
 
-    /// Свежие треки — по одному-двум из каждого нового релиза.
-    func getNewTracks(limit: Int = 24) async -> [YMTrackItem] {
-        if !newTracksCache.isEmpty { return newTracksCache }
-        let albums = (try? await getNewAlbums()) ?? []
+    /// Свежие треки — по одному-двум из каждого нового релиза (обновление каждые 24 часа).
+    func getNewTracks(limit: Int = 24, force: Bool = false) async -> [YMTrackItem] {
+        if !force, !newTracksCache.isEmpty, let at = newTracksCacheAt, Date().timeIntervalSince(at) < 86400 {
+            return newTracksCache
+        }
+        let albums = (try? await getNewAlbums(force: force)) ?? []
         var out: [YMTrackItem] = []
         var seen = Set<String>()
 
-        for album in albums.prefix(10) {
+        for album in albums.prefix(12) {
             if out.count >= limit { break }
             let tracks = (try? await getAlbumTracks(albumId: album.id)) ?? []
             for item in tracks.prefix(2) {
@@ -569,7 +572,10 @@ final class YandexMusicService {
             }
         }
 
-        if !out.isEmpty { newTracksCache = out }
+        if !out.isEmpty {
+            newTracksCache = out
+            newTracksCacheAt = Date()
+        }
         return out
     }
 
