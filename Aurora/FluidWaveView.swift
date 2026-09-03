@@ -96,8 +96,8 @@ struct FluidWaveView: View {
                                     .float(effectiveHighs),
                                     .color(c1),
                                     .color(c2),
-                                    .color(c3)
                                 )
+                            )
                             .blur(radius: isBackgroundMode ? 32 : 12)
                             .opacity(isBackgroundMode ? 0.70 : 0.95)
                     }
