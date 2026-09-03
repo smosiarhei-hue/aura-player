@@ -251,7 +251,14 @@ final class PlayerCore {
             p.automaticallyWaitsToMinimizeStalling = false
             p.volume = volume * Self.streamHeadroomCeiling
 
-            let interval = CMTime(seconds: 1.0 / 60.0, preferredTimescale: 600)
+            // Throttled from 60Hz: this closure runs continuously the whole
+            // time a stream plays and mutates an @Observable property
+            // (progress), which forces SwiftUI to re-diff/re-layout the
+            // timeline view on every tick. Combined with video-shot decoding
+            // and the animated mesh background, 60Hz here was a meaningful
+            // contributor to overall UI jank (delayed volume-slider tracking,
+            // sluggish taps). 30Hz is still visually smooth for a progress bar.
+            let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
             p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 Task { @MainActor [weak self] in
                     guard let self, self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
@@ -1839,7 +1846,14 @@ final class PlayerCore {
 
     private func startTimer() {
         progressTimer?.invalidate()
-        let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
+        // Throttled from 120Hz: at 120 ticks/sec this Timer fired on the main
+        // thread while a track played, mutating an @Observable property that
+        // forces SwiftUI to re-diff the whole player screen every ~8ms. Paired
+        // with the animated mesh background and, especially, decoding a
+        // looping video-shot at the same time, this was a major source of the
+        // reported UI lag/freeze and delayed-feeling volume-slider dragging.
+        // 30Hz still updates the progress bar smoothly to the eye.
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickProgress() }
         }
         RunLoop.main.add(timer, forMode: .common)
