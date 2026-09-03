@@ -110,8 +110,8 @@ private struct LyricsLineView: View {
 
     private var lineFont: Font {
         .system(size: isActive ? fontSize : fontSize * 0.88,
-                weight: isActive ? .bold : .medium,
-                design: .rounded)
+                weight: isActive ? .heavy : .medium,
+                design: .default)
     }
 
     var body: some View {
