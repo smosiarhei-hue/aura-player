@@ -68,13 +68,6 @@ struct LyricsSheetView: View {
     }
 }
 
-fileprivate struct TextWidthPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 struct MarqueeText: View {
     let text: String
     var font: Font = .title2.weight(.bold)
@@ -89,16 +82,17 @@ struct MarqueeText: View {
     @State private var animationTask: Task<Void, Never>? = nil
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: height)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .preference(key: TextWidthPreferenceKey.self, value: geo.size.width)
-                    }
-                )
-
+        // Root in GeometryReader: unlike a ZStack, GeometryReader always
+        // reports the width its parent proposes, never the ideal size of
+        // its content. The old version wrapped a `.fixedSize(horizontal:
+        // true)` Text (needed to measure the full un-clipped text width for
+        // the scroll animation) in a ZStack — but a ZStack's own size is the
+        // union of its children's sizes, so that fixedSize Text forced the
+        // whole MarqueeText (and therefore the row of heart/wave/video-shot
+        // buttons next to it) to report the full, un-clipped title/artist
+        // width upward, pushing those buttons off-screen for long titles
+        // instead of clipping the text and scrolling it in place.
+        GeometryReader { geo in
             Text(text)
                 .font(font)
                 .foregroundStyle(color)
@@ -109,6 +103,7 @@ struct MarqueeText: View {
                         Color.clear
                             .onAppear {
                                 textWidth = tGeo.size.width
+                                containerWidth = geo.size.width
                                 restartAnimation()
                             }
                             .onChange(of: tGeo.size.width) { _, newWidth in
@@ -118,15 +113,18 @@ struct MarqueeText: View {
                     }
                 )
                 .offset(x: offset)
+                // An explicit frame(width:) always reports exactly that
+                // size upward regardless of the child's ideal size — this
+                // is what actually keeps MarqueeText, and its siblings,
+                // inside the available space.
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
+                .clipped()
+                .onChange(of: geo.size.width) { _, newWidth in
+                    containerWidth = newWidth
+                    restartAnimation()
+                }
         }
         .frame(height: height)
-        .clipped()
-        .onPreferenceChange(TextWidthPreferenceKey.self) { containerW in
-            if containerW > 0 {
-                self.containerWidth = containerW
-                restartAnimation()
-            }
-        }
         .onChange(of: text) { _, _ in
             restartAnimation()
         }
