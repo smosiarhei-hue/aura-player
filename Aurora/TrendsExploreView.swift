@@ -118,9 +118,8 @@ struct TrendsExploreView: View {
             .frame(maxWidth: .infinity)
 
             // 2. Книги (Синяя книга)
-            Button {
-                let station = YandexMusicService.rotorStations.first(where: { $0.stationId == "genre:classical" || $0.stationId == "mood:calm" }) ?? YandexMusicService.rotorStations[0]
-                SonivoPlay.wave(station)
+            NavigationLink {
+                CategoryCatalogView(category: .books)
             } label: {
                 categoryItem(
                     title: "Книги",
@@ -133,9 +132,8 @@ struct TrendsExploreView: View {
             .frame(maxWidth: .infinity)
 
             // 3. Детям (Оранжевый)
-            Button {
-                let station = YandexMusicService.rotorStations.first(where: { $0.stationId == "activity:party" }) ?? YandexMusicService.rotorStations[0]
-                SonivoPlay.wave(station)
+            NavigationLink {
+                CategoryCatalogView(category: .kids)
             } label: {
                 categoryItem(
                     title: "Детям",
@@ -147,9 +145,8 @@ struct TrendsExploreView: View {
             .frame(maxWidth: .infinity)
 
             // 4. Подкасты (Зеленый микрофон)
-            Button {
-                let station = YandexMusicService.rotorStations.first(where: { $0.stationId == "activity:driving" }) ?? YandexMusicService.rotorStations[0]
-                SonivoPlay.wave(station)
+            NavigationLink {
+                CategoryCatalogView(category: .podcasts)
             } label: {
                 categoryItem(
                     title: "Подкасты",
@@ -194,10 +191,8 @@ struct TrendsExploreView: View {
     private var favoritesAndHistoryRow: some View {
         HStack(spacing: 12) {
             // Мне нравится
-            Button {
-                if let first = library.favorites.first {
-                    player.play(first, newQueue: library.favorites)
-                }
+            NavigationLink {
+                FavoritesListView()
             } label: {
                 HStack(spacing: 12) {
                     ZStack {
@@ -226,10 +221,8 @@ struct TrendsExploreView: View {
             .buttonStyle(GlassPressStyle())
 
             // История
-            Button {
-                if let first = chart.first {
-                    SonivoPlay.track(first, in: chart)
-                }
+            NavigationLink {
+                HistoryListView()
             } label: {
                 HStack(spacing: 12) {
                     ZStack {

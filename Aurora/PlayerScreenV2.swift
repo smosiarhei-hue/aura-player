@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 import MediaPlayer
+import AVFoundation
+import AVKit
 
 // MARK: - Sonivo Native Full Player (Apple Music iOS 26/27 Standard)
 
@@ -48,6 +50,12 @@ struct PlayerScreenV2: View {
 
     // Cover swipe gesture offset
     @State private var coverDragX: CGFloat = 0
+
+    // Video Shot (Canvas) Looping Player
+    @State private var videoShotURL: URL? = nil
+    @State private var isVideoShotEnabled: Bool = UserDefaults.standard.object(forKey: "aurora_videoshot_enabled") as? Bool ?? true
+    @State private var videoLooperPlayer: AVQueuePlayer? = nil
+    @State private var videoLooper: AVPlayerLooper? = nil
 
     // Colours extracted from the current artwork, driving the background
     @State private var artworkPaletteColors: [Color] = []
@@ -116,11 +124,13 @@ struct PlayerScreenV2: View {
                     contrastProtectionVignette
                 }
 
+                let topInset = max(geo.safeAreaInsets.top, 48)
+
                 // 2. Main Player Container (Controls ALWAYS pinned on top)
                 VStack(spacing: 0) {
                     // Top Bar (Grabber Pill & Dismiss Chevron)
                     topHeader
-                        .padding(.top, 12)
+                        .padding(.top, topInset)
                         .padding(.horizontal, 24)
 
                     Spacer(minLength: 8)
@@ -169,6 +179,14 @@ struct PlayerScreenV2: View {
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .animation(.easeInOut(duration: 0.35), value: dj.isTransitionActive)
+        .simultaneousGesture(
+            DragGesture()
+                .onEnded { value in
+                    if value.translation.height > 80 && value.predictedEndTranslation.height > 120 {
+                        close()
+                    }
+                }
+        )
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -195,6 +213,17 @@ struct PlayerScreenV2: View {
         .task(id: track?.id) {
             await refreshPalette()
             await loadLyrics()
+            await loadVideoShot()
+        }
+        .onChange(of: player.isPlaying) { _, isPlaying in
+            if isPlaying {
+                videoLooperPlayer?.play()
+            } else {
+                videoLooperPlayer?.pause()
+            }
+        }
+        .onDisappear {
+            teardownVideoLooper()
         }
     }
 
@@ -331,9 +360,16 @@ struct PlayerScreenV2: View {
     // MARK: - Center Stage: Standard Artwork
 
     private func artworkStage(side: CGFloat) -> some View {
-        artwork
-            .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        Group {
+            if isVideoShotEnabled, let vp = videoLooperPlayer {
+                VideoShotPlayerView(player: vp)
+                    .frame(width: side, height: side)
+            } else {
+                artwork
+                    .frame(width: side, height: side)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
@@ -473,8 +509,20 @@ struct PlayerScreenV2: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Right accessories: Wave button & Favorite heart
-            HStack(spacing: 12) {
+            // Right accessories: Video Shot toggle, Wave button & Favorite heart
+            HStack(spacing: 10) {
+                if videoShotURL != nil {
+                    Button(action: toggleVideoShot) {
+                        Image(systemName: isVideoShotEnabled ? "video.fill" : "video.slash.fill")
+                            .font(.system(size: iconGlyph, weight: .bold))
+                            .foregroundStyle(isVideoShotEnabled ? (Color(hex: "#00E676") ?? .green) : .white.opacity(0.60))
+                            .frame(width: tapSide, height: tapSide)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(GlassPressStyle())
+                    .accessibilityLabel(isVideoShotEnabled ? "Выключить видео-шот" : "Включить видео-шот")
+                }
+
                 if let current, current.isStream {
                     Button(action: startTrackWave) {
                         Image(systemName: "dot.radiowaves.left.and.right")
@@ -817,6 +865,65 @@ struct PlayerScreenV2: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         isPresented = false
     }
+
+    // MARK: - Video Shot (Canvas) Logic
+
+    private func toggleVideoShot() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.easeInOut(duration: 0.30)) {
+            isVideoShotEnabled.toggle()
+            UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled")
+            if isVideoShotEnabled, let url = videoShotURL {
+                setupVideoLooper(url: url)
+            } else {
+                teardownVideoLooper()
+            }
+        }
+    }
+
+    private func loadVideoShot() async {
+        guard let track else {
+            videoShotURL = nil
+            teardownVideoLooper()
+            return
+        }
+
+        let ymId = PlayerCore.yandexTrackID(from: track)
+        guard !ymId.isEmpty else {
+            videoShotURL = nil
+            teardownVideoLooper()
+            return
+        }
+
+        if let shotURL = await YandexMusicService.shared.getVideoShotUrl(for: ymId) {
+            self.videoShotURL = shotURL
+            if isVideoShotEnabled {
+                setupVideoLooper(url: shotURL)
+            }
+        } else {
+            self.videoShotURL = nil
+            teardownVideoLooper()
+        }
+    }
+
+    private func setupVideoLooper(url: URL) {
+        teardownVideoLooper()
+        let item = AVPlayerItem(url: url)
+        let queuePlayer = AVQueuePlayer(playerItem: item)
+        queuePlayer.isMuted = true
+        queuePlayer.actionAtItemEnd = .none
+        self.videoLooper = AVPlayerLooper(player: queuePlayer, templateItem: item)
+        self.videoLooperPlayer = queuePlayer
+        if player.isPlaying {
+            queuePlayer.play()
+        }
+    }
+
+    private func teardownVideoLooper() {
+        videoLooperPlayer?.pause()
+        videoLooperPlayer = nil
+        videoLooper = nil
+    }
 }
 
 // MARK: - Timeline Section (scrubber, timings and center status slot)
@@ -1008,4 +1115,32 @@ struct NativeVolumeSlider: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
+// MARK: - Native Looping Video Shot (Canvas) View
+
+struct VideoShotPlayerView: UIViewRepresentable {
+    let player: AVPlayer?
+
+    func makeUIView(context: Context) -> PlayerUIView {
+        let view = PlayerUIView()
+        view.player = player
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerUIView, context: Context) {
+        uiView.player = player
+    }
+
+    class PlayerUIView: UIView {
+        override static var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        var player: AVPlayer? {
+            get { playerLayer.player }
+            set {
+                playerLayer.player = newValue
+                playerLayer.videoGravity = .resizeAspectFill
+            }
+        }
+    }
 }

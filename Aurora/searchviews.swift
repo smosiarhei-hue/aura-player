@@ -8,6 +8,7 @@ struct SearchCatalogView: View {
     @State private var ym = YandexMusicService.shared
 
     @State private var searchText = ""
+    @State private var recentSearches: [String] = UserDefaults.standard.stringArray(forKey: "sonivo_recent_searches") ?? []
     @State private var results = YandexMusicService.GlobalSearchResults()
     @State private var suggestions: [String] = []
     @State private var isSearching = false
@@ -48,6 +49,9 @@ struct SearchCatalogView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         if searchText.isEmpty {
+                            if !recentSearches.isEmpty {
+                                recentSearchesSection
+                            }
                             genresGrid
                         } else {
                             if !suggestions.isEmpty { suggestionsRow }
@@ -298,9 +302,66 @@ struct SearchCatalogView: View {
         .riseIn()
     }
 
+    private var recentSearchesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Недавние поиски")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button("Очистить") {
+                    withAnimation {
+                        recentSearches = []
+                        UserDefaults.standard.removeObject(forKey: "sonivo_recent_searches")
+                    }
+                }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.60))
+            }
+            .padding(.horizontal, 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(recentSearches, id: \.self) { item in
+                        Button {
+                            searchText = item
+                            performSearch(immediate: true)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.60))
+                                Text(item)
+                                    .font(.system(size: 13.5, weight: .medium))
+                                    .foregroundStyle(.white)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(Color.white.opacity(0.10)))
+                        }
+                        .buttonStyle(GlassPressStyle())
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func saveSearchQuery(_ query: String) {
+        let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.count >= 2 else { return }
+        var list = recentSearches.filter { $0.caseInsensitiveCompare(clean) != .orderedSame }
+        list.insert(clean, at: 0)
+        if list.count > 15 { list = Array(list.prefix(15)) }
+        recentSearches = list
+        UserDefaults.standard.set(list, forKey: "sonivo_recent_searches")
+    }
+
     private func performSearch(immediate: Bool) {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
+        saveSearchQuery(query)
         searchTask?.cancel()
 
         searchTask = Task { @MainActor in

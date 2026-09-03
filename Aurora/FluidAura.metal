@@ -17,19 +17,18 @@ static float noise2D(float2 p) {
                mix(hash21(i + float2(0.0, 1.0)), hash21(i + float2(1.0, 1.0)), u.x), u.y);
 }
 
-// Polar SDF Ring Deformation with dynamic music harmonics
-static float sdDeformedRing(float2 p, float time, float bass, float mid) {
+// Volumetric Fluid Morphing Blob with dynamic music harmonics
+static float volumetricFluidBlob(float2 p, float time, float bass, float mid) {
     float angle = atan2(p.y, p.x);
     float radius = length(p);
 
-    // Dynamic harmonic wave oscillations + curl noise morphing
-    float wave = sin(angle * 3.0 + time * 1.8) * 0.09 * (1.0 + mid * 2.5)
-               + cos(angle * 5.0 - time * 1.2) * 0.06 * (0.8 + bass * 1.5)
-               + noise2D(p * 2.8 + time * 0.50) * 0.16 * (0.40 + mid * 1.2);
+    // Smooth organic harmonic wave oscillations + soft curl noise morphing
+    float wave = sin(angle * 3.0 + time * 1.4) * 0.11 * (1.0 + mid * 1.8)
+               + cos(angle * 4.0 - time * 0.9) * 0.08 * (0.8 + bass * 1.4)
+               + noise2D(p * 2.2 + time * 0.40) * 0.14 * (0.40 + mid * 1.0);
 
-    float baseRadius = 0.44 + bass * 0.22;
-    float thickness = 0.045 + bass * 0.055;
-    return abs(radius - (baseRadius + wave)) - thickness;
+    float baseRadius = 0.50 + bass * 0.18;
+    return radius - (baseRadius + wave);
 }
 
 [[ stitchable ]] half4 fluidAuraWave(
@@ -53,16 +52,16 @@ static float sdDeformedRing(float2 p, float time, float bass, float mid) {
     float angle = atan2(uv.y, uv.x);
 
     // Dynamic music-reactive chromatic dispersion (RGB spectral offset)
-    float dispersion = 0.045 * (1.0 + high * 3.8);
+    float dispersion = 0.035 * (1.0 + high * 2.5);
 
-    float distR = sdDeformedRing(uv * (1.0 + dispersion), time, bass, mid);
-    float distG = sdDeformedRing(uv, time, bass, mid);
-    float distB = sdDeformedRing(uv * (1.0 - dispersion), time, bass, mid);
+    float distR = volumetricFluidBlob(uv * (1.0 + dispersion), time, bass, mid);
+    float distG = volumetricFluidBlob(uv, time, bass, mid);
+    float distB = volumetricFluidBlob(uv * (1.0 - dispersion), time, bass, mid);
 
-    // Exponential HDR Bloom & Fresnel Glow
-    half glowR = half(smoothstep(0.12, 0.0, distR) * 1.1 + 0.038 / (abs(distR) + 0.024));
-    half glowG = half(smoothstep(0.12, 0.0, distG) * 1.1 + 0.038 / (abs(distG) + 0.024));
-    half glowB = half(smoothstep(0.12, 0.0, distB) * 1.1 + 0.038 / (abs(distB) + 0.024));
+    // Lush volumetric organic glow (exponential smooth falloff, ZERO hard wire contours)
+    half glowR = half(exp(-max(0.0, distR) * 6.0) * smoothstep(0.7, -0.2, distR));
+    half glowG = half(exp(-max(0.0, distG) * 6.0) * smoothstep(0.7, -0.2, distG));
+    half glowB = half(exp(-max(0.0, distB) * 6.0) * smoothstep(0.7, -0.2, distB));
 
     // Dynamic Caustic Rays reacting to music highs & mids
     float causticRays = sin(angle * 8.0 + time * 2.4) * cos(angle * 5.0 - time * 1.8);

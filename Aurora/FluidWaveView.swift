@@ -98,8 +98,8 @@ struct FluidWaveView: View {
                                     .color(c2),
                                     .color(c3)
                                 )
-                            )
-                            .opacity(isBackgroundMode ? 0.70 : 1.0)
+                            .blur(radius: isBackgroundMode ? 32 : 12)
+                            .opacity(isBackgroundMode ? 0.70 : 0.95)
                     }
                     .scaleEffect(bassPulse * touchScale)
                     .animation(.spring(response: 0.22, dampingFraction: 0.65), value: effectiveBass)

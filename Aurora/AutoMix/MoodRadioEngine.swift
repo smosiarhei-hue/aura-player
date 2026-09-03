@@ -178,23 +178,42 @@ final class MoodRadioEngine {
         playedTrackIDs.removeAll()
         playedArtistHistory.removeAll()
 
-        // 1. Быстрый сбор треков из библиотеки и каталога
+        // 1. Быстрый сбор треков с проверкой строгого соответствия вектору настроения
         let initialPool = getCandidatePool(for: mood)
         let sequenced = sequenceCandidates(initialPool, targetVector: sessionVector, count: 20)
 
-        queue = sequenced
-
-        // 2. Если есть первый трек, сразу запускаем воспроизведение
-        if let first = queue.first {
+        if let first = sequenced.first {
+            queue = sequenced
             PlayerCore.shared.play(first, newQueue: queue)
             playedTrackIDs.insert(first.id)
             playedArtistHistory.append(first.artist)
             recentPlayedTracks.append(first)
         }
 
-        // 3. Запускаем фоновую догрузку при необходимости
+        // 2. Асинхронно дозапрашиваем официальную станцию Яндекса под это настроение (например, activity:workout)
         Task {
-            await ensureSufficientQueue()
+            let stationId = stationIdForMood(mood)
+            let ym = YandexMusicService.shared
+            let rotorTracks = (try? await ym.getStationTracks(stationId: stationId)) ?? []
+            let unplayed = rotorTracks.filter { !ym.isRecentlyPlayed(ymTrackId: $0.id) }
+            let picked = unplayed.isEmpty ? rotorTracks : unplayed
+            let converted = picked.map { $0.toTrack() }.filter { !self.playedTrackIDs.contains($0.id) }
+
+            let freshSequenced = self.sequenceCandidates(converted, targetVector: self.sessionVector, count: 25)
+            guard !freshSequenced.isEmpty else { return }
+
+            if self.queue.isEmpty {
+                self.queue = freshSequenced
+                if let first = freshSequenced.first {
+                    PlayerCore.shared.play(first, newQueue: freshSequenced)
+                    self.playedTrackIDs.insert(first.id)
+                    self.playedArtistHistory.append(first.artist)
+                    self.recentPlayedTracks.append(first)
+                }
+            } else {
+                self.queue.append(contentsOf: freshSequenced)
+                PlayerCore.shared.appendToQueue(freshSequenced)
+            }
         }
     }
 
@@ -308,12 +327,18 @@ final class MoodRadioEngine {
     private func getCandidatePool(for mood: MoodPreset) -> [Track] {
         var pool: [Track] = []
 
-        // 1. Локальная библиотека пользователя
-        let localTracks = LibraryStore.shared.tracks.filter { !playedTrackIDs.contains($0.id) }
+        // 1. Локальная библиотека: отбираем ТОЛЬКО треки, строго подходящие под вектор настроения (>= 0.70)
+        let localTracks = LibraryStore.shared.tracks.filter { track in
+            !playedTrackIDs.contains(track.id) &&
+            extractVector(for: track).cosineSimilarity(to: mood.baseVector) >= 0.70
+        }
         pool.append(contentsOf: localTracks)
 
-        // 2. Треки из кэша чартов / рекомендаций Яндекс Музыки
-        let ymTracks = YandexMusicService.shared.chartCache.map { $0.toTrack() }.filter { !playedTrackIDs.contains($0.id) }
+        // 2. Треки из кэша чартов, подходящие под вектор
+        let ymTracks = YandexMusicService.shared.chartCache.map { $0.toTrack() }.filter { track in
+            !playedTrackIDs.contains(track.id) &&
+            extractVector(for: track).cosineSimilarity(to: mood.baseVector) >= 0.68
+        }
         pool.append(contentsOf: ymTracks)
 
         return pool

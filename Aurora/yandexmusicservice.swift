@@ -1099,7 +1099,7 @@ final class YandexMusicService {
                     if let s = result["videoShotUrl"] as? String, !s.isEmpty { candidate = s }
                     else if let s = result["shotUrl"] as? String, !s.isEmpty { candidate = s }
                     else if let s = result["videoUrl"] as? String, !s.isEmpty { candidate = s }
-                    else if let clips = result["clips"] as? [[String: Any]], let first = clips.first, let u = (first["url"] ?? first["videoUrl"]) as? String, !u.isEmpty {
+                    else if let clips = result["clips"] as? [[String: Any]], let first = clips.first, let u = (first["previewUrl"] ?? first["url"] ?? first["videoUrl"]) as? String, !u.isEmpty {
                         candidate = u
                     }
                     if let candidate, let shotURL = URL(string: candidate.hasPrefix("http") ? candidate : "https://" + candidate) {

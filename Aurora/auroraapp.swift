@@ -83,12 +83,9 @@ struct RootView: View {
                 NativeMiniPlayer(showPlayer: $showPlayer)
             }
         }
-        .sheet(isPresented: $showPlayer) {
+        .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreenV2(isPresented: $showPlayer)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(38)
-                .presentationBackground(.clear)
+                .ignoresSafeArea()
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
