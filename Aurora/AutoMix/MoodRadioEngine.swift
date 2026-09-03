@@ -166,7 +166,24 @@ final class MoodRadioEngine {
 
     private var isGenerating = false
 
-    private init() {}
+    private static let keyMoodPlayed = "mood.played_ids"
+
+    private init() {
+        let saved = UserDefaults.standard.stringArray(forKey: Self.keyMoodPlayed) ?? []
+        self.playedTrackIDs = Set(saved.compactMap { UUID(uuidString: $0) })
+    }
+
+    private func rememberPlayed(_ track: Track) {
+        playedTrackIDs.insert(track.id)
+        playedArtistHistory.append(track.artist)
+        recentPlayedTracks.append(track)
+        let yId = PlayerCore.yandexTrackID(from: track)
+        if !yId.isEmpty {
+            YandexMusicService.shared.remember(yandexTrackId: yId, artist: track.artist)
+        }
+        let idStrings = Array(playedTrackIDs.suffix(200).map { $0.uuidString })
+        UserDefaults.standard.set(idStrings, forKey: Self.keyMoodPlayed)
+    }
 
     // MARK: - API: Старт радио по настроению (POST /mood/start)
 
@@ -175,28 +192,25 @@ final class MoodRadioEngine {
         sessionVector = mood.baseVector
         queue.removeAll()
         recentPlayedTracks.removeAll()
-        playedTrackIDs.removeAll()
         playedArtistHistory.removeAll()
 
-        // 1. Быстрый сбор треков с проверкой строгого соответствия вектору настроения
+        // 1. Быстрый сбор свежих треков без повторов
         let initialPool = getCandidatePool(for: mood)
         let sequenced = sequenceCandidates(initialPool, targetVector: sessionVector, count: 20)
 
         if let first = sequenced.first {
             queue = sequenced
             PlayerCore.shared.play(first, newQueue: queue)
-            playedTrackIDs.insert(first.id)
-            playedArtistHistory.append(first.artist)
-            recentPlayedTracks.append(first)
+            rememberPlayed(first)
         }
 
         // 2. Асинхронно дозапрашиваем официальную станцию Яндекса под это настроение (например, activity:workout)
         Task {
             let stationId = stationIdForMood(mood)
             let ym = YandexMusicService.shared
-            let rotorTracks = (try? await ym.getStationTracks(stationId: stationId)) ?? []
+            let rotorTracks = await ym.buildWaveQueue(stationId: stationId, target: 30)
             let unplayed = rotorTracks.filter { !ym.isRecentlyPlayed(ymTrackId: $0.id) }
-            let picked = unplayed.isEmpty ? rotorTracks : unplayed
+            let picked = unplayed.isEmpty ? rotorTracks.shuffled() : unplayed
             let converted = picked.map { $0.toTrack() }.filter { !self.playedTrackIDs.contains($0.id) }
 
             let freshSequenced = self.sequenceCandidates(converted, targetVector: self.sessionVector, count: 25)
@@ -206,9 +220,7 @@ final class MoodRadioEngine {
                 self.queue = freshSequenced
                 if let first = freshSequenced.first {
                     PlayerCore.shared.play(first, newQueue: freshSequenced)
-                    self.playedTrackIDs.insert(first.id)
-                    self.playedArtistHistory.append(first.artist)
-                    self.recentPlayedTracks.append(first)
+                    self.rememberPlayed(first)
                 }
             } else {
                 self.queue.append(contentsOf: freshSequenced)
@@ -326,22 +338,27 @@ final class MoodRadioEngine {
 
     private func getCandidatePool(for mood: MoodPreset) -> [Track] {
         var pool: [Track] = []
+        let ym = YandexMusicService.shared
 
-        // 1. Локальная библиотека: отбираем ТОЛЬКО треки, строго подходящие под вектор настроения (>= 0.70)
+        // 1. Локальная библиотека: отбираем ТОЛЬКО еще не игравшие треки под вектор настроения
         let localTracks = LibraryStore.shared.tracks.filter { track in
-            !playedTrackIDs.contains(track.id) &&
-            extractVector(for: track).cosineSimilarity(to: mood.baseVector) >= 0.70
+            let yId = PlayerCore.yandexTrackID(from: track)
+            return !playedTrackIDs.contains(track.id) &&
+                   !ym.isRecentlyPlayed(ymTrackId: yId) &&
+                   extractVector(for: track).cosineSimilarity(to: mood.baseVector) >= 0.70
         }
-        pool.append(contentsOf: localTracks)
+        pool.append(contentsOf: localTracks.shuffled())
 
         // 2. Треки из кэша чартов, подходящие под вектор
-        let ymTracks = YandexMusicService.shared.chartCache.map { $0.toTrack() }.filter { track in
-            !playedTrackIDs.contains(track.id) &&
-            extractVector(for: track).cosineSimilarity(to: mood.baseVector) >= 0.68
+        let ymTracks = ym.chartCache.map { $0.toTrack() }.filter { track in
+            let yId = PlayerCore.yandexTrackID(from: track)
+            return !playedTrackIDs.contains(track.id) &&
+                   !ym.isRecentlyPlayed(ymTrackId: yId) &&
+                   extractVector(for: track).cosineSimilarity(to: mood.baseVector) >= 0.68
         }
-        pool.append(contentsOf: ymTracks)
+        pool.append(contentsOf: ymTracks.shuffled())
 
-        return pool
+        return pool.shuffled()
     }
 
     // MARK: - Ранжирование, Diversity & Sequencing Filter (ТЗ 3.3, 3.4)

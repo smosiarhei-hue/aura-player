@@ -115,14 +115,24 @@ struct PlayerScreenV2: View {
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.40, 360)
 
             ZStack {
-                // 1. Apple Music Ambient Liquid Mesh Background
-                if reduceMotion || scenePhase != .active {
+                // 1. Spatial Ambient Background (Full-Screen blurred atmosphere)
+                if isVideoShotEnabled, let vp = videoLooperPlayer {
+                    VideoShotPlayerView(player: vp)
+                        .blur(radius: 52)
+                        .scaleEffect(1.35)
+                        .opacity(0.85)
+                        .overlay(Color.black.opacity(0.40))
+                } else if reduceMotion || scenePhase != .active {
                     artworkGradientBackground
-                    contrastProtectionVignette
                 } else {
+                    artwork
+                        .blur(radius: 60)
+                        .scaleEffect(1.40)
+                        .opacity(0.50)
                     AnimatedMeshBackground(palette: backgroundColors)
-                    contrastProtectionVignette
+                        .opacity(0.70)
                 }
+                contrastProtectionVignette
 
                 let topInset = max(geo.safeAreaInsets.top, 48)
 
@@ -362,25 +372,69 @@ struct PlayerScreenV2: View {
     private func artworkStage(side: CGFloat) -> some View {
         Group {
             if isVideoShotEnabled, let vp = videoLooperPlayer {
-                VideoShotPlayerView(player: vp)
-                    .frame(width: side, height: side)
+                // Spatial Video Shot Canvas (Vertical floating card with ambient aura)
+                ZStack {
+                    // Soft ambient glow behind canvas
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    (artworkPaletteColors.first ?? AG.amber).opacity(0.40),
+                                    (artworkPaletteColors.last ?? Color.purple).opacity(0.20)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: side * 0.90, height: side * 1.28)
+                        .blur(radius: 28)
+
+                    // Vertical Video Shot Player View
+                    VideoShotPlayerView(player: vp)
+                        .frame(width: side * 0.88, height: side * 1.26)
+                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                .strokeBorder(
+                                    LinearGradient(
+                                        stops: [
+                                            .init(color: Color.white.opacity(0.40), location: 0.0),
+                                            .init(color: Color.white.opacity(0.10), location: 0.5),
+                                            .init(color: Color.clear, location: 1.0)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    lineWidth: 1.2
+                                )
+                        )
+                }
             } else {
-                artwork
-                    .frame(width: side, height: side)
+                // Spatial Album Cover with floating halo
+                ZStack {
+                    artwork
+                        .frame(width: side, height: side)
+                        .blur(radius: 26)
+                        .scaleEffect(1.08)
+                        .opacity(player.isPlaying ? 0.70 : 0.20)
+
+                    artwork
+                        .frame(width: side, height: side)
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1.0)
+                        )
+                }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
-            )
-            .shadow(
-                color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.55 : 0.15),
-                radius: player.isPlaying ? 32 : 10,
-                x: 0,
-                y: player.isPlaying ? 18 : 6
-            )
-            .scaleEffect(player.isPlaying ? 1.0 : 0.85)
+        .shadow(
+            color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.55 : 0.15),
+            radius: player.isPlaying ? 34 : 10,
+            x: 0,
+            y: player.isPlaying ? 18 : 6
+        )
+        .scaleEffect(player.isPlaying ? 1.0 : 0.86)
             .offset(x: coverDragX)
             .rotationEffect(.degrees(Double(coverDragX / 24)), anchor: .center)
             .gesture(
@@ -489,20 +543,21 @@ struct PlayerScreenV2: View {
         let isFav = current.map { library.isTrackFavorite($0) } ?? false
 
         return HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(current?.title ?? "Не играет")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.80)
-                    .contentTransition(.numericText())
+            VStack(alignment: .leading, spacing: 2) {
+                MarqueeText(
+                    text: current?.title ?? "Не играет",
+                    font: .system(size: 22, weight: .bold, design: .rounded),
+                    color: .white,
+                    height: 28
+                )
 
                 Button(action: openArtist) {
-                    Text(current?.artist ?? "")
-                        .font(.system(size: 17, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.68))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                    MarqueeText(
+                        text: current?.artist ?? "",
+                        font: .system(size: 17, weight: .medium, design: .rounded),
+                        color: .white.opacity(0.68),
+                        height: 22
+                    )
                 }
                 .buttonStyle(.plain)
                 .disabled(current == nil)
@@ -1140,6 +1195,96 @@ struct VideoShotPlayerView: UIViewRepresentable {
             set {
                 playerLayer.player = newValue
                 playerLayer.videoGravity = .resizeAspectFill
+            }
+        }
+    }
+}
+
+// MARK: - Marquee Text (Бегущая строка с пинг-понгом)
+
+fileprivate struct TextWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+struct MarqueeText: View {
+    let text: String
+    let font: Font
+    let color: Color
+    var height: CGFloat = 28
+    var pauseDelay: Double = 2.0
+    var scrollSpeed: Double = 32.0 // points per second
+
+    @State private var textWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+    @State private var offset: CGFloat = 0
+    @State private var animationTask: Task<Void, Never>? = nil
+
+    var body: some View {
+        GeometryReader { geo in
+            let cWidth = geo.size.width
+            ZStack(alignment: .leading) {
+                Text(text)
+                    .font(font)
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .background(
+                        GeometryReader { tGeo in
+                            Color.clear.preference(key: TextWidthPreferenceKey.self, value: tGeo.size.width)
+                        }
+                    )
+                    .offset(x: offset)
+            }
+            .frame(width: cWidth, height: height, alignment: .leading)
+            .clipped()
+            .onPreferenceChange(TextWidthPreferenceKey.self) { newWidth in
+                self.textWidth = newWidth
+                self.containerWidth = cWidth
+                restartAnimation()
+            }
+            .onChange(of: text) { _, _ in
+                restartAnimation()
+            }
+            .onDisappear {
+                animationTask?.cancel()
+            }
+        }
+        .frame(height: height)
+    }
+
+    private func restartAnimation() {
+        animationTask?.cancel()
+        offset = 0
+        guard textWidth > (containerWidth + 4), containerWidth > 0 else { return }
+
+        let diff = textWidth - containerWidth + 14
+        let scrollDuration = Double(diff) / scrollSpeed
+
+        animationTask = Task { @MainActor in
+            while !Task.isCancelled {
+                // 1. Постоять в начале (2 сек)
+                try? await Task.sleep(nanoseconds: UInt64(pauseDelay * 1_000_000_000))
+                guard !Task.isCancelled else { break }
+
+                // 2. Плавно доехать до конца
+                withAnimation(.easeInOut(duration: scrollDuration)) {
+                    offset = -diff
+                }
+
+                // 3. Постоять в конце (1.5 сек)
+                try? await Task.sleep(nanoseconds: UInt64((scrollDuration + 1.5) * 1_000_000_000))
+                guard !Task.isCancelled else { break }
+
+                // 4. Плавно вернуться в самое начало
+                withAnimation(.easeInOut(duration: scrollDuration)) {
+                    offset = 0
+                }
+
+                // 5. Пауза перед следующим циклом
+                try? await Task.sleep(nanoseconds: UInt64((scrollDuration + 1.5) * 1_000_000_000))
             }
         }
     }

@@ -264,7 +264,7 @@ struct HomeView: View {
                     LiquidGlassMoodCapsule(preset: preset) {
                         MoodRadioEngine.shared.start(mood: preset)
                     }
-                    .frame(width: 290, height: 104)
+                    .frame(width: 320, height: 96)
                 }
             }
             .padding(.horizontal, 16)

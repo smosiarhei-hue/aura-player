@@ -1012,7 +1012,7 @@ final class PlayerCore {
         }
 
         let remaining = totalDur - currentPos
-        guard remaining <= 45.0 else { return }
+        guard remaining <= 65.0 else { return }
 
         if let queued = queue.firstIndex(where: { $0.id == nextTrack.id }), !nextTrack.isStream, !FileManager.default.fileExists(atPath: nextTrack.url.path) {
             _ = queued
@@ -1020,7 +1020,7 @@ final class PlayerCore {
             return
         }
 
-        if remaining <= 55.0, activeTransitionPlan == nil, !isPlanningTransition {
+        if remaining <= 65.0, activeTransitionPlan == nil, !isPlanningTransition {
             isPlanningTransition = true
             planningStartedAt = Date()
             Task {
@@ -1367,14 +1367,33 @@ final class PlayerCore {
             }
         }
 
+        var streamSourceVol = sourceLevel
+        var streamTargetVol = targetLevel
+
+        if strategy == .BASS_SWAP {
+            // Cut 60% power at midpoint for bass swap; incoming punches in
+            if p > 0.40 && p < 0.85 {
+                let dropPct = Float((p - 0.40) / 0.45)
+                streamSourceVol *= max(0.20, 1.0 - dropPct * 0.65)
+            }
+            if p > 0.35 {
+                let risePct = Float((p - 0.35) / 0.65)
+                streamTargetVol = max(streamTargetVol, min(1.0, Float(pow(risePct, 0.7))))
+            }
+        } else if strategy == .BUILDUP_TO_DROP || strategy == .DROP_SWITCH {
+            if p > 0.60 {
+                streamSourceVol *= max(0.05, Float(1.0 - (p - 0.60) / 0.40))
+            }
+        }
+
         if isUsingStreamPlayer {
-            activeStreamingPlayer.volume = sourceLevel * volume
+            activeStreamingPlayer.volume = streamSourceVol * volume
         } else {
             activePlayer.volume = sourceLevel * volume
         }
 
         if incomingIsStream {
-            idleStreamingPlayer.volume = targetLevel * volume
+            idleStreamingPlayer.volume = streamTargetVol * volume
         } else {
             idlePlayer.volume = targetLevel * volume
         }
@@ -1408,16 +1427,14 @@ final class PlayerCore {
 
         // Tempo ramps for beat matching: streamed lanes ride AVPlayer.rate
         // (audioTimePitchAlgorithm keeps the pitch); engine lanes use the
-        // pitch-corrected time-pitch nodes. Bypass state is fixed for the
-        // whole transition (set once above); only the continuous rate is
-        // animated here, so no per-tick bypass flip can click.
+        // pitch-corrected time-pitch nodes.
         // Iconic DJ Vinyl Brake / Tape Slowdown ("Зажёвывание" как в Apple Music)
         let isBrakeStrategy = strategy == .DROP_SWITCH || strategy == .VOCAL_CUT || strategy == .FILTER_TRANSITION || strategy == .HARD_CUT || strategy == .ECHO_OUT
 
         if isBrakeStrategy {
-            if p > 0.35 {
-                let brakeP = Float((p - 0.35) / 0.65)
-                let brakeRate = max(0.05, Float(1.0 - brakeP * 0.95))
+            if p > 0.15 {
+                let brakeP = Float((p - 0.15) / 0.85)
+                let brakeRate = max(0.04, Float(1.0 - brakeP * 0.96))
                 if !isUsingStreamPlayer {
                     activeTimePitch.rate = brakeRate
                     activeTimePitch.pitch = Float(-1800.0 * (brakeP * brakeP))
@@ -1463,6 +1480,11 @@ final class PlayerCore {
                 idleTimePitch.rate = inRate
                 idleTimePitch.pitch = 0
             }
+        } else if isUsingStreamPlayer {
+            // Subtle DJ turntable pitch bend for beat alignment
+            let nudge = Float(1.0 + 0.03 * sin(p * .pi))
+            activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+            activeStreamingPlayer.rate = isPlaying ? nudge : 0
         }
         _ = filterCutoff
 

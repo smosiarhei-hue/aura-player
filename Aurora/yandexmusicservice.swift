@@ -632,7 +632,8 @@ final class YandexMusicService {
 
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
         beginStationSession(stationId)
-        let batch = await fetchRotorBatch(stationId: stationId, queueSeed: nil)
+        let queueSeed = recentYmIDs.suffix(40).joined(separator: ",")
+        let batch = await fetchRotorBatch(stationId: stationId, queueSeed: queueSeed.isEmpty ? nil : queueSeed)
         if !batch.isEmpty { return batch }
         return try await getChart()
     }

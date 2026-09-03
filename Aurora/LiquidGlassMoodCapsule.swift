@@ -17,24 +17,24 @@ struct LiquidGlassMoodCapsule: View {
             HStack(spacing: 16) {
                 // 1. Левая выпуклая 3D-сфера из стекла с тисненой иконкой
                 glassOrbView
-                    .frame(width: 86, height: 86)
+                    .frame(width: 74, height: 74)
                     .padding(.leading, 6)
 
-                // 2. Двустрочный текст настроения
+                // 2. Двустрочный текст настроения (всегда целиком без обрезаний)
                 Text(preset.title)
-                    .font(.system(size: 21, weight: .bold, design: .rounded))
+                    .font(.system(size: 16.5, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                    .lineSpacing(2)
+                    .lineSpacing(3)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .minimumScaleFactor(0.75)
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 6)
 
                 // 3. Правая круглая стеклянная кнопка с шевроном >
                 glassChevronButton
-                    .frame(width: 48, height: 48)
-                    .padding(.trailing, 14)
+                    .frame(width: 42, height: 42)
+                    .padding(.trailing, 12)
             }
             .padding(.vertical, 8)
             .background(capsuleGlassBackground)
