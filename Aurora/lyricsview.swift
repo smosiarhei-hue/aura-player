@@ -109,70 +109,21 @@ private struct LyricsLineView: View {
     let fontSize: Double
 
     private var lineFont: Font {
-        .system(size: isActive ? fontSize : fontSize * 0.84,
+        .system(size: isActive ? fontSize : fontSize * 0.88,
                 weight: isActive ? .bold : .medium,
-                design: .default)
+                design: .rounded)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let words = line.words, !words.isEmpty, isActive {
-                // Word-level karaoke progressive fill
-                Text(wordAttributed(words: words))
-                    .font(lineFont)
-                    .multilineTextAlignment(.leading)
-                    .lineSpacing(8)
-            } else {
-                Text(line.text)
-                    .font(lineFont)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.leading)
-                    .lineSpacing(8)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(isActive ? 1.0 : 0.38)
-        .blur(radius: isActive ? 0 : 0.7)
-        .scaleEffect(isActive ? 1.0 : 0.96, anchor: .leading)
-        .shadow(color: isActive ? Color.white.opacity(0.30) : .clear, radius: isActive ? 14 : 0)
-        .animation(.spring(response: 0.35, dampingFraction: 0.80), value: isActive)
-    }
-
-    private func wordAttributed(words: [LyricsWord]) -> AttributedString {
-        var result = AttributedString()
-        for w in words {
-            if currentTime < w.startTime {
-                // Unsung upcoming word
-                var piece = AttributedString(w.text)
-                piece.foregroundColor = .white.opacity(0.35)
-                result += piece
-            } else if currentTime < w.endTime {
-                // Active sung word: progressive character glow
-                let span = max(w.endTime - w.startTime, 0.05)
-                let fraction = min(1.0, max(0.0, (currentTime - w.startTime) / span))
-                let chars = Array(w.text)
-                let split = Int(Double(chars.count) * fraction)
-                let sung = String(chars.prefix(split))
-                let unsung = String(chars.suffix(max(0, chars.count - split)))
-
-                if !sung.isEmpty {
-                    var s = AttributedString(sung)
-                    s.foregroundColor = .white
-                    result += s
-                }
-                if !unsung.isEmpty {
-                    var u = AttributedString(unsung)
-                    u.foregroundColor = .white.opacity(0.35)
-                    result += u
-                }
-            } else {
-                // Completed sung word
-                var piece = AttributedString(w.text)
-                piece.foregroundColor = .white
-                result += piece
-            }
-        }
-        return result
+        Text(line.text)
+            .font(lineFont)
+            .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.36))
+            .multilineTextAlignment(.leading)
+            .lineSpacing(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .scaleEffect(isActive ? 1.0 : 0.96, anchor: .leading)
+            .shadow(color: isActive ? Color.white.opacity(0.35) : .clear, radius: isActive ? 12 : 0)
+            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isActive)
     }
 }
 

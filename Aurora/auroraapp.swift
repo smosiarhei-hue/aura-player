@@ -190,6 +190,14 @@ struct NativeMiniPlayer: View {
         .padding(.vertical, 3)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10)
+                .onEnded { value in
+                    if value.translation.height < -20 {
+                        open()
+                    }
+                }
+        )
     }
 
     private func open() {

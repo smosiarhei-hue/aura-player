@@ -268,43 +268,34 @@ enum SonivoPlay {
 
             // FAST START: fetch first quick batch (~200ms) and launch immediately!
             let firstBatch = (try? await ym.getStationTracks(stationId: station.stationId)) ?? []
-            let initial = firstBatch.isEmpty ? (try? await ym.getChart()) ?? [] : firstBatch
-            if !initial.isEmpty {
-                let convertedInitial = initial.map { ym.convertToTrack($0) }
-                let rankedInitial = UserTasteEngine.shared.filterAndRankWave(tracks: convertedInitial)
-                if let first = rankedInitial.first {
-                    PlayerCore.shared.play(first, newQueue: rankedInitial)
+            let unplayed = firstBatch.filter { !ym.isRecentlyPlayed(ymTrackId: $0.id) }
+            let initial = unplayed.isEmpty ? firstBatch : unplayed
+            let candidates = initial.isEmpty ? (try? await ym.getChart()) ?? [] : initial
+
+            if !candidates.isEmpty {
+                let convertedInitial = candidates.map { ym.convertToTrack($0) }
+                let available = convertedInitial.filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
+                if let first = available.first {
+                    PlayerCore.shared.play(first, newQueue: available)
                 }
             }
 
-            // BACKGROUND EXPANSION: load full queue without blocking audio
+            // BACKGROUND EXPANSION: load full fresh stream from Yandex Rotor
             var tracks = await ym.buildWaveQueue(stationId: station.stationId, target: 45)
             if tracks.isEmpty {
                 tracks = (try? await ym.getChart()) ?? []
             }
             guard !tracks.isEmpty else { return }
-            var converted = tracks.map { ym.convertToTrack($0) }
 
-            let isMoodOrActivitySpecific = station.stationId.hasPrefix("mood:") || station.stationId.hasPrefix("activity:")
-            if station.stationId != "user:onyourwave" && !isMoodOrActivitySpecific {
-                let favourite = await ym.personalPicks(limit: 8)
-                if !favourite.isEmpty {
-                    var seenIds = Set(tracks.map(\.id))
-                    let extra = favourite.filter { !seenIds.contains($0.id) }
-                    for item in extra { seenIds.insert(item.id) }
-                    converted.append(contentsOf: extra.map { ym.convertToTrack($0) })
-                }
-            }
+            let converted = tracks.map { ym.convertToTrack($0) }
+            let filtered = converted.filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
 
-            let rankedQueue = UserTasteEngine.shared.filterAndRankWave(tracks: converted)
             if let current = PlayerCore.shared.currentTrack {
-                if !rankedQueue.contains(where: { $0.id == current.id }) {
-                    PlayerCore.shared.queue = [current] + rankedQueue
-                } else {
-                    PlayerCore.shared.queue = rankedQueue
-                }
-            } else if let first = rankedQueue.first {
-                PlayerCore.shared.play(first, newQueue: rankedQueue)
+                var newQueue = filtered.filter { $0.id != current.id }
+                newQueue.insert(current, at: 0)
+                PlayerCore.shared.queue = newQueue
+            } else if let first = filtered.first {
+                PlayerCore.shared.play(first, newQueue: filtered)
             }
         }
     }

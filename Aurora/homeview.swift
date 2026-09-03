@@ -83,20 +83,10 @@ struct HomeView: View {
 
             Spacer()
 
-            // Center Logo: Яндекс ✳ Музыка
-            HStack(spacing: 5) {
-                Text("Яндекс")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-
-                Image(systemName: "asterisk")
-                    .font(.system(size: 15, weight: .black))
-                    .foregroundStyle(Color(hex: "#FFE000") ?? .yellow)
-
-                Text("Музыка")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-            }
+            // Center Title: Музыка
+            Text("Музыка")
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
 
             Spacer()
 

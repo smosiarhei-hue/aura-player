@@ -39,11 +39,13 @@ final class YandexMusicService {
     static let secretSalt = "XGRlBW9FXlekgbPrRHuSiA"
 
     private static let keyRecent = "ym.memory.recent"
+    private static let keyRecentYm = "ym.memory.recent_ym_ids"
     private static let keyArtists = "ym.memory.artists"
     private static let keyPlays = "ym.memory.plays"
     private static let memoryLimit = 600
-    private static let noRepeatWindow = 180
+    private static let noRepeatWindow = 200
 
+    private(set) var recentYmIDs: [String] = []
     private(set) var chartCache: [YMTrackItem] = []
     private var chartCacheAt: Date?
     private var newAlbumsCache: [YMAlbumItem] = []
@@ -60,6 +62,7 @@ final class YandexMusicService {
         self.token = activeToken
         self.isAuthorized = !activeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         self.recentKeys = defaults.stringArray(forKey: Self.keyRecent) ?? []
+        self.recentYmIDs = defaults.stringArray(forKey: Self.keyRecentYm) ?? []
         self.artistCounts = (defaults.dictionary(forKey: Self.keyArtists) as? [String: Int]) ?? [:]
         self.totalPlays = defaults.integer(forKey: Self.keyPlays)
         self.waveMoodStationId = defaults.string(forKey: "ym.waveMood") ?? "user:onyourwave"
@@ -827,6 +830,14 @@ final class YandexMusicService {
         defaults.set(keys, forKey: Self.keyRecent)
         defaults.set(totalPlays, forKey: Self.keyPlays)
 
+        if let ymTrackId, !ymTrackId.isEmpty {
+            var ymList = recentYmIDs.filter { $0 != ymTrackId }
+            ymList.insert(ymTrackId, at: 0)
+            if ymList.count > Self.memoryLimit { ymList = Array(ymList.prefix(Self.memoryLimit)) }
+            recentYmIDs = ymList
+            defaults.set(ymList, forKey: Self.keyRecentYm)
+        }
+
         if let artist, !artist.isEmpty, artist != "Неизвестный исполнитель" {
             let parts = artist.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             for name in parts where !name.isEmpty {
@@ -841,7 +852,11 @@ final class YandexMusicService {
     }
 
     func isRecentlyPlayed(ymTrackId: String) -> Bool {
-        recentKeys.prefix(Self.noRepeatWindow).contains(Self.stableKey(for: ymTrackId))
+        if recentYmIDs.prefix(Self.noRepeatWindow).contains(ymTrackId) { return true }
+        if recentKeys.prefix(Self.noRepeatWindow).contains(ymTrackId) { return true }
+        if recentKeys.prefix(Self.noRepeatWindow).contains("ym_\(ymTrackId).mp3") { return true }
+        if recentKeys.prefix(Self.noRepeatWindow).contains(Self.stableKey(for: ymTrackId)) { return true }
+        return false
     }
 
     var topArtists: [String] {
@@ -858,10 +873,12 @@ final class YandexMusicService {
 
     func clearMemory() {
         recentKeys = []
+        recentYmIDs = []
         artistCounts = [:]
         totalPlays = 0
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: Self.keyRecent)
+        defaults.removeObject(forKey: Self.keyRecentYm)
         defaults.removeObject(forKey: Self.keyArtists)
         defaults.removeObject(forKey: Self.keyPlays)
     }

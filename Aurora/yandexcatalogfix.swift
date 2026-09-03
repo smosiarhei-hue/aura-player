@@ -9,14 +9,25 @@ private struct YMCatalogArtistCover: Decodable {
 }
 
 private struct YMCatalogSearchArtist: Decodable {
+    struct Ratings: Decodable {
+        let month: Int?
+        let week: Int?
+        let day: Int?
+    }
     let id: Int?
     let name: String?
     let coverUri: String?
     let cover: YMCatalogArtistCover?
+    let ratings: Ratings?
+    let likesCount: Int?
 }
 
 private struct YMCatalogSearchResponse: Decodable {
     struct Result: Decodable {
+        struct BestBlock: Decodable {
+            let type: String?
+            let text: String?
+        }
         struct TracksBlock: Decodable {
             let results: [YandexMusicService.YMTrackItem]?
         }
@@ -26,6 +37,7 @@ private struct YMCatalogSearchResponse: Decodable {
         struct AlbumsBlock: Decodable {
             let results: [YandexMusicService.YMAlbumItem]?
         }
+        let best: BestBlock?
         let tracks: TracksBlock?
         let artists: ArtistsBlock?
         let albums: AlbumsBlock?
@@ -89,46 +101,71 @@ extension YandexMusicService {
             locale: .current
         )
 
-        var tracks = Self.playable(decoded.result?.tracks?.results ?? [])
-        tracks.sort { left, right in
-            let leftArtistExact = left.artists?.contains {
-                ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == normalized
+        let rawTracks = Self.playable(decoded.result?.tracks?.results ?? [])
+        let indexedTracks = rawTracks.enumerated().map { ($0.offset, $0.element) }
+        let sortedIndexedTracks = indexedTracks.sorted { left, right in
+            // Priority 1: track belongs to an artist matching search query
+            let leftArtistExact = left.1.artists?.contains {
+                let an = ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                return an == normalized || an.hasPrefix(normalized)
             } == true
-            let rightArtistExact = right.artists?.contains {
-                ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == normalized
+            let rightArtistExact = right.1.artists?.contains {
+                let an = ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                return an == normalized || an.hasPrefix(normalized)
             } == true
             if leftArtistExact != rightArtistExact { return leftArtistExact }
 
-            let leftTitle = left.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            let rightTitle = right.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            // Priority 2: exact title match
+            let leftTitle = left.1.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            let rightTitle = right.1.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             let leftExact = leftTitle == normalized
             let rightExact = rightTitle == normalized
             if leftExact != rightExact { return leftExact }
+
             let leftStarts = leftTitle.hasPrefix(normalized)
             let rightStarts = rightTitle.hasPrefix(normalized)
             if leftStarts != rightStarts { return leftStarts }
-            return leftTitle.count < rightTitle.count
-        }
 
-        var artists = (decoded.result?.artists?.results ?? []).compactMap { raw -> YMArtistBrief? in
-            guard let id = raw.id, let name = raw.name else { return nil }
-            return YMArtistBrief(
+            // Priority 3: maintain Yandex's native popularity order
+            return left.0 < right.0
+        }
+        let tracks = sortedIndexedTracks.map { $0.1 }
+
+        let rawArtists = decoded.result?.artists?.results ?? []
+        struct IndexedArtist {
+            let brief: YMArtistBrief
+            let score: Int
+            let rank: Int
+            let origIndex: Int
+        }
+        var indexedArtists = rawArtists.enumerated().compactMap { idx, raw -> IndexedArtist? in
+            guard let id = raw.id, let name = raw.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            let nameFolded = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            var score = 0
+            if nameFolded == normalized {
+                score = 3
+            } else if nameFolded.hasPrefix(normalized) {
+                score = 2
+            } else if nameFolded.contains(normalized) {
+                score = 1
+            }
+            let monthRank = raw.ratings?.month ?? 999999
+            let brief = YMArtistBrief(
                 id: String(id),
                 name: name,
                 coverUri: raw.coverUri ?? raw.cover?.uri
             )
+            return IndexedArtist(brief: brief, score: score, rank: monthRank, origIndex: idx)
         }
-        artists.sort { left, right in
-            let leftName = left.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            let rightName = right.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            let leftExact = leftName == normalized
-            let rightExact = rightName == normalized
-            if leftExact != rightExact { return leftExact }
-            let leftStarts = leftName.hasPrefix(normalized)
-            let rightStarts = rightName.hasPrefix(normalized)
-            if leftStarts != rightStarts { return leftStarts }
-            return leftName.count < rightName.count
+        indexedArtists.sort { left, right in
+            // Match quality first
+            if left.score != right.score { return left.score > right.score }
+            // Artist popularity: smaller month rank number means bigger superstar
+            if left.rank != right.rank { return left.rank < right.rank }
+            // Native Yandex search order
+            return left.origIndex < right.origIndex
         }
+        let artists = indexedArtists.map { $0.brief }
 
         var albums = (decoded.result?.albums?.results ?? []).filter { $0.id != 0 }
         albums.sort { left, right in

@@ -18,11 +18,16 @@ final class LyricsService {
         let syncedLyrics: String?
     }
 
-    /// Priority: LRCLIB synced → LRCLIB plain → embedded static text.
+    /// Priority: Yandex Music Supplement → LRCLIB synced → LRCLIB plain → embedded static text.
     func fetchLyrics(for track: Track) async throws -> Lyrics {
         let key = cacheKey(for: track)
         if let cached = cache[key] {
             return cached
+        }
+
+        if let yandexLyrics = await fetchYandexLyrics(for: track) {
+            cache[key] = yandexLyrics
+            return yandexLyrics
         }
 
         if let remote = await fetchLRCLib(for: track) {
@@ -37,6 +42,61 @@ final class LyricsService {
         }
 
         throw URLError(.resourceUnavailable)
+    }
+
+    private func fetchYandexLyrics(for track: Track) async -> Lyrics? {
+        let ymId = PlayerCore.yandexTrackID(from: track)
+        guard !ymId.isEmpty else { return nil }
+
+        guard let url = URL(string: YandexMusicService.apiBase + "/tracks/\(ymId)/supplement") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let token = YandexMusicService.shared.token.isEmpty ? YandexMusicService.defaultToken : YandexMusicService.shared.token
+        request.setValue("OAuth " + token, forHTTPHeaderField: "Authorization")
+        request.setValue("ru", forHTTPHeaderField: "Accept-Language")
+        request.setValue("WindowsPhone/4.75 (Windows Phone 8.1; Microsoft; Lumia 950)", forHTTPHeaderField: "User-Agent")
+        request.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
+
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            return nil
+        }
+
+        struct YMSupplementResponse: Decodable {
+            struct Result: Decodable {
+                struct LyricsData: Decodable {
+                    let id: Int?
+                    let lyrics: String?
+                    let fullLyrics: String?
+                    let hasRights: Bool?
+                    let syncType: String?
+                    let lrcLyrics: String?
+                    let lrc: String?
+                }
+                let lyrics: LyricsData?
+            }
+            let result: Result?
+        }
+
+        guard let decoded = try? JSONDecoder().decode(YMSupplementResponse.self, from: data),
+              let lyricsData = decoded.result?.lyrics else {
+            return nil
+        }
+
+        // 1. Check for synchronized LRC lyrics
+        if let lrcText = lyricsData.lrcLyrics ?? lyricsData.lrc, !lrcText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let parsed = LRCParser.parse(lrcText)
+            if !parsed.lines.isEmpty {
+                return Lyrics(title: track.title, artist: track.artist, lines: parsed.lines, isSyllable: parsed.isSyllable)
+            }
+        }
+
+        // 2. Check for full text lyrics
+        if let rawText = lyricsData.fullLyrics ?? lyricsData.lyrics, !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return staticLyrics(from: rawText, track: track)
+        }
+
+        return nil
     }
 
     private func fetchLRCLib(for track: Track) async -> Lyrics? {
