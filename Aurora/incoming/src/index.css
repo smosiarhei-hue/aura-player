@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  background: #07070c;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  overscroll-behavior-y: none;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  box-shadow: 0 10px 40px -20px rgba(0, 0, 0, 0.6);
+}
+
+.btn-icon {
+  @apply grid h-12 w-12 place-items-center rounded-full text-white/70 transition hover:bg-white/10 hover:text-white active:scale-95;
+}
+
+.btn-play {
+  @apply grid h-16 w-16 place-items-center rounded-full bg-white text-black shadow-[0_10px_30px_-8px_rgba(255,255,255,0.5)] transition active:scale-95 disabled:opacity-30;
+}
+
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  outline: none;
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+}

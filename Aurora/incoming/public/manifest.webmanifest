@@ -1,0 +1,15 @@
+{
+  "name": "AutoMix DSP",
+  "short_name": "AutoMix",
+  "description": "Офлайн музыкальный плеер с автоматическим DJ-сведением треков",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07070c",
+  "theme_color": "#07070c",
+  "lang": "ru",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
