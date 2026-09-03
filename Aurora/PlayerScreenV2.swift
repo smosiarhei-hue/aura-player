@@ -117,7 +117,7 @@ struct PlayerScreenV2: View {
             ZStack {
                 // 1. Spatial Ambient Background (Dark room atmosphere with color aura)
                 ZStack {
-                    if reduceMotion || scenePhase != .active {
+                    if reduceMotion || scenePhase != .active || (isVideoShotEnabled && videoLooperPlayer != nil) {
                         artworkGradientBackground
                         contrastProtectionVignette
                     } else {
@@ -380,9 +380,18 @@ struct PlayerScreenV2: View {
         ZStack {
             // 1. Медиа-контент: Видео-шот или Стандартная обложка
             if isVideoShotEnabled, let vp = videoLooperPlayer {
+                // Video-shots delivered by Yandex often bake in their own
+                // pillarbox/letterbox bars into the source pixels. The
+                // AVPlayerLayer already uses .resizeAspectFill (see
+                // VideoShotPlayerView below), so simply filling the fixed
+                // square frame is not enough - the extra .scaledToFill()
+                // that used to sit here forced SwiftUI to size the
+                // representable by its own ideal size *before* clipping,
+                // which re-introduced the bars. A slight overscan + crop
+                // instead reliably removes them.
                 VideoShotPlayerView(player: vp)
                     .frame(width: side, height: side)
-                    .scaledToFill()
+                    .scaleEffect(1.34)
                     .clipped()
             } else {
                 artwork
@@ -434,11 +443,12 @@ struct PlayerScreenV2: View {
                         } else {
                             let pair = inCoverLyricsCurrentAndNext
                             Text(pair.current)
-                                .font(.system(size: 24, weight: .black, design: .rounded))
+                                .font(.system(size: 32, weight: .heavy, design: .default))
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.center)
-                                .lineLimit(3)
-                                .minimumScaleFactor(0.75)
+                                .lineLimit(4)
+                                .lineSpacing(2)
+                                .minimumScaleFactor(0.70)
                                 .padding(.horizontal, 20)
                                 .id(pair.current)
                                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -446,7 +456,7 @@ struct PlayerScreenV2: View {
 
                             if let next = pair.next, !next.isEmpty {
                                 Text(next)
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .font(.system(size: 17, weight: .semibold, design: .default))
                                     .foregroundStyle(.white.opacity(0.45))
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
