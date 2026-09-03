@@ -146,17 +146,17 @@ struct MarqueeText: View {
 
         animationTask = Task { @MainActor in
             while !Task.isCancelled {
-                // 1. Постоять в начале (2 сек)
-                try? await Task.sleep(nanoseconds: UInt64(pauseDelay * 1_000_000_000))
+                // 1. Постоять на месте в самом начале (2 сек)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
                 guard !Task.isCancelled else { break }
 
-                // 2. Плавно доехать до конца
+                // 2. Плавно доехать до самого конца строки
                 withAnimation(.easeInOut(duration: scrollDuration)) {
                     offset = -diff
                 }
 
-                // 3. Постоять в конце (1.5 сек)
-                try? await Task.sleep(nanoseconds: UInt64((scrollDuration + 1.5) * 1_000_000_000))
+                // 3. Дождаться окончания движения + постоять в конце (2 сек)
+                try? await Task.sleep(nanoseconds: UInt64((scrollDuration + 2.0) * 1_000_000_000))
                 guard !Task.isCancelled else { break }
 
                 // 4. Плавно вернуться в самое начало
@@ -164,8 +164,8 @@ struct MarqueeText: View {
                     offset = 0
                 }
 
-                // 5. Пауза перед следующим циклом
-                try? await Task.sleep(nanoseconds: UInt64((scrollDuration + 1.5) * 1_000_000_000))
+                // 5. Дождаться окончания возврата
+                try? await Task.sleep(nanoseconds: UInt64(scrollDuration * 1_000_000_000))
             }
         }
     }

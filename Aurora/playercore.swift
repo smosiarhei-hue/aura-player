@@ -443,41 +443,19 @@ final class PlayerCore {
     private var idleReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbB : reverbA }
 
     private func setupNowPlayingSession() {
-        let session = MPNowPlayingSession(players: [streamingPlayerA, streamingPlayerB])
-        session.automaticallyPublishesNowPlayingInfo = false
-
-        let observer = NowPlayingSessionObserver()
-        session.delegate = observer
-        nowPlayingSessionObserver = observer
-        nowPlayingSession = session
-
-        SonivoDiagnostics.log("[NowPlaying] Session created over 2 AVPlayers, canBecomeActive=\(session.canBecomeActive)", tag: "NOWPLAYING")
+        // Стандартная нативная архитектура: используем MPNowPlayingInfoCenter.default()
+        // MPNowPlayingSession вызывала сторонний виджет на Dynamic Island внутри приложения
+        SonivoDiagnostics.log("[NowPlaying] Configured MPNowPlayingInfoCenter.default()", tag: "NOWPLAYING")
     }
 
     func activateNowPlayingSessionIfNeeded() {
-        guard let session = nowPlayingSession else { return }
-        guard !session.isActive, !nowPlayingActivationInFlight else { return }
-        guard session.canBecomeActive else { return }
-
-        nowPlayingActivationInFlight = true
-        session.becomeActiveIfPossible { [weak self] didBecomeActive in
-            Task { @MainActor in
-                self?.nowPlayingActivationInFlight = false
-                SonivoDiagnostics.log("[NowPlaying] becomeActiveIfPossible -> \(didBecomeActive)", tag: "NOWPLAYING")
-            }
-        }
+        // No-op: MPNowPlayingInfoCenter.default() синхронизирован с AVAudioSession
     }
 
     private func publishNowPlaying(_ info: [String: Any]?, state: MPNowPlayingPlaybackState) {
         let defaultCenter = MPNowPlayingInfoCenter.default()
-        let sessionCenter = nowPlayingSession?.nowPlayingInfoCenter
-
         defaultCenter.nowPlayingInfo = info
         defaultCenter.playbackState = state
-        if let sessionCenter, sessionCenter !== defaultCenter {
-            sessionCenter.nowPlayingInfo = info
-            sessionCenter.playbackState = state
-        }
     }
 
     func setApplicationSceneActive(_ active: Bool) {

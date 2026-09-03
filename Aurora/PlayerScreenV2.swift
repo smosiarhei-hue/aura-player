@@ -30,7 +30,7 @@ struct PlayerScreenV2: View {
 
     // Unified Modal State Machine
     enum ActivePlayerModal: String, Identifiable {
-        case queue, equalizer, sleepTimer, settings, quality, artistSelection
+        case queue, equalizer, sleepTimer, settings, quality, artistSelection, lyrics
         var id: String { rawValue }
     }
     @State private var activeModal: ActivePlayerModal? = nil
@@ -147,22 +147,10 @@ struct PlayerScreenV2: View {
                     Spacer(minLength: 8)
 
                     // Center Stage: Standard Square Artwork or Synced Lyrics
-                    if showLyricsMode {
-                        lyricsStage
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .transition(.opacity)
-                    } else {
-                        artworkStage(side: coverSide, geo: geo)
-                            .frame(maxWidth: .infinity)
-                            .overlay(
-                                Group {
-                                    if !isVideoShotEnabled {
-                                        AutoMixTransitionOverlay(side: coverSide)
-                                    }
-                                }
-                            )
-                            .transition(.opacity)
-                    }
+                    // Center Stage: Standard Square Artwork, Video-Shot or In-Cover Synced Lyrics (Constant Size)
+                    artworkStage(side: coverSide)
+                        .frame(maxWidth: .infinity)
+                        .transition(.opacity)
 
                     Spacer(minLength: 8)
 
@@ -219,6 +207,18 @@ struct PlayerScreenV2: View {
                     audioQualitySheetContent
                 case .artistSelection:
                     artistSelectionSheetContent
+                case .lyrics:
+                    NavigationStack {
+                        LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
+                            .navigationTitle("Текст песни")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    Button("Закрыть") { activeModal = nil }
+                                        .foregroundStyle(AG.amber)
+                                }
+                            }
+                    }
                 }
             }
             .preferredColorScheme(.dark)
@@ -374,73 +374,106 @@ struct PlayerScreenV2: View {
         .frame(minHeight: tapSide)
     }
 
-    // MARK: - Center Stage: Standard Artwork / Immersive Video-Shot
+    // MARK: - Center Stage: Standard Artwork / Video-Shot / In-Cover Synced Lyrics (по фото media_1788457981692.png)
 
-    private func artworkStage(side: CGFloat, geo: GeometryProxy) -> some View {
-        Group {
+    private func artworkStage(side: CGFloat) -> some View {
+        ZStack {
+            // 1. Медиа-контент: Видео-шот или Стандартная обложка
             if isVideoShotEnabled, let vp = videoLooperPlayer {
-                // Кинематографичный пространственный видео-шот во всю ширину и высоту
-                let canvasW = geo.size.width
-                let canvasH = min(geo.size.height * 0.58, 520)
-                ZStack {
-                    // 1. Широкий атмосферный ореол
-                    VideoShotPlayerView(player: vp)
-                        .frame(width: canvasW, height: canvasH)
-                        .blur(radius: 46)
-                        .scaleEffect(1.22)
-                        .opacity(0.68)
-                        .mask(featheredDissolveMask(topF: 0.06, bottomF: 0.20, hF: 0.05))
-
-                    // 2. Объемное преломляющее гауссово размытие
-                    VideoShotPlayerView(player: vp)
-                        .frame(width: canvasW, height: canvasH)
-                        .blur(radius: 20)
-                        .scaleEffect(1.06)
-                        .opacity(0.90)
-                        .mask(featheredDissolveMask(topF: 0.10, bottomF: 0.26, hF: 0.08))
-
-                    // 3. Четкое видео по центру с глубоким мягким растворением в кнопки снизу
-                    VideoShotPlayerView(player: vp)
-                        .frame(width: canvasW, height: canvasH)
-                        .mask(featheredDissolveMask(topF: 0.12, bottomF: 0.32, hF: 0.10))
-                }
-                .frame(width: canvasW, height: canvasH)
+                VideoShotPlayerView(player: vp)
+                    .frame(width: side, height: side)
+                    .scaledToFill()
+                    .clipped()
             } else {
-                // Apple Vision Pro Spatial Album Cover (Плавное растворение краев в пространство)
-                let coverW = min(side * 1.06, 350)
-                let coverH = coverW
+                artwork
+                    .frame(width: side, height: side)
+                    .scaledToFill()
+                    .clipped()
+            }
+
+            // 2. Оверлей перехода AutoMix
+            if !isVideoShotEnabled && !showLyricsMode {
+                AutoMixTransitionOverlay(side: side)
+            }
+
+            // 3. Текст песни прямо внутри обложки (по фото пользователя media_1788457981692.png)
+            if showLyricsMode {
                 ZStack {
-                    // 1. Атмосферный ореол обложки
-                    artwork
-                        .frame(width: coverW, height: coverH)
-                        .blur(radius: 36)
-                        .scaleEffect(1.16)
-                        .opacity(player.isPlaying ? 0.75 : 0.22)
-                        .mask(featheredDissolveMask(topF: 0.08, bottomF: 0.08, hF: 0.08))
+                    // Полупрозрачный слой темного стекла поверх видео или обложки
+                    Color.black.opacity(0.60)
 
-                    // 2. Объемное гауссово размытие по периметру
-                    artwork
-                        .frame(width: coverW, height: coverH)
-                        .blur(radius: 18)
-                        .scaleEffect(1.05)
-                        .opacity(0.90)
-                        .mask(featheredDissolveMask(topF: 0.14, bottomF: 0.14, hF: 0.12))
+                    // Кнопка развернуть на весь экран ↗ в правом верхнем углу
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                openModal(.lyrics)
+                            } label: {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .padding(14)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Развернуть текст")
+                        }
+                        Spacer()
+                    }
 
-                    // 3. Четкая обложка по центру с плавным переходом в размытие
-                    artwork
-                        .frame(width: coverW, height: coverH)
-                        .mask(featheredDissolveMask(topF: 0.18, bottomF: 0.18, hF: 0.16))
+                    // Текст текущей и следующей строчки по центру
+                    VStack(spacing: 14) {
+                        if lyricsLoading {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(1.15)
+                            Text("Загрузка текста…")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.70))
+                        } else {
+                            let pair = inCoverLyricsCurrentAndNext
+                            Text(pair.current)
+                                .font(.system(size: 24, weight: .black, design: .rounded))
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
+                                .minimumScaleFactor(0.75)
+                                .padding(.horizontal, 20)
+                                .id(pair.current)
+                                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: pair.current)
+
+                            if let next = pair.next, !next.isEmpty {
+                                Text(next)
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.45))
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                    .padding(.horizontal, 24)
+                                    .animation(.easeInOut(duration: 0.25), value: next)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
                 }
-                .frame(width: coverW, height: coverH)
+                .frame(width: side, height: side)
+                .transition(.opacity)
             }
         }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1.0)
+        )
         .shadow(
             color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.40 : 0.15),
-            radius: player.isPlaying ? 28 : 8,
+            radius: player.isPlaying ? 24 : 8,
             x: 0,
-            y: player.isPlaying ? 14 : 4
+            y: player.isPlaying ? 12 : 4
         )
-        .scaleEffect(player.isPlaying ? 1.0 : 0.86)
+        .scaleEffect(player.isPlaying ? 1.0 : 0.88)
         .offset(x: coverDragX)
         .rotationEffect(.degrees(Double(coverDragX / 24)), anchor: .center)
         .gesture(
@@ -481,32 +514,22 @@ struct PlayerScreenV2: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
     }
 
-    private func featheredDissolveMask(topF: CGFloat, bottomF: CGFloat, hF: CGFloat) -> some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .white, location: topF),
-                        .init(color: .white, location: max(topF, 1.0 - bottomF)),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .white, location: hF),
-                        .init(color: .white, location: 1.0 - hF),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
+    private var inCoverLyricsCurrentAndNext: (current: String, next: String?) {
+        guard let lines = lyrics?.lines, !lines.isEmpty else {
+            return (current: "Слова песни", next: nil)
+        }
+        let currentTime = max(0, player.progress - 0.12)
+        var activeIdx = 0
+        for (i, line) in lines.enumerated() {
+            if line.time <= currentTime {
+                activeIdx = i
+            } else {
+                break
+            }
+        }
+        let currentText = lines[activeIdx].text
+        let nextText = (activeIdx + 1 < lines.count) ? lines[activeIdx + 1].text : nil
+        return (current: currentText, next: nextText)
     }
 
     @ViewBuilder private var artwork: some View {
@@ -584,16 +607,12 @@ struct PlayerScreenV2: View {
                     height: 28
                 )
 
-                Button(action: openArtist) {
-                    MarqueeText(
-                        text: current?.artist ?? "",
-                        font: .system(size: 17, weight: .medium, design: .rounded),
-                        color: .white.opacity(0.68),
-                        height: 22
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(current == nil)
+                MarqueeText(
+                    text: current?.artist ?? "",
+                    font: .system(size: 17, weight: .medium, design: .rounded),
+                    color: .white.opacity(0.68),
+                    height: 22
+                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
