@@ -91,17 +91,12 @@ struct FavoritesListView: View {
 
                         // Track List
                         LazyVStack(spacing: 4) {
-                            ForEach(Array(library.favorites.enumerated()), id: \.element.id) { idx, track in
+                            ForEach(library.favorites) { track in
                                 Button {
                                     player.play(track, newQueue: library.favorites)
                                 } label: {
                                     HStack(spacing: 12) {
-                                        Text("\(idx + 1)")
-                                            .font(.system(size: 13, weight: .medium))
-                                            .foregroundStyle(.white.opacity(0.40))
-                                            .frame(width: 24, alignment: .trailing)
-
-                                        SongArtworkView(track: track, size: 46)
+                                        SmallArtwork(track: track, size: 46)
                                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                                         VStack(alignment: .leading, spacing: 3) {
@@ -231,7 +226,7 @@ struct HistoryListView: View {
                                     player.play(track, newQueue: historyTracks)
                                 } label: {
                                     HStack(spacing: 12) {
-                                        SongArtworkView(track: track, size: 46)
+                                        SmallArtwork(track: track, size: 46)
                                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                                         VStack(alignment: .leading, spacing: 3) {
@@ -371,7 +366,7 @@ struct CategoryCatalogView: View {
                             HStack {
                                 Button {
                                     if let first = results.tracks.first {
-                                        player.play(first, newQueue: results.tracks)
+                                        SonivoPlay.track(first, in: results.tracks)
                                     }
                                 } label: {
                                     HStack(spacing: 7) {
@@ -411,14 +406,14 @@ struct CategoryCatalogView: View {
                                                 SonivoPlay.album(album)
                                             } label: {
                                                 VStack(alignment: .leading, spacing: 6) {
-                                                    AlbumCoverView(album: album, side: 130)
-                                                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                                    RemoteArtwork(urlString: album.coverUrlString, corner: 14)
+                                                        .frame(width: 130, height: 130)
 
-                                                    Text(album.title)
+                                                    Text(album.displayTitle)
                                                         .font(.system(size: 13.5, weight: .semibold))
                                                         .foregroundStyle(.white)
                                                         .lineLimit(1)
-                                                    Text(album.artists?.first?.name ?? "")
+                                                    Text(album.artistName)
                                                         .font(.system(size: 12))
                                                         .foregroundStyle(.white.opacity(0.60))
                                                         .lineLimit(1)
@@ -442,25 +437,20 @@ struct CategoryCatalogView: View {
                                     .padding(.horizontal, 16)
 
                                 LazyVStack(spacing: 4) {
-                                    ForEach(Array(results.tracks.enumerated()), id: \.element.id) { idx, track in
+                                    ForEach(results.tracks) { item in
                                         Button {
-                                            player.play(track, newQueue: results.tracks)
+                                            SonivoPlay.track(item, in: results.tracks)
                                         } label: {
                                             HStack(spacing: 12) {
-                                                Text("\(idx + 1)")
-                                                    .font(.system(size: 13, weight: .medium))
-                                                    .foregroundStyle(.white.opacity(0.40))
-                                                    .frame(width: 24, alignment: .trailing)
-
-                                                SongArtworkView(track: track, size: 46)
-                                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                                RemoteArtwork(urlString: item.coverUrlString, corner: 10)
+                                                    .frame(width: 46, height: 46)
 
                                                 VStack(alignment: .leading, spacing: 3) {
-                                                    Text(track.title)
+                                                    Text(item.title)
                                                         .font(.system(size: 15, weight: .semibold))
-                                                        .foregroundStyle(player.currentTrack?.id == track.id ? (category.gradient.first ?? .white) : .white)
+                                                        .foregroundStyle(player.currentTrack?.title == item.title ? (category.gradient.first ?? .white) : .white)
                                                         .lineLimit(1)
-                                                    Text(track.artist)
+                                                    Text(item.artists?.first?.name ?? "Разные исполнители")
                                                         .font(.system(size: 13))
                                                         .foregroundStyle(.white.opacity(0.60))
                                                         .lineLimit(1)
@@ -474,7 +464,7 @@ struct CategoryCatalogView: View {
                                             }
                                             .padding(.horizontal, 16)
                                             .padding(.vertical, 8)
-                                            .background(player.currentTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
+                                            .background(player.currentTrack?.title == item.title ? Color.white.opacity(0.06) : Color.clear)
                                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                         }
                                         .buttonStyle(.plain)
@@ -491,7 +481,7 @@ struct CategoryCatalogView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             isLoading = true
-            results = await ym.searchAll(query: category.searchQuery)
+            results = await ym.searchAllFixed(query: category.searchQuery)
             isLoading = false
         }
     }
