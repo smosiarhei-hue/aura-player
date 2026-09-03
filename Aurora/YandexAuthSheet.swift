@@ -171,6 +171,22 @@ struct YandexOAuthWebView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
 
+        // Предотвращаем ошибку WebAuthn "Couldn't enable quick login" в WKWebView
+        let disableWebAuthnScript = WKUserScript(
+            source: """
+            try {
+                delete window.PublicKeyCredential;
+                if (navigator.credentials) {
+                    navigator.credentials.get = undefined;
+                    navigator.credentials.create = undefined;
+                }
+            } catch(e) {}
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(disableWebAuthnScript)
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
