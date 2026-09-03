@@ -44,6 +44,26 @@ actor TrackAnalysisService {
         }
     }
 
+    /// Already analysed result for a track - local file or Yandex stream -
+    /// from memory or disk only. Never downloads or computes anything, so
+    /// callers that scan several upcoming tracks (AutoMix smart-pick
+    /// lookahead) can never stall on network analysis work.
+    func cachedAnalysis(for track: Track) async -> TrackAnalysis? {
+        let url = await MainActor.run { track.url }
+        let isStream = await MainActor.run { track.isStream }
+        if !isStream, FileManager.default.fileExists(atPath: url.path) {
+            return cached(for: url)
+        }
+        let ymID = Self.ymTrackID(from: track)
+        guard !ymID.isEmpty else { return nil }
+        let key = "ym-\(ymID)-v\(TrackAnalysis.currentVersion)"
+        if let value = memory[key] { return value }
+        return Self.loadFromDisk(key: key).map { value in
+            memory[key] = value
+            return value
+        }
+    }
+
     /// Analyse the file if needed. Concurrent callers share one run.
     func analysis(trackID: UUID, url: URL) async -> TrackAnalysis? {
         if let value = cached(for: url) { return value }
