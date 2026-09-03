@@ -179,7 +179,7 @@ final class MoodRadioEngine {
         recentPlayedTracks.append(track)
         let yId = PlayerCore.yandexTrackID(from: track)
         if !yId.isEmpty {
-            YandexMusicService.shared.remember(yandexTrackId: yId, artist: track.artist)
+            YandexMusicService.shared.remember(key: yId, artist: track.artist, ymTrackId: yId)
         }
         let idStrings = Array(playedTrackIDs.suffix(200).map { $0.uuidString })
         UserDefaults.standard.set(idStrings, forKey: Self.keyMoodPlayed)
