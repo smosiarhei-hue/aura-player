@@ -92,6 +92,47 @@ nonisolated enum TransitionPlanner {
         return Double(CamelotWheel.compatibility(a, b))
     }
 
+    // MARK: - Smart next-track selection
+    //
+    // AutoMix should not just blend whatever the queue happens to place next -
+    // it should pick, out of a bounded lookahead window of upcoming songs,
+    // whichever one actually meshes with the track that is about to end:
+    // same or harmonically adjacent Camelot key, and a close enough tempo
+    // that the existing beat-match stretch window (+/-6%) can lock them
+    // together. This is what makes the transition musically "hit" the key
+    // and the beat instead of only depending on whatever a fixed pair
+    // happens to measure like.
+
+    /// Highest-scoring upcoming track for a real harmonic/tempo mashup, or
+    /// `nil` if nothing in the pool clears a reasonable compatibility bar
+    /// (in which case the caller should keep the plain queue order).
+    nonisolated static func bestAutoMixCandidate(
+        current: TrackAnalysis,
+        candidates: [(track: Track, analysis: TrackAnalysis)]
+    ) -> Track? {
+        guard !candidates.isEmpty else { return nil }
+
+        var best: (track: Track, score: Double)? = nil
+        for candidate in candidates {
+            let harmonic = harmonicScore(source: current, target: candidate.analysis)
+            let rhythm: Double
+            if let sourceBPM = current.bpm, let targetBPM = candidate.analysis.bpm {
+                rhythm = rhythmScore(sourceBPM: sourceBPM, targetBPM: targetBPM)
+            } else {
+                rhythm = 0.4
+            }
+            // Key match weighted higher than tempo: a wrong key clashes far
+            // more audibly than a tempo the beat-match stretch can absorb.
+            let score = harmonic * 0.6 + rhythm * 0.4
+            if best == nil || score > best!.score {
+                best = (candidate.track, score)
+            }
+        }
+
+        guard let winner = best, winner.score >= 0.55 else { return nil }
+        return winner.track
+    }
+
     // MARK: - Local Fallback Decision Planning (offline DSP decision engine)
 
     /// Builds a complete executable TransitionPlan without any network access.
