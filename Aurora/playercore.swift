@@ -956,6 +956,26 @@ final class PlayerCore {
         } else if let peeked = peekNext(auto: true) {
             plannedNextTrack = peeked
             nextTrack = peeked
+            if transitionMode == .automix, !shuffle, !isSelectingNextTrack {
+                isSelectingNextTrack = true
+                let upcoming = effectiveQueue()
+                let fallbackId = peeked.id
+                Task {
+                    let better = await SmartNextTrackSelector.betterCandidate(current: current, fallback: peeked, upcoming: upcoming)
+                    await MainActor.run {
+                        self.isSelectingNextTrack = false
+                        guard let better,
+                              self.currentTrack?.id == current.id,
+                              self.plannedNextTrack?.id == fallbackId,
+                              self.activeTransitionPlan == nil,
+                              !self.isPlanningTransition,
+                              self.prebufferedTrackId == nil,
+                              !self.isTransitioning else { return }
+                        self.plannedNextTrack = better
+                        SonivoDiagnostics.log("[AutoMix] Smart-pick upgraded next track to \(better.title)", tag: "AUTOMIX")
+                    }
+                }
+            }
         } else {
             return
         }
