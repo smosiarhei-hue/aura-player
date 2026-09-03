@@ -521,7 +521,7 @@ struct PlayerScreenV2: View {
         let currentTime = max(0, player.progress - 0.12)
         var activeIdx = 0
         for (i, line) in lines.enumerated() {
-            if line.time <= currentTime {
+            if line.startTime <= currentTime {
                 activeIdx = i
             } else {
                 break
