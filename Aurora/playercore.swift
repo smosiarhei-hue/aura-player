@@ -473,16 +473,6 @@ final class PlayerCore {
         let defaultCenter = MPNowPlayingInfoCenter.default()
         let sessionCenter = nowPlayingSession?.nowPlayingInfoCenter
 
-        if applicationIsActive {
-            defaultCenter.nowPlayingInfo = nil
-            defaultCenter.playbackState = .stopped
-            if let sessionCenter, sessionCenter !== defaultCenter {
-                sessionCenter.nowPlayingInfo = nil
-                sessionCenter.playbackState = .stopped
-            }
-            return
-        }
-
         defaultCenter.nowPlayingInfo = info
         defaultCenter.playbackState = state
         if let sessionCenter, sessionCenter !== defaultCenter {
@@ -967,6 +957,8 @@ final class PlayerCore {
     private func beginStream(_ url: URL, at seconds: Double) {
         let item = AVPlayerItem(url: url)
         item.audioTimePitchAlgorithm = .timeDomain
+        item.isAudioSpatializationAllowed = true
+        item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         StreamBeatTap.shared.attach(to: item)
         activeStreamingPlayer.replaceCurrentItem(with: item)
         activeStreamingPlayer.volume = volume
@@ -1059,6 +1051,8 @@ final class PlayerCore {
                     let resolvedStart = self.activeTransitionPlan != nil ? targetStart : 0
                     let nextItem = AVPlayerItem(url: info.url)
                     nextItem.audioTimePitchAlgorithm = .timeDomain
+                    nextItem.isAudioSpatializationAllowed = true
+                    nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
                     StreamBeatTap.shared.attach(to: nextItem)
                     self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                     self.idleStreamingPlayer.volume = 0
@@ -1265,6 +1259,9 @@ final class PlayerCore {
                     do {
                         let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                         let nextItem = AVPlayerItem(url: info.url)
+                        nextItem.audioTimePitchAlgorithm = .timeDomain
+                        nextItem.isAudioSpatializationAllowed = true
+                        nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
                         StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                         self.idleStreamingPlayer.volume = 0.001

@@ -49,6 +49,11 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
         ITSAppUsesNonExemptEncryption: false
+        CFBundleURLTypes:
+          - CFBundleURLName: com.smoze.sonivo
+            CFBundleURLSchemes:
+              - sonivo
+              - aurora
 schemes:
   Sonivo:
     build:

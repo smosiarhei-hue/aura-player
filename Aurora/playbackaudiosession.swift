@@ -74,7 +74,7 @@ final class PlaybackAudioSessionCoordinator {
     private func configure() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
+            try session.setCategory(.playback, mode: .default, policy: .default, options: [.allowAirPlay, .allowBluetooth, .allowBluetoothA2DP])
             try session.setActive(true)
         } catch {
             print("Playback audio session error: \(error)")

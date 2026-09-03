@@ -115,40 +115,19 @@ struct PlayerScreenV2: View {
             let coverSide = min(geo.size.width - 64, geo.size.height * 0.40, 360)
 
             ZStack {
-                // 1. Spatial Ambient Background (Strictly bounded to screen geometry)
+                // 1. Spatial Ambient Background (Dark room atmosphere with color aura)
                 ZStack {
-                    if isVideoShotEnabled, let vp = videoLooperPlayer {
-                        // FULL-SCREEN VIDEO SHOT (На весь экран без рамок и обрезаний)
-                        VideoShotPlayerView(player: vp)
-                            .frame(width: geo.size.width, height: geo.size.height)
-                            .clipped()
-                            .overlay(
-                                // Мягкое преломляющее затемнение сверху и снизу для идеальной читаемости
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: Color.black.opacity(0.70), location: 0.0),
-                                        .init(color: Color.black.opacity(0.15), location: 0.18),
-                                        .init(color: Color.clear, location: 0.35),
-                                        .init(color: Color.clear, location: 0.55),
-                                        .init(color: Color.black.opacity(0.65), location: 0.78),
-                                        .init(color: Color.black.opacity(0.92), location: 1.0)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                    } else if reduceMotion || scenePhase != .active {
+                    if reduceMotion || scenePhase != .active {
                         artworkGradientBackground
                         contrastProtectionVignette
                     } else {
-                        // Мягкое пространственное размытие обложки по краям
                         artwork
                             .frame(width: geo.size.width, height: geo.size.height)
-                            .blur(radius: 54)
-                            .scaleEffect(1.15)
-                            .opacity(0.48)
+                            .blur(radius: 64)
+                            .scaleEffect(1.20)
+                            .opacity(0.40)
                         AnimatedMeshBackground(palette: backgroundColors)
-                            .opacity(0.65)
+                            .opacity(0.55)
                         contrastProtectionVignette
                     }
                 }
@@ -399,32 +378,82 @@ struct PlayerScreenV2: View {
 
     private func artworkStage(side: CGFloat) -> some View {
         Group {
-            if isVideoShotEnabled {
-                // Видео-шот уже полноэкранный на всем плеере — окно и рамка убраны!
-                // Прозрачная сенсорная область для свайпов треков вперед/назад
-                Color.clear
-                    .frame(width: side, height: side)
-            } else {
-                // Пространственная обложка: мягкое гауссово свечение БЕЗ ободка (no stroke)
+            if isVideoShotEnabled, let vp = videoLooperPlayer {
+                // Apple Vision Pro Spatial Video Canvas (Плавные преломляющие края как на фото 1)
+                let canvasW = side
+                let canvasH = min(side * 1.18, 360)
                 ZStack {
-                    // 1. Пространственный рассеянный гауссов ореол сзади
-                    artwork
-                        .frame(width: side, height: side)
-                        .blur(radius: 26)
-                        .scaleEffect(1.05)
-                        .opacity(player.isPlaying ? 0.70 : 0.16)
+                    // 1. Широкий атмосферный ореол рассеянного света
+                    VideoShotPlayerView(player: vp)
+                        .frame(width: canvasW, height: canvasH)
+                        .blur(radius: 36)
+                        .scaleEffect(1.15)
+                        .opacity(0.70)
 
-                    // 2. Обложка с мягким скруглением без ободка
+                    // 2. Объемное преломляющее гауссово размытие по контуру
+                    VideoShotPlayerView(player: vp)
+                        .frame(width: canvasW, height: canvasH)
+                        .blur(radius: 16)
+                        .scaleEffect(1.04)
+                        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+                        .opacity(0.90)
+
+                    // 3. Четкое видео по центру с плавным растворением к краям (без резких срезов)
+                    VideoShotPlayerView(player: vp)
+                        .frame(width: canvasW, height: canvasH)
+                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        .mask(
+                            RadialGradient(
+                                stops: [
+                                    .init(color: .white, location: 0.60),
+                                    .init(color: .white.opacity(0.85), location: 0.76),
+                                    .init(color: .white.opacity(0.20), location: 0.90),
+                                    .init(color: .clear, location: 1.0)
+                                ],
+                                center: .center,
+                                startRadius: min(canvasW, canvasH) * 0.28,
+                                endRadius: max(canvasW, canvasH) * 0.56
+                            )
+                        )
+                }
+                .frame(width: canvasW, height: canvasH)
+            } else {
+                // Apple Vision Pro Spatial Album Cover (Мягкое растворение краев как на фото 1)
+                ZStack {
+                    // 1. Атмосферный ореол обложки
                     artwork
                         .frame(width: side, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .blur(radius: 32)
+                        .scaleEffect(1.15)
+                        .opacity(player.isPlaying ? 0.75 : 0.20)
+
+                    // 2. Объемное преломляющее размытие по периметру
+                    artwork
+                        .frame(width: side, height: side)
+                        .blur(radius: 16)
+                        .scaleEffect(1.04)
+                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .opacity(0.92)
+
+                    // 3. Четкая обложка по центру с плавным гауссовым переходом в размытие
+                    artwork
+                        .frame(width: side, height: side)
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .mask(
+                            RadialGradient(
+                                stops: [
+                                    .init(color: .white, location: 0.60),
+                                    .init(color: .white.opacity(0.85), location: 0.76),
+                                    .init(color: .white.opacity(0.20), location: 0.90),
+                                    .init(color: .clear, location: 1.0)
+                                ],
+                                center: .center,
+                                startRadius: side * 0.28,
+                                endRadius: side * 0.56
+                            )
+                        )
                 }
-                .shadow(
-                    color: (artworkPaletteColors.first ?? Color.black).opacity(player.isPlaying ? 0.45 : 0.15),
-                    radius: player.isPlaying ? 28 : 8,
-                    x: 0,
-                    y: player.isPlaying ? 14 : 4
-                )
+                .frame(width: side, height: side)
             }
         }
         .shadow(

@@ -91,8 +91,14 @@ struct RootView: View {
             PlaybackAudioSessionCoordinator.shared.install()
             player.setApplicationSceneActive(scenePhase == .active)
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase) { oldPhase, phase in
             player.setApplicationSceneActive(phase == .active)
+            if phase == .active, oldPhase == .background, player.isPlaying {
+                showPlayer = true
+            }
+        }
+        .onOpenURL { _ in
+            showPlayer = true
         }
         .onChange(of: player.currentTrack?.id) { _, _ in
             rememberCurrentTrack()
