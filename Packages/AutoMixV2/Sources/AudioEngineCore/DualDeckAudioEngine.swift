@@ -48,13 +48,6 @@ public actor DualDeckAudioEngine {
         deckB = secondDeck
     }
 
-    deinit {
-        crossfadeTask?.cancel()
-        deckA.feederTask?.cancel()
-        deckB.feederTask?.cancel()
-        engine.stop()
-    }
-
     public func startEngine() throws {
         guard !engine.isRunning else { return }
         engine.prepare()
