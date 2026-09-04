@@ -11,7 +11,7 @@ struct PlayerScreenV2: View {
     @State private var library = LibraryStore.shared
     @Binding var isPresented: Bool
 
-    init(isPresented: Binding<Bool>, dragOffsetY: Binding<CGFloat> = .constant(0)) {
+    init(isPresented: Binding<Bool>) {
         self._isPresented = isPresented
     }
 
@@ -19,10 +19,7 @@ struct PlayerScreenV2: View {
     @Environment(\.scenePhase) private var scenePhase
 
     // Native medium control metrics.
-    private let tapSide: CGFloat = 44
-    private let iconGlyph: CGFloat = 19
-    private let skipGlyph: CGFloat = 30
-    private let playGlyph: CGFloat = 40
+    private let tapSide: CGFloat = AG.tapTarget
 
     @State private var artistChoices: [PlayerArtistLink] = []
     @State private var selectedArtist: PlayerArtistLink?
@@ -158,15 +155,15 @@ struct PlayerScreenV2: View {
                     if let waveMessage {
                         HStack(spacing: 6) {
                             Image(systemName: "dot.radiowaves.left.and.right")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(AG.text(.footnote, .bold))
                                 .foregroundStyle(AG.amber)
                             Text(waveMessage)
-                                .font(AG.text(12, .semibold))
-                                .foregroundStyle(.white)
+                                .font(AG.text(.caption, .semibold))
+                                .foregroundStyle(AG.ink)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
-                        .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8)))
+                        .glassCapsule()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .padding(.bottom, 4)
                     }
@@ -303,15 +300,7 @@ struct PlayerScreenV2: View {
 
     private var topHeader: some View {
         HStack(alignment: .center) {
-            Button(action: close) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.70))
-                    .frame(width: tapSide, height: tapSide)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(GlassPressStyle())
-            .accessibilityLabel("Свернуть плеер")
+            GlassIconButton(systemImage: "chevron.down", tint: AG.inkMuted, weight: .bold, accessibilityLabel: "Свернуть плеер", action: close)
 
             Spacer()
 
@@ -364,11 +353,12 @@ struct PlayerScreenV2: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: iconGlyph, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.70))
+                    .font(AG.glyph(.bold))
+                    .foregroundStyle(AG.inkMuted)
                     .frame(width: tapSide, height: tapSide)
                     .contentShape(Circle())
             }
+            .glassCircle()
             .accessibilityLabel("Ещё")
         }
         .frame(minHeight: tapSide)
@@ -416,12 +406,12 @@ struct PlayerScreenV2: View {
                         HStack {
                             Spacer()
                             Button {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                Haptics.tap(.light)
                                 openModal(.lyrics)
                             } label: {
                                 Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(.white.opacity(0.85))
+                                    .font(AG.text(.subheadline, .bold))
+                                    .foregroundStyle(AG.ink.opacity(0.85))
                                     .padding(14)
                                     .contentShape(Rectangle())
                             }
@@ -438,13 +428,13 @@ struct PlayerScreenV2: View {
                                 .tint(.white)
                                 .scaleEffect(1.15)
                             Text("Загрузка текста…")
-                                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.70))
+                                .font(AG.rounded(.subheadline, .semibold))
+                                .foregroundStyle(AG.inkMuted)
                         } else {
                             let pair = inCoverLyricsCurrentAndNext
                             Text(pair.current)
-                                .font(.system(size: 32, weight: .heavy, design: .default))
-                                .foregroundStyle(.white)
+                                .font(AG.display(.largeTitle, .heavy))
+                                .foregroundStyle(AG.ink)
                                 .multilineTextAlignment(.center)
                                 .lineLimit(4)
                                 .lineSpacing(2)
@@ -452,12 +442,12 @@ struct PlayerScreenV2: View {
                                 .padding(.horizontal, 20)
                                 .id(pair.current)
                                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: pair.current)
+                                .animation(AG.spring, value: pair.current)
 
                             if let next = pair.next, !next.isEmpty {
                                 Text(next)
-                                    .font(.system(size: 17, weight: .semibold, design: .default))
-                                    .foregroundStyle(.white.opacity(0.45))
+                                    .font(AG.text(.body, .semibold))
+                                    .foregroundStyle(AG.inkFaint)
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
                                     .padding(.horizontal, 24)
@@ -496,32 +486,32 @@ struct PlayerScreenV2: View {
                 }
                 .onEnded { val in
                     guard abs(val.translation.width) > abs(val.translation.height) else {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
+                        withAnimation(AG.spring) { coverDragX = 0 }
                         return
                     }
                     let threshold: CGFloat = 50
                     if val.translation.width < -threshold {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = -side * 1.2 }
+                        Haptics.tap(.medium)
+                        withAnimation(AG.spring) { coverDragX = -side * 1.2 }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             nextTrack()
                             coverDragX = side * 1.2
-                            withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
+                            withAnimation(AG.spring) { coverDragX = 0 }
                         }
                     } else if val.translation.width > threshold {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = side * 1.2 }
+                        Haptics.tap(.medium)
+                        withAnimation(AG.spring) { coverDragX = side * 1.2 }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             previousTrack()
                             coverDragX = -side * 1.2
-                            withAnimation(.spring(response: 0.40, dampingFraction: 0.78)) { coverDragX = 0 }
+                            withAnimation(AG.spring) { coverDragX = 0 }
                         }
                     } else {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { coverDragX = 0 }
+                        withAnimation(AG.spring) { coverDragX = 0 }
                     }
                 }
         )
-        .animation(.spring(response: 0.45, dampingFraction: 0.72), value: player.isPlaying)
+        .animation(AG.slowSpring, value: player.isPlaying)
     }
 
     private var inCoverLyricsCurrentAndNext: (current: String, next: String?) {
@@ -567,16 +557,8 @@ struct PlayerScreenV2: View {
             LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
             Image(systemName: "music.note")
                 .font(.system(size: 70, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(AG.ink.opacity(0.85))
         }
-    }
-
-    // MARK: - Lyrics Stage
-
-    private var lyricsStage: some View {
-        LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
     }
 
     // MARK: - Lower Deck: Standard Apple Music Layout
@@ -609,65 +591,68 @@ struct PlayerScreenV2: View {
         let isFav = current.map { library.isTrackFavorite($0) } ?? false
 
         return HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                MarqueeText(
-                    text: current?.title ?? "Не играет",
-                    font: .system(size: 22, weight: .bold, design: .rounded),
-                    color: .white,
-                    height: 28
-                )
+            Button(action: openArtist) {
+                VStack(alignment: .leading, spacing: 2) {
+                    MarqueeText(
+                        text: current?.title ?? "Не играет",
+                        font: AG.rounded(.title2, .bold),
+                        color: AG.ink,
+                        height: 28
+                    )
 
-                MarqueeText(
-                    text: current?.artist ?? "",
-                    font: .system(size: 17, weight: .medium, design: .rounded),
-                    color: .white.opacity(0.68),
-                    height: 22
-                )
+                    MarqueeText(
+                        text: current?.artist ?? "",
+                        font: AG.rounded(.body, .medium),
+                        color: AG.inkMuted,
+                        height: 22
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+            .disabled(current == nil || resolvingArtist)
+            .accessibilityHint("Открыть страницу исполнителя")
 
             // Right accessories: Video Shot toggle, Wave button & Favorite heart
-            HStack(spacing: 10) {
-                if videoShotURL != nil {
-                    Button(action: toggleVideoShot) {
-                        Image(systemName: isVideoShotEnabled ? "video.fill" : "video.slash.fill")
-                            .font(.system(size: iconGlyph, weight: .bold))
-                            .foregroundStyle(isVideoShotEnabled ? (Color(hex: "#00E676") ?? .green) : .white.opacity(0.60))
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
+                    if videoShotURL != nil {
+                        GlassIconButton(
+                            systemImage: isVideoShotEnabled ? "video.fill" : "video.slash.fill",
+                            tint: isVideoShotEnabled ? AG.positive : AG.inkMuted,
+                            accessibilityLabel: isVideoShotEnabled ? "Выключить видео-шот" : "Включить видео-шот",
+                            action: toggleVideoShot
+                        )
+                    }
+
+                    if let current, current.isStream {
+                        GlassIconButton(
+                            systemImage: "dot.radiowaves.left.and.right",
+                            tint: waveActive ? AG.amber : AG.inkMuted,
+                            accessibilityLabel: "Моя волна по треку",
+                            action: startTrackWave
+                        )
+                        .disabled(waveLoading)
+                    }
+
+                    Button {
+                        guard let current else { return }
+                        Haptics.tap(.medium)
+                        library.toggleFavorite(current)
+                    } label: {
+                        Image(systemName: isFav ? "heart.fill" : "heart")
+                            .font(AG.glyph(.semibold))
+                            .foregroundStyle(isFav ? AG.heart : AG.inkMuted)
+                            .contentTransition(.symbolEffect(.replace))
                             .frame(width: tapSide, height: tapSide)
                             .contentShape(Circle())
                     }
-                    .buttonStyle(GlassPressStyle())
-                    .accessibilityLabel(isVideoShotEnabled ? "Выключить видео-шот" : "Включить видео-шот")
+                    .buttonStyle(.plain)
+                    .glassCircle()
+                    .disabled(current == nil)
+                    .accessibilityLabel(isFav ? "Удалить из избранного" : "В избранное")
                 }
-
-                if let current, current.isStream {
-                    Button(action: startTrackWave) {
-                        Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: iconGlyph, weight: .bold))
-                            .foregroundStyle(waveActive ? AG.amber : .white.opacity(0.75))
-                            .frame(width: tapSide, height: tapSide)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(GlassPressStyle())
-                    .disabled(waveLoading)
-                    .accessibilityLabel("Моя волна по треку")
-                }
-
-                Button {
-                    guard let current else { return }
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    library.toggleFavorite(current)
-                } label: {
-                    Image(systemName: isFav ? "heart.fill" : "heart")
-                        .font(.system(size: iconGlyph + 2, weight: .bold))
-                        .foregroundStyle(isFav ? Color.pink : Color.white.opacity(0.75))
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: tapSide, height: tapSide)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(GlassPressStyle())
-                .disabled(current == nil)
-                .accessibilityLabel(isFav ? "Удалить из избранного" : "В избранное")
             }
             .fixedSize(horizontal: true, vertical: false)
         }
@@ -691,18 +676,18 @@ struct PlayerScreenV2: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "waveform")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(AG.text(.caption2, .bold))
                 Text(qualityBadgeLabel)
-                    .font(AG.text(11, .semibold))
+                    .font(AG.text(.caption2, .semibold))
                     .lineLimit(1)
             }
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(AG.ink.opacity(0.85))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Capsule().fill(.ultraThinMaterial).overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8)))
             .contentShape(Capsule())
         }
-        .buttonStyle(GlassPressStyle())
+        .buttonStyle(.plain)
+        .glassCapsule(interactive: true)
         .accessibilityLabel("Качество звука: \(qualityBadgeLabel)")
     }
 
@@ -727,8 +712,8 @@ struct PlayerScreenV2: View {
         HStack(spacing: 0) {
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: skipGlyph, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.system(.largeTitle, design: .default, weight: .bold))
+                    .foregroundStyle(AG.ink)
                     .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
@@ -737,8 +722,8 @@ struct PlayerScreenV2: View {
 
             Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: playGlyph, weight: .black))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 40, weight: .black))
+                    .foregroundStyle(AG.ink)
                     .contentTransition(.symbolEffect(.replace.downUp))
                     .frame(maxWidth: .infinity, minHeight: 56)
                     .contentShape(Rectangle())
@@ -748,8 +733,8 @@ struct PlayerScreenV2: View {
 
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: skipGlyph, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.system(.largeTitle, design: .default, weight: .bold))
+                    .foregroundStyle(AG.ink)
                     .frame(maxWidth: .infinity, minHeight: 52)
                     .contentShape(Rectangle())
             }
@@ -764,15 +749,15 @@ struct PlayerScreenV2: View {
     private var volumeBar: some View {
         HStack(spacing: 12) {
             Image(systemName: "speaker.fill")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.50))
+                .font(AG.text(.caption2, .bold))
+                .foregroundStyle(AG.inkMuted)
 
             NativeVolumeSlider()
                 .frame(height: 32)
 
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.50))
+                .font(AG.text(.caption2, .bold))
+                .foregroundStyle(AG.inkMuted)
         }
         .padding(.horizontal, 4)
     }
@@ -781,40 +766,33 @@ struct PlayerScreenV2: View {
 
     private var appleMusicBottomBar: some View {
         HStack(alignment: .center) {
-            Button {
+            GlassIconButton(
+                systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble",
+                tint: showLyricsMode ? AG.amber : AG.inkMuted,
+                accessibilityLabel: "Текст песни"
+            ) {
                 withAnimation(AG.spring) {
                     showLyricsMode.toggle()
                 }
-            } label: {
-                Image(systemName: showLyricsMode ? "quote.bubble.fill" : "quote.bubble")
-                    .font(.system(size: iconGlyph, weight: .semibold))
-                    .foregroundStyle(showLyricsMode ? AG.amber : .white.opacity(0.65))
-                    .frame(width: tapSide, height: tapSide)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(GlassPressStyle())
-            .accessibilityLabel("Текст песни")
 
             Spacer()
 
             AirPlayButtonView()
                 .frame(width: tapSide, height: tapSide)
-                .contentShape(Rectangle())
+                .contentShape(Circle())
+                .glassCircle()
                 .accessibilityLabel("AirPlay")
 
             Spacer()
 
-            Button {
+            GlassIconButton(
+                systemImage: activeModal == .queue ? "list.bullet.rectangle.portrait.fill" : "list.bullet",
+                tint: activeModal == .queue ? AG.amber : AG.inkMuted,
+                accessibilityLabel: "Очередь"
+            ) {
                 openModal(.queue)
-            } label: {
-                Image(systemName: activeModal == .queue ? "list.bullet.rectangle.portrait.fill" : "list.bullet")
-                    .font(.system(size: iconGlyph, weight: .semibold))
-                    .foregroundStyle(activeModal == .queue ? AG.amber : .white.opacity(0.65))
-                    .frame(width: tapSide, height: tapSide)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(GlassPressStyle())
-            .accessibilityLabel("Очередь")
         }
         .padding(.horizontal, 28)
         .frame(minHeight: tapSide)
@@ -827,23 +805,23 @@ struct PlayerScreenV2: View {
             Section {
                 ForEach(AudioQuality.allCases) { q in
                     Button {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Haptics.tap(.medium)
                         player.selectQuality(q)
                         activeModal = nil
                     } label: {
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(q.label)
-                                    .font(AG.text(15, .semibold))
-                                    .foregroundStyle(.white)
+                                    .font(AG.text(.subheadline, .semibold))
+                                    .foregroundStyle(AG.ink)
                                 Text(q.detail)
-                                    .font(AG.text(12, .regular))
-                                    .foregroundStyle(.white.opacity(0.60))
+                                    .font(AG.text(.caption))
+                                    .foregroundStyle(AG.inkMuted)
                             }
                             Spacer()
                             if player.audioQuality == q {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 14, weight: .bold))
+                                    .font(AG.text(.subheadline, .bold))
                                     .foregroundStyle(AG.amber)
                             }
                         }
@@ -878,12 +856,12 @@ struct PlayerScreenV2: View {
                     } label: {
                         HStack {
                             Text(artist.name)
-                                .font(AG.text(16, .medium))
-                                .foregroundStyle(.white)
+                                .font(AG.text(.callout, .medium))
+                                .foregroundStyle(AG.ink)
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.40))
+                                .font(AG.text(.footnote, .semibold))
+                                .foregroundStyle(AG.inkFaint)
                         }
                         .padding(.vertical, 4)
                         .frame(minHeight: 44)
@@ -903,7 +881,7 @@ struct PlayerScreenV2: View {
     }
 
     private func openModal(_ modal: ActivePlayerModal) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.tap(.light)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             activeModal = modal
         }
@@ -913,7 +891,7 @@ struct PlayerScreenV2: View {
 
     private func startTrackWave() {
         guard let current = track else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.tap(.medium)
         waveLoading = true
         Task {
             let waveTracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45)
@@ -921,7 +899,7 @@ struct PlayerScreenV2: View {
             if !waveTracks.isEmpty {
                 player.queue = waveTracks
                 waveActive = true
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
                 withAnimation(AG.spring) {
                     waveMessage = "🌊 Моя волна по треку запущена"
                 }
@@ -947,19 +925,19 @@ struct PlayerScreenV2: View {
     }
 
     private func togglePlayback() {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.tap(.medium)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.togglePlay()
     }
 
     private func previousTrack() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.previous()
     }
 
     private func nextTrack() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.next()
     }
@@ -980,14 +958,14 @@ struct PlayerScreenV2: View {
     }
 
     private func close() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.tap(.light)
         isPresented = false
     }
 
     // MARK: - Video Shot (Canvas) Logic
 
     private func toggleVideoShot() {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.tap(.medium)
         withAnimation(.easeInOut(duration: 0.30)) {
             isVideoShotEnabled.toggle()
             UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled")
@@ -1100,13 +1078,13 @@ struct PlayerTimelineSection<Center: View>: View {
                             if !isScrubbing {
                                 isScrubbing = true
                                 selectionFeedback.prepare()
-                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                Haptics.tap(.soft)
                             }
                             let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
                             scrubProgress = fraction * maxDuration
 
                             if abs(fraction - lastFeedbackProgress) > 0.04 {
-                                selectionFeedback.selectionChanged()
+                                Haptics.scrubTick(selectionFeedback)
                                 lastFeedbackProgress = fraction
                             }
                         }
@@ -1114,20 +1092,20 @@ struct PlayerTimelineSection<Center: View>: View {
                             let fraction = min(1.0, max(0.0, val.location.x / geo.size.width))
                             let target = fraction * maxDuration
                             player.seek(to: target)
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                            withAnimation(AG.spring) {
                                 isScrubbing = false
                             }
                         }
                 )
             }
             .frame(height: 24)
-            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isScrubbing)
+            .animation(AG.fastSpring, value: isScrubbing)
 
             // Timings and center status line
             HStack(alignment: .center) {
                 Text(player.formatted(effectiveProgress))
-                    .font(AG.text(12, .semibold).monospacedDigit())
-                    .foregroundStyle(.white.opacity(isScrubbing ? 1.0 : 0.60))
+                    .font(AG.text(.caption, .semibold).monospacedDigit())
+                    .foregroundStyle(isScrubbing ? AG.ink : AG.inkMuted)
 
                 Spacer()
 
@@ -1136,8 +1114,8 @@ struct PlayerTimelineSection<Center: View>: View {
                 Spacer()
 
                 Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
-                    .font(AG.text(12, .semibold).monospacedDigit())
-                    .foregroundStyle(.white.opacity(isScrubbing ? 1.0 : 0.60))
+                    .font(AG.text(.caption, .semibold).monospacedDigit())
+                    .foregroundStyle(isScrubbing ? AG.ink : AG.inkMuted)
             }
             .animation(.easeInOut(duration: 0.2), value: isScrubbing)
         }
@@ -1174,8 +1152,8 @@ struct AutoMixBadge: View {
         HStack(spacing: 4) {
             mark(sweep: sweep)
             Text(usingGemini ? "AI" : "DSP")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(usingGemini ? Color.green.opacity(0.85) : Color.white.opacity(0.45))
+                .font(AG.text(.caption2, .bold))
+                .foregroundStyle(usingGemini ? AG.positive : AG.inkFaint)
                 .fixedSize()
                 .accessibilityLabel(Text(usingGemini ? "План Gemini AI" : "Локальный DSP-движок"))
         }
@@ -1183,7 +1161,7 @@ struct AutoMixBadge: View {
 
     private func mark(sweep: CGFloat?) -> some View {
         let label = Text(title)
-            .font(.system(size: 12, weight: .semibold, design: .default))
+            .font(AG.text(.caption, .semibold))
 
         return label
             .foregroundStyle(.white.opacity(0.78))

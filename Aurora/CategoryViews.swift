@@ -13,13 +13,13 @@ struct FavoritesListView: View {
             if library.favorites.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "heart.slash")
-                        .font(.system(size: 48))
+                        .font(.system(size: 48, weight: .regular))
                         .foregroundStyle(.white.opacity(0.40))
                     Text("В избранном пока ничего нет")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(AG.text(.headline, .bold))
                         .foregroundStyle(.white)
                     Text("Нажимайте на сердечко в плеере или треках, чтобы собирать любимую музыку здесь.")
-                        .font(.system(size: 14))
+                        .font(AG.text(.subheadline))
                         .foregroundStyle(.white.opacity(0.60))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
@@ -32,9 +32,9 @@ struct FavoritesListView: View {
                         HStack(spacing: 16) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .fill(LinearGradient(colors: [Color(hex: "#FF2D55")!, Color(hex: "#FF375F")!], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                    .fill(LinearGradient(colors: AG.Tile.red, startPoint: .topLeading, endPoint: .bottomTrailing))
                                     .frame(width: 84, height: 84)
-                                    .shadow(color: Color(hex: "#FF2D55")!.opacity(0.40), radius: 12, y: 6)
+                                    .shadow(color: AG.heart.opacity(0.40), radius: 12, y: 6)
 
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: 40, weight: .bold))
@@ -43,10 +43,10 @@ struct FavoritesListView: View {
 
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Мне нравится")
-                                    .font(.system(size: 22, weight: .bold))
+                                    .font(AG.display(.title2, .bold))
                                     .foregroundStyle(.white)
                                 Text("\(library.favorites.count) треков в коллекции")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AG.text(.footnote, .medium))
                                     .foregroundStyle(.white.opacity(0.65))
 
                                 HStack(spacing: 10) {
@@ -57,9 +57,9 @@ struct FavoritesListView: View {
                                     } label: {
                                         HStack(spacing: 5) {
                                             Image(systemName: "play.fill")
-                                                .font(.system(size: 12, weight: .bold))
+                                                .font(AG.text(.caption, .bold))
                                             Text("Слушать")
-                                                .font(.system(size: 13, weight: .bold))
+                                                .font(AG.text(.footnote, .bold))
                                         }
                                         .foregroundStyle(.black)
                                         .padding(.horizontal, 14)
@@ -75,7 +75,7 @@ struct FavoritesListView: View {
                                         }
                                     } label: {
                                         Image(systemName: "shuffle")
-                                            .font(.system(size: 14, weight: .bold))
+                                            .font(AG.text(.subheadline, .bold))
                                             .foregroundStyle(.white)
                                             .frame(width: 32, height: 32)
                                             .background(Circle().fill(Color.white.opacity(0.12)))
@@ -101,11 +101,11 @@ struct FavoritesListView: View {
 
                                         VStack(alignment: .leading, spacing: 3) {
                                             Text(track.title)
-                                                .font(.system(size: 15, weight: .semibold))
-                                                .foregroundStyle(player.currentTrack?.id == track.id ? (Color(hex: "#FF2D55") ?? .pink) : .white)
+                                                .font(AG.text(.subheadline, .semibold))
+                                                .foregroundStyle(player.currentTrack?.id == track.id ? (AG.heart) : .white)
                                                 .lineLimit(1)
                                             Text(track.artist)
-                                                .font(.system(size: 13))
+                                                .font(AG.text(.footnote))
                                                 .foregroundStyle(.white.opacity(0.60))
                                                 .lineLimit(1)
                                         }
@@ -116,8 +116,8 @@ struct FavoritesListView: View {
                                             library.toggleFavorite(track)
                                         } label: {
                                             Image(systemName: "heart.fill")
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundStyle(Color(hex: "#FF2D55")!)
+                                                .font(AG.text(.callout, .semibold))
+                                                .foregroundStyle(AG.heart)
                                                 .frame(width: 36, height: 36)
                                         }
                                         .buttonStyle(.plain)
@@ -179,13 +179,13 @@ struct HistoryListView: View {
             if historyTracks.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 48))
+                        .font(.system(size: 48, weight: .regular))
                         .foregroundStyle(.white.opacity(0.40))
                     Text("История прослушиваний пуста")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(AG.text(.headline, .bold))
                         .foregroundStyle(.white)
                     Text("Здесь будут сохраняться все треки, которые вы включали.")
-                        .font(.system(size: 14))
+                        .font(AG.text(.subheadline))
                         .foregroundStyle(.white.opacity(0.60))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
@@ -197,10 +197,10 @@ struct HistoryListView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("История прослушиваний")
-                                    .font(.system(size: 22, weight: .bold))
+                                    .font(AG.display(.title2, .bold))
                                     .foregroundStyle(.white)
                                 Text("\(historyTracks.count) последних треков")
-                                    .font(.system(size: 13))
+                                    .font(AG.text(.footnote))
                                     .foregroundStyle(.white.opacity(0.60))
                             }
                             Spacer()
@@ -209,7 +209,7 @@ struct HistoryListView: View {
                                 ym.clearMemory()
                             } label: {
                                 Text("Очистить")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(AG.text(.footnote, .semibold))
                                     .foregroundStyle(.white.opacity(0.70))
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
@@ -231,11 +231,11 @@ struct HistoryListView: View {
 
                                         VStack(alignment: .leading, spacing: 3) {
                                             Text(track.title)
-                                                .font(.system(size: 15, weight: .semibold))
+                                                .font(AG.text(.subheadline, .semibold))
                                                 .foregroundStyle(player.currentTrack?.id == track.id ? AG.amber : .white)
                                                 .lineLimit(1)
                                             Text(track.artist)
-                                                .font(.system(size: 13))
+                                                .font(AG.text(.footnote))
                                                 .foregroundStyle(.white.opacity(0.60))
                                                 .lineLimit(1)
                                         }
@@ -291,9 +291,9 @@ enum TrendsCatalogCategory: String, Identifiable {
 
     var gradient: [Color] {
         switch self {
-        case .books: return [Color(hex: "#0088FF") ?? .blue, Color(hex: "#00E5FF") ?? .cyan]
-        case .kids: return [Color(hex: "#FF8A00") ?? .orange, Color(hex: "#FFD600") ?? .yellow]
-        case .podcasts: return [Color(hex: "#00E676") ?? .green, Color(hex: "#1DE9B6") ?? .teal]
+        case .books: return AG.Tile.blue
+        case .kids: return AG.Tile.orange
+        case .podcasts: return AG.Tile.green
         }
     }
 
@@ -333,10 +333,10 @@ struct CategoryCatalogView: View {
 
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(category.rawValue)
-                                    .font(.system(size: 26, weight: .black))
+                                    .font(AG.display(.title, .black))
                                     .foregroundStyle(.white)
                                 Text(category.subtitle)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AG.text(.footnote, .medium))
                                     .foregroundStyle(.white.opacity(0.85))
                                     .lineLimit(2)
                             }
@@ -353,10 +353,10 @@ struct CategoryCatalogView: View {
                     } else if results.tracks.isEmpty && results.albums.isEmpty {
                         VStack(spacing: 8) {
                             Text("Ничего не найдено")
-                                .font(.system(size: 16, weight: .bold))
+                                .font(AG.text(.callout, .bold))
                                 .foregroundStyle(.white)
                             Text("Попробуйте обновить страницу")
-                                .font(.system(size: 13))
+                                .font(AG.text(.footnote))
                                 .foregroundStyle(.white.opacity(0.60))
                         }
                         .frame(maxWidth: .infinity, minHeight: 120)
@@ -371,9 +371,9 @@ struct CategoryCatalogView: View {
                                 } label: {
                                     HStack(spacing: 7) {
                                         Image(systemName: "play.fill")
-                                            .font(.system(size: 12, weight: .bold))
+                                            .font(AG.text(.caption, .bold))
                                         Text("Слушать подборку")
-                                            .font(.system(size: 14, weight: .bold))
+                                            .font(AG.text(.subheadline, .bold))
                                     }
                                     .foregroundStyle(.black)
                                     .padding(.horizontal, 18)
@@ -385,7 +385,7 @@ struct CategoryCatalogView: View {
                                 Spacer()
 
                                 Text("\(results.tracks.count) выпусков")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AG.text(.footnote, .medium))
                                     .foregroundStyle(.white.opacity(0.60))
                             }
                             .padding(.horizontal, 16)
@@ -395,7 +395,7 @@ struct CategoryCatalogView: View {
                         if !results.albums.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Коллекции и циклы")
-                                    .font(.system(size: 18, weight: .bold))
+                                    .font(AG.text(.headline, .bold))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 16)
 
@@ -410,11 +410,11 @@ struct CategoryCatalogView: View {
                                                         .frame(width: 130, height: 130)
 
                                                     Text(album.displayTitle)
-                                                        .font(.system(size: 13.5, weight: .semibold))
+                                                        .font(AG.text(.footnote, .semibold))
                                                         .foregroundStyle(.white)
                                                         .lineLimit(1)
                                                     Text(album.artistName)
-                                                        .font(.system(size: 12))
+                                                        .font(AG.text(.caption))
                                                         .foregroundStyle(.white.opacity(0.60))
                                                         .lineLimit(1)
                                                 }
@@ -432,7 +432,7 @@ struct CategoryCatalogView: View {
                         if !results.tracks.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Выпуски")
-                                    .font(.system(size: 18, weight: .bold))
+                                    .font(AG.text(.headline, .bold))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 16)
 
@@ -447,11 +447,11 @@ struct CategoryCatalogView: View {
 
                                                 VStack(alignment: .leading, spacing: 3) {
                                                     Text(item.title)
-                                                        .font(.system(size: 15, weight: .semibold))
+                                                        .font(AG.text(.subheadline, .semibold))
                                                         .foregroundStyle(player.currentTrack?.title == item.title ? (category.gradient.first ?? .white) : .white)
                                                         .lineLimit(1)
                                                     Text(item.artists?.first?.name ?? "Разные исполнители")
-                                                        .font(.system(size: 13))
+                                                        .font(AG.text(.footnote))
                                                         .foregroundStyle(.white.opacity(0.60))
                                                         .lineLimit(1)
                                                 }

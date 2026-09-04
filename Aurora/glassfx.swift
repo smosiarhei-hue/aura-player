@@ -1,11 +1,11 @@
 import SwiftUI
 
-// MARK: - Liquid Glass Motion System
-// Пружинные нажатия, бегущий блик по стеклу, дышащее свечение и
-// появление секций с мягким сдвигом — современные анимации в духе Liquid Glass.
-// Совместимо с iOS 16+.
+// MARK: - Motion primitives
+//
+// Press feedback and section entrance. Glass, glow and shimmer are the
+// system's job now (see theme.swift), so this file only owns how things move.
 
-/// Кнопка, которая «прилипает» к пальцу: пружинное сжатие без резких рывков.
+/// Spring compression for controls that sit on glass.
 struct GlassPressStyle: ButtonStyle {
     var scale: CGFloat = 0.965
 
@@ -17,7 +17,7 @@ struct GlassPressStyle: ButtonStyle {
     }
 }
 
-/// Современная интерактивная пружинная анимация карточки с тактильным откликом
+/// Card / row press with a light haptic on touch-down.
 struct CardPressStyle: ButtonStyle {
     var scale: CGFloat = 0.96
     var haptic: Bool = true
@@ -27,16 +27,16 @@ struct CardPressStyle: ButtonStyle {
             .contentShape(Rectangle())
             .scaleEffect(configuration.isPressed ? scale : 1.0)
             .opacity(configuration.isPressed ? 0.88 : 1.0)
-            .animation(.spring(response: 0.24, dampingFraction: 0.72), value: configuration.isPressed)
+            .animation(AG.fastSpring, value: configuration.isPressed)
             .onChange(of: configuration.isPressed) { _, isPressed in
                 if isPressed && haptic {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Haptics.tap(.light)
                 }
             }
     }
 }
 
-/// Живые анимированные столбики эквалайзера для активного трека
+/// Now-playing indicator: three bars that breathe while audio plays.
 struct LiveWaveEqualizer: View {
     let isPlaying: Bool
     var color: Color = AG.amber
@@ -53,79 +53,19 @@ struct LiveWaveEqualizer: View {
             }
         }
         .frame(width: 14, height: 14, alignment: .bottom)
-        .onAppear {
-            if isPlaying {
-                withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
-                    wavePhases = [0.95, 0.35, 0.8]
-                }
-            }
-        }
-        .onChange(of: isPlaying) { _, playing in
-            if playing {
-                withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
-                    wavePhases = [0.95, 0.35, 0.8]
-                }
-            }
+        .onAppear { animateIfNeeded() }
+        .onChange(of: isPlaying) { _, _ in animateIfNeeded() }
+    }
+
+    private func animateIfNeeded() {
+        guard isPlaying else { return }
+        withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
+            wavePhases = [0.95, 0.35, 0.8]
         }
     }
 }
 
-/// Бегущий блик по поверхности стеклянной карточки.
-struct ShimmerOverlay: View {
-    var corner: CGFloat = 24
-    @State private var phase: CGFloat = 0
-
-    var body: some View {
-        GeometryReader { geo in
-            Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.0),
-                            Color.white.opacity(0.20),
-                            Color.white.opacity(0.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(width: geo.size.width * 0.45)
-                .rotationEffect(.degrees(18))
-                .offset(x: -geo.size.width * 0.6 + phase * geo.size.width * 2.4)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-        .allowsHitTesting(false)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 3.6).repeatForever(autoreverses: false)) {
-                phase = 1
-            }
-        }
-    }
-}
-
-/// Дышащее янтарное свечение вокруг карточки.
-struct PulsingGlow: ViewModifier {
-    var color: Color = AG.ember
-    @State private var pulse = false
-
-    func body(content: Content) -> some View {
-        content
-            .shadow(color: color.opacity(pulse ? 0.50 : 0.22), radius: pulse ? 26 : 12, y: 8)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
-                    pulse = true
-                }
-            }
-    }
-}
-
-extension View {
-    func pulsingGlow(_ color: Color = AG.ember) -> some View {
-        modifier(PulsingGlow(color: color))
-    }
-}
-
-/// Появление секции с лёгким сдвигом вверх — как карточки в современных iOS-экранах.
+/// Section entrance: a short rise with fade, staggered by `delay`.
 struct RiseIn: ViewModifier {
     let delay: Double
     @State private var shown = false

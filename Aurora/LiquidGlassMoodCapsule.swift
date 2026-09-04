@@ -1,212 +1,46 @@
 import SwiftUI
 
-// MARK: - Liquid Glass Mood Capsule (по референсу фото 2: media_1788447855900.png)
-// Ультрареалистичная горизонтальная капсула из жидкого стекла:
-// - Слева: выпуклая 3D стеклянная сфера с тисненой иконкой настроения
-// - По центру: 2-строчный нативный заголовок
-// - Справа: круглая стеклянная кнопка со стрелкой >
+// MARK: - Mood capsule
+//
+// One horizontal glass pill per mood: a tinted glass orb with the mood glyph,
+// the title, and a chevron. The material, lensing and press response come
+// from the system Liquid Glass; only the mood tint is ours.
 
 struct LiquidGlassMoodCapsule: View {
     let preset: MoodPreset
     let action: () -> Void
 
-    @State private var isPressed = false
+    private var tint: Color {
+        Color(hex: preset.gradientColors.first ?? "") ?? AG.amber
+    }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                // 1. Левая стеклянная сфера с тисненой иконкой
-                glassOrbView
+                Image(systemName: preset.iconName)
+                    .font(AG.text(.callout, .bold))
+                    .foregroundStyle(AG.ink)
                     .frame(width: 36, height: 36)
+                    .glassEffect(.regular.tint(tint.opacity(0.55)), in: .circle)
                     .padding(.leading, 6)
 
-                // 2. Текст настроения
                 Text(preset.title.replacingOccurrences(of: "\n", with: " "))
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(AG.rounded(.subheadline, .semibold))
+                    .foregroundStyle(AG.ink)
                     .lineLimit(1)
 
                 Spacer(minLength: 4)
 
-                // 3. Правый аккуратный шеврон >
-                glassChevronButton
-                    .frame(width: 24, height: 24)
-                    .padding(.trailing, 8)
+                Image(systemName: "chevron.right")
+                    .font(AG.text(.caption2, .bold))
+                    .foregroundStyle(AG.inkMuted)
+                    .padding(.trailing, 14)
             }
             .padding(.vertical, 6)
-            .background(capsuleGlassBackground)
-            .clipShape(Capsule())
-            .overlay(
-                // Верхний стеклянный блик (спекулярная каемка)
-                Capsule()
-                    .strokeBorder(
-                        LinearGradient(
-                            stops: [
-                                .init(color: Color.white.opacity(0.85), location: 0.0),
-                                .init(color: Color.white.opacity(0.35), location: 0.25),
-                                .init(color: Color.white.opacity(0.08), location: 0.65),
-                                .init(color: Color.white.opacity(0.40), location: 1.0)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.5
-                    )
-            )
-            .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 10)
-            .shadow(color: (Color(hex: preset.gradientColors.first ?? "#FFFFFF") ?? .white).opacity(0.25), radius: 24, x: 0, y: 8)
+            .contentShape(Capsule())
         }
-        .buttonStyle(GlassCapsulePressStyle())
-    }
-
-    // MARK: - Левая выпуклая 3D Сфера из стекла
-
-    private var glassOrbView: some View {
-        ZStack {
-            let baseColor = Color(hex: preset.gradientColors.first ?? "#FF8AD1") ?? .pink
-            let secondColor = Color(hex: preset.gradientColors.last ?? "#A855F7") ?? .purple
-
-            // Внутреннее цветное сияние настроения
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            baseColor.opacity(0.45),
-                            secondColor.opacity(0.20),
-                            Color.clear
-                        ],
-                        center: .center,
-                        startRadius: 4,
-                        endRadius: 42
-                    )
-                )
-
-            // Стеклянная оболочка сферы с каустикой
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.35),
-                            Color.white.opacity(0.08),
-                            Color.black.opacity(0.30)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(
-                    // Двойной стеклянный контур с дисперсией
-                    Circle()
-                        .strokeBorder(
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .white.opacity(0.95), location: 0.0),
-                                    .init(color: .white.opacity(0.20), location: 0.5),
-                                    .init(color: .white.opacity(0.60), location: 1.0)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 2.0
-                        )
-                )
-
-            // Внутренний блик сферы
-            Circle()
-                .inset(by: 8)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.55), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.2
-                )
-
-            // Тисненая иконка в центре сферы
-            Image(systemName: preset.iconName)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [
-                            Color.white,
-                            Color.white.opacity(0.85)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .shadow(color: Color.white.opacity(0.6), radius: 4, x: 0, y: 0)
-                .shadow(color: Color.black.opacity(0.5), radius: 2, x: 0, y: 1)
-        }
-    }
-
-    // MARK: - Правая стеклянная кнопка со стрелкой >
-
-    private var glassChevronButton: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.20),
-                            Color.white.opacity(0.05)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(
-                    Circle()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.50), Color.white.opacity(0.10)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.8
-                        )
-                )
-
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white.opacity(0.85))
-        }
-    }
-
-    // MARK: - Фоновый материал капсулы
-
-    private var capsuleGlassBackground: some View {
-        ZStack {
-            // Темное преломляющее основание
-            Color.black.opacity(0.50)
-
-            // Ультратонкое жидкое стекло
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(0.85)
-
-            // Горизонтальный стеклянный рефлекс
-            LinearGradient(
-                stops: [
-                    .init(color: Color.white.opacity(0.18), location: 0.0),
-                    .init(color: Color.white.opacity(0.04), location: 0.4),
-                    .init(color: Color.clear, location: 0.6),
-                    .init(color: Color.white.opacity(0.06), location: 1.0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-    }
-}
-
-// MARK: - Стиль нажатия с пружинным откликом
-
-struct GlassCapsulePressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
-            .animation(.spring(response: 0.32, dampingFraction: 0.72), value: configuration.isPressed)
+        .buttonStyle(.plain)
+        .glassCapsule(interactive: true)
+        .accessibilityLabel(preset.title.replacingOccurrences(of: "\n", with: " "))
     }
 }

@@ -1,73 +1,6 @@
 import SwiftUI
 import UIKit
 
-struct LyricsSheetView: View {
-    @State private var player = PlayerCore.shared
-    @Environment(\.dismiss) private var dismiss
-    @State private var lyrics: Lyrics?
-    @State private var isLoading = false
-
-    var body: some View {
-        ZStack {
-            karaokeBackdrop
-            LyricsView(lyrics: lyrics, isLoading: isLoading)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            VStack {
-                HStack(spacing: 12) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(player.currentTrack?.title ?? "Текст песни")
-                            .font(.headline).lineLimit(1).truncationMode(.tail)
-                        Text(player.currentTrack?.artist ?? "")
-                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 16).padding(.top, 8)
-                Spacer()
-            }
-        }
-        .colorScheme(.dark)
-        .task(id: player.currentTrack?.id) { await load() }
-    }
-
-    private var karaokeBackdrop: some View {
-        ZStack {
-            AG.bg
-            Color.clear.overlay {
-                if let track = player.currentTrack, let image = LibraryStore.cachedArtworkImage(for: track) {
-                    Image(uiImage: image).resizable().aspectRatio(contentMode: .fill).blur(radius: 60, opaque: true).opacity(0.45)
-                } else if let track = player.currentTrack, let cover = track.coverURL, let url = URL(string: cover) {
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable().aspectRatio(contentMode: .fill).blur(radius: 60, opaque: true).opacity(0.45)
-                        } else {
-                            LinearGradient(colors: track.palette, startPoint: .top, endPoint: .bottom)
-                        }
-                    }
-                } else {
-                    LinearGradient(colors: [AG.coal, AG.bg], startPoint: .top, endPoint: .bottom)
-                }
-            }
-            .clipped()
-        }
-        .ignoresSafeArea()
-    }
-
-    private func load() async {
-        guard let track = player.currentTrack else { return }
-        isLoading = true
-        defer { isLoading = false }
-        lyrics = try? await LyricsService.shared.fetchLyrics(for: track)
-    }
-}
-
 struct MarqueeText: View {
     let text: String
     var font: Font = .title2.weight(.bold)
@@ -211,7 +144,7 @@ struct QueueSheetView: View {
                     ContentUnavailableView("Очередь пуста", systemImage: "music.note.list", description: Text("Выберите треки из каталога или медиатеки.")).listRowBackground(Color.clear)
                 } else {
                     ForEach(player.queue) { track in
-                        Button { UIImpactFeedbackGenerator(style: .light).impactOccurred(); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.play(track) } label: {
+                        Button { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.play(track) } label: {
                             queueRow(track, isCurrent: player.currentTrack?.id == track.id)
                         }
                         .buttonStyle(.plain)
@@ -269,7 +202,7 @@ struct PlayerEQSheetView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(EQPresets.all) { preset in
-                                Button(preset.name) { withAnimation(.spring(response: 0.3)) { player.eqGains = preset.gains } }
+                                Button(preset.name) { withAnimation(AG.spring) { player.eqGains = preset.gains } }
                                     .buttonStyle(.bordered).tint(player.eqGains == preset.gains ? AG.amber : .secondary)
                                     .frame(minHeight: tapHeight)
                             }
@@ -353,6 +286,6 @@ struct TactileButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scaleAmount : 1.0)
-            .animation(.spring(response: 0.28, dampingFraction: 0.65), value: configuration.isPressed)
+            .animation(AG.fastSpring, value: configuration.isPressed)
     }
 }

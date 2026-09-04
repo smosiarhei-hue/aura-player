@@ -54,7 +54,7 @@ struct LibraryView: View {
                         showSettings = true
                     } label: {
                         Image(systemName: "gearshape.fill")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(AG.text(.callout, .semibold))
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Rectangle())
                     }
@@ -86,7 +86,7 @@ struct LibraryView: View {
                                 .frame(minWidth: 44, minHeight: 44)
                         } else {
                             Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(AG.text(.headline, .semibold))
                                 .frame(minWidth: 44, minHeight: 44)
                                 .contentShape(Rectangle())
                         }
@@ -174,7 +174,7 @@ struct LibraryView: View {
                 mediaScanButton
             }
         }
-        .liquidGlass(corner: 16, padding: 12)
+        .glassCard(corner: 16, padding: 12)
         .padding(.horizontal, 16)
     }
 

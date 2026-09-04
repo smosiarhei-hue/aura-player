@@ -49,9 +49,9 @@ struct FluidWaveView: View {
                 let w = Float(proxy.size.width)
                 let h = Float(proxy.size.height)
 
-                let c1 = colors.indices.contains(0) ? colors[0] : (Color(hex: "#FF2A85") ?? .pink)
-                let c2 = colors.indices.contains(1) ? colors[1] : (Color(hex: "#FF8A00") ?? .orange)
-                let c3 = colors.indices.contains(2) ? colors[2] : (Color(hex: "#FFE000") ?? .yellow)
+                let c1 = colors.indices.contains(0) ? colors[0] : AG.flame
+                let c2 = colors.indices.contains(1) ? colors[1] : AG.ember
+                let c3 = colors.indices.contains(2) ? colors[2] : AG.amber
 
                 let bassPulse = 1.0 + CGFloat(effectiveBass) * 0.14
 
@@ -96,13 +96,14 @@ struct FluidWaveView: View {
                                     .float(effectiveHighs),
                                     .color(c1),
                                     .color(c2),
+                                    .color(c3)
                                 )
                             )
                             .blur(radius: isBackgroundMode ? 32 : 12)
                             .opacity(isBackgroundMode ? 0.70 : 0.95)
                     }
                     .scaleEffect(bassPulse * touchScale)
-                    .animation(.spring(response: 0.22, dampingFraction: 0.65), value: effectiveBass)
+                    .animation(AG.fastSpring, value: effectiveBass)
                 }
             }
         }

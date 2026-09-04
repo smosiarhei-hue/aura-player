@@ -20,7 +20,7 @@ struct YandexAuthSheet: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(hex: "#121214")!.ignoresSafeArea()
+                AG.bgRaised.ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     // Tab Picker
@@ -52,14 +52,14 @@ struct YandexAuthSheet: View {
                         Color.black.opacity(0.80).ignoresSafeArea()
                         VStack(spacing: 16) {
                             ProgressView()
-                                .tint(Color(hex: "#FF334B")!)
+                                .tint(AG.ember)
                                 .scaleEffect(1.4)
                             Text(statusMessage ?? "Авторизация в Яндекс ID...")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(AG.text(.subheadline, .semibold))
                                 .foregroundStyle(.white)
                         }
                         .padding(24)
-                        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(hex: "#1C1C1E")!))
+                        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(AG.card))
                     }
                 }
             }
@@ -81,11 +81,11 @@ struct YandexAuthSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("OAuth-токен аккаунта")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(AG.text(.subheadline, .bold))
                         .foregroundStyle(.white)
 
                     Text("Если вы уже получали токен Яндекс Музыки ранее (начинается с y0_...), вы можете просто вставить его сюда:")
-                        .font(.system(size: 13))
+                        .font(AG.text(.footnote))
                         .foregroundStyle(.white.opacity(0.70))
 
                     SecureField("Вставьте токен y0_...", text: $manualToken)
@@ -97,7 +97,7 @@ struct YandexAuthSheet: View {
 
                 if let msg = statusMessage {
                     Text(msg)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(AG.text(.footnote, .medium))
                         .foregroundStyle(isError ? Color.red : Color.green)
                 }
 
@@ -107,19 +107,19 @@ struct YandexAuthSheet: View {
                     HStack {
                         Spacer()
                         Text("Войти по токену")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(AG.text(.subheadline, .bold))
                             .foregroundStyle(.white)
                         Spacer()
                     }
                     .padding(.vertical, 14)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: "#FF334B")!))
+                    .background(RoundedRectangle(cornerRadius: 14).fill(AG.ember))
                 }
                 .buttonStyle(GlassPressStyle())
                 .disabled(manualToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Зачем нужен вход:")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(AG.text(.subheadline, .semibold))
                         .foregroundStyle(.white)
 
                     Text("• Максимальное качество 320 kbps и Lossless FLAC\n• Синхронизация ваших лайков в раздел «Мне нравится»\n• Персональная «Моя волна», обучающаяся на вашем вкусе\n• Возможность ставить лайки прямо в плеере с сохранением на сервере Яндекса")

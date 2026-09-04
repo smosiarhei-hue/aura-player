@@ -59,56 +59,6 @@ struct AnimatedMeshBackground: View {
     }
 }
 
-// MARK: - Track Artwork View with Play/Pause Spring Scaling
-
-struct TrackArtworkView: View {
-    let track: Track?
-    let isPlaying: Bool
-    var size: CGFloat = 300
-
-    var body: some View {
-        Group {
-            if let track = track, let img = LibraryStore.cachedArtworkImage(for: track) {
-                Image(uiImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else if let track = track, let cover = track.coverURL, let url = URL(string: cover) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    } else {
-                        artworkPlaceholder
-                    }
-                }
-            } else {
-                artworkPlaceholder
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.35), radius: isPlaying ? 24 : 12, x: 0, y: isPlaying ? 16 : 8)
-        .scaleEffect(isPlaying ? 1.0 : 0.88)
-        .animation(.spring(response: 0.45, dampingFraction: 0.7), value: isPlaying)
-    }
-
-    private var artworkPlaceholder: some View {
-        ZStack {
-            LinearGradient(
-                colors: track?.palette ?? Palette.seeded(42).colors,
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            Image(systemName: "music.note")
-                .font(.system(size: size * 0.35, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
-        }
-    }
-}
-
 // MARK: - Small Artwork Thumbnail
 
 struct SmallArtwork: View {
@@ -158,39 +108,5 @@ struct SmallArtwork: View {
                 .font(.system(size: size * 0.35, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.9))
         }
-    }
-}
-
-// MARK: - 32-Band Live Spectrum Analyzer Bars
-
-struct SpectrumView: View {
-    @State private var analyzer = SpectrumAnalyzer.shared
-    var barWidth: CGFloat = 4
-    var maxHeight: CGFloat = 48
-
-    var body: some View {
-        GeometryReader { geo in
-            let count = SpectrumAnalyzer.bandCount
-            let spacing = max(2, (geo.size.width - CGFloat(count) * barWidth) / CGFloat(max(count - 1, 1)))
-
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(0..<count, id: \.self) { i in
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    SettingsStore.shared.accentColor,
-                                    SettingsStore.shared.accent.colors.last ?? .teal
-                                ],
-                                startPoint: .bottom,
-                                endPoint: .top
-                            )
-                        )
-                        .frame(width: barWidth, height: max(3, CGFloat(analyzer.bands[i]) * maxHeight))
-                }
-            }
-            .frame(width: geo.size.width, height: maxHeight, alignment: .bottom)
-        }
-        .frame(height: maxHeight)
     }
 }
