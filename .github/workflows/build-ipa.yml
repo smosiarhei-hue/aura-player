@@ -108,7 +108,7 @@ jobs:
 
       - name: Package unsigned IPA
         run: |
-          APP=$(find derived/Build/Products/Release-iphoneos -name "*.app" -maxdepth 1 | head -n 1)
+          APP=$(find derived/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
           if [ -z "$APP" ]; then
             echo "Error: .app bundle not found!"
             exit 1
@@ -120,29 +120,80 @@ jobs:
           ls -lh Sonivo-unsigned.ipa
 
       - name: Send IPA to Telegram
+        id: telegram
         if: github.event_name != 'pull_request'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
+          TELEGRAM_CHAT_ID_SECRET: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          set +e
+          TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID_SECRET:-8559869613}"
+          echo "chat_id=${TELEGRAM_CHAT_ID}" >> "$GITHUB_OUTPUT"
+
           if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "TELEGRAM_STATUS=skipped_missing_token" >> "$GITHUB_ENV"
+            echo "TELEGRAM_RESPONSE=TELEGRAM_BOT_TOKEN secret is not configured" >> "$GITHUB_ENV"
             echo "::warning::TELEGRAM_BOT_TOKEN secret is not configured, skipping Telegram delivery."
             exit 0
           fi
           if [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "TELEGRAM_STATUS=skipped_missing_chat_id" >> "$GITHUB_ENV"
+            echo "TELEGRAM_RESPONSE=TELEGRAM_CHAT_ID is not configured" >> "$GITHUB_ENV"
             echo "::warning::TELEGRAM_CHAT_ID is not configured, skipping Telegram delivery."
             exit 0
           fi
-          RESPONSE=$(curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
+
+          RESPONSE=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
+               -F chat_id="${TELEGRAM_CHAT_ID}" \
                -F document=@Sonivo-unsigned.ipa \
-               -F caption="Sonivo IPA готов к установке! (Сборка: #${BUILD_NUMBER})" \
-               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument")
-          echo "Telegram response: $RESPONSE"
-          if echo "$RESPONSE" | grep -q '"ok":true'; then
+               -F caption="Sonivo IPA готов к установке! Версия ${MARKETING_VERSION} (сборка #${BUILD_NUMBER})" \
+               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" 2>&1)
+          HTTP_STATUS=$(printf "%s" "$RESPONSE" | awk -F: '/HTTP_STATUS:/ {print $2}' | tail -n 1)
+          BODY=$(printf "%s" "$RESPONSE" | sed '/HTTP_STATUS:/d')
+          echo "Telegram HTTP status: ${HTTP_STATUS}"
+          echo "Telegram response: ${BODY}"
+
+          if printf "%s" "$BODY" | grep -q '"ok":true'; then
+            echo "TELEGRAM_STATUS=success" >> "$GITHUB_ENV"
+            echo "TELEGRAM_RESPONSE=ok" >> "$GITHUB_ENV"
             echo "Telegram delivery succeeded."
           else
-            echo "::warning::Telegram delivery failed: $RESPONSE"
+            SAFE_BODY=$(printf "%s" "$BODY" | tr '\n' ' ' | cut -c 1-900)
+            echo "TELEGRAM_STATUS=failed_http_${HTTP_STATUS}" >> "$GITHUB_ENV"
+            echo "TELEGRAM_RESPONSE=${SAFE_BODY}" >> "$GITHUB_ENV"
+            echo "::warning::Telegram delivery failed: ${SAFE_BODY}"
           fi
+          exit 0
+
+      - name: Publish Telegram delivery status
+        if: always() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TELEGRAM_STATUS: ${{ env.TELEGRAM_STATUS }}
+          TELEGRAM_RESPONSE: ${{ env.TELEGRAM_RESPONSE }}
+        run: |
+          STATUS="${TELEGRAM_STATUS:-not_run}"
+          RESPONSE="${TELEGRAM_RESPONSE:-no_response}"
+          cat > telegram-diagnostic.txt <<EOF
+          Commit: ${GITHUB_SHA}
+          Run: ${GITHUB_RUN_ID}
+          Telegram status: ${STATUS}
+          Telegram response: ${RESPONSE}
+          EOF
+
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b ci-diagnostics
+          mkdir -p ci-logs
+          cp "$GITHUB_WORKSPACE/telegram-diagnostic.txt" ci-logs/latest-telegram-delivery.txt
+          git add ci-logs/latest-telegram-delivery.txt
+          git commit -m "Record Telegram delivery from run $GITHUB_RUN_ID"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin ci-diagnostics || true
+          git push --force origin ci-diagnostics
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
