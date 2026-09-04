@@ -33,11 +33,14 @@ final class AutoMixDJEngine {
     static let shared = AutoMixDJEngine()
 
     var isTransitionActive: Bool = false
-    var transitionProgress: Double = 0.0
+    var transitionProgress: Double = 0.0 {
+        didSet { logTransitionSnapshotIfNeeded() }
+    }
     var activeStrategyName: String = "BASS_SWAP"
     var activePlan: TransitionPlan? = nil
     var statusBadge: String? = nil
     var currentBPM: Double = 0
+    private var lastTransitionLogBucket: Int = -1
 
     private init() {}
 
@@ -73,13 +76,6 @@ final class AutoMixDJEngine {
             let startValue: Double = value
             var endValue: Double = frame.value
 
-            // Several AutoMix plans use an explicit silent keyframe at t=0 for
-            // the incoming lane, then the next keyframe says where that lane
-            // should be by the middle/end of the blend. The old executor ramped
-            // from 0 to 0 during the first segment, so the next track stayed
-            // muted for most of the transition and then jumped to full volume
-            // when `completeTransition` promoted the lane. Interpret that
-            // silent hold as "ramp toward the next incoming-volume keyframe".
             if target == "target",
                parameter == "volume",
                index + 1 < frames.count,
@@ -88,9 +84,6 @@ final class AutoMixDJEngine {
                 endValue = Double(frames[index + 1].value)
             }
 
-            // The promoted lane becomes the main player at the end of the
-            // transition. Make sure the last incoming-volume ramp really lands
-            // on unity, otherwise the hand-off sounds like a sudden volume jump.
             if target == "target",
                parameter == "volume",
                index == frames.count - 1,
@@ -102,31 +95,99 @@ final class AutoMixDJEngine {
             value = startValue + delta * segment
         }
 
-        if target == "target", parameter == "volume" {
-            // User-device logs showed a real ENERGY_BLEND transition, but it
-            // still sounded like the old hand-off: the incoming lane was too
-            // quiet until the final promotion, then it felt like it jumped to
-            // maximum. For AutoMix we now enforce an audible equal-power floor
-            // across the whole planned window. This keeps AI/local envelopes,
-            // but prevents any plan from hiding the next track until the end.
-            let total = frames.reduce(0.0) { max($0, $1.time + max(0, $1.duration)) }
-            if total > 0.001 {
-                let p = min(1.0, max(0.0, time / total))
-                let equalPower = sin(p * (.pi / 2))
-                let audibleFloor = 0.16 + equalPower * 0.84
+        let total = frames.reduce(0.0) { max($0, $1.time + max(0, $1.duration)) }
+        if total > 0.001 {
+            let p = min(1.0, max(0.0, time / total))
+
+            if target == "target", parameter == "volume" {
+                // Make the mashup unmistakable: the incoming lane is quiet at the
+                // very first beat, clearly audible by 25-30%, and already near full
+                // before the final hand-off. This removes the old "silent until the
+                // last millisecond, then jump" effect the device logs exposed.
+                let fastP = min(1.0, p / 0.72)
+                let equalPower = sin(fastP * (.pi / 2))
+                let audibleFloor = 0.06 + equalPower * 0.94
                 value = max(value, audibleFloor)
+                value = min(1.0, max(0.0, value))
             }
-            value = min(1.0, max(0.0, value))
+
+            if target == "source", parameter == "volume" {
+                // Do not leave the outgoing track at full volume until the final
+                // quarter: start ducking earlier so the blend reads as a DJ move,
+                // not a normal track end.
+                let shaped: Double
+                if p < 0.18 {
+                    shaped = 1.0
+                } else if p < 0.72 {
+                    let q = (p - 0.18) / 0.54
+                    shaped = 1.0 - q * 0.48
+                } else {
+                    let q = (p - 0.72) / 0.28
+                    shaped = max(0.0, 0.52 * (1.0 - q))
+                }
+                value = min(value, shaped)
+                value = min(1.0, max(0.0, value))
+            }
+
+            if target == "source", parameter == "lowEQ" {
+                // Start removing the outgoing bass early; otherwise both songs feel
+                // like a plain volume fade and the bass hand-off is inaudible.
+                let earlyCut = max(0.04, 1.0 - min(1.0, p / 0.62) * 0.96)
+                value = min(value, earlyCut)
+            }
+
+            if target == "target", parameter == "lowEQ" {
+                // Bring the incoming bass back by the middle, not at the very end.
+                let earlyReturn = min(1.0, p / 0.55)
+                value = max(value, earlyReturn)
+            }
         }
 
         if parameter == "reverb", value > 0 {
-            // Wet/dry values below ~30% were too subtle on phone speakers and
-            // made the transition feel like a plain fade. Keep it bounded but
-            // intentionally audible for the UI AutoMix test.
-            value = min(1.0, value * 2.2 + 0.15)
+            // Wet/dry values below ~30% were too subtle on phone speakers and made
+            // the transition feel like a plain fade. Push reverb into an obvious
+            // tail for local AutoMix testing, still bounded to 100%.
+            value = min(1.0, value * 2.4 + 0.20)
         }
 
         return Float(value)
+    }
+
+    private func logTransitionSnapshotIfNeeded() {
+        guard isTransitionActive else {
+            lastTransitionLogBucket = -1
+            return
+        }
+
+        let p = min(1.0, max(0.0, transitionProgress))
+        let bucket: Int
+        if p < 0.04 { bucket = 0 }
+        else if p < 0.30 { bucket = 25 }
+        else if p < 0.55 { bucket = 50 }
+        else if p < 0.82 { bucket = 75 }
+        else if p < 0.98 { bucket = 95 }
+        else { bucket = 100 }
+
+        guard bucket != lastTransitionLogBucket else { return }
+        lastTransitionLogBucket = bucket
+
+        let strategy = activePlan?.strategy ?? TransitionStrategy(rawValue: activeStrategyName) ?? .ENERGY_BLEND
+        let actions = activePlan?.actions ?? []
+        let blendTime = p * max(0.001, activePlan?.leadTime ?? 1.0)
+        let base = computeVolumesAndEQ(progress: p, strategy: strategy)
+
+        let sourceVol = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime, defaultValue: 1.0) ?? base.outgoingVol
+        let targetVol = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime, defaultValue: 0.0) ?? base.incomingVol
+        let sourceLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0)
+        let targetLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0)
+        let reverb = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
+        let sourceLowDB = sourceLow.map { max(-30.0, min(0.0, ($0 - 1) * 24.0)) } ?? base.outgoingBassCutDB
+        let targetLowDB = targetLow.map { max(-30.0, min(0.0, ($0 - 1) * 24.0)) } ?? base.incomingBassGainDB
+
+        SonivoDiagnostics.log(
+            "[AutoMix Tick] \(bucket)% strategy=\(strategy.rawValue) srcVol=\(String(format: "%.2f", sourceVol)) tgtVol=\(String(format: "%.2f", targetVol)) srcLow=\(String(format: "%.1f", sourceLowDB))dB tgtLow=\(String(format: "%.1f", targetLowDB))dB reverb=\(String(format: "%.2f", reverb)) targetStart=\(String(format: "%.2f", activePlan?.targetTrack.startPosition ?? 0))s",
+            tag: "AUTOMIX"
+        )
     }
 
     func computeVolumesAndEQ(
@@ -145,8 +206,6 @@ final class AutoMixDJEngine {
 
         switch strategy {
         case .DROP_SWITCH, .HARD_CUT:
-            // High energy hold on outgoing track, then quick punchy hand-off to incoming track.
-            // Absolutely NO SILENCE DIP: incoming track is audible from the start and hits 100% on the drop!
             let switchPoint = 0.50
             if p < switchPoint {
                 outVol = 1.0
@@ -162,7 +221,6 @@ final class AutoMixDJEngine {
             }
 
         case .VOCAL_CUT:
-            // Smooth vocal fade-out crossfade
             outVol = Float(cos(p * (.pi / 2)))
             inVol = Float(sin(p * (.pi / 2)))
             if p > 0.40 {
@@ -189,14 +247,23 @@ final class AutoMixDJEngine {
             inVol = Float(sin(p * (.pi / 2)))
 
         case .ENERGY_BLEND, .BUILDUP_TO_DROP:
-            if p > 0.35 {
-                outBassCut = Float((p - 0.35) / 0.65) * -30.0
+            // DJ/mashup curve: incoming becomes audible early, outgoing ducks
+            // before the final quarter, and the bass hand-off happens in the
+            // middle so the transition has a clear shape on phone speakers.
+            let fastIn = min(1.0, p / 0.72)
+            inVol = max(Float(0.06 + sin(fastIn * (.pi / 2)) * 0.94), inVol)
+            if p < 0.18 {
+                outVol = 1.0
+            } else if p < 0.72 {
+                let q = Float((p - 0.18) / 0.54)
+                outVol = min(outVol, max(0.52, 1.0 - q * 0.48))
+            } else {
+                let q = Float((p - 0.72) / 0.28)
+                outVol = min(outVol, max(0.0, 0.52 * (1.0 - q)))
             }
-            if p < 0.25 {
-                inBassGain = -18.0 * (1.0 - Float(p / 0.25))
-            }
-            outVol = Float(cos(p * (.pi / 2)))
-            inVol = Float(sin(p * (.pi / 2)))
+            outBassCut = -30.0 * Float(min(1.0, max(0.0, (p - 0.18) / 0.62)))
+            inBassGain = -24.0 * Float(max(0.0, 1.0 - min(1.0, p / 0.55)))
+            filterCutoff = max(0.15, Float(1.0 - p * 0.85))
 
         case .ECHO_OUT:
             outBassCut = Float(p) * -20.0
