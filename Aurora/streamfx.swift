@@ -67,10 +67,8 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
             let storage = MTAudioProcessingTapGetStorage(tap)
             let format = AVAudioFormat(streamDescription: processingFormat)
                 ?? AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)
-            if let format {
-                Unmanaged<StreamFXProcessor>.fromOpaque(storage)
-                    .takeUnretainedValue().prepare(format: format)
-            }
+            Unmanaged<StreamFXProcessor>.fromOpaque(storage)
+                .takeUnretainedValue().prepare(format: format)
         }
         let unprepareCallback: @convention(c) (MTAudioProcessingTap?) -> Void = { tap in
             guard let tap else { return }
