@@ -153,10 +153,10 @@ actor VKMusicService {
         guard let url = URL(string: "https://api.vk.com/method/\(method)") else {
             throw VKMusicError.invalidResponse
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 20
-        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = 20
+        urlRequest.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
 
         var body = parameters
         body["access_token"] = token.value
@@ -164,10 +164,10 @@ actor VKMusicService {
         body["lang"] = "ru"
         body["https"] = "1"
         body["extended"] = "1"
-        request.httpBody = Self.formEncoded(body).data(using: .utf8)
+        urlRequest.httpBody = Self.formEncoded(body).data(using: .utf8)
         lastRequestAt = Date()
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: urlRequest)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw VKMusicError.invalidResponse
         }
