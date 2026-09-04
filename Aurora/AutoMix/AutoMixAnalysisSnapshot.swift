@@ -108,7 +108,12 @@ extension TrackVector {
     ///                   loudness / compression rather than peak energy)
     ///   acousticness <- heuristic, pulled down when the track has a strong
     ///                   steady machine-like beat
-    nonisolated static func measured(
+    ///
+    /// Stays main-actor isolated (the project builds with
+    /// `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor`, so `TrackVector.init` is
+    /// main-actor isolated too). All call sites - Mood Radio ranking and the
+    /// smart selector - already run on the main actor.
+    static func measured(
         _ analysis: TrackAnalysis,
         fallback: TrackVector
     ) -> TrackVector {
