@@ -70,10 +70,10 @@ jobs:
           if [ "$BUILD_OUTCOME" = "success" ]; then
             echo "BUILD SUCCEEDED" >> diagnostic.txt
           else
-            grep -nE "error:|fatal error:|BUILD FAILED|Command SwiftCompile failed" build.log | tail -n 250 > compiler-errors.txt || true
-            if [ ! -s compiler-errors.txt ]; then
-              tail -n 300 build.log > compiler-errors.txt
-            fi
+            grep -nE "error:|fatal error:|BUILD FAILED|Command SwiftCompile failed|note:" build.log | tail -n 250 > compiler-errors.txt || true
+            # Always append the full tail so frontend crashes / type errors
+            # without a trailing 'error:' line are still visible.
+            tail -n 400 build.log >> compiler-errors.txt
             cat compiler-errors.txt >> diagnostic.txt
           fi
 
