@@ -3,7 +3,11 @@ import UIKit
 
 @main
 struct SonivoApp: App {
+    @State private var vkAuthorization: VKAuthorizationStore
+
     init() {
+        _vkAuthorization = State(initialValue: VKAuthorizationStore())
+
         let appearance = UITabBarAppearance()
         appearance.configureWithTransparentBackground()
         appearance.stackedLayoutAppearance.normal.iconColor = UIColor.white.withAlphaComponent(0.72)
@@ -23,6 +27,7 @@ struct SonivoApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .environment(vkAuthorization)
                 .preferredColorScheme(.dark)
                 .tint(.white)
         }
@@ -32,6 +37,7 @@ struct SonivoApp: App {
 enum AppTab: String, CaseIterable, Identifiable {
     case wave = "Wave"
     case trends = "Trends"
+    case vk = "VK"
     case library = "Library"
     case search = "Search"
 
@@ -41,6 +47,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .wave: return "Моя волна"
         case .trends: return "Тренды"
+        case .vk: return "VK"
         case .library: return "Коллекция"
         case .search: return "Поиск"
         }
@@ -50,6 +57,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .wave: return "sparkles"
         case .trends: return "chart.line.uptrend.xyaxis"
+        case .vk: return "music.note.list"
         case .library: return "books.vertical.fill"
         case .search: return "magnifyingglass"
         }
@@ -58,12 +66,12 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(VKAuthorizationStore.self) private var vkAuthorization
     @State private var player = PlayerCore.shared
     @State private var tab: AppTab = .wave
     @State private var showPlayer = false
     @Namespace private var playerTransition
 
-    /// Shared id so the mini-player artwork zooms into the full player.
     static let playerZoomID = "now-playing-artwork"
 
     private var miniVisible: Bool {
@@ -78,6 +86,9 @@ struct RootView: View {
             }
             Tab(AppTab.trends.label, systemImage: AppTab.trends.icon, value: .trends) {
                 TrendsExploreView()
+            }
+            Tab(AppTab.vk.label, systemImage: AppTab.vk.icon, value: .vk) {
+                VKMusicView()
             }
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) {
                 LibraryView()
@@ -109,8 +120,10 @@ struct RootView: View {
                 showPlayer = true
             }
         }
-        .onOpenURL { _ in
-            showPlayer = true
+        .onOpenURL { url in
+            if !vkAuthorization.handle(url: url) {
+                showPlayer = true
+            }
         }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in
             showPlayer = true
@@ -142,7 +155,6 @@ struct NativeMiniPlayer: View {
     @State private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
     let zoomNamespace: Namespace.ID
-    // Controls follow the system font size but stay inside the bottom accessory.
     @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
 
     private var tapSide: CGFloat { max(44, min(controlSide, 56)) }
@@ -245,9 +257,6 @@ struct NativeMiniPlayer: View {
 struct MiniArtworkPulse: View {
     let track: Track?
     let isPlaying: Bool
-
-    // The artwork itself is capped below the 44pt slot. That leaves a fixed
-    // clipping margin for the material accessory even at large Dynamic Type.
     @ScaledMetric(relativeTo: .body) private var artworkSide: CGFloat = 40
 
     private var side: CGFloat { min(40, max(36, artworkSide)) }
