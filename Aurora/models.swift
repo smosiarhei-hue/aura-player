@@ -361,7 +361,7 @@ extension Color {
         guard let comps = UIColor(self).cgColor.components, comps.count >= 3 else { return "#888888" }
         let r = Int((comps[0] * 255).rounded())
         let g = Int((comps[1] * 255).rounded())
-        let b = Int(comps[2] * 255).rounded()
+        let b = Int((comps[2] * 255).rounded())
         return String(format: "#%02X%02X%02X", r, g, b)
     }
 }
