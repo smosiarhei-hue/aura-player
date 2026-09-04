@@ -48,8 +48,15 @@ jobs:
       - name: Build unsigned app
         id: xcodebuild
         shell: bash
+        env:
+          VKID_CLIENT_SECRET: ${{ secrets.VKID_CLIENT_SECRET }}
         run: |
           set -o pipefail
+          if [ -z "$VKID_CLIENT_SECRET" ]; then
+            echo "::error::VKID_CLIENT_SECRET repository secret is not configured"
+            exit 1
+          fi
+          echo "::add-mask::$VKID_CLIENT_SECRET"
           xcodebuild \
             -project Sonivo.xcodeproj \
             -scheme Sonivo \
@@ -60,6 +67,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            VKID_CLIENT_SECRET="$VKID_CLIENT_SECRET" \
             build 2>&1 | tee build.log
 
       - name: Publish build status
