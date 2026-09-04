@@ -57,9 +57,9 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
         // The C callbacks must capture nothing — they only shuttle the raw
         // opaque pointer stored by `init` into the file-level trampolines.
         let retained = Unmanaged.passRetained(self).toOpaque()
-        let initCallback: @convention(c) (MTAudioProcessingTap?, UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutableRawPointer?>?) -> Void = {
+        let initCallback: @convention(c) (MTAudioProcessingTap?, UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutableRawPointer?>) -> Void = {
             _, clientInfo, tapStorageOut in
-            tapStorageOut?.pointee = clientInfo
+            tapStorageOut.pointee = clientInfo
         }
 
         var callbacks = MTAudioProcessingTapCallbacks(
