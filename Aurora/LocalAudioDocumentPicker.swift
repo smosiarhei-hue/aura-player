@@ -15,10 +15,9 @@ import UniformTypeIdentifiers
 struct LocalAudioDocumentPicker: UIViewControllerRepresentable {
     var onPick: ([URL]) -> Void
     var onCancel: () -> Void
-    var onError: (Error) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPick: onPick, onCancel: onCancel, onError: onError)
+        Coordinator(onPick: onPick, onCancel: onCancel)
     }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
@@ -59,16 +58,13 @@ struct LocalAudioDocumentPicker: UIViewControllerRepresentable {
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         private let onPick: ([URL]) -> Void
         private let onCancel: () -> Void
-        private let onError: (Error) -> Void
 
         init(
             onPick: @escaping ([URL]) -> Void,
-            onCancel: @escaping () -> Void,
-            onError: @escaping (Error) -> Void
+            onCancel: @escaping () -> Void
         ) {
             self.onPick = onPick
             self.onCancel = onCancel
-            self.onError = onError
         }
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
@@ -77,18 +73,6 @@ struct LocalAudioDocumentPicker: UIViewControllerRepresentable {
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             onCancel()
-        }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentAt url: URL) {
-            onPick([url])
-        }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL], error: Error?) {
-            if let error {
-                onError(error)
-            } else {
-                onPick(urls)
-            }
         }
     }
 }

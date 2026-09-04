@@ -20,6 +20,12 @@ struct LibraryView: View {
         var id: String { rawValue }
     }
 
+    private var localAudioTracks: [Track] {
+        library.tracks.filter {
+            !$0.isStream && FileManager.default.fileExists(atPath: $0.url.path)
+        }
+    }
+
     var filteredTracks: [Track] {
         var list = library.tracks
         switch filter {
@@ -35,12 +41,6 @@ struct LibraryView: View {
             }
         }
         return list
-    }
-
-    private var localAudioTracks: [Track] {
-        library.tracks.filter {
-            !$0.isStream && FileManager.default.fileExists(atPath: $0.url.path)
-        }
     }
 
     var body: some View {
@@ -136,10 +136,6 @@ struct LibraryView: View {
                     },
                     onCancel: {
                         showFilePicker = false
-                    },
-                    onError: { error in
-                        showFilePicker = false
-                        library.reportImportPickerError(error)
                     }
                 )
                 .ignoresSafeArea()
