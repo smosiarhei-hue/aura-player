@@ -58,13 +58,13 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
             tapStorageOut?.pointee = clientInfo
         }
         let finalizeCallback: @convention(c) (MTAudioProcessingTap?) -> Void = { tap in
-            if let tap, let storage = MTAudioProcessingTapGetStorage(tap) {
-                Unmanaged<StreamFXProcessor>.fromOpaque(storage).release()
-            }
+            guard let tap else { return }
+            Unmanaged<StreamFXProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
         }
         let prepareCallback: @convention(c) (MTAudioProcessingTap?, CMItemCount, UnsafePointer<AudioStreamBasicDescription>) -> Void = {
             tap, _, processingFormat in
-            guard let tap, let storage = MTAudioProcessingTapGetStorage(tap) else { return }
+            guard let tap else { return }
+            let storage = MTAudioProcessingTapGetStorage(tap)
             let format = AVAudioFormat(streamDescription: processingFormat)
                 ?? AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)
             if let format {
@@ -73,22 +73,23 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
             }
         }
         let unprepareCallback: @convention(c) (MTAudioProcessingTap?) -> Void = { tap in
-            guard let tap, let storage = MTAudioProcessingTapGetStorage(tap) else { return }
-            Unmanaged<StreamFXProcessor>.fromOpaque(storage)
+            guard let tap else { return }
+            Unmanaged<StreamFXProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap))
                 .takeUnretainedValue().unprepare()
         }
         let processCallback: @convention(c) (MTAudioProcessingTap?, CMItemCount, MTAudioProcessingTapFlags, UnsafeMutablePointer<AudioBufferList>, UnsafeMutablePointer<CMItemCount>?, UnsafeMutablePointer<MTAudioProcessingTapFlags>?) -> Void = {
             tap, numberFrames, _, bufferListInOut, numberFramesOut, flagsOut in
-            guard let tap, let storage = MTAudioProcessingTapGetStorage(tap) else {
+            guard let tap else {
                 numberFramesOut?.pointee = numberFrames
                 return
             }
-            let processor = Unmanaged<StreamFXProcessor>.fromOpaque(storage).takeUnretainedValue()
+            let processor = Unmanaged<StreamFXProcessor>
+                .fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
             let status = MTAudioProcessingTapGetSourceAudio(
                 tap, numberFrames, bufferListInOut, flagsOut, nil, numberFramesOut
             )
             guard status == noErr else { return }
-            processor.process(frames: numberFrames, bufferList: bufferListInOut)
+            processor.process(frames: AVAudioFrameCount(numberFrames), bufferList: bufferListInOut)
         }
 
         var callbacks = MTAudioProcessingTapCallbacks(
