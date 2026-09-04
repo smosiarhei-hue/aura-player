@@ -176,10 +176,10 @@ actor VKMusicService {
         guard let error = envelope.error else { throw VKMusicError.invalidResponse }
 
         switch error.errorCode {
-        case 5, 113:
+        case 5:
             try? await tokenStore.delete()
             throw VKMusicError.tokenExpired
-        case 201:
+        case 15, 201:
             throw VKMusicError.accessDenied
         case 6:
             guard retry < 2 else { throw VKMusicError.rateLimited }
