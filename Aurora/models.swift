@@ -66,15 +66,49 @@ final class AutoMixDJEngine {
         guard let first = frames.first else { return nil }
 
         var value = Double(defaultValue ?? Float(first.value))
-        for frame in frames where frame.time <= time {
+        for (index, frame) in frames.enumerated() where frame.time <= time {
             let segment: Double = frame.duration > 0.001
                 ? min(1, max(0, (time - frame.time) / frame.duration))
                 : 1
             let startValue: Double = value
-            let endValue: Double = frame.value
+            var endValue: Double = frame.value
+
+            // Several AutoMix plans use an explicit silent keyframe at t=0 for
+            // the incoming lane, then the next keyframe says where that lane
+            // should be by the middle/end of the blend. The old executor ramped
+            // from 0 to 0 during the first segment, so the next track stayed
+            // muted for most of the transition and then jumped to full volume
+            // when `completeTransition` promoted the lane. Interpret that
+            // silent hold as "ramp toward the next incoming-volume keyframe".
+            if target == "target",
+               parameter == "volume",
+               index + 1 < frames.count,
+               abs(endValue - startValue) < 0.0001,
+               frames[index + 1].time > frame.time {
+                endValue = Double(frames[index + 1].value)
+            }
+
+            // The promoted lane becomes the main player at the end of the
+            // transition. Make sure the last incoming-volume ramp really lands
+            // on unity, otherwise the hand-off sounds like a sudden volume jump.
+            if target == "target",
+               parameter == "volume",
+               index == frames.count - 1,
+               endValue < 0.999 {
+                endValue = 1.0
+            }
+
             let delta: Double = endValue - startValue
             value = startValue + delta * segment
         }
+
+        if parameter == "reverb", value > 0 {
+            // Wet/dry values below ~30% were too subtle on phone speakers and
+            // made the transition feel like a plain fade. Keep it bounded but
+            // intentionally audible for the UI AutoMix test.
+            value = min(1.0, value * 1.7 + 0.08)
+        }
+
         return Float(value)
     }
 
@@ -327,7 +361,7 @@ extension Color {
         guard let comps = UIColor(self).cgColor.components, comps.count >= 3 else { return "#888888" }
         let r = Int((comps[0] * 255).rounded())
         let g = Int((comps[1] * 255).rounded())
-        let b = Int((comps[2] * 255).rounded())
+        let b = Int(comps[2] * 255).rounded()
         return String(format: "#%02X%02X%02X", r, g, b)
     }
 }
