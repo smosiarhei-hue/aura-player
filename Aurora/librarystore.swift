@@ -43,7 +43,7 @@ final class LibraryStore {
         documentsDirectoryURL().appendingPathComponent("library_playlists.json")
     }()
 
-    private static let supportedAudioExtensions: Set<String> = [
+    nonisolated private static let supportedAudioExtensions: Set<String> = [
         "mp3", "m4a", "aac", "wav", "flac", "aiff", "aif", "alac", "ogg", "oga", "opus", "caf", "mp4"
     ]
 
