@@ -1,0 +1,26 @@
+{
+  "sourceLanguage" : "ru",
+  "strings" : {
+    "vk_audio_access_denied" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "VK не предоставил приложению доступ к аудиокаталогу" } } } },
+    "vk_auth_failed" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не удалось войти через VK ID" } } } },
+    "vk_catalog_available" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Каталог доступен, воспроизводимых треков" } } } },
+    "vk_catalog_checking" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Проверяем доступ к VK Музыке…" } } } },
+    "vk_catalog_failed" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не удалось получить каталог VK Музыки" } } } },
+    "vk_check_catalog" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Проверить каталог" } } } },
+    "vk_configuration_missing" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Конфигурация VK ID отсутствует в этой сборке" } } } },
+    "vk_connection_status" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Подключение VK" } } } },
+    "vk_login_explanation" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Войдите через официальный VK ID. Sonivo не получает и не хранит пароль от вашего аккаунта." } } } },
+    "vk_music_title" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "VK Музыка" } } } },
+    "vk_not_signed_in" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Вход не выполнен" } } } },
+    "vk_rate_limited" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "VK временно ограничил частоту запросов. Повторите позже." } } } },
+    "vk_search_button" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Найти в VK Музыке" } } } },
+    "vk_search_prompt" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Трек или исполнитель" } } } },
+    "vk_searching" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Поиск в VK Музыке…" } } } },
+    "vk_signed_in" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Вход через VK ID выполнен" } } } },
+    "vk_sign_out" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выйти" } } } },
+    "vk_signing_in" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выполняется вход…" } } } },
+    "vk_token_expired" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сессия VK истекла. Выполните вход ещё раз." } } } },
+    "vk_track_unavailable" : { "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Трек недоступен" } } } }
+  },
+  "version" : "1.0"
+}
