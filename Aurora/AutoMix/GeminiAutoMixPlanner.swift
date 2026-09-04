@@ -96,7 +96,7 @@ actor GeminiAutoMixPlanner {
     static let shared = GeminiAutoMixPlanner()
 
     /// Bump when the prompt/schema changes so stale cached plans are dropped.
-    private static let planCacheVersion = 4
+    private static let planCacheVersion = 5
 
     private var cache: [String: TransitionPlan] = [:]
     private var inFlightTasks: [String: Task<TransitionPlan, Never>] = [:]
@@ -166,13 +166,19 @@ actor GeminiAutoMixPlanner {
                 targetAnalysis: targetAnalysis,
                 currentPosition: currentPosition
                ) {
+                // Sanitise with the REAL pair identity: if the plan has to be
+                // replaced by a local one, that local plan must stay stable
+                // and characterful for this exact pair of tracks instead of
+                // being seeded with throwaway UUIDs.
                 aiPlan = TransitionPlanner.sanitize(
                     aiPlan,
+                    sourceTrackID: sourceTrack.id,
                     sourceAnalysis: sourceAnalysis,
+                    targetTrackID: targetTrack.id,
                     targetAnalysis: targetAnalysis
                 )
                 SonivoDiagnostics.log(
-                    "[AutoMix AI] Gemini plan: \(aiPlan.decision.transitionType) (conf: \(String(format: "%.2f", aiPlan.decision.confidence))), reason: \(aiPlan.decision.reason)",
+                    "[AutoMix AI] Gemini plan: \(aiPlan.decision.transitionType) (conf: \(String(format: "%.2f", aiPlan.decision.confidence))), reverb: \(aiPlan.effects.resolvedReverbPreset), reason: \(aiPlan.decision.reason)",
                     tag: "AUTOMIX"
                 )
                 Self.lastPlanUsedGemini = true
@@ -468,6 +474,11 @@ Respond ONLY with a JSON object matching this schema:
             let confidence = rawPlan.decision.confidence.isFinite
                 ? min(1, max(0, rawPlan.decision.confidence))
                 : 0.5
+            // Keep every field the model actually decided on, including the
+            // DSP character: rebuilding the plan without `effects` silently
+            // dropped the chosen reverbPreset and forced the default "plate"
+            // on every AI transition, even though the prompt asks for it and
+            // the audio engine supports 13 presets.
             let plan = TransitionPlan(
                 decision: TransitionDecisionInfo(
                     transitionType: rawPlan.decision.transitionType,
@@ -478,7 +489,8 @@ Respond ONLY with a JSON object matching this schema:
                 targetTrack: rawPlan.targetTrack,
                 tempo: rawPlan.tempo,
                 actions: rawPlan.actions,
-                fallback: rawPlan.fallback
+                fallback: rawPlan.fallback,
+                effects: rawPlan.effects
             )
             return plan
         } catch {
