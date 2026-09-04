@@ -3,6 +3,23 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Observation
 
+enum LocalAudioImportError: LocalizedError {
+    case unsupportedExtension(String)
+    case notAudioFile(String)
+    case emptySelection
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedExtension(let name):
+            return "Формат файла не поддерживается: \(name)"
+        case .notAudioFile(let name):
+            return "Файл не содержит аудиодорожку: \(name)"
+        case .emptySelection:
+            return "Файлы не выбраны"
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class LibraryStore {
@@ -16,6 +33,7 @@ final class LibraryStore {
     private(set) var isImportingFiles = false
     var importProgress: Double? = nil
     var lastError: String? = nil
+    private(set) var lastImportMessage: String? = nil
 
     static let tracksIndexURL: URL = {
         documentsDirectoryURL().appendingPathComponent("library_tracks.json")
@@ -24,6 +42,10 @@ final class LibraryStore {
     static let playlistsIndexURL: URL = {
         documentsDirectoryURL().appendingPathComponent("library_playlists.json")
     }()
+
+    private static let supportedAudioExtensions: Set<String> = [
+        "mp3", "m4a", "aac", "wav", "flac", "aiff", "aif", "alac", "ogg", "oga", "opus", "caf", "mp4"
+    ]
 
     private init() {
         loadData()
@@ -165,7 +187,6 @@ final class LibraryStore {
         isScanning = true
         defer { isScanning = false }
 
-        let exts: Set<String> = ["mp3", "m4a", "aac", "wav", "flac", "aiff", "alac", "ogg", "caf"]
         let docURL = documentsDirectoryURL()
         let musicURL = musicDirectoryURL()
 
@@ -174,7 +195,7 @@ final class LibraryStore {
         if let rootFiles = try? FileManager.default.contentsOfDirectory(at: docURL, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey]) {
             for file in rootFiles {
                 let isDir = (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                if !isDir && exts.contains(file.pathExtension.lowercased()) {
+                if !isDir && Self.isSupportedAudioURL(file) {
                     discoveredURLs.append(file)
                 }
             }
@@ -182,7 +203,7 @@ final class LibraryStore {
 
         if let musicFiles = try? FileManager.default.contentsOfDirectory(at: musicURL, includingPropertiesForKeys: [.fileSizeKey]) {
             for file in musicFiles {
-                if exts.contains(file.pathExtension.lowercased()) && !discoveredURLs.contains(where: { $0.lastPathComponent == file.lastPathComponent }) {
+                if Self.isSupportedAudioURL(file) && !discoveredURLs.contains(where: { $0.lastPathComponent == file.lastPathComponent }) {
                     discoveredURLs.append(file)
                 }
             }
@@ -192,6 +213,8 @@ final class LibraryStore {
         var addedTracks: [Track] = []
 
         for url in discoveredURLs where !knownNames.contains(url.lastPathComponent) {
+            guard await Self.hasAudioTrack(url: url) else { continue }
+
             let meta = await Self.readMetadata(url: url)
             let seed = Self.stableSeed(url.lastPathComponent)
             let relative = url.path.replacingOccurrences(of: docURL.path, with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -223,24 +246,43 @@ final class LibraryStore {
 
     func importFiles(from urls: [URL]) async {
         lastError = nil
-        guard !urls.isEmpty else { return }
+        lastImportMessage = nil
+        guard !urls.isEmpty else {
+            lastError = LocalAudioImportError.emptySelection.localizedDescription
+            return
+        }
+
         isImportingFiles = true
-        defer { isImportingFiles = false }
+        importProgress = 0
+        defer {
+            isImportingFiles = false
+            importProgress = nil
+        }
 
         let targetDir = musicDirectoryURL()
+        try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
         var failures: [String] = []
+        var imported = 0
 
-        for url in urls {
+        for (index, url) in urls.enumerated() {
+            importProgress = Double(index) / Double(max(1, urls.count))
+
+            guard Self.isSupportedAudioURL(url) else {
+                failures.append("\(url.lastPathComponent) — \(LocalAudioImportError.unsupportedExtension(url.lastPathComponent).localizedDescription)")
+                continue
+            }
+
             let isScoped = url.startAccessingSecurityScopedResource()
             defer { if isScoped { url.stopAccessingSecurityScopedResource() } }
 
             do {
-                let dest = targetDir.appendingPathComponent(url.lastPathComponent)
-                if FileManager.default.fileExists(atPath: dest.path) {
-                    try? FileManager.default.removeItem(at: dest)
-                }
-                try FileManager.default.copyItem(at: url, to: dest)
-                try await addLocalFile(at: dest)
+                let destination = Self.uniqueDestinationURL(
+                    for: url.lastPathComponent,
+                    in: targetDir
+                )
+                try Self.copyPickedFile(from: url, to: destination)
+                try await addLocalFile(at: destination)
+                imported += 1
                 SonivoDiagnostics.log("Imported local file: \(url.lastPathComponent)", tag: "LIBRARY")
             } catch {
                 // Surface the real underlying reason (permission denied, file
@@ -252,9 +294,17 @@ final class LibraryStore {
             }
         }
 
+        importProgress = 1
+
+        if imported > 0 {
+            lastImportMessage = imported == 1
+                ? "Загружен 1 локальный аудиофайл"
+                : "Загружено \(imported) локальных аудиофайлов"
+        }
+
         if !failures.isEmpty {
             lastError = failures.count == 1
-                ? "Не удалось импортировать «\(failures[0])»"
+                ? "Не удалось импортировать: \(failures[0])"
                 : "Не удалось импортировать \(failures.count) файл(ов):\n" + failures.joined(separator: "\n")
         }
     }
@@ -266,11 +316,22 @@ final class LibraryStore {
         lastError = nil
     }
 
+    func clearLastImportMessage() {
+        lastImportMessage = nil
+    }
+
+    func reportImportPickerError(_ error: Error) {
+        lastImportMessage = nil
+        lastError = "Не удалось открыть системный выбор аудио: \(error.localizedDescription)"
+        SonivoDiagnostics.log("File picker failed: \(error.localizedDescription)", tag: "LIBRARY")
+    }
+
     // MARK: - Save Online Track for Offline Playback
 
     func saveOnlineTrackLocally(track: Track) async {
         guard track.isStream, let urlString = track.streamUrlString, let url = URL(string: urlString) else { return }
         lastError = nil
+        lastImportMessage = nil
         importProgress = -1
         defer { importProgress = nil }
 
@@ -294,6 +355,10 @@ final class LibraryStore {
     // MARK: - Add Local File
 
     func addLocalFile(at dest: URL) async throws {
+        guard await Self.hasAudioTrack(url: dest) else {
+            throw LocalAudioImportError.notAudioFile(dest.lastPathComponent)
+        }
+
         let meta = await Self.readMetadata(url: dest)
         let docURL = documentsDirectoryURL()
         let relative = dest.path.replacingOccurrences(of: docURL.path, with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -332,6 +397,62 @@ final class LibraryStore {
         playlists.removeAll()
         try? FileManager.default.removeItem(at: Self.tracksIndexURL)
         try? FileManager.default.removeItem(at: Self.playlistsIndexURL)
+    }
+
+    // MARK: - Import helpers
+
+    nonisolated private static func isSupportedAudioURL(_ url: URL) -> Bool {
+        supportedAudioExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    nonisolated private static func safeFileName(_ original: String) -> String {
+        let trimmed = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = "audio-\(UUID().uuidString).m4a"
+        let raw = trimmed.isEmpty ? fallback : trimmed
+        let separators = CharacterSet(charactersIn: "/:")
+        return raw.components(separatedBy: separators).joined(separator: "-")
+    }
+
+    nonisolated private static func uniqueDestinationURL(for originalName: String, in directory: URL) -> URL {
+        let safeName = safeFileName(originalName)
+        let base = (safeName as NSString).deletingPathExtension
+        let ext = (safeName as NSString).pathExtension
+        var candidate = directory.appendingPathComponent(safeName)
+        var counter = 2
+
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let suffix = ext.isEmpty ? " \(counter)" : " \(counter).\(ext)"
+            candidate = directory.appendingPathComponent(base + suffix)
+            counter += 1
+        }
+
+        return candidate
+    }
+
+    nonisolated private static func copyPickedFile(from source: URL, to destination: URL) throws {
+        var coordinatorError: NSError?
+        var copyError: Error?
+
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        coordinator.coordinate(readingItemAt: source, options: [], error: &coordinatorError) { readableURL in
+            do {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.copyItem(at: readableURL, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+
+        if let copyError { throw copyError }
+        if let coordinatorError { throw coordinatorError }
+    }
+
+    nonisolated private static func hasAudioTrack(url: URL) async -> Bool {
+        let asset = AVURLAsset(url: url)
+        guard let tracks = try? await asset.loadTracks(withMediaType: .audio) else { return false }
+        return !tracks.isEmpty
     }
 
     // MARK: - Artwork Cache

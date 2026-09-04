@@ -63,10 +63,11 @@ jobs:
             build 2>&1 | tee build.log
 
       - name: Publish build status
-        if: always() && steps.xcodebuild.outcome != 'skipped' && github.event_name != 'pull_request'
+        if: always() && steps.xcodebuild.outcome != 'skipped'
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_OUTCOME: ${{ steps.xcodebuild.outcome }}
+          PR_NUMBER: ${{ github.event.number }}
         run: |
           printf "Commit: %s\nRun: %s\nOutcome: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$BUILD_OUTCOME" > diagnostic.txt
           if [ "$BUILD_OUTCOME" = "success" ]; then
@@ -79,18 +80,31 @@ jobs:
             cat compiler-errors.txt >> diagnostic.txt
           fi
 
+          DIAG_BRANCH="ci-diagnostics"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            DIAG_BRANCH="ci-diagnostics-pr-${PR_NUMBER}"
+          fi
+
           TMP=$(mktemp -d)
           cd "$TMP"
           git init
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b ci-diagnostics
+          git checkout -b "$DIAG_BRANCH"
           mkdir -p ci-logs
           cp "$GITHUB_WORKSPACE/diagnostic.txt" ci-logs/latest-build-errors.txt
           git add ci-logs/latest-build-errors.txt
           git commit -m "Record build status from run $GITHUB_RUN_ID"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force origin ci-diagnostics
+          git push --force origin "$DIAG_BRANCH"
+
+      - name: Upload build log
+        if: always() && steps.xcodebuild.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
 
       - name: Package unsigned IPA
         run: |
@@ -108,12 +122,16 @@ jobs:
       - name: Send IPA to Telegram
         if: github.event_name != 'pull_request'
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA' }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::warning::Telegram secrets are not configured, skipping delivery."
+            exit 0
+          fi
           RESPONSE=$(curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
                -F document=@Sonivo-unsigned.ipa \
-               -F caption="🎵 Sonivo IPA готов к установке! (Сборка: #${BUILD_NUMBER})" \
+               -F caption="Sonivo IPA готов к установке! (Сборка: #${BUILD_NUMBER})" \
                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument")
           echo "Telegram response: $RESPONSE"
           if echo "$RESPONSE" | grep -q '"ok":true'; then
