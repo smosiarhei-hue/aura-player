@@ -37,6 +37,12 @@ struct LibraryView: View {
         return list
     }
 
+    private var localAudioTracks: [Track] {
+        library.tracks.filter {
+            !$0.isStream && FileManager.default.fileExists(atPath: $0.url.path)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -64,15 +70,15 @@ struct LibraryView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
-                            showNewPlaylistAlert = true
+                            showFilePicker = true
                         } label: {
-                            Label("Создать плейлист", systemImage: "plus.rectangle.on.rectangle")
+                            Label("Загрузить аудио", systemImage: "square.and.arrow.down")
                         }
 
                         Button {
-                            showFilePicker = true
+                            showNewPlaylistAlert = true
                         } label: {
-                            Label("Выбрать из «Файлов»", systemImage: "folder.badge.plus")
+                            Label("Создать плейлист", systemImage: "plus.rectangle.on.rectangle")
                         }
 
                         Button {
@@ -111,20 +117,32 @@ struct LibraryView: View {
             } message: {
                 Text(library.lastError ?? "")
             }
+            .alert("Готово", isPresented: Binding(
+                get: { library.lastImportMessage != nil },
+                set: { isPresented in if !isPresented { library.clearLastImportMessage() } }
+            )) {
+                Button("ОК", role: .cancel) { library.clearLastImportMessage() }
+            } message: {
+                Text(library.lastImportMessage ?? "")
+            }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
-            .fileImporter(
-                isPresented: $showFilePicker,
-                allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav, .aiff],
-                allowsMultipleSelection: true
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    library.importFromPicker(urls: urls)
-                case .failure(let error):
-                    library.lastError = "Не удалось открыть «Файлы»: \(error.localizedDescription)"
-                }
+            .sheet(isPresented: $showFilePicker) {
+                LocalAudioDocumentPicker(
+                    onPick: { urls in
+                        showFilePicker = false
+                        library.importFromPicker(urls: urls)
+                    },
+                    onCancel: {
+                        showFilePicker = false
+                    },
+                    onError: { error in
+                        showFilePicker = false
+                        library.reportImportPickerError(error)
+                    }
+                )
+                .ignoresSafeArea()
             }
         }
     }
@@ -135,6 +153,7 @@ struct LibraryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 mediaScanActionCard
+                localAutoMixTestCard
                 filterChips
 
                 if filter == .playlists {
@@ -179,18 +198,31 @@ struct LibraryView: View {
     }
 
     private var mediaScanIcon: some View {
-        Image(systemName: "iphone.and.arrow.forward")
+        Image(systemName: library.isImportingFiles ? "arrow.down.doc.fill" : "iphone.and.arrow.forward")
             .font(.title2)
             .foregroundStyle(settings.accentColor)
     }
 
     private var mediaScanText: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Импорт музыки с телефона")
+            Text("Локальные аудио")
                 .font(.subheadline.weight(.semibold))
-            Text(library.isImportingFiles ? "Импортируем файлы…" : "Выберите аудиофайлы через «Файлы»")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+
+            if library.isImportingFiles {
+                if let progress = library.importProgress, progress >= 0 {
+                    Text("Загружаем… \(Int(progress * 100))%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Загружаем выбранные файлы…")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Загрузите MP3, M4A, WAV, FLAC, AIFF или CAF через системный UI «Файлы»")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -203,7 +235,7 @@ struct LibraryView: View {
                 if library.isImportingFiles {
                     ProgressView().controlSize(.mini)
                 }
-                Text(library.isImportingFiles ? "Импорт…" : "Выбрать файлы")
+                Text(library.isImportingFiles ? "Загрузка…" : "Загрузить аудио")
                     .font(.caption.weight(.bold))
             }
             .padding(.horizontal, 12)
@@ -213,6 +245,53 @@ struct LibraryView: View {
         .buttonStyle(.borderedProminent)
         .tint(settings.accentColor)
         .disabled(library.isImportingFiles)
+    }
+
+    // MARK: - Local AutoMix Test
+
+    private var localAutoMixTestCard: some View {
+        let count = localAudioTracks.count
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.path.ecg.rectangle")
+                    .font(.title2)
+                    .foregroundStyle(settings.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Тест AutoMix на локальных файлах")
+                        .font(.subheadline.weight(.semibold))
+                    Text(count >= 2
+                         ? "Готово: \(count) локальных треков. Запустим первые два через AutoMix."
+                         : "Загрузите минимум 2 локальных аудио, чтобы проверить переход без стримов.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            Button {
+                startLocalAutoMixTest()
+            } label: {
+                Label("Начать локальный тест", systemImage: "play.circle.fill")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(settings.accentColor)
+            .disabled(count < 2 || library.isImportingFiles)
+        }
+        .glassCard(corner: 16, padding: 12)
+        .padding(.horizontal, 16)
+    }
+
+    private func startLocalAutoMixTest() {
+        let local = localAudioTracks
+        guard local.count >= 2 else { return }
+        player.transitionMode = .automix
+        player.play(local[0], newQueue: local)
+        SonivoDiagnostics.log("Started UI local AutoMix test with \(local.count) local tracks", tag: "AUTOMIX")
     }
 
     // MARK: - Playlists Section
@@ -369,6 +448,12 @@ struct LibraryView: View {
                             .lineLimit(1)
                             .foregroundStyle(.primary)
 
+                        if !track.isStream {
+                            Image(systemName: "iphone")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
                         if library.isTrackFavorite(track) {
                             Image(systemName: "star.fill")
                                 .font(.caption2)
@@ -433,7 +518,7 @@ struct LibraryView: View {
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
 
-            Text("Загрузите аудиофайлы через приложение «Файлы», чтобы начать слушать музыку.")
+            Text("Загрузите минимум два локальных аудиофайла через системный UI «Файлы», чтобы протестировать AutoMix без стримов.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -442,7 +527,7 @@ struct LibraryView: View {
             Button {
                 showFilePicker = true
             } label: {
-                Label("Выбрать из «Файлов»", systemImage: "folder.badge.plus")
+                Label(library.isImportingFiles ? "Загрузка…" : "Загрузить аудио", systemImage: "square.and.arrow.down")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
@@ -450,6 +535,12 @@ struct LibraryView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(settings.accentColor)
+            .disabled(library.isImportingFiles)
+
+            if library.isImportingFiles, let progress = library.importProgress, progress >= 0 {
+                ProgressView(value: progress)
+                    .padding(.horizontal, 32)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
