@@ -165,8 +165,19 @@ struct SettingsView: View {
                             Slider(value: $player.crossfadeDuration, in: 1...12, step: 0.5).tint(settings.accentColor)
                         }
                     }
+                    if player.transitionMode == .automix {
+                        Toggle(isOn: $player.cloudPlanningEnabled) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Облачный AI-план переходов")
+                                Text("Выключено: сведение считается локально на устройстве и работает офлайн.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .tint(settings.accentColor)
+                    }
                 } header: { Text("Переходы между песнями") } footer: {
-                    Text("В AutoMix нет ручной длины и стиля: он сам анализирует BPM, такты, структуру и тональность, выбирает 4/8/16 тактов, синхронизирует темп и автоматически применяет beat-loop, фильтры и reverb.")
+                    Text("В AutoMix нет ручной длины и стиля: он сам анализирует BPM, такты, структуру и тональность, выбирает 4/8/16 тактов, синхронизирует темп по битам (beat-lock), накладывает фильтры и reverb. Весь анализ и планирование работают офлайн на устройстве; Яндекс API подбирает похожие треки для волны онлайн.")
                 }
 
                 Section {

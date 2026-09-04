@@ -2,7 +2,7 @@ name: Build IPA
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, 'arena/**' ]
     tags: [ 'v*' ]
 
 permissions:

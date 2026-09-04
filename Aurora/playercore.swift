@@ -82,6 +82,14 @@ final class PlayerCore {
     static let bandFrequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
     private static let streamHeadroomCeiling: Float = 0.89
 
+    /// Strategies that can ride the sample-accurate beatgrid lock. Strategies
+    /// that deliberately destroy tempo (vinyl brakes, hard cuts) are excluded
+    /// — they use the immediate path by design.
+    static let lockableStrategies: Set<TransitionStrategy> = [
+        .BEAT_MATCH, .BEAT_MATCH_EQ, .BASS_SWAP,
+        .ENERGY_BLEND, .FILTER_TRANSITION, .ECHO_OUT, .SIMPLE_CROSSFADE
+    ]
+
     private(set) var isPlaying = false
     private(set) var currentTrack: Track?
     private(set) var progress: Double = 0
@@ -170,6 +178,11 @@ final class PlayerCore {
     private var incomingAudioFile: AVAudioFile?
     private(set) var incomingTrack: Track?
     private(set) var metadataTrack: Track?
+
+    // UI-facing read-only views into private transition state.
+    var isGridArmed: Bool { gridSyncArmed || AutoMixDJEngine.shared.beatLockActive }
+    var plannedNextTrackID: UUID? { plannedNextTrack?.id }
+    var peekNextForHUD: Track? { peekNext(auto: true) }
     private var metadataSwapped = false
     private var incomingStartPosition: Double = 0
     private var generation = 0
@@ -187,6 +200,43 @@ final class PlayerCore {
     private var transitionDuration: Double = 3.0
     private var transitionTimer: Timer?
     private var rateReleaseTimer: Timer?
+
+    // MARK: Sample-accurate beatgrid sync
+    //
+    // When armed, the incoming deck is scheduled in the future so its entry
+    // downbeat is rendered at the outgoing deck's cue downbeat, and both
+    // time-pitch units are held at constant tempo-lock rates for the whole
+    // blend — the transition timer only ramps volume/EQ/reverb, never the
+    // rates, so the grids cannot drift apart mid-mix.
+    private var gridSyncArmed = false
+    private var gridCueDate: Date?
+    private var cueWatchTimer: Timer?
+    private var isArmingGrid = false
+    /// Scheduling anchors per player node: the node sample time at which its
+    /// scheduled segment starts, and the file frame it starts at. Lets us
+    /// read the true sounding file position from the render clock instead of
+    /// a wall-clock anchor (which drifts under rate changes).
+    private var anchorSampleTimeA: AVAudioFramePosition = 0
+    private var anchorStartFrameA: AVAudioFramePosition = 0
+    private var anchorValidA = false
+    private var anchorSampleTimeB: AVAudioFramePosition = 0
+    private var anchorStartFrameB: AVAudioFramePosition = 0
+    private var anchorValidB = false
+    /// Tracks whose analysis is currently being warmed in the background, so
+    /// the lookahead window of the AutoMix picker always has real BPM/key
+    /// data ready (the picker itself only ever reads cached results).
+    private var prewarmingAnalysisIDs = Set<UUID>()
+    /// Offline-first AutoMix: planning runs entirely on the local DSP engine
+    /// (BPM/key/structure analysis + transition strategy). The optional cloud
+    /// planner is only consulted when this is on. Persisted.
+    var cloudPlanningEnabled: Bool = UserDefaults.standard.bool(forKey: "automix.cloudPlanning") {
+        didSet {
+            defaults.set(cloudPlanningEnabled, forKey: "automix.cloudPlanning")
+            if !cloudPlanningEnabled {
+                AutoMixDJEngine.shared.localDSPActive = true
+            }
+        }
+    }
 
     var displayTrack: Track? { metadataTrack ?? currentTrack }
 
@@ -634,6 +684,11 @@ final class PlayerCore {
 
     func pause() {
         guard isPlaying else { return }
+        // A future-scheduled beatgrid entry cannot survive a pause cleanly —
+        // drop the pending blend; it replans (immediate path) on resume.
+        if gridSyncArmed {
+            cancelTransition()
+        }
         if isUsingStreamPlayer {
             activeStreamingPlayer.pause()
             idleStreamingPlayer.pause()
@@ -798,6 +853,8 @@ final class PlayerCore {
         idleStreamingPlayer.pause()
         playerA.stop()
         playerB.stop()
+        anchorValidA = false
+        anchorValidB = false
         stopBeatLoop()
         playerA.volume = 1.0
         playerB.volume = 0.0
@@ -835,6 +892,14 @@ final class PlayerCore {
                 }
 
                 self.playerA.play()
+                // Anchor the render clock to the scheduled segment so later
+                // transitions can reason about the exact sounding beat.
+                if let nodeTime = self.playerA.lastRenderTime,
+                   let now = self.playerA.playerTime(forNodeTime: nodeTime) {
+                    self.setAnchor(for: self.playerA,
+                                   sample: now.sampleTime,
+                                   frame: validOffset)
+                }
                 self.isPlaying = true
                 self.anchorDate = Date()
                 self.anchorOffset = seconds
@@ -989,6 +1054,11 @@ final class PlayerCore {
             return
         }
 
+        // Warm up analysis for the AutoMix lookahead window so smart-pick and
+        // the grid sync have real BPM/beat-grid data ready well before the
+        // cue instead of racing it.
+        prewarmUpcomingAnalysis(current: current, remaining: remaining)
+
         if remaining <= 65.0, activeTransitionPlan == nil, !isPlanningTransition {
             isPlanningTransition = true
             planningStartedAt = Date()
@@ -998,13 +1068,34 @@ final class PlayerCore {
                 let tgtAnalysis = await TrackAnalysisService.shared.analysis(for: nextTrack)
                     ?? TrackAnalysis.minimal(trackID: nextTrack.id.uuidString, duration: nextTrack.duration)
 
-                let plan = await GeminiAutoMixPlanner.shared.planTransition(
-                    sourceTrack: current,
-                    sourceAnalysis: srcAnalysis,
-                    targetTrack: nextTrack,
-                    targetAnalysis: tgtAnalysis,
-                    currentPosition: currentPos
-                )
+                let plan: TransitionPlan
+                if self.cloudPlanningEnabled {
+                    plan = await GeminiAutoMixPlanner.shared.planTransition(
+                        sourceTrack: current,
+                        sourceAnalysis: srcAnalysis,
+                        targetTrack: nextTrack,
+                        targetAnalysis: tgtAnalysis,
+                        currentPosition: currentPos
+                    )
+                } else {
+                    // Offline-first: the local DSP decision engine needs zero
+                    // network and answers instantly — no ~10 s API round-trip
+                    // before every blend.
+                    plan = TransitionPlanner.planLocalFallback(
+                        sourceTrackID: current.id,
+                        sourceAnalysis: srcAnalysis,
+                        targetTrackID: nextTrack.id,
+                        targetAnalysis: tgtAnalysis
+                    )
+                    GeminiAutoMixPlanner.lastPlanUsedGemini = false
+                    AutoMixDJEngine.shared.localDSPActive = true
+                    let cueS = String(format: "%.1f", plan.cueTime)
+                    let leadS = String(format: "%.1f", plan.leadTime)
+                    SonivoDiagnostics.log(
+                        "[AutoMix Local] DSP plan: \(plan.decision.transitionType), cue: \(cueS)s, dur: \(leadS)s",
+                        tag: "AUTOMIX"
+                    )
+                }
 
                 await MainActor.run {
                     guard self.currentTrack?.id == current.id, !self.isTransitioning else { return }
@@ -1012,6 +1103,9 @@ final class PlayerCore {
                     self.isPlanningTransition = false
                     self.planningStartedAt = nil
                     AutoMixDJEngine.shared.currentBPM = plan.tempo.targetBPM
+                    if self.cloudPlanningEnabled {
+                        AutoMixDJEngine.shared.localDSPActive = !GeminiAutoMixPlanner.lastPlanUsedGemini
+                    }
                 }
             }
         }
@@ -1046,9 +1140,75 @@ final class PlayerCore {
 
         guard let plan = activeTransitionPlan else { return }
         let effectiveCueTime = max(plan.cueTime, totalDur - 35.0)
-        guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
+        let runwayToCue = effectiveCueTime - currentPos
 
+        // --- Pre-cue preparation, while the outgoing track is still playing ---
+
+        // Tempo pre-lock for local decks: ease toward the tempo-lock rate
+        // during the seconds BEFORE the cue, so by the time the blend starts
+        // the beat grid is already stable (no audible rate jump mid-mix).
+        if !isUsingStreamPlayer, !gridSyncArmed,
+           Self.lockableStrategies.contains(plan.strategy),
+           plan.tempo.sourcePlaybackRate != 1.0 {
+            let target = Float(plan.tempo.sourcePlaybackRate)
+            let current = activeTimePitch.rate
+            if runwayToCue > 0.3, runwayToCue <= 9.0, abs(current - target) > 0.0008 {
+                activeTimePitch.bypass = false
+                activeTimePitch.pitch = 0
+                activeTimePitch.rate = current + (target - current) * 0.06
+            }
+        }
+
+        // Sample-accurate grid arm ~4 s BEFORE the cue. The old code armed
+        // only after the cue, which worked for short crossfades but never for
+        // the long 16-24 s DJ blends: by the time the at-cue branch ran,
+        // scheduling a future entry was impossible, so the incoming deck just
+        // started immediately — no beat lock, no lead-in, "instant" feel.
+        if !isTransitioning, !transitionScheduled, !gridSyncArmed, !isArmingGrid,
+           !nextTrack.isStream, isPlaying,
+           Self.lockableStrategies.contains(plan.strategy),
+           runwayToCue > 0.2, runwayToCue <= 4.2 {
+            isArmingGrid = true
+            transitionDuration = plan.leadTime
+            incomingTrack = nextTrack
+            incomingIsStream = false
+            incomingStartPosition = max(0, plan.targetTrack.startPosition)
+            AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
+            AutoMixDJEngine.shared.activePlan = plan
+            applyReverbPreset(plan.effects.resolvedReverbPreset)
+            let idle = idlePlayer
+            Task { [idle] in
+                let armed = await self.armGridSyncedTransition(
+                    plan: plan,
+                    nextTrack: nextTrack,
+                    current: current,
+                    totalDur: totalDur,
+                    targetIdlePlayer: idle,
+                    targetIsPlayerA: idle === self.playerA
+                )
+                await MainActor.run {
+                    self.isArmingGrid = false
+                    if !armed {
+                        self.incomingTrack = nil
+                        self.incomingIsStream = false
+                        self.incomingStartPosition = 0
+                        AutoMixDJEngine.shared.activePlan = nil
+                        AutoMixDJEngine.shared.activeStrategyName = "BASS_SWAP"
+                        // The at-cue immediate path below takes over.
+                        SonivoDiagnostics.log("[AutoMix] Pre-cue arm missed — at-cue fallback will run", tag: "AUTOMIX")
+                    }
+                }
+            }
+            return
+        }
+
+        // The blend begins at the cue.
+        guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
         if effectiveCueTime > currentPos + 1.0 { return }
+        // A grid-synced arm already scheduled both decks; its cue watcher
+        // starts the ramp exactly here — do not also schedule an immediate
+        // second segment on top of it.
+        if gridSyncArmed { return }
 
         transitionScheduled = true
         isTransitioning = true
@@ -1095,9 +1255,15 @@ final class PlayerCore {
         let targetIsPlayerA = targetIdlePlayer === playerA
         let targetStart = max(0, plan.targetTrack.startPosition)
 
+        // At-cue immediate start: runs only if the pre-cue grid arm could
+        // not lock (missing analysis, un-schedulable decks). It starts the
+        // incoming deck right away, so the blend still overlaps for the full
+        // planned duration.
+
         let outgoingURL = currentTrack?.url
         Task { [weak self] in
-            guard let self, let outgoingURL, outgoingURL.isFileURL, !nextTrack.isStream, !self.isUsingStreamPlayer else { return }
+            guard let self, let outgoingURL, outgoingURL.isFileURL, !nextTrack.isStream,
+                  !self.isUsingStreamPlayer, !self.isArmingGrid, !self.gridSyncArmed else { return }
             let outgoingAnalysis = await TrackAnalysisService.shared.analysis(for: current)
                 ?? TrackAnalysis.minimal(trackID: current.id.uuidString, duration: totalDur)
             await MainActor.run {
@@ -1133,6 +1299,10 @@ final class PlayerCore {
                 targetIdlePlayer.volume = 0
                 if !self.engine.isRunning { try? self.engine.start() }
                 targetIdlePlayer.play()
+                if let nodeTime = targetIdlePlayer.lastRenderTime,
+                   let pt = targetIdlePlayer.playerTime(forNodeTime: nodeTime) {
+                    self.setAnchor(for: targetIdlePlayer, sample: pt.sampleTime, frame: startFrame)
+                }
 
                 self.transitionStartTime = Date()
                 self.startTransitionTimer()
@@ -1274,6 +1444,203 @@ final class PlayerCore {
         }
     }
 
+    // MARK: - Sample-accurate grid-synced transition
+
+    /// Schedule the idle deck ahead of the cue so its entry downbeat is
+    /// rendered at the exact host time of the outgoing cue downbeat.
+    /// Returns `true` when the future segment was scheduled (caller should
+    /// not run the immediate path).
+    private func armGridSyncedTransition(
+        plan: TransitionPlan,
+        nextTrack: Track,
+        current: Track,
+        totalDur: Double,
+        targetIdlePlayer: AVAudioPlayerNode,
+        targetIsPlayerA: Bool
+    ) async -> Bool {
+        guard !nextTrack.isStream, currentTrack?.id == current.id else { return false }
+
+        let srcAnalysis = await TrackAnalysisService.shared.analysis(for: current)
+        let tgtAnalysis = await TrackAnalysisService.shared.analysis(for: nextTrack)
+        guard let srcAnalysis, let tgtAnalysis else { return false }
+
+        let nextFile: AVAudioFile
+        do {
+            nextFile = try AVAudioFile(forReading: nextTrack.url)
+        } catch {
+            return false
+        }
+
+        let sourcePosition = activeSoundingFileTime() ?? liveProgress()
+        guard let arm = BeatgridSync.arm(
+            source: srcAnalysis,
+            target: tgtAnalysis,
+            sourceFileTime: sourcePosition,
+            cueTime: plan.cueTime,
+            blendDuration: plan.leadTime,
+            sourceRate: plan.tempo.sourcePlaybackRate,
+            targetRate: plan.tempo.targetPlaybackRate,
+            sourceFileSampleRate: activeAudioFile?.processingFormat.sampleRate ?? nextFile.processingFormat.sampleRate,
+            targetFileSampleRate: nextFile.processingFormat.sampleRate,
+            targetFileLengthFrames: nextFile.length
+        ), arm.locked else { return false }
+
+        let frameCount = AVAudioFrameCount(max(0, nextFile.length - arm.incomingStartFrame))
+        guard frameCount > 4096 else { return false }
+
+        let whenHost = mach_absolute_time()
+            + AVAudioTime.hostTime(forSeconds: arm.delay)
+        let when = AVAudioTime(hostTime: whenHost)
+
+        // Commit the transition state on the main actor.
+        await MainActor.run {
+            self.incomingAudioFile = nextFile
+
+            targetIdlePlayer.scheduleSegment(
+                nextFile,
+                startingFrame: arm.incomingStartFrame,
+                frameCount: frameCount,
+                at: when,
+                completionCallbackType: .dataPlayedBack
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self,
+                          self.activePlayer === (targetIsPlayerA ? self.playerA : self.playerB) else { return }
+                    self.handleTrackFinish()
+                }
+            }
+
+            if !self.engine.isRunning { try? self.engine.start() }
+
+            // Tempo lock: constant rates for the whole blend so the grids
+            // stay interlocked. The transition timer must never touch them.
+            self.activeTimePitch.bypass = false
+            self.idleTimePitch.bypass = false
+            self.activeTimePitch.pitch = 0
+            self.idleTimePitch.pitch = 0
+            self.activeTimePitch.rate = Float(arm.sourceRate)
+            self.idleTimePitch.rate = Float(arm.targetRate)
+
+            targetIdlePlayer.volume = 0
+            targetIdlePlayer.play()
+            // The node's render clock starts once it begins rendering; the
+            // anchor resolves a few render cycles later in tickCueWatch().
+
+            self.gridSyncArmed = true
+            self.gridCueDate = Date().addingTimeInterval(arm.delay)
+            self.incomingStartPosition = arm.incomingEntryTime
+            self.AutoMixDJEngineGridState(locked: true)
+            self.startCueWatchTimer()
+
+            let delayS = String(format: "%.2f", arm.delay)
+            let bpmS = String(format: "%.1f", plan.tempo.targetBPM)
+            let srcRateS = String(format: "%.3f", arm.sourceRate)
+            let tgtRateS = String(format: "%.3f", arm.targetRate)
+            SonivoDiagnostics.log(
+                "[AutoMix] Grid arm: \(current.title) -> \(nextTrack.title), cue in \(delayS)s @ \(bpmS) BPM, rates \(srcRateS)/\(tgtRateS)",
+                tag: "AUTOMIX"
+            )
+        }
+        return true
+    }
+
+    private func AutoMixDJEngineGridState(locked: Bool) {
+        AutoMixDJEngine.shared.beatLockActive = locked
+    }
+
+    private func startCueWatchTimer() {
+        cueWatchTimer?.invalidate()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickCueWatch() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cueWatchTimer = timer
+    }
+
+    private func tickCueWatch() {
+        guard gridSyncArmed, let cueDate = gridCueDate else {
+            cueWatchTimer?.invalidate()
+            cueWatchTimer = nil
+            return
+        }
+        // The scheduled anchor may only resolve once the idle deck actually
+        // starts rendering — keep retrying until it sticks.
+        let idle = idlePlayer
+        if let incoming = incomingAudioFile {
+            let (sample, frame, valid) = anchorPair(for: idle)
+            if !valid, sample == 0, frame == 0 {
+                let hostDelay = max(0, cueDate.timeIntervalSinceNow)
+                let when = AVAudioTime(hostTime: mach_absolute_time()
+                    + AVAudioTime.hostTime(forSeconds: hostDelay))
+                _ = recordAnchor(for: idle,
+                                 startFrame: AVAudioFramePosition(incomingStartPosition * incoming.processingFormat.sampleRate),
+                                 when: when)
+            }
+        }
+        guard cueDate.timeIntervalSinceNow <= 0 else { return }
+        cueWatchTimer?.invalidate()
+        cueWatchTimer = nil
+        beginGridBlendRamp()
+    }
+
+    private func beginGridBlendRamp() {
+        guard gridSyncArmed, let incomingTrack else {
+            disarmGridSync()
+            return
+        }
+        // The pre-cue arm only prepared the decks; the blend itself starts
+        // here, exactly at the cue downbeat. Flip to the mixing state.
+        isTransitioning = true
+        transitionScheduled = true
+        incomingLaneReady = true
+        AutoMixDJEngine.shared.isTransitionActive = true
+        metadataSwapped = false
+        metadataTrack = nil
+        SonivoDiagnostics.log("[AutoMix] Cue hit — grid-synced blend ramp starts", tag: "AUTOMIX")
+        transitionStartTime = Date()
+        startTransitionTimer()
+    }
+
+    private func disarmGridSync() {
+        cueWatchTimer?.invalidate()
+        cueWatchTimer = nil
+        gridSyncArmed = false
+        gridCueDate = nil
+        AutoMixDJEngine.shared.beatLockActive = false
+        idleTimePitch.rate = 1.0
+        idleTimePitch.bypass = true
+    }
+
+    // MARK: - Analysis prewarm (offline AutoMix lookahead)
+
+    private func prewarmUpcomingAnalysis(current: Track, remaining: Double) {
+        // Prewarm the anchor track early; for local files (free, offline)
+        // also warm the tracks behind it so smart-pick has a real pool.
+        let q = effectiveQueue()
+        let localUpcoming = q.filter { $0.id != current.id && !$0.isStream }
+        let prewarmTargets: [Track]
+        if nextTrackIsStreamAnchor(current: current) {
+            prewarmTargets = Array(localUpcoming.prefix(3))
+        } else {
+            prewarmTargets = Array(localUpcoming.prefix(4))
+        }
+        guard !prewarmTargets.isEmpty, remaining < 140 else { return }
+        for track in prewarmTargets where !prewarmingAnalysisIDs.contains(track.id) {
+            prewarmingAnalysisIDs.insert(track.id)
+            let trackID = track.id
+            Task.detached(priority: .utility) {
+                _ = await TrackAnalysisService.shared.analysis(for: track)
+                Task { @MainActor in
+                    PlayerCore.shared.prewarmingAnalysisIDs.remove(trackID)
+                }
+            }
+        }
+    }
+
+    private func nextTrackIsStreamAnchor(current: Track) -> Bool {
+        peekNext(auto: true)?.isStream ?? false
+    }
+
     private func stopBeatLoop() {
         looperPlayer.stop()
         looperPlayer.volume = 0
@@ -1301,6 +1668,11 @@ final class PlayerCore {
 
     private func tickTransition() {
         guard let start = transitionStartTime, isTransitioning else { return }
+        // Grid-armed blends only start their ramp at the cue downbeat;
+        // the scheduled idle deck is silent until then.
+        if gridSyncArmed, let cueDate = gridCueDate, cueDate.timeIntervalSinceNow > 0 {
+            return
+        }
         let elapsed = -start.timeIntervalSinceNow
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
@@ -1387,7 +1759,18 @@ final class PlayerCore {
 
         let isBrakeStrategy = strategy == .DROP_SWITCH || strategy == .VOCAL_CUT || strategy == .FILTER_TRANSITION || strategy == .HARD_CUT || strategy == .ECHO_OUT
 
-        if isBrakeStrategy {
+        // Beatgrid lock: rates were set to tempo-lock constants before the
+        // blend and must stay there for its whole duration, otherwise the
+        // interlocked grids audibly drift apart. Volume/EQ/reverb envelopes
+        // above still run normally.
+        if AutoMixDJEngine.shared.beatLockActive && gridSyncArmed {
+            if !isUsingStreamPlayer {
+                activeTimePitch.rate = Float(activeTransitionPlan?.tempo.sourcePlaybackRate ?? 1.0)
+                idleTimePitch.rate = Float(activeTransitionPlan?.tempo.targetPlaybackRate ?? 1.0)
+                activeTimePitch.pitch = 0
+                idleTimePitch.pitch = 0
+            }
+        } else if isBrakeStrategy {
             if p > 0.15 {
                 let brakeP = Float((p - 0.15) / 0.85)
                 let brakeRate = max(0.04, Float(1.0 - brakeP * 0.96))
@@ -1456,6 +1839,12 @@ final class PlayerCore {
     private func completeTransition(to nextTrack: Track) {
         transitionTimer?.invalidate()
         transitionTimer = nil
+        cueWatchTimer?.invalidate()
+        cueWatchTimer = nil
+        gridSyncArmed = false
+        gridCueDate = nil
+        isArmingGrid = false
+        AutoMixDJEngine.shared.beatLockActive = false
         transitionStartTime = nil
         transitionScheduledAt = nil
         activeTransitionPlan = nil
@@ -1470,8 +1859,10 @@ final class PlayerCore {
             activeStreamingPlayer.replaceCurrentItem(with: nil)
         } else {
             let outgoingNode = activeTimePitch
-            activePlayer.stop()
-            activePlayer.volume = 1.0
+            let outgoingPlayer = activePlayer
+            outgoingPlayer.stop()
+            invalidateAnchor(for: outgoingPlayer)
+            outgoingPlayer.volume = 1.0
             outgoingNode.rate = 1.0
             outgoingNode.pitch = 0
             outgoingNode.bypass = true
@@ -1631,6 +2022,12 @@ final class PlayerCore {
     }
 
     private func cancelTransition() {
+        cueWatchTimer?.invalidate()
+        cueWatchTimer = nil
+        gridSyncArmed = false
+        gridCueDate = nil
+        isArmingGrid = false
+        AutoMixDJEngine.shared.beatLockActive = false
         transitionScheduled = false
         rateReleaseTimer?.invalidate()
         rateReleaseTimer = nil
@@ -1655,8 +2052,10 @@ final class PlayerCore {
         transitionTimer = nil
         transitionStartTime = nil
         stopBeatLoop()
-        idlePlayer.stop()
-        idlePlayer.volume = 0
+        let idleToStop = idlePlayer
+        idleToStop.stop()
+        invalidateAnchor(for: idleToStop)
+        idleToStop.volume = 0
         activePlayer.volume = volume
         activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
         activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
@@ -1803,10 +2202,76 @@ final class PlayerCore {
     }
 
     private func liveProgress() -> Double {
+        if isUsingStreamPlayer {
+            return progress
+        }
+        if let clockTime = activeSoundingFileTime() {
+            return min(max(0, clockTime), duration)
+        }
         if let anchor = anchorDate {
             return min(max(0, anchorOffset + (-anchor.timeIntervalSinceNow)), duration)
         }
         return pausedProgress
+    }
+
+    // MARK: Render-clock file position (beatgrid sync support)
+
+    private func anchorPair(for player: AVAudioPlayerNode) -> (sample: AVAudioFramePosition, frame: AVAudioFramePosition, valid: Bool) {
+        player === playerA ? (anchorSampleTimeA, anchorStartFrameA, anchorValidA)
+                           : (anchorSampleTimeB, anchorStartFrameB, anchorValidB)
+    }
+
+    private func setAnchor(for player: AVAudioPlayerNode, sample: AVAudioFramePosition, frame: AVAudioFramePosition) {
+        if player === playerA {
+            anchorSampleTimeA = sample
+            anchorStartFrameA = frame
+            anchorValidA = true
+        } else {
+            anchorSampleTimeB = sample
+            anchorStartFrameB = frame
+            anchorValidB = true
+        }
+    }
+
+    private func invalidateAnchor(for player: AVAudioPlayerNode) {
+        if player === playerA { anchorValidA = false } else { anchorValidB = false }
+    }
+
+    /// Record the render-clock anchor of a segment scheduled at `when`
+    /// (host time). The player converts its own render time to the same
+    /// clock; if it is not rendering yet the caller retries later.
+    private func recordAnchor(for player: AVAudioPlayerNode, startFrame: AVAudioFramePosition, when: AVAudioTime) -> Bool {
+        guard let nodeTime = player.lastRenderTime,
+              let playerTimeAtNode = player.playerTime(forNodeTime: nodeTime) else { return false }
+        let whenHost = when.hostTime
+        guard whenHost != 0 else { return false }
+        let nodeHost = nodeTime.hostTime
+        guard nodeHost != 0 else { return false }
+        let nodeRate = playerTimeAtNode.sampleRate
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        let ticksPerSecond = Double(info.numer) / Double(info.denom)
+        let deltaTicks = Int64(whenHost) - Int64(nodeHost)
+        let deltaSeconds = Double(deltaTicks) / ticksPerSecond
+        let startSample = playerTimeAtNode.sampleTime + AVAudioFramePosition((deltaSeconds * Double(nodeRate)).rounded())
+        setAnchor(for: player, sample: startSample, frame: startFrame)
+        return true
+    }
+
+    /// True sounding position inside the active deck's file, read from the
+    /// audio render clock. Independent of wall-clock anchors and playback
+    /// rate (the player node renders file frames 1:1; TimePitch stretches
+    /// downstream).
+    private func activeSoundingFileTime() -> Double? {
+        guard let file = activeAudioFile else { return nil }
+        let (anchorSample, anchorFrame, valid) = anchorPair(for: activePlayer)
+        guard valid else { return nil }
+        return BeatgridSync.soundingFileTime(
+            player: activePlayer,
+            scheduledAtNodeSampleTime: anchorSample,
+            startFrame: anchorFrame,
+            fileSampleRate: file.processingFormat.sampleRate
+        )
     }
 
     private func startTimer() {

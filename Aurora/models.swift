@@ -38,6 +38,13 @@ final class AutoMixDJEngine {
     var activePlan: TransitionPlan? = nil
     var statusBadge: String? = nil
     var currentBPM: Double = 0
+    /// True while a sample-accurate beatgrid-synced blend is armed/running.
+    /// Both lanes are held at tempo-lock rates — the transition timer must
+    /// never ramp rates while this is on, or the interlocked grids drift.
+    var beatLockActive: Bool = false
+    /// True when the most recent plan came from the offline local DSP engine
+    /// rather than the optional cloud planner.
+    var localDSPActive: Bool = true
 
     private init() {}
 

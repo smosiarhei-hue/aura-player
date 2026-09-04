@@ -154,6 +154,15 @@ struct PlayerScreenV2: View {
 
                     Spacer(minLength: 8)
 
+                    // AutoMix beat-sync HUD (offline DSP status, next vibe
+                    // match %, beat lock) — hidden when a wave toast shows.
+                    if waveMessage == nil {
+                        AutoMixHUD()
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 6)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+
                     // Floating status line: Track Wave toast only
                     if let waveMessage {
                         HStack(spacing: 6) {
@@ -1144,23 +1153,27 @@ struct PlayerTimelineSection<Center: View>: View {
     }
 }
 
-// MARK: - AutoMix mark (Apple Music "Mixing" style)
+// MARK: - AutoMix mark (glowing Apple Music "Mixing" style)
 
 struct AutoMixBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dj = AutoMixDJEngine.shared
 
     private let title = "AutoMix"
-    private let sweepCycle: TimeInterval = 2.6
+    private let sweepCycle: TimeInterval = 2.2
 
     var body: some View {
         Group {
             if reduceMotion {
-                fullMark(sweep: nil)
+                fullMark(sweep: 0.3, pulse: 0.6)
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
                     let time = context.date.timeIntervalSinceReferenceDate
                     let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
-                    fullMark(sweep: CGFloat(phase))
+                    // Gentle breathing pulse synced to the blend progress.
+                    let blend = dj.isTransitionActive ? dj.transitionProgress : 0.2
+                    let pulse = 0.55 + 0.45 * sin(time * 3.2 + blend * .pi * 2)
+                    fullMark(sweep: CGFloat(phase), pulse: CGFloat(pulse))
                 }
             }
         }
@@ -1169,33 +1182,48 @@ struct AutoMixBadge: View {
     }
 
     @ViewBuilder
-    private func fullMark(sweep: CGFloat?) -> some View {
-        let usingGemini = GeminiAutoMixPlanner.lastPlanUsedGemini
-        HStack(spacing: 4) {
-            mark(sweep: sweep)
-            Text(usingGemini ? "AI" : "DSP")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(usingGemini ? Color.green.opacity(0.85) : Color.white.opacity(0.45))
-                .fixedSize()
-                .accessibilityLabel(Text(usingGemini ? "План Gemini AI" : "Локальный DSP-движок"))
+    private func fullMark(sweep: CGFloat?, pulse: CGFloat) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "waveform")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Gradient(colors: [.cyan, .green]))
+            mark(sweep: sweep, pulse: pulse)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .overlay(Capsule().stroke(Color.cyan.opacity(0.25 + 0.25 * Double(pulse)), lineWidth: 1))
+        )
+        .shadow(color: .cyan.opacity(0.35 + 0.3 * Double(pulse)), radius: 10 + 6 * Double(pulse))
     }
 
-    private func mark(sweep: CGFloat?) -> some View {
+    private func mark(sweep: CGFloat?, pulse: CGFloat) -> some View {
         let label = Text(title)
-            .font(.system(size: 12, weight: .semibold, design: .default))
+            .font(.system(size: 15, weight: .heavy, design: .rounded))
 
         return label
-            .foregroundStyle(.white.opacity(0.78))
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.35, green: 0.95, blue: 1.0),
+                        Color(red: 0.5, green: 1.0, blue: 0.7),
+                        Color(red: 0.4, green: 0.9, blue: 1.0)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
             .overlay {
                 if let sweep {
                     GeometryReader { geo in
                         let width = max(geo.size.width, 1)
-                        let band = max(width * 0.5, 22)
+                        let band = max(width * 0.45, 26)
                         let travel = width + band * 2
 
                         LinearGradient(
-                            colors: [.clear, .white.opacity(0.35), .white, .white.opacity(0.35), .clear],
+                            colors: [.clear, .white.opacity(0.4), .white, .white.opacity(0.4), .clear],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
@@ -1209,8 +1237,8 @@ struct AutoMixBadge: View {
                     .allowsHitTesting(false)
                 }
             }
-            .shadow(color: .white.opacity(0.45), radius: 5)
-            .shadow(color: .white.opacity(0.18), radius: 11)
+            .shadow(color: .cyan.opacity(0.7), radius: 6 + 5 * Double(pulse))
+            .shadow(color: .green.opacity(0.5), radius: 12 + 8 * Double(pulse))
             .fixedSize()
             .compositingGroup()
     }

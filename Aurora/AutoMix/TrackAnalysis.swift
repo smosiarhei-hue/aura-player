@@ -181,6 +181,13 @@ nonisolated struct TrackAnalysis: Codable, Sendable {
         silenceRegions.last { $0.end >= duration - 1.0 && $0.duration >= 0.4 }
     }
 
+    /// Leading silence region overlapping the very start of the track.
+    /// AutoMix brings the incoming track in at its first real beat instead
+    /// of rolling over dead air at the beginning of the file.
+    var leadingSilence: TimeRange? {
+        silenceRegions.first { $0.start <= 0.6 && $0.duration >= 0.3 }
+    }
+
     var lastVocalEnd: TimeInterval? {
         vocalRegions.last(where: { $0.end <= duration })?.end
     }
