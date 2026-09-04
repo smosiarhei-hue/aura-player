@@ -15,7 +15,9 @@ let package = Package(
     products: [
         .library(name: "MixModels", targets: ["MixModels"]),
         .library(name: "TrackSource", targets: ["TrackSource"]),
-        .library(name: "AudioEngineCore", targets: ["AudioEngineCore"])
+        .library(name: "AudioEngineCore", targets: ["AudioEngineCore"]),
+        .library(name: "PlaybackCoordinator", targets: ["PlaybackCoordinator"]),
+        .library(name: "MixDiagnostics", targets: ["MixDiagnostics"])
     ],
     targets: [
         .target(
@@ -30,6 +32,16 @@ let package = Package(
         .target(
             name: "AudioEngineCore",
             dependencies: ["MixModels"],
+            swiftSettings: strictConcurrency
+        ),
+        .target(
+            name: "PlaybackCoordinator",
+            dependencies: ["MixModels", "TrackSource", "AudioEngineCore"],
+            swiftSettings: strictConcurrency
+        ),
+        .target(
+            name: "MixDiagnostics",
+            dependencies: ["MixModels", "AudioEngineCore", "PlaybackCoordinator"],
             swiftSettings: strictConcurrency
         )
     ],
