@@ -123,10 +123,14 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
         run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "::warning::Telegram secrets are not configured, skipping delivery."
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "::warning::TELEGRAM_BOT_TOKEN secret is not configured, skipping Telegram delivery."
+            exit 0
+          fi
+          if [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::warning::TELEGRAM_CHAT_ID is not configured, skipping Telegram delivery."
             exit 0
           fi
           RESPONSE=$(curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
