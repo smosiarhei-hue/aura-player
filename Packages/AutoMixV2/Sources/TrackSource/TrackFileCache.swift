@@ -12,7 +12,7 @@ public actor TrackFileCache {
 
     public init(
         directory: URL,
-        capacityBytes: Int64 = Self.defaultCapacityBytes,
+        capacityBytes: Int64 = TrackFileCache.defaultCapacityBytes,
         fileManager: FileManager = .default
     ) throws {
         self.directory = directory
