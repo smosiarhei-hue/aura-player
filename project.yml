@@ -4,6 +4,10 @@ options:
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
+packages:
+  VKID:
+    url: https://github.com/VKCOM/vkid-ios-sdk.git
+    from: 2.9.5
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -14,6 +18,8 @@ settings:
     CODE_SIGNING_ALLOWED: NO
     CODE_SIGNING_REQUIRED: NO
     CODE_SIGN_IDENTITY: ""
+    VKID_CLIENT_ID: "54753449"
+    VKID_CLIENT_SECRET: ""
 targets:
   Sonivo:
     type: application
@@ -23,6 +29,9 @@ targets:
         excludes:
           - "Info.plist"
           - "PlayerScreen.swift"
+    dependencies:
+      - package: VKID
+        product: VKID
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo
@@ -40,9 +49,13 @@ targets:
         CFBundleDisplayName: Sonivo
         CFBundleShortVersionString: "1.1.0"
         CFBundleVersion: "2"
+        CLIENT_ID: "$(VKID_CLIENT_ID)"
+        CLIENT_SECRET: "$(VKID_CLIENT_SECRET)"
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        LSApplicationQueriesSchemes:
+          - vkauthorize-silent
         UIBackgroundModes:
           - audio
         UISupportedInterfaceOrientations:
@@ -54,6 +67,10 @@ targets:
             CFBundleURLSchemes:
               - sonivo
               - aurora
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: auth_callback
+            CFBundleURLSchemes:
+              - vk54753449
 schemes:
   Sonivo:
     build:
