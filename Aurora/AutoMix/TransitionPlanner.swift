@@ -133,6 +133,45 @@ nonisolated enum TransitionPlanner {
         return winner.track
     }
 
+    // MARK: - Stream plan override
+
+    /// Remap a plan (local or cloud) to a long, audible, FX-driven blend for
+    /// Yandex/HTTP streams: drop the short "silence trim / hard cut" style
+    /// strategies and floor the lead time at 14 s so the bass-kill / echo /
+    /// crossfade in the stream tap is actually heard.
+    nonisolated static func streamOverride(_ plan: TransitionPlan, streamBlend: Bool = true) -> TransitionPlan {
+        guard streamBlend else { return plan }
+        var strategy = plan.strategy
+        switch strategy {
+        case .SILENCE_TRIM, .HARD_CUT, .VOCAL_CUT, .DROP_SWITCH, .LOOP_TRANSITION:
+            strategy = .BASS_SWAP
+        default:
+            break
+        }
+        var actions = plan.actions
+        if actions.isEmpty || plan.leadTime < 12 {
+            actions = actionEnvelopes(strategy: strategy, duration: max(16, plan.leadTime))
+        }
+        let leadTime = max(plan.leadTime, 14.0)
+        let start = max(0, plan.sourceTrack.transitionStart, plan.cueTime)
+        return TransitionPlan(
+            decision: TransitionDecisionInfo(
+                transitionType: strategy.rawValue,
+                confidence: plan.decision.confidence,
+                reason: plan.decision.reason + " [stream long-blend]"
+            ),
+            sourceTrack: TransitionSourceTrackInfo(
+                transitionStart: max(0, start),
+                transitionEnd: start + leadTime
+            ),
+            targetTrack: plan.targetTrack,
+            tempo: plan.tempo,
+            actions: actions,
+            fallback: plan.fallback,
+            effects: plan.effects
+        )
+    }
+
     // MARK: - Local Fallback Decision Planning (offline DSP decision engine)
 
     /// Builds a complete executable TransitionPlan without any network access.
@@ -142,7 +181,8 @@ nonisolated enum TransitionPlanner {
         sourceTrackID: UUID,
         sourceAnalysis: TrackAnalysis,
         targetTrackID: UUID,
-        targetAnalysis: TrackAnalysis
+        targetAnalysis: TrackAnalysis,
+        streamBlend: Bool = false
     ) -> TransitionPlan {
         let sourceDur = max(8.0, sourceAnalysis.duration)
         let targetDur = max(8.0, targetAnalysis.duration)
@@ -251,6 +291,32 @@ nonisolated enum TransitionPlanner {
             reason = "Треки совместимы — простое сведение звучит лучше сложного"
         }
 
+        // --- Stream (Yandex/HTTP) override: the fade-out of a streamed track
+        // is often detected as "trailing silence", which selected the 1.5 s
+        // SILENCE_TRIM and made stream transitions sound like a short, abrupt
+        // crossfade with no DJ effects. Streams always get a long, audible,
+        // frequency-separated blend (bass kill / echo / energy crossfade) —
+        // the in-stream MTAudioProcessingTap renders the FX live.
+        if streamBlend {
+            let pick = seededDouble(variationSeed(sourceTrackID: sourceTrackID,
+                                                  targetTrackID: targetTrackID, salt: 9))
+            if strategy == .SILENCE_TRIM || strategy == .HARD_CUT || strategy == .VOCAL_CUT {
+                if pick < 0.4 {
+                    strategy = .BASS_SWAP
+                    reason = "Стрим: длинный DJ bass-swap с глушением низа"
+                } else if pick < 0.75 {
+                    strategy = .ENERGY_BLEND
+                    reason = "Стрим: длинный частотно-разделенный AutoMix"
+                } else {
+                    strategy = .ECHO_OUT
+                    reason = "Стрим: уходящий трек растворяется в эхо-хвосте"
+                }
+            } else if strategy == .SIMPLE_CROSSFADE {
+                strategy = pick < 0.5 ? .BEAT_MATCH_EQ : .ENERGY_BLEND
+                reason = "Стрим: расширенное DJ-сведение вместо короткого фейда"
+            }
+        }
+
         // --- 3. Musical cue time (TZ Sections 10, 23) ---
         var blendDuration = blendLength(
             for: strategy,
@@ -266,6 +332,17 @@ nonisolated enum TransitionPlanner {
             if let bar = sourceAnalysis.barDuration, bar > 0.4 {
                 let bars = max(1, (blendDuration / bar).rounded())
                 blendDuration = bars * bar
+            }
+        }
+        // Streams must always blend long enough to hear the DJ "заезжание" —
+        // floor at 13 s and quantize up to the next whole bar.
+        if streamBlend, strategy != .SILENCE_TRIM, strategy != .HARD_CUT {
+            blendDuration = max(blendDuration, 13.0)
+            if let bar = sourceAnalysis.barDuration, bar > 0.4 {
+                let bars = max(1, (blendDuration / bar).rounded(.up))
+                blendDuration = min(28, bars * bar)
+            } else {
+                blendDuration = min(28, max(blendDuration, 16.0))
             }
         }
 

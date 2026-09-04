@@ -130,11 +130,6 @@ final class PlayerCore {
 
     private let streamingPlayerA = AVPlayer()
     private let streamingPlayerB = AVPlayer()
-    /// Per-lane in-stream DJ FX (bass kill / filter sweep / echo tail),
-    /// applied through MTAudioProcessingTap inside AVPlayer — this is what
-    /// makes AutoMix effects audible on Yandex streams, not just volume.
-    private let streamFXA = StreamFXProcessor()
-    private let streamFXB = StreamFXProcessor()
     private var activeStreamingPlayer: AVPlayer
     private var idleStreamingPlayer: AVPlayer
     var streamingPlayer: AVPlayer { activeStreamingPlayer }
@@ -983,30 +978,12 @@ final class PlayerCore {
         }
     }
 
-    /// Build a stream player item with the in-stream AutoMix FX tap attached
-    /// (bass kill / filter sweep / echo), plus the existing pitch/time setup.
-    private func makeStreamItem(url: URL, fx: StreamFXProcessor) -> AVPlayerItem {
+    private func beginStream(_ url: URL, at seconds: Double) {
         let item = AVPlayerItem(url: url)
         item.audioTimePitchAlgorithm = .timeDomain
         item.isAudioSpatializationAllowed = true
         item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
-        fx.attach(to: item)
-        fx.resetFX()
         StreamBeatTap.shared.attach(to: item)
-        return item
-    }
-
-    private func streamFX(for player: AVPlayer) -> StreamFXProcessor {
-        player === streamingPlayerA ? streamFXA : streamFXB
-    }
-
-    private func resetStreamFX() {
-        streamFXA.resetFX()
-        streamFXB.resetFX()
-    }
-
-    private func beginStream(_ url: URL, at seconds: Double) {
-        let item = makeStreamItem(url: url, fx: streamFX(for: activeStreamingPlayer))
         activeStreamingPlayer.replaceCurrentItem(with: item)
         activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
         if seconds > 0 {
@@ -1085,13 +1062,19 @@ final class PlayerCore {
         if remaining <= 65.0, activeTransitionPlan == nil, !isPlanningTransition {
             isPlanningTransition = true
             planningStartedAt = Date()
+            let targetIsStream = nextTrack.isStream
+            let targetIsCurrentStream = isUsingStreamPlayer
             Task {
                 let srcAnalysis = await TrackAnalysisService.shared.analysis(for: current)
                     ?? TrackAnalysis.minimal(trackID: current.id.uuidString, duration: totalDur)
                 let tgtAnalysis = await TrackAnalysisService.shared.analysis(for: nextTrack)
                     ?? TrackAnalysis.minimal(trackID: nextTrack.id.uuidString, duration: nextTrack.duration)
+                // Streams always blend long with audible in-stream FX — the
+                // "fade-out mistaken for silence" path must never pick a 1.5 s
+                // SILENCE_TRIM for a Yandex stream.
+                let streamBlend = targetIsStream || targetIsCurrentStream
 
-                let plan: TransitionPlan
+                var plan: TransitionPlan
                 if self.cloudPlanningEnabled {
                     plan = await GeminiAutoMixPlanner.shared.planTransition(
                         sourceTrack: current,
@@ -1100,6 +1083,9 @@ final class PlayerCore {
                         targetAnalysis: tgtAnalysis,
                         currentPosition: currentPos
                     )
+                    if streamBlend {
+                        plan = TransitionPlanner.streamOverride(plan, streamBlend: true)
+                    }
                 } else {
                     // Offline-first: the local DSP decision engine needs zero
                     // network and answers instantly — no ~10 s API round-trip
@@ -1108,7 +1094,8 @@ final class PlayerCore {
                         sourceTrackID: current.id,
                         sourceAnalysis: srcAnalysis,
                         targetTrackID: nextTrack.id,
-                        targetAnalysis: tgtAnalysis
+                        targetAnalysis: tgtAnalysis,
+                        streamBlend: streamBlend
                     )
                     GeminiAutoMixPlanner.lastPlanUsedGemini = false
                     AutoMixDJEngine.shared.localDSPActive = true
@@ -1143,7 +1130,11 @@ final class PlayerCore {
                 do {
                     let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                     let resolvedStart = self.activeTransitionPlan != nil ? targetStart : 0
-                    let nextItem = self.makeStreamItem(url: info.url, fx: self.streamFX(for: self.idleStreamingPlayer))
+                    let nextItem = AVPlayerItem(url: info.url)
+                    nextItem.audioTimePitchAlgorithm = .timeDomain
+                    nextItem.isAudioSpatializationAllowed = true
+                    nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+                    StreamBeatTap.shared.attach(to: nextItem)
                     self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                     self.idleStreamingPlayer.volume = 0
                     self.idleStreamingPlayer.seek(to: CMTime(seconds: resolvedStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
@@ -1411,7 +1402,11 @@ final class PlayerCore {
                 Task { @MainActor in
                     do {
                         let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                        let nextItem = self.makeStreamItem(url: info.url, fx: self.streamFX(for: self.idleStreamingPlayer))
+                        let nextItem = AVPlayerItem(url: info.url)
+                        nextItem.audioTimePitchAlgorithm = .timeDomain
+                        nextItem.isAudioSpatializationAllowed = true
+                        nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+                        StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                         self.idleStreamingPlayer.volume = 0.001
                         self.idleStreamingPlayer.playImmediately(atRate: 1.0)
@@ -1745,44 +1740,15 @@ final class PlayerCore {
             idlePlayer.volume = targetLevel * volume
         }
 
-        // Low-end EQ targets, shared by the local EQ units and the stream tap.
-        var outLowDB = outBassCut
-        var inLowDB = inBassGain
-        if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0) {
-            outLowDB = max(-30.0, min(0.0, (outLow - 1) * 24.0))
-        }
-        if let inLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0) {
-            inLowDB = max(-30.0, min(0.0, (inLow - 1) * 24.0))
-        }
-
-        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
-        let inReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
-
-        if isUsingStreamPlayer {
-            // In-stream DJ FX for Yandex/HTTP streams: bass kill (high-pass),
-            // low-pass filter sweep and echo tail — audible effects, not just
-            // a volume fade. dB -30..0 maps to depth 0..1; idle starts with
-            // a boosted low cut (negative dB) and opens up as it enters.
-            let srcBassDepth = max(0, min(1, -outLowDB / 30.0))
-            let tgtBassDepth = max(0, min(1, -inLowDB / 30.0))
-            // filterCutoff (1 -> 0) drives the outgoing low-pass sweep.
-            let srcSweep = max(0, min(1, 1.0 - Float(filterCutoff)))
-            // Echo rises on echo-out / filter strategies, otherwise follows reverb.
-            let echoStrategy: Bool
-            switch strategy {
-            case .ECHO_OUT, .FILTER_TRANSITION, .LOOP_TRANSITION: echoStrategy = true
-            default: echoStrategy = false
+        if !isUsingStreamPlayer {
+            var outLowDB = outBassCut
+            var inLowDB = inBassGain
+            if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0) {
+                outLowDB = max(-30.0, min(0.0, (outLow - 1) * 24.0))
             }
-            let srcEcho = echoStrategy
-                ? max(Float(outReverbMix), Float(p) * 0.9)
-                : Float(outReverbMix) * 0.8
-            let tgtEcho = Float(inReverbMix) * 0.6
-
-            streamFX(for: activeStreamingPlayer).setFX(
-                bassDepth: srcBassDepth, sweepDepth: srcSweep, echoMix: srcEcho)
-            streamFX(for: idleStreamingPlayer).setFX(
-                bassDepth: tgtBassDepth, sweepDepth: 0, echoMix: tgtEcho)
-        } else {
+            if let inLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0) {
+                inLowDB = max(-30.0, min(0.0, (inLow - 1) * 24.0))
+            }
             activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outLowDB) : outLowDB
             activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + outLowDB * 0.8) : (outLowDB * 0.8)
             activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + outLowDB * 0.5) : (outLowDB * 0.5)
@@ -1790,7 +1756,11 @@ final class PlayerCore {
             idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inLowDB) : inLowDB
             idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inLowDB) : inLowDB
             idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inLowDB) : inLowDB
+        }
 
+        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
+        let inReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
+        if !isUsingStreamPlayer {
             activeReverb.wetDryMix = max(0, min(100, outReverbMix * 100))
             if !incomingIsStream {
                 idleReverb.wetDryMix = max(0, min(100, inReverbMix * 100))
@@ -1864,6 +1834,7 @@ final class PlayerCore {
             activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
             activeStreamingPlayer.rate = isPlaying ? nudge : 0
         }
+        _ = filterCutoff
 
         if !metadataSwapped, let incomingTrack, transitionDuration * (1.0 - p) <= 0.25 {
             metadataSwapped = true
@@ -1947,7 +1918,6 @@ final class PlayerCore {
         plannedNextTrack = nil
         reverbA.wetDryMix = 0
         reverbB.wetDryMix = 0
-        resetStreamFX()
         currentTrack = nextTrack
         metadataTrack = nil
         metadataSwapped = false
@@ -2104,7 +2074,6 @@ final class PlayerCore {
         idleStreamingPlayer.rate = 1.0
         reverbA.wetDryMix = 0
         reverbB.wetDryMix = 0
-        resetStreamFX()
         incomingAudioFile = nil
         isTransitioning = false
         AutoMixDJEngine.shared.isTransitionActive = false

@@ -154,15 +154,6 @@ struct PlayerScreenV2: View {
 
                     Spacer(minLength: 8)
 
-                    // AutoMix beat-sync HUD (offline DSP status, next vibe
-                    // match %, beat lock) — hidden when a wave toast shows.
-                    if waveMessage == nil {
-                        AutoMixHUD()
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 6)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-
                     // Floating status line: Track Wave toast only
                     if let waveMessage {
                         HStack(spacing: 6) {
@@ -1164,6 +1155,7 @@ struct AutoMixBadge: View {
                 .font(.system(size: 13, weight: .semibold))
         }
         .foregroundStyle(.secondary)
+        .contentTransition(.opacity)
         .allowsHitTesting(false)
         .accessibilityLabel(Text("AutoMix"))
     }
