@@ -31,6 +31,8 @@ targets:
         product: MixModels
       - package: AutoMixV2
         product: TrackSource
+      - package: AutoMixV2
+        product: AudioEngineCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo
@@ -74,6 +76,8 @@ targets:
         product: MixModels
       - package: AutoMixV2
         product: TrackSource
+      - package: AutoMixV2
+        product: AudioEngineCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo.UnitTests
