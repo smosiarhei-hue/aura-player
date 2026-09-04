@@ -95,7 +95,12 @@ private struct Fixture: Sendable {
     }
 
     func cleanup() {
-        try? FileManager.default.removeItem(at: directory)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: directory)
+        } catch {
+            assertionFailure("Failed to remove test directory: \(error)")
+        }
     }
 }
 
@@ -166,8 +171,10 @@ private func option(
     bitrate: Int,
     suffix: String = UUID().uuidString
 ) -> YandexDownloadOption {
-    YandexDownloadOption(
-        url: URL(string: "https://example.com/\(suffix)")!,
+    let url = URL(string: "https://example.com/\(suffix)")
+        ?? URL(fileURLWithPath: "/invalid-download-option")
+    return YandexDownloadOption(
+        url: url,
         codec: codec,
         bitrateKbps: bitrate,
         fileExtension: codec == .mp3 ? "mp3" : "m4a"
