@@ -20,6 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Print toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
       - name: Compute version (auto-increment per build)
         id: version
         run: |
@@ -44,6 +49,36 @@ jobs:
 
       - name: Generate Xcode project
         run: xcodegen generate
+
+      - name: Run unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); devices=[d for values in data["devices"].values() for d in values if d.get("isAvailable")]; print(devices[0]["udid"] if devices else "")')
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "No available iOS simulator found"
+            exit 1
+          fi
+          echo "Using simulator: $SIMULATOR_ID"
+          xcodebuild \
+            -project Sonivo.xcodeproj \
+            -scheme Sonivo \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$SIMULATOR_ID" \
+            -derivedDataPath derived-tests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            test 2>&1 | tee test.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: test.log
+          if-no-files-found: warn
 
       - name: Build unsigned app
         id: xcodebuild
@@ -147,7 +182,7 @@ jobs:
                -F chat_id="${TELEGRAM_CHAT_ID}" \
                -F document=@Sonivo-unsigned.ipa \
                -F caption="Sonivo IPA готов к установке! Версия ${MARKETING_VERSION} (сборка #${BUILD_NUMBER})" \
-               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" 2>&1)
+               "{{https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}}}/sendDocument" 2>&1)
           HTTP_STATUS=$(printf "%s" "$RESPONSE" | awk -F: '/HTTP_STATUS:/ {print $2}' | tail -n 1)
           BODY=$(printf "%s" "$RESPONSE" | sed '/HTTP_STATUS:/d')
           echo "Telegram HTTP status: ${HTTP_STATUS}"
