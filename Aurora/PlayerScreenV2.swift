@@ -1153,94 +1153,19 @@ struct PlayerTimelineSection<Center: View>: View {
     }
 }
 
-// MARK: - AutoMix mark (glowing Apple Music "Mixing" style)
+// MARK: - AutoMix mark (plain Apple Music "Mixing" style)
 
 struct AutoMixBadge: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var dj = AutoMixDJEngine.shared
-
-    private let title = "AutoMix"
-    private let sweepCycle: TimeInterval = 2.2
-
     var body: some View {
-        Group {
-            if reduceMotion {
-                fullMark(sweep: 0.3, pulse: 0.6)
-            } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-                    let time = context.date.timeIntervalSinceReferenceDate
-                    let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
-                    // Gentle breathing pulse synced to the blend progress.
-                    let blend = dj.isTransitionActive ? dj.transitionProgress : 0.2
-                    let pulse = 0.55 + 0.45 * sin(time * 3.2 + blend * .pi * 2)
-                    fullMark(sweep: CGFloat(phase), pulse: CGFloat(pulse))
-                }
-            }
-        }
-        .accessibilityLabel(Text(title))
-        .allowsHitTesting(false)
-    }
-
-    @ViewBuilder
-    private func fullMark(sweep: CGFloat?, pulse: CGFloat) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             Image(systemName: "waveform")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Gradient(colors: [.cyan, .green]))
-            mark(sweep: sweep, pulse: pulse)
+                .font(.system(size: 12, weight: .semibold))
+            Text("AutoMix")
+                .font(.system(size: 13, weight: .semibold))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
-        .background(
-            Capsule()
-                .fill(.ultraThinMaterial)
-                .overlay(Capsule().stroke(Color.cyan.opacity(0.25 + 0.25 * Double(pulse)), lineWidth: 1))
-        )
-        .shadow(color: .cyan.opacity(0.35 + 0.3 * Double(pulse)), radius: 10 + 6 * Double(pulse))
-    }
-
-    private func mark(sweep: CGFloat?, pulse: CGFloat) -> some View {
-        let label = Text(title)
-            .font(.system(size: 15, weight: .heavy, design: .rounded))
-
-        return label
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.35, green: 0.95, blue: 1.0),
-                        Color(red: 0.5, green: 1.0, blue: 0.7),
-                        Color(red: 0.4, green: 0.9, blue: 1.0)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .overlay {
-                if let sweep {
-                    GeometryReader { geo in
-                        let width = max(geo.size.width, 1)
-                        let band = max(width * 0.45, 26)
-                        let travel = width + band * 2
-
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.4), .white, .white.opacity(0.4), .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: band)
-                        .offset(x: -band + sweep * travel)
-                        .frame(width: width, height: geo.size.height, alignment: .leading)
-                        .clipped()
-                        .blendMode(.plusLighter)
-                    }
-                    .mask(label)
-                    .allowsHitTesting(false)
-                }
-            }
-            .shadow(color: .cyan.opacity(0.7), radius: 6 + 5 * Double(pulse))
-            .shadow(color: .green.opacity(0.5), radius: 12 + 8 * Double(pulse))
-            .fixedSize()
-            .compositingGroup()
+        .foregroundStyle(.secondary)
+        .allowsHitTesting(false)
+        .accessibilityLabel(Text("AutoMix"))
     }
 }
 

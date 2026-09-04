@@ -48,22 +48,11 @@ struct AutoMixHUD: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                // Glowing shimmering AUTOMIX label
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { ctx in
-                    let t = ctx.date.timeIntervalSinceReferenceDate
-                    let glow = 0.65 + 0.35 * sin(t * 3.5)
-                    Text("AutoMix")
-                        .font(.system(size: 16, weight: .heavy, design: .rounded))
-                        .foregroundStyle(
-                            LinearGradient(colors: [Color(red: 0.4, green: 0.95, blue: 1.0),
-                                                    Color(red: 0.45, green: 1.0, blue: 0.7)],
-                                           startPoint: .leading, endPoint: .trailing)
-                        )
-                        .shadow(color: .cyan.opacity(glow), radius: 7)
-                        .shadow(color: .green.opacity(glow * 0.8), radius: 13)
-                }
+                Text("AutoMix")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
                 Text(strategyLabel)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -133,11 +122,11 @@ struct AutoMixHUD: View {
 private struct HUDChipStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .font(.system(size: 12, weight: .semibold))
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
-            .shadow(color: .cyan.opacity(0.25), radius: 10, y: 3)
+            .overlay(Capsule().stroke(.white.opacity(0.10), lineWidth: 1))
+            .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
     }
 }
