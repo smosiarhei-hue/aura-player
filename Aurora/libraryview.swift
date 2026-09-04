@@ -14,6 +14,8 @@ struct LibraryView: View {
     @State private var showFilePicker = false
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistTitle = ""
+    @State private var isSendingAutoMixLogs = false
+    @State private var autoMixLogMessage: String? = nil
 
     enum LibraryFilter: String, CaseIterable, Identifiable {
         case all = "Все песни", favorites = "Избранное", playlists = "Плейлисты", recent = "Недавние"
@@ -124,6 +126,14 @@ struct LibraryView: View {
                 Button("ОК", role: .cancel) { library.clearLastImportMessage() }
             } message: {
                 Text(library.lastImportMessage ?? "")
+            }
+            .alert("Логи AutoMix", isPresented: Binding(
+                get: { autoMixLogMessage != nil },
+                set: { isPresented in if !isPresented { autoMixLogMessage = nil } }
+            )) {
+                Button("ОК", role: .cancel) { autoMixLogMessage = nil }
+            } message: {
+                Text(autoMixLogMessage ?? "")
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
@@ -277,6 +287,29 @@ struct LibraryView: View {
             .buttonStyle(.borderedProminent)
             .tint(settings.accentColor)
             .disabled(count < 2 || library.isImportingFiles)
+
+            HStack(spacing: 10) {
+                Button {
+                    sendAutoMixLogs()
+                } label: {
+                    if isSendingAutoMixLogs {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Label("Отправить логи", systemImage: "paperplane.fill")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isSendingAutoMixLogs)
+
+                Button {
+                    SonivoDiagnostics.shared.copyAutoMixReportToClipboard()
+                    autoMixLogMessage = "Подробные AutoMix-логи скопированы. Можно вставить их в чат."
+                } label: {
+                    Label("Скопировать", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+            }
+            .font(.caption.weight(.semibold))
         }
         .glassCard(corner: 16, padding: 12)
         .padding(.horizontal, 16)
@@ -288,6 +321,20 @@ struct LibraryView: View {
         player.transitionMode = .automix
         player.play(local[0], newQueue: local)
         SonivoDiagnostics.log("Started UI local AutoMix test with \(local.count) local tracks", tag: "AUTOMIX")
+    }
+
+    private func sendAutoMixLogs() {
+        guard !isSendingAutoMixLogs else { return }
+        isSendingAutoMixLogs = true
+        Task {
+            let sent = await SonivoDiagnostics.shared.sendAutoMixReportToTelegram()
+            await MainActor.run {
+                isSendingAutoMixLogs = false
+                autoMixLogMessage = sent
+                    ? "Подробные AutoMix-логи отправлены в Telegram."
+                    : "Не удалось отправить в Telegram. Нажмите «Скопировать» и вставьте логи сюда."
+            }
+        }
     }
 
     // MARK: - Playlists Section
