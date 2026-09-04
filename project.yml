@@ -4,6 +4,9 @@ options:
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
+packages:
+  AutoMixV2:
+    path: Packages/AutoMixV2
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -23,6 +26,11 @@ targets:
         excludes:
           - "Info.plist"
           - "PlayerScreen.swift"
+    dependencies:
+      - package: AutoMixV2
+        product: MixModels
+      - package: AutoMixV2
+        product: TrackSource
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo
@@ -38,6 +46,7 @@ targets:
       path: Aurora/Info.plist
       properties:
         CFBundleDisplayName: Sonivo
+        CFBundleDevelopmentRegion: ru
         CFBundleShortVersionString: "1.1.0"
         CFBundleVersion: "2"
         UILaunchScreen: {}
@@ -54,11 +63,37 @@ targets:
             CFBundleURLSchemes:
               - sonivo
               - aurora
+  SonivoUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Tests/UnitTests
+    dependencies:
+      - package: AutoMixV2
+        product: MixModels
+      - package: AutoMixV2
+        product: TrackSource
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo.UnitTests
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
 schemes:
   Sonivo:
     build:
       targets:
         Sonivo: all
+        SonivoUnitTests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - SonivoUnitTests
     run:
       config: Debug
     archive:
