@@ -13,45 +13,22 @@ import SwiftUI
 struct AutoMixHUD: View {
     @State private var player = PlayerCore.shared
     @State private var dj = AutoMixDJEngine.shared
-    @State private var now = Date()
-
-    @State private var matchPercent: Double?
-    @State private var nextTitle: String?
-
-    private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        Group {
-            if player.transitionMode == .automix {
-                content
-                    .onReceive(timer) { now = $0 }
-                    .task(id: player.plannedNextTrackID) { await refreshMatch() }
-                    .onAppear { Task { await refreshMatch() } }
-            }
+        if player.transitionMode == .automix {
+            content
         }
-        .animation(.easeOut(duration: 0.25), value: dj.isTransitionActive)
-        .animation(.easeOut(duration: 0.25), value: dj.beatLockActive)
     }
 
     @ViewBuilder
     private var content: some View {
-        HStack(spacing: 10) {
-            if dj.isTransitionActive {
-                mixingChip
-            } else if dj.beatLockActive || player.isGridArmed {
-                armedChip
-            } else if let nextTitle, let pct = matchPercent {
-                idleChip(nextTitle: nextTitle, percent: pct)
-            } else {
-                idleLabel
-            }
+        if dj.isTransitionActive {
+            mixingChip.modifier(HUDChipStyle())
+        } else if dj.beatLockActive || player.isGridArmed {
+            armedChip.modifier(HUDChipStyle())
         }
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+        // Idle: renders nothing — the plate appears only when AutoMix
+        // actually locks the grids / starts mixing.
     }
 
     // MARK: States
@@ -130,34 +107,6 @@ struct AutoMixHUD: View {
         }
     }
 
-    private func idleChip(nextTitle: String, percent: Double) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "waveform.path")
-                .foregroundStyle(.cyan)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("AutoMix • дальше: \(nextTitle)")
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text("Совпадение по вайбу \(Int((percent * 100).rounded()))%")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Text(dj.localDSPActive ? "OFFLINE" : "AI")
-                .font(.system(size: 9, weight: .black))
-                .foregroundStyle(dj.localDSPActive ? .green : .purple)
-        }
-    }
-
-    private var idleLabel: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "waveform.path")
-                .foregroundStyle(.cyan)
-            Text("AutoMix следит за битом")
-                .foregroundStyle(.secondary)
-        }
-    }
-
     // MARK: Data
 
     private var strategyLabel: String {
@@ -178,23 +127,17 @@ struct AutoMixHUD: View {
         "DROP_SWITCH": "Drop-switch",
         "HARD_CUT": "Резкая склейка"
     ]
+}
 
-    @MainActor
-    private func refreshMatch() async {
-        guard let current = player.currentTrack,
-              let next = player.peekNextForHUD else {
-            matchPercent = nil
-            nextTitle = nil
-            return
-        }
-        nextTitle = next.title
-        async let src = TrackAnalysisService.shared.cachedAnalysis(for: current)
-        async let tgt = TrackAnalysisService.shared.cachedAnalysis(for: next)
-        let (a, b) = await (src, tgt)
-        if let a, let b {
-            matchPercent = SmartNextTrackSelector.matchPercent(current: a, candidate: b)
-        } else {
-            matchPercent = nil
-        }
+/// Shared capsule chrome for the AutoMix status plates.
+private struct HUDChipStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
+            .shadow(color: .cyan.opacity(0.25), radius: 10, y: 3)
     }
 }
