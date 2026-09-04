@@ -54,52 +54,24 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
     /// Must run on the main actor — AVPlayerItem.audioMix is actor-isolated.
     @MainActor
     func attach(to item: AVPlayerItem) {
+        // The C callbacks must capture nothing — they only shuttle the raw
+        // opaque pointer stored by `init` into the file-level trampolines.
         let retained = Unmanaged.passRetained(self).toOpaque()
         let initCallback: @convention(c) (MTAudioProcessingTap?, UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutableRawPointer?>?) -> Void = {
             _, clientInfo, tapStorageOut in
             tapStorageOut?.pointee = clientInfo
-        }
-        let finalizeCallback: @convention(c) (MTAudioProcessingTap?) -> Void = { tap in
-            guard let tap else { return }
-            Unmanaged<StreamFXProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
-        }
-        let prepareCallback: @convention(c) (MTAudioProcessingTap?, CMItemCount, UnsafePointer<AudioStreamBasicDescription>) -> Void = {
-            tap, _, processingFormat in
-            guard let tap else { return }
-            let storage = MTAudioProcessingTapGetStorage(tap)
-            let format = AVAudioFormat(streamDescription: processingFormat)
-                ?? AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
-            Unmanaged<StreamFXProcessor>.fromOpaque(storage)
-                .takeUnretainedValue().prepare(format: format)
-        }
-        let unprepareCallback: @convention(c) (MTAudioProcessingTap?) -> Void = { tap in
-            guard let tap else { return }
-            Unmanaged<StreamFXProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap))
-                .takeUnretainedValue().unprepare()
-        }
-        let processCallback: @convention(c) (MTAudioProcessingTap?, CMItemCount, MTAudioProcessingTapFlags, UnsafeMutablePointer<AudioBufferList>, UnsafeMutablePointer<CMItemCount>?, UnsafeMutablePointer<MTAudioProcessingTapFlags>?) -> Void = {
-            tap, numberFrames, _, bufferListInOut, numberFramesOut, flagsOut in
-            guard let tap else {
-                numberFramesOut?.pointee = numberFrames
-                return
-            }
-            let processor = Unmanaged<StreamFXProcessor>
-                .fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
-            let status = MTAudioProcessingTapGetSourceAudio(
-                tap, numberFrames, bufferListInOut, flagsOut, nil, numberFramesOut
-            )
-            guard status == noErr else { return }
-            processor.process(frames: AVAudioFrameCount(numberFrames), bufferList: bufferListInOut)
         }
 
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0,
             clientInfo: retained,
             init: initCallback,
-            finalize: finalizeCallback,
-            prepare: prepareCallback,
-            unprepare: unprepareCallback,
-            process: processCallback
+            finalize: { tap in streamFXFinalize(tap) },
+            prepare: { tap, _, asbd in streamFXPrepare(tap, asbd) },
+            unprepare: { tap in streamFXUnprepare(tap) },
+            process: { tap, frames, _, bufferList, framesOut, flagsOut in
+                streamFXProcess(tap, frames, bufferList, framesOut, flagsOut)
+            }
         )
 
         var tap: MTAudioProcessingTap?
@@ -117,8 +89,11 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
     }
 
     // MARK: DSP lifecycle (audio thread)
+    // nonisolated: touched from the C tap trampolines on the audio thread.
+    // Parameter reads/writes are aligned floats; DSP state is only mutated
+    // here while the tap owns it.
 
-    private func prepare(format: AVAudioFormat) {
+    nonisolated func prepare(format: AVAudioFormat) {
         sampleRate = format.sampleRate > 0 ? format.sampleRate : 44_100
         let channelCount = max(1, Int(format.channelCount))
         // ~0.27 s slap/echo delay, independent of tempo.
@@ -130,11 +105,11 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
         }
     }
 
-    private func unprepare() {
+    nonisolated func unprepare() {
         channels = []
     }
 
-    private func process(frames: AVAudioFrameCount, bufferList: UnsafeMutablePointer<AudioBufferList>) {
+    nonisolated func process(frames: AVAudioFrameCount, bufferList: UnsafeMutablePointer<AudioBufferList>) {
         // Snapshot parameters once per block — no allocation, no locks.
         let bass = bassDepth
         let sweep = sweepDepth
@@ -212,4 +187,48 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
             channels[chIndex] = st
         }
     }
+}
+
+// MARK: - C trampolines (no captures, callable from @convention(c) callbacks)
+
+private func streamFXProcessor(_ tap: MTAudioProcessingTap?) -> StreamFXProcessor? {
+    guard let tap else { return nil }
+    return Unmanaged<StreamFXProcessor>
+        .fromOpaque(MTAudioProcessingTapGetStorage(tap))
+        .takeUnretainedValue()
+}
+
+private func streamFXFinalize(_ tap: MTAudioProcessingTap?) {
+    guard let tap else { return }
+    Unmanaged<StreamFXProcessor>
+        .fromOpaque(MTAudioProcessingTapGetStorage(tap))
+        .release()
+}
+
+private func streamFXPrepare(_ tap: MTAudioProcessingTap?,
+                              _ asbd: UnsafePointer<AudioStreamBasicDescription>) {
+    guard let processor = streamFXProcessor(tap) else { return }
+    let format = AVAudioFormat(streamDescription: asbd)
+        ?? AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+    processor.prepare(format: format)
+}
+
+private func streamFXUnprepare(_ tap: MTAudioProcessingTap?) {
+    streamFXProcessor(tap)?.unprepare()
+}
+
+private func streamFXProcess(_ tap: MTAudioProcessingTap?,
+                             _ numberFrames: CMItemCount,
+                             _ bufferList: UnsafeMutablePointer<AudioBufferList>,
+                             _ numberFramesOut: UnsafeMutablePointer<CMItemCount>?,
+                             _ flagsOut: UnsafeMutablePointer<MTAudioProcessingTapFlags>?) {
+    guard let tap, let processor = streamFXProcessor(tap) else {
+        numberFramesOut?.pointee = numberFrames
+        return
+    }
+    let status = MTAudioProcessingTapGetSourceAudio(
+        tap, numberFrames, bufferList, flagsOut, nil, numberFramesOut
+    )
+    guard status == noErr else { return }
+    processor.process(frames: AVAudioFrameCount(numberFrames), bufferList: bufferList)
 }
