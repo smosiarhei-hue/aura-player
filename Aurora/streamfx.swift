@@ -51,6 +51,8 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
 
     /// Install this processor on a player item. Safe to call on every new
     /// item; a fresh tap is created each time and released with the item.
+    /// Must run on the main actor — AVPlayerItem.audioMix is actor-isolated.
+    @MainActor
     func attach(to item: AVPlayerItem) {
         let retained = Unmanaged.passRetained(self).toOpaque()
         let initCallback: @convention(c) (MTAudioProcessingTap?, UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutableRawPointer?>?) -> Void = {
@@ -66,7 +68,7 @@ nonisolated final class StreamFXProcessor: NSObject, @unchecked Sendable {
             guard let tap else { return }
             let storage = MTAudioProcessingTapGetStorage(tap)
             let format = AVAudioFormat(streamDescription: processingFormat)
-                ?? AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)
+                ?? AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
             Unmanaged<StreamFXProcessor>.fromOpaque(storage)
                 .takeUnretainedValue().prepare(format: format)
         }
