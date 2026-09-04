@@ -83,7 +83,7 @@ struct ArtistView: View {
                 // 5. Artist Name and Play Button docked at the bottom of the hero
                 VStack(spacing: 12) {
                     Text(artist.name)
-                        .font(AG.display(36, .heavy))
+                        .font(AG.display(.largeTitle, .heavy))
                         .foregroundStyle(AG.ink)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -91,7 +91,7 @@ struct ArtistView: View {
 
                     if !artist.subtitle.isEmpty {
                         Text(artist.subtitle)
-                            .font(AG.text(13, .medium))
+                            .font(AG.text(.footnote, .medium))
                             .foregroundStyle(AG.inkMuted)
                             .multilineTextAlignment(.center)
                             .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 2)
@@ -101,25 +101,25 @@ struct ArtistView: View {
                         if let first = artist.popularTracks.first {
                             Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
                                 Label("Слушать", systemImage: "play.fill")
-                                    .font(AG.text(14, .bold))
+                                    .font(AG.text(.subheadline, .bold))
                                     .foregroundStyle(.black.opacity(0.92))
                                     .padding(.horizontal, 22)
                                     .padding(.vertical, 12)
-                                    .background(AG.emberGradient, in: Capsule())
+                                    .glassProminent()
                             }
                             .buttonStyle(GlassPressStyle())
-                            .pulsingGlow(AG.ember)
+                            
                         }
 
                         Button {
                             playArtistWave(artist)
                         } label: {
                             Label("Волна", systemImage: "dot.radiowaves.left.and.right")
-                                .font(AG.text(14, .bold))
+                                .font(AG.text(.subheadline, .bold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 22)
                                 .padding(.vertical, 12)
-                                .background(.ultraThinMaterial, in: Capsule())
+                                .glassCapsule(interactive: true)
                                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1.0))
                         }
                         .buttonStyle(GlassPressStyle())
@@ -137,7 +137,7 @@ struct ArtistView: View {
     }
 
     private func playArtistWave(_ artist: YandexMusicService.YMArtistItem) {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.tap(.medium)
         Task {
             let tracks = await YandexMusicService.shared.buildArtistWave(artistId: artist.id, target: 45)
             guard let first = tracks.first else { return }
@@ -179,11 +179,11 @@ struct ArtistView: View {
                                         RemoteArtwork(urlString: album.coverUrlString, corner: 16)
                                             .frame(width: 150, height: 150)
                                         Text(album.displayTitle)
-                                            .font(AG.text(13, .semibold))
+                                            .font(AG.text(.footnote, .semibold))
                                             .foregroundStyle(AG.ink)
                                             .lineLimit(1)
                                         if let year = album.year {
-                                            Text(String(year)).font(AG.text(11, .regular)).foregroundStyle(AG.inkMuted)
+                                            Text(String(year)).font(AG.text(.caption2)).foregroundStyle(AG.inkMuted)
                                         }
                                     }
                                     .frame(width: 150, alignment: .leading)
@@ -215,7 +215,7 @@ struct ArtistView: View {
                                         RemoteArtwork(urlString: similar.coverUrlString, corner: 999)
                                             .frame(width: 110, height: 110)
                                         Text(similar.name)
-                                            .font(AG.text(12, .semibold))
+                                            .font(AG.text(.caption, .semibold))
                                             .foregroundStyle(AG.ink)
                                             .lineLimit(2)
                                             .multilineTextAlignment(.center)
@@ -238,15 +238,15 @@ struct ArtistView: View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 40, weight: .light)).foregroundStyle(AG.inkMuted)
-            Text("Не удалось загрузить").font(AG.text(17, .semibold)).foregroundStyle(AG.ink)
+            Text("Не удалось загрузить").font(AG.text(.body, .semibold)).foregroundStyle(AG.ink)
             Text(message)
-                .font(AG.text(13, .regular)).foregroundStyle(AG.inkMuted)
+                .font(AG.text(.footnote)).foregroundStyle(AG.inkMuted)
                 .multilineTextAlignment(.center)
             Button { Task { await load() } } label: {
                 Text("Повторить")
-                    .font(AG.text(13, .bold)).foregroundStyle(.black.opacity(0.86))
+                    .font(AG.text(.footnote, .bold)).foregroundStyle(.black.opacity(0.86))
                     .padding(.horizontal, 20).padding(.vertical, 10)
-                    .background(AG.emberGradient, in: Capsule())
+                    .glassProminent()
             }
             .buttonStyle(.plain)
         }
@@ -306,7 +306,7 @@ struct AlbumView: View {
 
             VStack(spacing: 7) {
                 Text(album.displayTitle)
-                    .font(AG.display(25, .heavy))
+                    .font(AG.display(.title, .heavy))
                     .foregroundStyle(AG.ink)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
@@ -316,7 +316,7 @@ struct AlbumView: View {
                 artistLinks(album)
 
                 if let year = album.year {
-                    Text(String(year)).font(AG.text(12, .regular)).foregroundStyle(AG.inkMuted)
+                    Text(String(year)).font(AG.text(.caption)).foregroundStyle(AG.inkMuted)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -325,14 +325,14 @@ struct AlbumView: View {
             if let first = tracks.first {
                 Button { SonivoPlay.track(first, in: tracks) } label: {
                     Label("Слушать", systemImage: "play.fill")
-                        .font(AG.text(14, .bold))
+                        .font(AG.text(.subheadline, .bold))
                         .foregroundStyle(.black.opacity(0.88))
                         .padding(.horizontal, 28)
                         .padding(.vertical, 13)
-                        .background(AG.emberGradient, in: Capsule())
+                        .glassProminent()
                 }
                 .buttonStyle(GlassPressStyle())
-                .pulsingGlow(AG.ember)
+                
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -349,7 +349,7 @@ struct AlbumView: View {
             NavigationLink { ArtistView(artistId: artist.id) } label: {
                 Label(artist.name, systemImage: "chevron.right")
                     .labelStyle(ArtistTrailingChevronStyle())
-                    .font(AG.text(15, .semibold))
+                    .font(AG.text(.subheadline, .semibold))
                     .foregroundStyle(AG.amber)
             }
             .buttonStyle(.plain)
@@ -360,11 +360,11 @@ struct AlbumView: View {
                 }
             } label: {
                 Label(album.artistName, systemImage: "chevron.down")
-                    .font(AG.text(15, .semibold))
+                    .font(AG.text(.subheadline, .semibold))
                     .foregroundStyle(AG.amber)
             }
         } else {
-            Text(album.artistName).font(AG.text(15, .medium)).foregroundStyle(AG.inkMuted)
+            Text(album.artistName).font(AG.text(.subheadline, .medium)).foregroundStyle(AG.inkMuted)
         }
     }
 
@@ -401,7 +401,7 @@ private struct ArtistTrailingChevronStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 5) {
             configuration.title
-            configuration.icon.font(.system(size: 9, weight: .black))
+            configuration.icon.font(AG.text(.caption2, .black))
         }
     }
 }

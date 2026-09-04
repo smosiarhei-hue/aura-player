@@ -26,31 +26,31 @@ struct SettingsView: View {
                             } else {
                                 ZStack {
                                     Circle()
-                                        .fill(LinearGradient(colors: [Color(hex: "#FF334B")!, Color(hex: "#FF6A00")!], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        .fill(LinearGradient(colors: [AG.ember, AG.amber], startPoint: .topLeading, endPoint: .bottomTrailing))
                                         .frame(width: 52, height: 52)
                                     Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased())
-                                        .font(.system(size: 20, weight: .bold))
+                                        .font(AG.text(.title3, .bold))
                                         .foregroundStyle(.white)
                                 }
                             }
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(user.displayName ?? user.login)
-                                    .font(.system(size: 16, weight: .bold))
+                                    .font(AG.text(.callout, .bold))
                                     .foregroundStyle(.primary)
 
                                 Text("@\(user.login)")
-                                    .font(.system(size: 13))
+                                    .font(AG.text(.footnote))
                                     .foregroundStyle(.secondary)
 
                                 if user.hasPlus {
                                     HStack(spacing: 4) {
                                         Image(systemName: "checkmark.seal.fill")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(Color(hex: "#FF334B")!)
+                                            .font(AG.text(.caption2))
+                                            .foregroundStyle(AG.ember)
                                         Text("Яндекс Плюс (320 kbps & FLAC)")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundStyle(Color(hex: "#FF334B")!)
+                                            .font(AG.text(.caption2, .semibold))
+                                            .foregroundStyle(AG.ember)
                                     }
                                     .padding(.top, 2)
                                 }
@@ -80,7 +80,7 @@ struct SettingsView: View {
                     } else {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Войдите в свой Яндекс ID, чтобы слушать персональную Мою волну, синхронизировать всю любимую музыку и сохранять историю.")
-                                .font(.system(size: 13))
+                                .font(AG.text(.footnote))
                                 .foregroundStyle(.secondary)
 
                             Button {
@@ -88,15 +88,15 @@ struct SettingsView: View {
                             } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: "person.badge.key.fill")
-                                        .font(.system(size: 15, weight: .bold))
+                                        .font(AG.text(.subheadline, .bold))
                                     Text("Войти с Яндекс ID")
-                                        .font(.system(size: 15, weight: .bold))
+                                        .font(AG.text(.subheadline, .bold))
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(Color(hex: "#FF334B")!)
+                            .tint(AG.ember)
                         }
                         .padding(.vertical, 4)
                     }
@@ -129,20 +129,6 @@ struct SettingsView: View {
                                 if player.audioQuality == quality { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
                             }.contentShape(Rectangle())
                         }.buttonStyle(.plain)
-                    }
-                }
-
-                Section("Оформление") {
-                    Picker("Тема", selection: $settings.theme) { ForEach(AppTheme.allCases) { Text($0.name).tag($0) } }
-                    HStack {
-                        Text("Цветовой акцент"); Spacer()
-                        ForEach(AccentChoice.allCases) { accent in
-                            Button { settings.accent = accent } label: {
-                                Circle().fill(LinearGradient(colors: accent.colors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    .frame(width: 26, height: 26)
-                                    .overlay(Circle().strokeBorder(settings.accent == accent ? Color.primary : .clear, lineWidth: 2.5))
-                            }.buttonStyle(.plain)
-                        }
                     }
                 }
 
@@ -218,7 +204,6 @@ struct SettingsView: View {
                 }
 
                 Section("Караоке (текст песни)") {
-                    Toggle("Строка текста в плеере", isOn: $settings.showTeleprompterInPlayer).tint(settings.accentColor)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack { Text("Размер шрифта"); Spacer(); Text("\(Int(settings.lyricsFontSize)) pt").foregroundStyle(.secondary) }
                         Slider(value: $settings.lyricsFontSize, in: 36...60, step: 1).tint(settings.accentColor)
@@ -239,7 +224,7 @@ struct SettingsView: View {
                     LabeledContent("Название", value: "Sonivo")
                     LabeledContent("Версия", value: appVersion)
                     LabeledContent("Сборка", value: "Build #\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")")
-                    LabeledContent("Дизайн", value: "iOS 27 Liquid Glass")
+                    LabeledContent("Дизайн", value: "Liquid Glass")
                 }
             }
             .navigationTitle("Настройки")

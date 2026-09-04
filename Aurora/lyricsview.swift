@@ -16,7 +16,7 @@ struct LyricsView: View {
                         .tint(AG.amber)
                         .scaleEffect(1.2)
                     Text("Загрузка текста…")
-                        .font(AG.text(14, .semibold))
+                        .font(AG.text(.subheadline, .semibold))
                         .foregroundStyle(.white.opacity(0.70))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -66,7 +66,7 @@ private struct SyncedLyrics: View {
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            Haptics.tap(.medium)
                             player.seek(to: max(0, line.startTime - 0.05))
                         }
                         .id(idx)
@@ -137,16 +137,16 @@ private struct StaticLyricsList: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if let title = lyrics.title, !title.isEmpty {
-                    Text(title).font(AG.display(22, .heavy))
+                    Text(title).font(AG.display(.title2, .heavy))
                     if let artist = lyrics.artist, !artist.isEmpty {
-                        Text(artist).font(AG.text(16, .semibold)).foregroundStyle(.secondary)
+                        Text(artist).font(AG.text(.callout, .semibold)).foregroundStyle(.secondary)
                     }
                     Divider().padding(.vertical, 6)
                 }
                 ForEach(lyrics.lines) { line in
                     Text(line.text)
-                        .font(AG.text(settings.lyricsFontSize * 0.82, .medium))
-                        .foregroundStyle(.white.opacity(0.88))
+                        .font(.system(size: settings.lyricsFontSize * 0.82, weight: .medium))
+                        .foregroundStyle(AG.ink.opacity(0.88))
                         .lineSpacing(6)
                 }
             }
@@ -169,13 +169,13 @@ private struct EmptyLyricsState: View {
                 .foregroundStyle(.white.opacity(0.40))
 
             Text("Текст песни не найден")
-                .font(AG.display(18, .bold))
+                .font(AG.display(.headline, .bold))
                 .foregroundStyle(.white)
 
             if let staticText = player.currentTrack?.lyricsText, !staticText.isEmpty {
                 ScrollView {
                     Text(staticText)
-                        .font(AG.text(14, .regular))
+                        .font(AG.text(.subheadline))
                         .foregroundStyle(.white.opacity(0.72))
                         .multilineTextAlignment(.center)
                         .lineSpacing(6)
@@ -183,7 +183,7 @@ private struct EmptyLyricsState: View {
                 }
             } else {
                 Text("Для этого трека пока нет синхронизированного караоке.")
-                    .font(AG.text(13, .regular))
+                    .font(AG.text(.footnote))
                     .foregroundStyle(.white.opacity(0.50))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)

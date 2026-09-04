@@ -11,14 +11,13 @@ struct HomeView: View {
     @State private var albums: [YandexMusicService.YMAlbumItem] = []
     @State private var isLoading = false
     @State private var showSettings = false
-    @State private var showWaveSelector = false
     @State private var showPlayer = false
 
     private var moodStation: YandexMusicService.StationOption { ym.waveMoodStation }
     private var moodColors: [Color] {
         let cols = moodStation.gradient.compactMap { Color(hex: $0) }
         if cols.isEmpty {
-            return [Color(hex: "#E5127D") ?? .pink, Color(hex: "#FF8C00") ?? .orange, Color(hex: "#FFE000") ?? .yellow]
+            return [AG.flame, AG.ember, AG.amber]
         }
         return cols
     }
@@ -61,7 +60,7 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Top Bar (Яндекс * Музыка)
+    // MARK: - Top Bar
 
     private var yandexTopBar: some View {
         HStack(alignment: .center) {
@@ -73,62 +72,59 @@ struct HomeView: View {
                     if let avatar = user.avatarUrl {
                         RemoteArtwork(urlString: avatar, corner: 10)
                             .frame(width: 34, height: 34)
-                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.35), lineWidth: 1))
                     } else {
                         ZStack {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(LinearGradient(colors: [Color(hex: "#FF334B")!, Color(hex: "#FF6A00")!], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .fill(AG.emberGradient)
                                 .frame(width: 34, height: 34)
                             Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased())
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.white)
+                                .font(AG.text(.subheadline, .bold))
+                                .foregroundStyle(AG.ink)
                         }
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.35), lineWidth: 1))
                     }
                 } else {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(LinearGradient(colors: [Color(hex: "#FF6B00") ?? .orange, Color(hex: "#FF1361") ?? .red], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .fill(AG.emberGradient)
                             .frame(width: 34, height: 34)
                         Image(systemName: "person.fill")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.white)
+                            .font(AG.text(.callout, .bold))
+                            .foregroundStyle(AG.ink)
                     }
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.25), lineWidth: 0.8))
                 }
             }
             .buttonStyle(GlassPressStyle())
+            .accessibilityLabel("Профиль и настройки")
 
             Spacer()
 
-            // Center Title: Музыка
             Text("Музыка")
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(AG.rounded(.title2, .bold))
+                .foregroundStyle(AG.ink)
 
             Spacer()
 
-            // Search Icon
             NavigationLink {
                 SearchCatalogView()
             } label: {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.white.opacity(0.08)))
+                    .font(AG.glyph(.bold))
+                    .foregroundStyle(AG.ink)
+                    .frame(width: AG.tapTarget, height: AG.tapTarget)
+                    .contentShape(Circle())
             }
-            .buttonStyle(GlassPressStyle())
+            .buttonStyle(.plain)
+            .glassCircle()
+            .accessibilityLabel("Поиск")
         }
         .padding(.horizontal, 18)
         .padding(.top, 4)
     }
 
-    // MARK: - Моя волна: Центральная сцена с сиянием и большой жёлтой кнопкой Play
+    // MARK: - Моя волна: центральная сцена
 
     private var waveCenterStage: some View {
         ZStack(alignment: .center) {
-            // 1. Анимированная плазма / аура с каустикой, спекулярными бликами и реакцией на звук
             FluidWaveView(
                 colors: moodColors,
                 isBackgroundMode: false
@@ -137,11 +133,10 @@ struct HomeView: View {
             .scaleEffect(1.08)
             .opacity(0.95)
 
-            // 2. Радиальный градиентный свет
             RadialGradient(
                 colors: [
-                    (Color(hex: "#FFE000") ?? .yellow).opacity(0.35),
-                    (Color(hex: "#FF007F") ?? .pink).opacity(0.25),
+                    (moodColors.first ?? AG.amber).opacity(0.30),
+                    (moodColors.last ?? AG.ember).opacity(0.18),
                     Color.clear
                 ],
                 center: .center,
@@ -151,84 +146,71 @@ struct HomeView: View {
             .frame(height: 380)
             .allowsHitTesting(false)
 
-            // 3. Контент сцены
             VStack(spacing: 18) {
-                // Заголовок "Моя волна"
                 Text("Моя волна")
-                    .font(.system(size: 42, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(AG.rounded(.largeTitle, .heavy))
+                    .foregroundStyle(AG.ink)
                     .shadow(color: .black.opacity(0.55), radius: 14, x: 0, y: 4)
 
-                // Большая жёлтая кнопка Play (80x80)
                 Button {
                     handlePlayTap()
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color(hex: "#FFE000") ?? .yellow)
-                            .frame(width: 82, height: 82)
-                            .shadow(color: (Color(hex: "#FFE000") ?? .yellow).opacity(player.isPlaying ? 0.65 : 0.35), radius: 24, x: 0, y: 6)
-
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 32, weight: .black))
-                            .foregroundStyle(.black)
-                            .offset(x: player.isPlaying ? 0 : 3)
-                    }
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 30, weight: .black))
+                        .foregroundStyle(AG.ink)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 82, height: 82)
+                        .contentShape(Circle())
                 }
-                .buttonStyle(GlassPressStyle())
+                .buttonStyle(.plain)
+                .glassEffect(.regular.tint(moodColors.first ?? AG.amber).interactive(), in: .circle)
                 .scaleEffect(player.isPlaying ? 1.04 : 1.0)
-                .animation(.spring(response: 0.35, dampingFraction: 0.65), value: player.isPlaying)
+                .animation(AG.spring, value: player.isPlaying)
+                .accessibilityLabel(player.isPlaying ? "Пауза" : "Запустить Мою волну")
 
-                // Трек в эфире (стеклянная капсула)
                 if let track = player.currentTrack {
                     Button {
                         showPlayer = true
                     } label: {
                         HStack(spacing: 9) {
                             Text("\(track.title) — \(track.artist)")
-                                .font(.system(size: 13.5, weight: .semibold))
-                                .foregroundStyle(.white)
+                                .font(AG.text(.footnote, .semibold))
+                                .foregroundStyle(AG.ink)
                                 .lineLimit(1)
 
                             Button {
+                                Haptics.tap(.light)
                                 library.toggleFavorite(track)
                             } label: {
                                 Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(library.isTrackFavorite(track) ? Color(hex: "#FF2D55")! : .white.opacity(0.85))
+                                    .font(AG.text(.footnote, .bold))
+                                    .foregroundStyle(library.isTrackFavorite(track) ? AG.heart : AG.ink.opacity(0.85))
+                                    .contentTransition(.symbolEffect(.replace))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("В избранное")
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 9)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8))
-                        .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 3)
                     }
-                    .buttonStyle(GlassPressStyle())
+                    .buttonStyle(.plain)
+                    .glassCapsule(interactive: true)
+                    .accessibilityLabel("Открыть плеер")
                 }
 
-                // AI Insight плашка
                 HStack(spacing: 7) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color(hex: "#FFE000") ?? .yellow)
-
-                    Text("AI")
-                        .font(.system(size: 9.5, weight: .black))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.white.opacity(0.18)))
+                        .font(AG.text(.caption, .bold))
+                        .foregroundStyle(AG.amber)
 
                     Text(currentAiSubtitle)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.88))
+                        .font(AG.text(.caption, .medium))
+                        .foregroundStyle(AG.ink.opacity(0.88))
                         .lineLimit(1)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
-                .background(Color.black.opacity(0.40), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8))
+                .glassCapsule()
             }
             .padding(.vertical, 24)
         }
@@ -246,7 +228,7 @@ struct HomeView: View {
     }
 
     private func handlePlayTap() {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.tap(.medium)
         if player.isPlaying {
             player.pause()
         } else {
@@ -255,9 +237,9 @@ struct HomeView: View {
     }
 
     private var solidMoodBackdrop: some View {
-        let accent = moodColors.first ?? Color(hex: "#FF334B")!
+        let accent = moodColors.first ?? AG.ember
         return ZStack {
-            Color(hex: "#09090B")!.ignoresSafeArea()
+            AG.bg.ignoresSafeArea()
             accent.opacity(0.12).ignoresSafeArea()
         }
     }
@@ -266,12 +248,15 @@ struct HomeView: View {
 
     private var moodCardsSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(MoodPreset.allCases) { preset in
-                    LiquidGlassMoodCapsule(preset: preset) {
-                        MoodRadioEngine.shared.start(mood: preset)
+            GlassEffectContainer(spacing: 12) {
+                HStack(spacing: 12) {
+                    ForEach(MoodPreset.allCases) { preset in
+                        LiquidGlassMoodCapsule(preset: preset) {
+                            Haptics.tap(.light)
+                            MoodRadioEngine.shared.start(mood: preset)
+                        }
+                        .frame(height: 48)
                     }
-                    .frame(height: 48)
                 }
             }
             .padding(.horizontal, 16)
@@ -328,12 +313,12 @@ struct HomeView: View {
                                     .frame(width: 140, height: 140)
 
                                 Text(album.displayTitle)
-                                    .font(AG.text(13, .semibold))
+                                    .font(AG.text(.footnote, .semibold))
                                     .foregroundStyle(AG.ink)
                                     .lineLimit(1)
 
                                 Text(album.artistName)
-                                    .font(AG.text(10.5, .regular))
+                                    .font(AG.text(.caption2))
                                     .foregroundStyle(AG.inkMuted)
                                     .lineLimit(1)
                             }

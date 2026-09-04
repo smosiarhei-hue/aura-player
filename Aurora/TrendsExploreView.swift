@@ -82,7 +82,7 @@ struct TrendsExploreView: View {
         HStack {
             Spacer()
             Text("Что послушать")
-                .font(.system(size: 20, weight: .bold))
+                .font(AG.display(.title3, .bold))
                 .foregroundStyle(.white)
             Spacer()
 
@@ -90,12 +90,14 @@ struct TrendsExploreView: View {
                 SearchCatalogView()
             } label: {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.white.opacity(0.08)))
+                    .font(AG.glyph(.bold))
+                    .foregroundStyle(AG.ink)
+                    .frame(width: AG.tapTarget, height: AG.tapTarget)
+                    .contentShape(Circle())
             }
-            .buttonStyle(GlassPressStyle())
+            .buttonStyle(.plain)
+            .glassCircle()
+            .accessibilityLabel("Поиск")
         }
         .padding(.horizontal, 16)
     }
@@ -111,7 +113,7 @@ struct TrendsExploreView: View {
                 categoryItem(
                     title: "Тренды",
                     icon: "bolt.fill",
-                    gradient: [Color(hex: "#FF2A85") ?? .pink, Color(hex: "#FF7300") ?? .orange]
+                    gradient: AG.Tile.pink
                 )
             }
             .buttonStyle(.plain)
@@ -124,7 +126,7 @@ struct TrendsExploreView: View {
                 categoryItem(
                     title: "Книги",
                     icon: "book.fill",
-                    gradient: [Color(hex: "#0088FF") ?? .blue, Color(hex: "#00E5FF") ?? .cyan],
+                    gradient: AG.Tile.blue,
                     hasDot: true
                 )
             }
@@ -138,7 +140,7 @@ struct TrendsExploreView: View {
                 categoryItem(
                     title: "Детям",
                     icon: "teddybear.fill",
-                    gradient: [Color(hex: "#FF8A00") ?? .orange, Color(hex: "#FFD600") ?? .yellow]
+                    gradient: AG.Tile.orange
                 )
             }
             .buttonStyle(.plain)
@@ -151,7 +153,7 @@ struct TrendsExploreView: View {
                 categoryItem(
                     title: "Подкасты",
                     icon: "mic.fill",
-                    gradient: [Color(hex: "#00E676") ?? .green, Color(hex: "#1DE9B6") ?? .teal]
+                    gradient: AG.Tile.green
                 )
             }
             .buttonStyle(.plain)
@@ -169,18 +171,18 @@ struct TrendsExploreView: View {
                     .shadow(color: (gradient.first ?? .blue).opacity(0.40), radius: 10, x: 0, y: 5)
 
                 Image(systemName: icon)
-                    .font(.system(size: 26, weight: .black))
+                    .font(AG.display(.title, .black))
                     .foregroundStyle(.white)
             }
 
             HStack(spacing: 4) {
                 if hasDot {
                     Circle()
-                        .fill(Color(hex: "#FFE000") ?? .yellow)
+                        .fill(AG.amber)
                         .frame(width: 5, height: 5)
                 }
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(AG.text(.footnote, .semibold))
                     .foregroundStyle(.white)
             }
         }
@@ -197,20 +199,20 @@ struct TrendsExploreView: View {
                 HStack(spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(LinearGradient(colors: [Color(hex: "#1C1C1E")!, Color(hex: "#2C2C2E")!], startPoint: .top, endPoint: .bottom))
+                            .fill(LinearGradient(colors: [AG.card, AG.coal], startPoint: .top, endPoint: .bottom))
                             .frame(width: 54, height: 54)
                         Image(systemName: "heart.fill")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(Color(hex: "#FF2D55")!)
+                            .font(AG.display(.title2, .bold))
+                            .foregroundStyle(AG.heart)
                     }
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Мне\nнравится")
-                            .font(.system(size: 13.5, weight: .bold))
+                            .font(AG.text(.footnote, .bold))
                             .foregroundStyle(.white)
                             .lineLimit(2)
                         Text("\(library.favorites.count) треков")
-                            .font(.system(size: 11.5, weight: .regular))
+                            .font(AG.text(.caption2, .regular))
                             .foregroundStyle(.white.opacity(0.60))
                     }
                     Spacer(minLength: 0)
@@ -227,19 +229,19 @@ struct TrendsExploreView: View {
                 HStack(spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(LinearGradient(colors: [Color(hex: "#2C2C2E")!, Color(hex: "#3A3A3C")!], startPoint: .top, endPoint: .bottom))
+                            .fill(LinearGradient(colors: AG.Tile.graphite, startPoint: .top, endPoint: .bottom))
                             .frame(width: 54, height: 54)
                         Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(Color(hex: "#FFE000")!)
+                            .font(AG.display(.title2, .bold))
+                            .foregroundStyle(AG.amber)
                     }
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("История")
-                            .font(.system(size: 13.5, weight: .bold))
+                            .font(AG.text(.footnote, .bold))
                             .foregroundStyle(.white)
                         Text("Недавно играло")
-                            .font(.system(size: 11.5, weight: .regular))
+                            .font(AG.text(.caption2, .regular))
                             .foregroundStyle(.white.opacity(0.60))
                     }
                     Spacer(minLength: 0)
@@ -257,7 +259,7 @@ struct TrendsExploreView: View {
     private func artistRecommendsSection(_ album: YandexMusicService.YMAlbumItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Артист рекомендует")
-                .font(.system(size: 22, weight: .heavy))
+                .font(AG.display(.title2, .heavy))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
 
@@ -278,12 +280,12 @@ struct TrendsExploreView: View {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(album.displayTitle)
-                            .font(.system(size: 20, weight: .heavy))
+                            .font(AG.display(.title3, .heavy))
                             .foregroundStyle(.white)
                             .lineLimit(1)
 
                         Text(album.artistName)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(AG.text(.subheadline, .medium))
                             .foregroundStyle(.white.opacity(0.80))
                     }
 
@@ -294,9 +296,9 @@ struct TrendsExploreView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "play.fill")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(AG.text(.footnote, .bold))
                             Text("Слушать")
-                                .font(.system(size: 14, weight: .bold))
+                                .font(AG.text(.subheadline, .bold))
                         }
                         .foregroundStyle(.black)
                         .padding(.horizontal, 18)
@@ -318,11 +320,11 @@ struct TrendsExploreView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Новые релизы")
-                    .font(.system(size: 22, weight: .heavy))
+                    .font(AG.display(.title2, .heavy))
                     .foregroundStyle(.white)
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(AG.text(.subheadline, .bold))
                     .foregroundStyle(.white.opacity(0.6))
 
                 Spacer()
@@ -344,7 +346,7 @@ struct TrendsExploreView: View {
                                         SonivoPlay.album(album)
                                     } label: {
                                         Image(systemName: "play.fill")
-                                            .font(.system(size: 14, weight: .bold))
+                                            .font(AG.text(.subheadline, .bold))
                                             .foregroundStyle(.black)
                                             .frame(width: 36, height: 36)
                                             .background(Circle().fill(.white))
@@ -354,12 +356,12 @@ struct TrendsExploreView: View {
                                 }
 
                                 Text(album.displayTitle)
-                                    .font(.system(size: 13.5, weight: .semibold))
+                                    .font(AG.text(.footnote, .semibold))
                                     .foregroundStyle(.white)
                                     .lineLimit(1)
 
                                 Text(album.artistName)
-                                    .font(.system(size: 11.5, weight: .regular))
+                                    .font(AG.text(.caption2, .regular))
                                     .foregroundStyle(.white.opacity(0.60))
                                     .lineLimit(1)
                             }
@@ -379,7 +381,7 @@ struct TrendsExploreView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center) {
                 Text("Больше открытий")
-                    .font(.system(size: 22, weight: .heavy))
+                    .font(AG.display(.title2, .heavy))
                     .foregroundStyle(.white)
 
                 Spacer()
@@ -390,12 +392,12 @@ struct TrendsExploreView: View {
                         selectedFilter = "top"
                     } label: {
                         Text("ТОП")
-                            .font(.system(size: 11, weight: .heavy))
+                            .font(AG.text(.caption2, .heavy))
                             .foregroundStyle(selectedFilter == "top" ? .black : .white.opacity(0.8))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule().fill(selectedFilter == "top" ? Color(hex: "#FFE000")! : Color.white.opacity(0.12))
+                                Capsule().fill(selectedFilter == "top" ? AG.amber : Color.white.opacity(0.12))
                             )
                     }
 
@@ -403,12 +405,12 @@ struct TrendsExploreView: View {
                         selectedFilter = "lang"
                     } label: {
                         Text("ПО ЯЗЫКУ")
-                            .font(.system(size: 11, weight: .heavy))
+                            .font(AG.text(.caption2, .heavy))
                             .foregroundStyle(selectedFilter == "lang" ? .black : .white.opacity(0.8))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule().fill(selectedFilter == "lang" ? Color(hex: "#FFE000")! : Color.white.opacity(0.12))
+                                Capsule().fill(selectedFilter == "lang" ? AG.amber : Color.white.opacity(0.12))
                             )
                     }
                 }
@@ -432,17 +434,17 @@ struct TrendsExploreView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "chart.bar.fill")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(AG.text(.footnote, .bold))
                         Text("Показать все 100 треков чарта")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(AG.text(.subheadline, .bold))
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(AG.text(.caption2, .bold))
                     }
                     .foregroundStyle(.black)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
-                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(hex: "#FFE000")!))
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(AG.amber))
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
                 }
@@ -456,7 +458,7 @@ struct TrendsExploreView: View {
     private var inStyleSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("В стиле")
-                .font(.system(size: 22, weight: .heavy))
+                .font(AG.display(.title2, .heavy))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
 
@@ -472,7 +474,7 @@ struct TrendsExploreView: View {
                                     .clipShape(Circle())
 
                                 Text(artist.name)
-                                    .font(.system(size: 13.5, weight: .bold))
+                                    .font(AG.text(.footnote, .bold))
                                     .foregroundStyle(.white)
                             }
                             .padding(.horizontal, 12)
@@ -495,11 +497,11 @@ struct TrendsExploreView: View {
             HStack {
                 HStack(spacing: 8) {
                     Text("Премьера")
-                        .font(.system(size: 22, weight: .heavy))
+                        .font(AG.display(.title2, .heavy))
                         .foregroundStyle(.white)
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(AG.text(.subheadline, .bold))
                         .foregroundStyle(.white.opacity(0.6))
                 }
                 Spacer()
@@ -507,7 +509,7 @@ struct TrendsExploreView: View {
             .padding(.horizontal, 16)
 
             Text("Лучшие новые треки для вас")
-                .font(.system(size: 13, weight: .regular))
+                .font(AG.text(.footnote, .regular))
                 .foregroundStyle(.white.opacity(0.60))
                 .padding(.horizontal, 16)
                 .padding(.top, -8)

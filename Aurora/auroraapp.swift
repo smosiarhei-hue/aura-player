@@ -3,8 +3,6 @@ import UIKit
 
 @main
 struct SonivoApp: App {
-    @State private var settings = SettingsStore.shared
-
     init() {
         let appearance = UITabBarAppearance()
         appearance.configureWithTransparentBackground()
@@ -25,7 +23,7 @@ struct SonivoApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .preferredColorScheme(settings.colorScheme)
+                .preferredColorScheme(.dark)
                 .tint(.white)
         }
     }
@@ -63,6 +61,10 @@ struct RootView: View {
     @State private var player = PlayerCore.shared
     @State private var tab: AppTab = .wave
     @State private var showPlayer = false
+    @Namespace private var playerTransition
+
+    /// Shared id so the mini-player artwork zooms into the full player.
+    static let playerZoomID = "now-playing-artwork"
 
     private var miniVisible: Bool {
         guard let track = player.currentTrack else { return false }
@@ -71,20 +73,30 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            HomeView().tabItem { Label(AppTab.wave.label, systemImage: AppTab.wave.icon) }.tag(AppTab.wave)
-            TrendsExploreView().tabItem { Label(AppTab.trends.label, systemImage: AppTab.trends.icon) }.tag(AppTab.trends)
-            LibraryView().tabItem { Label(AppTab.library.label, systemImage: AppTab.library.icon) }.tag(AppTab.library)
-            SearchCatalogView().tabItem { Label(AppTab.search.label, systemImage: AppTab.search.icon) }.tag(AppTab.search)
+            Tab(AppTab.wave.label, systemImage: AppTab.wave.icon, value: .wave) {
+                HomeView()
+            }
+            Tab(AppTab.trends.label, systemImage: AppTab.trends.icon, value: .trends) {
+                TrendsExploreView()
+            }
+            Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) {
+                LibraryView()
+            }
+            Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) {
+                SearchCatalogView()
+            }
         }
         .tint(.white)
         .toolbarColorScheme(.dark, for: .tabBar)
+        .tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
             if miniVisible {
-                NativeMiniPlayer(showPlayer: $showPlayer)
+                NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition)
             }
         }
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreenV2(isPresented: $showPlayer)
+                .navigationTransition(.zoom(sourceID: Self.playerZoomID, in: playerTransition))
                 .ignoresSafeArea()
         }
         .onAppear {
@@ -129,6 +141,7 @@ struct RootView: View {
 struct NativeMiniPlayer: View {
     @State private var player = PlayerCore.shared
     @Binding var showPlayer: Bool
+    let zoomNamespace: Namespace.ID
     // Controls follow the system font size but stay inside the bottom accessory.
     @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
 
@@ -147,16 +160,17 @@ struct NativeMiniPlayer: View {
                         MiniArtworkPulse(track: player.currentTrack, isPlaying: player.isPlaying)
                             .frame(width: 44, height: 44)
                             .clipped()
+                            .matchedTransitionSource(id: RootView.playerZoomID, in: zoomNamespace)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(player.currentTrack?.title ?? "")
-                                .font(.system(.headline, design: .rounded, weight: .semibold))
-                                .foregroundStyle(.white)
+                                .font(AG.rounded(.headline, .semibold))
+                                .foregroundStyle(AG.ink)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.85)
                             Text(player.currentTrack?.artist ?? "")
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.68))
+                                .font(AG.rounded(.subheadline))
+                                .foregroundStyle(AG.inkMuted)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.85)
                         }
@@ -168,8 +182,9 @@ struct NativeMiniPlayer: View {
 
                 Button(action: togglePlayback) {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundStyle(.white)
+                        .font(AG.glyph(.bold))
+                        .foregroundStyle(AG.ink)
+                        .contentTransition(.symbolEffect(.replace))
                         .frame(width: tapSide, height: tapSide)
                         .contentShape(Circle())
                 }
@@ -178,8 +193,8 @@ struct NativeMiniPlayer: View {
 
                 Button(action: nextTrack) {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
+                        .font(AG.glyph(.bold))
+                        .foregroundStyle(AG.ink)
                         .frame(width: tapSide, height: tapSide)
                         .contentShape(Circle())
                 }
@@ -189,7 +204,7 @@ struct NativeMiniPlayer: View {
 
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
-                .tint(.white)
+                .tint(AG.ink)
                 .scaleEffect(x: 1, y: 0.45)
                 .allowsHitTesting(false)
         }
@@ -210,18 +225,18 @@ struct NativeMiniPlayer: View {
     }
 
     private func open() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.tap(.light)
         showPlayer = true
     }
 
     private func togglePlayback() {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.tap(.medium)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.togglePlay()
     }
 
     private func nextTrack() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.next()
     }

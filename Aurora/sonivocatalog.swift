@@ -1,22 +1,16 @@
 import SwiftUI
 
-// MARK: - Общие компоненты каталога (Ember)
+// MARK: - Общие компоненты каталога
 
 struct SonivoBackdrop: View {
     var body: some View {
         ZStack {
             AG.bg
             RadialGradient(
-                colors: [AG.ember.opacity(0.22), Color.clear],
+                colors: [AG.ember.opacity(0.16), Color.clear],
                 center: .topTrailing,
                 startRadius: 8,
                 endRadius: 430
-            )
-            RadialGradient(
-                colors: [AG.amber.opacity(0.13), Color.clear],
-                center: .bottomLeading,
-                startRadius: 8,
-                endRadius: 380
             )
         }
         .ignoresSafeArea()
@@ -32,18 +26,18 @@ struct SonivoHeader: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title)
-                    .font(AG.display(22, .heavy))
+                    .font(AG.display(.title2, .heavy))
                     .foregroundStyle(AG.ink)
                 if let accent {
                     Text(accent)
-                        .font(AG.serifAccent(22))
+                        .font(AG.serifAccent(.title2))
                         .foregroundStyle(AG.amber)
                 }
                 Spacer(minLength: 0)
             }
             if let subtitle {
                 Text(subtitle)
-                    .font(AG.text(12, .regular))
+                    .font(AG.text(.caption))
                     .foregroundStyle(AG.inkMuted)
                     .lineLimit(2)
             }
@@ -59,22 +53,14 @@ struct SonivoChip: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .bold))
+                .font(AG.text(.caption2, .bold))
             Text(title)
-                .font(AG.text(12.5, isActive ? .bold : .medium))
+                .font(AG.text(.footnote, isActive ? .bold : .medium))
         }
         .foregroundStyle(isActive ? Color.black.opacity(0.86) : AG.ink.opacity(0.82))
         .padding(.horizontal, 13)
         .padding(.vertical, 8)
-        .background(
-            Capsule().fill(isActive ? AnyShapeStyle(AG.emberGradient) : AnyShapeStyle(Color.white.opacity(0.08)))
-        )
-        .overlay(
-            Capsule().strokeBorder(
-                isActive ? AnyShapeStyle(Color.clear) : AnyShapeStyle(AG.hairline),
-                lineWidth: 0.8
-            )
-        )
+        .glassEffect(isActive ? .regular.tint(AG.amber).interactive() : .regular.interactive(), in: .capsule)
     }
 }
 
@@ -84,14 +70,14 @@ struct SonivoMoreButton: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(title)
-                .font(AG.text(12, .bold))
+                .font(AG.text(.caption, .bold))
             Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .black))
+                .font(AG.text(.caption2, .black))
         }
         .foregroundStyle(AG.amber)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(Capsule().fill(AG.amber.opacity(0.14)))
+        .glassCapsule(interactive: true)
     }
 }
 
@@ -128,7 +114,7 @@ struct RemoteArtwork: View {
         ZStack {
             LinearGradient(colors: [AG.coal, AG.card], startPoint: .topLeading, endPoint: .bottomTrailing)
             Image(systemName: "music.note")
-                .font(.system(size: 17, weight: .semibold))
+                .font(AG.text(.body, .semibold))
                 .foregroundStyle(AG.inkMuted)
         }
     }
@@ -165,7 +151,7 @@ struct ChartRowView: View {
             HStack(spacing: 12) {
                 if let rank {
                     Text(String(rank))
-                        .font(AG.display(15, .heavy).monospacedDigit())
+                        .font(AG.display(.subheadline, .heavy).monospacedDigit())
                         .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
                         .frame(width: 26, alignment: .center)
                 }
@@ -184,13 +170,13 @@ struct ChartRowView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
-                        .font(AG.text(14, .semibold))
+                        .font(AG.text(.subheadline, .semibold))
                         .foregroundStyle(isCurrentPlaying ? AG.amber : AG.ink)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     Text(item.artistName)
-                        .font(AG.text(11.5, .medium))
+                        .font(AG.text(.caption, .medium))
                         .foregroundStyle(isCurrentPlaying ? AG.amber.opacity(0.75) : AG.inkMuted)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -214,16 +200,16 @@ struct ChartRowView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(AG.text(.subheadline, .bold))
                         .foregroundStyle(AG.inkMuted)
-                        .frame(width: 32, height: 44)
+                        .frame(width: 32, height: AG.tapTarget)
                         .contentShape(Rectangle())
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: AG.radiusSmall, style: .continuous)
                     .fill(isCurrentPlaying ? AG.card.opacity(0.92) : Color.white.opacity(0.001))
             )
             .contentShape(Rectangle())
@@ -359,34 +345,5 @@ struct Top100ChartView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
-    }
-}
-
-// MARK: - Секции вкладки «Новое»
-
-enum NewSection: String, CaseIterable, Identifiable {
-    case fresh
-    case popular
-    case listening
-    case top100
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .fresh:     return "Новинки"
-        case .popular:   return "Популярное"
-        case .listening: return "Сейчас слушают"
-        case .top100:    return "Топ 100"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .fresh:     return "sparkles"
-        case .popular:   return "flame.fill"
-        case .listening: return "headphones"
-        case .top100:    return "chart.bar.fill"
-        }
     }
 }

@@ -22,11 +22,11 @@ struct SearchCatalogView: View {
 
     private let genres: [Genre] = [
         Genre(id: "Поп", colors: [AG.amber, AG.flame]),
-        Genre(id: "Хип-хоп", colors: [AG.ember, Color(hex: "#7C2D12") ?? .brown]),
-        Genre(id: "Электроника", colors: [Color(hex: "#FDE68A") ?? .yellow, AG.ember]),
-        Genre(id: "Рок", colors: [Color(hex: "#B91C1C") ?? .red, Color(hex: "#7C2D12") ?? .brown]),
-        Genre(id: "Lo-Fi", colors: [Color(hex: "#FCD34D") ?? .yellow, Color(hex: "#B45309") ?? .orange]),
-        Genre(id: "Джаз", colors: [Color(hex: "#FB923C") ?? .orange, Color(hex: "#9A3412") ?? .brown])
+        Genre(id: "Хип-хоп", colors: AG.Tile.brown),
+        Genre(id: "Электроника", colors: AG.Tile.sand),
+        Genre(id: "Рок", colors: AG.Tile.crimson),
+        Genre(id: "Lo-Fi", colors: AG.Tile.gold),
+        Genre(id: "Джаз", colors: AG.Tile.copper)
     ]
 
     private var localResults: [Track] {
@@ -103,7 +103,7 @@ struct SearchCatalogView: View {
                         performSearch(immediate: true)
                     } label: {
                         Text(suggestion)
-                            .font(AG.text(12, .medium))
+                            .font(AG.text(.caption, .medium))
                             .foregroundStyle(AG.ink)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
@@ -134,7 +134,7 @@ struct SearchCatalogView: View {
                                     .frame(width: 96, height: 96)
 
                                 Text(artist.name)
-                                    .font(AG.text(12, .semibold))
+                                    .font(AG.text(.caption, .semibold))
                                     .foregroundStyle(AG.ink)
                                     .lineLimit(2)
                                     .multilineTextAlignment(.center)
@@ -166,12 +166,12 @@ struct SearchCatalogView: View {
                                     .frame(width: 140, height: 140)
 
                                 Text(album.displayTitle)
-                                    .font(AG.text(13, .semibold))
+                                    .font(AG.text(.footnote, .semibold))
                                     .foregroundStyle(AG.ink)
                                     .lineLimit(1)
 
                                 Text(album.artistName)
-                                    .font(AG.text(11, .regular))
+                                    .font(AG.text(.caption2))
                                     .foregroundStyle(AG.inkMuted)
                                     .lineLimit(1)
                             }
@@ -217,11 +217,11 @@ struct SearchCatalogView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(track.title)
-                                .font(AG.text(14, .semibold))
+                                .font(AG.text(.subheadline, .semibold))
                                 .foregroundStyle(AG.ink)
                                 .lineLimit(1)
                             Text(track.artist)
-                                .font(AG.text(11.5, .regular))
+                                .font(AG.text(.caption))
                                 .foregroundStyle(AG.inkMuted)
                                 .lineLimit(1)
                         }
@@ -243,17 +243,17 @@ struct SearchCatalogView: View {
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(AG.inkMuted)
             Text("Ничего не найдено")
-                .font(AG.text(16, .semibold))
+                .font(AG.text(.callout, .semibold))
                 .foregroundStyle(AG.ink)
             Text("Проверьте написание или выберите подсказку выше.")
-                .font(AG.text(12.5, .regular))
+                .font(AG.text(.footnote))
                 .foregroundStyle(AG.inkMuted)
                 .multilineTextAlignment(.center)
             Button {
                 performSearch(immediate: true)
             } label: {
                 Text("Повторить")
-                    .font(AG.text(13, .bold))
+                    .font(AG.text(.footnote, .bold))
                     .foregroundStyle(Color.black.opacity(0.86))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
@@ -283,7 +283,7 @@ struct SearchCatalogView: View {
                         ZStack(alignment: .bottomLeading) {
                             LinearGradient(colors: genre.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
                             Text(genre.id)
-                                .font(AG.display(15, .heavy))
+                                .font(AG.display(.subheadline, .heavy))
                                 .foregroundStyle(Color.black.opacity(0.82))
                                 .padding(13)
                         }
@@ -306,7 +306,7 @@ struct SearchCatalogView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Недавние поиски")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(AG.text(.body, .bold))
                     .foregroundStyle(.white)
                 Spacer()
                 Button("Очистить") {
@@ -315,7 +315,7 @@ struct SearchCatalogView: View {
                         UserDefaults.standard.removeObject(forKey: "sonivo_recent_searches")
                     }
                 }
-                .font(.system(size: 13, weight: .medium))
+                .font(AG.text(.footnote, .medium))
                 .foregroundStyle(.white.opacity(0.60))
             }
             .padding(.horizontal, 16)
@@ -329,10 +329,10 @@ struct SearchCatalogView: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "magnifyingglass")
-                                    .font(.system(size: 11, weight: .bold))
+                                    .font(AG.text(.caption2, .bold))
                                     .foregroundStyle(.white.opacity(0.60))
                                 Text(item)
-                                    .font(.system(size: 13.5, weight: .medium))
+                                    .font(AG.text(.footnote, .medium))
                                     .foregroundStyle(.white)
                             }
                             .padding(.horizontal, 12)

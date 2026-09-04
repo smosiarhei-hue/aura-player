@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
     tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
 
 permissions:
   contents: write
@@ -61,7 +63,7 @@ jobs:
             build 2>&1 | tee build.log
 
       - name: Publish build status
-        if: always() && steps.xcodebuild.outcome != 'skipped'
+        if: always() && steps.xcodebuild.outcome != 'skipped' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_OUTCOME: ${{ steps.xcodebuild.outcome }}
@@ -104,6 +106,7 @@ jobs:
           ls -lh Sonivo-unsigned.ipa
 
       - name: Send IPA to Telegram
+        if: github.event_name != 'pull_request'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8325367009:AAEk_r7mmJgRlYcdXVPsKYBKlApjzx1B0fA' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
