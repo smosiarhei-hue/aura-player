@@ -62,7 +62,7 @@ private struct Fixture: Sendable {
     let directory: URL
 
     static func make(statusCodes: [Int]) async throws -> Fixture {
-        let directory = try makeTemporaryDirectory()
+        let directory = try makeTestTemporaryDirectory()
         let trackID = TrackID(raw: "100:200")
         let first = option(codec: .mp3, bitrate: 320, suffix: "first")
         let refreshed = option(codec: .mp3, bitrate: 320, suffix: "refreshed")
@@ -95,12 +95,7 @@ private struct Fixture: Sendable {
     }
 
     func cleanup() {
-        guard FileManager.default.fileExists(atPath: directory.path) else { return }
-        do {
-            try FileManager.default.removeItem(at: directory)
-        } catch {
-            assertionFailure("Failed to remove test directory: \(error)")
-        }
+        removeTestItemIfPresent(at: directory)
     }
 }
 
@@ -154,7 +149,7 @@ private actor MockDownloader: HTTPDownloadClient {
     func download(from url: URL) throws -> HTTPDownloadResponse {
         downloads += 1
         let status = statusCodes.isEmpty ? 500 : statusCodes.removeFirst()
-        let temporaryURL = try makeTemporaryFile(bytes: 32)
+        let temporaryURL = try makeTestTemporaryFile(bytes: 32)
         return HTTPDownloadResponse(
             temporaryFileURL: temporaryURL,
             statusCode: status
