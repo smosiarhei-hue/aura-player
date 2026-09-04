@@ -268,7 +268,7 @@ struct LibraryView: View {
                     Text("Тест AutoMix на локальных файлах")
                         .font(.subheadline.weight(.semibold))
                     Text(count >= 2
-                         ? "Готово: \(count) локальных треков. Запустим первые два через AutoMix."
+                         ? "Быстрый тест: запустим локальную очередь и сразу подведём первый трек к зоне сведения."
                          : "Загрузите минимум 2 локальных аудио, чтобы проверить переход без стримов.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -280,7 +280,7 @@ struct LibraryView: View {
             Button {
                 startLocalAutoMixTest()
             } label: {
-                Label("Начать локальный тест", systemImage: "play.circle.fill")
+                Label("Быстрый тест перехода", systemImage: "forward.end.circle.fill")
                     .font(.caption.weight(.bold))
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -317,10 +317,22 @@ struct LibraryView: View {
 
     private func startLocalAutoMixTest() {
         let local = localAudioTracks
-        guard local.count >= 2 else { return }
+        guard let first = local.first, local.count >= 2 else { return }
         player.transitionMode = .automix
-        player.play(local[0], newQueue: local)
-        SonivoDiagnostics.log("Started UI local AutoMix test with \(local.count) local tracks", tag: "AUTOMIX")
+        player.play(first, newQueue: local)
+
+        let previewStart = max(0, first.duration - 42)
+        SonivoDiagnostics.log(
+            "Started quick UI local AutoMix test with \(local.count) local tracks; seeking \(first.title) to \(String(format: "%.1f", previewStart))s / \(String(format: "%.1f", first.duration))s so the transition is heard immediately",
+            tag: "AUTOMIX"
+        )
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard player.currentTrack?.id == first.id else { return }
+            player.seek(to: previewStart)
+            SonivoDiagnostics.log("Quick UI local AutoMix test seek applied", tag: "AUTOMIX")
+        }
     }
 
     private func sendAutoMixLogs() {
