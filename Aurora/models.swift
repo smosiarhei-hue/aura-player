@@ -102,11 +102,28 @@ final class AutoMixDJEngine {
             value = startValue + delta * segment
         }
 
+        if target == "target", parameter == "volume" {
+            // User-device logs showed a real ENERGY_BLEND transition, but it
+            // still sounded like the old hand-off: the incoming lane was too
+            // quiet until the final promotion, then it felt like it jumped to
+            // maximum. For AutoMix we now enforce an audible equal-power floor
+            // across the whole planned window. This keeps AI/local envelopes,
+            // but prevents any plan from hiding the next track until the end.
+            let total = frames.reduce(0.0) { max($0, $1.time + max(0, $1.duration)) }
+            if total > 0.001 {
+                let p = min(1.0, max(0.0, time / total))
+                let equalPower = sin(p * (.pi / 2))
+                let audibleFloor = 0.16 + equalPower * 0.84
+                value = max(value, audibleFloor)
+            }
+            value = min(1.0, max(0.0, value))
+        }
+
         if parameter == "reverb", value > 0 {
             // Wet/dry values below ~30% were too subtle on phone speakers and
             // made the transition feel like a plain fade. Keep it bounded but
             // intentionally audible for the UI AutoMix test.
-            value = min(1.0, value * 1.7 + 0.08)
+            value = min(1.0, value * 2.2 + 0.15)
         }
 
         return Float(value)
