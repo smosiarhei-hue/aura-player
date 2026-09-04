@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import AudioEngineCore
+import MixDiagnostics
 import UIKit
 
 @MainActor
