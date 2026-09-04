@@ -27,16 +27,14 @@ public actor MixDiagnosticsStore {
         preferredBufferDuration: Double,
         actualBufferDuration: Double
     ) {
-        record(MixDiagnosticEvent(
-            category: "audio-session",
-            message: String(
-                format: "preferredRate=%.0f actualRate=%.0f preferredBuffer=%.4f actualBuffer=%.4f",
-                preferredSampleRate,
-                actualSampleRate,
-                preferredBufferDuration,
-                actualBufferDuration
-            )
-        ))
+        let message = String(
+            format: "preferredRate=%.0f actualRate=%.0f preferredBuffer=%.4f actualBuffer=%.4f",
+            preferredSampleRate,
+            actualSampleRate,
+            preferredBufferDuration,
+            actualBufferDuration
+        )
+        record(MixDiagnosticEvent(category: "audio-session", message: message))
     }
 
     public func allEvents() -> [MixDiagnosticEvent] {
@@ -54,20 +52,28 @@ public actor MixDiagnosticsStore {
         let playback = await coordinator.snapshot()
         let engine = await coordinator.engineSnapshot()
         let formatter = ISO8601DateFormatter()
-        var lines = [
-            "Sonivo AutoMix V2 diagnostics",
-            "Generated: \(formatter.string(from: generatedAt))",
-            "Phase: \(String(describing: playback.phase))",
-            "Active deck: \(playback.activeDeck.rawValue)",
-            "First sound latency: \(playback.firstSoundLatencySeconds.map(String.init) ?? "n/a") s",
-            "Engine running: \(engine.isRunning)",
-            "Engine format: \(Int(engine.sampleRate)) Hz, \(engine.channels) ch",
-            "PCM preload estimate: \(PCMPreloadPolicy().estimatedTotalQueuedBytes) bytes",
-            "Events:"
-        ]
-        lines.append(contentsOf: events.map {
-            "[\(formatter.string(from: $0.timestamp))] [\($0.level.rawValue)] [\($0.category)] \($0.message)"
-        })
+        let latencyText: String
+        if let latency = playback.firstSoundLatencySeconds {
+            latencyText = String(format: "%.3f", latency)
+        } else {
+            latencyText = "n/a"
+        }
+
+        var lines: [String] = []
+        lines.append("Sonivo AutoMix V2 diagnostics")
+        lines.append("Generated: \(formatter.string(from: generatedAt))")
+        lines.append("Phase: \(String(describing: playback.phase))")
+        lines.append("Active deck: \(playback.activeDeck.rawValue)")
+        lines.append("First sound latency: \(latencyText) s")
+        lines.append("Engine running: \(engine.isRunning)")
+        lines.append("Engine format: \(Int(engine.sampleRate)) Hz, \(engine.channels) ch")
+        lines.append("PCM preload estimate: \(PCMPreloadPolicy().estimatedTotalQueuedBytes) bytes")
+        lines.append("Events:")
+
+        for event in events {
+            let timestamp = formatter.string(from: event.timestamp)
+            lines.append("[\(timestamp)] [\(event.level.rawValue)] [\(event.category)] \(event.message)")
+        }
         return lines.joined(separator: "\n")
     }
 }
