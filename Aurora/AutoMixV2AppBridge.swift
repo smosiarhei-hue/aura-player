@@ -81,6 +81,16 @@ final class AutoMixV2Runtime {
         await play(track, queue: PlayerCore.shared.queue)
     }
 
+    func replaceQueue(_ newQueue: [Track]) {
+        guard !newQueue.isEmpty else { return }
+        queue = newQueue
+        if let currentTrack {
+            currentIndex = newQueue.firstIndex { $0.id == currentTrack.id }
+        } else {
+            currentIndex = nil
+        }
+    }
+
     func play(_ track: Track, queue newQueue: [Track]) async {
         guard let coordinator, let compositeSource else {
             lastError = "AutoMix V2 audio engine недоступен"
@@ -142,8 +152,12 @@ final class AutoMixV2Runtime {
     func play() async {
         if currentTrack == nil { await adoptLegacyTrackIfNeeded(); return }
         guard let coordinator else { return }
-        do { try await coordinator.resume(); isPlaying = true }
-        catch { lastError = Self.userMessage(for: error) }
+        do {
+            try await coordinator.resume()
+            isPlaying = true
+        } catch {
+            lastError = Self.userMessage(for: error)
+        }
     }
 
     func pause() async {
@@ -177,8 +191,11 @@ final class AutoMixV2Runtime {
 
     func seek(to seconds: Double) async {
         guard let coordinator else { return }
-        do { try await coordinator.seek(to: seconds) }
-        catch { lastError = Self.userMessage(for: error) }
+        do {
+            try await coordinator.seek(to: seconds)
+        } catch {
+            lastError = Self.userMessage(for: error)
+        }
     }
 
     func interruptionBegan() async {
@@ -192,13 +209,18 @@ final class AutoMixV2Runtime {
         do {
             try await coordinator.handleInterruptionEnded(systemShouldResume: shouldResume)
             isPlaying = shouldResume
-        } catch { lastError = Self.userMessage(for: error) }
+        } catch {
+            lastError = Self.userMessage(for: error)
+        }
     }
 
     func engineConfigurationChanged() async {
         guard let coordinator else { return }
-        do { try await coordinator.handleEngineConfigurationChange() }
-        catch { lastError = Self.userMessage(for: error) }
+        do {
+            try await coordinator.handleEngineConfigurationChange()
+        } catch {
+            lastError = Self.userMessage(for: error)
+        }
     }
 
     func refreshDiagnostics() async {
@@ -219,17 +241,22 @@ final class AutoMixV2Runtime {
     private static func yandexTrackID(from track: Track) -> String? {
         if let parsed = YandexMusicService.ymId(fromFileName: track.fileName) { return parsed }
         guard let raw = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty, URL(string: raw)?.scheme == nil else { return nil }
+              !raw.isEmpty,
+              URL(string: raw)?.scheme == nil else { return nil }
         return raw
     }
 
     private static func userMessage(for error: Error) -> String {
         guard let sourceError = error as? TrackSourceError else { return String(describing: error) }
         switch sourceError {
-        case .authenticationRequired: return "Нужно заново войти в Яндекс Музыку"
-        case .trackUnavailable, .noDownloadOption: return "Трек сейчас недоступен для загрузки"
-        case .httpStatus(let code): return "Ошибка загрузки Яндекс Музыки: HTTP \(code)"
-        default: return String(describing: sourceError)
+        case .authenticationRequired:
+            return "Нужно заново войти в Яндекс Музыку"
+        case .trackUnavailable, .noDownloadOption:
+            return "Трек сейчас недоступен для загрузки"
+        case .httpStatus(let code):
+            return "Ошибка загрузки Яндекс Музыки: HTTP \(code)"
+        default:
+            return String(describing: sourceError)
         }
     }
 }
@@ -244,10 +271,18 @@ final class PlaybackCommandRouter {
         guard !installed else { return }
         installed = true
         let center = MPRemoteCommandCenter.shared()
-        let commands: [MPRemoteCommand] = [center.playCommand, center.pauseCommand,
-            center.togglePlayPauseCommand, center.nextTrackCommand,
-            center.previousTrackCommand, center.changePlaybackPositionCommand]
-        commands.forEach { $0.removeTarget(nil); $0.isEnabled = true }
+        let commands: [MPRemoteCommand] = [
+            center.playCommand,
+            center.pauseCommand,
+            center.togglePlayPauseCommand,
+            center.nextTrackCommand,
+            center.previousTrackCommand,
+            center.changePlaybackPositionCommand
+        ]
+        commands.forEach {
+            $0.removeTarget(nil)
+            $0.isEnabled = true
+        }
 
         center.playCommand.addTarget { _ in Task { @MainActor in Self.shared.play() }; return .success }
         center.pauseCommand.addTarget { _ in Task { @MainActor in Self.shared.pause() }; return .success }
@@ -264,31 +299,56 @@ final class PlaybackCommandRouter {
     func play(_ track: Track, queue: [Track]) {
         if AutoMixEngineSelectionStore.shared.isV2Enabled {
             Task { await AutoMixV2Runtime.shared.play(track, queue: queue) }
-        } else { PlayerCore.shared.play(track, newQueue: queue) }
+        } else {
+            PlayerCore.shared.play(track, newQueue: queue)
+        }
     }
 
     func play() {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.play() } }
-        else { PlayerCore.shared.resume() }
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task { await AutoMixV2Runtime.shared.play() }
+        } else {
+            PlayerCore.shared.resume()
+        }
     }
+
     func pause() {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.pause() } }
-        else { PlayerCore.shared.pause() }
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task { await AutoMixV2Runtime.shared.pause() }
+        } else {
+            PlayerCore.shared.pause()
+        }
     }
+
     func toggle() {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.toggle() } }
-        else { PlayerCore.shared.togglePlay() }
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task { await AutoMixV2Runtime.shared.toggle() }
+        } else {
+            PlayerCore.shared.togglePlay()
+        }
     }
+
     func next() {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.next() } }
-        else { PlayerCore.shared.next() }
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task { await AutoMixV2Runtime.shared.next() }
+        } else {
+            PlayerCore.shared.next()
+        }
     }
+
     func previous() {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.previous() } }
-        else { PlayerCore.shared.previous() }
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task { await AutoMixV2Runtime.shared.previous() }
+        } else {
+            PlayerCore.shared.previous()
+        }
     }
+
     func seek(to seconds: Double) {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.seek(to: seconds) } }
-        else { PlayerCore.shared.seek(to: seconds) }
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task { await AutoMixV2Runtime.shared.seek(to: seconds) }
+        } else {
+            PlayerCore.shared.seek(to: seconds)
+        }
     }
 }
