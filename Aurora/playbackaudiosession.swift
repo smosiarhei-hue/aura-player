@@ -81,38 +81,76 @@ final class PlaybackAudioSessionCoordinator {
     private func configure() {
         let session = AVAudioSession.sharedInstance()
         let usesV2 = AutoMixEngineSelectionStore.shared.isV2Enabled
-        do {
-            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [.allowAirPlay, .allowBluetooth, .allowBluetoothA2DP])
-            if usesV2 {
-                try session.setPreferredSampleRate(DualDeckAudioEngine.preferredSampleRate)
-                try session.setPreferredIOBufferDuration(DualDeckAudioEngine.preferredIOBufferDuration)
-            }
-            try session.setActive(true)
 
-            if usesV2 {
-                let preferredRate = DualDeckAudioEngine.preferredSampleRate
-                let preferredBuffer = DualDeckAudioEngine.preferredIOBufferDuration
-                let actualRate = session.sampleRate
-                let actualBuffer = session.ioBufferDuration
-                print("[AutoMix V2] audio session preferred=\(preferredRate)Hz/\(preferredBuffer)s actual=\(actualRate)Hz/\(actualBuffer)s")
-                Task {
-                    await AutoMixV2Runtime.shared.diagnostics.recordAudioSession(
-                        preferredSampleRate: preferredRate,
-                        actualSampleRate: actualRate,
-                        preferredBufferDuration: preferredBuffer,
-                        actualBufferDuration: actualBuffer
-                    )
-                }
-            }
+        // .allowBluetooth is an HFP/input option intended for playAndRecord.
+        // Combining it with the playback category and long-form routing can
+        // return kAudio_ParamError (-50), especially on newer iOS versions.
+        do {
+            try session.setCategory(
+                .playback,
+                mode: .default,
+                policy: .longFormAudio,
+                options: [.allowAirPlay]
+            )
         } catch {
-            print("Playback audio session error: \(error)")
-            if usesV2 {
-                Task {
-                    await AutoMixV2Runtime.shared.diagnostics.record(
-                        MixDiagnosticEvent(level: .error, category: "audio-session", message: error.localizedDescription)
-                    )
-                }
+            report(error, step: "setCategory")
+        }
+
+        if usesV2 {
+            do {
+                try session.setPreferredSampleRate(DualDeckAudioEngine.preferredSampleRate)
+            } catch {
+                report(error, step: "setPreferredSampleRate")
             }
+
+            do {
+                try session.setPreferredIOBufferDuration(DualDeckAudioEngine.preferredIOBufferDuration)
+            } catch {
+                report(error, step: "setPreferredIOBufferDuration")
+            }
+        }
+
+        do {
+            try session.setActive(true)
+        } catch {
+            report(error, step: "setActive")
+        }
+
+        guard usesV2 else { return }
+
+        let preferredRate = DualDeckAudioEngine.preferredSampleRate
+        let preferredBuffer = DualDeckAudioEngine.preferredIOBufferDuration
+        let actualRate = session.sampleRate
+        let actualBuffer = session.ioBufferDuration
+        let route = session.currentRoute.outputs
+            .map { "\($0.portType.rawValue):\($0.portName)" }
+            .joined(separator: ", ")
+
+        print("[AutoMix V2] audio session preferred=\(preferredRate)Hz/\(preferredBuffer)s actual=\(actualRate)Hz/\(actualBuffer)s route=\(route)")
+        Task {
+            await AutoMixV2Runtime.shared.diagnostics.recordAudioSession(
+                preferredSampleRate: preferredRate,
+                actualSampleRate: actualRate,
+                preferredBufferDuration: preferredBuffer,
+                actualBufferDuration: actualBuffer
+            )
+            await AutoMixV2Runtime.shared.diagnostics.record(
+                MixDiagnosticEvent(
+                    category: "audio-session",
+                    message: "Configured route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s"
+                )
+            )
+        }
+    }
+
+    private func report(_ error: Error, step: String) {
+        let message = "\(step) failed: \(error.localizedDescription)"
+        print("[AutoMix V2] audio session \(message)")
+        guard AutoMixEngineSelectionStore.shared.isV2Enabled else { return }
+        Task {
+            await AutoMixV2Runtime.shared.diagnostics.record(
+                MixDiagnosticEvent(level: .error, category: "audio-session", message: message)
+            )
         }
     }
 }
