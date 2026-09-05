@@ -17,6 +17,7 @@ final class AutoMixEngineSelectionStore {
         didSet {
             UserDefaults.standard.set(isV2Enabled, forKey: Self.defaultsKey)
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+            Task { await AutoMixV2Runtime.shared.engineSelectionChanged(isV2Enabled: isV2Enabled) }
         }
     }
 
@@ -30,7 +31,9 @@ final class AutoMixEngineSelectionStore {
 final class AutoMixV2Runtime {
     static let shared = AutoMixV2Runtime()
 
-    private let localSource = LocalTrackSource()
+    private let localSource: LocalTrackSource
+    private let yandexClient: AutoMixV2YandexDownloadClient
+    private let compositeSource: CompositeTrackSource?
     private let coordinator: PlaybackCoordinator?
     let diagnostics = MixDiagnosticsStore()
 
@@ -43,14 +46,32 @@ final class AutoMixV2Runtime {
     private(set) var diagnosticReport = "Нажмите «Обновить отчёт»."
 
     private init() {
+        let local = LocalTrackSource()
+        let client = AutoMixV2YandexDownloadClient()
+        localSource = local
+        yandexClient = client
+
         do {
+            let cache = try TrackFileCache(directory: TrackFileCache.defaultDirectory())
+            let yandex = YandexTrackSource(client: client, cache: cache, maximumParallelDownloads: 2)
+            let composite = CompositeTrackSource(localSource: local, yandexSource: yandex)
+            compositeSource = composite
             coordinator = PlaybackCoordinator(
-                source: localSource,
+                source: composite,
                 engine: try DualDeckAudioEngine()
             )
         } catch {
+            compositeSource = nil
             coordinator = nil
             lastError = String(describing: error)
+        }
+    }
+
+    func engineSelectionChanged(isV2Enabled: Bool) async {
+        if isV2Enabled {
+            await adoptLegacyTrackIfNeeded()
+        } else {
+            await stop()
         }
     }
 
@@ -60,13 +81,8 @@ final class AutoMixV2Runtime {
     }
 
     func play(_ track: Track, queue newQueue: [Track]) async {
-        guard let coordinator else {
+        guard let coordinator, let compositeSource else {
             lastError = "AutoMix V2 audio engine недоступен"
-            return
-        }
-        guard !track.isStream, track.url.isFileURL else {
-            lastError = "Потоковый TrackSource будет подключён в следующей части шага 1c"
-            await diagnostics.record(MixDiagnosticEvent(level: .warning, category: "source", message: "Streaming track rejected by local TrackSource bridge"))
             return
         }
 
@@ -74,9 +90,30 @@ final class AutoMixV2Runtime {
         currentIndex = queue.firstIndex(where: { $0.id == track.id })
         currentTrack = track
         isLoading = true
+        isPlaying = false
         lastError = nil
 
-        let id = TrackID(raw: track.id.uuidString)
+        let id: TrackID
+        let route: TrackSourceRoute
+        if track.isStream {
+            guard let yandexID = Self.yandexTrackID(from: track) else {
+                lastError = "Не удалось определить ID трека Яндекс Музыки"
+                isLoading = false
+                await diagnostics.record(MixDiagnosticEvent(level: .error, category: "source", message: lastError ?? "Invalid Yandex track ID"))
+                return
+            }
+            id = TrackID(raw: yandexID)
+            route = .yandex
+        } else {
+            guard track.url.isFileURL else {
+                lastError = "Локальный трек не содержит прямой файловый URL"
+                isLoading = false
+                return
+            }
+            id = TrackID(raw: track.id.uuidString)
+            route = .local
+        }
+
         let meta = TrackMeta(
             id: id,
             title: track.title,
@@ -85,16 +122,25 @@ final class AutoMixV2Runtime {
             durationSec: track.duration,
             artworkURL: track.coverURL.flatMap(URL.init(string:))
         )
-        await localSource.register(LocalTrackRecord(metadata: meta, fileURL: track.url))
+
+        if route == .local {
+            await localSource.register(LocalTrackRecord(metadata: meta, fileURL: track.url))
+        } else {
+            await yandexClient.register(meta)
+        }
+        await compositeSource.register(id, route: route)
+
+        // Legacy must be silent before the V2 download/prepare pipeline starts.
         PlayerCore.shared.stopAndClear()
+        await diagnostics.record(MixDiagnosticEvent(category: "source", message: "Loading \(route.rawValue) track \(track.title)"))
 
         do {
             try await coordinator.play(trackID: id)
             isPlaying = true
-            await diagnostics.record(MixDiagnosticEvent(category: "playback", message: "Started local track \(track.title)"))
+            await diagnostics.record(MixDiagnosticEvent(category: "playback", message: "Started \(route.rawValue) track \(track.title)"))
         } catch {
             isPlaying = false
-            lastError = String(describing: error)
+            lastError = Self.userMessage(for: error)
             await diagnostics.record(MixDiagnosticEvent(level: .error, category: "playback", message: lastError ?? "Unknown error"))
         }
         isLoading = false
@@ -110,7 +156,7 @@ final class AutoMixV2Runtime {
             try await coordinator.resume()
             isPlaying = true
         } catch {
-            lastError = String(describing: error)
+            lastError = Self.userMessage(for: error)
         }
     }
 
@@ -118,6 +164,16 @@ final class AutoMixV2Runtime {
         guard let coordinator else { return }
         await coordinator.pause()
         isPlaying = false
+    }
+
+    func stop() async {
+        guard let coordinator else { return }
+        await coordinator.stop()
+        isPlaying = false
+        isLoading = false
+        currentTrack = nil
+        currentIndex = nil
+        queue = []
     }
 
     func toggle() async {
@@ -146,7 +202,7 @@ final class AutoMixV2Runtime {
         do {
             try await coordinator.seek(to: seconds)
         } catch {
-            lastError = String(describing: error)
+            lastError = Self.userMessage(for: error)
         }
     }
 
@@ -162,7 +218,7 @@ final class AutoMixV2Runtime {
             try await coordinator.handleInterruptionEnded(systemShouldResume: shouldResume)
             isPlaying = shouldResume
         } catch {
-            lastError = String(describing: error)
+            lastError = Self.userMessage(for: error)
         }
     }
 
@@ -171,7 +227,7 @@ final class AutoMixV2Runtime {
         do {
             try await coordinator.handleEngineConfigurationChange()
         } catch {
-            lastError = String(describing: error)
+            lastError = Self.userMessage(for: error)
         }
     }
 
@@ -181,6 +237,34 @@ final class AutoMixV2Runtime {
             return
         }
         diagnosticReport = await diagnostics.textReport(coordinator: coordinator)
+    }
+
+    private static func yandexTrackID(from track: Track) -> String? {
+        if let parsed = YandexMusicService.ymId(fromFileName: track.fileName) {
+            return parsed
+        }
+        guard let raw = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty,
+              URL(string: raw)?.scheme == nil else {
+            return nil
+        }
+        return raw
+    }
+
+    private static func userMessage(for error: Error) -> String {
+        guard let sourceError = error as? TrackSourceError else {
+            return String(describing: error)
+        }
+        switch sourceError {
+        case .authenticationRequired:
+            return "Нужно заново войти в Яндекс Музыку"
+        case .trackUnavailable, .noDownloadOption:
+            return "Трек сейчас недоступен для загрузки"
+        case .httpStatus(let code):
+            return "Ошибка загрузки Яндекс Музыки: HTTP \(code)"
+        default:
+            return String(describing: sourceError)
+        }
     }
 }
 
@@ -237,6 +321,14 @@ final class PlaybackCommandRouter {
             let seconds = event.positionTime
             Task { @MainActor in PlaybackCommandRouter.shared.seek(to: seconds) }
             return .success
+        }
+    }
+
+    func play(_ track: Track, queue: [Track]) {
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task { await AutoMixV2Runtime.shared.play(track, queue: queue) }
+        } else {
+            PlayerCore.shared.play(track, newQueue: queue)
         }
     }
 
