@@ -13,115 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  patch-playercore:
-    if: ${{ !contains(github.event.head_commit.message, '[automix-patched]') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feature/automix-engine-v2
-      - name: Route legacy UI through AutoMix V2
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def once(text, old, new, label):
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{label}: expected 1 match, got {count}")
-              return text.replace(old, new, 1)
-
-          path = Path("Aurora/playercore.swift")
-          text = path.read_text()
-          edits = [
-              ("toggle", "    func togglePlay() {\n        if currentTrack == nil {", "    func togglePlay() {\n        if AutoMixEngineSelectionStore.shared.isV2Enabled {\n            Task { await AutoMixV2Runtime.shared.toggle() }\n            return\n        }\n        if currentTrack == nil {"),
-              ("play", "    func play(_ track: Track, newQueue: [Track]? = nil) {\n        flushListeningStats()", "    func play(_ track: Track, newQueue: [Track]? = nil) {\n        if AutoMixEngineSelectionStore.shared.isV2Enabled {\n            Task { await AutoMixV2Runtime.shared.play(track, queue: newQueue ?? [track]) }\n            return\n        }\n        flushListeningStats()"),
-              ("pause", "    func pause() {\n        guard isPlaying else { return }", "    func pause() {\n        if AutoMixEngineSelectionStore.shared.isV2Enabled {\n            Task { await AutoMixV2Runtime.shared.pause() }\n            return\n        }\n        guard isPlaying else { return }"),
-              ("resume", "    func resume() {\n        guard !isPlaying, let track = currentTrack else { return }", "    func resume() {\n        if AutoMixEngineSelectionStore.shared.isV2Enabled {\n            Task { await AutoMixV2Runtime.shared.play() }\n            return\n        }\n        guard !isPlaying, let track = currentTrack else { return }"),
-              ("next", "    func next() {\n        cancelTransition()", "    func next() {\n        if AutoMixEngineSelectionStore.shared.isV2Enabled {\n            Task { await AutoMixV2Runtime.shared.next() }\n            return\n        }\n        cancelTransition()"),
-              ("previous", "    func previous() {\n        cancelTransition()", "    func previous() {\n        if AutoMixEngineSelectionStore.shared.isV2Enabled {\n            Task { await AutoMixV2Runtime.shared.previous() }\n            return\n        }\n        cancelTransition()"),
-              ("seek", "    func seek(to seconds: Double) {\n        cancelTransition()", "    func seek(to seconds: Double) {\n        if AutoMixEngineSelectionStore.shared.isV2Enabled {\n            Task { await AutoMixV2Runtime.shared.seek(to: seconds) }\n            return\n        }\n        cancelTransition()"),
-          ]
-          for label, old, new in edits:
-              text = once(text, old, new, label)
-
-          marker = "    func stopAndClear() {\n"
-          external = '''    func prepareForExternalPlayback(_ track: Track, queue externalQueue: [Track]) {
-              stopLegacyPlaybackForExternalEngine()
-              currentTrack = track
-              queue = externalQueue.isEmpty ? [track] : externalQueue
-              streamDuration = track.duration
-              progress = 0
-              pausedProgress = 0
-              isPlaying = false
-              updateNowPlayingInfo()
-          }
-
-          func updateExternalPlaybackState(isPlaying externalIsPlaying: Bool, progress externalProgress: Double? = nil) {
-              isPlaying = externalIsPlaying
-              if let externalProgress {
-                  progress = max(0, externalProgress)
-                  pausedProgress = progress
-              }
-              updateNowPlayingInfo()
-          }
-
-          func clearExternalPlaybackPresentation() {
-              stopLegacyPlaybackForExternalEngine()
-              currentTrack = nil
-              queue = []
-              progress = 0
-              pausedProgress = 0
-              streamDuration = 0
-              isPlaying = false
-              updateNowPlayingInfo()
-          }
-
-          private func stopLegacyPlaybackForExternalEngine() {
-              generation += 1
-              streamingPlayerA.pause()
-              streamingPlayerB.pause()
-              streamingPlayerA.replaceCurrentItem(with: nil)
-              streamingPlayerB.replaceCurrentItem(with: nil)
-              playerA.stop()
-              playerB.stop()
-              stopBeatLoop()
-              activeAudioFile = nil
-              incomingAudioFile = nil
-              metadataTrack = nil
-              metadataSwapped = false
-              anchorDate = nil
-              cancelTransition()
-              SpectrumAnalyzer.shared.reset()
-          }
-
-'''
-          text = once(text, marker, external + marker, "external presentation")
-          path.write_text(text)
-
-          path = Path("Aurora/AutoMixV2AppBridge.swift")
-          text = path.read_text()
-          text = once(text, "        PlayerCore.shared.stopAndClear()\n        await diagnostics.record", "        PlayerCore.shared.prepareForExternalPlayback(track, queue: queue)\n        await diagnostics.record", "runtime prepare")
-          text = once(text, "            isPlaying = true\n            isLoading = false\n            PlayerCore.shared.updateExternalPlaybackState(isPlaying: true)\n", "            isPlaying = true\n            isLoading = false\n            PlayerCore.shared.updateExternalPlaybackState(isPlaying: true)\n", "already synchronized start") if "PlayerCore.shared.updateExternalPlaybackState(isPlaying: true)" in text else once(text, "            isPlaying = true\n            isLoading = false\n            await diagnostics.record", "            isPlaying = true\n            isLoading = false\n            PlayerCore.shared.updateExternalPlaybackState(isPlaying: true)\n            await diagnostics.record", "runtime start")
-          if "try await coordinator.resume()\n            isPlaying = true\n            PlayerCore.shared.updateExternalPlaybackState" not in text:
-              text = once(text, "            try await coordinator.resume()\n            isPlaying = true", "            try await coordinator.resume()\n            isPlaying = true\n            PlayerCore.shared.updateExternalPlaybackState(isPlaying: true)", "runtime resume")
-          if "await coordinator.pause()\n        isPlaying = false\n        PlayerCore.shared.updateExternalPlaybackState" not in text:
-              text = once(text, "        await coordinator.pause()\n        isPlaying = false", "        await coordinator.pause()\n        isPlaying = false\n        PlayerCore.shared.updateExternalPlaybackState(isPlaying: false)", "runtime pause")
-          if "PlayerCore.shared.clearExternalPlaybackPresentation()" not in text:
-              text = once(text, "        queue = []\n    }\n\n    func toggle()", "        queue = []\n        PlayerCore.shared.clearExternalPlaybackPresentation()\n    }\n\n    func toggle()", "runtime stop")
-          path.write_text(text)
-          PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Aurora/playercore.swift Aurora/AutoMixV2AppBridge.swift
-          git commit -m "Route all player controls through AutoMix V2 [automix-patched]"
-          git push origin HEAD:feature/automix-engine-v2
-
   verify:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
       - name: Verify package, project, and tests
         id: verify
         shell: bash
@@ -132,15 +28,37 @@ jobs:
           swift --version 2>&1 | tee -a verify.log
           brew install xcodegen 2>&1 | tee -a verify.log
           BREW_STATUS=${PIPESTATUS[0]}
-          if [ "$BREW_STATUS" -ne 0 ]; then echo "VERIFY_STATUS=$BREW_STATUS" >> "$GITHUB_ENV"; exit 0; fi
+          if [ "$BREW_STATUS" -ne 0 ]; then
+            echo "VERIFY_STATUS=$BREW_STATUS" >> "$GITHUB_ENV"
+            exit 0
+          fi
           xcodegen generate 2>&1 | tee -a verify.log
           GENERATE_STATUS=${PIPESTATUS[0]}
-          if [ "$GENERATE_STATUS" -ne 0 ]; then echo "VERIFY_STATUS=$GENERATE_STATUS" >> "$GITHUB_ENV"; exit 0; fi
+          if [ "$GENERATE_STATUS" -ne 0 ]; then
+            echo "VERIFY_STATUS=$GENERATE_STATUS" >> "$GITHUB_ENV"
+            exit 0
+          fi
           SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); devices=[d for values in data["devices"].values() for d in values if d.get("isAvailable")]; print(devices[0]["udid"] if devices else "")')
-          if [ -z "$SIMULATOR_ID" ]; then echo "VERIFY_STATUS=1" >> "$GITHUB_ENV"; exit 0; fi
-          xcodebuild -project Sonivo.xcodeproj -scheme Sonivo -configuration Debug -sdk iphonesimulator -destination "id=$SIMULATOR_ID" -derivedDataPath derived-tests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" test 2>&1 | tee -a verify.log
-          echo "VERIFY_STATUS=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "No available iOS simulator found" | tee -a verify.log
+            echo "VERIFY_STATUS=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          xcodebuild \
+            -project Sonivo.xcodeproj \
+            -scheme Sonivo \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$SIMULATOR_ID" \
+            -derivedDataPath derived-tests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            test 2>&1 | tee -a verify.log
+          TEST_STATUS=${PIPESTATUS[0]}
+          echo "VERIFY_STATUS=$TEST_STATUS" >> "$GITHUB_ENV"
           exit 0
+
       - name: Publish verification diagnostic
         if: always()
         env:
@@ -148,12 +66,26 @@ jobs:
         shell: bash
         run: |
           STATUS=${VERIFY_STATUS:-1}
-          { printf "Commit: %s\nRun: %s\nStatus: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$STATUS"; grep -nE "error:|fatal error:|BUILD FAILED|TEST FAILED|failed|Xcode|Swift version" verify.log | tail -n 300 || tail -n 300 verify.log; } > latest.txt
-          TMP=$(mktemp -d); cd "$TMP"; git init
-          git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b ci-automix-v2; mkdir -p ci-logs
+          {
+            printf "Commit: %s\nRun: %s\nStatus: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$STATUS"
+            if [ -f verify.log ]; then
+              grep -nE "error:|fatal error:|BUILD FAILED|TEST FAILED|failed|Xcode|Swift version" verify.log | tail -n 300 || tail -n 300 verify.log
+            else
+              echo "verify.log was not produced"
+            fi
+          } > latest.txt
+
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b ci-automix-v2
+          mkdir -p ci-logs
           cp "$GITHUB_WORKSPACE/latest.txt" ci-logs/latest-verification.txt
-          git add ci-logs/latest-verification.txt; git commit -m "Record AutoMix V2 verification $GITHUB_RUN_ID"
+          git add ci-logs/latest-verification.txt
+          git commit -m "Record AutoMix V2 verification $GITHUB_RUN_ID"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin ci-automix-v2
+
           exit "$STATUS"
