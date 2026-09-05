@@ -59,15 +59,24 @@ enum AppTab: String, CaseIterable, Identifiable {
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
+    @State private var v2 = AutoMixV2Runtime.shared
+    @State private var engineSelection = AutoMixEngineSelectionStore.shared
     @State private var tab: AppTab = .wave
     @State private var showPlayer = false
     @Namespace private var playerTransition
 
-    /// Shared id so the mini-player artwork zooms into the full player.
     static let playerZoomID = "now-playing-artwork"
 
+    private var presentedTrack: Track? {
+        engineSelection.isV2Enabled ? v2.currentTrack : player.currentTrack
+    }
+
+    private var presentedIsPlaying: Bool {
+        engineSelection.isV2Enabled ? v2.isPlaying : player.isPlaying
+    }
+
     private var miniVisible: Bool {
-        guard let track = player.currentTrack else { return false }
+        guard let track = presentedTrack else { return false }
         return !track.title.isEmpty || track.isStream || track.duration > 0
     }
 
@@ -105,31 +114,29 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { oldPhase, phase in
             player.setApplicationSceneActive(phase == .active)
-            if phase == .active, oldPhase != .active, player.isPlaying {
+            if phase == .active, oldPhase != .active, presentedIsPlaying {
                 showPlayer = true
             }
         }
-        .onOpenURL { _ in
-            showPlayer = true
-        }
-        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in
-            showPlayer = true
-        }
-        .onContinueUserActivity("com.apple.mediaitem") { _ in
-            showPlayer = true
-        }
-        .onChange(of: player.currentTrack?.id) { _, _ in
-            rememberCurrentTrack()
-        }
+        .onOpenURL { _ in showPlayer = true }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in showPlayer = true }
+        .onContinueUserActivity("com.apple.mediaitem") { _ in showPlayer = true }
+        .onChange(of: player.currentTrack?.id) { _, _ in rememberCurrentTrack() }
+        .onChange(of: v2.currentTrack?.id) { _, _ in rememberCurrentTrack() }
         .onChange(of: player.isPlaying) { _, isPlaying in
-            if isPlaying {
+            if !engineSelection.isV2Enabled, isPlaying {
+                PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+            }
+        }
+        .onChange(of: v2.isPlaying) { _, isPlaying in
+            if engineSelection.isV2Enabled, isPlaying {
                 PlaybackAudioSessionCoordinator.shared.activateForPlayback()
             }
         }
     }
 
     private func rememberCurrentTrack() {
-        guard let track = player.currentTrack else { return }
+        guard let track = presentedTrack else { return }
         YandexMusicService.shared.remember(
             key: track.id.uuidString,
             artist: track.artist,
@@ -140,15 +147,19 @@ struct RootView: View {
 
 struct NativeMiniPlayer: View {
     @State private var player = PlayerCore.shared
+    @State private var v2 = AutoMixV2Runtime.shared
+    @State private var engineSelection = AutoMixEngineSelectionStore.shared
     @Binding var showPlayer: Bool
     let zoomNamespace: Namespace.ID
-    // Controls follow the system font size but stay inside the bottom accessory.
     @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
 
     private var tapSide: CGFloat { max(44, min(controlSide, 56)) }
+    private var track: Track? { engineSelection.isV2Enabled ? v2.currentTrack : player.currentTrack }
+    private var isPlaying: Bool { engineSelection.isV2Enabled ? v2.isPlaying : player.isPlaying }
+    private var isLoading: Bool { engineSelection.isV2Enabled && v2.isLoading }
 
     private var progress: Double {
-        guard player.duration > 0 else { return 0 }
+        guard !engineSelection.isV2Enabled, player.duration > 0 else { return 0 }
         return min(1, max(0, player.progress / player.duration))
     }
 
@@ -157,20 +168,20 @@ struct NativeMiniPlayer: View {
             HStack(spacing: 8) {
                 Button(action: open) {
                     HStack(spacing: 10) {
-                        MiniArtworkPulse(track: player.currentTrack, isPlaying: player.isPlaying)
+                        MiniArtworkPulse(track: track, isPlaying: isPlaying)
                             .frame(width: 44, height: 44)
                             .clipped()
                             .matchedTransitionSource(id: RootView.playerZoomID, in: zoomNamespace)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(player.currentTrack?.title ?? "")
+                            Text(track?.title ?? "")
                                 .font(AG.rounded(.headline, .semibold))
                                 .foregroundStyle(AG.ink)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.85)
-                            Text(player.currentTrack?.artist ?? "")
+                            Text(isLoading ? "Загрузка полного трека…" : (track?.artist ?? ""))
                                 .font(AG.rounded(.subheadline))
-                                .foregroundStyle(AG.inkMuted)
+                                .foregroundStyle(isLoading ? AG.amber : AG.inkMuted)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.85)
                         }
@@ -181,15 +192,22 @@ struct NativeMiniPlayer: View {
                 .buttonStyle(.plain)
 
                 Button(action: togglePlayback) {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(AG.glyph(.bold))
-                        .foregroundStyle(AG.ink)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: tapSide, height: tapSide)
-                        .contentShape(Circle())
+                    Group {
+                        if isLoading {
+                            ProgressView().tint(AG.ink)
+                        } else {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .font(AG.glyph(.bold))
+                                .foregroundStyle(AG.ink)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                    }
+                    .frame(width: tapSide, height: tapSide)
+                    .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизвести")
+                .disabled(isLoading)
+                .accessibilityLabel(isLoading ? "Загрузка трека" : (isPlaying ? "Пауза" : "Воспроизвести"))
 
                 Button(action: nextTrack) {
                     Image(systemName: "forward.fill")
@@ -199,14 +217,18 @@ struct NativeMiniPlayer: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(isLoading)
                 .accessibilityLabel("Следующий трек")
             }
 
-            ProgressView(value: progress)
-                .progressViewStyle(.linear)
-                .tint(AG.ink)
-                .scaleEffect(x: 1, y: 0.45)
-                .allowsHitTesting(false)
+            if isLoading {
+                ProgressView().progressViewStyle(.linear).tint(AG.amber)
+            } else {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .tint(AG.ink)
+                    .scaleEffect(x: 1, y: 0.45)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.leading, 10)
@@ -217,9 +239,7 @@ struct NativeMiniPlayer: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 10)
                 .onEnded { value in
-                    if value.translation.height < -20 {
-                        open()
-                    }
+                    if value.translation.height < -20 { open() }
                 }
         )
     }
@@ -232,13 +252,13 @@ struct NativeMiniPlayer: View {
     private func togglePlayback() {
         Haptics.tap(.medium)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        player.togglePlay()
+        PlaybackCommandRouter.shared.toggle()
     }
 
     private func nextTrack() {
         Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        player.next()
+        PlaybackCommandRouter.shared.next()
     }
 }
 
@@ -246,8 +266,6 @@ struct MiniArtworkPulse: View {
     let track: Track?
     let isPlaying: Bool
 
-    // The artwork itself is capped below the 44pt slot. That leaves a fixed
-    // clipping margin for the material accessory even at large Dynamic Type.
     @ScaledMetric(relativeTo: .body) private var artworkSide: CGFloat = 40
 
     private var side: CGFloat { min(40, max(36, artworkSide)) }
