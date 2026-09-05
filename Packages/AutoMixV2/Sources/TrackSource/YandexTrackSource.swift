@@ -91,7 +91,11 @@ public struct YandexTrackSource: TrackSource, Sendable {
             )
         case 401:
             throw TrackSourceError.authenticationRequired
-        case 403, 410 where retryAfterExpiredLink:
+        case 403, 410:
+            // Apply the retry limit to both statuses, not just the last pattern.
+            guard retryAfterExpiredLink else {
+                throw TrackSourceError.trackUnavailable
+            }
             let refreshed = try await client.downloadOptions(for: id, forceRefresh: true)
             guard let replacement = preferredOption(from: refreshed) else {
                 throw TrackSourceError.trackUnavailable
@@ -104,8 +108,6 @@ public struct YandexTrackSource: TrackSource, Sendable {
                 downloader: downloader,
                 cache: cache
             )
-        case 403, 410:
-            throw TrackSourceError.trackUnavailable
         default:
             throw TrackSourceError.httpStatus(response.statusCode)
         }
