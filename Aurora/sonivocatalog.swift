@@ -81,8 +81,6 @@ struct SonivoMoreButton: View {
     }
 }
 
-/// Обложка из сети. Color.clear + overlay гарантирует, что картинка никогда
-/// не раздувает родительскую разметку.
 struct RemoteArtwork: View {
     let urlString: String?
     var corner: CGFloat = 12
@@ -90,10 +88,10 @@ struct RemoteArtwork: View {
     var body: some View {
         Color.clear
             .overlay {
-                if let s = urlString, let url = URL(string: s) {
+                if let value = urlString, let url = URL(string: value) {
                     AsyncImage(url: url) { phase in
-                        if let img = phase.image {
-                            img.resizable().aspectRatio(contentMode: .fill)
+                        if let image = phase.image {
+                            image.resizable().aspectRatio(contentMode: .fill)
                         } else {
                             placeholder
                         }
@@ -120,15 +118,12 @@ struct RemoteArtwork: View {
     }
 }
 
-/// Обёртка для нумерованных списков — стабильный id без enumerated().
 struct RankedTrack: Identifiable {
     let rank: Int
     let item: YandexMusicService.YMTrackItem
     var id: String { String(rank) + "-" + item.id }
 }
 
-/// Строка трека: обложка и название запускают воспроизведение,
-/// Строка трека: вся карточка кликабельна в любую точку с пружинным откликом и живым эквалайзером
 struct ChartRowView: View {
     let rank: Int?
     let item: YandexMusicService.YMTrackItem
@@ -137,12 +132,12 @@ struct ChartRowView: View {
     @State private var player = PlayerCore.shared
 
     private var isCurrentPlaying: Bool {
-        guard let cur = player.currentTrack else { return false }
-        return cur.title == item.title && cur.artist == item.artistName
+        guard let current = player.currentTrack else { return false }
+        return current.title == item.title && current.artist == item.artistName
     }
 
     private var firstArtistId: String? {
-        guard let a = item.artists?.first, let id = a.id else { return nil }
+        guard let artist = item.artists?.first, let id = artist.id else { return nil }
         return String(id)
     }
 
@@ -156,10 +151,9 @@ struct ChartRowView: View {
                         .frame(width: 26, alignment: .center)
                 }
 
-                ZStack(alignment: .center) {
+                ZStack {
                     RemoteArtwork(urlString: item.coverUrlString, corner: 10)
                         .frame(width: 50, height: 50)
-
                     if isCurrentPlaying {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Color.black.opacity(0.45))
@@ -174,7 +168,6 @@ struct ChartRowView: View {
                         .foregroundStyle(isCurrentPlaying ? AG.amber : AG.ink)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-
                     Text(item.artistName)
                         .font(AG.text(.caption, .medium))
                         .foregroundStyle(isCurrentPlaying ? AG.amber.opacity(0.75) : AG.inkMuted)
@@ -185,16 +178,11 @@ struct ChartRowView: View {
                 Spacer(minLength: 0)
 
                 Menu {
-                    Button {
-                        SonivoPlay.download(item)
-                    } label: {
+                    Button { SonivoPlay.download(item) } label: {
                         Label("Скачать на iPhone", systemImage: "arrow.down.circle")
                     }
-
                     if let artistId = firstArtistId {
-                        NavigationLink {
-                            ArtistView(artistId: artistId)
-                        } label: {
+                        NavigationLink { ArtistView(artistId: artistId) } label: {
                             Label("К артисту", systemImage: "person.crop.circle")
                         }
                     }
@@ -222,86 +210,93 @@ struct ChartRowView: View {
 
 @MainActor
 enum SonivoPlay {
+    private static let router = PlaybackCommandRouter.shared
+
     static func track(_ item: YandexMusicService.YMTrackItem, in list: [YandexMusicService.YMTrackItem]) {
-        let ym = YandexMusicService.shared
-        ym.endStationSession()
+        let service = YandexMusicService.shared
+        service.endStationSession()
         let source = list.isEmpty ? [item] : list
-        let queue = source.map { ym.convertToTrack($0) }
-        PlayerCore.shared.play(ym.convertToTrack(item), newQueue: queue)
+        let queue = source.map { service.convertToTrack($0) }
+        router.play(service.convertToTrack(item), queue: queue)
     }
 
     static func wave(_ station: YandexMusicService.StationOption) {
-        let ym = YandexMusicService.shared
+        let service = YandexMusicService.shared
 
-        // «Итоги» — не ротор Яндекса, а персональный рекап по реальному
-        // вкусу пользователя (см. YandexMusicService.buildRecapQueue).
         if station.stationId == "app:recap" {
-            ym.endStationSession()
+            service.endStationSession()
             Task {
-                var tracks = await ym.buildRecapQueue(target: 40)
-                if tracks.isEmpty { tracks = (try? await ym.getChart()) ?? [] }
+                var tracks = await service.buildRecapQueue(target: 40)
+                if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
                 guard !tracks.isEmpty else { return }
-                let converted = tracks.map { ym.convertToTrack($0) }
-                let rankedQueue = UserTasteEngine.shared.filterAndRankWave(tracks: converted)
+                let rankedQueue = UserTasteEngine.shared.filterAndRankWave(
+                    tracks: tracks.map { service.convertToTrack($0) }
+                )
                 guard let first = rankedQueue.first else { return }
-                PlayerCore.shared.play(first, newQueue: rankedQueue)
+                router.play(first, queue: rankedQueue)
             }
             return
         }
 
         Task {
-            ym.beginStationSession(station.stationId)
+            service.beginStationSession(station.stationId)
 
-            // FAST START: fetch first quick batch (~200ms) and launch immediately!
-            let firstBatch = (try? await ym.getStationTracks(stationId: station.stationId)) ?? []
-            let unplayed = firstBatch.filter { !ym.isRecentlyPlayed(ymTrackId: $0.id) }
+            let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
+            let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
             let initial = unplayed.isEmpty ? firstBatch : unplayed
-            let candidates = initial.isEmpty ? (try? await ym.getChart()) ?? [] : initial
+            let candidates = initial.isEmpty ? (try? await service.getChart()) ?? [] : initial
 
             if !candidates.isEmpty {
-                let convertedInitial = candidates.map { ym.convertToTrack($0) }
-                let available = convertedInitial.filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
+                let available = candidates
+                    .map { service.convertToTrack($0) }
+                    .filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
                 if let first = available.first {
-                    PlayerCore.shared.play(first, newQueue: available)
+                    router.play(first, queue: available)
                 }
             }
 
-            // BACKGROUND EXPANSION: load full fresh stream from Yandex Rotor
-            var tracks = await ym.buildWaveQueue(stationId: station.stationId, target: 45)
-            if tracks.isEmpty {
-                tracks = (try? await ym.getChart()) ?? []
-            }
+            var tracks = await service.buildWaveQueue(stationId: station.stationId, target: 45)
+            if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
             guard !tracks.isEmpty else { return }
 
-            let converted = tracks.map { ym.convertToTrack($0) }
-            let filtered = converted.filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
+            let filtered = tracks
+                .map { service.convertToTrack($0) }
+                .filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
 
-            if let current = PlayerCore.shared.currentTrack {
+            if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                guard let current = AutoMixV2Runtime.shared.currentTrack else {
+                    if let first = filtered.first { router.play(first, queue: filtered) }
+                    return
+                }
+                var newQueue = filtered.filter { $0.id != current.id }
+                newQueue.insert(current, at: 0)
+                AutoMixV2Runtime.shared.replaceQueue(newQueue)
+            } else if let current = PlayerCore.shared.currentTrack {
                 var newQueue = filtered.filter { $0.id != current.id }
                 newQueue.insert(current, at: 0)
                 PlayerCore.shared.queue = newQueue
             } else if let first = filtered.first {
-                PlayerCore.shared.play(first, newQueue: filtered)
+                router.play(first, queue: filtered)
             }
         }
     }
 
     static func album(_ album: YandexMusicService.YMAlbumItem) {
-        let ym = YandexMusicService.shared
-        ym.endStationSession()
+        let service = YandexMusicService.shared
+        service.endStationSession()
         Task {
-            let tracks = (try? await ym.getAlbumTracks(albumId: album.id)) ?? []
+            let tracks = (try? await service.getAlbumTracks(albumId: album.id)) ?? []
             guard let first = tracks.first else { return }
-            let queue = tracks.map { ym.convertToTrack($0) }
-            PlayerCore.shared.play(ym.convertToTrack(first), newQueue: queue)
+            let queue = tracks.map { service.convertToTrack($0) }
+            router.play(service.convertToTrack(first), queue: queue)
         }
     }
 
     static func download(_ item: YandexMusicService.YMTrackItem) {
-        let ym = YandexMusicService.shared
+        let service = YandexMusicService.shared
         Task {
-            guard let info = try? await ym.getStreamInfo(for: item.id) else { return }
-            var track = ym.convertToTrack(item)
+            guard let info = try? await service.getStreamInfo(for: item.id) else { return }
+            var track = service.convertToTrack(item)
             track.streamUrlString = info.url.absoluteString
             await LibraryStore.shared.saveOnlineTrackLocally(track: track)
         }
@@ -321,7 +316,6 @@ struct Top100ChartView: View {
     var body: some View {
         ZStack {
             SonivoBackdrop()
-
             ScrollView {
                 LazyVStack(spacing: 2) {
                     SonivoHeader(
