@@ -111,7 +111,7 @@ public final class PlaybackCoordinator {
         let token = generation
         await engine.pause(activeDeck)
         guard token == generation else { return }
-        if let meta = activeMeta { phase = .paused(meta) }
+        if let meta = activeMeta { phase = wantsPlayback ? .playing(meta) : .paused(meta) }
         publish()
     }
     public func resume() async throws {
@@ -121,14 +121,23 @@ public final class PlaybackCoordinator {
         let token = generation
         let state = await engine.snapshot()
         try check(token)
+        guard wantsPlayback else { return }
         let deck = deckSnapshot(state, activeDeck)
         if deck.reachedEndOfFile && deck.queuedChunks == 0 {
+            if transitionTask != nil, let next = prepared {
+                // A may drain just before a paused fade completes. Resume the surviving B audio.
+                try await runCommand { owner, token in
+                    try await owner.promote(next, fadeDuration: nil, token: token)
+                }
+                return
+            }
             waitingForNext = true
         } else {
             try await engine.resume(activeDeck)
             try check(token)
+            if !wantsPlayback { await engine.pause(activeDeck); try check(token) }
         }
-        phase = .playing(meta)
+        phase = wantsPlayback ? .playing(activeMeta ?? meta) : .paused(activeMeta ?? meta)
         publish()
         startMonitor()
     }
@@ -184,7 +193,9 @@ public final class PlaybackCoordinator {
         try await runCommand { owner, token in
             let snapshot = await owner.engine.snapshot()
             try owner.check(token)
-            let position = owner.deckSnapshot(snapshot, owner.activeDeck).positionSeconds
+            let deck = owner.deckSnapshot(snapshot, owner.activeDeck)
+            let upper = deck.durationSeconds.map { max(0, $0 - 1 / 48_000.0) } ?? Double.greatestFiniteMagnitude
+            let position = min(deck.positionSeconds, upper)
             await owner.engine.stopEngine()
             try owner.check(token)
             owner.prepared = nil
@@ -264,8 +275,8 @@ public final class PlaybackCoordinator {
             _ = await previous?.result
             await prefetch?.value
             await transition?.value
-            try check(token)
             do {
+                try check(token)
                 try await operation(self, token)
                 try check(token)
                 busy = false
