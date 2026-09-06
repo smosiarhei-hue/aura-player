@@ -1,0 +1,26 @@
+# Path: .github/workflows/notify-automix-v2.yml
+name: Notify AutoMix V2 commit
+
+on:
+  push:
+    branches: [feature/automix-engine-v2]
+
+permissions:
+  contents: read
+
+jobs:
+  telegram-receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test notification safety
+        run: python -m unittest discover -s .github/scripts -p 'test_notify_automix_telegram.py' -v
+      - name: Send commit receipt to configured Telegram chat
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python .github/scripts/notify_automix_telegram.py
