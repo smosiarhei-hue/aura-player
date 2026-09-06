@@ -1,3 +1,5 @@
+// Path: Aurora/playbackaudiosession.swift
+
 @preconcurrency import AVFoundation
 import AudioEngineCore
 import MixDiagnostics
@@ -81,52 +83,27 @@ final class PlaybackAudioSessionCoordinator {
     private func configure() {
         let session = AVAudioSession.sharedInstance()
         let usesV2 = AutoMixEngineSelectionStore.shared.isV2Enabled
-
-        // .allowBluetooth is an HFP/input option intended for playAndRecord.
-        // Combining it with the playback category and long-form routing can
-        // return kAudio_ParamError (-50), especially on newer iOS versions.
-        do {
-            try session.setCategory(
-                .playback,
-                mode: .default,
-                policy: .longFormAudio,
-                options: [.allowAirPlay]
-            )
-        } catch {
-            report(error, step: "setCategory")
+        let result = PlaybackAudioSessionSetup.configure(
+            session: SystemPlaybackAudioSessionConfiguration(session: session),
+            usesV2: usesV2
+        ) { error, step in
+            report(error, step: step.rawValue)
         }
 
-        if usesV2 {
-            do {
-                try session.setPreferredSampleRate(DualDeckAudioEngine.preferredSampleRate)
-            } catch {
-                report(error, step: "setPreferredSampleRate")
-            }
-
-            do {
-                try session.setPreferredIOBufferDuration(DualDeckAudioEngine.preferredIOBufferDuration)
-            } catch {
-                report(error, step: "setPreferredIOBufferDuration")
-            }
-        }
-
-        do {
-            try session.setActive(true)
-        } catch {
-            report(error, step: "setActive")
-        }
-
-        guard usesV2 else { return }
+        // Never publish an active/configured snapshot after category or activation failure.
+        guard result.isActive, usesV2 else { return }
 
         let preferredRate = DualDeckAudioEngine.preferredSampleRate
         let preferredBuffer = DualDeckAudioEngine.preferredIOBufferDuration
         let actualRate = session.sampleRate
         let actualBuffer = session.ioBufferDuration
+        let rejectedPreferences = result.failedSteps.map(\.rawValue).joined(separator: ", ")
+        let preferenceStatus = rejectedPreferences.isEmpty ? "none" : rejectedPreferences
         let route = session.currentRoute.outputs
             .map { "\($0.portType.rawValue):\($0.portName)" }
             .joined(separator: ", ")
 
-        print("[AutoMix V2] audio session preferred=\(preferredRate)Hz/\(preferredBuffer)s actual=\(actualRate)Hz/\(actualBuffer)s route=\(route)")
+        print("[AutoMix V2] audio session active preferred=\(preferredRate)Hz/\(preferredBuffer)s actual=\(actualRate)Hz/\(actualBuffer)s rejectedPreferences=\(preferenceStatus) route=\(route)")
         Task {
             await AutoMixV2Runtime.shared.diagnostics.recordAudioSession(
                 preferredSampleRate: preferredRate,
@@ -137,7 +114,7 @@ final class PlaybackAudioSessionCoordinator {
             await AutoMixV2Runtime.shared.diagnostics.record(
                 MixDiagnosticEvent(
                     category: "audio-session",
-                    message: "Configured route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s"
+                    message: "Active route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s rejectedPreferences=\(preferenceStatus)"
                 )
             )
         }
