@@ -1,15 +1,16 @@
 # Path: .github/workflows/notify-automix-v2.yml
-name: Notify AutoMix V2 commit
+# Automatic delivery is owned by build-ipa.yml. Keep receipts as an explicit manual tool.
+name: Manual AutoMix commit receipt (no IPA)
 
 on:
-  push:
-    branches: [feature/automix-engine-v2]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   telegram-receipt:
+    if: github.repository == 'smosiarhei-hue/aura-player' && github.ref == 'refs/heads/feature/automix-engine-v2'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
