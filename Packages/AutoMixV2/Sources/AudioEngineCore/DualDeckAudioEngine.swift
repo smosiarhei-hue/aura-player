@@ -4,281 +4,372 @@
 import Foundation
 import MixModels
 
-public actor DualDeckAudioEngine {
+/// Invariant: graph, nodes, slots and fade state are accessed only on controlQueue.
+/// Public async methods enqueue commands; decoder queues never touch audio nodes.
+/// Player callbacks only enqueue ticket retirement, never decode or mutate the graph.
+public final class DualDeckAudioEngine: @unchecked Sendable {
     public static let preferredSampleRate = 48_000.0
     public static let preferredIOBufferDuration = 0.005
 
+    private let controlQueue: DispatchQueue
     private let engine: AVAudioEngine
     private let outputFormat: AVAudioFormat
     private let preloadPolicy: PCMPreloadPolicy
     private let deckA: DeckSlot
     private let deckB: DeckSlot
-    private var crossfadeTask: Task<Void, Never>?
+    private var fade: FadeState?
 
     public init(preloadPolicy: PCMPreloadPolicy = PCMPreloadPolicy()) throws {
-        guard preloadPolicy.estimatedTotalQueuedBytes <= PCMPreloadPolicy.maximumTotalBytes,
-              let format = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: preloadPolicy.sampleRate,
-                channels: preloadPolicy.channels,
-                interleaved: false
-              ) else {
-            throw AudioEngineCoreError.unsupportedOutputFormat
+        guard preloadPolicy.isValid else { throw AudioEngineCoreError.unsupportedOutputFormat }
+        let queue = DispatchQueue(label: "com.sonivo.automix.audio-control", qos: .userInteractive)
+        let graph = try queue.sync {
+            guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                             sampleRate: preloadPolicy.sampleRate,
+                                             channels: preloadPolicy.channels, interleaved: false) else {
+                throw AudioEngineCoreError.unsupportedOutputFormat
+            }
+            let engine = AVAudioEngine()
+            let a = DeckSlot(deck: .a, capacity: preloadPolicy.initialChunksPerDeck)
+            let b = DeckSlot(deck: .b, capacity: preloadPolicy.initialChunksPerDeck)
+            for slot in [a, b] {
+                engine.attach(slot.player)
+                engine.attach(slot.gainMixer)
+                engine.connect(slot.player, to: slot.gainMixer, format: format)
+                engine.connect(slot.gainMixer, to: engine.mainMixerNode, format: format)
+            }
+            a.gainMixer.outputVolume = 1
+            b.gainMixer.outputVolume = 0
+            return (engine, format, a, b)
         }
-
-        let audioEngine = AVAudioEngine()
-        let firstDeck = DeckSlot(deck: .a)
-        let secondDeck = DeckSlot(deck: .b)
-
-        audioEngine.attach(firstDeck.player)
-        audioEngine.attach(firstDeck.gainMixer)
-        audioEngine.attach(secondDeck.player)
-        audioEngine.attach(secondDeck.gainMixer)
-        audioEngine.connect(firstDeck.player, to: firstDeck.gainMixer, format: format)
-        audioEngine.connect(secondDeck.player, to: secondDeck.gainMixer, format: format)
-        audioEngine.connect(firstDeck.gainMixer, to: audioEngine.mainMixerNode, format: format)
-        audioEngine.connect(secondDeck.gainMixer, to: audioEngine.mainMixerNode, format: format)
-        firstDeck.gainMixer.outputVolume = 1
-        secondDeck.gainMixer.outputVolume = 0
-
-        engine = audioEngine
-        outputFormat = format
+        controlQueue = queue
+        engine = graph.0
+        outputFormat = graph.1
+        deckA = graph.2
+        deckB = graph.3
         self.preloadPolicy = preloadPolicy
-        deckA = firstDeck
-        deckB = secondDeck
     }
 
-    public func startEngine() throws {
+    public func startEngine() async throws {
+        try await command { try $0.startLocked() }
+    }
+
+    public func stopEngine() async {
+        await inspect {
+            $0.cancelFadeLocked()
+            $0.stopLocked($0.deckA)
+            $0.stopLocked($0.deckB)
+            $0.engine.stop()
+        }
+    }
+
+    public func prepare(_ deck: Deck, fileURL: URL, startTimeSeconds: Double = 0) async throws {
+        _ = try await prepareInternal(deck, fileURL: fileURL, startTimeSeconds: startTimeSeconds)
+    }
+
+    public func play(_ deck: Deck) async throws {
+        try await command { try $0.playLocked($0.slot(for: deck)) }
+    }
+
+    public func pause(_ deck: Deck) async {
+        await inspect { owner in
+            if let fade = owner.fade, fade.outgoing == deck || fade.incoming == deck {
+                owner.pauseLocked(owner.slot(for: fade.outgoing))
+                owner.pauseLocked(owner.slot(for: fade.incoming))
+            } else {
+                owner.pauseLocked(owner.slot(for: deck))
+            }
+        }
+    }
+
+    public func resume(_ deck: Deck) async throws {
+        try await command { owner in
+            if let fade = owner.fade, fade.outgoing == deck || fade.incoming == deck {
+                try owner.playLocked(owner.slot(for: fade.outgoing))
+                try owner.playLocked(owner.slot(for: fade.incoming))
+            } else {
+                try owner.playLocked(owner.slot(for: deck))
+            }
+        }
+    }
+
+    public func seek(_ deck: Deck, to timeSeconds: Double) async throws {
+        let request = try await command { owner in
+            let slot = owner.slot(for: deck)
+            guard let url = slot.fileURL else { throw AudioEngineCoreError.deckNotPrepared(deck) }
+            return (url, slot.isPlaying, slot.ledger.generation)
+        }
+        let generation = try await prepareInternal(deck, fileURL: request.0,
+                                                  startTimeSeconds: timeSeconds,
+                                                  expectedGeneration: request.2)
+        if request.1 {
+            try await command { owner in
+                let slot = owner.slot(for: deck)
+                guard slot.ledger.generation == generation else { throw CancellationError() }
+                try owner.playLocked(slot)
+            }
+        }
+    }
+
+    public func skip(from current: Deck, to next: Deck) async throws {
+        try await command { owner in
+            guard current != next else { return }
+            owner.cancelFadeLocked()
+            let incoming = owner.slot(for: next)
+            try owner.playLocked(incoming)
+            owner.stopLocked(owner.slot(for: current))
+            incoming.gainMixer.outputVolume = 1
+        }
+    }
+
+    public func stop(_ deck: Deck) async {
+        await inspect { owner in
+            owner.cancelFadeLocked()
+            owner.stopLocked(owner.slot(for: deck))
+        }
+    }
+
+    public func setGain(_ gain: Float, for deck: Deck) async {
+        await inspect { owner in
+            owner.slot(for: deck).gainMixer.outputVolume = gain.isFinite ? min(max(gain, 0), 1) : 0
+        }
+    }
+
+    public func crossfade(from outgoing: Deck, to incoming: Deck, durationSeconds: Double) async throws {
+        let token = try await command { owner in
+            guard outgoing != incoming, durationSeconds.isFinite, durationSeconds > 0 else {
+                throw AudioEngineCoreError.conversionFailed("Invalid crossfade request")
+            }
+            owner.cancelFadeLocked()
+            let a = owner.slot(for: outgoing)
+            let b = owner.slot(for: incoming)
+            guard a.isPlaying, !b.isPlaying, b.isPrepared, b.ledger.count > 0 else {
+                throw AudioEngineCoreError.deckNotPrepared(incoming)
+            }
+            let baseline = owner.playerSeconds(b) ?? 0
+            b.gainMixer.outputVolume = 0
+            try owner.playLocked(b)
+            a.gainMixer.outputVolume = 1
+            let state = FadeState(outgoing: outgoing, incoming: incoming,
+                                  duration: durationSeconds, baseline: baseline)
+            owner.fade = state
+            return state.token
+        }
+        try await withTaskCancellationHandler {
+            do {
+                while true {
+                    try Task.checkCancellation()
+                    let completed = try await command { try $0.advanceFadeLocked(token: token) }
+                    if completed { return }
+                    try await ContinuousClock().sleep(for: .milliseconds(5))
+                }
+            } catch {
+                await inspect { owner in
+                    if owner.fade?.token == token { owner.cancelFadeLocked() }
+                }
+                throw error
+            }
+        } onCancel: {
+            self.controlQueue.async { [self] in
+                if fade?.token == token { cancelFadeLocked() }
+            }
+        }
+    }
+
+    public func snapshot() async -> AudioEngineSnapshot {
+        await inspect { owner in
+            AudioEngineSnapshot(isRunning: owner.engine.isRunning,
+                                sampleRate: owner.outputFormat.sampleRate,
+                                channels: owner.outputFormat.channelCount,
+                                deckA: owner.snapshotLocked(owner.deckA),
+                                deckB: owner.snapshotLocked(owner.deckB))
+        }
+    }
+
+    private func prepareInternal(_ deck: Deck, fileURL: URL, startTimeSeconds: Double,
+                                 expectedGeneration: UUID? = nil) async throws -> UUID {
+        guard startTimeSeconds.isFinite else { throw AudioEngineCoreError.unsupportedOutputFormat }
+        try Task.checkCancellation()
+        let request = try await command { owner in
+            let slot = owner.slot(for: deck)
+            if let expectedGeneration, slot.ledger.generation != expectedGeneration {
+                throw CancellationError()
+            }
+            owner.cancelFadeLocked()
+            owner.stopLocked(slot)
+            let worker = PCMDecodeWorker(fileURL: fileURL, startTimeSeconds: startTimeSeconds,
+                                         policy: owner.preloadPolicy)
+            slot.fileURL = fileURL
+            slot.worker = worker
+            return (slot.ledger.generation, worker)
+        }
+        let generation = request.0
+        let worker = request.1
+        return try await withTaskCancellationHandler {
+            do {
+                for _ in 0..<preloadPolicy.initialChunksPerDeck {
+                    try Task.checkCancellation()
+                    let chunk = try await worker.next()
+                    try Task.checkCancellation()
+                    let hasChunk = try await command { owner in
+                        let slot = owner.slot(for: deck)
+                        guard slot.ledger.generation == generation else { throw CancellationError() }
+                        if let chunk {
+                            owner.scheduleLocked(chunk, slot: slot)
+                            return true
+                        }
+                        slot.reachedEndOfFile = true
+                        return false
+                    }
+                    if !hasChunk { break }
+                }
+                try Task.checkCancellation()
+                return try await command { owner in
+                    let slot = owner.slot(for: deck)
+                    guard slot.ledger.generation == generation else { throw CancellationError() }
+                    guard slot.ledger.count > 0 else { throw AudioEngineCoreError.deckNotPrepared(deck) }
+                    slot.isPrepared = true
+                    return generation
+                }
+            } catch {
+                await inspect { owner in
+                    let slot = owner.slot(for: deck)
+                    guard slot.ledger.generation == generation else { return }
+                    owner.stopLocked(slot)
+                    if !(error is CancellationError) { slot.lastError = String(describing: error) }
+                }
+                throw error
+            }
+        } onCancel: {
+            worker.cancel()
+            self.controlQueue.async { [self] in
+                let slot = slot(for: deck)
+                if slot.ledger.generation == generation { stopLocked(slot) }
+            }
+        }
+    }
+
+    private func startLocked() throws {
+        dispatchPrecondition(condition: .onQueue(controlQueue))
         guard !engine.isRunning else { return }
         engine.prepare()
         try engine.start()
     }
 
-    public func stopEngine() {
-        crossfadeTask?.cancel()
-        crossfadeTask = nil
-        stop(.a)
-        stop(.b)
-        engine.stop()
-    }
-
-    public func prepare(
-        _ deck: Deck,
-        fileURL: URL,
-        startTimeSeconds: Double = 0
-    ) throws {
-        let slot = slot(for: deck)
-        stop(deck)
-        let file = try AVAudioFile(forReading: fileURL)
-        let boundedStart = max(0, startTimeSeconds)
-        let sourceFrame = AVAudioFramePosition(
-            (boundedStart * file.processingFormat.sampleRate).rounded(.down)
-        )
-        file.framePosition = min(sourceFrame, file.length)
-
-        slot.fileURL = fileURL
-        slot.file = file
-        slot.converter = AVAudioConverter(from: file.processingFormat, to: outputFormat)
-        guard slot.converter != nil else {
-            throw AudioEngineCoreError.cannotCreateConverter
+    private func playLocked(_ slot: DeckSlot) throws {
+        guard slot.isPrepared, slot.ledger.count > 0 else {
+            throw AudioEngineCoreError.deckNotPrepared(slot.deck)
         }
-        slot.reachedEndOfFile = false
-        slot.queuedChunks = 0
-        slot.isPrepared = true
-
-        for _ in 0..<preloadPolicy.initialChunksPerDeck {
-            guard try scheduleNextChunk(for: slot) else { break }
-        }
-    }
-
-    public func play(_ deck: Deck) throws {
-        let slot = slot(for: deck)
-        guard slot.isPrepared else {
-            throw AudioEngineCoreError.deckNotPrepared(deck)
-        }
-        try startEngine()
+        try startLocked()
         slot.player.play()
         slot.isPlaying = true
-        startFeeder(for: deck)
+        refillLocked(slot)
     }
 
-    public func pause(_ deck: Deck) {
-        let slot = slot(for: deck)
+    private func pauseLocked(_ slot: DeckSlot) {
         slot.player.pause()
         slot.isPlaying = false
-        slot.feederTask?.cancel()
-        slot.feederTask = nil
     }
 
-    public func resume(_ deck: Deck) throws {
-        try play(deck)
-    }
-
-    public func seek(_ deck: Deck, to timeSeconds: Double) throws {
-        let slot = slot(for: deck)
-        guard let fileURL = slot.fileURL else {
-            throw AudioEngineCoreError.deckNotPrepared(deck)
-        }
-        let shouldResume = slot.isPlaying
-        try prepare(deck, fileURL: fileURL, startTimeSeconds: timeSeconds)
-        if shouldResume {
-            try play(deck)
-        }
-    }
-
-    public func skip(from current: Deck, to next: Deck) throws {
-        stop(current)
-        setGain(1, for: next)
-        try play(next)
-    }
-
-    public func stop(_ deck: Deck) {
-        let slot = slot(for: deck)
-        slot.feederTask?.cancel()
-        slot.feederTask = nil
+    private func stopLocked(_ slot: DeckSlot) {
+        // Invalidate before stop(), which may itself invoke buffer callbacks.
+        slot.ledger.reset()
+        slot.worker?.cancel()
+        slot.worker = nil
+        slot.decodePending = false
         slot.player.stop()
         slot.player.reset()
         slot.isPlaying = false
         slot.isPrepared = false
         slot.fileURL = nil
-        slot.file = nil
-        slot.converter = nil
-        slot.queuedChunks = 0
         slot.reachedEndOfFile = false
+        slot.lastError = nil
     }
 
-    public func setGain(_ gain: Float, for deck: Deck) {
-        slot(for: deck).gainMixer.outputVolume = min(max(gain, 0), 1)
-    }
-
-    public func crossfade(
-        from outgoing: Deck,
-        to incoming: Deck,
-        durationSeconds: Double
-    ) async throws {
-        crossfadeTask?.cancel()
-        setGain(1, for: outgoing)
-        setGain(0, for: incoming)
-        try play(incoming)
-
-        let duration = max(0.005, durationSeconds)
-        let step = 0.005
-        let steps = max(1, Int((duration / step).rounded(.up)))
-        let clock = ContinuousClock()
-
-        for index in 0...steps {
-            if Task.isCancelled { return }
-            let progress = Double(index) / Double(steps)
-            let gains = CrossfadeCurve.gains(progress: progress)
-            setGain(gains.outgoing, for: outgoing)
-            setGain(gains.incoming, for: incoming)
-            if index < steps {
-                do {
-                    try await clock.sleep(for: .milliseconds(5))
-                } catch {
-                    return
-                }
-            }
-        }
-
-        pause(outgoing)
-        setGain(0, for: outgoing)
-        setGain(1, for: incoming)
-    }
-
-    public func snapshot() -> AudioEngineSnapshot {
-        AudioEngineSnapshot(
-            isRunning: engine.isRunning,
-            sampleRate: outputFormat.sampleRate,
-            channels: outputFormat.channelCount,
-            deckA: snapshot(for: deckA),
-            deckB: snapshot(for: deckB)
-        )
-    }
-
-    private func startFeeder(for deck: Deck) {
-        let slot = slot(for: deck)
-        slot.feederTask?.cancel()
-        let interval = preloadPolicy.chunkDurationSeconds
-        slot.feederTask = Task { [weak self] in
+    private func scheduleLocked(_ chunk: DecodedPCMChunk, slot: DeckSlot) {
+        guard let ticket = slot.ledger.schedule() else { return }
+        let generation = slot.ledger.generation
+        let deck = slot.deck
+        slot.player.scheduleBuffer(chunk.buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self else { return }
-            let clock = ContinuousClock()
-            while !Task.isCancelled {
-                do {
-                    try await clock.sleep(for: .seconds(interval))
-                } catch {
-                    return
-                }
-                let shouldContinue = await self.refill(deck)
-                if !shouldContinue { return }
+            self.controlQueue.async { [weak self] in
+                guard let self else { return }
+                let slot = self.slot(for: deck)
+                guard slot.ledger.complete(ticket: ticket, generation: generation) else { return }
+                self.finishIfDrainedLocked(slot)
+                self.refillLocked(slot)
             }
         }
     }
 
-    private func refill(_ deck: Deck) -> Bool {
-        let slot = slot(for: deck)
-        guard slot.isPlaying, !slot.reachedEndOfFile else { return false }
-        slot.queuedChunks = max(0, slot.queuedChunks - 1)
-        do {
-            return try scheduleNextChunk(for: slot)
-        } catch {
-            slot.reachedEndOfFile = true
-            return false
+    private func refillLocked(_ slot: DeckSlot) {
+        guard slot.isPrepared, !slot.reachedEndOfFile, !slot.decodePending,
+              slot.ledger.count < preloadPolicy.initialChunksPerDeck,
+              let worker = slot.worker else { return }
+        slot.decodePending = true
+        let generation = slot.ledger.generation
+        let deck = slot.deck
+        worker.next { [weak self] result in
+            guard let self else { return }
+            self.controlQueue.async { [weak self] in
+                guard let self else { return }
+                let slot = self.slot(for: deck)
+                guard slot.ledger.generation == generation else { return }
+                slot.decodePending = false
+                switch result {
+                case .success(let chunk):
+                    if let chunk {
+                        self.scheduleLocked(chunk, slot: slot)
+                        self.refillLocked(slot)
+                    } else {
+                        slot.reachedEndOfFile = true
+                        self.finishIfDrainedLocked(slot)
+                    }
+                case .failure(let error):
+                    self.cancelFadeLocked()
+                    self.stopLocked(slot)
+                    slot.lastError = String(describing: error)
+                }
+            }
         }
     }
 
-    private func scheduleNextChunk(for slot: DeckSlot) throws -> Bool {
-        guard let file = slot.file,
-              let converter = slot.converter else {
-            return false
+    private func finishIfDrainedLocked(_ slot: DeckSlot) {
+        if slot.reachedEndOfFile, slot.ledger.count == 0 {
+            pauseLocked(slot)
         }
-        guard file.framePosition < file.length else {
-            slot.reachedEndOfFile = true
-            return false
-        }
+    }
 
-        let outputCapacity = AVAudioFrameCount(preloadPolicy.framesPerChunk)
-        let rateRatio = file.processingFormat.sampleRate / outputFormat.sampleRate
-        let inputCapacity = AVAudioFrameCount(
-            max(1, (Double(outputCapacity) * rateRatio).rounded(.up) + 8)
-        )
-        guard let inputBuffer = AVAudioPCMBuffer(
-            pcmFormat: file.processingFormat,
-            frameCapacity: inputCapacity
-        ), let outputBuffer = AVAudioPCMBuffer(
-            pcmFormat: outputFormat,
-            frameCapacity: outputCapacity
-        ) else {
-            throw AudioEngineCoreError.cannotCreatePCMBuffer
-        }
+    private func playerSeconds(_ slot: DeckSlot) -> Double? {
+        guard let renderTime = slot.player.lastRenderTime,
+              let time = slot.player.playerTime(forNodeTime: renderTime), time.sampleRate > 0 else { return nil }
+        return Double(time.sampleTime) / time.sampleRate
+    }
 
-        try file.read(into: inputBuffer, frameCount: inputCapacity)
-        guard inputBuffer.frameLength > 0 else {
-            slot.reachedEndOfFile = true
-            return false
-        }
-
-        let inputBox = ConverterInputBox(buffer: inputBuffer)
-        var conversionError: NSError?
-        let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outputStatus in
-            inputBox.nextBuffer(status: outputStatus)
-        }
-        if status == .error {
-            throw AudioEngineCoreError.conversionFailed(
-                conversionError?.localizedDescription ?? "Unknown AVAudioConverter error"
-            )
-        }
-        guard outputBuffer.frameLength > 0 else {
-            slot.reachedEndOfFile = true
-            return false
-        }
-
-        slot.player.scheduleBuffer(outputBuffer)
-        slot.queuedChunks += 1
-        if file.framePosition >= file.length {
-            slot.reachedEndOfFile = true
-        }
+    private func advanceFadeLocked(token: UUID) throws -> Bool {
+        guard let fade, fade.token == token else { throw CancellationError() }
+        let a = slot(for: fade.outgoing)
+        let b = slot(for: fade.incoming)
+        if b.reachedEndOfFile, b.ledger.count == 0 { throw AudioEngineCoreError.deckNotPrepared(b.deck) }
+        guard b.isPlaying, let seconds = playerSeconds(b) else { return false }
+        // The polling interval does not advance progress. Pausing the player freezes its timeline.
+        let progress = min(max((seconds - fade.baseline) / fade.duration, 0), 1)
+        let gains = CrossfadeCurve.gains(progress: progress)
+        a.gainMixer.outputVolume = gains.outgoing
+        b.gainMixer.outputVolume = gains.incoming
+        guard progress >= 1 else { return false }
+        self.fade = nil
+        stopLocked(a)
+        b.gainMixer.outputVolume = 1
         return true
+    }
+
+    private func cancelFadeLocked() {
+        guard let fade else { return }
+        self.fade = nil
+        slot(for: fade.outgoing).gainMixer.outputVolume = 1
+        let incoming = slot(for: fade.incoming)
+        incoming.gainMixer.outputVolume = 0
+        pauseLocked(incoming)
     }
 
     private func slot(for deck: Deck) -> DeckSlot {
@@ -288,16 +379,26 @@ public actor DualDeckAudioEngine {
         }
     }
 
-    private func snapshot(for slot: DeckSlot) -> DeckPlaybackSnapshot {
-        DeckPlaybackSnapshot(
-            deck: slot.deck,
-            fileURL: slot.fileURL,
-            isPrepared: slot.isPrepared,
-            isPlaying: slot.isPlaying,
-            gain: slot.gainMixer.outputVolume,
-            queuedChunks: slot.queuedChunks,
-            reachedEndOfFile: slot.reachedEndOfFile
-        )
+    private func snapshotLocked(_ slot: DeckSlot) -> DeckPlaybackSnapshot {
+        DeckPlaybackSnapshot(deck: slot.deck, fileURL: slot.fileURL,
+                             isPrepared: slot.isPrepared, isPlaying: slot.isPlaying,
+                             gain: slot.gainMixer.outputVolume, queuedChunks: slot.ledger.count,
+                             reachedEndOfFile: slot.reachedEndOfFile, lastError: slot.lastError)
+    }
+
+    private func inspect<T: Sendable>(_ body: @escaping @Sendable (DualDeckAudioEngine) -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            controlQueue.async { [self] in continuation.resume(returning: body(self)) }
+        }
+    }
+
+    private func command<T: Sendable>(_ body: @escaping @Sendable (DualDeckAudioEngine) throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            controlQueue.async { [self] in
+                do { continuation.resume(returning: try body(self)) }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
     }
 }
 
@@ -305,38 +406,25 @@ private final class DeckSlot {
     let deck: Deck
     let player = AVAudioPlayerNode()
     let gainMixer = AVAudioMixerNode()
+    var ledger: PCMBufferLedger
+    var worker: PCMDecodeWorker?
     var fileURL: URL?
-    var file: AVAudioFile?
-    var converter: AVAudioConverter?
     var isPrepared = false
     var isPlaying = false
-    var queuedChunks = 0
     var reachedEndOfFile = false
-    var feederTask: Task<Void, Never>?
+    var decodePending = false
+    var lastError: String?
 
-    init(deck: Deck) {
+    init(deck: Deck, capacity: Int) {
         self.deck = deck
+        ledger = PCMBufferLedger(capacity: capacity)
     }
 }
 
-private final class ConverterInputBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private let buffer: AVAudioPCMBuffer
-    private var consumed = false
-
-    init(buffer: AVAudioPCMBuffer) {
-        self.buffer = buffer
-    }
-
-    func nextBuffer(status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !consumed else {
-            status.pointee = .endOfStream
-            return nil
-        }
-        consumed = true
-        status.pointee = .haveData
-        return buffer
-    }
+private struct FadeState {
+    let token = UUID()
+    let outgoing: Deck
+    let incoming: Deck
+    let duration: Double
+    let baseline: Double
 }
