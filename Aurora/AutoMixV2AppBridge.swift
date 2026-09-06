@@ -330,3 +330,20 @@ final class PlaybackCommandRouter {
         else { PlayerCore.shared.seek(to: seconds) }
     }
 }
+
+// Read-only presentation access; the coordinator remains the owner of playback.
+extension AutoMixV2Runtime {
+    var playbackQueue: [Track] { queue }
+    func playbackTimeline() async -> (position: Double, duration: Double, isTransitioning: Bool)? {
+        guard let coordinator else { return nil }
+        let token = requestID
+        let before = coordinator.snapshot()
+        let engine = await coordinator.engineSnapshot()
+        let after = coordinator.snapshot()
+        guard token == requestID, before.activeDeck == after.activeDeck,
+              before.currentIndex == after.currentIndex, before.phase == after.phase else { return nil }
+        let deck = after.activeDeck == .a ? engine.deckA : engine.deckB
+        let duration = deck.durationSeconds ?? currentTrack?.duration ?? 0
+        return (max(0, deck.positionSeconds), duration.isFinite ? max(0, duration) : 0, after.isTransitioning)
+    }
+}
