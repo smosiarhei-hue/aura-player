@@ -10,7 +10,6 @@ import MixModels
 public final class DualDeckAudioEngine: @unchecked Sendable {
     public static let preferredSampleRate = 48_000.0
     public static let preferredIOBufferDuration = 0.005
-
     private let controlQueue: DispatchQueue
     private let engine: AVAudioEngine
     private let outputFormat: AVAudioFormat
@@ -48,11 +47,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         deckB = graph.3
         self.preloadPolicy = preloadPolicy
     }
-
-    public func startEngine() async throws {
-        try await command { try $0.startLocked() }
-    }
-
+    public func startEngine() async throws { try await command { try $0.startLocked() } }
     public func stopEngine() async {
         await inspect {
             $0.cancelFadeLocked()
@@ -61,37 +56,26 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             $0.engine.stop()
         }
     }
-
     public func prepare(_ deck: Deck, fileURL: URL, startTimeSeconds: Double = 0) async throws {
         _ = try await prepareInternal(deck, fileURL: fileURL, startTimeSeconds: startTimeSeconds)
     }
-
-    public func play(_ deck: Deck) async throws {
-        try await command { try $0.playLocked($0.slot(for: deck)) }
-    }
-
+    public func play(_ deck: Deck) async throws { try await command { try $0.playLocked($0.slot(for: deck)) } }
     public func pause(_ deck: Deck) async {
         await inspect { owner in
             if let fade = owner.fade, fade.outgoing == deck || fade.incoming == deck {
                 owner.pauseLocked(owner.slot(for: fade.outgoing))
                 owner.pauseLocked(owner.slot(for: fade.incoming))
-            } else {
-                owner.pauseLocked(owner.slot(for: deck))
-            }
+            } else { owner.pauseLocked(owner.slot(for: deck)) }
         }
     }
-
     public func resume(_ deck: Deck) async throws {
         try await command { owner in
             if let fade = owner.fade, fade.outgoing == deck || fade.incoming == deck {
                 try owner.playLocked(owner.slot(for: fade.outgoing))
                 try owner.playLocked(owner.slot(for: fade.incoming))
-            } else {
-                try owner.playLocked(owner.slot(for: deck))
-            }
+            } else { try owner.playLocked(owner.slot(for: deck)) }
         }
     }
-
     public func seek(_ deck: Deck, to timeSeconds: Double) async throws {
         let request = try await command { owner in
             let slot = owner.slot(for: deck)
@@ -109,7 +93,6 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             }
         }
     }
-
     public func skip(from current: Deck, to next: Deck) async throws {
         try await command { owner in
             guard current != next else { return }
@@ -120,20 +103,17 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             incoming.gainMixer.outputVolume = 1
         }
     }
-
     public func stop(_ deck: Deck) async {
         await inspect { owner in
             owner.cancelFadeLocked()
             owner.stopLocked(owner.slot(for: deck))
         }
     }
-
     public func setGain(_ gain: Float, for deck: Deck) async {
         await inspect { owner in
             owner.slot(for: deck).gainMixer.outputVolume = gain.isFinite ? min(max(gain, 0), 1) : 0
         }
     }
-
     public func crossfade(from outgoing: Deck, to incoming: Deck, durationSeconds: Double) async throws {
         let token = try await command { owner in
             guard outgoing != incoming, durationSeconds.isFinite, durationSeconds > 0 else {
@@ -174,7 +154,6 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             }
         }
     }
-
     public func snapshot() async -> AudioEngineSnapshot {
         await inspect { owner in
             AudioEngineSnapshot(isRunning: owner.engine.isRunning,
@@ -184,16 +163,13 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                                 deckB: owner.snapshotLocked(owner.deckB))
         }
     }
-
     private func prepareInternal(_ deck: Deck, fileURL: URL, startTimeSeconds: Double,
                                  expectedGeneration: UUID? = nil) async throws -> UUID {
         guard startTimeSeconds.isFinite else { throw AudioEngineCoreError.unsupportedOutputFormat }
         try Task.checkCancellation()
         let request = try await command { owner in
             let slot = owner.slot(for: deck)
-            if let expectedGeneration, slot.ledger.generation != expectedGeneration {
-                throw CancellationError()
-            }
+            if let expectedGeneration, slot.ledger.generation != expectedGeneration { throw CancellationError() }
             owner.cancelFadeLocked()
             owner.stopLocked(slot)
             let worker = PCMDecodeWorker(fileURL: fileURL, startTimeSeconds: startTimeSeconds,
@@ -213,10 +189,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                     let hasChunk = try await command { owner in
                         let slot = owner.slot(for: deck)
                         guard slot.ledger.generation == generation else { throw CancellationError() }
-                        if let chunk {
-                            owner.scheduleLocked(chunk, slot: slot)
-                            return true
-                        }
+                        if let chunk { owner.scheduleLocked(chunk, slot: slot); return true }
                         slot.reachedEndOfFile = true
                         return false
                     }
@@ -247,29 +220,20 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             }
         }
     }
-
     private func startLocked() throws {
         dispatchPrecondition(condition: .onQueue(controlQueue))
         guard !engine.isRunning else { return }
         engine.prepare()
         try engine.start()
     }
-
     private func playLocked(_ slot: DeckSlot) throws {
-        guard slot.isPrepared, slot.ledger.count > 0 else {
-            throw AudioEngineCoreError.deckNotPrepared(slot.deck)
-        }
+        guard slot.isPrepared, slot.ledger.count > 0 else { throw AudioEngineCoreError.deckNotPrepared(slot.deck) }
         try startLocked()
         slot.player.play()
         slot.isPlaying = true
         refillLocked(slot)
     }
-
-    private func pauseLocked(_ slot: DeckSlot) {
-        slot.player.pause()
-        slot.isPlaying = false
-    }
-
+    private func pauseLocked(_ slot: DeckSlot) { slot.player.pause(); slot.isPlaying = false }
     private func stopLocked(_ slot: DeckSlot) {
         // Invalidate before stop(), which may itself invoke buffer callbacks.
         slot.ledger.reset()
@@ -283,10 +247,13 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         slot.fileURL = nil
         slot.reachedEndOfFile = false
         slot.lastError = nil
+        slot.durationSeconds = nil
+        slot.startTimeSeconds = 0
     }
-
     private func scheduleLocked(_ chunk: DecodedPCMChunk, slot: DeckSlot) {
         guard let ticket = slot.ledger.schedule() else { return }
+        slot.durationSeconds = chunk.durationSeconds
+        slot.startTimeSeconds = chunk.startTimeSeconds
         let generation = slot.ledger.generation
         let deck = slot.deck
         slot.player.scheduleBuffer(chunk.buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
@@ -300,11 +267,9 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             }
         }
     }
-
     private func refillLocked(_ slot: DeckSlot) {
         guard slot.isPrepared, !slot.reachedEndOfFile, !slot.decodePending,
-              slot.ledger.count < preloadPolicy.initialChunksPerDeck,
-              let worker = slot.worker else { return }
+              slot.ledger.count < preloadPolicy.initialChunksPerDeck, let worker = slot.worker else { return }
         slot.decodePending = true
         let generation = slot.ledger.generation
         let deck = slot.deck
@@ -332,19 +297,14 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             }
         }
     }
-
     private func finishIfDrainedLocked(_ slot: DeckSlot) {
-        if slot.reachedEndOfFile, slot.ledger.count == 0 {
-            pauseLocked(slot)
-        }
+        if slot.reachedEndOfFile, slot.ledger.count == 0 { pauseLocked(slot) }
     }
-
     private func playerSeconds(_ slot: DeckSlot) -> Double? {
         guard let renderTime = slot.player.lastRenderTime,
               let time = slot.player.playerTime(forNodeTime: renderTime), time.sampleRate > 0 else { return nil }
         return Double(time.sampleTime) / time.sampleRate
     }
-
     private func advanceFadeLocked(token: UUID) throws -> Bool {
         guard let fade, fade.token == token else { throw CancellationError() }
         let a = slot(for: fade.outgoing)
@@ -362,7 +322,6 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         b.gainMixer.outputVolume = 1
         return true
     }
-
     private func cancelFadeLocked() {
         guard let fade else { return }
         self.fade = nil
@@ -371,27 +330,28 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         incoming.gainMixer.outputVolume = 0
         pauseLocked(incoming)
     }
-
     private func slot(for deck: Deck) -> DeckSlot {
-        switch deck {
-        case .a: deckA
-        case .b: deckB
-        }
+        switch deck { case .a: deckA; case .b: deckB }
     }
-
+    private func elapsedSecondsLocked(_ slot: DeckSlot) -> Double {
+        if slot.reachedEndOfFile, slot.ledger.count == 0 {
+            return max(0, (slot.durationSeconds ?? slot.startTimeSeconds) - slot.startTimeSeconds)
+        }
+        return playerSeconds(slot) ?? 0
+    }
     private func snapshotLocked(_ slot: DeckSlot) -> DeckPlaybackSnapshot {
         DeckPlaybackSnapshot(deck: slot.deck, fileURL: slot.fileURL,
                              isPrepared: slot.isPrepared, isPlaying: slot.isPlaying,
                              gain: slot.gainMixer.outputVolume, queuedChunks: slot.ledger.count,
-                             reachedEndOfFile: slot.reachedEndOfFile, lastError: slot.lastError)
+                             reachedEndOfFile: slot.reachedEndOfFile, lastError: slot.lastError,
+                             positionSeconds: slot.startTimeSeconds + max(0, elapsedSecondsLocked(slot)),
+                             durationSeconds: slot.durationSeconds)
     }
-
     private func inspect<T: Sendable>(_ body: @escaping @Sendable (DualDeckAudioEngine) -> T) async -> T {
         await withCheckedContinuation { continuation in
             controlQueue.async { [self] in continuation.resume(returning: body(self)) }
         }
     }
-
     private func command<T: Sendable>(_ body: @escaping @Sendable (DualDeckAudioEngine) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             controlQueue.async { [self] in
@@ -414,13 +374,10 @@ private final class DeckSlot {
     var reachedEndOfFile = false
     var decodePending = false
     var lastError: String?
-
-    init(deck: Deck, capacity: Int) {
-        self.deck = deck
-        ledger = PCMBufferLedger(capacity: capacity)
-    }
+    var durationSeconds: Double?
+    var startTimeSeconds: Double = 0
+    init(deck: Deck, capacity: Int) { self.deck = deck; ledger = PCMBufferLedger(capacity: capacity) }
 }
-
 private struct FadeState {
     let token = UUID()
     let outgoing: Deck

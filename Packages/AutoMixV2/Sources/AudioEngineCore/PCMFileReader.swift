@@ -7,6 +7,8 @@ import Foundation
 /// Neither the decoder nor control code mutates it after publication to the player.
 struct DecodedPCMChunk: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
+    let durationSeconds: Double
+    let startTimeSeconds: Double
 }
 
 /// Invariant: file/converter/input state is used exclusively on one decoder queue.
@@ -19,6 +21,8 @@ final class PCMFileReader: @unchecked Sendable {
     private var inputBuffer: AVAudioPCMBuffer?
     private var inputError: Error?
     private var finished = false
+    private let durationSeconds: Double
+    private let startTimeSeconds: Double
 
     init(fileURL: URL, startTimeSeconds: Double, policy: PCMPreloadPolicy) throws {
         guard policy.isValid, startTimeSeconds.isFinite,
@@ -42,6 +46,8 @@ final class PCMFileReader: @unchecked Sendable {
         // Clamp in seconds before converting to Int64, including enormous seek requests.
         let duration = Double(file.length) / sourceRate
         let seconds = min(max(0, startTimeSeconds), duration)
+        self.durationSeconds = duration
+        self.startTimeSeconds = seconds
         file.framePosition = seconds >= duration ? file.length : AVAudioFramePosition(seconds * sourceRate)
     }
 
@@ -95,7 +101,7 @@ final class PCMFileReader: @unchecked Sendable {
             if finished { return nil }
             throw AudioEngineCoreError.conversionFailed("PCM converter made no progress before EOF")
         }
-        return DecodedPCMChunk(buffer: output)
+        return DecodedPCMChunk(buffer: output, durationSeconds: durationSeconds, startTimeSeconds: startTimeSeconds)
     }
 }
 
@@ -115,19 +121,16 @@ final class PCMDecodeWorker: @unchecked Sendable {
         self.startTimeSeconds = startTimeSeconds
         self.policy = policy
     }
-
     func cancel() {
         cancellationLock.lock()
         cancelled = true
         cancellationLock.unlock()
     }
-
     private var isCancelled: Bool {
         cancellationLock.lock()
         defer { cancellationLock.unlock() }
         return cancelled
     }
-
     func next(_ completion: @escaping @Sendable (Result<DecodedPCMChunk?, Error>) -> Void) {
         queue.async { [self] in
             do {
@@ -137,12 +140,9 @@ final class PCMDecodeWorker: @unchecked Sendable {
                 }
                 let chunk = try reader?.readChunk(isCancelled: { self.isCancelled })
                 completion(.success(chunk))
-            } catch {
-                completion(.failure(error))
-            }
+            } catch { completion(.failure(error)) }
         }
     }
-
     func next() async throws -> DecodedPCMChunk? {
         try await withCheckedThrowingContinuation { continuation in
             next { continuation.resume(with: $0) }
