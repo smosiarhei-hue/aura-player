@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var player = PlayerCore.shared
     @State private var ym = YandexMusicService.shared
     @State private var socialAuth = SocialAuthStore.shared
+    @State private var engineSelection = AutoMixEngineSelectionStore.shared
     @State private var tokenInput = ""
     @State private var showYandexAuthSheet = false
     @State private var isSyncingLikes = false
@@ -21,84 +22,38 @@ struct SettingsView: View {
                     if let user = ym.currentUser {
                         HStack(spacing: 14) {
                             if let avatar = user.avatarUrl {
-                                RemoteArtwork(urlString: avatar, corner: 999)
-                                    .frame(width: 52, height: 52)
+                                RemoteArtwork(urlString: avatar, corner: 999).frame(width: 52, height: 52)
                             } else {
                                 ZStack {
-                                    Circle()
-                                        .fill(LinearGradient(colors: [AG.ember, AG.amber], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                        .frame(width: 52, height: 52)
-                                    Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased())
-                                        .font(AG.text(.title3, .bold))
-                                        .foregroundStyle(.white)
+                                    Circle().fill(LinearGradient(colors: [AG.ember, AG.amber], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 52, height: 52)
+                                    Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased()).font(AG.text(.title3, .bold)).foregroundStyle(.white)
                                 }
                             }
-
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(user.displayName ?? user.login)
-                                    .font(AG.text(.callout, .bold))
-                                    .foregroundStyle(.primary)
-
-                                Text("@\(user.login)")
-                                    .font(AG.text(.footnote))
-                                    .foregroundStyle(.secondary)
-
+                                Text(user.displayName ?? user.login).font(AG.text(.callout, .bold)).foregroundStyle(.primary)
+                                Text("@\(user.login)").font(AG.text(.footnote)).foregroundStyle(.secondary)
                                 if user.hasPlus {
                                     HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.seal.fill")
-                                            .font(AG.text(.caption2))
-                                            .foregroundStyle(AG.ember)
-                                        Text("Яндекс Плюс (320 kbps & FLAC)")
-                                            .font(AG.text(.caption2, .semibold))
-                                            .foregroundStyle(AG.ember)
-                                    }
-                                    .padding(.top, 2)
+                                        Image(systemName: "checkmark.seal.fill").font(AG.text(.caption2)).foregroundStyle(AG.ember)
+                                        Text("Яндекс Плюс (320 kbps & FLAC)").font(AG.text(.caption2, .semibold)).foregroundStyle(AG.ember)
+                                    }.padding(.top, 2)
                                 }
                             }
-                        }
-                        .padding(.vertical, 4)
-
+                        }.padding(.vertical, 4)
                         Button {
-                            Task {
-                                isSyncingLikes = true
-                                await ym.syncAccountData()
-                                isSyncingLikes = false
-                            }
+                            Task { isSyncingLikes = true; await ym.syncAccountData(); isSyncingLikes = false }
                         } label: {
-                            HStack {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                Text(isSyncingLikes ? "Синхронизация..." : "Синхронизировать медиатеку")
-                            }
-                        }
-                        .disabled(isSyncingLikes)
-
-                        Button(role: .destructive) {
-                            ym.logout()
-                        } label: {
-                            Text("Выйти из Яндекс ID")
-                        }
+                            HStack { Image(systemName: "arrow.triangle.2.circlepath"); Text(isSyncingLikes ? "Синхронизация..." : "Синхронизировать медиатеку") }
+                        }.disabled(isSyncingLikes)
+                        Button(role: .destructive) { ym.logout() } label: { Text("Выйти из Яндекс ID") }
                     } else {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Войдите в свой Яндекс ID, чтобы слушать персональную Мою волну, синхронизировать всю любимую музыку и сохранять историю.")
-                                .font(AG.text(.footnote))
-                                .foregroundStyle(.secondary)
-
-                            Button {
-                                showYandexAuthSheet = true
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "person.badge.key.fill")
-                                        .font(AG.text(.subheadline, .bold))
-                                    Text("Войти с Яндекс ID")
-                                        .font(AG.text(.subheadline, .bold))
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(AG.ember)
-                        }
-                        .padding(.vertical, 4)
+                            Text("Войдите в свой Яндекс ID, чтобы слушать персональную Мою волну, синхронизировать всю любимую музыку и сохранять историю.").font(AG.text(.footnote)).foregroundStyle(.secondary)
+                            Button { showYandexAuthSheet = true } label: {
+                                HStack(spacing: 8) { Image(systemName: "person.badge.key.fill").font(AG.text(.subheadline, .bold)); Text("Войти с Яндекс ID").font(AG.text(.subheadline, .bold)) }
+                                    .frame(maxWidth: .infinity).padding(.vertical, 8)
+                            }.buttonStyle(.borderedProminent).tint(AG.ember)
+                        }.padding(.vertical, 4)
                     }
                 }
 
@@ -115,6 +70,16 @@ struct SettingsView: View {
                     } else {
                         SignInWithAppleView { userID, name in socialAuth.handleSuccess(userID: userID, name: name) }
                     }
+                }
+
+                Section {
+                    Toggle("Использовать AutoMix V2", isOn: $engineSelection.isV2Enabled).tint(settings.accentColor)
+                    LabeledContent("Текущий движок", value: engineSelection.isV2Enabled ? "AutoMix V2" : "Старый")
+                    NavigationLink("Диагностика AutoMix V2") { AutoMixV2DiagnosticsView() }
+                } header: {
+                    Text("Движок воспроизведения")
+                } footer: {
+                    Text("По умолчанию используется старый движок. AutoMix V2 включается только этим переключателем. На текущем шаге V2 воспроизводит локальные файлы; потоковый источник подключается отдельно.")
                 }
 
                 Section("Качество звука") {
@@ -163,37 +128,17 @@ struct SettingsView: View {
                             let status = await GeminiAutoMixPlanner.shared.testConnectivity()
                             isCheckingGemini = false
                             switch status {
-                            case .ok(let model):
-                                geminiCheckIsError = false
-                                geminiCheckResult = "✅ Gemini отвечает (\(model)). AutoMix сейчас будет использовать AI-план."
-                            case .regionBlocked(let message):
-                                geminiCheckIsError = true
-                                geminiCheckResult = "🚫 Google заблокировал запрос по региону/ключу: \(message)"
-                            case .httpError(let code, let message):
-                                geminiCheckIsError = true
-                                geminiCheckResult = "⚠️ Ошибка Gemini (HTTP \(code)): \(message)"
-                            case .networkError(let message):
-                                geminiCheckIsError = true
-                                geminiCheckResult = "⚠️ Сетевая ошибка: \(message)"
-                            case .noApiKey:
-                                geminiCheckIsError = true
-                                geminiCheckResult = "⚠️ API-ключ Gemini не настроен."
+                            case .ok(let model): geminiCheckIsError = false; geminiCheckResult = "✅ Gemini отвечает (\(model)). AutoMix сейчас будет использовать AI-план."
+                            case .regionBlocked(let message): geminiCheckIsError = true; geminiCheckResult = "🚫 Google заблокировал запрос по региону/ключу: \(message)"
+                            case .httpError(let code, let message): geminiCheckIsError = true; geminiCheckResult = "⚠️ Ошибка Gemini (HTTP \(code)): \(message)"
+                            case .networkError(let message): geminiCheckIsError = true; geminiCheckResult = "⚠️ Сетевая ошибка: \(message)"
+                            case .noApiKey: geminiCheckIsError = true; geminiCheckResult = "⚠️ API-ключ Gemini не настроен."
                             }
                         }
                     } label: {
-                        HStack {
-                            Text("Проверить подключение к Gemini")
-                            Spacer()
-                            if isCheckingGemini { ProgressView() }
-                        }
-                    }
-                    .disabled(isCheckingGemini)
-
-                    if let geminiCheckResult {
-                        Text(geminiCheckResult)
-                            .font(.caption)
-                            .foregroundStyle(geminiCheckIsError ? .red : .green)
-                    }
+                        HStack { Text("Проверить подключение к Gemini"); Spacer(); if isCheckingGemini { ProgressView() } }
+                    }.disabled(isCheckingGemini)
+                    if let geminiCheckResult { Text(geminiCheckResult).font(.caption).foregroundStyle(geminiCheckIsError ? .red : .green) }
                 } header: { Text("Диагностика Gemini AI") } footer: {
                     Text("Отправляет прямо сейчас короткий тестовый запрос в Gemini API. Включите или выключите VPN и нажмите ещё раз, чтобы увидеть актуальный результат для текущего подключения.")
                 }
@@ -228,9 +173,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Настройки")
-            .sheet(isPresented: $showYandexAuthSheet) {
-                YandexAuthSheet()
-            }
+            .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
         }
     }
 

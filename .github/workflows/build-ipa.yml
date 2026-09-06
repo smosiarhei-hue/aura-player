@@ -1,14 +1,15 @@
+# Path: .github/workflows/build-ipa.yml
 name: Build IPA
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, feature/automix-engine-v2 ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: build-${{ github.ref }}
@@ -16,9 +17,24 @@ concurrency:
 
 jobs:
   build:
+    # The trusted AutoMix branch is built on push; other PRs still build without delivery.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      github.head_ref != 'feature/automix-engine-v2'
     runs-on: macos-26
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Print toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Test IPA delivery safety
+        run: python3 -m unittest discover -s .github/scripts -p 'test_send_ipa_telegram.py' -v
 
       - name: Compute version (auto-increment per build)
         id: version
@@ -45,6 +61,36 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Run unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); devices=[d for values in data["devices"].values() for d in values if d.get("isAvailable")]; print(devices[0]["udid"] if devices else "")')
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "No available iOS simulator found"
+            exit 1
+          fi
+          echo "Using simulator: $SIMULATOR_ID"
+          xcodebuild \
+            -project Sonivo.xcodeproj \
+            -scheme Sonivo \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$SIMULATOR_ID" \
+            -derivedDataPath derived-tests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            test 2>&1 | tee test.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: test.log
+          if-no-files-found: warn
+
       - name: Build unsigned app
         id: xcodebuild
         shell: bash
@@ -63,11 +109,10 @@ jobs:
             build 2>&1 | tee build.log
 
       - name: Publish build status
-        if: always() && steps.xcodebuild.outcome != 'skipped'
+        if: always() && steps.xcodebuild.outcome != 'skipped' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_OUTCOME: ${{ steps.xcodebuild.outcome }}
-          PR_NUMBER: ${{ github.event.number }}
         run: |
           printf "Commit: %s\nRun: %s\nOutcome: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$BUILD_OUTCOME" > diagnostic.txt
           if [ "$BUILD_OUTCOME" = "success" ]; then
@@ -79,24 +124,18 @@ jobs:
             fi
             cat compiler-errors.txt >> diagnostic.txt
           fi
-
-          DIAG_BRANCH="ci-diagnostics"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            DIAG_BRANCH="ci-diagnostics-pr-${PR_NUMBER}"
-          fi
-
           TMP=$(mktemp -d)
           cd "$TMP"
           git init
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$DIAG_BRANCH"
+          git checkout -b ci-diagnostics
           mkdir -p ci-logs
           cp "$GITHUB_WORKSPACE/diagnostic.txt" ci-logs/latest-build-errors.txt
           git add ci-logs/latest-build-errors.txt
           git commit -m "Record build status from run $GITHUB_RUN_ID"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force origin "$DIAG_BRANCH"
+          git push --force origin ci-diagnostics
 
       - name: Upload build log
         if: always() && steps.xcodebuild.outcome != 'skipped'
@@ -119,87 +158,13 @@ jobs:
           zip -qry Sonivo-unsigned.ipa Payload
           ls -lh Sonivo-unsigned.ipa
 
-      - name: Send IPA to Telegram
-        id: telegram
-        if: github.event_name != 'pull_request'
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID_SECRET: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          set +e
-          TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID_SECRET:-8559869613}"
-          echo "chat_id=${TELEGRAM_CHAT_ID}" >> "$GITHUB_OUTPUT"
-
-          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-            echo "TELEGRAM_STATUS=skipped_missing_token" >> "$GITHUB_ENV"
-            echo "TELEGRAM_RESPONSE=TELEGRAM_BOT_TOKEN secret is not configured" >> "$GITHUB_ENV"
-            echo "::warning::TELEGRAM_BOT_TOKEN secret is not configured, skipping Telegram delivery."
-            exit 0
-          fi
-          if [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "TELEGRAM_STATUS=skipped_missing_chat_id" >> "$GITHUB_ENV"
-            echo "TELEGRAM_RESPONSE=TELEGRAM_CHAT_ID is not configured" >> "$GITHUB_ENV"
-            echo "::warning::TELEGRAM_CHAT_ID is not configured, skipping Telegram delivery."
-            exit 0
-          fi
-
-          RESPONSE=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
-               -F chat_id="${TELEGRAM_CHAT_ID}" \
-               -F document=@Sonivo-unsigned.ipa \
-               -F caption="Sonivo IPA готов к установке! Версия ${MARKETING_VERSION} (сборка #${BUILD_NUMBER})" \
-               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" 2>&1)
-          HTTP_STATUS=$(printf "%s" "$RESPONSE" | awk -F: '/HTTP_STATUS:/ {print $2}' | tail -n 1)
-          BODY=$(printf "%s" "$RESPONSE" | sed '/HTTP_STATUS:/d')
-          echo "Telegram HTTP status: ${HTTP_STATUS}"
-          echo "Telegram response: ${BODY}"
-
-          if printf "%s" "$BODY" | grep -q '"ok":true'; then
-            echo "TELEGRAM_STATUS=success" >> "$GITHUB_ENV"
-            echo "TELEGRAM_RESPONSE=ok" >> "$GITHUB_ENV"
-            echo "Telegram delivery succeeded."
-          else
-            SAFE_BODY=$(printf "%s" "$BODY" | tr '\n' ' ' | cut -c 1-900)
-            echo "TELEGRAM_STATUS=failed_http_${HTTP_STATUS}" >> "$GITHUB_ENV"
-            echo "TELEGRAM_RESPONSE=${SAFE_BODY}" >> "$GITHUB_ENV"
-            echo "::warning::Telegram delivery failed: ${SAFE_BODY}"
-          fi
-          exit 0
-
-      - name: Publish Telegram delivery status
-        if: always() && github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TELEGRAM_STATUS: ${{ env.TELEGRAM_STATUS }}
-          TELEGRAM_RESPONSE: ${{ env.TELEGRAM_RESPONSE }}
-        run: |
-          STATUS="${TELEGRAM_STATUS:-not_run}"
-          RESPONSE="${TELEGRAM_RESPONSE:-no_response}"
-          cat > telegram-diagnostic.txt <<EOF
-          Commit: ${GITHUB_SHA}
-          Run: ${GITHUB_RUN_ID}
-          Telegram status: ${STATUS}
-          Telegram response: ${RESPONSE}
-          EOF
-
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          git init
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b ci-diagnostics
-          mkdir -p ci-logs
-          cp "$GITHUB_WORKSPACE/telegram-diagnostic.txt" ci-logs/latest-telegram-delivery.txt
-          git add ci-logs/latest-telegram-delivery.txt
-          git commit -m "Record Telegram delivery from run $GITHUB_RUN_ID"
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git fetch origin ci-diagnostics || true
-          git push --force origin ci-diagnostics
-
+      # Persist the IPA before attempting any external delivery.
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Sonivo-unsigned-ipa
           path: Sonivo-unsigned.ipa
+          if-no-files-found: error
 
       - name: Release on tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -207,3 +172,51 @@ jobs:
         with:
           files: Sonivo-unsigned.ipa
           generate_release_notes: true
+
+  telegram:
+    needs: build
+    # Never expose Telegram credentials to PR jobs or arbitrary manual branches.
+    if: >-
+      github.repository == 'smosiarhei-hue/aura-player' &&
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/feature/automix-engine-v2' ||
+       startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Sonivo-unsigned-ipa
+      - name: Send IPA to configured Telegram chat
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 .github/scripts/send_ipa_telegram.py
+
+      - name: Publish safe Telegram delivery status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf 'Commit: %s\nRun: %s\nTelegram status: %s\nTelegram response: %s\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "${TELEGRAM_STATUS:-not_run}" \
+            "${TELEGRAM_RESPONSE:-Delivery did not run; inspect the job steps.}" > telegram-diagnostic.txt
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin ci-diagnostics
+          git checkout -b ci-diagnostics FETCH_HEAD
+          mkdir -p ci-logs
+          cp "$GITHUB_WORKSPACE/telegram-diagnostic.txt" ci-logs/latest-telegram-delivery.txt
+          git add ci-logs/latest-telegram-delivery.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record Telegram delivery from run $GITHUB_RUN_ID"
+            git push origin ci-diagnostics
+          fi
