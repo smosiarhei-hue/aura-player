@@ -7,7 +7,7 @@ import TrackAnalysis
 
 @Suite("TrackAnalyzer Stage 2")
 struct TrackAnalyzerStage2Tests {
-    @Test("Synthetic click tempos stay within two percent", arguments: [90.0, 120.0, 128.0, 174.0])
+    @Test("Synthetic click tempos stay within one BPM", arguments: [90.0, 120.0, 128.0, 174.0])
     func clickTempo(expected: Double) {
         let sampleRate = 22_050.0
         let duration = 40.0
@@ -27,10 +27,12 @@ struct TrackAnalyzerStage2Tests {
             let noise = Float(Int(state >> 48) - 32_768) / 32_768 * 0.002
             samples[index] += noise
         }
-        let result = TrackAnalysisAlgorithms.estimateTempo(samples: samples, sampleRate: sampleRate)
-        let estimates = [Double(result.bpm), Double(result.bpm) * 2, Double(result.bpm) / 2]
-        let relativeError = estimates.map { abs($0 - expected) / expected }.min() ?? 1
-        #expect(relativeError <= 0.02)
-        #expect(result.confidence >= 0.65)
+        let broad = TrackAnalysisAlgorithms.estimateTempo(samples: samples, sampleRate: sampleRate)
+        let precise = PulseTempoEstimator.estimate(samples: samples, sampleRate: sampleRate)
+        let estimates = [Double(precise.bpm), Double(precise.bpm) * 2, Double(precise.bpm) / 2]
+        let error = estimates.map { abs($0 - expected) }.min() ?? .infinity
+        #expect(error <= 1)
+        #expect(precise.confidence >= 0.7)
+        #expect(broad.confidence >= 0.65)
     }
 }
