@@ -8,9 +8,11 @@ public struct TrackDownloadProgress: Sendable, Equatable {
     public let isDownloading: Bool
 
     public init(receivedBytes: Int64, totalBytes: Int64?, isDownloading: Bool) {
-        self.receivedBytes = max(0, receivedBytes)
-        self.totalBytes = totalBytes.flatMap { $0 > 0 ? $0 : nil }
-        self.fraction = self.totalBytes.map { min(1, max(0, Double(self.receivedBytes) / Double($0))) }
+        let received = max(0, receivedBytes)
+        let expected = totalBytes.flatMap { $0 > 0 ? $0 : nil }
+        self.receivedBytes = received
+        self.totalBytes = expected
+        self.fraction = expected.map { min(1, max(0, Double(received) / Double($0))) }
         self.isDownloading = isDownloading
     }
 }
