@@ -1,0 +1,51 @@
+name: Stage 2 diagnostics
+
+on:
+  push:
+    branches: [ feature/automix-stage2-analysis ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stage2-diagnostics
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Compile and test
+        shell: bash
+        run: |
+          set +e
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); a=[x for v in d["devices"].values() for x in v if x.get("isAvailable")]; print(a[0]["udid"] if a else "")')
+          xcodebuild -project Sonivo.xcodeproj -scheme Sonivo -configuration Debug -sdk iphonesimulator -destination "id=$SIMULATOR_ID" -derivedDataPath derived-tests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" test > stage2.log 2>&1
+          STATUS=$?
+          printf 'Commit: %s\nRun: %s\nStatus: %s\n\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$STATUS" > stage2-diagnostic.txt
+          if [ "$STATUS" -eq 0 ]; then
+            echo 'STAGE 2 BUILD AND TESTS SUCCEEDED' >> stage2-diagnostic.txt
+          else
+            grep -nE 'error:|fatal error:|failed|Issue recorded|Expectation failed|Command SwiftCompile failed' stage2.log | tail -n 400 >> stage2-diagnostic.txt || true
+            if [ $(wc -l < stage2-diagnostic.txt) -lt 6 ]; then tail -n 400 stage2.log >> stage2-diagnostic.txt; fi
+          fi
+          TMP=$(mktemp -d)
+          cp stage2-diagnostic.txt "$TMP/"
+          cd "$TMP"
+          git init
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b ci-diagnostics-stage2
+          mkdir -p ci-logs
+          mv stage2-diagnostic.txt ci-logs/latest.txt
+          git add ci-logs/latest.txt
+          git commit -m "Record Stage 2 diagnostics from run $GITHUB_RUN_ID"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin ci-diagnostics-stage2
+          exit "$STATUS"
