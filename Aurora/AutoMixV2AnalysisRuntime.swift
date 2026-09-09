@@ -31,9 +31,7 @@ final class AutoMixV2AnalysisRuntime {
         analyzer = TrackAnalyzer(storageDirectory: directory)
         if let cache = try? TrackFileCache(directory: TrackFileCache.defaultDirectory()) {
             yandexSource = YandexTrackSource(client: yandexClient, cache: cache, maximumParallelDownloads: 2)
-        } else {
-            yandexSource = nil
-        }
+        } else { yandexSource = nil }
     }
 
     func install() {
@@ -41,8 +39,7 @@ final class AutoMixV2AnalysisRuntime {
         observerTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 self?.refreshPairIfNeeded()
-                do { try await ContinuousClock().sleep(for: .seconds(1)) }
-                catch { return }
+                do { try await ContinuousClock().sleep(for: .seconds(1)) } catch { return }
             }
         }
     }
@@ -54,8 +51,7 @@ final class AutoMixV2AnalysisRuntime {
         analysisTask = Task { @MainActor [weak self] in
             guard let self, let id else { return }
             try? await analyzer.removeProfile(for: id)
-            observedPair = ""
-            refreshPairIfNeeded()
+            observedPair = ""; refreshPairIfNeeded()
         }
     }
 
@@ -68,26 +64,23 @@ final class AutoMixV2AnalysisRuntime {
         let next = index.flatMap { $0 + 1 < queue.count ? queue[$0 + 1] : nil }
         let key = currentID.raw + "|" + (next.flatMap(trackID)?.raw ?? "")
         guard key != observedPair else { return }
-        observedPair = key
-        analysisTask?.cancel()
+        observedPair = key; analysisTask?.cancel()
         analysisTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            pipelineStatus = "Анализ текущего трека"
-            lastError = nil
+            pipelineStatus = "Анализ текущего трека"; lastError = nil
             do {
                 let currentFile = try await localFile(for: current, id: currentID)
-                let a = try await analyzer.profile(for: currentID, fileURL: currentFile)
+                let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)
+                let a = await Stage3ProfileEnricher.enrich(rawA, fileURL: currentFile)
                 guard !Task.isCancelled, observedPair == key else { return }
-                currentProfile = a
-                nextProfile = nil
-                transitionPlan = nil
+                currentProfile = a; nextProfile = nil; transitionPlan = nil
                 guard let next, let nextID = trackID(for: next) else {
-                    pipelineStatus = "Профиль текущего трека готов"
-                    return
+                    pipelineStatus = "Профиль текущего трека готов"; return
                 }
-                pipelineStatus = "Скачивание и анализ следующего трека"
+                pipelineStatus = "Анализ следующего трека и тональности"
                 let nextFile = try await localFile(for: next, id: nextID)
-                let b = try await analyzer.profile(for: nextID, fileURL: nextFile)
+                let rawB = try await analyzer.profile(for: nextID, fileURL: nextFile)
+                let b = await Stage3ProfileEnricher.enrich(rawB, fileURL: nextFile)
                 guard !Task.isCancelled, observedPair == key else { return }
                 nextProfile = b
                 let settings = MixSettings(mode: .automix,
@@ -96,19 +89,15 @@ final class AutoMixV2AnalysisRuntime {
                                            dontCutEndings: false,
                                            loudnessNormalization: true,
                                            targetLUFS: -14)
-                transitionPlan = MixPlanner.plan(
-                    from: a, to: b,
-                    aMeta: metadata(for: current, id: currentID),
-                    bMeta: metadata(for: next, id: nextID),
-                    settings: settings
-                )
-                pipelineStatus = "Профили и план перехода готовы"
-            } catch is CancellationError {
-                return
-            } catch {
+                transitionPlan = MixPlanner.plan(from: a, to: b,
+                                                 aMeta: metadata(for: current, id: currentID),
+                                                 bMeta: metadata(for: next, id: nextID),
+                                                 settings: settings)
+                pipelineStatus = "Профили и музыкальный план готовы"
+            } catch is CancellationError { return }
+            catch {
                 guard observedPair == key else { return }
-                lastError = String(describing: error)
-                pipelineStatus = "Ошибка анализа"
+                lastError = String(describing: error); pipelineStatus = "Ошибка анализа"
             }
         }
     }
@@ -119,14 +108,12 @@ final class AutoMixV2AnalysisRuntime {
         await yandexClient.register(metadata(for: track, id: id))
         return try await yandexSource.localFileURL(for: id)
     }
-
     private func metadata(for track: Track, id: TrackID) -> TrackMeta {
         TrackMeta(id: id, title: track.title, artist: track.artist,
                   albumID: track.album.isEmpty ? nil : track.album,
                   durationSec: track.duration,
                   artworkURL: track.coverURL.flatMap(URL.init(string:)))
     }
-
     private func trackID(for track: Track) -> TrackID? {
         if track.isStream {
             guard let raw = YandexMusicService.ymId(fromFileName: track.fileName) else { return nil }
