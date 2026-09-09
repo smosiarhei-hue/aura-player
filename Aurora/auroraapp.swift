@@ -112,10 +112,10 @@ struct RootView: View {
             PlaybackAudioSessionCoordinator.shared.install()
             player.setApplicationSceneActive(scenePhase == .active)
         }
-        .onChange(of: scenePhase) { oldPhase, phase in
+        .onChange(of: scenePhase) { _, phase in
             player.setApplicationSceneActive(phase == .active)
-            if phase == .active, oldPhase != .active, presentedIsPlaying {
-                showPlayer = true
+            if phase == .active, presentedIsPlaying {
+                PlaybackAudioSessionCoordinator.shared.activateForPlayback()
             }
         }
         .onOpenURL { _ in showPlayer = true }
@@ -146,20 +146,18 @@ struct RootView: View {
 }
 
 struct NativeMiniPlayer: View {
-    @State private var player = PlayerCore.shared
-    @State private var v2 = AutoMixV2Runtime.shared
-    @State private var engineSelection = AutoMixEngineSelectionStore.shared
+    @State private var player = ActivePlayerPresentation()
     @Binding var showPlayer: Bool
     let zoomNamespace: Namespace.ID
     @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
 
     private var tapSide: CGFloat { max(44, min(controlSide, 56)) }
-    private var track: Track? { engineSelection.isV2Enabled ? v2.currentTrack : player.currentTrack }
-    private var isPlaying: Bool { engineSelection.isV2Enabled ? v2.isPlaying : player.isPlaying }
-    private var isLoading: Bool { engineSelection.isV2Enabled && v2.isLoading }
+    private var track: Track? { player.currentTrack }
+    private var isPlaying: Bool { player.isPlaying }
+    private var isLoading: Bool { player.isLoading }
 
     private var progress: Double {
-        guard !engineSelection.isV2Enabled, player.duration > 0 else { return 0 }
+        guard player.duration > 0 else { return 0 }
         return min(1, max(0, player.progress / player.duration))
     }
 
@@ -242,6 +240,7 @@ struct NativeMiniPlayer: View {
                     if value.translation.height < -20 { open() }
                 }
         )
+        .task { await player.observeTimeline() }
     }
 
     private func open() {
@@ -252,13 +251,13 @@ struct NativeMiniPlayer: View {
     private func togglePlayback() {
         Haptics.tap(.medium)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        PlaybackCommandRouter.shared.toggle()
+        player.togglePlay()
     }
 
     private func nextTrack() {
         Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        PlaybackCommandRouter.shared.next()
+        player.next()
     }
 }
 
