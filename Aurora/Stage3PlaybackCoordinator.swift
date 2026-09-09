@@ -146,19 +146,21 @@ final class PlaybackCoordinator {
             guard let self else { return }
             let duration = plan.type == .crossfade ? plan.bars
                 : BeatGridSynchronization.duration(bars: plan.bars, bpm: plan.tempoTargetBPM)
-            effects = Task { @MainActor [weak self] in
-                await self?.executeEffects(plan, outgoing: activeDeck, incoming: item.deck)
+            let outgoing = self.activeDeck
+            self.effects = Task { @MainActor [weak self] in
+                await self?.executeEffects(plan, outgoing: outgoing, incoming: item.deck)
             }
             do {
-                try await promote(item, duration: max(0.05, duration), plan: plan)
-                await effects?.value; effects = nil; transition = nil; publish(); startPrefetch()
+                try await self.promote(item, duration: max(0.05, duration), plan: plan)
+                await self.effects?.value; self.effects = nil; self.transition = nil
+                self.publish(); self.startPrefetch()
             } catch is CancellationError {
-                effects?.cancel(); await effects?.value; effects = nil; transition = nil
-                await engine.resetEffects(activeDeck); await engine.resetEffects(item.deck)
+                self.effects?.cancel(); await self.effects?.value; self.effects = nil; self.transition = nil
+                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
             } catch {
-                effects?.cancel(); await effects?.value; effects = nil
-                lastError = String(describing: error); transition = nil
-                await engine.resetEffects(activeDeck); await engine.resetEffects(item.deck); publish()
+                self.effects?.cancel(); await self.effects?.value; self.effects = nil
+                self.lastError = String(describing: error); self.transition = nil
+                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck); self.publish()
             }
         }; publish()
     }
@@ -204,13 +206,13 @@ final class PlaybackCoordinator {
         guard prepared == nil, prefetch == nil, let index, index + 1 < ids.count else { return }
         let deck = otherDeck
         prefetch = Task { @MainActor [weak self] in
-            guard let self else { return }; defer { prefetch = nil; publish() }
+            guard let self else { return }; defer { self.prefetch = nil; self.publish() }
             do {
-                let item = try await fetch(index + 1, deck: deck)
-                try await engine.prepare(deck, fileURL: item.url, startTimeSeconds: 0)
-                await engine.setGain(0, for: deck); prepared = item
+                let item = try await self.fetch(index + 1, deck: deck)
+                try await self.engine.prepare(deck, fileURL: item.url, startTimeSeconds: 0)
+                await self.engine.setGain(0, for: deck); self.prepared = item
             } catch is CancellationError { return }
-            catch { lastError = String(describing: error) }
+            catch { self.lastError = String(describing: error) }
         }
     }
     private func fetch(_ index: Int, deck: Deck) async throws -> Item {
