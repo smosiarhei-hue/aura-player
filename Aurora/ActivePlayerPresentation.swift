@@ -2,6 +2,7 @@
 
 import AudioEngineCore
 import Foundation
+import MixModels
 import Observation
 import TrackSource
 
