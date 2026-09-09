@@ -1,5 +1,6 @@
 import AudioEngineCore
 import MixModels
+import MixPlanner
 import SwiftUI
 
 struct AutoMixV2DiagnosticsView: View {
@@ -23,11 +24,15 @@ struct AutoMixV2DiagnosticsView: View {
             profileSection("Следующий трек", profile: analysis.nextProfile)
 
             if let plan = analysis.transitionPlan {
-                Section("План перехода") {
+                Section("План и синхронизация") {
                     LabeledContent("Тип", value: plan.type.rawValue)
                     LabeledContent("Причина", value: plan.reason)
-                    LabeledContent("Начало A", value: String(format: "%.1f с", plan.aOutStartSec))
-                    LabeledContent("Старт B", value: String(format: "%.1f с", plan.bInStartSec))
+                    LabeledContent("Target BPM", value: String(format: "%.2f", plan.tempoTargetBPM))
+                    LabeledContent("Rate A", value: String(format: "%.5f", plan.rateA))
+                    LabeledContent("Rate B", value: String(format: "%.5f", plan.rateB))
+                    LabeledContent("Начало A", value: String(format: "%.3f с", plan.aOutStartSec))
+                    LabeledContent("Старт B", value: String(format: "%.3f с", plan.bInStartSec))
+                    LabeledContent("Тактов", value: String(format: "%.0f", plan.bars))
                     LabeledContent("Поправка B", value: String(format: "%+.1f дБ", plan.gainOffsetBdB))
                 }
             }
@@ -39,17 +44,14 @@ struct AutoMixV2DiagnosticsView: View {
 
             Section("Действия") {
                 Button("Пересчитать профиль текущего трека") { analysis.recalculateCurrent() }
-                Button("Обновить отчёт") { Task { await runtime.refreshDiagnostics() } }
+                Button("Обновить runtime-отчёт") { Task { await runtime.refreshDiagnostics() } }
                 Text(runtime.diagnosticReport)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
             }
         }
         .navigationTitle("AutoMix V2")
-        .task {
-            analysis.install()
-            await runtime.refreshDiagnostics()
-        }
+        .task { analysis.install(); await runtime.refreshDiagnostics() }
     }
 
     @ViewBuilder
@@ -58,14 +60,14 @@ struct AutoMixV2DiagnosticsView: View {
             if let profile {
                 LabeledContent("BPM", value: String(format: "%.1f", profile.bpm))
                 LabeledContent("BPM confidence", value: String(format: "%.2f", profile.confidence.bpm))
+                LabeledContent("Downbeat confidence", value: String(format: "%.2f", profile.confidence.downbeats))
+                LabeledContent("Camelot", value: profile.camelotKey ?? "Не определён")
                 LabeledContent("LUFS", value: String(format: "%.1f", profile.integratedLUFS))
                 LabeledContent("Mixable", value: profile.mixable ? "Да" : "Нет")
                 LabeledContent("Mix in", value: String(format: "%.1f с", profile.mixInSec))
                 LabeledContent("Mix out", value: String(format: "%.1f с", profile.mixOutSec))
                 LabeledContent("Долей", value: String(profile.beatsSec.count))
-            } else {
-                Text("Профиль ещё не готов").foregroundStyle(.secondary)
-            }
+            } else { Text("Профиль ещё не готов").foregroundStyle(.secondary) }
         }
     }
 }

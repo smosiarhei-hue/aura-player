@@ -83,17 +83,25 @@ final class DualDeckAudioEngine {
         guard durationSeconds.isFinite, durationSeconds > 0 else {
             throw AudioEngineCoreError.conversionFailed("Invalid transition duration")
         }
+        let out = slot(outgoing), incomingSlot = slot(incoming)
         try await play(incoming)
-        let started = ContinuousClock().now
-        while true {
-            try Task.checkCancellation()
-            let elapsed = started.duration(to: ContinuousClock().now).components
-            let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
-            let p = min(1, max(0, seconds / durationSeconds))
-            slot(outgoing).mixer.outputVolume = Float(cos(p * .pi / 2))
-            slot(incoming).mixer.outputVolume = Float(sin(p * .pi / 2))
-            if p >= 1 { break }
-            try await ContinuousClock().sleep(for: .milliseconds(5))
+        let baseline = renderedSourceSeconds(incomingSlot)
+        do {
+            while true {
+                try Task.checkCancellation()
+                let sourceElapsed = max(0, renderedSourceSeconds(incomingSlot) - baseline)
+                let wallElapsed = sourceElapsed / Double(max(incomingSlot.rate, 0.01))
+                let p = min(1, max(0, wallElapsed / durationSeconds))
+                out.mixer.outputVolume = Float(cos(p * .pi / 2))
+                incomingSlot.mixer.outputVolume = Float(sin(p * .pi / 2))
+                if p >= 1 { break }
+                try await ContinuousClock().sleep(for: .milliseconds(5))
+            }
+        } catch {
+            out.mixer.outputVolume = 1
+            incomingSlot.mixer.outputVolume = 0
+            incomingSlot.player.pause(); incomingSlot.playing = false
+            throw error
         }
         await stop(outgoing); await setGain(1, for: incoming)
     }
@@ -102,12 +110,13 @@ final class DualDeckAudioEngine {
         return AudioEngineSnapshot(isRunning: graph.isRunning, sampleRate: f.sampleRate,
                                    channels: f.channelCount, deckA: snapshot(a), deckB: snapshot(b))
     }
+    private func renderedSourceSeconds(_ s: Slot) -> Double {
+        guard let r = s.player.lastRenderTime,
+              let t = s.player.playerTime(forNodeTime: r), t.sampleRate > 0 else { return 0 }
+        return Double(t.sampleTime) / t.sampleRate
+    }
     private func snapshot(_ s: Slot) -> DeckPlaybackSnapshot {
-        let played: Double
-        if let r = s.player.lastRenderTime, let t = s.player.playerTime(forNodeTime: r), t.sampleRate > 0 {
-            played = Double(t.sampleTime) / t.sampleRate * Double(s.rate)
-        } else { played = 0 }
-        let position = s.ended ? s.duration : min(s.duration, s.start + max(0, played))
+        let position = s.ended ? s.duration : min(s.duration, s.start + max(0, renderedSourceSeconds(s)))
         return DeckPlaybackSnapshot(deck: s.deck, fileURL: s.url, isPrepared: s.prepared,
                                     isPlaying: s.playing, gain: s.mixer.outputVolume,
                                     queuedChunks: s.prepared && !s.ended ? 1 : 0,
