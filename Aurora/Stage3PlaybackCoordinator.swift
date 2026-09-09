@@ -21,6 +21,7 @@ final class PlaybackCoordinator {
     private var resumeIntent = false
     private var monitor: Task<Void, Never>?
     private var transition: Task<Void, Never>?
+    private var effects: Task<Void, Never>?
     private var prefetch: Task<Void, Never>?
     private var planSignature = ""
     private var suppressAutoMixUntilTrackChange = false
@@ -56,8 +57,7 @@ final class PlaybackCoordinator {
     }
     func previous() async throws {
         guard !ids.isEmpty else { return }
-        await cancelTransitionAndWait()
-        try await load(((index ?? 0) - 1 + ids.count) % ids.count)
+        await cancelTransitionAndWait(); try await load(((index ?? 0) - 1 + ids.count) % ids.count)
     }
     private func load(_ newIndex: Int) async throws {
         await engine.stopEngine(); activeDeck = .a; prepared = nil; planSignature = ""
@@ -81,9 +81,7 @@ final class PlaybackCoordinator {
     }
     func seek(to seconds: Double) async throws {
         guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
-        await cancelTransitionAndWait()
-        prefetch?.cancel(); prefetch = nil
-        // A manual scrub must never be interpreted as natural EOF or a transition cue.
+        await cancelTransitionAndWait(); prefetch?.cancel(); prefetch = nil
         suppressAutoMixUntilTrackChange = true
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: seconds)
         await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
@@ -126,8 +124,7 @@ final class PlaybackCoordinator {
         guard wantsPlayback, transition == nil, let current = active, let next = prepared else { return }
         let state = await engine.snapshot(); let deck = activeDeck == .a ? state.deckA : state.deckB
         if suppressAutoMixUntilTrackChange {
-            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }
-            return
+            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }; return
         }
         guard let plan = AutoMixV2AnalysisRuntime.shared.transitionPlan else {
             if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }; return
@@ -147,17 +144,49 @@ final class PlaybackCoordinator {
     private func begin(_ item: Item, plan: MixModels.TransitionPlan) {
         transition = Task { @MainActor [weak self] in
             guard let self else { return }
+            let duration = plan.type == .crossfade ? plan.bars
+                : BeatGridSynchronization.duration(bars: plan.bars, bpm: plan.tempoTargetBPM)
+            effects = Task { @MainActor [weak self] in
+                await self?.executeEffects(plan, outgoing: activeDeck, incoming: item.deck)
+            }
             do {
-                let duration = plan.type == .crossfade ? plan.bars
-                    : BeatGridSynchronization.duration(bars: plan.bars, bpm: plan.tempoTargetBPM)
                 try await promote(item, duration: max(0.05, duration), plan: plan)
-                transition = nil; publish(); startPrefetch()
-            } catch is CancellationError { transition = nil }
-            catch { lastError = String(describing: error); transition = nil; publish() }
+                await effects?.value; effects = nil; transition = nil; publish(); startPrefetch()
+            } catch is CancellationError {
+                effects?.cancel(); await effects?.value; effects = nil; transition = nil
+                await engine.resetEffects(activeDeck); await engine.resetEffects(item.deck)
+            } catch {
+                effects?.cancel(); await effects?.value; effects = nil
+                lastError = String(describing: error); transition = nil
+                await engine.resetEffects(activeDeck); await engine.resetEffects(item.deck); publish()
+            }
         }; publish()
     }
+    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck, incoming: Deck) async {
+        guard plan.type != .crossfade, plan.tempoTargetBPM > 0 else { return }
+        let initial = await engine.snapshot()
+        let initialDeck = outgoing == .a ? initial.deckA : initial.deckB
+        let baseline = initialDeck.positionSeconds
+        while !Task.isCancelled {
+            let state = await engine.snapshot(); let deck = outgoing == .a ? state.deckA : state.deckB
+            let elapsedSource = max(0, deck.positionSeconds - baseline)
+            let elapsedWall = elapsedSource / Double(max(plan.rateA, 0.01))
+            let bar = EffectAutomation.bar(atSeconds: elapsedWall, bpm: plan.tempoTargetBPM)
+            for event in plan.fx where event.kind != .volume {
+                if let value = EffectAutomation.value(for: event, atBar: bar) {
+                    let target = event.target == .a ? outgoing : incoming
+                    await engine.applyEffect(event.kind, value: value, param: event.param,
+                                             bpm: plan.tempoTargetBPM, to: target)
+                }
+            }
+            if bar >= plan.bars { return }
+            do { try await ContinuousClock().sleep(for: .milliseconds(10)) } catch { return }
+        }
+    }
     private func promote(_ item: Item, duration: Double?, plan: MixModels.TransitionPlan?) async throws {
-        if let plan { await engine.setRate(plan.rateA, for: activeDeck); await engine.setRate(plan.rateB, for: item.deck) }
+        if let plan, !plan.fx.contains(where: { $0.kind == .rateRamp }) {
+            await engine.setRate(plan.rateA, for: activeDeck); await engine.setRate(plan.rateB, for: item.deck)
+        }
         if let duration { try await engine.crossfade(from: activeDeck, to: item.deck, durationSeconds: duration) }
         else if wantsPlayback { try await engine.skip(from: activeDeck, to: item.deck) }
         activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
@@ -166,7 +195,10 @@ final class PlaybackCoordinator {
         phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
     }
     private func cancelTransitionAndWait() async {
-        let task = transition; transition = nil; task?.cancel(); await task?.value
+        effects?.cancel(); let fx = effects; effects = nil
+        let task = transition; transition = nil; task?.cancel()
+        await task?.value; await fx?.value
+        await engine.resetEffects(.a); await engine.resetEffects(.b)
     }
     private func startPrefetch() {
         guard prepared == nil, prefetch == nil, let index, index + 1 < ids.count else { return }
