@@ -9,41 +9,24 @@ let strictConcurrency: [SwiftSetting] = [
 
 let package = Package(
     name: "AutoMixV2",
-    platforms: [
-        .iOS(.v17)
-    ],
+    platforms: [.iOS(.v17)],
     products: [
         .library(name: "MixModels", targets: ["MixModels"]),
         .library(name: "TrackSource", targets: ["TrackSource"]),
+        .library(name: "TrackAnalysis", targets: ["TrackAnalysis"]),
+        .library(name: "MixPlanner", targets: ["MixPlanner"]),
         .library(name: "AudioEngineCore", targets: ["AudioEngineCore"]),
         .library(name: "PlaybackCoordinator", targets: ["PlaybackCoordinator"]),
         .library(name: "MixDiagnostics", targets: ["MixDiagnostics"])
     ],
     targets: [
-        .target(
-            name: "MixModels",
-            swiftSettings: strictConcurrency
-        ),
-        .target(
-            name: "TrackSource",
-            dependencies: ["MixModels"],
-            swiftSettings: strictConcurrency
-        ),
-        .target(
-            name: "AudioEngineCore",
-            dependencies: ["MixModels"],
-            swiftSettings: strictConcurrency
-        ),
-        .target(
-            name: "PlaybackCoordinator",
-            dependencies: ["MixModels", "TrackSource", "AudioEngineCore"],
-            swiftSettings: strictConcurrency
-        ),
-        .target(
-            name: "MixDiagnostics",
-            dependencies: ["MixModels", "AudioEngineCore", "PlaybackCoordinator"],
-            swiftSettings: strictConcurrency
-        )
+        .target(name: "MixModels", swiftSettings: strictConcurrency),
+        .target(name: "TrackSource", dependencies: ["MixModels"], swiftSettings: strictConcurrency),
+        .target(name: "TrackAnalysis", dependencies: ["MixModels"], swiftSettings: strictConcurrency),
+        .target(name: "MixPlanner", dependencies: ["MixModels"], swiftSettings: strictConcurrency),
+        .target(name: "AudioEngineCore", dependencies: ["MixModels"], swiftSettings: strictConcurrency),
+        .target(name: "PlaybackCoordinator", dependencies: ["MixModels", "TrackSource", "AudioEngineCore"], swiftSettings: strictConcurrency),
+        .target(name: "MixDiagnostics", dependencies: ["MixModels", "AudioEngineCore", "PlaybackCoordinator"], swiftSettings: strictConcurrency)
     ],
     swiftLanguageModes: [.v6]
 )
