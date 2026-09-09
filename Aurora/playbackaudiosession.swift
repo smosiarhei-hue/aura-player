@@ -17,6 +17,7 @@ final class PlaybackAudioSessionCoordinator {
         installed = true
         configure()
         PlaybackCommandRouter.shared.install()
+        AutoMixV2NowPlayingCenter.shared.install()
 
         let center = NotificationCenter.default
 
@@ -90,7 +91,6 @@ final class PlaybackAudioSessionCoordinator {
             report(error, step: step.rawValue)
         }
 
-        // Never publish an active/configured snapshot after category or activation failure.
         guard result.isActive, usesV2 else { return }
 
         let preferredRate = DualDeckAudioEngine.preferredSampleRate
