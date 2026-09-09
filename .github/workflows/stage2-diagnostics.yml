@@ -2,7 +2,7 @@ name: AutoMix stage diagnostics
 
 on:
   push:
-    branches: [ feature/automix-stage2-analysis, feature/automix-stage3-beatmatch ]
+    branches: [ feature/automix-stage2-analysis, feature/automix-stage3-beatmatch, feature/automix-stage4-effects ]
   workflow_dispatch:
 
 permissions:
@@ -35,17 +35,10 @@ jobs:
             grep -nE 'error:|fatal error:|failed|Issue recorded|Expectation failed|Command SwiftCompile failed' stage.log | tail -n 400 >> diagnostic.txt || true
             if [ $(wc -l < diagnostic.txt) -lt 6 ]; then tail -n 400 stage.log >> diagnostic.txt; fi
           fi
-          TMP=$(mktemp -d)
-          cp diagnostic.txt "$TMP/"
-          cd "$TMP"
-          git init
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout -b ci-diagnostics-stage3
-          mkdir -p ci-logs
-          mv diagnostic.txt ci-logs/latest.txt
-          git add ci-logs/latest.txt
-          git commit -m "Record AutoMix diagnostics from run $GITHUB_RUN_ID"
+          TMP=$(mktemp -d); cp diagnostic.txt "$TMP/"; cd "$TMP"
+          git init; git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b ci-diagnostics-stage4; mkdir -p ci-logs; mv diagnostic.txt ci-logs/latest.txt
+          git add ci-logs/latest.txt; git commit -m "Record AutoMix diagnostics from run $GITHUB_RUN_ID"
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force origin ci-diagnostics-stage3
+          git push --force origin ci-diagnostics-stage4
           exit "$STATUS"
