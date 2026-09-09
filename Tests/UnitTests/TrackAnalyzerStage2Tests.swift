@@ -31,7 +31,7 @@ struct TrackAnalyzerStage2Tests {
         let direct = abs(Double(result.bpm) - expected)
         let doubled = abs(Double(result.bpm) * 2 - expected)
         let halved = abs(Double(result.bpm) / 2 - expected)
-        #expect(min(direct, doubled, halved) <= 1)
+        #expect(Swift.min(direct, Swift.min(doubled, halved)) <= 1)
         #expect(result.confidence >= 0.7)
     }
 }

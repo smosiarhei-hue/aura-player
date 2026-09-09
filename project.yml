@@ -32,6 +32,10 @@ targets:
       - package: AutoMixV2
         product: TrackSource
       - package: AutoMixV2
+        product: TrackAnalysis
+      - package: AutoMixV2
+        product: MixPlanner
+      - package: AutoMixV2
         product: AudioEngineCore
       - package: AutoMixV2
         product: PlaybackCoordinator
@@ -80,6 +84,10 @@ targets:
         product: MixModels
       - package: AutoMixV2
         product: TrackSource
+      - package: AutoMixV2
+        product: TrackAnalysis
+      - package: AutoMixV2
+        product: MixPlanner
       - package: AutoMixV2
         product: AudioEngineCore
       - package: AutoMixV2
