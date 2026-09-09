@@ -1,4 +1,5 @@
 import AudioEngineCore
+import MixModels
 import SwiftUI
 
 struct AutoMixV2DiagnosticsView: View {
@@ -52,7 +53,7 @@ struct AutoMixV2DiagnosticsView: View {
     }
 
     @ViewBuilder
-    private func profileSection(_ title: String, profile: MixModels.TrackProfile?) -> some View {
+    private func profileSection(_ title: String, profile: TrackProfile?) -> some View {
         Section(title) {
             if let profile {
                 LabeledContent("BPM", value: String(format: "%.1f", profile.bpm))
