@@ -13,13 +13,13 @@ final class ActivePlayerPresentation {
     private let selection: AutoMixEngineSelectionStore
     private let router: PlaybackCommandRouter
     private var timelineTrackID: UUID?
-    private var timelinePosition: Double = 0
-    private var timelineDuration: Double = 0
+    private var timelinePosition = 0.0
+    private var timelineDuration = 0.0
     private var timelineTransitioning = false
     private var networkFraction: Double?
-    private var networkReceivedBytes: Int64 = 0
-    private var networkTotalBytes: Int64?
     private var networkDownloading = false
+    private var nextNetworkFraction: Double?
+    private var nextNetworkDownloading = false
 
     init(legacy: PlayerCore = .shared, runtime: AutoMixV2Runtime = .shared,
          selection: AutoMixEngineSelectionStore = .shared, router: PlaybackCommandRouter = .shared) {
@@ -38,9 +38,9 @@ final class ActivePlayerPresentation {
         return value.isFinite ? max(0, value) : 0
     }
     var downloadProgress: Double? { isV2Enabled ? networkFraction : nil }
-    var downloadReceivedBytes: Int64 { networkReceivedBytes }
-    var downloadTotalBytes: Int64? { networkTotalBytes }
     var isDownloading: Bool { isV2Enabled && networkDownloading }
+    var nextDownloadProgress: Double? { isV2Enabled ? nextNetworkFraction : nil }
+    var isNextDownloading: Bool { isV2Enabled && nextNetworkDownloading }
     var queue: [Track] {
         get { isV2Enabled ? runtime.playbackQueue : legacy.queue }
         set { if isV2Enabled { runtime.replaceQueue(newValue) } else { legacy.queue = newValue } }
@@ -67,16 +67,21 @@ final class ActivePlayerPresentation {
                     timelineTrackID = trackID; timelinePosition = timeline.position
                     timelineDuration = timeline.duration; timelineTransitioning = timeline.isTransitioning
                 }
-                if let track, track.isStream,
-                   let raw = YandexMusicService.ymId(fromFileName: track.fileName) {
-                    let state = await DownloadProgressStore.shared.snapshot(for: TrackID(raw: raw))
-                    networkFraction = state?.fraction; networkReceivedBytes = state?.receivedBytes ?? 0
-                    networkTotalBytes = state?.totalBytes; networkDownloading = state?.isDownloading ?? false
-                } else {
-                    networkFraction = nil; networkReceivedBytes = 0; networkTotalBytes = nil; networkDownloading = false
+                let currentState = await downloadState(for: track)
+                networkFraction = currentState?.fraction; networkDownloading = currentState?.isDownloading ?? false
+                let list = runtime.playbackQueue
+                let next = track.flatMap { current in
+                    list.firstIndex(where: { $0.id == current.id }).flatMap { $0 + 1 < list.count ? list[$0 + 1] : nil }
                 }
+                let nextState = await downloadState(for: next)
+                nextNetworkFraction = nextState?.fraction; nextNetworkDownloading = nextState?.isDownloading ?? false
             }
             do { try await ContinuousClock().sleep(for: .milliseconds(200)) } catch { return }
         }
+    }
+    private func downloadState(for track: Track?) async -> TrackDownloadProgress? {
+        guard let track, track.isStream,
+              let raw = YandexMusicService.ymId(fromFileName: track.fileName) else { return nil }
+        return await DownloadProgressStore.shared.snapshot(for: TrackID(raw: raw))
     }
 }
