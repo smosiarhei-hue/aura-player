@@ -8,6 +8,14 @@ struct AutoMixV2DiagnosticsView: View {
     @State private var runtime = AutoMixV2Runtime.shared
     @State private var analysis = AutoMixV2AnalysisRuntime.shared
 
+    private var visibleError: String? {
+        let value = runtime.lastError ?? analysis.lastError
+        guard let value else { return nil }
+        let lowered = value.lowercased()
+        if lowered.contains("code=-999") || lowered.contains("cancelled") || lowered.contains("отменено") { return nil }
+        return value
+    }
+
     var body: some View {
         List {
             Section("Состояние") {
@@ -15,16 +23,12 @@ struct AutoMixV2DiagnosticsView: View {
                 LabeledContent("Воспроизведение", value: runtime.isPlaying ? "Играет" : "Остановлено")
                 LabeledContent("Загрузка", value: runtime.isLoading ? "Да" : "Нет")
                 LabeledContent("Анализ", value: analysis.pipelineStatus)
-                if let error = runtime.lastError ?? analysis.lastError {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                }
+                if let error = visibleError { Text(error).font(.caption).foregroundStyle(.red) }
             }
-
             profileSection("Текущий трек", profile: analysis.currentProfile)
             profileSection("Следующий трек", profile: analysis.nextProfile)
-
             if let plan = analysis.transitionPlan {
-                Section("План и синхронизация") {
+                Section("План, синхронизация и FX") {
                     LabeledContent("Тип", value: plan.type.rawValue)
                     LabeledContent("Причина", value: plan.reason)
                     LabeledContent("Target BPM", value: String(format: "%.2f", plan.tempoTargetBPM))
@@ -33,21 +37,16 @@ struct AutoMixV2DiagnosticsView: View {
                     LabeledContent("Начало A", value: String(format: "%.3f с", plan.aOutStartSec))
                     LabeledContent("Старт B", value: String(format: "%.3f с", plan.bInStartSec))
                     LabeledContent("Тактов", value: String(format: "%.0f", plan.bars))
-                    LabeledContent("Поправка B", value: String(format: "%+.1f дБ", plan.gainOffsetBdB))
+                    LabeledContent("FX событий", value: String(plan.fx.count))
+                    ForEach(Array(plan.fx.enumerated()), id: \.offset) { _, event in
+                        LabeledContent(event.kind.rawValue, value: event.target.rawValue.uppercased())
+                    }
                 }
             }
-
-            Section("Бюджеты") {
-                LabeledContent("PCM preload", value: ByteCountFormatter.string(fromByteCount: Int64(PCMPreloadPolicy().estimatedTotalQueuedBytes), countStyle: .memory))
-                LabeledContent("Лимит PCM", value: "25 МБ")
-            }
-
             Section("Действия") {
                 Button("Пересчитать профиль текущего трека") { analysis.recalculateCurrent() }
                 Button("Обновить runtime-отчёт") { Task { await runtime.refreshDiagnostics() } }
-                Text(runtime.diagnosticReport)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
+                Text(runtime.diagnosticReport).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
             }
         }
         .navigationTitle("AutoMix V2")
@@ -66,7 +65,6 @@ struct AutoMixV2DiagnosticsView: View {
                 LabeledContent("Mixable", value: profile.mixable ? "Да" : "Нет")
                 LabeledContent("Mix in", value: String(format: "%.1f с", profile.mixInSec))
                 LabeledContent("Mix out", value: String(format: "%.1f с", profile.mixOutSec))
-                LabeledContent("Долей", value: String(profile.beatsSec.count))
             } else { Text("Профиль ещё не готов").foregroundStyle(.secondary) }
         }
     }

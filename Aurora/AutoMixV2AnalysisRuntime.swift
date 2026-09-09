@@ -11,14 +11,12 @@ import TrackSource
 @MainActor
 final class AutoMixV2AnalysisRuntime {
     static let shared = AutoMixV2AnalysisRuntime()
-
     private let analyzer: TrackAnalyzer
     private let yandexClient = AutoMixV2YandexDownloadClient()
     private let yandexSource: YandexTrackSource?
     private var observerTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
     private var observedPair = ""
-
     private(set) var currentProfile: TrackProfile?
     private(set) var nextProfile: TrackProfile?
     private(set) var transitionPlan: MixModels.TransitionPlan?
@@ -33,7 +31,6 @@ final class AutoMixV2AnalysisRuntime {
             yandexSource = YandexTrackSource(client: yandexClient, cache: cache, maximumParallelDownloads: 2)
         } else { yandexSource = nil }
     }
-
     func install() {
         guard observerTask == nil else { return }
         observerTask = Task { @MainActor [weak self] in
@@ -43,18 +40,15 @@ final class AutoMixV2AnalysisRuntime {
             }
         }
     }
-
     func recalculateCurrent() {
         guard let track = AutoMixV2Runtime.shared.currentTrack else { return }
-        let id = trackID(for: track)
-        analysisTask?.cancel()
+        let id = trackID(for: track); analysisTask?.cancel()
         analysisTask = Task { @MainActor [weak self] in
             guard let self, let id else { return }
             try? await analyzer.removeProfile(for: id)
             observedPair = ""; refreshPairIfNeeded()
         }
     }
-
     private func refreshPairIfNeeded() {
         guard AutoMixEngineSelectionStore.shared.isV2Enabled,
               let current = AutoMixV2Runtime.shared.currentTrack,
@@ -75,7 +69,7 @@ final class AutoMixV2AnalysisRuntime {
                 guard !Task.isCancelled, observedPair == key else { return }
                 currentProfile = a; nextProfile = nil; transitionPlan = nil
                 guard let next, let nextID = trackID(for: next) else {
-                    pipelineStatus = "Профиль текущего трека готов"; return
+                    pipelineStatus = "Профиль текущего трека готов"; lastError = nil; return
                 }
                 pipelineStatus = "Анализ следующего трека и тональности"
                 let nextFile = try await localFile(for: next, id: nextID)
@@ -93,15 +87,19 @@ final class AutoMixV2AnalysisRuntime {
                                                  aMeta: metadata(for: current, id: currentID),
                                                  bMeta: metadata(for: next, id: nextID),
                                                  settings: settings)
-                pipelineStatus = "Профили и музыкальный план готовы"
-            } catch is CancellationError { return }
-            catch {
-                guard observedPair == key else { return }
+                pipelineStatus = "Профили и музыкальный план готовы"; lastError = nil
+            } catch {
+                guard observedPair == key, !Self.isCancellation(error) else { return }
                 lastError = String(describing: error); pipelineStatus = "Ошибка анализа"
             }
         }
     }
-
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        let ns = error as NSError
+        return ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled
+    }
     private func localFile(for track: Track, id: TrackID) async throws -> URL {
         if !track.isStream { return track.url }
         guard let yandexSource else { throw TrackSourceError.invalidResponse }
