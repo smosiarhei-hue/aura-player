@@ -13,6 +13,7 @@ final class AutoMixV2NowPlayingCenter {
     private var artworkTrackID: UUID?
     private var artwork: MPMediaItemArtwork?
     private var imageCache: [String: UIImage] = [:]
+    private var ownsNowPlaying = false
     private init() {}
 
     func install() {
@@ -27,50 +28,41 @@ final class AutoMixV2NowPlayingCenter {
     }
 
     private func refresh() async {
-        let center = MPNowPlayingInfoCenter.default()
-        guard AutoMixEngineSelectionStore.shared.isV2Enabled else {
-            clear(center); return
-        }
         let runtime = AutoMixV2Runtime.shared
-        guard let track = runtime.currentTrack else { clear(center); return }
-
-        // Preload artwork while the app is visible so lock screen/Dynamic Island
-        // receive it immediately when the app moves to background.
-        startArtworkLoadIfNeeded(for: track)
-
-        // iOS owns the system Dynamic Island media surface. Clearing Now Playing
-        // while Sonivo is foreground is the supported best-effort way to avoid a
-        // duplicate system player over the app's own full player. It is restored
-        // within 500 ms after the app is hidden or the device is locked.
-        if UIApplication.shared.applicationState == .active {
-            center.nowPlayingInfo = nil
-            center.playbackState = .stopped
-            publishedTrackID = nil
-            return
+        let enabled = AutoMixEngineSelectionStore.shared.isV2Enabled
+        guard enabled, let track = runtime.currentTrack else {
+            clearOnlyIfOwned(); return
         }
-
+        startArtworkLoadIfNeeded(for: track)
         let timeline = await runtime.playbackTimeline()
-        let duration = timeline?.duration ?? max(0, track.duration)
-        let elapsed = min(max(0, timeline?.position ?? 0), max(duration, 0))
+        let durationCandidate = timeline?.duration ?? track.duration
+        let duration = durationCandidate.isFinite ? max(0, durationCandidate) : 0
+        let positionCandidate = timeline?.position ?? 0
+        let elapsed = positionCandidate.isFinite ? min(max(0, positionCandidate), duration > 0 ? duration : positionCandidate) : 0
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.title,
             MPMediaItemPropertyArtist: track.artist,
-            MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
             MPNowPlayingInfoPropertyPlaybackRate: runtime.isPlaying ? 1.0 : 0.0,
-            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+            MPNowPlayingInfoPropertyIsLiveStream: false
         ]
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+            info[MPNowPlayingInfoPropertyPlaybackProgress] = min(1, max(0, elapsed / duration))
+        }
         if !track.album.isEmpty { info[MPMediaItemPropertyAlbumTitle] = track.album }
         if artworkTrackID == track.id, let artwork { info[MPMediaItemPropertyArtwork] = artwork }
+        let center = MPNowPlayingInfoCenter.default()
         center.nowPlayingInfo = info
         center.playbackState = runtime.isPlaying ? .playing : .paused
-        publishedTrackID = track.id
+        ownsNowPlaying = true; publishedTrackID = track.id
     }
 
     private func startArtworkLoadIfNeeded(for track: Track) {
         guard artworkTrackID != track.id else { return }
-        artworkTask?.cancel(); artworkTask = nil
-        artworkTrackID = track.id; artwork = nil
+        artworkTask?.cancel(); artworkTrackID = track.id; artwork = nil
         guard let raw = track.coverURL, let url = URL(string: raw) else { return }
         if let cached = imageCache[raw] { artwork = makeArtwork(cached); return }
         let id = track.id
@@ -79,25 +71,20 @@ final class AutoMixV2NowPlayingCenter {
             do {
                 let (data, response) = try await URLSession.shared.data(from: url)
                 try Task.checkCancellation()
-                guard let http = response as? HTTPURLResponse,
-                      (200...299).contains(http.statusCode),
-                      let image = UIImage(data: data) else { return }
-                guard artworkTrackID == id else { return }
-                imageCache[raw] = image
-                artwork = makeArtwork(image)
-            } catch is CancellationError { return }
-            catch let error as URLError where error.code == .cancelled { return }
-            catch { return } // Artwork failure must never affect audio playback.
+                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                      let image = UIImage(data: data), artworkTrackID == id else { return }
+                imageCache[raw] = image; artwork = makeArtwork(image)
+            } catch { return }
         }
     }
-
     private func makeArtwork(_ image: UIImage) -> MPMediaItemArtwork {
         MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
-
-    private func clear(_ center: MPNowPlayingInfoCenter) {
-        artworkTask?.cancel(); artworkTask = nil
+    private func clearOnlyIfOwned() {
+        guard ownsNowPlaying else { return }
+        let center = MPNowPlayingInfoCenter.default()
         center.nowPlayingInfo = nil; center.playbackState = .stopped
-        publishedTrackID = nil; artworkTrackID = nil; artwork = nil
+        ownsNowPlaying = false; publishedTrackID = nil
+        artworkTask?.cancel(); artworkTask = nil; artworkTrackID = nil; artwork = nil
     }
 }

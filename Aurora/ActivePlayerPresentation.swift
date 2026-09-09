@@ -3,8 +3,8 @@
 import AudioEngineCore
 import Foundation
 import Observation
+import TrackSource
 
-/// UI-owned adapter: never mirrors V2 state into the legacy audio engine.
 @Observable
 @MainActor
 final class ActivePlayerPresentation {
@@ -16,13 +16,14 @@ final class ActivePlayerPresentation {
     private var timelinePosition: Double = 0
     private var timelineDuration: Double = 0
     private var timelineTransitioning = false
+    private var networkFraction: Double?
+    private var networkReceivedBytes: Int64 = 0
+    private var networkTotalBytes: Int64?
+    private var networkDownloading = false
 
     init(legacy: PlayerCore = .shared, runtime: AutoMixV2Runtime = .shared,
          selection: AutoMixEngineSelectionStore = .shared, router: PlaybackCommandRouter = .shared) {
-        self.legacy = legacy
-        self.runtime = runtime
-        self.selection = selection
-        self.router = router
+        self.legacy = legacy; self.runtime = runtime; self.selection = selection; self.router = router
     }
     var isV2Enabled: Bool { selection.isV2Enabled }
     var currentTrack: Track? { isV2Enabled ? runtime.currentTrack : legacy.currentTrack }
@@ -30,22 +31,19 @@ final class ActivePlayerPresentation {
     var isPlaying: Bool { isV2Enabled ? runtime.isPlaying : legacy.isPlaying }
     var isLoading: Bool { isV2Enabled && runtime.isLoading }
     var isTransitionActive: Bool { isV2Enabled ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive }
-    var progress: Double {
-        guard isV2Enabled else { return legacy.progress }
-        return timelineTrackID == currentTrack?.id ? timelinePosition : 0
-    }
+    var progress: Double { isV2Enabled ? (timelineTrackID == currentTrack?.id ? timelinePosition : 0) : legacy.progress }
     var duration: Double {
         guard isV2Enabled else { return legacy.duration }
-        let value = timelineTrackID == currentTrack?.id && timelineDuration > 0
-            ? timelineDuration : (currentTrack?.duration ?? 0)
+        let value = timelineTrackID == currentTrack?.id && timelineDuration > 0 ? timelineDuration : (currentTrack?.duration ?? 0)
         return value.isFinite ? max(0, value) : 0
     }
+    var downloadProgress: Double? { isV2Enabled ? networkFraction : nil }
+    var downloadReceivedBytes: Int64 { networkReceivedBytes }
+    var downloadTotalBytes: Int64? { networkTotalBytes }
+    var isDownloading: Bool { isV2Enabled && networkDownloading }
     var queue: [Track] {
         get { isV2Enabled ? runtime.playbackQueue : legacy.queue }
-        set {
-            if isV2Enabled { runtime.replaceQueue(newValue) }
-            else { legacy.queue = newValue }
-        }
+        set { if isV2Enabled { runtime.replaceQueue(newValue) } else { legacy.queue = newValue } }
     }
     var currentCodec: String? { isV2Enabled ? nil : legacy.currentCodec }
     var currentBitrate: Int? { isV2Enabled ? nil : legacy.currentBitrate }
@@ -57,29 +55,28 @@ final class ActivePlayerPresentation {
     func next() { router.next() }
     func seek(to seconds: Double) { router.seek(to: seconds) }
     func play(_ track: Track) { router.play(track, queue: queue) }
-    func removeFromQueue(_ track: Track) {
-        if isV2Enabled { queue = queue.filter { $0.id != track.id } }
-        else { legacy.removeFromQueue(track) }
-    }
-    func stopAndClear() {
-        if isV2Enabled { Task { await runtime.stop() } }
-        else { legacy.stopAndClear() }
-    }
-    /// SwiftUI .task owns cancellation; there is no detached or global UI polling task.
+    func removeFromQueue(_ track: Track) { if isV2Enabled { queue = queue.filter { $0.id != track.id } } else { legacy.removeFromQueue(track) } }
+    func stopAndClear() { if isV2Enabled { Task { await runtime.stop() } } else { legacy.stopAndClear() } }
+
     func observeTimeline() async {
         while !Task.isCancelled {
             if isV2Enabled {
-                let trackID = currentTrack?.id
+                let track = currentTrack; let trackID = track?.id
                 if let timeline = await runtime.playbackTimeline(), !Task.isCancelled,
                    isV2Enabled, currentTrack?.id == trackID {
-                    timelineTrackID = trackID
-                    timelinePosition = timeline.position
-                    timelineDuration = timeline.duration
-                    timelineTransitioning = timeline.isTransitioning
+                    timelineTrackID = trackID; timelinePosition = timeline.position
+                    timelineDuration = timeline.duration; timelineTransitioning = timeline.isTransitioning
+                }
+                if let track, track.isStream,
+                   let raw = YandexMusicService.ymId(fromFileName: track.fileName) {
+                    let state = await DownloadProgressStore.shared.snapshot(for: TrackID(raw: raw))
+                    networkFraction = state?.fraction; networkReceivedBytes = state?.receivedBytes ?? 0
+                    networkTotalBytes = state?.totalBytes; networkDownloading = state?.isDownloading ?? false
+                } else {
+                    networkFraction = nil; networkReceivedBytes = 0; networkTotalBytes = nil; networkDownloading = false
                 }
             }
-            do { try await ContinuousClock().sleep(for: .milliseconds(200)) }
-            catch { return }
+            do { try await ContinuousClock().sleep(for: .milliseconds(200)) } catch { return }
         }
     }
 }
