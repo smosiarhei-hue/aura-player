@@ -7,9 +7,7 @@ import TrackSource
 
 @MainActor
 final class PlaybackCoordinator {
-    private struct Item {
-        let index: Int; let id: TrackID; let url: URL; let meta: TrackMeta; let deck: Deck
-    }
+    private struct Item { let index: Int; let id: TrackID; let url: URL; let meta: TrackMeta; let deck: Deck }
     private let source: any TrackSource
     private let engine: DualDeckAudioEngine
     var onChange: (@MainActor @Sendable (PlaybackCoordinatorSnapshot) -> Void)?
@@ -25,6 +23,7 @@ final class PlaybackCoordinator {
     private var transition: Task<Void, Never>?
     private var prefetch: Task<Void, Never>?
     private var planSignature = ""
+    private var suppressAutoMixUntilTrackChange = false
     private var lastError: String?
 
     init(source: any TrackSource, engine: DualDeckAudioEngine,
@@ -35,8 +34,9 @@ final class PlaybackCoordinator {
     func play(trackID: TrackID) async throws { try await play(queue: [trackID], startIndex: 0) }
     func play(queue: [TrackID], startIndex: Int) async throws {
         guard queue.indices.contains(startIndex) else { throw PlaybackCoordinatorError.noPreparedTrack }
-        transition?.cancel(); prefetch?.cancel(); await engine.stopEngine()
+        await cancelTransitionAndWait(); prefetch?.cancel(); await engine.stopEngine()
         ids = queue; index = startIndex; activeDeck = .a; wantsPlayback = true
+        suppressAutoMixUntilTrackChange = false
         phase = .loading(queue[startIndex]); publish()
         let item = try await fetch(startIndex, deck: activeDeck); active = item
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
@@ -50,16 +50,18 @@ final class PlaybackCoordinator {
     }
     func next() async throws {
         guard !ids.isEmpty else { return }
-        transition?.cancel(); prefetch?.cancel()
+        await cancelTransitionAndWait(); prefetch?.cancel()
         if let item = prepared { try await promote(item, duration: nil, plan: nil) }
         else { try await load(((index ?? -1) + 1) % ids.count) }
     }
     func previous() async throws {
         guard !ids.isEmpty else { return }
+        await cancelTransitionAndWait()
         try await load(((index ?? 0) - 1 + ids.count) % ids.count)
     }
     private func load(_ newIndex: Int) async throws {
         await engine.stopEngine(); activeDeck = .a; prepared = nil; planSignature = ""
+        suppressAutoMixUntilTrackChange = false
         let item = try await fetch(newIndex, deck: activeDeck); active = item; index = newIndex
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
         if wantsPlayback { try await engine.play(activeDeck) }
@@ -79,14 +81,17 @@ final class PlaybackCoordinator {
     }
     func seek(to seconds: Double) async throws {
         guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
-        transition?.cancel(); transition = nil
+        await cancelTransitionAndWait()
+        prefetch?.cancel(); prefetch = nil
+        // A manual scrub must never be interpreted as natural EOF or a transition cue.
+        suppressAutoMixUntilTrackChange = true
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: seconds)
-        await engine.setRate(1, for: activeDeck)
+        await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
         if wantsPlayback { try await engine.play(activeDeck) }
         prepared = nil; planSignature = ""; startPrefetch(); publish()
     }
     func stop() async {
-        wantsPlayback = false; transition?.cancel(); prefetch?.cancel(); await engine.stopEngine()
+        wantsPlayback = false; await cancelTransitionAndWait(); prefetch?.cancel(); await engine.stopEngine()
         ids = []; index = nil; active = nil; prepared = nil; phase = .idle; publish()
     }
     func handleInterruptionBegan() async { resumeIntent = wantsPlayback; await pause() }
@@ -95,8 +100,8 @@ final class PlaybackCoordinator {
         resumeIntent = false; publish()
     }
     func handleEngineConfigurationChange() async throws {
-        let state = await engine.snapshot(); let d = activeDeck == .a ? state.deckA : state.deckB
-        try await seek(to: d.positionSeconds)
+        let state = await engine.snapshot(); let deck = activeDeck == .a ? state.deckA : state.deckB
+        try await seek(to: deck.positionSeconds)
     }
     func snapshot() -> PlaybackCoordinatorSnapshot {
         PlaybackCoordinatorSnapshot(phase: phase, activeDeck: activeDeck,
@@ -120,6 +125,10 @@ final class PlaybackCoordinator {
     private func tick() async {
         guard wantsPlayback, transition == nil, let current = active, let next = prepared else { return }
         let state = await engine.snapshot(); let deck = activeDeck == .a ? state.deckA : state.deckB
+        if suppressAutoMixUntilTrackChange {
+            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }
+            return
+        }
         guard let plan = AutoMixV2AnalysisRuntime.shared.transitionPlan else {
             if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }; return
         }
@@ -152,8 +161,12 @@ final class PlaybackCoordinator {
         if let duration { try await engine.crossfade(from: activeDeck, to: item.deck, durationSeconds: duration) }
         else if wantsPlayback { try await engine.skip(from: activeDeck, to: item.deck) }
         activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
+        suppressAutoMixUntilTrackChange = false
         if !wantsPlayback { await engine.pause(activeDeck) }
         phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+    }
+    private func cancelTransitionAndWait() async {
+        let task = transition; transition = nil; task?.cancel(); await task?.value
     }
     private func startPrefetch() {
         guard prepared == nil, prefetch == nil, let index, index + 1 < ids.count else { return }
@@ -164,7 +177,8 @@ final class PlaybackCoordinator {
                 let item = try await fetch(index + 1, deck: deck)
                 try await engine.prepare(deck, fileURL: item.url, startTimeSeconds: 0)
                 await engine.setGain(0, for: deck); prepared = item
-            } catch { lastError = String(describing: error) }
+            } catch is CancellationError { return }
+            catch { lastError = String(describing: error) }
         }
     }
     private func fetch(_ index: Int, deck: Deck) async throws -> Item {

@@ -21,6 +21,7 @@ final class DualDeckAudioEngine {
         var prepared = false
         var playing = false
         var ended = false
+        var generation = UUID()
         init(_ deck: Deck) { self.deck = deck }
     }
 
@@ -41,7 +42,10 @@ final class DualDeckAudioEngine {
 
     func prepare(_ deck: Deck, fileURL: URL, startTimeSeconds: Double = 0) async throws {
         try Task.checkCancellation()
-        let s = slot(deck); s.player.stop(); s.player.reset()
+        let s = slot(deck)
+        s.generation = UUID()
+        let generation = s.generation
+        s.player.stop(); s.player.reset()
         let file = try AVAudioFile(forReading: fileURL)
         let sr = file.processingFormat.sampleRate
         guard sr > 0 else { throw AudioEngineCoreError.unsupportedOutputFormat }
@@ -52,7 +56,10 @@ final class DualDeckAudioEngine {
         s.file = file; s.url = fileURL; s.start = start; s.duration = duration
         s.prepared = true; s.playing = false; s.ended = false
         s.player.scheduleSegment(file, startingFrame: frame, frameCount: count, at: nil) { [weak s] in
-            Task { @MainActor in s?.playing = false; s?.ended = true }
+            Task { @MainActor in
+                guard let s, s.generation == generation else { return }
+                s.playing = false; s.ended = true
+            }
         }
     }
 
@@ -64,7 +71,9 @@ final class DualDeckAudioEngine {
     func pause(_ deck: Deck) async { slot(deck).player.pause(); slot(deck).playing = false }
     func resume(_ deck: Deck) async throws { try await play(deck) }
     func stop(_ deck: Deck) async {
-        let s = slot(deck); s.player.stop(); s.player.reset(); s.file = nil; s.url = nil
+        let s = slot(deck)
+        s.generation = UUID()
+        s.player.stop(); s.player.reset(); s.file = nil; s.url = nil
         s.start = 0; s.duration = 0; s.rate = 1; s.timePitch.rate = 1
         s.prepared = false; s.playing = false; s.ended = false
     }
@@ -91,10 +100,11 @@ final class DualDeckAudioEngine {
                 try Task.checkCancellation()
                 let sourceElapsed = max(0, renderedSourceSeconds(incomingSlot) - baseline)
                 let wallElapsed = sourceElapsed / Double(max(incomingSlot.rate, 0.01))
-                let p = min(1, max(0, wallElapsed / durationSeconds))
-                out.mixer.outputVolume = Float(cos(p * .pi / 2))
-                incomingSlot.mixer.outputVolume = Float(sin(p * .pi / 2))
-                if p >= 1 { break }
+                let progress = min(1, max(0, wallElapsed / durationSeconds))
+                // Standard predictable linear crossfade: no equal-power loudness bump.
+                out.mixer.outputVolume = Float(1 - progress)
+                incomingSlot.mixer.outputVolume = Float(progress)
+                if progress >= 1 { break }
                 try await ContinuousClock().sleep(for: .milliseconds(5))
             }
         } catch {
