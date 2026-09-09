@@ -12,6 +12,8 @@ final class DualDeckAudioEngine {
         let deck: Deck
         let player = AVAudioPlayerNode()
         let timePitch = AVAudioUnitTimePitch()
+        let eq = AVAudioUnitEQ(numberOfBands: 3)
+        let delay = AVAudioUnitDelay()
         let mixer = AVAudioMixerNode()
         var file: AVAudioFile?
         var url: URL?
@@ -31,21 +33,22 @@ final class DualDeckAudioEngine {
 
     init() throws {
         for slot in [a, b] {
-            graph.attach(slot.player); graph.attach(slot.timePitch); graph.attach(slot.mixer)
+            graph.attach(slot.player); graph.attach(slot.timePitch); graph.attach(slot.eq)
+            graph.attach(slot.delay); graph.attach(slot.mixer)
             graph.connect(slot.player, to: slot.timePitch, format: nil)
-            graph.connect(slot.timePitch, to: slot.mixer, format: nil)
+            graph.connect(slot.timePitch, to: slot.eq, format: nil)
+            graph.connect(slot.eq, to: slot.delay, format: nil)
+            graph.connect(slot.delay, to: slot.mixer, format: nil)
             graph.connect(slot.mixer, to: graph.mainMixerNode, format: nil)
-            slot.timePitch.pitch = 0; slot.timePitch.rate = 1; slot.timePitch.overlap = 8
+            configureNeutral(slot)
         }
         a.mixer.outputVolume = 1; b.mixer.outputVolume = 0; graph.prepare()
     }
 
     func prepare(_ deck: Deck, fileURL: URL, startTimeSeconds: Double = 0) async throws {
         try Task.checkCancellation()
-        let s = slot(deck)
-        s.generation = UUID()
-        let generation = s.generation
-        s.player.stop(); s.player.reset()
+        let s = slot(deck); s.generation = UUID(); let generation = s.generation
+        s.player.stop(); s.player.reset(); configureNeutral(s)
         let file = try AVAudioFile(forReading: fileURL)
         let sr = file.processingFormat.sampleRate
         guard sr > 0 else { throw AudioEngineCoreError.unsupportedOutputFormat }
@@ -71,11 +74,9 @@ final class DualDeckAudioEngine {
     func pause(_ deck: Deck) async { slot(deck).player.pause(); slot(deck).playing = false }
     func resume(_ deck: Deck) async throws { try await play(deck) }
     func stop(_ deck: Deck) async {
-        let s = slot(deck)
-        s.generation = UUID()
-        s.player.stop(); s.player.reset(); s.file = nil; s.url = nil
-        s.start = 0; s.duration = 0; s.rate = 1; s.timePitch.rate = 1
-        s.prepared = false; s.playing = false; s.ended = false
+        let s = slot(deck); s.generation = UUID(); s.player.stop(); s.player.reset()
+        s.file = nil; s.url = nil; s.start = 0; s.duration = 0
+        s.prepared = false; s.playing = false; s.ended = false; configureNeutral(s)
     }
     func stopEngine() async { await stop(.a); await stop(.b); graph.stop() }
     func setGain(_ gain: Float, for deck: Deck) async {
@@ -85,40 +86,74 @@ final class DualDeckAudioEngine {
         let value = min(1.08, max(0.92, rate.isFinite ? rate : 1))
         slot(deck).rate = value; slot(deck).timePitch.rate = value
     }
+
+    func applyEffect(_ kind: FxKind, value: Float, param: Float?, bpm: Float, to deck: Deck) async {
+        let s = slot(deck)
+        guard value.isFinite else { return }
+        switch kind {
+        case .highPass:
+            let band = s.eq.bands[1]
+            band.frequency = min(18_000, max(20, value)); band.bypass = value <= 21
+        case .lowPass:
+            let band = s.eq.bands[2]
+            band.frequency = min(20_000, max(100, value)); band.bypass = value >= 19_900
+        case .bassKill, .bassOn:
+            s.eq.bands[0].gain = min(0, max(-24, -24 * min(1, max(0, value))))
+        case .echoOut:
+            s.delay.wetDryMix = min(60, max(0, value))
+            s.delay.feedback = min(55, max(0, param ?? 35))
+            s.delay.delayTime = bpm > 0 ? min(2, max(0.05, 60 / Double(bpm) * 0.75)) : 0.375
+        case .rateRamp:
+            await setRate(value, for: deck)
+        case .volume:
+            break // Main crossfade owns volume to prevent competing gain automation.
+        }
+    }
+
+    func resetEffects(_ deck: Deck, preservingRate: Bool = false) async {
+        let s = slot(deck); let rate = s.rate; configureNeutral(s)
+        if preservingRate { s.rate = rate; s.timePitch.rate = rate }
+    }
+
     func skip(from current: Deck, to next: Deck) async throws {
-        try await play(next); await setGain(1, for: next); await stop(current)
+        try await play(next); await setGain(1, for: next); await stop(current); await resetEffects(next)
     }
     func crossfade(from outgoing: Deck, to incoming: Deck, durationSeconds: Double) async throws {
         guard durationSeconds.isFinite, durationSeconds > 0 else {
             throw AudioEngineCoreError.conversionFailed("Invalid transition duration")
         }
         let out = slot(outgoing), incomingSlot = slot(incoming)
-        try await play(incoming)
-        let baseline = renderedSourceSeconds(incomingSlot)
+        try await play(incoming); let baseline = renderedSourceSeconds(incomingSlot)
         do {
             while true {
                 try Task.checkCancellation()
                 let sourceElapsed = max(0, renderedSourceSeconds(incomingSlot) - baseline)
                 let wallElapsed = sourceElapsed / Double(max(incomingSlot.rate, 0.01))
                 let progress = min(1, max(0, wallElapsed / durationSeconds))
-                // Standard predictable linear crossfade: no equal-power loudness bump.
                 out.mixer.outputVolume = Float(1 - progress)
                 incomingSlot.mixer.outputVolume = Float(progress)
                 if progress >= 1 { break }
                 try await ContinuousClock().sleep(for: .milliseconds(5))
             }
         } catch {
-            out.mixer.outputVolume = 1
-            incomingSlot.mixer.outputVolume = 0
+            out.mixer.outputVolume = 1; incomingSlot.mixer.outputVolume = 0
             incomingSlot.player.pause(); incomingSlot.playing = false
+            await resetEffects(outgoing); await resetEffects(incoming)
             throw error
         }
-        await stop(outgoing); await setGain(1, for: incoming)
+        await stop(outgoing); await setGain(1, for: incoming); await resetEffects(incoming)
     }
     func snapshot() async -> AudioEngineSnapshot {
         let f = graph.outputNode.outputFormat(forBus: 0)
         return AudioEngineSnapshot(isRunning: graph.isRunning, sampleRate: f.sampleRate,
                                    channels: f.channelCount, deckA: snapshot(a), deckB: snapshot(b))
+    }
+    private func configureNeutral(_ s: Slot) {
+        let bass = s.eq.bands[0]; bass.filterType = .lowShelf; bass.frequency = 180; bass.gain = 0; bass.bypass = false
+        let hp = s.eq.bands[1]; hp.filterType = .highPass; hp.frequency = 20; hp.bypass = true
+        let lp = s.eq.bands[2]; lp.filterType = .lowPass; lp.frequency = 20_000; lp.bypass = true
+        s.delay.wetDryMix = 0; s.delay.feedback = 0; s.delay.delayTime = 0.375
+        s.rate = 1; s.timePitch.rate = 1; s.timePitch.pitch = 0; s.timePitch.overlap = 8
     }
     private func renderedSourceSeconds(_ s: Slot) -> Double {
         guard let r = s.player.lastRenderTime,
