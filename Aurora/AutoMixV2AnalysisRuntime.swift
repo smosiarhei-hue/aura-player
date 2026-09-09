@@ -96,7 +96,7 @@ final class AutoMixV2AnalysisRuntime {
                                            dontCutEndings: false,
                                            loudnessNormalization: true,
                                            targetLUFS: -14)
-                transitionPlan = MixPlanner.MixPlanner.plan(
+                transitionPlan = MixPlanner.plan(
                     from: a, to: b,
                     aMeta: metadata(for: current, id: currentID),
                     bMeta: metadata(for: next, id: nextID),
@@ -114,9 +114,7 @@ final class AutoMixV2AnalysisRuntime {
     }
 
     private func localFile(for track: Track, id: TrackID) async throws -> URL {
-        if !track.isStream {
-            return track.url
-        }
+        if !track.isStream { return track.url }
         guard let yandexSource else { throw TrackSourceError.invalidResponse }
         await yandexClient.register(metadata(for: track, id: id))
         return try await yandexSource.localFileURL(for: id)
