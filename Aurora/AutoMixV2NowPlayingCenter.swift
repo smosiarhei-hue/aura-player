@@ -37,7 +37,7 @@ final class AutoMixV2NowPlayingCenter {
 
     func setFullPlayerVisible(_ visible: Bool) {
         fullPlayerVisible = visible
-        if visible, UIApplication.shared.applicationState == .active {
+        if UIApplication.shared.applicationState == .active {
             suppressSystemSurfacePreservingArtwork()
         } else {
             Task { @MainActor [weak self] in await self?.refresh() }
@@ -51,11 +51,15 @@ final class AutoMixV2NowPlayingCenter {
             clearOnlyIfOwned()
             return
         }
-        if fullPlayerVisible, UIApplication.shared.applicationState == .active {
+
+        // Preload and retain artwork while the app is visible so lock-screen and
+        // Dynamic Island metadata appear immediately after the app backgrounds.
+        loadArtwork(for: track)
+        if UIApplication.shared.applicationState == .active {
             suppressSystemSurfacePreservingArtwork()
             return
         }
-        loadArtwork(for: track)
+
         let timeline = await runtime.playbackTimeline()
         let duration = max(0, timeline?.duration ?? track.duration)
         let elapsed = min(max(0, timeline?.position ?? 0), duration > 0 ? duration : .greatestFiniteMagnitude)
@@ -82,9 +86,7 @@ final class AutoMixV2NowPlayingCenter {
 
     private func loadArtwork(for track: Track) {
         guard artworkTrackID != track.id else { return }
-        artworkTask?.cancel()
-        artworkTrackID = track.id
-        artwork = nil
+        artworkTask?.cancel(); artworkTrackID = track.id; artwork = nil
         guard let raw = track.coverURL, let url = URL(string: raw) else { return }
         if let image = imageCache[raw] {
             artwork = NowPlayingArtworkProvider(image: image).makeArtwork()
@@ -113,9 +115,6 @@ final class AutoMixV2NowPlayingCenter {
     private func clearOnlyIfOwned() {
         guard ownsNowPlaying else { return }
         suppressSystemSurfacePreservingArtwork()
-        artworkTask?.cancel()
-        artworkTask = nil
-        artworkTrackID = nil
-        artwork = nil
+        artworkTask?.cancel(); artworkTask = nil; artworkTrackID = nil; artwork = nil
     }
 }
