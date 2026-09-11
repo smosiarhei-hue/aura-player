@@ -38,7 +38,7 @@ final class ActivePlayerPresentation {
         v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying
     }
     var isLoading: Bool {
-        v2OwnsPlayback ? (runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing) : legacy.isLoading
+        v2OwnsPlayback ? (runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing) : false
     }
     var isTransitionActive: Bool { v2OwnsPlayback ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive }
     var progress: Double { v2OwnsPlayback ? (timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0) : legacy.progress }
