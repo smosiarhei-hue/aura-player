@@ -38,10 +38,7 @@ final class PlaybackCoordinator {
         await cancelTransitionAndWait(); prefetch?.cancel(); await engine.stopEngine()
         ids = queue; index = startIndex; activeDeck = .a; wantsPlayback = true
         suppressAutoMixUntilTrackChange = false
-        phase = .loading(queue[startIndex]); publish()
-        // Start downloading/preparing Deck B while Deck A is still downloading.
-        // This makes the first manual Next use the existing in-flight cache task.
-        startPrefetch()
+        phase = .loading(queue[startIndex]); publish(); startPrefetch()
         let item = try await fetch(startIndex, deck: activeDeck); active = item
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
         await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
@@ -56,7 +53,6 @@ final class PlaybackCoordinator {
     func next() async throws {
         guard !ids.isEmpty else { return }
         await cancelTransitionAndWait()
-        // Never cancel and restart a nearly completed online prefetch.
         if prepared == nil, let pending = prefetch { await pending.value }
         if let item = prepared { try await promote(item, duration: nil, plan: nil) }
         else { try await load(((index ?? -1) + 1) % ids.count) }
@@ -89,10 +85,7 @@ final class PlaybackCoordinator {
     }
     func seek(to seconds: Double) async throws {
         guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
-        await cancelTransitionAndWait()
-        suppressAutoMixUntilTrackChange = true
-        // Seeking only reschedules the active local file. Keep Deck B and its
-        // internet download intact so scrubbing cannot make Next slow again.
+        await cancelTransitionAndWait(); suppressAutoMixUntilTrackChange = true
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: seconds)
         await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
         if wantsPlayback { try await engine.play(activeDeck) }
@@ -158,7 +151,7 @@ final class PlaybackCoordinator {
                 : BeatGridSynchronization.duration(bars: plan.bars, bpm: plan.tempoTargetBPM)
             let outgoing = self.activeDeck
             self.effects = Task { @MainActor [weak self] in
-                await self?.executeEffects(plan, outgoing: outgoing, incoming: item.deck)
+                await self?.executeEffects(plan, outgoing: outgoing, incoming: item.deck, duration: duration)
             }
             do {
                 try await self.promote(item, duration: max(0.05, duration), plan: plan)
@@ -174,8 +167,9 @@ final class PlaybackCoordinator {
             }
         }; publish()
     }
-    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck, incoming: Deck) async {
-        guard plan.type != .crossfade, plan.tempoTargetBPM > 0 else { return }
+    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck,
+                                incoming: Deck, duration: Double) async {
+        guard duration.isFinite, duration > 0 else { return }
         let initial = await engine.snapshot()
         let initialDeck = outgoing == .a ? initial.deckA : initial.deckB
         let baseline = initialDeck.positionSeconds
@@ -183,15 +177,26 @@ final class PlaybackCoordinator {
             let state = await engine.snapshot(); let deck = outgoing == .a ? state.deckA : state.deckB
             let elapsedSource = max(0, deck.positionSeconds - baseline)
             let elapsedWall = elapsedSource / Double(max(plan.rateA, 0.01))
-            let bar = EffectAutomation.bar(atSeconds: elapsedWall, bpm: plan.tempoTargetBPM)
-            for event in plan.fx where event.kind != .volume {
-                if let value = EffectAutomation.value(for: event, atBar: bar) {
-                    let target = event.target == .a ? outgoing : incoming
-                    await engine.applyEffect(event.kind, value: value, param: event.param,
-                                             bpm: plan.tempoTargetBPM, to: target)
+            if plan.type == .crossfade {
+                // Low-confidence fallback still gets a conservative, audible
+                // filter transition without beatmatching, bass swap or tempo FX.
+                let p = min(1, max(0, elapsedWall / duration))
+                let hp = Float(20 * pow(60, p))
+                let lp = Float(2_500 * pow(8, min(1, p * 2)))
+                await engine.applyEffect(.highPass, value: hp, param: nil, bpm: 0, to: outgoing)
+                await engine.applyEffect(.lowPass, value: lp, param: nil, bpm: 0, to: incoming)
+                if p >= 1 { return }
+            } else {
+                let bar = EffectAutomation.bar(atSeconds: elapsedWall, bpm: plan.tempoTargetBPM)
+                for event in plan.fx where event.kind != .volume {
+                    if let value = EffectAutomation.value(for: event, atBar: bar) {
+                        let target = event.target == .a ? outgoing : incoming
+                        await engine.applyEffect(event.kind, value: value, param: event.param,
+                                                 bpm: plan.tempoTargetBPM, to: target)
+                    }
                 }
+                if bar >= plan.bars { return }
             }
-            if bar >= plan.bars { return }
             do { try await ContinuousClock().sleep(for: .milliseconds(10)) } catch { return }
         }
     }
