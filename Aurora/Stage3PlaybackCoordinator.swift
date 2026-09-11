@@ -7,9 +7,13 @@ import TrackSource
 
 @MainActor
 final class PlaybackCoordinator {
+    enum TransitionReadiness: String, Sendable {
+        case idle, waitingForDeckB, waitingForAnalysis, ready, transitioning, fallback, ended, failed
+    }
     private struct Item { let index: Int; let id: TrackID; let url: URL; let meta: TrackMeta; let deck: Deck }
     private let source: any TrackSource
     private let engine: DualDeckAudioEngine
+    private let fallbackCrossfadeSeconds: Double
     var onChange: (@MainActor @Sendable (PlaybackCoordinatorSnapshot) -> Void)?
     private var phase: PlaybackPhase = .idle
     private var ids: [TrackID] = []
@@ -24,12 +28,14 @@ final class PlaybackCoordinator {
     private var effects: Task<Void, Never>?
     private var prefetch: Task<Void, Never>?
     private var planSignature = ""
-    private var suppressAutoMixUntilTrackChange = false
     private var lastError: String?
+    private(set) var transitionReadiness: TransitionReadiness = .idle
+    private(set) var transitionReason = "Ожидание воспроизведения"
 
     init(source: any TrackSource, engine: DualDeckAudioEngine,
          crossfadeSeconds: Double = 6, automaticallyMonitor: Bool = true) {
-        self.source = source; self.engine = engine; _ = crossfadeSeconds
+        self.source = source; self.engine = engine
+        fallbackCrossfadeSeconds = min(12, max(0.75, crossfadeSeconds.isFinite ? crossfadeSeconds : 6))
         if automaticallyMonitor { startMonitor() }
     }
     func play(trackID: TrackID) async throws { try await play(queue: [trackID], startIndex: 0) }
@@ -37,8 +43,7 @@ final class PlaybackCoordinator {
         guard queue.indices.contains(startIndex) else { throw PlaybackCoordinatorError.noPreparedTrack }
         await cancelTransitionAndWait(); prefetch?.cancel(); await engine.stopEngine()
         ids = queue; index = startIndex; activeDeck = .a; wantsPlayback = true
-        suppressAutoMixUntilTrackChange = false
-        phase = .loading(queue[startIndex]); publish(); startPrefetch()
+        phase = .loading(queue[startIndex]); setReadiness(.waitingForDeckB, "Загрузка следующей композиции")
         let item = try await fetch(startIndex, deck: activeDeck); active = item
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
         await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
@@ -48,7 +53,8 @@ final class PlaybackCoordinator {
     func replaceQueue(_ queue: [TrackID]) async throws {
         ids = queue; if let id = active?.id { index = queue.firstIndex(of: id) }
         prefetch?.cancel(); prefetch = nil; prepared = nil
-        await engine.stop(otherDeck); startPrefetch(); publish()
+        await engine.stop(otherDeck); setReadiness(.waitingForDeckB, "Очередь обновлена; готовится следующий трек")
+        startPrefetch(); publish()
     }
     func next() async throws {
         guard !ids.isEmpty else { return }
@@ -64,8 +70,7 @@ final class PlaybackCoordinator {
     private func load(_ newIndex: Int) async throws {
         prefetch?.cancel(); prefetch = nil
         await engine.stopEngine(); activeDeck = .a; prepared = nil; planSignature = ""
-        suppressAutoMixUntilTrackChange = false
-        index = newIndex; phase = .loading(ids[newIndex]); publish(); startPrefetch()
+        index = newIndex; phase = .loading(ids[newIndex]); setReadiness(.waitingForDeckB, "Загрузка следующей композиции")
         let item = try await fetch(newIndex, deck: activeDeck); active = item
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
         if wantsPlayback { try await engine.play(activeDeck) }
@@ -85,15 +90,21 @@ final class PlaybackCoordinator {
     }
     func seek(to seconds: Double) async throws {
         guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
-        await cancelTransitionAndWait(); suppressAutoMixUntilTrackChange = true
+        await cancelTransitionAndWait()
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: seconds)
         await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
         if wantsPlayback { try await engine.play(activeDeck) }
-        planSignature = ""; publish()
+        // Seeking must re-arm AutoMix. The next tick either uses the valid pair
+        // plan or starts the guaranteed fallback inside the transition window.
+        planSignature = ""
+        setReadiness(prepared == nil ? .waitingForDeckB : .waitingForAnalysis,
+                     "Перемотка завершена; AutoMix снова активен")
+        publish()
     }
     func stop() async {
         wantsPlayback = false; await cancelTransitionAndWait(); prefetch?.cancel(); await engine.stopEngine()
-        ids = []; index = nil; active = nil; prepared = nil; phase = .idle; publish()
+        ids = []; index = nil; active = nil; prepared = nil; phase = .idle
+        setReadiness(.idle, "Воспроизведение остановлено"); publish()
     }
     func handleInterruptionBegan() async { resumeIntent = wantsPlayback; await pause() }
     func handleInterruptionEnded(systemShouldResume: Bool) async throws {
@@ -126,44 +137,84 @@ final class PlaybackCoordinator {
     private func tick() async {
         guard wantsPlayback, transition == nil, let current = active, let currentIndex = index else { return }
         let state = await engine.snapshot(); let deck = activeDeck == .a ? state.deckA : state.deckB
+        let hasNext = currentIndex + 1 < ids.count
 
         if prepared == nil {
+            setReadiness(hasNext ? .waitingForDeckB : .ended,
+                         hasNext ? "Deck B ещё загружается" : "Это последний трек очереди")
             guard deck.reachedEndOfFile else { return }
             if let pending = prefetch { await pending.value }
             if let next = prepared {
-                try? await promote(next, duration: nil, plan: nil)
-                startPrefetch()
-            } else if currentIndex + 1 < ids.count {
+                try? await promote(next, duration: nil, plan: nil); startPrefetch()
+            } else if hasNext {
                 do { try await load(currentIndex + 1) }
-                catch { lastError = String(describing: error); phase = .failed(lastError ?? "Next track failed"); publish() }
+                catch { lastError = String(describing: error); phase = .failed(lastError ?? "Next track failed"); setReadiness(.failed, lastError ?? "Ошибка следующего трека"); publish() }
             } else {
-                wantsPlayback = false; phase = .ready(current.meta); publish()
+                wantsPlayback = false; phase = .ready(current.meta); setReadiness(.ended, "Очередь завершена"); publish()
             }
             return
         }
         guard let next = prepared else { return }
-        if suppressAutoMixUntilTrackChange {
-            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil); startPrefetch() }
-            return
+        let analysis = AutoMixV2AnalysisRuntime.shared
+        let plan = analysis.plan(for: current.id, nextID: next.id)
+        let usablePlan = plan.flatMap { $0.type == .none ? nil : $0 }
+        let duration = deck.durationSeconds ?? current.meta.durationSec
+        let remaining = max(0, duration - deck.positionSeconds)
+        let reachedPlanStart = usablePlan.map { deck.positionSeconds + 0.010 >= $0.aOutStartSec } ?? false
+        let decision = AutoMixTransitionGate.decide(
+            hasNext: hasNext, nextPrepared: true, reachedEnd: deck.reachedEndOfFile,
+            remainingSeconds: remaining, hasUsablePlan: usablePlan != nil,
+            reachedPlannedStart: reachedPlanStart, fallbackSeconds: fallbackCrossfadeSeconds)
+
+        switch decision {
+        case .waitingForNext:
+            setReadiness(.waitingForDeckB, "Deck B ещё загружается")
+        case .waitingForPlan:
+            setReadiness(.waitingForAnalysis, analysis.status(for: current.id, nextID: next.id))
+        case .readyForPlan:
+            guard let plan = usablePlan else { return }
+            let signature = current.id.raw + "|" + next.id.raw + "|" + plan.type.rawValue + "|" + String(plan.bInStartSec)
+            if signature != planSignature {
+                do {
+                    try await engine.prepare(next.deck, fileURL: next.url, startTimeSeconds: plan.bInStartSec)
+                    await engine.setGain(0, for: next.deck); planSignature = signature
+                } catch { lastError = String(describing: error); setReadiness(.failed, lastError ?? "Ошибка подготовки Deck B"); publish(); return }
+            }
+            setReadiness(.ready, "Музыкальный план готов: \(plan.type.rawValue)")
+        case .startPlanned:
+            guard let plan = usablePlan else { return }
+            let signature = current.id.raw + "|" + next.id.raw + "|" + plan.type.rawValue + "|" + String(plan.bInStartSec)
+            if signature != planSignature {
+                do {
+                    try await engine.prepare(next.deck, fileURL: next.url, startTimeSeconds: plan.bInStartSec)
+                    await engine.setGain(0, for: next.deck); planSignature = signature
+                } catch { lastError = String(describing: error); beginFallback(next, duration: min(fallbackCrossfadeSeconds, max(0.05, remaining))); return }
+            }
+            begin(next, plan: plan)
+        case .startFallback(let seconds):
+            beginFallback(next, duration: seconds)
+        case .hardCutAtEnd:
+            try? await promote(next, duration: nil, plan: nil); startPrefetch()
+        case .queueEnded:
+            wantsPlayback = false; phase = .ready(current.meta); setReadiness(.ended, "Очередь завершена"); publish()
         }
-        guard let plan = AutoMixV2AnalysisRuntime.shared.transitionPlan else {
-            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil); startPrefetch() }
-            return
-        }
-        if plan.type == .none {
-            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil); startPrefetch() }
-            return
-        }
-        let signature = current.id.raw + "|" + next.id.raw + "|" + plan.type.rawValue + "|" + String(plan.bInStartSec)
-        if signature != planSignature {
+    }
+    private func beginFallback(_ item: Item, duration: Double) {
+        guard transition == nil else { return }
+        setReadiness(.fallback, "Анализ не успел или план небезопасен; выполняется кроссфейд")
+        transition = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                try await engine.prepare(next.deck, fileURL: next.url, startTimeSeconds: plan.bInStartSec)
-                await engine.setGain(0, for: next.deck); planSignature = signature
-            } catch { lastError = String(describing: error); publish(); return }
+                try await self.promote(item, duration: max(0.05, duration), plan: nil)
+                self.transition = nil; self.publish(); self.startPrefetch()
+            } catch is CancellationError { self.transition = nil }
+            catch { self.lastError = String(describing: error); self.transition = nil; self.setReadiness(.failed, self.lastError ?? "Ошибка кроссфейда"); self.publish() }
         }
-        if deck.positionSeconds + 0.010 >= plan.aOutStartSec { begin(next, plan: plan) }
+        publish()
     }
     private func begin(_ item: Item, plan: MixModels.TransitionPlan) {
+        guard transition == nil else { return }
+        setReadiness(.transitioning, "Выполняется \(plan.type.rawValue)")
         transition = Task { @MainActor [weak self] in
             guard let self else { return }
             let duration = plan.type == .crossfade ? plan.bars
@@ -174,10 +225,7 @@ final class PlaybackCoordinator {
             }
             do {
                 try await self.promote(item, duration: max(0.05, duration), plan: plan)
-                // The audio handoff owns the exact transition duration. Never wait
-                // indefinitely for an FX observer after the outgoing deck was stopped.
-                self.effects?.cancel()
-                await self.effects?.value
+                self.effects?.cancel(); await self.effects?.value
                 self.effects = nil; self.transition = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
                 self.publish(); self.startPrefetch()
@@ -188,34 +236,30 @@ final class PlaybackCoordinator {
             } catch {
                 self.effects?.cancel(); await self.effects?.value; self.effects = nil
                 self.lastError = String(describing: error); self.transition = nil
-                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck); self.publish()
+                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
+                self.setReadiness(.failed, self.lastError ?? "Ошибка перехода"); self.publish()
             }
         }; publish()
     }
-    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck,
-                                incoming: Deck, duration: Double) async {
+    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck, incoming: Deck, duration: Double) async {
         guard duration.isFinite, duration > 0 else { return }
-        let initial = await engine.snapshot()
-        let initialDeck = incoming == .a ? initial.deckA : initial.deckB
+        let initial = await engine.snapshot(); let initialDeck = incoming == .a ? initial.deckA : initial.deckB
         let baseline = initialDeck.positionSeconds
         while !Task.isCancelled {
             let state = await engine.snapshot(); let deck = incoming == .a ? state.deckA : state.deckB
-            let elapsedSource = max(0, deck.positionSeconds - baseline)
-            let elapsedWall = elapsedSource / Double(max(plan.rateB, 0.01))
+            let elapsedWall = max(0, deck.positionSeconds - baseline) / Double(max(plan.rateB, 0.01))
             if plan.type == .crossfade {
                 let p = min(1, max(0, elapsedWall / duration))
-                let hp = Float(20 * pow(60, p))
-                let lp = Float(2_500 * pow(8, min(1, p * 2)))
-                await engine.applyEffect(.highPass, value: hp, param: nil, bpm: 0, to: outgoing)
-                await engine.applyEffect(.lowPass, value: lp, param: nil, bpm: 0, to: incoming)
+                await engine.applyEffect(.highPass, value: Float(20 * pow(60, p)), param: nil, bpm: 0, to: outgoing)
+                await engine.applyEffect(.lowPass, value: Float(2_500 * pow(8, min(1, p * 2))), param: nil, bpm: 0, to: incoming)
                 if p >= 1 { return }
             } else {
                 let bar = EffectAutomation.bar(atSeconds: elapsedWall, bpm: plan.tempoTargetBPM)
                 for event in plan.fx where event.kind != .volume {
                     if let value = EffectAutomation.value(for: event, atBar: bar) {
-                        let target = event.target == .a ? outgoing : incoming
                         await engine.applyEffect(event.kind, value: value, param: event.param,
-                                                 bpm: plan.tempoTargetBPM, to: target)
+                                                 bpm: plan.tempoTargetBPM,
+                                                 to: event.target == .a ? outgoing : incoming)
                     }
                 }
                 if bar >= plan.bars { return }
@@ -230,9 +274,9 @@ final class PlaybackCoordinator {
         if let duration { try await engine.crossfade(from: activeDeck, to: item.deck, durationSeconds: duration) }
         else if wantsPlayback { try await engine.skip(from: activeDeck, to: item.deck) }
         activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
-        suppressAutoMixUntilTrackChange = false
         if !wantsPlayback { await engine.pause(activeDeck) }
         phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+        setReadiness(.waitingForDeckB, "Готовится следующий трек")
     }
     private func cancelTransitionAndWait() async {
         effects?.cancel(); let fx = effects; effects = nil
@@ -243,19 +287,25 @@ final class PlaybackCoordinator {
     private func startPrefetch() {
         guard prepared == nil, prefetch == nil, let index, index + 1 < ids.count else { return }
         let deck = otherDeck
+        setReadiness(.waitingForDeckB, "Загрузка и подготовка Deck B")
         prefetch = Task { @MainActor [weak self] in
             guard let self else { return }; defer { self.prefetch = nil; self.publish() }
             do {
                 let item = try await self.fetch(index + 1, deck: deck)
                 try await self.engine.prepare(deck, fileURL: item.url, startTimeSeconds: 0)
                 await self.engine.setGain(0, for: deck); self.prepared = item
+                self.setReadiness(.waitingForAnalysis, "Deck B готова; ожидается музыкальный план")
             } catch is CancellationError { return }
-            catch { self.lastError = String(describing: error) }
+            catch { self.lastError = String(describing: error); self.setReadiness(.failed, self.lastError ?? "Ошибка подготовки Deck B") }
         }
     }
     private func fetch(_ index: Int, deck: Deck) async throws -> Item {
         let id = ids[index]; async let url = source.localFileURL(for: id); async let meta = source.metadata(for: id)
         return try await Item(index: index, id: id, url: url, meta: meta, deck: deck)
+    }
+    private func setReadiness(_ value: TransitionReadiness, _ reason: String) {
+        guard transitionReadiness != value || transitionReason != reason else { return }
+        transitionReadiness = value; transitionReason = reason
     }
     private var otherDeck: Deck { activeDeck == .a ? .b : .a }
     private func publish() { onChange?(snapshot()) }

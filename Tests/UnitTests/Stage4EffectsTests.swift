@@ -16,28 +16,53 @@ struct Stage4EffectsTests {
 
     @Test("Musical plan contains all mandatory Stage 4 effects")
     func mandatoryEffects() {
-        let plan = musicalPlan()
-        let kinds = Set(plan.fx.map(\.kind))
+        let kinds = Set(musicalPlan().fx.map(\.kind))
         #expect(kinds.contains(.highPass)); #expect(kinds.contains(.lowPass))
         #expect(kinds.contains(.bassKill)); #expect(kinds.contains(.bassOn))
-        #expect(kinds.contains(.echoOut)); #expect(kinds.contains(.rateRamp))
-        #expect(kinds.contains(.volume))
+        #expect(kinds.contains(.echoOut)); #expect(kinds.contains(.rateRamp)); #expect(kinds.contains(.volume))
+    }
+
+    @Test("Seek inside fallback window starts crossfade instead of suppressing AutoMix")
+    func seekRearmer() {
+        let decision = AutoMixTransitionGate.decide(hasNext: true, nextPrepared: true,
+            reachedEnd: false, remainingSeconds: 3.2, hasUsablePlan: false,
+            reachedPlannedStart: false, fallbackSeconds: 6)
+        #expect(decision == .startFallback(durationSeconds: 3.2))
+    }
+
+    @Test("Missing analysis cannot prevent fallback transition")
+    func guaranteedFallback() {
+        #expect(AutoMixTransitionGate.decide(hasNext: true, nextPrepared: true,
+            reachedEnd: false, remainingSeconds: 8, hasUsablePlan: false,
+            reachedPlannedStart: false, fallbackSeconds: 6) == .waitingForPlan)
+        #expect(AutoMixTransitionGate.decide(hasNext: true, nextPrepared: true,
+            reachedEnd: false, remainingSeconds: 6, hasUsablePlan: false,
+            reachedPlannedStart: false, fallbackSeconds: 6) == .startFallback(durationSeconds: 6))
+        #expect(AutoMixTransitionGate.decide(hasNext: true, nextPrepared: true,
+            reachedEnd: true, remainingSeconds: 0, hasUsablePlan: false,
+            reachedPlannedStart: false, fallbackSeconds: 6) == .hardCutAtEnd)
+    }
+
+    @Test("Prepared musical plan waits for its start then fires")
+    func plannedGate() {
+        #expect(AutoMixTransitionGate.decide(hasNext: true, nextPrepared: true,
+            reachedEnd: false, remainingSeconds: 30, hasUsablePlan: true,
+            reachedPlannedStart: false, fallbackSeconds: 6) == .readyForPlan)
+        #expect(AutoMixTransitionGate.decide(hasNext: true, nextPrepared: true,
+            reachedEnd: false, remainingSeconds: 20, hasUsablePlan: true,
+            reachedPlannedStart: true, fallbackSeconds: 6) == .startPlanned)
     }
 
     @Test("Incoming rate returns smoothly to one before promotion")
     func rateReturn() {
-        let plan = musicalPlan()
-        let ramps = plan.fx.filter { $0.target == .b && $0.kind == .rateRamp }
+        let plan = musicalPlan(); let ramps = plan.fx.filter { $0.target == .b && $0.kind == .rateRamp }
         #expect(ramps.count == 2)
         guard let final = ramps.last else { return }
-        #expect(final.endBar == plan.bars)
-        #expect(final.toValue == 1)
-        #expect(final.curve == .sCurve)
+        #expect(final.endBar == plan.bars); #expect(final.toValue == 1); #expect(final.curve == .sCurve)
         for step in 0...100 {
             let bar = final.startBar + (final.endBar - final.startBar) * Double(step) / 100
             let value = EffectAutomation.value(for: final, atBar: bar) ?? 0
-            #expect(value.isFinite)
-            #expect((0.92...1.08).contains(value))
+            #expect(value.isFinite); #expect((0.92...1.08).contains(value))
         }
     }
 
@@ -47,8 +72,7 @@ struct Stage4EffectsTests {
         for event in plan.fx {
             #expect(event.startBar.isFinite); #expect(event.endBar.isFinite)
             #expect(event.fromValue.isFinite); #expect(event.toValue.isFinite)
-            #expect(event.startBar >= 0); #expect(event.endBar >= event.startBar)
-            #expect(event.endBar <= plan.bars)
+            #expect(event.startBar >= 0); #expect(event.endBar >= event.startBar); #expect(event.endBar <= plan.bars)
         }
     }
 
@@ -67,8 +91,7 @@ struct Stage4EffectsTests {
                            confidence: Confidence(bpm: 0.2, downbeats: 0.2, key: 0.2))
         let plan = MixPlanner.plan(from: low, to: profile("b", key: "8B"),
                                    aMeta: meta("a"), bMeta: meta("b"), settings: MixSettings())
-        #expect(plan.type == .crossfade)
-        #expect(Set(plan.fx.map(\.kind)) == [.volume])
+        #expect(plan.type == .crossfade); #expect(Set(plan.fx.map(\.kind)) == [.volume])
         #expect(plan.rateA == 1); #expect(plan.rateB == 1)
     }
 

@@ -17,6 +17,7 @@ final class AutoMixV2AnalysisRuntime {
     private var observerTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
     private var observedPair = ""
+    private var plannedPair = ""
     private(set) var currentProfile: TrackProfile?
     private(set) var nextProfile: TrackProfile?
     private(set) var transitionPlan: MixModels.TransitionPlan?
@@ -36,42 +37,62 @@ final class AutoMixV2AnalysisRuntime {
         observerTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 self?.refreshPairIfNeeded()
-                do { try await ContinuousClock().sleep(for: .seconds(1)) } catch { return }
+                do { try await ContinuousClock().sleep(for: .milliseconds(250)) } catch { return }
             }
         }
     }
     func recalculateCurrent() {
         guard let track = AutoMixV2Runtime.shared.currentTrack else { return }
         let id = trackID(for: track); analysisTask?.cancel()
+        transitionPlan = nil; plannedPair = ""; observedPair = ""
+        pipelineStatus = "Перезапуск анализа"
         analysisTask = Task { @MainActor [weak self] in
             guard let self, let id else { return }
             try? await analyzer.removeProfile(for: id)
-            observedPair = ""; refreshPairIfNeeded()
+            refreshPairIfNeeded()
         }
+    }
+    func plan(for currentID: TrackID, nextID: TrackID) -> MixModels.TransitionPlan? {
+        let key = pairKey(currentID, nextID)
+        guard plannedPair == key else { return nil }
+        return transitionPlan
+    }
+    func status(for currentID: TrackID, nextID: TrackID) -> String {
+        plannedPair == pairKey(currentID, nextID) && transitionPlan != nil
+            ? "План перехода готов" : pipelineStatus
     }
     private func refreshPairIfNeeded() {
         guard AutoMixEngineSelectionStore.shared.isV2Enabled,
               let current = AutoMixV2Runtime.shared.currentTrack,
-              let currentID = trackID(for: current) else { return }
+              let currentID = trackID(for: current) else {
+            transitionPlan = nil; plannedPair = ""; pipelineStatus = "Ожидание воспроизведения"
+            return
+        }
         let queue = AutoMixV2Runtime.shared.playbackQueue
         let index = queue.firstIndex(where: { $0.id == current.id })
         let next = index.flatMap { $0 + 1 < queue.count ? queue[$0 + 1] : nil }
-        let key = currentID.raw + "|" + (next.flatMap(trackID)?.raw ?? "")
+        let nextID = next.flatMap(trackID)
+        let key = currentID.raw + "|" + (nextID?.raw ?? "")
         guard key != observedPair else { return }
-        observedPair = key; analysisTask?.cancel()
+
+        // Clear the previous pair synchronously. The coordinator must never use
+        // a valid-looking plan that was calculated for two different tracks.
+        observedPair = key; plannedPair = ""; transitionPlan = nil
+        currentProfile = nil; nextProfile = nil; lastError = nil
+        analysisTask?.cancel()
         analysisTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            pipelineStatus = "Анализ текущего трека"; lastError = nil
+            pipelineStatus = "Анализ текущего трека"
             do {
                 let currentFile = try await localFile(for: current, id: currentID)
                 let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)
                 let a = await Stage3ProfileEnricher.enrich(rawA, fileURL: currentFile)
                 guard !Task.isCancelled, observedPair == key else { return }
-                currentProfile = a; nextProfile = nil; transitionPlan = nil
-                guard let next, let nextID = trackID(for: next) else {
-                    pipelineStatus = "Профиль текущего трека готов"; lastError = nil; return
+                currentProfile = a
+                guard let next, let nextID else {
+                    pipelineStatus = "Следующего трека нет"; return
                 }
-                pipelineStatus = "Анализ следующего трека и тональности"
+                pipelineStatus = "Анализ следующего трека"
                 let nextFile = try await localFile(for: next, id: nextID)
                 let rawB = try await analyzer.profile(for: nextID, fileURL: nextFile)
                 let b = await Stage3ProfileEnricher.enrich(rawB, fileURL: nextFile)
@@ -79,21 +100,27 @@ final class AutoMixV2AnalysisRuntime {
                 nextProfile = b
                 let settings = MixSettings(mode: .automix,
                                            crossfadeSeconds: PlayerCore.shared.crossfadeDuration,
-                                           skipTransitionsWithinAlbum: true,
+                                           skipTransitionsWithinAlbum: false,
                                            dontCutEndings: false,
                                            loudnessNormalization: true,
                                            targetLUFS: -14)
-                transitionPlan = MixPlanner.plan(from: a, to: b,
-                                                 aMeta: metadata(for: current, id: currentID),
-                                                 bMeta: metadata(for: next, id: nextID),
-                                                 settings: settings)
-                pipelineStatus = "Профили и музыкальный план готовы"; lastError = nil
+                let plan = MixPlanner.plan(from: a, to: b,
+                                           aMeta: metadata(for: current, id: currentID),
+                                           bMeta: metadata(for: next, id: nextID),
+                                           settings: settings)
+                guard !Task.isCancelled, observedPair == key else { return }
+                transitionPlan = plan
+                plannedPair = pairKey(currentID, nextID)
+                pipelineStatus = plan.type == .none ? "План запретил музыкальный переход; будет кроссфейд" : "План перехода готов"
             } catch {
                 guard observedPair == key, !Self.isCancellation(error) else { return }
-                lastError = String(describing: error); pipelineStatus = "Ошибка анализа"
+                transitionPlan = nil; plannedPair = ""
+                lastError = String(describing: error)
+                pipelineStatus = "Ошибка анализа; будет кроссфейд"
             }
         }
     }
+    private func pairKey(_ currentID: TrackID, _ nextID: TrackID) -> String { currentID.raw + "|" + nextID.raw }
     private static func isCancellation(_ error: Error) -> Bool {
         if error is CancellationError { return true }
         if let urlError = error as? URLError, urlError.code == .cancelled { return true }
