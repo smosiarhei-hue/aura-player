@@ -58,9 +58,14 @@ struct RootView: View {
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
             player.setApplicationSceneActive(scenePhase == .active)
+            AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(showPlayer)
+        }
+        .onChange(of: showPlayer) { _, visible in
+            AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(visible)
         }
         .onChange(of: scenePhase) { _, phase in
             player.setApplicationSceneActive(phase == .active)
+            AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(showPlayer)
             if phase == .active, presentedIsPlaying { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
         .onOpenURL { _ in showPlayer = true }
