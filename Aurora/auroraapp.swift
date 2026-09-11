@@ -20,12 +20,8 @@ struct SonivoApp: App {
 enum AppTab: String, CaseIterable, Identifiable {
     case wave = "Wave", trends = "Trends", library = "Library", search = "Search"
     var id: String { rawValue }
-    var label: String {
-        switch self { case .wave: "Моя волна"; case .trends: "Тренды"; case .library: "Коллекция"; case .search: "Поиск" }
-    }
-    var icon: String {
-        switch self { case .wave: "sparkles"; case .trends: "chart.line.uptrend.xyaxis"; case .library: "books.vertical.fill"; case .search: "magnifyingglass" }
-    }
+    var label: String { switch self { case .wave: "Моя волна"; case .trends: "Тренды"; case .library: "Коллекция"; case .search: "Поиск" } }
+    var icon: String { switch self { case .wave: "sparkles"; case .trends: "chart.line.uptrend.xyaxis"; case .library: "books.vertical.fill"; case .search: "magnifyingglass" } }
 }
 
 struct RootView: View {
@@ -37,8 +33,9 @@ struct RootView: View {
     @State private var showPlayer = false
     @Namespace private var playerTransition
     static let playerZoomID = "now-playing-artwork"
-    private var presentedTrack: Track? { engineSelection.isV2Enabled ? v2.currentTrack : player.currentTrack }
-    private var presentedIsPlaying: Bool { engineSelection.isV2Enabled ? v2.isPlaying : player.isPlaying }
+    private var v2OwnsPlayback: Bool { engineSelection.isV2Enabled && v2.currentTrack != nil }
+    private var presentedTrack: Track? { v2OwnsPlayback ? v2.currentTrack : player.currentTrack }
+    private var presentedIsPlaying: Bool { v2OwnsPlayback ? v2.isPlaying : player.isPlaying }
     private var miniVisible: Bool {
         guard let track = presentedTrack else { return false }
         return !track.title.isEmpty || track.isStream || track.duration > 0
@@ -72,10 +69,10 @@ struct RootView: View {
         .onChange(of: player.currentTrack?.id) { _, _ in rememberCurrentTrack() }
         .onChange(of: v2.currentTrack?.id) { _, _ in rememberCurrentTrack() }
         .onChange(of: player.isPlaying) { _, playing in
-            if !engineSelection.isV2Enabled, playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
+            if !v2OwnsPlayback, playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
         .onChange(of: v2.isPlaying) { _, playing in
-            if engineSelection.isV2Enabled, playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
+            if v2OwnsPlayback, playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
     }
     private func rememberCurrentTrack() {
@@ -147,12 +144,8 @@ struct NativeMiniPlayer: View {
         .task { await player.observeTimeline() }
     }
     private func open() { Haptics.tap(.light); showPlayer = true }
-    private func togglePlayback() {
-        Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay()
-    }
-    private func nextTrack() {
-        Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.next()
-    }
+    private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
+    private func nextTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.next() }
 }
 
 struct MiniArtworkPulse: View {
