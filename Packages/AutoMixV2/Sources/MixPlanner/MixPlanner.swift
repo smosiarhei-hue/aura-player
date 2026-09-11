@@ -53,7 +53,12 @@ public enum MixPlanner {
             FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 0.25,
                     fromValue: 0, toValue: 1, curve: .sCurve),
             FxEvent(target: .b, kind: .bassOn, startBar: bars / 2, endBar: bars / 2 + 1,
-                    fromValue: 1, toValue: 0, curve: .sCurve)
+                    fromValue: 1, toValue: 0, curve: .sCurve),
+            // The incoming deck becomes the new active deck. Return it to its
+            // natural rate gradually before the transition completes so reset
+            // does not produce an audible tempo step.
+            FxEvent(target: .b, kind: .rateRamp, startBar: max(1, bars - 2), endBar: bars,
+                    fromValue: tempo.rateB, toValue: 1, curve: .sCurve)
         ]
         if compatible {
             events.append(FxEvent(target: .a, kind: .echoOut,
