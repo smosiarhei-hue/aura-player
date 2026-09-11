@@ -4,6 +4,18 @@
 import Foundation
 import UIKit
 
+/// MediaPlayer invokes artwork request handlers on its own private queue.
+/// Keeping the handler outside MainActor prevents Swift 6 executor assertions.
+private final class NowPlayingArtworkProvider: @unchecked Sendable {
+    private let image: UIImage
+    nonisolated init(image: UIImage) { self.image = image }
+
+    nonisolated func makeArtwork() -> MPMediaItemArtwork {
+        let image = self.image
+        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+    }
+}
+
 @MainActor
 final class AutoMixV2NowPlayingCenter {
     static let shared = AutoMixV2NowPlayingCenter()
@@ -29,8 +41,8 @@ final class AutoMixV2NowPlayingCenter {
 
     private func refresh() async {
         let runtime = AutoMixV2Runtime.shared
-        let enabled = AutoMixEngineSelectionStore.shared.isV2Enabled
-        guard enabled, let track = runtime.currentTrack else {
+        guard AutoMixEngineSelectionStore.shared.isV2Enabled,
+              let track = runtime.currentTrack else {
             clearOnlyIfOwned(); return
         }
         startArtworkLoadIfNeeded(for: track)
@@ -38,7 +50,8 @@ final class AutoMixV2NowPlayingCenter {
         let durationCandidate = timeline?.duration ?? track.duration
         let duration = durationCandidate.isFinite ? max(0, durationCandidate) : 0
         let positionCandidate = timeline?.position ?? 0
-        let elapsed = positionCandidate.isFinite ? min(max(0, positionCandidate), duration > 0 ? duration : positionCandidate) : 0
+        let elapsed = positionCandidate.isFinite
+            ? min(max(0, positionCandidate), duration > 0 ? duration : max(0, positionCandidate)) : 0
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.title,
             MPMediaItemPropertyArtist: track.artist,
@@ -64,22 +77,24 @@ final class AutoMixV2NowPlayingCenter {
         guard artworkTrackID != track.id else { return }
         artworkTask?.cancel(); artworkTrackID = track.id; artwork = nil
         guard let raw = track.coverURL, let url = URL(string: raw) else { return }
-        if let cached = imageCache[raw] { artwork = makeArtwork(cached); return }
+        if let cached = imageCache[raw] {
+            artwork = NowPlayingArtworkProvider(image: cached).makeArtwork(); return
+        }
         let id = track.id
         artworkTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let (data, response) = try await URLSession.shared.data(from: url)
                 try Task.checkCancellation()
-                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                guard let http = response as? HTTPURLResponse,
+                      (200...299).contains(http.statusCode),
                       let image = UIImage(data: data), artworkTrackID == id else { return }
-                imageCache[raw] = image; artwork = makeArtwork(image)
+                imageCache[raw] = image
+                artwork = NowPlayingArtworkProvider(image: image).makeArtwork()
             } catch { return }
         }
     }
-    private func makeArtwork(_ image: UIImage) -> MPMediaItemArtwork {
-        MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-    }
+
     private func clearOnlyIfOwned() {
         guard ownsNowPlaying else { return }
         let center = MPNowPlayingInfoCenter.default()
