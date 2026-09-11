@@ -39,6 +39,9 @@ final class PlaybackCoordinator {
         ids = queue; index = startIndex; activeDeck = .a; wantsPlayback = true
         suppressAutoMixUntilTrackChange = false
         phase = .loading(queue[startIndex]); publish()
+        // Start downloading/preparing Deck B while Deck A is still downloading.
+        // This makes the first manual Next use the existing in-flight cache task.
+        startPrefetch()
         let item = try await fetch(startIndex, deck: activeDeck); active = item
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
         await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
@@ -47,11 +50,14 @@ final class PlaybackCoordinator {
     }
     func replaceQueue(_ queue: [TrackID]) async throws {
         ids = queue; if let id = active?.id { index = queue.firstIndex(of: id) }
-        prepared = nil; await engine.stop(otherDeck); startPrefetch(); publish()
+        prefetch?.cancel(); prefetch = nil; prepared = nil
+        await engine.stop(otherDeck); startPrefetch(); publish()
     }
     func next() async throws {
         guard !ids.isEmpty else { return }
-        await cancelTransitionAndWait(); prefetch?.cancel()
+        await cancelTransitionAndWait()
+        // Never cancel and restart a nearly completed online prefetch.
+        if prepared == nil, let pending = prefetch { await pending.value }
         if let item = prepared { try await promote(item, duration: nil, plan: nil) }
         else { try await load(((index ?? -1) + 1) % ids.count) }
     }
@@ -60,9 +66,11 @@ final class PlaybackCoordinator {
         await cancelTransitionAndWait(); try await load(((index ?? 0) - 1 + ids.count) % ids.count)
     }
     private func load(_ newIndex: Int) async throws {
+        prefetch?.cancel(); prefetch = nil
         await engine.stopEngine(); activeDeck = .a; prepared = nil; planSignature = ""
         suppressAutoMixUntilTrackChange = false
-        let item = try await fetch(newIndex, deck: activeDeck); active = item; index = newIndex
+        index = newIndex; phase = .loading(ids[newIndex]); publish(); startPrefetch()
+        let item = try await fetch(newIndex, deck: activeDeck); active = item
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
         if wantsPlayback { try await engine.play(activeDeck) }
         phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
@@ -81,12 +89,14 @@ final class PlaybackCoordinator {
     }
     func seek(to seconds: Double) async throws {
         guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
-        await cancelTransitionAndWait(); prefetch?.cancel(); prefetch = nil
+        await cancelTransitionAndWait()
         suppressAutoMixUntilTrackChange = true
+        // Seeking only reschedules the active local file. Keep Deck B and its
+        // internet download intact so scrubbing cannot make Next slow again.
         try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: seconds)
         await engine.setGain(1, for: activeDeck); await engine.setRate(1, for: activeDeck)
         if wantsPlayback { try await engine.play(activeDeck) }
-        prepared = nil; planSignature = ""; startPrefetch(); publish()
+        planSignature = ""; publish()
     }
     func stop() async {
         wantsPlayback = false; await cancelTransitionAndWait(); prefetch?.cancel(); await engine.stopEngine()
