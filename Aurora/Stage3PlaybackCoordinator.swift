@@ -54,7 +54,7 @@ final class PlaybackCoordinator {
         guard !ids.isEmpty else { return }
         await cancelTransitionAndWait()
         if prepared == nil, let pending = prefetch { await pending.value }
-        if let item = prepared { try await promote(item, duration: nil, plan: nil) }
+        if let item = prepared { try await promote(item, duration: nil, plan: nil); startPrefetch() }
         else { try await load(((index ?? -1) + 1) % ids.count) }
     }
     func previous() async throws {
@@ -106,10 +106,10 @@ final class PlaybackCoordinator {
     }
     func snapshot() -> PlaybackCoordinatorSnapshot {
         PlaybackCoordinatorSnapshot(phase: phase, activeDeck: activeDeck,
-                                    shouldResumeAfterInterruption: resumeIntent,
-                                    firstSoundLatencySeconds: nil, queue: ids, currentIndex: index,
-                                    preparedIndex: prepared?.index, isTransitioning: transition != nil,
-                                    waitingForNext: prefetch != nil, lastQueueError: lastError)
+                                     shouldResumeAfterInterruption: resumeIntent,
+                                     firstSoundLatencySeconds: nil, queue: ids, currentIndex: index,
+                                     preparedIndex: prepared?.index, isTransitioning: transition != nil,
+                                     waitingForNext: prefetch != nil, lastQueueError: lastError)
     }
     func engineSnapshot() async -> AudioEngineSnapshot { await engine.snapshot() }
     func updatePlayback() async { await tick() }
@@ -124,16 +124,35 @@ final class PlaybackCoordinator {
         }
     }
     private func tick() async {
-        guard wantsPlayback, transition == nil, let current = active, let next = prepared else { return }
+        guard wantsPlayback, transition == nil, let current = active, let currentIndex = index else { return }
         let state = await engine.snapshot(); let deck = activeDeck == .a ? state.deckA : state.deckB
+
+        if prepared == nil {
+            guard deck.reachedEndOfFile else { return }
+            if let pending = prefetch { await pending.value }
+            if let next = prepared {
+                try? await promote(next, duration: nil, plan: nil)
+                startPrefetch()
+            } else if currentIndex + 1 < ids.count {
+                do { try await load(currentIndex + 1) }
+                catch { lastError = String(describing: error); phase = .failed(lastError ?? "Next track failed"); publish() }
+            } else {
+                wantsPlayback = false; phase = .ready(current.meta); publish()
+            }
+            return
+        }
+        guard let next = prepared else { return }
         if suppressAutoMixUntilTrackChange {
-            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }; return
+            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil); startPrefetch() }
+            return
         }
         guard let plan = AutoMixV2AnalysisRuntime.shared.transitionPlan else {
-            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }; return
+            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil); startPrefetch() }
+            return
         }
         if plan.type == .none {
-            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil) }; return
+            if deck.reachedEndOfFile { try? await promote(next, duration: nil, plan: nil); startPrefetch() }
+            return
         }
         let signature = current.id.raw + "|" + next.id.raw + "|" + plan.type.rawValue + "|" + String(plan.bInStartSec)
         if signature != planSignature {
@@ -155,10 +174,16 @@ final class PlaybackCoordinator {
             }
             do {
                 try await self.promote(item, duration: max(0.05, duration), plan: plan)
-                await self.effects?.value; self.effects = nil; self.transition = nil
+                // The audio handoff owns the exact transition duration. Never wait
+                // indefinitely for an FX observer after the outgoing deck was stopped.
+                self.effects?.cancel()
+                await self.effects?.value
+                self.effects = nil; self.transition = nil
+                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
                 self.publish(); self.startPrefetch()
             } catch is CancellationError {
-                self.effects?.cancel(); await self.effects?.value; self.effects = nil; self.transition = nil
+                self.effects?.cancel(); await self.effects?.value
+                self.effects = nil; self.transition = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
             } catch {
                 self.effects?.cancel(); await self.effects?.value; self.effects = nil
@@ -171,15 +196,13 @@ final class PlaybackCoordinator {
                                 incoming: Deck, duration: Double) async {
         guard duration.isFinite, duration > 0 else { return }
         let initial = await engine.snapshot()
-        let initialDeck = outgoing == .a ? initial.deckA : initial.deckB
+        let initialDeck = incoming == .a ? initial.deckA : initial.deckB
         let baseline = initialDeck.positionSeconds
         while !Task.isCancelled {
-            let state = await engine.snapshot(); let deck = outgoing == .a ? state.deckA : state.deckB
+            let state = await engine.snapshot(); let deck = incoming == .a ? state.deckA : state.deckB
             let elapsedSource = max(0, deck.positionSeconds - baseline)
-            let elapsedWall = elapsedSource / Double(max(plan.rateA, 0.01))
+            let elapsedWall = elapsedSource / Double(max(plan.rateB, 0.01))
             if plan.type == .crossfade {
-                // Low-confidence fallback still gets a conservative, audible
-                // filter transition without beatmatching, bass swap or tempo FX.
                 let p = min(1, max(0, elapsedWall / duration))
                 let hp = Float(20 * pow(60, p))
                 let lp = Float(2_500 * pow(8, min(1, p * 2)))
