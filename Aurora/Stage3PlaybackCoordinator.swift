@@ -60,8 +60,19 @@ final class PlaybackCoordinator {
         guard !ids.isEmpty else { return }
         await cancelTransitionAndWait()
         if prepared == nil, let pending = prefetch { await pending.value }
-        if let item = prepared { try await promote(item, duration: nil, plan: nil); startPrefetch() }
-        else { try await load(((index ?? -1) + 1) % ids.count) }
+        if let item = prepared {
+            // При ручном переключении пользователем трек обязан начинаться строго с 0:00!
+            // Если Deck B ранее был подготовлен на середину (bInStartSec под автомикс),
+            // переподготавливаем его с 0.0 с нейтральной громкостью.
+            try await engine.prepare(item.deck, fileURL: item.url, startTimeSeconds: 0)
+            await engine.setGain(0, for: item.deck)
+            await engine.setRate(1, for: item.deck)
+            await engine.resetEffects(item.deck)
+            try await promote(item, duration: nil, plan: nil)
+            startPrefetch()
+        } else {
+            try await load(((index ?? -1) + 1) % ids.count)
+        }
     }
     func previous() async throws {
         guard !ids.isEmpty else { return }

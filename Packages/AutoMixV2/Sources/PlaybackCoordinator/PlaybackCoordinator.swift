@@ -86,6 +86,12 @@ public final class PlaybackCoordinator {
         try await runCommand { owner, token in
             // A prepared candidate can be later than current + 1 when unavailable entries were skipped.
             if let next = owner.prepared {
+                // User explicitly requested next track: must play from the very beginning (0:00),
+                // not from any auto-mix cue point.
+                try await owner.engine.prepare(next.deck, fileURL: next.url, startTimeSeconds: 0)
+                try owner.check(token)
+                await owner.engine.setGain(0, for: next.deck)
+                try owner.check(token)
                 try await owner.promote(next, fadeDuration: nil, token: token)
             } else {
                 let index = ((owner.currentIndex ?? -1) + 1) % owner.queue.count
