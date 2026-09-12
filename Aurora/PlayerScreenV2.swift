@@ -93,18 +93,45 @@ struct PlayerScreenV2: View {
         .onDisappear { teardownVideoLooper() }
     }
 
+    private var isFullScreenVideoShot: Bool {
+        isVideoShotEnabled && videoLooperPlayer != nil
+    }
+
     private var background: some View {
         ZStack {
-            if reduceMotion || scenePhase != .active || (isVideoShotEnabled && videoLooperPlayer != nil) {
+            if isFullScreenVideoShot, let videoLooperPlayer {
+                VideoShotPlayerView(player: videoLooperPlayer)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .scaledToFill()
+                    .clipped()
+                    .ignoresSafeArea()
+
+                // Элегантная кинематографичная виньетка:
+                // Верх — легкое затемнение под хедер; центр — кристально чистое видео; низ — глубокое затемнение под контролы
+                LinearGradient(stops: [
+                    .init(color: .black.opacity(0.45), location: 0.0),
+                    .init(color: .black.opacity(0.10), location: 0.18),
+                    .init(color: .clear, location: 0.35),
+                    .init(color: .clear, location: 0.50),
+                    .init(color: .black.opacity(0.45), location: 0.68),
+                    .init(color: .black.opacity(0.85), location: 0.88),
+                    .init(color: .black.opacity(0.96), location: 1.0)
+                ], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+            } else if reduceMotion || scenePhase != .active {
                 gradientBackground
+                LinearGradient(stops: [.init(color: .black.opacity(0.18), location: 0),
+                                       .init(color: .black.opacity(0.68), location: 0.78),
+                                       .init(color: .black.opacity(0.94), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
             } else {
                 artwork.frame(maxWidth: .infinity, maxHeight: .infinity).blur(radius: 64).scaleEffect(1.2).opacity(0.4)
                 AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.55)
+                LinearGradient(stops: [.init(color: .black.opacity(0.18), location: 0),
+                                       .init(color: .black.opacity(0.68), location: 0.78),
+                                       .init(color: .black.opacity(0.94), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
             }
-            LinearGradient(stops: [.init(color: .black.opacity(0.18), location: 0),
-                                   .init(color: .black.opacity(0.68), location: 0.78),
-                                   .init(color: .black.opacity(0.94), location: 1)],
-                           startPoint: .top, endPoint: .bottom)
         }.allowsHitTesting(false)
     }
     private var backgroundColors: [Color] { palette.isEmpty ? [AG.amber, AG.ember] : palette }
@@ -143,10 +170,11 @@ struct PlayerScreenV2: View {
 
     private func artworkStage(side: CGFloat) -> some View {
         ZStack {
-            if isVideoShotEnabled, let videoLooperPlayer {
-                VideoShotPlayerView(player: videoLooperPlayer)
+            if isFullScreenVideoShot && !showLyricsMode {
+                // В полноэкранном режиме видеошота центральный квадрат прозрачен,
+                // открывая полный обзор красивого вертикального видео лейбла
+                Color.clear
                     .frame(width: side, height: side)
-                    .clipped()
             } else {
                 artwork
                     .frame(width: side, height: side)
@@ -156,18 +184,29 @@ struct PlayerScreenV2: View {
             if player.isV2Enabled && player.isTransitionActive && !showLyricsMode {
                 AutoMixArtworkGlint(side: side, reduceMotion: reduceMotion)
                     .transition(.opacity)
-            } else if !player.isV2Enabled && !isVideoShotEnabled && !showLyricsMode {
+            } else if !player.isV2Enabled && !isFullScreenVideoShot && !showLyricsMode {
                 AutoMixTransitionOverlay(side: side)
             }
             if showLyricsMode { lyricsOverlay(side: side) }
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(player.isTransitionActive ? 0.32 : 0.14), lineWidth: 1))
-        .shadow(color: .white.opacity(player.isTransitionActive ? 0.22 : 0), radius: 22)
-        .shadow(color: (artworkPaletteColors.first ?? .black).opacity(player.isPlaying ? 0.40 : 0.15), radius: player.isPlaying ? 24 : 8, y: player.isPlaying ? 12 : 4)
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(
+                    .white.opacity(isFullScreenVideoShot && !showLyricsMode ? 0.0 : (player.isTransitionActive ? 0.32 : 0.14)),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: .white.opacity(isFullScreenVideoShot ? 0 : (player.isTransitionActive ? 0.22 : 0)), radius: 22)
+        .shadow(
+            color: (artworkPaletteColors.first ?? .black).opacity(isFullScreenVideoShot ? 0 : (player.isPlaying ? 0.40 : 0.15)),
+            radius: player.isPlaying ? 24 : 8,
+            y: player.isPlaying ? 12 : 4
+        )
         .scaleEffect(player.isPlaying ? 1 : 0.88).offset(x: coverDragX)
         .rotationEffect(.degrees(Double(coverDragX / 24)))
+        .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 15)
             .onChanged { value in
                 guard !player.isTransitionActive, abs(value.translation.width) > abs(value.translation.height) else { return }
