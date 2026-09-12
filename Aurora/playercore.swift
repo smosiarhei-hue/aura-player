@@ -188,6 +188,8 @@ final class PlayerCore {
     private var transitionTimer: Timer?
     private var rateReleaseTimer: Timer?
 
+    var streamBufferFraction: Double = 0.0
+
     var displayTrack: Track? { metadataTrack ?? currentTrack }
 
     var duration: Double {
@@ -243,10 +245,18 @@ final class PlayerCore {
                             if d.isFinite && d > 0 && self.streamDuration != d {
                                 self.streamDuration = d
                             }
+                            if let timeRange = item.loadedTimeRanges.first?.timeRangeValue {
+                                let bufferEnd = CMTimeGetSeconds(timeRange.start) + CMTimeGetSeconds(timeRange.duration)
+                                let total = self.duration
+                                if total > 0 {
+                                    self.streamBufferFraction = min(1.0, max(0.0, bufferEnd / total))
+                                }
+                            }
                         }
 
                         self.syncNowPlayingElapsedIfNeeded()
                         self.scheduleTransitionIfNeeded()
+                        self.refillQueueIfNeeded()
                     }
                 }
             }
@@ -587,10 +597,28 @@ final class PlayerCore {
                       let image = UIImage(data: data) else { return }
                 guard let self, self.currentTrack?.id == track.id else { return }
                 self.remoteArtworkCache[track.id] = image
+                LibraryStore.cacheArtworkImage(image, for: track)
                 var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 current[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
                 self.publishNowPlaying(current, state: self.isPlaying ? .playing : .paused)
             }
+        }
+
+        if let next = peekNext(auto: true) {
+            preloadArtwork(for: next)
+        }
+    }
+
+    func preloadArtwork(for track: Track) {
+        guard LibraryStore.cachedArtworkImage(for: track) == nil,
+              remoteArtworkCache[track.id] == nil,
+              let cover = track.coverURL,
+              let url = URL(string: cover) else { return }
+        Task { [weak self] in
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  let image = UIImage(data: data) else { return }
+            self?.remoteArtworkCache[track.id] = image
+            LibraryStore.cacheArtworkImage(image, for: track)
         }
     }
 
@@ -705,6 +733,23 @@ final class PlayerCore {
             currentTrack = nextTrack
             streamDuration = nextTrack.duration
             start(at: 0)
+            refillQueueIfNeeded()
+        } else if let cur = currentTrack, repeatMode != .one {
+            Task { @MainActor in
+                let wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
+                let existing = Set(self.queue.map(\.id))
+                let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id }
+                if let first = fresh.first {
+                    self.queue.append(contentsOf: fresh)
+                    self.currentTrack = first
+                    self.streamDuration = first.duration
+                    self.start(at: 0)
+                    self.refillQueueIfNeeded()
+                } else {
+                    self.start(at: 0)
+                    self.currentTrack = cur
+                }
+            }
         } else if let cur = currentTrack {
             start(at: 0)
             currentTrack = cur
@@ -786,8 +831,10 @@ final class PlayerCore {
         planningStartedAt = nil
 
         if track.isStream || track.streamUrlString != nil {
+            streamBufferFraction = 0.0
             startStream(track, at: seconds, token: token)
         } else {
+            streamBufferFraction = 1.0
             startLocal(track, at: seconds, token: token)
         }
     }
@@ -1748,7 +1795,8 @@ final class PlayerCore {
         if let nextTrack = peekNext(auto: true) {
             currentTrack = nextTrack
             start(at: 0)
-        } else if let current = currentTrack, current.isStream, repeatMode != .one {
+            refillQueueIfNeeded()
+        } else if let current = currentTrack, repeatMode != .one {
             Task { @MainActor in
                 let wave = await YandexMusicService.shared.buildTrackWave(from: current, target: 20)
                 guard self.currentTrack?.id == current.id else { return }
@@ -1762,9 +1810,41 @@ final class PlayerCore {
                 self.queue.append(contentsOf: fresh)
                 self.currentTrack = fresh[0]
                 self.start(at: 0)
+                self.refillQueueIfNeeded()
             }
         } else {
             updateNowPlayingInfo()
+        }
+    }
+
+    private var lastRefillCheck: Date?
+    private var isRefillingWave = false
+
+    func refillQueueIfNeeded() {
+        guard !isRefillingWave, repeatMode != .one, let current = currentTrack else { return }
+        let now = Date()
+        if let last = lastRefillCheck, now.timeIntervalSince(last) < 4.0 { return }
+        lastRefillCheck = now
+
+        let q = effectiveQueue()
+        guard let currentIndex = q.firstIndex(where: { $0.id == current.id }) else { return }
+        let remainingAhead = q.count - 1 - currentIndex
+        guard remainingAhead <= 2 else { return }
+
+        isRefillingWave = true
+        let seed = q.last ?? current
+        Task { @MainActor [weak self] in
+            defer { self?.isRefillingWave = false }
+            guard let self, self.currentTrack != nil else { return }
+            let freshTracks = await YandexMusicService.shared.buildTrackWave(from: seed, target: 20)
+            let existing = Set(self.queue.map(\.id))
+            let fresh = freshTracks.filter { !existing.contains($0.id) && $0.id != current.id }
+            guard !fresh.isEmpty else { return }
+            SonivoDiagnostics.log("[Wave] Infinite queue refill: +\(fresh.count) tracks", tag: "WAVE")
+            self.queue.append(contentsOf: fresh)
+            if let next = self.peekNext(auto: true) {
+                self.preloadArtwork(for: next)
+            }
         }
     }
 
@@ -1849,6 +1929,7 @@ final class PlayerCore {
         progress = liveProgress()
         syncNowPlayingElapsedIfNeeded()
         scheduleTransitionIfNeeded()
+        refillQueueIfNeeded()
     }
 
     func formatted(_ t: Double) -> String {
@@ -1880,6 +1961,9 @@ final class PlayerCore {
         let remaining = deadline.timeIntervalSinceNow
         if remaining <= 0 {
             pause()
+            Task { @MainActor in
+                await AutoMixV2Runtime.shared.pause()
+            }
             cancelSleepTimer()
         } else {
             sleepTimerRemaining = remaining

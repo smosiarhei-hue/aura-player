@@ -81,15 +81,6 @@ public enum PlaybackAudioSessionSetup {
             return AudioSessionSetupResult(isActive: false, failedSteps: failedSteps)
         }
 
-        if usesV2 {
-            _ = attempt(.sampleRate) {
-                try session.setPreferredSampleRate(DualDeckAudioEngine.preferredSampleRate)
-            }
-            _ = attempt(.bufferDuration) {
-                try session.setPreferredIOBufferDuration(DualDeckAudioEngine.preferredIOBufferDuration)
-            }
-        }
-
         let isActive = attempt(.activation) { try session.activate() }
         return AudioSessionSetupResult(isActive: isActive, failedSteps: failedSteps)
     }

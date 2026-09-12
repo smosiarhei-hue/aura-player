@@ -25,8 +25,11 @@ struct PlayerScreenV2: View {
     @State private var isVideoShotEnabled = UserDefaults.standard.object(forKey: "aurora_videoshot_enabled") as? Bool ?? true
     @State private var videoLooperPlayer: AVQueuePlayer?
     @State private var videoLooper: AVPlayerLooper?
+    @State private var ambientLooperPlayer: AVQueuePlayer?
+    @State private var ambientLooper: AVPlayerLooper?
     @State private var artworkPaletteColors: [Color] = []
     @State private var paletteTrackId: UUID?
+    @State private var artworkTrackId: UUID?
     @State private var currentArtworkImage: UIImage?
     private let tapSide: CGFloat = AG.tapTarget
 
@@ -90,31 +93,52 @@ struct PlayerScreenV2: View {
             async let v: () = loadVideoShot()
             _ = await (p, l, v)
         }
-        .onChange(of: player.isPlaying) { _, playing in playing ? videoLooperPlayer?.play() : videoLooperPlayer?.pause() }
+        .onChange(of: player.isPlaying) { _, playing in
+            if playing {
+                videoLooperPlayer?.play()
+                ambientLooperPlayer?.play()
+            } else {
+                videoLooperPlayer?.pause()
+                ambientLooperPlayer?.pause()
+            }
+        }
         .onDisappear { teardownVideoLooper() }
     }
 
     private var isFullScreenVideoShot: Bool {
-        isVideoShotEnabled && videoLooperPlayer != nil
+        isVideoShotEnabled && videoLooperPlayer != nil && !showLyricsMode
     }
 
     private var background: some View {
         ZStack {
-            if isFullScreenVideoShot, let videoLooperPlayer {
+            if isFullScreenVideoShot {
                 // Размытый атмосферный фон на весь экран (ambient blur по краям)
-                VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .scaledToFill()
-                    .blur(radius: 40)
-                    .scaleEffect(1.15)
-                    .clipped()
-                    .ignoresSafeArea()
+                if let ambientLooperPlayer {
+                    VideoShotPlayerView(player: ambientLooperPlayer, videoGravity: .resizeAspectFill)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .scaledToFill()
+                        .blur(radius: 40)
+                        .scaleEffect(1.15)
+                        .clipped()
+                        .ignoresSafeArea()
+                } else if let img = (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? track.flatMap({ LibraryStore.cachedArtworkImage(for: $0) }) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .blur(radius: 50)
+                        .scaleEffect(1.2)
+                        .clipped()
+                        .ignoresSafeArea()
+                }
 
                 // Четкое видео 1080x1920 (9:16) от лейбла без обрезки по бокам и без искусственного зума
-                VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspect)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                    .ignoresSafeArea()
+                if let videoLooperPlayer {
+                    VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspect)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .ignoresSafeArea()
+                }
 
                 // Элегантная кинематографичная виньетка:
                 // Верх — легкое затемнение под хедер; центр — кристально чистое видео; низ — глубокое затемнение под контролы
@@ -172,7 +196,7 @@ struct PlayerScreenV2: View {
                 Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: { Label("Текст песни", systemImage: "quote.bubble") }
                 Button { openModal(.queue) } label: { Label("Очередь", systemImage: "list.bullet") }
                 Button { openModal(.equalizer) } label: { Label("Эквалайзер", systemImage: "slider.vertical.3") }.disabled(player.isV2Enabled)
-                Button { openModal(.sleepTimer) } label: { Label("Таймер сна", systemImage: "timer") }.disabled(player.isV2Enabled)
+                Button { openModal(.sleepTimer) } label: { Label("Таймер сна", systemImage: "timer") }
                 Button { openModal(.settings) } label: { Label("Настройки", systemImage: "gearshape") }
                 Button {
                     Task {
@@ -304,19 +328,22 @@ struct PlayerScreenV2: View {
     }
 
     @ViewBuilder private var artwork: some View {
-        if let currentArtworkImage {
-            Image(uiImage: currentArtworkImage)
+        let cached = track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
+        let current = (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? cached
+        if let current {
+            Image(uiImage: current)
                 .resizable()
                 .scaledToFill()
-        } else if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
+                .id(track?.id)
         } else if let raw = track?.coverURL, let url = URL(string: raw) {
             AsyncImage(url: url) { phase in
                 if let image = phase.image { image.resizable().scaledToFill() } else { fallbackArtwork }
             }
-        } else { fallbackArtwork }
+            .id(track?.id)
+        } else {
+            fallbackArtwork
+                .id(track?.id)
+        }
     }
     private var fallbackArtwork: some View {
         ZStack { LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing); Image(systemName: "music.note").font(.system(size: 70, weight: .semibold)).foregroundStyle(.white.opacity(0.85)) }
@@ -402,21 +429,43 @@ struct PlayerScreenV2: View {
         withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
     }
     private func refreshPalette() async {
-        guard let track, paletteTrackId != track.id else { return }; paletteTrackId = track.id
+        guard let track, paletteTrackId != track.id else { return }
+        paletteTrackId = track.id
+        artworkTrackId = track.id
         if let image = LibraryStore.cachedArtworkImage(for: track) {
             currentArtworkImage = image
             await updatePalette(from: image)
-            return
-        }
-        if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) {
+        } else if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) {
             LibraryStore.cacheArtworkImage(image, for: track)
-            currentArtworkImage = image
-            await updatePalette(from: image)
+            if paletteTrackId == track.id {
+                currentArtworkImage = image
+                await updatePalette(from: image)
+            }
         } else {
             currentArtworkImage = nil
             if !track.palette.isEmpty { artworkPaletteColors = track.palette }
         }
+        prefetchUpcomingArtwork()
     }
+
+    private func prefetchUpcomingArtwork() {
+        let q = player.queue
+        guard let current = track,
+              let idx = q.firstIndex(where: { $0.id == current.id }) else { return }
+        let nextTracks = Array(q.dropFirst(idx + 1).prefix(3))
+        for next in nextTracks {
+            guard LibraryStore.cachedArtworkImage(for: next) == nil,
+                  let raw = next.coverURL,
+                  let url = URL(string: raw) else { continue }
+            Task(priority: .utility) {
+                if let (data, _) = try? await URLSession.shared.data(from: url),
+                   let img = UIImage(data: data) {
+                    LibraryStore.cacheArtworkImage(img, for: next)
+                }
+            }
+        }
+    }
+
     private func loadLyrics() async {
         lyrics = nil; guard let requested = track else { lyricsLoading = false; return }
         lyricsLoading = true; let result = try? await LyricsService.shared.fetchLyrics(for: requested)
@@ -431,16 +480,33 @@ struct PlayerScreenV2: View {
     }
     private func setupVideoLooper(url: URL) {
         teardownVideoLooper()
-        let item = AVPlayerItem(url: url)
-        let player = AVQueuePlayer(playerItem: item)
-        player.isMuted = true
-        player.actionAtItemEnd = .none
-        player.preventsDisplaySleepDuringVideoPlayback = false
-        videoLooper = AVPlayerLooper(player: player, templateItem: item)
-        videoLooperPlayer = player
-        player.play()
+        let itemA = AVPlayerItem(url: url)
+        let playerA = AVQueuePlayer(playerItem: itemA)
+        playerA.isMuted = true
+        playerA.actionAtItemEnd = .none
+        playerA.preventsDisplaySleepDuringVideoPlayback = false
+        videoLooper = AVPlayerLooper(player: playerA, templateItem: itemA)
+        videoLooperPlayer = playerA
+
+        let itemB = AVPlayerItem(url: url)
+        let playerB = AVQueuePlayer(playerItem: itemB)
+        playerB.isMuted = true
+        playerB.actionAtItemEnd = .none
+        playerB.preventsDisplaySleepDuringVideoPlayback = false
+        ambientLooper = AVPlayerLooper(player: playerB, templateItem: itemB)
+        ambientLooperPlayer = playerB
+
+        playerA.play()
+        playerB.play()
     }
-    private func teardownVideoLooper() { videoLooperPlayer?.pause(); videoLooperPlayer = nil; videoLooper = nil }
+    private func teardownVideoLooper() {
+        videoLooperPlayer?.pause()
+        videoLooperPlayer = nil
+        videoLooper = nil
+        ambientLooperPlayer?.pause()
+        ambientLooperPlayer = nil
+        ambientLooper = nil
+    }
     private func toggleVideoShot() { isVideoShotEnabled.toggle(); UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled"); if isVideoShotEnabled, let videoShotURL { setupVideoLooper(url: videoShotURL) } else { teardownVideoLooper() } }
     private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }
     private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
@@ -482,7 +548,13 @@ struct PlayerTimelineSection<Center: View>: View {
                 let width = geo.size.width * fraction
                 let height: CGFloat = isScrubbing ? 10 : 4
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.20)).frame(height: height)
+                    Capsule().fill(.white.opacity(0.18)).frame(height: height)
+                    if let bufferFraction = player.downloadProgress, bufferFraction > 0.005 {
+                        Capsule()
+                            .fill(.white.opacity(0.38))
+                            .frame(width: max(height, geo.size.width * min(1.0, CGFloat(bufferFraction))), height: height)
+                            .animation(.easeInOut(duration: 0.25), value: bufferFraction)
+                    }
                     Capsule().fill(.white).frame(width: max(height, width), height: height)
                     if isScrubbing { Circle().fill(.white).frame(width: 22, height: 22).offset(x: width - 11).shadow(radius: 6) }
                 }

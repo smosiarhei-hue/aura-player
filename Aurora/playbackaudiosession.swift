@@ -93,28 +93,24 @@ final class PlaybackAudioSessionCoordinator {
 
         guard result.isActive, usesV2 else { return }
 
-        let preferredRate = DualDeckAudioEngine.preferredSampleRate
-        let preferredBuffer = DualDeckAudioEngine.preferredIOBufferDuration
         let actualRate = session.sampleRate
         let actualBuffer = session.ioBufferDuration
-        let rejectedPreferences = result.failedSteps.map(\.rawValue).joined(separator: ", ")
-        let preferenceStatus = rejectedPreferences.isEmpty ? "none" : rejectedPreferences
         let route = session.currentRoute.outputs
             .map { "\($0.portType.rawValue):\($0.portName)" }
             .joined(separator: ", ")
 
-        print("[AutoMix V2] audio session active preferred=\(preferredRate)Hz/\(preferredBuffer)s actual=\(actualRate)Hz/\(actualBuffer)s rejectedPreferences=\(preferenceStatus) route=\(route)")
+        print("[AutoMix V2] audio session active actual=\(actualRate)Hz/\(actualBuffer)s route=\(route)")
         Task {
             await AutoMixV2Runtime.shared.diagnostics.recordAudioSession(
-                preferredSampleRate: preferredRate,
+                preferredSampleRate: actualRate,
                 actualSampleRate: actualRate,
-                preferredBufferDuration: preferredBuffer,
+                preferredBufferDuration: actualBuffer,
                 actualBufferDuration: actualBuffer
             )
             await AutoMixV2Runtime.shared.diagnostics.record(
                 MixDiagnosticEvent(
                     category: "audio-session",
-                    message: "Active route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s rejectedPreferences=\(preferenceStatus)"
+                    message: "Active route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s"
                 )
             )
         }

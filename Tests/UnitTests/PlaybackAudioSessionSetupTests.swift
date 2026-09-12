@@ -12,7 +12,7 @@ struct PlaybackAudioSessionSetupTests {
         #expect(SystemPlaybackAudioSessionConfiguration.categoryOptions.isEmpty)
     }
 
-    @Test("V2 configures category, preferences and activation in order")
+    @Test("V2 configures category and activation without requesting hardware preferences")
     func successfulV2Setup() {
         let client = RecordingAudioSession()
         var reportedSteps: [AudioSessionSetupStep] = []
@@ -23,12 +23,12 @@ struct PlaybackAudioSessionSetupTests {
         #expect(result.isActive)
         #expect(result.failedSteps.isEmpty)
         #expect(reportedSteps.isEmpty)
-        #expect(client.steps == [.category, .sampleRate, .bufferDuration, .activation])
-        #expect(client.preferredSampleRate == DualDeckAudioEngine.preferredSampleRate)
-        #expect(client.preferredBufferDuration == DualDeckAudioEngine.preferredIOBufferDuration)
+        #expect(client.steps == [.category, .activation])
+        #expect(client.preferredSampleRate == nil)
+        #expect(client.preferredBufferDuration == nil)
     }
 
-    @Test("Legacy does not inherit V2 hardware preference requests")
+    @Test("Legacy configures category and activation without requesting hardware preferences")
     func legacySetup() {
         let client = RecordingAudioSession()
         let result = PlaybackAudioSessionSetup.configure(session: client, usesV2: false) { _, _ in }
@@ -39,7 +39,7 @@ struct PlaybackAudioSessionSetupTests {
         #expect(client.preferredBufferDuration == nil)
     }
 
-    @Test("Category failure stops setup before preferences and activation")
+    @Test("Category failure stops setup before activation")
     func categoryFailure() {
         let client = RecordingAudioSession(failures: [.category])
         var reportedSteps: [AudioSessionSetupStep] = []
@@ -64,21 +64,7 @@ struct PlaybackAudioSessionSetupTests {
         #expect(!result.isActive)
         #expect(result.failedSteps == [.activation])
         #expect(reportedSteps == [.activation])
-        #expect(client.steps == [.category, .sampleRate, .bufferDuration, .activation])
-    }
-
-    @Test("Rejected preferences remain visible but do not prevent activation")
-    func rejectedPreferences() {
-        let client = RecordingAudioSession(failures: [.sampleRate, .bufferDuration])
-        var reportedSteps: [AudioSessionSetupStep] = []
-        let result = PlaybackAudioSessionSetup.configure(session: client, usesV2: true) { _, step in
-            reportedSteps.append(step)
-        }
-
-        #expect(result.isActive)
-        #expect(result.failedSteps == [.sampleRate, .bufferDuration])
-        #expect(reportedSteps == [.sampleRate, .bufferDuration])
-        #expect(client.steps.last == .activation)
+        #expect(client.steps == [.category, .activation])
     }
 }
 

@@ -47,8 +47,16 @@ final class ActivePlayerPresentation {
         let value = timelineDuration > 0 ? timelineDuration : (runtime.currentTrack?.duration ?? 0)
         return value.isFinite ? max(0, value) : 0
     }
-    var downloadProgress: Double? { v2OwnsPlayback ? networkFraction : nil }
-    var isDownloading: Bool { v2OwnsPlayback && networkDownloading }
+    var downloadProgress: Double? {
+        if v2OwnsPlayback {
+            return networkFraction
+        } else if legacy.currentTrack?.isStream == true {
+            return legacy.streamBufferFraction > 0 ? legacy.streamBufferFraction : nil
+        } else {
+            return 1.0 // Local file is 100% loaded
+        }
+    }
+    var isDownloading: Bool { v2OwnsPlayback ? networkDownloading : (legacy.streamBufferFraction < 0.99 && legacy.currentTrack?.isStream == true) }
     var nextDownloadProgress: Double? { v2OwnsPlayback ? nextNetworkFraction : nil }
     var isNextDownloading: Bool { v2OwnsPlayback && nextNetworkDownloading }
     var queue: [Track] {
@@ -60,6 +68,10 @@ final class ActivePlayerPresentation {
     var audioQuality: AudioQuality { legacy.audioQuality }
     func selectQuality(_ quality: AudioQuality) { legacy.selectQuality(quality) }
     func formatted(_ seconds: Double) -> String { legacy.formatted(seconds) }
+
+    var sleepTimerMinutes: Int? { legacy.sleepTimerMinutes }
+    var sleepTimerRemaining: Double? { legacy.sleepTimerRemaining }
+    func setSleepTimer(minutes: Int?) { legacy.setSleepTimer(minutes: minutes) }
 
     func togglePlay() {
         if v2OwnsPlayback { Task { await runtime.toggle() } } else { legacy.togglePlay() }

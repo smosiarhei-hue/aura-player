@@ -81,6 +81,14 @@ public final class PlaybackCoordinator {
             owner.lastQueueError = nil
         }
     }
+    public func appendQueue(_ additional: [TrackID]) async throws {
+        guard !additional.isEmpty else { return }
+        try await runCommand { owner, token in
+            try owner.check(token)
+            owner.queue.append(contentsOf: additional)
+            owner.publish()
+        }
+    }
     public func next() async throws {
         guard !queue.isEmpty else { return }
         try await runCommand { owner, token in

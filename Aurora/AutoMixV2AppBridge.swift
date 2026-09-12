@@ -102,7 +102,12 @@ final class AutoMixV2Runtime {
         isPlaying = false; isLoading = false; currentTrack = nil; queue = []; queueIDs = []
     }
     func toggle() async { isPlaying ? await pause() : await play() }
-    func next() async { await runCommand { try await $0.next() } }
+    func next() async {
+        if let index = coordinator?.snapshot().currentIndex, index >= queue.count - 2 {
+            refillQueueIfNeeded()
+        }
+        await runCommand { try await $0.next() }
+    }
     func previous() async { await runCommand { try await $0.previous() } }
     func seek(to seconds: Double) async { await runCommand { try await $0.seek(to: seconds) } }
     private func runCommand(_ command: @escaping @MainActor (PlaybackCoordinator) async throws -> Void) async {
@@ -159,6 +164,10 @@ final class AutoMixV2Runtime {
             let changed = currentTrack?.id != queue[index].id
             currentTrack = queue[index]
             if changed { updatePlaybackStreamInfo(for: currentTrack) }
+            let remainingAhead = queue.count - 1 - index
+            if remainingAhead <= 2 {
+                refillQueueIfNeeded()
+            }
         }
         switch state.phase {
         case .idle:
@@ -174,6 +183,45 @@ final class AutoMixV2Runtime {
         case .failed(let error): isPlaying = false; isLoading = false; lastError = error
         }
         if let error = state.lastQueueError { lastError = error }
+    }
+
+    private var isRefillingWave = false
+    private var lastRefillDate: Date?
+
+    func refillQueueIfNeeded() {
+        guard !isRefillingWave, let current = currentTrack, let coordinator else { return }
+        let now = Date()
+        if let last = lastRefillDate, now.timeIntervalSince(last) < 4.0 { return }
+        lastRefillDate = now
+
+        let currentIndex = queue.firstIndex(where: { $0.id == current.id }) ?? 0
+        let remainingAhead = queue.count - 1 - currentIndex
+        guard remainingAhead <= 2 else { return }
+
+        isRefillingWave = true
+        Task { [weak self] in
+            defer { self?.isRefillingWave = false }
+            guard let self else { return }
+            let seed = self.queue.last ?? current
+            let freshTracks = await YandexMusicService.shared.buildTrackWave(from: seed, target: 20)
+            let existing = Set(self.queue.map(\.id))
+            let fresh = freshTracks.filter { !existing.contains($0.id) && $0.id != current.id }
+            guard !fresh.isEmpty else { return }
+
+            do {
+                let token = self.requestID
+                let registered = try await self.register(fresh, token: token)
+                try self.check(token)
+                self.queue.append(contentsOf: registered.tracks)
+                self.queueIDs.append(contentsOf: registered.ids)
+                try await coordinator.appendQueue(registered.ids)
+                try self.check(token)
+                self.apply(coordinator.snapshot())
+                SonivoDiagnostics.log("[AutoMix V2] Infinite queue refill: +\(fresh.count) tracks", tag: "WAVE")
+            } catch {
+                // Ignore cancellation during queue refill
+            }
+        }
     }
     private func updatePlaybackStreamInfo(for track: Track?) {
         guard let track else {
