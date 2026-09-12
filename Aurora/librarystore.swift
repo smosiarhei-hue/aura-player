@@ -457,11 +457,30 @@ final class LibraryStore {
 
     // MARK: - Artwork Cache
 
+    private static let artworkMemoryCache = NSCache<NSString, UIImage>()
+
     static func cachedArtworkImage(for track: Track) -> UIImage? {
+        let key = (track.coverURL ?? track.fileName) as NSString
+        if let memoryImage = artworkMemoryCache.object(forKey: key) {
+            return memoryImage
+        }
         let tempSeed = stableSeed(track.fileName)
         let artPath = artworkCacheDirectoryURL().appendingPathComponent("seed_\(tempSeed).jpg")
-        guard FileManager.default.fileExists(atPath: artPath.path) else { return nil }
-        return UIImage(contentsOfFile: artPath.path)
+        if FileManager.default.fileExists(atPath: artPath.path), let img = UIImage(contentsOfFile: artPath.path) {
+            artworkMemoryCache.setObject(img, forKey: key)
+            return img
+        }
+        return nil
+    }
+
+    static func cacheArtworkImage(_ image: UIImage, for track: Track) {
+        let key = (track.coverURL ?? track.fileName) as NSString
+        artworkMemoryCache.setObject(image, forKey: key)
+        let tempSeed = stableSeed(track.fileName)
+        let artPath = artworkCacheDirectoryURL().appendingPathComponent("seed_\(tempSeed).jpg")
+        if let data = image.jpegData(compressionQuality: 0.85) {
+            try? data.write(to: artPath)
+        }
     }
 
     nonisolated private static func readMetadata(url: URL) async -> (

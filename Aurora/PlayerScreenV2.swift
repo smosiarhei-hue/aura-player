@@ -27,6 +27,7 @@ struct PlayerScreenV2: View {
     @State private var videoLooper: AVPlayerLooper?
     @State private var artworkPaletteColors: [Color] = []
     @State private var paletteTrackId: UUID?
+    @State private var currentArtworkImage: UIImage?
     private let tapSide: CGFloat = AG.tapTarget
 
     enum ActivePlayerModal: String, Identifiable {
@@ -134,8 +135,20 @@ struct PlayerScreenV2: View {
                                        .init(color: .black.opacity(0.94), location: 1)],
                                startPoint: .top, endPoint: .bottom)
             } else {
-                artwork.frame(maxWidth: .infinity, maxHeight: .infinity).blur(radius: 64).scaleEffect(1.2).opacity(0.4)
-                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.55)
+                if let currentArtworkImage {
+                    Image(uiImage: currentArtworkImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .blur(radius: 64)
+                        .scaleEffect(1.2)
+                        .opacity(0.40)
+                        .clipped()
+                        .drawingGroup()
+                } else {
+                    gradientBackground
+                }
+                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.50)
                 LinearGradient(stops: [.init(color: .black.opacity(0.18), location: 0),
                                        .init(color: .black.opacity(0.68), location: 0.78),
                                        .init(color: .black.opacity(0.94), location: 1)],
@@ -222,12 +235,30 @@ struct PlayerScreenV2: View {
                     withAnimation(AG.spring) { coverDragX = 0 }; return
                 }
                 if value.translation.width < -50 {
-                    withAnimation(AG.spring) { coverDragX = -side * 1.2 }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { nextTrack(); coverDragX = side * 1.2; withAnimation(AG.spring) { coverDragX = 0 } }
+                    withAnimation(.easeOut(duration: 0.20)) {
+                        coverDragX = -side * 1.15
+                    }
+                    nextTrack()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        coverDragX = side * 0.9
+                        withAnimation(AG.spring) {
+                            coverDragX = 0
+                        }
+                    }
                 } else if value.translation.width > 50 {
-                    withAnimation(AG.spring) { coverDragX = side * 1.2 }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { previousTrack(); coverDragX = -side * 1.2; withAnimation(AG.spring) { coverDragX = 0 } }
-                } else { withAnimation(AG.spring) { coverDragX = 0 } }
+                    withAnimation(.easeOut(duration: 0.20)) {
+                        coverDragX = side * 1.15
+                    }
+                    previousTrack()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        coverDragX = -side * 0.9
+                        withAnimation(AG.spring) {
+                            coverDragX = 0
+                        }
+                    }
+                } else {
+                    withAnimation(AG.spring) { coverDragX = 0 }
+                }
             })
         .animation(.easeInOut(duration: 0.35), value: player.isTransitionActive)
         .animation(AG.slowSpring, value: player.isPlaying)
@@ -273,8 +304,15 @@ struct PlayerScreenV2: View {
     }
 
     @ViewBuilder private var artwork: some View {
-        if let track, let image = LibraryStore.cachedArtworkImage(for: track) { Image(uiImage: image).resizable().scaledToFill() }
-        else if let raw = track?.coverURL, let url = URL(string: raw) {
+        if let currentArtworkImage {
+            Image(uiImage: currentArtworkImage)
+                .resizable()
+                .scaledToFill()
+        } else if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else if let raw = track?.coverURL, let url = URL(string: raw) {
             AsyncImage(url: url) { phase in
                 if let image = phase.image { image.resizable().scaledToFill() } else { fallbackArtwork }
             }
@@ -287,7 +325,7 @@ struct PlayerScreenV2: View {
     private var lowerDeck: some View {
         VStack(spacing: 16) {
             metadataRow
-            PlayerTimelineSection { centerStatusLabel }
+            PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
             HStack(spacing: 12) {
                 Image(systemName: "speaker.fill").foregroundStyle(AG.inkMuted)
@@ -365,9 +403,19 @@ struct PlayerScreenV2: View {
     }
     private func refreshPalette() async {
         guard let track, paletteTrackId != track.id else { return }; paletteTrackId = track.id
-        if let image = LibraryStore.cachedArtworkImage(for: track) { await updatePalette(from: image); return }
-        if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) { await updatePalette(from: image) }
-        else if !track.palette.isEmpty { artworkPaletteColors = track.palette }
+        if let image = LibraryStore.cachedArtworkImage(for: track) {
+            currentArtworkImage = image
+            await updatePalette(from: image)
+            return
+        }
+        if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) {
+            LibraryStore.cacheArtworkImage(image, for: track)
+            currentArtworkImage = image
+            await updatePalette(from: image)
+        } else {
+            currentArtworkImage = nil
+            if !track.palette.isEmpty { artworkPaletteColors = track.palette }
+        }
     }
     private func loadLyrics() async {
         lyrics = nil; guard let requested = track else { lyricsLoading = false; return }
@@ -414,13 +462,16 @@ struct PlayerScreenV2: View {
 }
 
 struct PlayerTimelineSection<Center: View>: View {
-    @State private var player = ActivePlayerPresentation()
+    @Bindable var player: ActivePlayerPresentation
     @State private var isScrubbing = false
     @State private var scrubProgress = 0.0
     @State private var lastFeedbackProgress = 0.0
     private let feedback = UISelectionFeedbackGenerator()
     private let center: Center
-    init(@ViewBuilder center: () -> Center) { self.center = center() }
+    init(player: ActivePlayerPresentation, @ViewBuilder center: () -> Center) {
+        self.player = player
+        self.center = center()
+    }
     private var effectiveProgress: Double { isScrubbing ? scrubProgress : player.progress }
 
     var body: some View {
@@ -452,7 +503,7 @@ struct PlayerTimelineSection<Center: View>: View {
                 Spacer(); center; Spacer()
                 Text("-" + player.formatted(max(0, player.duration - effectiveProgress))).font(AG.text(.caption, .semibold).monospacedDigit()).foregroundStyle(AG.inkMuted)
             }
-        }.task { await player.observeTimeline() }.onChange(of: player.currentTrack?.id) { _, _ in isScrubbing = false }
+        }.onChange(of: player.currentTrack?.id) { _, _ in isScrubbing = false }
     }
 }
 
@@ -746,4 +797,4 @@ struct PlayerQualityModalView: View {
 }
 
 #Preview("Full player") { PlayerScreenV2(isPresented: .constant(true)) }
-#Preview("Timeline") { PlayerTimelineSection { AutoMixBadge() }.padding() }
+#Preview("Timeline") { PlayerTimelineSection(player: ActivePlayerPresentation()) { AutoMixBadge() }.padding() }
