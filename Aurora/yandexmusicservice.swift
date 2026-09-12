@@ -1079,37 +1079,34 @@ final class YandexMusicService {
 
     private var videoShotCache: [String: URL] = [:]
 
-    /// Получение видеошота (Canvas Video) для трека из Yandex Music API
+    /// Получение официального вертикального видеошота (Canvas Video), загруженного лейблом / артистом
     func getVideoShotUrl(for trackId: String) async -> URL? {
         let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
         guard !cleanId.isEmpty else { return nil }
         if let cached = videoShotCache[cleanId] { return cached }
 
-        // 1. Check Supplement Endpoint (/tracks/{id}/supplement)
+        // 1. Проверяем официальный эндпоинт дополнений (/tracks/{id}/supplement)
+        // В нем лейблы передают videoShotUrl / shotUrl / canvasUrl для вертикального видео
         if let suppURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/supplement") {
             if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: suppURL)) {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let result = json["result"] as? [String: Any] {
                     var candidate: String? = nil
+                    // Берем ТОЛЬКО официальные вертикальные видеошоты от лейблов (без горизонтальных клипов):
                     if let s = result["videoShotUrl"] as? String, !s.isEmpty { candidate = s }
                     else if let s = result["shotUrl"] as? String, !s.isEmpty { candidate = s }
-                    else if let s = result["videoUrl"] as? String, !s.isEmpty { candidate = s }
                     else if let s = result["canvasUrl"] as? String, !s.isEmpty { candidate = s }
-                    else if let clips = result["clips"] as? [[String: Any]], let first = clips.first, let u = (first["url"] ?? first["videoUrl"] ?? first["previewUrl"]) as? String, !u.isEmpty {
-                        candidate = u
-                    } else if let videos = result["videos"] as? [[String: Any]], let first = videos.first, let u = (first["url"] ?? first["videoUrl"]) as? String, !u.isEmpty {
-                        candidate = u
-                    }
+
                     if let candidate, let shotURL = URL(string: candidate.hasPrefix("http") ? candidate : "https://" + candidate) {
                         videoShotCache[cleanId] = shotURL
-                        SonivoDiagnostics.log("VideoShot found for \(cleanId): \(shotURL.absoluteString)", tag: "VIDEOSHOT")
+                        SonivoDiagnostics.log("Official vertical VideoShot found for \(cleanId): \(shotURL.absoluteString)", tag: "VIDEOSHOT")
                         return shotURL
                     }
                 }
             }
         }
 
-        // 2. Check Track Metadata Endpoint (/tracks/{id})
+        // 2. Резервная проверка метаданных трека (/tracks/{id}) - строго videoShotUrl / shotUrl / canvasUrl
         if let trackURL = URL(string: Self.apiBase + "/tracks/" + cleanId) {
             if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: trackURL)) {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1117,13 +1114,11 @@ final class YandexMusicService {
                     var candidate: String? = nil
                     if let s = result["videoShotUrl"] as? String, !s.isEmpty { candidate = s }
                     else if let s = result["shotUrl"] as? String, !s.isEmpty { candidate = s }
-                    else if let s = result["videoUrl"] as? String, !s.isEmpty { candidate = s }
-                    else if let clips = result["clips"] as? [[String: Any]], let first = clips.first, let u = (first["previewUrl"] ?? first["url"] ?? first["videoUrl"]) as? String, !u.isEmpty {
-                        candidate = u
-                    }
+                    else if let s = result["canvasUrl"] as? String, !s.isEmpty { candidate = s }
+
                     if let candidate, let shotURL = URL(string: candidate.hasPrefix("http") ? candidate : "https://" + candidate) {
                         videoShotCache[cleanId] = shotURL
-                        SonivoDiagnostics.log("VideoShot found in track info for \(cleanId): \(shotURL.absoluteString)", tag: "VIDEOSHOT")
+                        SonivoDiagnostics.log("Official vertical VideoShot in track info for \(cleanId): \(shotURL.absoluteString)", tag: "VIDEOSHOT")
                         return shotURL
                     }
                 }
