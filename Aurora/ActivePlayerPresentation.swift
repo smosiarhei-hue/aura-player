@@ -73,6 +73,15 @@ final class ActivePlayerPresentation {
     var sleepTimerRemaining: Double? { legacy.sleepTimerRemaining }
     func setSleepTimer(minutes: Int?) { legacy.setSleepTimer(minutes: minutes) }
 
+    var eqEnabled: Bool {
+        get { legacy.eqEnabled }
+        set { legacy.eqEnabled = newValue }
+    }
+    var eqGains: [Float] {
+        get { legacy.eqGains }
+        set { legacy.eqGains = newValue }
+    }
+
     func togglePlay() {
         if v2OwnsPlayback { Task { await runtime.toggle() } } else { legacy.togglePlay() }
     }
