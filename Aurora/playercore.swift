@@ -883,10 +883,21 @@ final class PlayerCore {
     }
 
     static func yandexTrackID(from track: Track) -> String {
-        let raw = track.streamUrlString ?? ""
-        return raw
+        if let fromFile = YandexMusicService.ymId(fromFileName: track.fileName), !fromFile.isEmpty {
+            return fromFile
+        }
+        let raw = track.streamUrlString ?? track.fileName
+        let clean = raw
             .replacingOccurrences(of: "ym_", with: "")
             .replacingOccurrences(of: ".mp3", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !clean.isEmpty, !clean.hasPrefix("http") {
+            return clean
+        }
+        if let fromFile = YandexMusicService.ymId(fromFileName: track.fileName) {
+            return fromFile
+        }
+        return ""
     }
 
     func selectQuality(_ q: AudioQuality) {

@@ -84,9 +84,10 @@ struct PlayerScreenV2: View {
         .sheet(item: $selectedArtist) { artist in NavigationStack { ArtistView(artistId: artist.id) }.preferredColorScheme(.dark) }
         .task { await player.observeTimeline() }
         .task(id: track?.id) {
-            await refreshPalette(); guard !Task.isCancelled else { return }
-            await loadLyrics(); guard !Task.isCancelled else { return }
-            await loadVideoShot()
+            async let p: () = refreshPalette()
+            async let l: () = loadLyrics()
+            async let v: () = loadVideoShot()
+            _ = await (p, l, v)
         }
         .onChange(of: player.isPlaying) { _, playing in playing ? videoLooperPlayer?.play() : videoLooperPlayer?.pause() }
         .onDisappear { teardownVideoLooper() }
@@ -142,10 +143,15 @@ struct PlayerScreenV2: View {
 
     private func artworkStage(side: CGFloat) -> some View {
         ZStack {
-            if isVideoShotEnabled, let videoLooperPlayer, !player.isTransitionActive {
-                VideoShotPlayerView(player: videoLooperPlayer).frame(width: side, height: side).scaleEffect(1.34).clipped()
+            if isVideoShotEnabled, let videoLooperPlayer {
+                VideoShotPlayerView(player: videoLooperPlayer)
+                    .frame(width: side, height: side)
+                    .clipped()
             } else {
-                artwork.frame(width: side, height: side).scaledToFill().clipped()
+                artwork
+                    .frame(width: side, height: side)
+                    .scaledToFill()
+                    .clipped()
             }
             if player.isV2Enabled && player.isTransitionActive && !showLyricsMode {
                 AutoMixArtworkGlint(side: side, reduceMotion: reduceMotion)
@@ -325,9 +331,10 @@ struct PlayerScreenV2: View {
         let player = AVQueuePlayer(playerItem: item)
         player.isMuted = true
         player.actionAtItemEnd = .none
+        player.preventsDisplaySleepDuringVideoPlayback = false
         videoLooper = AVPlayerLooper(player: player, templateItem: item)
         videoLooperPlayer = player
-        if self.player.isPlaying { player.play() }
+        player.play()
     }
     private func teardownVideoLooper() { videoLooperPlayer?.pause(); videoLooperPlayer = nil; videoLooper = nil }
     private func toggleVideoShot() { isVideoShotEnabled.toggle(); UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled"); if isVideoShotEnabled, let videoShotURL { setupVideoLooper(url: videoShotURL) } else { teardownVideoLooper() } }
