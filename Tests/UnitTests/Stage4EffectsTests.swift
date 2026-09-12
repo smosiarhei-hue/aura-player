@@ -56,14 +56,54 @@ struct Stage4EffectsTests {
     @Test("Incoming rate returns smoothly to one before promotion")
     func rateReturn() {
         let plan = musicalPlan(); let ramps = plan.fx.filter { $0.target == .b && $0.kind == .rateRamp }
-        #expect(ramps.count == 2)
-        guard let final = ramps.last else { return }
+        #expect(ramps.count == 1)
+        guard let final = ramps.first else { return }
         #expect(final.endBar == plan.bars); #expect(final.toValue == 1); #expect(final.curve == .sCurve)
         for step in 0...100 {
             let bar = final.startBar + (final.endBar - final.startBar) * Double(step) / 100
             let value = EffectAutomation.value(for: final, atBar: bar) ?? 0
             #expect(value.isFinite); #expect((0.92...1.08).contains(value))
         }
+    }
+
+    @Test("Stage 4 FX contains bass-swap, echoOut, lowPass, and single rateRamp")
+    func stage4FXProperties() {
+        let plan = musicalPlan()
+        let ramps = plan.fx.filter { $0.kind == .rateRamp }
+        #expect(ramps.count == 1)
+        #expect(ramps.first?.target == .b)
+        #expect(ramps.first?.startBar == plan.bars - 1)
+
+        let aBassKill = plan.fx.first(where: { $0.target == .a && $0.kind == .bassKill })
+        #expect(aBassKill != nil)
+        #expect(aBassKill?.startBar == 0 && aBassKill?.endBar == 2)
+
+        let bBassKill = plan.fx.first(where: { $0.target == .b && $0.kind == .bassKill })
+        #expect(bBassKill != nil)
+        #expect(bBassKill?.startBar == 0 && bBassKill?.endBar == 0)
+
+        let bBassOn = plan.fx.first(where: { $0.target == .b && $0.kind == .bassOn })
+        #expect(bBassOn != nil)
+        #expect(bBassOn?.startBar == 2 && bBassOn?.endBar == 3)
+
+        let bLowPass = plan.fx.first(where: { $0.target == .b && $0.kind == .lowPass })
+        #expect(bLowPass != nil)
+        #expect(bLowPass?.startBar == 0 && bLowPass?.endBar == 2)
+
+        let aEchoOut = plan.fx.first(where: { $0.target == .a && $0.kind == .echoOut })
+        #expect(aEchoOut != nil)
+        #expect(aEchoOut?.startBar == plan.bars - 4 && aEchoOut?.endBar == plan.bars)
+        #expect(aEchoOut?.toValue == 65)
+        #expect(aEchoOut?.param == 50)
+    }
+
+    @Test("Equal-power crossfade preserves mid-point energy")
+    func equalPowerMidpoint() {
+        let p = 0.5
+        let outGain = cos(p * .pi / 2)
+        let incGain = sin(p * .pi / 2)
+        let powerSum = outGain * outGain + incGain * incGain
+        #expect(abs(powerSum - 1.0) < 0.0001)
     }
 
     @Test("Every generated event is finite, ordered and bounded")

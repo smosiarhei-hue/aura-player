@@ -14,19 +14,36 @@ public enum MixPlanner {
             return none(a: a, reason: "Трек короче 60 секунд")
         }
         guard settings.mode == .automix else { return crossfade(a, b, settings, "Пользовательский кроссфейд") }
-        guard a.mixable, b.mixable, a.confidence.bpm >= 0.7, b.confidence.bpm >= 0.7,
-              a.tempoStability >= 0.9, b.tempoStability >= 0.9 else {
-            return crossfade(a, b, settings, "Fallback: недостаточная уверенность ритмической сетки")
-        }
+        guard a.mixable, b.mixable else { return crossfade(a, b, settings, "Fallback: трек не предназначен для сведения") }
         guard let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) else {
             return crossfade(a, b, settings, "Fallback: темпы нельзя безопасно совместить")
         }
         let compatible = CamelotCompatibility.areCompatible(a.camelotKey, b.camelotKey)
-        let bars = compatible ? 16.0 : 8.0
-        let seconds = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
-        let out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
+        var bars: Double
+        if a.confidence.bpm >= 0.85, b.confidence.bpm >= 0.85, a.tempoStability >= 0.9, b.tempoStability >= 0.9 {
+            bars = compatible ? 16.0 : 8.0
+        } else if a.confidence.bpm >= 0.70, b.confidence.bpm >= 0.70, a.tempoStability >= 0.85, b.tempoStability >= 0.85 {
+            bars = compatible ? 8.0 : 4.0
+        } else if a.confidence.bpm >= 0.55, b.confidence.bpm >= 0.55, a.tempoStability >= 0.75, b.tempoStability >= 0.75 {
+            bars = 4.0
+        } else {
+            return crossfade(a, b, settings, "Fallback: недостаточная уверенность ритмической сетки")
+        }
+        var seconds = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
+        var out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
         let incoming = BeatGridSynchronization.incomingCue(profile: b)
-        return TransitionPlan(type: compatible ? .beatmatchedLong : .beatmatchedShort,
+        let phaseA = a.downbeatsSec.min(by: { abs($0 - out) < abs($1 - out) }).map { abs(out - $0) } ?? 0
+        let phaseB = b.downbeatsSec.min(by: { abs($0 - incoming) < abs($1 - incoming) }).map { abs(incoming - $0) } ?? 0
+        let phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
+        if phaseError > 80 {
+            return crossfade(a, b, settings, "Fallback: фазовое расхождение > 80ms")
+        } else if phaseError > 40 {
+            bars = max(4.0, bars / 2)
+            seconds = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
+            out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
+        }
+        let finalType: TransitionType = (bars >= 16 && compatible) ? .beatmatchedLong : .beatmatchedShort
+        return TransitionPlan(type: finalType,
                               aOutStartSec: out, bInStartSec: incoming, bars: bars,
                               tempoTargetBPM: tempo.targetBPM, rateA: tempo.rateA, rateB: tempo.rateB,
                               gainOffsetBdB: normalizationGain(profile: b, settings: settings),
@@ -42,28 +59,23 @@ public enum MixPlanner {
                     fromValue: 0, toValue: -60, curve: .linear),
             FxEvent(target: .b, kind: .volume, startBar: 0, endBar: bars,
                     fromValue: -60, toValue: 0, curve: .linear),
-            FxEvent(target: .a, kind: .rateRamp, startBar: 0, endBar: 1,
-                    fromValue: 1, toValue: tempo.rateA, curve: .sCurve),
-            FxEvent(target: .b, kind: .rateRamp, startBar: 0, endBar: 1,
-                    fromValue: 1, toValue: tempo.rateB, curve: .sCurve),
-            FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
-                    fromValue: 20, toValue: compatible ? 2_200 : 1_200, curve: .exp),
-            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: min(4, bars / 2),
-                    fromValue: 1_200, toValue: 20_000, curve: .exp),
-            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 0.25,
+            FxEvent(target: .a, kind: .bassKill, startBar: 0, endBar: 2,
                     fromValue: 0, toValue: 1, curve: .sCurve),
-            FxEvent(target: .b, kind: .bassOn, startBar: bars / 2, endBar: bars / 2 + 1,
+            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 0,
+                    fromValue: 1, toValue: 1, curve: .linear),
+            FxEvent(target: .b, kind: .bassOn, startBar: 2, endBar: 3,
                     fromValue: 1, toValue: 0, curve: .sCurve),
-            // The incoming deck becomes the new active deck. Return it to its
-            // natural rate gradually before the transition completes so reset
-            // does not produce an audible tempo step.
-            FxEvent(target: .b, kind: .rateRamp, startBar: max(1, bars - 2), endBar: bars,
+            FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
+                    fromValue: 20, toValue: compatible ? 4500 : 2500, curve: .exp),
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: 2,
+                    fromValue: 1200, toValue: 20000, curve: .exp),
+            FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 1), endBar: bars,
                     fromValue: tempo.rateB, toValue: 1, curve: .sCurve)
         ]
         if compatible {
             events.append(FxEvent(target: .a, kind: .echoOut,
-                                  startBar: max(0, bars - 2), endBar: bars,
-                                  fromValue: 0, toValue: 42, curve: .sCurve, param: 35))
+                                  startBar: max(0, bars - 4), endBar: bars,
+                                  fromValue: 0, toValue: 65, curve: .sCurve, param: 50))
         }
         return events
     }
@@ -96,8 +108,8 @@ public enum BeatGridSynchronization {
     public static func tempoMatch(aBPM: Float, bBPM: Float, maximumRateChange: Float = 0.08) -> TempoMatch? {
         guard aBPM.isFinite, bBPM.isFinite, aBPM > 30, bBPM > 30 else { return nil }
         var b = bBPM; while b / aBPM > 1.5 { b /= 2 }; while aBPM / b > 1.5 { b *= 2 }
-        let target = sqrt(aBPM * b), rateA = target / aBPM, rateB = target / b
-        guard abs(rateA - 1) <= maximumRateChange, abs(rateB - 1) <= maximumRateChange else { return nil }
+        let target = aBPM, rateA: Float = 1.0, rateB = aBPM / b
+        guard abs(rateB - 1) <= maximumRateChange else { return nil }
         return TempoMatch(targetBPM: target, rateA: rateA, rateB: rateB)
     }
     public static func duration(bars: Double, bpm: Float) -> Double { bpm > 0 ? bars * 240 / Double(bpm) : 0 }
@@ -106,7 +118,15 @@ public enum BeatGridSynchronization {
         return profile.phraseStartsSec.last(where: { $0 <= latest }) ?? profile.downbeatsSec.last(where: { $0 <= latest }) ?? latest
     }
     public static func incomingCue(profile: TrackProfile) -> Double {
-        profile.phraseStartsSec.first(where: { $0 >= profile.mixInSec }) ?? profile.downbeatsSec.first(where: { $0 >= profile.mixInSec }) ?? profile.mixInSec
+        if let firstDownbeat = profile.downbeatsSec.first(where: { $0 >= profile.mixInSec }) {
+            let fourBars = profile.bpm > 0 ? 16.0 * 60.0 / Double(profile.bpm) : 8.0
+            if let firstPhrase = profile.phraseStartsSec.first(where: { $0 >= profile.mixInSec }),
+               firstPhrase - profile.mixInSec <= fourBars {
+                return firstPhrase
+            }
+            return firstDownbeat
+        }
+        return profile.phraseStartsSec.first(where: { $0 >= profile.mixInSec }) ?? profile.mixInSec
     }
     public static func phaseErrorMilliseconds(outgoingBeat: Double, incomingBeat: Double, rateA: Float, rateB: Float) -> Double {
         abs(outgoingBeat / Double(rateA) - incomingBeat / Double(rateB)) * 1_000

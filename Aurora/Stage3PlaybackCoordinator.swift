@@ -3,6 +3,7 @@ import Foundation
 import MixModels
 import MixPlanner
 import PlaybackCoordinator
+import QuartzCore
 import TrackSource
 
 @MainActor
@@ -177,7 +178,7 @@ final class PlaybackCoordinator {
         let usablePlan = plan.flatMap { $0.type == .none ? nil : $0 }
         let duration = deck.durationSeconds ?? current.meta.durationSec
         let remaining = max(0, duration - deck.positionSeconds)
-        let reachedPlanStart = usablePlan.map { deck.positionSeconds + 0.010 >= $0.aOutStartSec } ?? false
+        let reachedPlanStart = usablePlan.map { ($0.aOutStartSec - deck.positionSeconds) <= 0.30 } ?? false
         let decision = AutoMixTransitionGate.decide(
             hasNext: hasNext, nextPrepared: true, reachedEnd: deck.reachedEndOfFile,
             remainingSeconds: remaining, hasUsablePlan: usablePlan != nil,
@@ -194,7 +195,9 @@ final class PlaybackCoordinator {
             if signature != planSignature {
                 do {
                     try await engine.prepare(next.deck, fileURL: next.url, startTimeSeconds: plan.bInStartSec)
-                    await engine.setGain(0, for: next.deck); planSignature = signature
+                    await engine.setGain(0, for: next.deck)
+                    await engine.setRate(plan.rateB, for: next.deck)
+                    planSignature = signature
                 } catch { lastError = String(describing: error); setReadiness(.failed, lastError ?? "Ошибка подготовки Deck B"); publish(); return }
             }
             setReadiness(.ready, "Музыкальный план готов: \(plan.type.rawValue)")
@@ -204,7 +207,9 @@ final class PlaybackCoordinator {
             if signature != planSignature {
                 do {
                     try await engine.prepare(next.deck, fileURL: next.url, startTimeSeconds: plan.bInStartSec)
-                    await engine.setGain(0, for: next.deck); planSignature = signature
+                    await engine.setGain(0, for: next.deck)
+                    await engine.setRate(plan.rateB, for: next.deck)
+                    planSignature = signature
                 } catch { lastError = String(describing: error); beginFallback(next, duration: min(fallbackCrossfadeSeconds, max(0.05, remaining))); return }
             }
             begin(next, plan: plan)
@@ -237,8 +242,12 @@ final class PlaybackCoordinator {
             let duration = plan.type == .crossfade ? plan.bars
                 : BeatGridSynchronization.duration(bars: plan.bars, bpm: plan.tempoTargetBPM)
             let outgoing = self.activeDeck
+            let state = await self.engine.snapshot()
+            let deck = outgoing == .a ? state.deckA : state.deckB
+            let delay = plan.type == .crossfade ? 0 : max(0, plan.aOutStartSec - deck.positionSeconds)
+            let startHostTime = delay > 0 && delay <= 0.5 ? CACurrentMediaTime() + delay : CACurrentMediaTime()
             self.effects = Task { @MainActor [weak self] in
-                await self?.executeEffects(plan, outgoing: outgoing, incoming: item.deck, duration: duration)
+                await self?.executeEffects(plan, outgoing: outgoing, incoming: item.deck, duration: duration, startHostTime: startHostTime)
             }
             do {
                 try await self.promote(item, duration: max(0.05, duration), plan: plan)
@@ -258,13 +267,15 @@ final class PlaybackCoordinator {
             }
         }; publish()
     }
-    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck, incoming: Deck, duration: Double) async {
+    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck, incoming: Deck, duration: Double, startHostTime: Double) async {
         guard duration.isFinite, duration > 0 else { return }
-        let initial = await engine.snapshot(); let initialDeck = incoming == .a ? initial.deckA : initial.deckB
-        let baseline = initialDeck.positionSeconds
         while !Task.isCancelled {
-            let state = await engine.snapshot(); let deck = incoming == .a ? state.deckA : state.deckB
-            let elapsedWall = max(0, deck.positionSeconds - baseline) / Double(max(plan.rateB, 0.01))
+            let now = CACurrentMediaTime()
+            if now < startHostTime {
+                do { try await ContinuousClock().sleep(for: .milliseconds(5)) } catch { return }
+                continue
+            }
+            let elapsedWall = max(0, now - startHostTime)
             if plan.type == .crossfade {
                 let p = min(1, max(0, elapsedWall / duration))
                 await engine.applyEffect(.highPass, value: Float(20 * pow(60, p)), param: nil, bpm: 0, to: outgoing)
@@ -285,12 +296,25 @@ final class PlaybackCoordinator {
         }
     }
     private func promote(_ item: Item, duration: Double?, plan: MixModels.TransitionPlan?) async throws {
-        if let plan, !plan.fx.contains(where: { $0.kind == .rateRamp }) {
-            await engine.setRate(plan.rateA, for: activeDeck); await engine.setRate(plan.rateB, for: item.deck)
+        if let plan {
+            await engine.setRate(1, for: activeDeck)
+            await engine.setRate(plan.rateB, for: item.deck)
         }
-        if let duration { try await engine.crossfade(from: activeDeck, to: item.deck, durationSeconds: duration) }
-        else if wantsPlayback { try await engine.skip(from: activeDeck, to: item.deck) }
+        if let duration {
+            if let plan, plan.type != .crossfade {
+                try await engine.crossfade(from: activeDeck, to: item.deck, durationSeconds: duration, alignedToCueSeconds: plan.aOutStartSec)
+            } else {
+                try await engine.crossfade(from: activeDeck, to: item.deck, durationSeconds: duration)
+            }
+        } else if wantsPlayback {
+            try await engine.skip(from: activeDeck, to: item.deck)
+        }
         activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
+        if let plan, plan.rateB != 1 {
+            let tempoB = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
+            let twoBarsDuration = BeatGridSynchronization.duration(bars: 2, bpm: tempoB)
+            await engine.rampRate(item.deck, from: plan.rateB, to: 1.0, duration: twoBarsDuration > 0 ? twoBarsDuration : 2.0)
+        }
         if !wantsPlayback { await engine.pause(activeDeck) }
         phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
         setReadiness(.waitingForDeckB, "Готовится следующий трек")
