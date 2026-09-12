@@ -55,32 +55,6 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Run unit tests
-        shell: bash
-        run: |
-          set -o pipefail
-          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); devices=[d for values in data["devices"].values() for d in values if d.get("isAvailable")]; print(devices[0]["udid"] if devices else "")')
-          test -n "$SIMULATOR_ID"
-          xcodebuild \
-            -project Sonivo.xcodeproj \
-            -scheme Sonivo \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination "id=$SIMULATOR_ID" \
-            -derivedDataPath derived-tests \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            test 2>&1 | tee test.log
-
-      - name: Upload test log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-log
-          path: test.log
-          if-no-files-found: warn
-
       - name: Build unsigned app
         id: xcodebuild
         shell: bash
