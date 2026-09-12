@@ -56,6 +56,12 @@ final class PlaybackCoordinator {
         await engine.stop(otherDeck); setReadiness(.waitingForDeckB, "Очередь обновлена; готовится следующий трек")
         startPrefetch(); publish()
     }
+    func appendQueue(_ additional: [TrackID]) async throws {
+        guard !additional.isEmpty else { return }
+        ids.append(contentsOf: additional)
+        if prepared == nil { startPrefetch() }
+        publish()
+    }
     func next() async throws {
         guard !ids.isEmpty else { return }
         await cancelTransitionAndWait()
