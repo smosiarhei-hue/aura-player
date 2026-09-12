@@ -181,10 +181,7 @@ struct PlayerScreenV2: View {
                     .scaledToFill()
                     .clipped()
             }
-            if player.isV2Enabled && player.isTransitionActive && !showLyricsMode {
-                AutoMixArtworkGlint(side: side, reduceMotion: reduceMotion)
-                    .transition(.opacity)
-            } else if !player.isV2Enabled && !isFullScreenVideoShot && !showLyricsMode {
+            if !isFullScreenVideoShot && !showLyricsMode {
                 AutoMixTransitionOverlay(side: side)
             }
             if showLyricsMode { lyricsOverlay(side: side) }
@@ -304,8 +301,8 @@ struct PlayerScreenV2: View {
     }
     @ViewBuilder private var centerStatusLabel: some View {
         if player.isTransitionActive {
-            AutoMixBadge().scaleEffect(1.10).transition(.scale(scale: 0.92).combined(with: .opacity))
-        } else if !player.isV2Enabled {
+            AutoMixBadge().transition(.opacity)
+        } else {
             qualityBadgeButton.transition(.opacity)
         }
     }
@@ -416,7 +413,6 @@ struct PlayerTimelineSection<Center: View>: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.20)).frame(height: height)
                     Capsule().fill(.white).frame(width: max(height, width), height: height)
-                    if player.isTransitionActive { AutoMixTimelineGlow().frame(height: max(12, height + 8)).transition(.opacity) }
                     if isScrubbing { Circle().fill(.white).frame(width: 22, height: 22).offset(x: width - 11).shadow(radius: 6) }
                 }
                 .frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -442,54 +438,57 @@ struct PlayerTimelineSection<Center: View>: View {
 
 struct AutoMixBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
-            let phase = reduceMotion ? 0.5 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.8) / 1.8
-            let label = Text("AutoMix происходит").font(AG.text(.subheadline, .bold))
-            label.foregroundStyle(.white.opacity(0.86)).overlay {
-                GeometryReader { geo in
-                    LinearGradient(colors: [.clear, .white.opacity(0.45), .white, .white.opacity(0.45), .clear], startPoint: .leading, endPoint: .trailing)
-                        .frame(width: max(32, geo.size.width * 0.42))
-                        .offset(x: -geo.size.width * 0.45 + CGFloat(phase) * geo.size.width * 1.45)
-                }.mask(label).blendMode(.plusLighter)
-            }
-            .shadow(color: .white.opacity(0.72), radius: 7).shadow(color: .white.opacity(0.28), radius: 16)
-        }.fixedSize().allowsHitTesting(false).accessibilityLabel("Происходит автоматический переход")
-    }
-}
+    private let title = "Mixing"
+    private let sweepCycle: TimeInterval = 2.4
 
-private struct AutoMixArtworkGlint: View {
-    let side: CGFloat
-    let reduceMotion: Bool
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { context in
-            let phase = reduceMotion ? 0.5 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.2) / 2.2
-            ZStack {
-                RadialGradient(colors: [.white.opacity(0.22), .clear], center: .center, startRadius: 0, endRadius: side * 0.65).blendMode(.plusLighter)
-                LinearGradient(colors: [.clear, .white.opacity(0.10), .white.opacity(0.95), .white.opacity(0.18), .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: side * 0.34).rotationEffect(.degrees(12))
-                    .offset(x: -side * 0.78 + CGFloat(phase) * side * 1.56)
-                    .blur(radius: 5).blendMode(.plusLighter)
+        Group {
+            if reduceMotion {
+                mark(sweep: nil)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                    let time = context.date.timeIntervalSinceReferenceDate
+                    let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
+                    mark(sweep: CGFloat(phase))
+                }
             }
-        }.allowsHitTesting(false)
+        }
+        .accessibilityLabel(Text(title))
+        .allowsHitTesting(false)
     }
-}
 
-private struct AutoMixTimelineGlow: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var body: some View {
-        GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { context in
-                let phase = reduceMotion ? 0.5 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.7) / 1.7
-                ZStack(alignment: .leading) {
-                    Capsule().stroke(.white.opacity(0.50), lineWidth: 1).blur(radius: 3)
-                    LinearGradient(colors: [.clear, .white.opacity(0.25), .white, .white.opacity(0.25), .clear], startPoint: .leading, endPoint: .trailing)
-                        .frame(width: max(34, geo.size.width * 0.22))
-                        .offset(x: -geo.size.width * 0.24 + CGFloat(phase) * geo.size.width * 1.24)
-                        .blur(radius: 2).blendMode(.plusLighter)
-                }.shadow(color: .white.opacity(0.60), radius: 7)
+    private func mark(sweep: CGFloat?) -> some View {
+        let label = Text(title)
+            .font(.system(size: 13, weight: .semibold, design: .default))
+
+        return label
+            .foregroundStyle(.white.opacity(0.85))
+            .overlay {
+                if let sweep {
+                    GeometryReader { geo in
+                        let width = max(geo.size.width, 1)
+                        let band = max(width * 0.55, 24)
+                        let travel = width + band * 2
+
+                        LinearGradient(
+                            colors: [.clear, .white.opacity(0.40), .white, .white.opacity(0.40), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: band)
+                        .offset(x: -band + sweep * travel)
+                        .frame(width: width, height: geo.size.height, alignment: .leading)
+                        .clipped()
+                        .blendMode(.plusLighter)
+                    }
+                    .mask(label)
+                    .allowsHitTesting(false)
+                }
             }
-        }.allowsHitTesting(false)
+            .shadow(color: .white.opacity(0.40), radius: 6)
+            .shadow(color: .white.opacity(0.15), radius: 12)
+            .fixedSize()
+            .compositingGroup()
     }
 }
 
