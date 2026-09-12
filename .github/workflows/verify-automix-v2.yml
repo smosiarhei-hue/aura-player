@@ -1,0 +1,91 @@
+name: Verify AutoMix V2
+
+on:
+  push:
+    branches: [ feature/automix-engine-v2 ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-automix-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify package, project, and tests
+        id: verify
+        shell: bash
+        run: |
+          set +e
+          : > verify.log
+          xcodebuild -version 2>&1 | tee -a verify.log
+          swift --version 2>&1 | tee -a verify.log
+          brew install xcodegen 2>&1 | tee -a verify.log
+          BREW_STATUS=${PIPESTATUS[0]}
+          if [ "$BREW_STATUS" -ne 0 ]; then
+            echo "VERIFY_STATUS=$BREW_STATUS" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          xcodegen generate 2>&1 | tee -a verify.log
+          GENERATE_STATUS=${PIPESTATUS[0]}
+          if [ "$GENERATE_STATUS" -ne 0 ]; then
+            echo "VERIFY_STATUS=$GENERATE_STATUS" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); devices=[d for values in data["devices"].values() for d in values if d.get("isAvailable")]; print(devices[0]["udid"] if devices else "")')
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "No available iOS simulator found" | tee -a verify.log
+            echo "VERIFY_STATUS=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          xcodebuild \
+            -project Sonivo.xcodeproj \
+            -scheme Sonivo \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$SIMULATOR_ID" \
+            -derivedDataPath derived-tests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            test 2>&1 | tee -a verify.log
+          TEST_STATUS=${PIPESTATUS[0]}
+          echo "VERIFY_STATUS=$TEST_STATUS" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Publish verification diagnostic
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          STATUS=${VERIFY_STATUS:-1}
+          {
+            printf "Commit: %s\nRun: %s\nStatus: %s\n\n" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$STATUS"
+            if [ -f verify.log ]; then
+              grep -nE "error:|fatal error:|BUILD FAILED|TEST FAILED|failed|Xcode|Swift version" verify.log | tail -n 300 || tail -n 300 verify.log
+            else
+              echo "verify.log was not produced"
+            fi
+          } > latest.txt
+
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b ci-automix-v2
+          mkdir -p ci-logs
+          cp "$GITHUB_WORKSPACE/latest.txt" ci-logs/latest-verification.txt
+          git add ci-logs/latest-verification.txt
+          git commit -m "Record AutoMix V2 verification $GITHUB_RUN_ID"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin ci-automix-v2
+
+          exit "$STATUS"

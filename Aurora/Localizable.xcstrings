@@ -1,0 +1,16 @@
+{
+  "sourceLanguage" : "ru",
+  "strings" : {
+    "Перемотка" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перемотка"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
