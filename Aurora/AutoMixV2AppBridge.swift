@@ -38,6 +38,8 @@ final class AutoMixV2Runtime {
     private var requestID = UUID()
     private var queueUpdateTask: Task<Void, Never>?
     private(set) var currentTrack: Track?
+    private(set) var currentCodec: String?
+    private(set) var currentBitrate: Int?
     private(set) var isPlaying = false
     private(set) var isLoading = false
     private(set) var lastError: String?
@@ -153,18 +155,58 @@ final class AutoMixV2Runtime {
     }
     private func apply(_ state: PlaybackCoordinatorSnapshot) {
         if let index = state.currentIndex, queue.indices.contains(index), state.queue.indices.contains(index),
-           queueIDs[index] == state.queue[index] { currentTrack = queue[index] }
+           queueIDs[index] == state.queue[index] {
+            let changed = currentTrack?.id != queue[index].id
+            currentTrack = queue[index]
+            if changed { updatePlaybackStreamInfo(for: currentTrack) }
+        }
         switch state.phase {
-        case .idle: currentTrack = nil; isPlaying = false; isLoading = false
+        case .idle:
+            currentTrack = nil; isPlaying = false; isLoading = false
+            updatePlaybackStreamInfo(for: nil)
         case .loading: isPlaying = false; isLoading = true
         case .playing:
             // Prefetch belongs to the next track. It must never turn the current
             // playing track into a loading/paused state in UI or Now Playing.
             isPlaying = true; isLoading = false
+            if currentCodec == nil { updatePlaybackStreamInfo(for: currentTrack) }
         case .paused, .ready: isPlaying = false; isLoading = false
         case .failed(let error): isPlaying = false; isLoading = false; lastError = error
         }
         if let error = state.lastQueueError { lastError = error }
+    }
+    private func updatePlaybackStreamInfo(for track: Track?) {
+        guard let track else {
+            currentCodec = nil
+            currentBitrate = nil
+            return
+        }
+        if let yandexId = Self.yandexTrackID(from: track) {
+            let trackId = TrackID(raw: yandexId)
+            Task { [weak self] in
+                guard let self else { return }
+                if let info = await self.yandexClient.streamInfo(for: trackId) {
+                    await MainActor.run {
+                        self.currentCodec = info.codec
+                        self.currentBitrate = info.bitrate
+                    }
+                } else {
+                    let ext = track.url.pathExtension.lowercased()
+                    let c = (ext == "flac" || ext == "alac" || ext == "wav") ? "flac" : (ext == "mp3" ? "mp3" : (ext == "m4a" || ext == "aac" ? "aac" : nil))
+                    let b = (c == "flac") ? 1411 : (c == "mp3" ? 320 : 256)
+                    await MainActor.run {
+                        self.currentCodec = c
+                        self.currentBitrate = b
+                    }
+                }
+            }
+        } else {
+            let ext = track.url.pathExtension.lowercased()
+            let c = (ext == "flac" || ext == "alac" || ext == "wav") ? "flac" : (ext == "mp3" ? "mp3" : (ext == "m4a" || ext == "aac" ? "aac" : (ext.isEmpty ? nil : ext)))
+            let b = (c == "flac") ? 1411 : (c == "mp3" ? 320 : 256)
+            currentCodec = c
+            currentBitrate = b
+        }
     }
     private func fail(_ message: String, category: String) async {
         isLoading = false; isPlaying = false; lastError = message

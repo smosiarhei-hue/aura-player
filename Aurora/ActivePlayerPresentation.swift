@@ -55,10 +55,10 @@ final class ActivePlayerPresentation {
         get { v2OwnsPlayback ? runtime.playbackQueue : legacy.queue }
         set { if v2OwnsPlayback { runtime.replaceQueue(newValue) } else { legacy.queue = newValue } }
     }
-    var currentCodec: String? { v2OwnsPlayback ? nil : legacy.currentCodec }
-    var currentBitrate: Int? { v2OwnsPlayback ? nil : legacy.currentBitrate }
+    var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
+    var currentBitrate: Int? { v2OwnsPlayback ? runtime.currentBitrate : legacy.currentBitrate }
     var audioQuality: AudioQuality { legacy.audioQuality }
-    func selectQuality(_ quality: AudioQuality) { if !v2OwnsPlayback { legacy.selectQuality(quality) } }
+    func selectQuality(_ quality: AudioQuality) { legacy.selectQuality(quality) }
     func formatted(_ seconds: Double) -> String { legacy.formatted(seconds) }
 
     func togglePlay() {

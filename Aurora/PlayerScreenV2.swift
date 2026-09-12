@@ -72,7 +72,7 @@ struct PlayerScreenV2: View {
                 case .equalizer: PlayerEQSheetView()
                 case .sleepTimer: SleepTimerSheetView()
                 case .settings: SettingsView()
-                case .quality: qualitySheet
+                case .quality: PlayerQualityModalView(player: player, onDismiss: { activeModal = nil })
                 case .artistSelection: artistSelectionSheet
                 case .lyrics:
                     LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
@@ -313,9 +313,14 @@ struct PlayerScreenV2: View {
         }.buttonStyle(.plain).glassCapsule(interactive: true)
     }
     private var qualityBadgeLabel: String {
-        let codec = player.currentCodec?.lowercased() ?? ""; let bitrate = player.currentBitrate ?? 0
-        if codec.contains("flac") { return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless" }
-        if bitrate >= 320 { return "HQ \(bitrate) kbps" }; if bitrate > 0 { return "\(bitrate) kbps" }
+        let codec = player.currentCodec?.lowercased() ?? ""
+        let bitrate = player.currentBitrate ?? 0
+        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
+            return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
+        }
+        if bitrate >= 320 { return "HQ \(bitrate) kbps" }
+        if bitrate > 0 { return "\(bitrate) kbps" }
+        if !codec.isEmpty { return codec.uppercased() }
         return player.audioQuality.badgeText
     }
     private var transportControls: some View {
@@ -326,12 +331,198 @@ struct PlayerScreenV2: View {
         }.foregroundStyle(AG.ink).buttonStyle(TactileButtonStyle(scale: 0.86))
     }
 
-    private var qualitySheet: some View {
-        List { ForEach(AudioQuality.allCases) { quality in
-            Button { player.selectQuality(quality); activeModal = nil } label: {
-                HStack { VStack(alignment: .leading) { Text(quality.label); Text(quality.detail).font(.caption).foregroundStyle(AG.inkMuted) }; Spacer(); if player.audioQuality == quality { Image(systemName: "checkmark") } }
+    private var artistSelectionSheet: some View {
+        List(artistChoices) { artist in Button(artist.name) { activeModal = nil; selectedArtist = artist } }
+            .navigationTitle("Исполнители").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
+    }
+}
+
+struct PlayerQualityModalView: View {
+    let player: ActivePlayerPresentation
+    let onDismiss: () -> Void
+
+    @State private var showingSettings = false
+
+    var body: some View {
+        Group {
+            if showingSettings {
+                qualitySettingsList
+            } else {
+                appleMusicQualityCard
             }
-        }}.navigationTitle("Качество звука").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { activeModal = nil } } }
+        }
+    }
+
+    private var appleMusicQualityCard: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(.white.opacity(0.12))
+                    .frame(width: 58, height: 58)
+                Image(systemName: "waveform")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .padding(.top, 16)
+
+            Text(currentQualityTitle)
+                .font(.system(size: 24, weight: .bold, design: .default))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+
+            VStack(spacing: 8) {
+                Text(currentQualityDescription)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+
+                if let formatDetail = currentQualityFormatDetail {
+                    Text(formatDetail)
+                        .font(.system(size: 13, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.60))
+                        .multilineTextAlignment(.center)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            VStack(spacing: 12) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        showingSettings = true
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("Настройки качества звука")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.white.opacity(0.15))
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    onDismiss()
+                } label: {
+                    Text("OK")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(.white)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+        .padding(.top, 8)
+        .presentationDetents([.height(370), .medium])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+    }
+
+    private var qualitySettingsList: some View {
+        List {
+            Section {
+                ForEach(AudioQuality.allCases) { quality in
+                    Button {
+                        player.selectQuality(quality)
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showingSettings = false
+                        }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(quality.label)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                Text(quality.detail)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.white.opacity(0.65))
+                            }
+                            Spacer()
+                            if player.audioQuality == quality {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.white)
+                                    .fontWeight(.bold)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Предпочитаемое качество звука")
+            }
+        }
+        .navigationTitle("Качество звука")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        showingSettings = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text("Назад")
+                    }
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Готово") {
+                    onDismiss()
+                }
+            }
+        }
+    }
+
+    private var currentQualityTitle: String {
+        let codec = player.currentCodec?.lowercased() ?? ""
+        let bitrate = player.currentBitrate ?? 0
+        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
+            return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
+        }
+        if bitrate >= 320 { return "Высокое качество (HQ)" }
+        if bitrate > 0 { return "Стандартное качество" }
+        return player.audioQuality.badgeText
+    }
+
+    private var currentQualityDescription: String {
+        let codec = player.currentCodec?.lowercased() ?? ""
+        let bitrate = player.currentBitrate ?? 0
+        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
+            return "Аудио без потерь (Lossless) воспроизводится с оригинальным студийным качеством записи без потери деталей звука."
+        }
+        if bitrate >= 320 || codec.contains("mp3") || codec.contains("aac") {
+            return "Аудио высокого качества воспроизводится с оптимизированным сжатием данных для быстрого и стабильного воспроизведения."
+        }
+        return "Качество звука настраивается автоматически или в соответствии с вашими предпочтениями."
+    }
+
+    private var currentQualityFormatDetail: String? {
+        let codec = player.currentCodec?.uppercased() ?? ""
+        let bitrate = player.currentBitrate ?? 0
+        if codec.contains("FLAC") || codec.contains("ALAC") || codec.contains("WAV") {
+            let brText = bitrate > 0 ? "\(bitrate) кбит/с" : "до 1411 кбит/с"
+            return "Формат: \(codec) • \(brText) • 16/24 бит, 44,1 кГц"
+        }
+        if !codec.isEmpty {
+            let brText = bitrate > 0 ? "\(bitrate) кбит/с" : "320 кбит/с"
+            return "Формат: \(codec) • \(brText)"
+        }
+        return nil
     }
     private var artistSelectionSheet: some View {
         List(artistChoices) { artist in Button(artist.name) { activeModal = nil; selectedArtist = artist } }

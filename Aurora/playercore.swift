@@ -818,6 +818,21 @@ final class PlayerCore {
                 self.activeAudioFile = audioFile
                 self.incomingAudioFile = nil
 
+                let ext = track.url.pathExtension.lowercased()
+                if ext == "flac" || ext == "alac" || ext == "wav" {
+                    self.currentCodec = ext
+                    self.currentBitrate = 1411
+                } else if ext == "mp3" {
+                    self.currentCodec = "mp3"
+                    self.currentBitrate = 320
+                } else if ext == "m4a" || ext == "aac" {
+                    self.currentCodec = "aac"
+                    self.currentBitrate = 256
+                } else {
+                    self.currentCodec = ext.isEmpty ? nil : ext
+                    self.currentBitrate = 320
+                }
+
                 if !self.engine.isRunning {
                     try self.engine.start()
                 }
