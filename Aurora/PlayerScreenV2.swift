@@ -247,41 +247,43 @@ struct PlayerScreenV2: View {
             y: player.isPlaying ? 12 : 4
         )
         .scaleEffect(player.isPlaying ? 1 : 0.88).offset(x: coverDragX)
-        .rotationEffect(.degrees(Double(coverDragX / 24)))
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 15)
             .onChanged { value in
                 guard !player.isTransitionActive, abs(value.translation.width) > abs(value.translation.height) else { return }
-                coverDragX = value.translation.width / (1 + abs(value.translation.width) * 0.003)
+                coverDragX = value.translation.width / (1 + abs(value.translation.width) * 0.001)
             }
             .onEnded { value in
                 guard !player.isTransitionActive, abs(value.translation.width) > abs(value.translation.height) else {
-                    withAnimation(AG.spring) { coverDragX = 0 }; return
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }; return
                 }
-                if value.translation.width < -50 {
-                    withAnimation(.easeOut(duration: 0.20)) {
+                let threshold: CGFloat = 65
+                if value.translation.width < -threshold {
+                    Haptics.tap(.light)
+                    withAnimation(.easeOut(duration: 0.16)) {
                         coverDragX = -side * 1.15
                     }
                     nextTrack()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        coverDragX = side * 0.9
-                        withAnimation(AG.spring) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                        coverDragX = side * 0.85
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                             coverDragX = 0
                         }
                     }
-                } else if value.translation.width > 50 {
-                    withAnimation(.easeOut(duration: 0.20)) {
+                } else if value.translation.width > threshold {
+                    Haptics.tap(.light)
+                    withAnimation(.easeOut(duration: 0.16)) {
                         coverDragX = side * 1.15
                     }
                     previousTrack()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        coverDragX = -side * 0.9
-                        withAnimation(AG.spring) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                        coverDragX = -side * 0.85
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                             coverDragX = 0
                         }
                     }
                 } else {
-                    withAnimation(AG.spring) { coverDragX = 0 }
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }
                 }
             })
         .animation(.easeInOut(duration: 0.35), value: player.isTransitionActive)
@@ -531,6 +533,7 @@ struct PlayerTimelineSection<Center: View>: View {
     @Bindable var player: ActivePlayerPresentation
     @State private var isScrubbing = false
     @State private var scrubProgress = 0.0
+    @State private var pendingSeekProgress: Double?
     @State private var lastFeedbackProgress = 0.0
     private let feedback = UISelectionFeedbackGenerator()
     private let center: Center
@@ -538,7 +541,11 @@ struct PlayerTimelineSection<Center: View>: View {
         self.player = player
         self.center = center()
     }
-    private var effectiveProgress: Double { isScrubbing ? scrubProgress : player.progress }
+    private var effectiveProgress: Double {
+        if isScrubbing { return scrubProgress }
+        if let pending = pendingSeekProgress { return pending }
+        return player.progress
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -546,7 +553,7 @@ struct PlayerTimelineSection<Center: View>: View {
                 let duration = max(player.duration, 0.01)
                 let fraction = min(1, max(0, effectiveProgress / duration))
                 let width = geo.size.width * fraction
-                let height: CGFloat = isScrubbing ? 10 : 4
+                let height: CGFloat = isScrubbing ? 8 : 4
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.18)).frame(height: height)
                     if let bufferFraction = player.downloadProgress, bufferFraction > 0.005 {
@@ -556,18 +563,34 @@ struct PlayerTimelineSection<Center: View>: View {
                             .animation(.easeInOut(duration: 0.25), value: bufferFraction)
                     }
                     Capsule().fill(.white).frame(width: max(height, width), height: height)
-                    if isScrubbing { Circle().fill(.white).frame(width: 22, height: 22).offset(x: width - 11).shadow(radius: 6) }
+                    if isScrubbing {
+                        Circle()
+                            .fill(.white)
+                            .frame(width: 20, height: 20)
+                            .offset(x: max(0, min(width - 10, geo.size.width - 20)))
+                            .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+                    }
                 }
+                .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isScrubbing)
                 .frame(maxHeight: .infinity).contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         if !isScrubbing { isScrubbing = true; feedback.prepare() }
-                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1))); scrubProgress = f * duration
+                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
+                        scrubProgress = f * duration
                         if abs(f - lastFeedbackProgress) > 0.04 { Haptics.scrubTick(feedback); lastFeedbackProgress = f }
                     }
                     .onEnded { value in
-                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1))); player.seek(to: f * duration)
+                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
+                        let target = f * duration
+                        pendingSeekProgress = target
+                        player.seek(to: target)
                         withAnimation(AG.spring) { isScrubbing = false }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            if pendingSeekProgress == target {
+                                pendingSeekProgress = nil
+                            }
+                        }
                     })
             }.frame(height: 24)
             HStack {
@@ -575,7 +598,16 @@ struct PlayerTimelineSection<Center: View>: View {
                 Spacer(); center; Spacer()
                 Text("-" + player.formatted(max(0, player.duration - effectiveProgress))).font(AG.text(.caption, .semibold).monospacedDigit()).foregroundStyle(AG.inkMuted)
             }
-        }.onChange(of: player.currentTrack?.id) { _, _ in isScrubbing = false }
+        }
+        .onChange(of: player.currentTrack?.id) { _, _ in
+            isScrubbing = false
+            pendingSeekProgress = nil
+        }
+        .onChange(of: player.progress) { _, newProgress in
+            if let pending = pendingSeekProgress, abs(newProgress - pending) < 1.0 {
+                pendingSeekProgress = nil
+            }
+        }
     }
 }
 

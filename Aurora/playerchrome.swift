@@ -142,75 +142,250 @@ struct QueueSheetView: View {
 struct PlayerEQSheetView: View {
     @State private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
-    @ScaledMetric(relativeTo: .body) private var controlHeight: CGFloat = 44
-    private let labels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
-    private var tapHeight: CGFloat { max(44, min(controlHeight, 56)) }
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Toggle("10-полосный эквалайзер", isOn: $player.eqEnabled).tint(AG.amber).frame(minHeight: tapHeight)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Пресеты").font(.headline)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(EQPresets.all) { preset in
-                                Button(preset.name) { withAnimation(AG.spring) { player.eqGains = preset.gains } }
-                                    .buttonStyle(.bordered).tint(player.eqGains == preset.gains ? AG.amber : .secondary)
-                                    .frame(minHeight: tapHeight)
-                            }
-                        }.padding(.vertical, 2)
-                    }
-                }
-                HStack {
-                    Text("Полосы частот").font(.headline)
-                    Spacer()
-                    Button("Сбросить") { player.eqGains = EQPresets.flat.gains }.frame(minHeight: tapHeight)
-                }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .center, spacing: 8) {
-                        ForEach(0..<10, id: \.self) { index in
-                            BandSlider(label: labels[index], value: Binding(get: { player.eqGains[index] }, set: { player.eqGains[index] = $0 }))
-                                .frame(width: 44)
-                        }
-                    }.padding(.horizontal, 2)
-                }.frame(minHeight: 230)
+
+    private let frequencies = ["60 Hz", "150 Hz", "400 Hz", "1.0 kHz", "2.4 kHz", "15 kHz"]
+
+    private var activePresetName: String {
+        for preset in EQPresets.all {
+            if isMatching(preset.gains, player.eqGains) {
+                return preset.name
             }
-            .padding(.horizontal, 20).padding(.top, 20).safeAreaPadding(.bottom, 12)
         }
-        .navigationTitle("Эквалайзер").navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() }.foregroundStyle(AG.amber) } }
-        .presentationDetents([.medium, .large]).presentationDragIndicator(.visible).dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        return "Своя настройка"
+    }
+
+    private func isMatching(_ a: [Float], _ b: [Float]) -> Bool {
+        guard a.count == b.count else { return false }
+        for i in 0..<a.count {
+            if abs(a[i] - b[i]) > 0.1 { return false }
+        }
+        return true
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Top Bar with Close button
+                    HStack {
+                        Spacer()
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.white.opacity(0.12), in: Circle())
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+
+                    // Title
+                    Text("Эквалайзер")
+                        .font(.system(size: 30, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 20)
+
+                    // Interactive EQ Graph with dB values and Frequencies
+                    InteractiveEQGraph(
+                        frequencies: frequencies,
+                        gains: Binding(
+                            get: {
+                                if player.eqGains.count == 6 { return player.eqGains }
+                                return EQPresets.flat.gains
+                            },
+                            set: { player.eqGains = $0 }
+                        ),
+                        enabled: player.eqEnabled
+                    )
+                    .frame(height: 190)
+                    .padding(.horizontal, 16)
+
+                    // Toggle row
+                    HStack {
+                        Text("Эквалайзер")
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Toggle("", isOn: $player.eqEnabled)
+                            .labelsHidden()
+                            .tint(Color(red: 0.90, green: 0.98, blue: 0.12))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+
+                    Divider().background(Color.white.opacity(0.12)).padding(.horizontal, 20)
+
+                    // Presets List
+                    VStack(spacing: 0) {
+                        presetRow(title: "Своя настройка", isSelected: activePresetName == "Своя настройка") {
+                            // Keep current custom gains
+                        }
+
+                        ForEach(EQPresets.all) { preset in
+                            presetRow(title: preset.name, isSelected: activePresetName == preset.name) {
+                                Haptics.tap(.light)
+                                withAnimation(AG.spring) {
+                                    player.eqGains = preset.gains
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 30)
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color.black)
+    }
+
+    private func presetRow(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(.white)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(height: 50)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
-struct BandSlider: View {
-    let label: String
-    @Binding var value: Float
+
+struct InteractiveEQGraph: View {
+    let frequencies: [String]
+    @Binding var gains: [Float]
+    let enabled: Bool
+
+    private let yellow = Color(red: 0.90, green: 0.98, blue: 0.12)
+    private let nodeCount = 6
+
     var body: some View {
-        GeometryReader { geometry in
-            let trackHeight = max(150, geometry.size.height - 30)
-            VStack(spacing: 6) {
-                ZStack(alignment: .bottom) {
-                    Capsule().fill(Color.primary.opacity(0.12)).frame(width: 8)
-                    let fraction = CGFloat((value + 12) / 24)
-                    Capsule().fill(AG.emberGradient).frame(width: 8, height: max(8, fraction * trackHeight))
+        GeometryReader { geo in
+            let w = geo.size.width
+            let topLabelH: CGFloat = 24
+            let bottomLabelH: CGFloat = 24
+            let graphH = max(80, geo.size.height - topLabelH - bottomLabelH)
+            let midY = topLabelH + graphH / 2
+            let sidePad: CGFloat = 20
+            let stepX = (w - 2 * sidePad) / CGFloat(max(1, nodeCount - 1))
+
+            ZStack {
+                // Top dB Labels
+                HStack(spacing: 0) {
+                    ForEach(0..<nodeCount, id: \.self) { i in
+                        let g = i < gains.count ? gains[i] : 0
+                        Text(formatDB(g))
+                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .foregroundStyle(enabled ? yellow : yellow.opacity(0.4))
+                            .frame(width: stepX, alignment: .center)
+                    }
                 }
-                .frame(height: trackHeight).frame(maxWidth: .infinity).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0).onChanged { gesture in
-                    let fraction = 1 - Float(min(max(gesture.location.y / trackHeight, 0), 1))
-                    value = fraction * 24 - 12
-                })
-                Text(label).font(.caption2).foregroundStyle(.secondary).frame(minHeight: 18)
+                .padding(.horizontal, sidePad - stepX / 2)
+                .position(x: w / 2, y: topLabelH / 2)
+
+                // 0 dB Guide Line
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: midY))
+                    path.addLine(to: CGPoint(x: w, y: midY))
+                }
+                .stroke(enabled ? yellow.opacity(0.7) : yellow.opacity(0.2), lineWidth: 1.5)
+
+                // Continuous Spline Curve connecting nodes
+                splinePath(width: w, midY: midY, graphH: graphH, sidePad: sidePad, stepX: stepX)
+                    .stroke(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2)
+
+                // 6 Draggable Circular Nodes
+                ForEach(0..<nodeCount, id: \.self) { i in
+                    let x = sidePad + CGFloat(i) * stepX
+                    let gain = CGFloat(i < gains.count ? gains[i] : 0)
+                    let y = midY - (gain / 12.0) * (graphH / 2 - 12)
+
+                    Circle()
+                        .strokeBorder(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2.5)
+                        .background(Circle().fill(Color.black))
+                        .frame(width: 22, height: 22)
+                        .position(x: x, y: y)
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { val in
+                                    guard enabled, i < gains.count else { return }
+                                    let deltaY = midY - val.location.y
+                                    let maxRange = graphH / 2 - 12
+                                    let rawGain = Float(deltaY / maxRange * 12.0)
+                                    let clamped = min(12.0, max(-12.0, rawGain))
+                                    if abs(clamped) < 0.3 {
+                                        gains[i] = 0
+                                    } else {
+                                        gains[i] = round(clamped)
+                                    }
+                                }
+                        )
+                }
+
+                // Bottom Frequency Labels
+                HStack(spacing: 0) {
+                    ForEach(0..<nodeCount, id: \.self) { i in
+                        Text(frequencies[i])
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color(white: 0.6))
+                            .frame(width: stepX, alignment: .center)
+                    }
+                }
+                .padding(.horizontal, sidePad - stepX / 2)
+                .position(x: w / 2, y: geo.size.height - bottomLabelH / 2)
             }
         }
-        .frame(height: 210).accessibilityElement(children: .ignore).accessibilityLabel(label + " герц")
-        .accessibilityValue(String(format: "%.0f децибел", value))
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: value = min(12, value + 1)
-            case .decrement: value = max(-12, value - 1)
-            @unknown default: break
-            }
+    }
+
+    private func formatDB(_ value: Float) -> String {
+        let rounded = Int(round(value))
+        if rounded > 0 { return "+\(rounded) dB" }
+        return "\(rounded) dB"
+    }
+
+    private func splinePath(width: CGFloat, midY: CGFloat, graphH: CGFloat, sidePad: CGFloat, stepX: CGFloat) -> Path {
+        var points: [CGPoint] = []
+        for i in 0..<nodeCount {
+            let x = sidePad + CGFloat(i) * stepX
+            let gain = CGFloat(i < gains.count ? gains[i] : 0)
+            let y = midY - (gain / 12.0) * (graphH / 2 - 12)
+            points.append(CGPoint(x: x, y: y))
         }
+
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: CGPoint(x: 0, y: first.y))
+        path.addLine(to: first)
+
+        for i in 0..<(points.count - 1) {
+            let p0 = points[i]
+            let p1 = points[i + 1]
+            let midX = (p0.x + p1.x) / 2
+            path.addCurve(
+                to: p1,
+                control1: CGPoint(x: midX, y: p0.y),
+                control2: CGPoint(x: midX, y: p1.y)
+            )
+        }
+
+        if let last = points.last {
+            path.addLine(to: CGPoint(x: width, y: last.y))
+        }
+        return path
     }
 }
 struct TactileButtonStyle: ButtonStyle {

@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - Tab 1: Моя волна (Yandex Music Style)
 
 struct HomeView: View {
-    @State private var player = PlayerCore.shared
+    @State private var player = ActivePlayerPresentation()
     @State private var ym = YandexMusicService.shared
     @State private var library = LibraryStore.shared
 
@@ -57,6 +57,7 @@ struct HomeView: View {
                     .presentationBackground(.clear)
             }
             .task { await load() }
+            .task { await player.observeTimeline() }
         }
     }
 

@@ -76,6 +76,12 @@ final class ActivePlayerPresentation {
     func togglePlay() {
         if v2OwnsPlayback { Task { await runtime.toggle() } } else { legacy.togglePlay() }
     }
+    func pause() {
+        if v2OwnsPlayback { Task { await runtime.pause() } } else { legacy.pause() }
+    }
+    func resume() {
+        if v2OwnsPlayback { Task { await runtime.play() } } else { legacy.resume() }
+    }
     func previous() {
         if v2OwnsPlayback { Task { await runtime.previous() } } else { legacy.previous() }
     }

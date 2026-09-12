@@ -362,18 +362,20 @@ struct EQPreset: Identifiable, Equatable, Sendable {
 }
 
 enum EQPresets {
-    static let flat = EQPreset(name: "Flat", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    static let flat = EQPreset(name: "По умолчанию", gains: [0, 0, 0, 0, 0, 0])
+    static let classical = EQPreset(name: "Классическая музыка", gains: [4, 3, 2, 2, -1, -2])
+    static let club = EQPreset(name: "Клубная музыка", gains: [5, 4, 1, 2, 3, 4])
+    static let dance = EQPreset(name: "Танцевальная музыка", gains: [6, 5, 2, 0, 3, 4])
+    static let bassBoost = EQPreset(name: "Усиление НЧ", gains: [7, 5, 3, 0, 0, 0])
+    static let bassTrebleBoost = EQPreset(name: "Усиление НЧ и ВЧ", gains: [6, 4, 1, 0, 4, 6])
 
     static let all: [EQPreset] = [
         flat,
-        EQPreset(name: "Rock",       gains: [ 5,  4,  2, -1, -2,  0,  2,  4,  5,  5]),
-        EQPreset(name: "Pop",        gains: [-1,  1,  3,  4,  3,  0, -1, -1,  1,  2]),
-        EQPreset(name: "Bass Boost", gains: [ 8,  7,  5,  2,  0,  0,  0,  0,  1,  2]),
-        EQPreset(name: "Electronic", gains: [ 5,  4,  1,  0, -2,  1,  0,  1,  4,  5]),
-        EQPreset(name: "Jazz",       gains: [ 3,  2,  1,  2, -1, -1,  0,  1,  3,  4]),
-        EQPreset(name: "Classical",  gains: [ 4,  3,  2,  0, -1, -1,  0,  2,  3,  4]),
-        EQPreset(name: "Vocal",      gains: [-2, -1,  0,  2,  4,  4,  3,  1,  0, -1]),
-        EQPreset(name: "Acoustic",   gains: [ 3,  2,  1,  1, -1, -1, -2, -2, -1,  0])
+        classical,
+        club,
+        dance,
+        bassBoost,
+        bassTrebleBoost
     ]
 }
 

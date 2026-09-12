@@ -33,7 +33,7 @@ public enum MixPlanner {
         var out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
         let incoming = BeatGridSynchronization.incomingCue(profile: b)
         let phaseA = a.downbeatsSec.min(by: { abs($0 - out) < abs($1 - out) }).map { abs(out - $0) } ?? 0
-        let phaseB = b.downbeatsSec.min(by: { abs($0 - incoming) < abs($1 - incoming) }).map { abs(incoming - $0) } ?? 0
+        let phaseB = b.downbeatsSec.min(by: { abs($0 - b.mixInSec) < abs($1 - b.mixInSec) }).map { abs(b.mixInSec - $0) } ?? 0
         let phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
         if phaseError > 80 {
             return crossfade(a, b, settings, "Fallback: фазовое расхождение > 80ms")
@@ -115,14 +115,28 @@ public enum BeatGridSynchronization {
     public static func duration(bars: Double, bpm: Float) -> Double { bpm > 0 ? bars * 240 / Double(bpm) : 0 }
     public static func outgoingCue(profile: TrackProfile, duration: Double) -> Double {
         let latest = min(profile.mixOutSec, max(0, profile.durationSec - duration))
-        return profile.phraseStartsSec.last(where: { $0 <= latest }) ?? profile.downbeatsSec.last(where: { $0 <= latest }) ?? latest
+        if let downbeat = profile.downbeatsSec.last(where: { $0 <= latest }) {
+            if let phrase = profile.phraseStartsSec.last(where: { $0 <= latest }) {
+                let beat = profile.bpm > 0 ? 60.0 / Double(profile.bpm) : 0.5
+                if let matched = profile.downbeatsSec.min(by: { abs($0 - phrase) < abs($1 - phrase) }),
+                   abs(matched - phrase) <= beat {
+                    return matched
+                }
+            }
+            return downbeat
+        }
+        return profile.phraseStartsSec.last(where: { $0 <= latest }) ?? latest
     }
     public static func incomingCue(profile: TrackProfile) -> Double {
         if let firstDownbeat = profile.downbeatsSec.first(where: { $0 >= profile.mixInSec }) {
             let fourBars = profile.bpm > 0 ? 16.0 * 60.0 / Double(profile.bpm) : 8.0
             if let firstPhrase = profile.phraseStartsSec.first(where: { $0 >= profile.mixInSec }),
                firstPhrase - profile.mixInSec <= fourBars {
-                return firstPhrase
+                let beat = profile.bpm > 0 ? 60.0 / Double(profile.bpm) : 0.5
+                if let matched = profile.downbeatsSec.min(by: { abs($0 - firstPhrase) < abs($1 - firstPhrase) }),
+                   abs(matched - firstPhrase) <= beat {
+                    return matched
+                }
             }
             return firstDownbeat
         }

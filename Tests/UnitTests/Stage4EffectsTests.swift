@@ -150,15 +150,16 @@ struct Stage4EffectsTests {
         TrackMeta(id: TrackID(raw: id), title: id, artist: "Test", albumID: nil, durationSec: 240, artworkURL: nil)
     }
     private func profile(_ id: String, key: String) -> TrackProfile {
-        TrackProfile(trackID: TrackID(raw: id), durationSec: 240, sourceSampleRate: 48_000,
+        let barSec = 240.0 / 124.0
+        return TrackProfile(trackID: TrackID(raw: id), durationSec: 240, sourceSampleRate: 48_000,
                      sourceBitrateKbps: nil, bpm: 124,
                      beatsSec: Array(stride(from: 0.0, to: 240, by: 60.0 / 124.0)),
-                     downbeatsSec: Array(stride(from: 0.0, to: 240, by: 240.0 / 124.0)),
-                     phraseStartsSec: Array(stride(from: 0.0, to: 240, by: 16)),
+                     downbeatsSec: Array(stride(from: 0.0, to: 240, by: barSec)),
+                     phraseStartsSec: Array(stride(from: 0.0, to: 240, by: 8 * barSec)),
                      tempoStability: 1, camelotKey: key, integratedLUFS: -14,
                      loudnessCurveLUFS: [], energyCurve: [], hasFadeOut: false,
                      endsInSilence: false, vocalPresence: [], segments: [],
-                     mixInSec: 8, mixOutSec: 220, mixable: true,
+                     mixInSec: 4 * barSec, mixOutSec: 220, mixable: true,
                      confidence: Confidence(bpm: 1, downbeats: 1, key: 1))
     }
 }

@@ -79,7 +79,7 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
-    static let bandFrequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+    static let bandFrequencies: [Float] = [60, 150, 400, 1000, 2400, 15000]
     private static let streamHeadroomCeiling: Float = 0.89
 
     private(set) var isPlaying = false
@@ -333,7 +333,6 @@ final class PlayerCore {
         engine.connect(outputLimiter, to: engine.outputNode, format: nil)
 
         engine.mainMixerNode.outputVolume = volume
-        try? engine.start()
     }
 
     private func configureEQ(_ node: AVAudioUnitEQ) {
@@ -915,6 +914,9 @@ final class PlayerCore {
 
     private func startStream(_ track: Track, at seconds: Double, token: Int) {
         isUsingStreamPlayer = true
+        if engine.isRunning {
+            engine.pause()
+        }
         playerA.stop()
         playerB.stop()
         stopBeatLoop()

@@ -18,9 +18,8 @@ final class StreamBeatTap {
     private init() {}
 
     func attach(to item: AVPlayerItem) {
-        // Spatial playback remains limited to formats that do not rewrite the
-        // source channel layout. No MTAudioProcessingTap is installed here.
-        item.allowedAudioSpatializationFormats = .monoAndStereo
+        // Spatial playback allows mono, stereo, and multichannel spatialization
+        item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         SpectrumAnalyzer.ingestStreamLevel(0)
     }
 }

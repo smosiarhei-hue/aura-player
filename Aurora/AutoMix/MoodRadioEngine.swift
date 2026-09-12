@@ -200,7 +200,7 @@ final class MoodRadioEngine {
 
         if let first = sequenced.first {
             queue = sequenced
-            PlayerCore.shared.play(first, newQueue: queue)
+            PlaybackCommandRouter.shared.play(first, queue: queue)
             rememberPlayed(first)
         }
 
@@ -223,12 +223,16 @@ final class MoodRadioEngine {
             if self.queue.isEmpty {
                 self.queue = freshSequenced
                 if let first = freshSequenced.first {
-                    PlayerCore.shared.play(first, newQueue: freshSequenced)
+                    PlaybackCommandRouter.shared.play(first, queue: freshSequenced)
                     self.rememberPlayed(first)
                 }
             } else {
                 self.queue.append(contentsOf: freshSequenced)
-                PlayerCore.shared.appendToQueue(freshSequenced)
+                if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                    AutoMixV2Runtime.shared.appendQueue(freshSequenced)
+                } else {
+                    PlayerCore.shared.appendToQueue(freshSequenced)
+                }
             }
         }
     }
