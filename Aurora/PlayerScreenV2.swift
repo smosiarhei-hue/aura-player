@@ -100,21 +100,30 @@ struct PlayerScreenV2: View {
     private var background: some View {
         ZStack {
             if isFullScreenVideoShot, let videoLooperPlayer {
-                VideoShotPlayerView(player: videoLooperPlayer)
+                // Размытый атмосферный фон на весь экран (ambient blur по краям)
+                VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .scaledToFill()
+                    .blur(radius: 40)
+                    .scaleEffect(1.15)
+                    .clipped()
+                    .ignoresSafeArea()
+
+                // Четкое видео 1080x1920 (9:16) от лейбла без обрезки по бокам и без искусственного зума
+                VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspect)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                     .ignoresSafeArea()
 
                 // Элегантная кинематографичная виньетка:
                 // Верх — легкое затемнение под хедер; центр — кристально чистое видео; низ — глубокое затемнение под контролы
                 LinearGradient(stops: [
-                    .init(color: .black.opacity(0.45), location: 0.0),
-                    .init(color: .black.opacity(0.10), location: 0.18),
-                    .init(color: .clear, location: 0.35),
-                    .init(color: .clear, location: 0.50),
-                    .init(color: .black.opacity(0.45), location: 0.68),
-                    .init(color: .black.opacity(0.85), location: 0.88),
+                    .init(color: .black.opacity(0.48), location: 0.0),
+                    .init(color: .black.opacity(0.12), location: 0.18),
+                    .init(color: .clear, location: 0.32),
+                    .init(color: .clear, location: 0.52),
+                    .init(color: .black.opacity(0.35), location: 0.68),
+                    .init(color: .black.opacity(0.80), location: 0.86),
                     .init(color: .black.opacity(0.96), location: 1.0)
                 ], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
@@ -170,9 +179,8 @@ struct PlayerScreenV2: View {
 
     private func artworkStage(side: CGFloat) -> some View {
         ZStack {
-            if isFullScreenVideoShot && !showLyricsMode {
-                // В полноэкранном режиме видеошота центральный квадрат прозрачен,
-                // открывая полный обзор красивого вертикального видео лейбла
+            if isFullScreenVideoShot {
+                // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
                 Color.clear
                     .frame(width: side, height: side)
             } else {
@@ -191,7 +199,7 @@ struct PlayerScreenV2: View {
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(
-                    .white.opacity(isFullScreenVideoShot && !showLyricsMode ? 0.0 : (player.isTransitionActive ? 0.32 : 0.14)),
+                    .white.opacity(isFullScreenVideoShot ? 0.0 : (player.isTransitionActive ? 0.32 : 0.14)),
                     lineWidth: 1
                 )
         )
@@ -227,9 +235,19 @@ struct PlayerScreenV2: View {
 
     private func lyricsOverlay(side: CGFloat) -> some View {
         ZStack {
-            Color.black.opacity(0.60)
+            if !isFullScreenVideoShot {
+                Color.black.opacity(0.60)
+            }
             VStack {
-                HStack { Spacer(); Button { openModal(.lyrics) } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").padding(14) } }
+                HStack {
+                    Spacer()
+                    Button { openModal(.lyrics) } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.80))
+                            .padding(14)
+                    }
+                }
                 Spacer()
             }
             VStack(spacing: 14) {
@@ -238,7 +256,11 @@ struct PlayerScreenV2: View {
                     let pair = currentLyricsPair
                     Text(pair.current).font(AG.display(.largeTitle, .heavy)).foregroundStyle(AG.ink)
                         .multilineTextAlignment(.center).lineLimit(4).minimumScaleFactor(0.7).padding(.horizontal, 20)
-                    if let next = pair.next { Text(next).font(AG.text(.body, .semibold)).foregroundStyle(AG.inkFaint).lineLimit(2) }
+                        .shadow(color: .black.opacity(0.7), radius: 8, y: 2)
+                    if let next = pair.next {
+                        Text(next).font(AG.text(.body, .semibold)).foregroundStyle(AG.inkFaint).lineLimit(2)
+                            .shadow(color: .black.opacity(0.7), radius: 6, y: 1)
+                    }
                 }
             }
         }.frame(width: side, height: side)
@@ -335,16 +357,213 @@ struct PlayerScreenV2: View {
         List(artistChoices) { artist in Button(artist.name) { activeModal = nil; selectedArtist = artist } }
             .navigationTitle("Исполнители").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
     }
+
+    private func updatePalette(from image: UIImage) async {
+        let hexes = await Task.detached(priority: .utility) { LibraryStore.artworkPalette(from: image) }.value
+        let colors = hexes.compactMap(Color.init(hex:)); guard !colors.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
+    }
+    private func refreshPalette() async {
+        guard let track, paletteTrackId != track.id else { return }; paletteTrackId = track.id
+        if let image = LibraryStore.cachedArtworkImage(for: track) { await updatePalette(from: image); return }
+        if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) { await updatePalette(from: image) }
+        else if !track.palette.isEmpty { artworkPaletteColors = track.palette }
+    }
+    private func loadLyrics() async {
+        lyrics = nil; guard let requested = track else { lyricsLoading = false; return }
+        lyricsLoading = true; let result = try? await LyricsService.shared.fetchLyrics(for: requested)
+        guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }; lyrics = result; lyricsLoading = false
+    }
+    private func loadVideoShot() async {
+        guard let track else { videoShotURL = nil; teardownVideoLooper(); return }
+        let id = PlayerCore.yandexTrackID(from: track); guard !id.isEmpty else { videoShotURL = nil; teardownVideoLooper(); return }
+        let url = await YandexMusicService.shared.getVideoShotUrl(for: id)
+        guard !Task.isCancelled, player.currentTrack?.id == track.id else { return }
+        videoShotURL = url; if isVideoShotEnabled, let url { setupVideoLooper(url: url) } else { teardownVideoLooper() }
+    }
+    private func setupVideoLooper(url: URL) {
+        teardownVideoLooper()
+        let item = AVPlayerItem(url: url)
+        let player = AVQueuePlayer(playerItem: item)
+        player.isMuted = true
+        player.actionAtItemEnd = .none
+        player.preventsDisplaySleepDuringVideoPlayback = false
+        videoLooper = AVPlayerLooper(player: player, templateItem: item)
+        videoLooperPlayer = player
+        player.play()
+    }
+    private func teardownVideoLooper() { videoLooperPlayer?.pause(); videoLooperPlayer = nil; videoLooper = nil }
+    private func toggleVideoShot() { isVideoShotEnabled.toggle(); UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled"); if isVideoShotEnabled, let videoShotURL { setupVideoLooper(url: videoShotURL) } else { teardownVideoLooper() } }
+    private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }
+    private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
+    private func previousTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.previous() }
+    private func nextTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.next() }
+    private func close() { Haptics.tap(.light); isPresented = false }
+    private func openArtist() {
+        guard let track else { return }; resolvingArtist = true
+        Task { let result = await YandexMusicService.shared.resolvePlayerArtists(for: track); resolvingArtist = false; artistChoices = result; if result.count == 1 { selectedArtist = result[0] } else if !result.isEmpty { activeModal = .artistSelection } }
+    }
+    private func startTrackWave() {
+        guard let current = track else { return }; waveLoading = true
+        Task {
+            let tracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45); waveLoading = false
+            guard !tracks.isEmpty else { return }; player.queue = player.isV2Enabled ? [current] + tracks.filter { $0.id != current.id } : tracks
+            waveActive = true; waveMessage = "🌊 Моя волна запущена"; try? await Task.sleep(for: .seconds(2.5)); waveMessage = nil
+        }
+    }
 }
 
-struct PlayerQualityModalView: View {
-    let player: ActivePlayerPresentation
-    let onDismiss: () -> Void
+struct PlayerTimelineSection<Center: View>: View {
+    @State private var player = ActivePlayerPresentation()
+    @State private var isScrubbing = false
+    @State private var scrubProgress = 0.0
+    @State private var lastFeedbackProgress = 0.0
+    private let feedback = UISelectionFeedbackGenerator()
+    private let center: Center
+    init(@ViewBuilder center: () -> Center) { self.center = center() }
+    private var effectiveProgress: Double { isScrubbing ? scrubProgress : player.progress }
 
-    @State private var showingSettings = false
+    var body: some View {
+        VStack(spacing: 8) {
+            GeometryReader { geo in
+                let duration = max(player.duration, 0.01)
+                let fraction = min(1, max(0, effectiveProgress / duration))
+                let width = geo.size.width * fraction
+                let height: CGFloat = isScrubbing ? 10 : 4
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.20)).frame(height: height)
+                    Capsule().fill(.white).frame(width: max(height, width), height: height)
+                    if isScrubbing { Circle().fill(.white).frame(width: 22, height: 22).offset(x: width - 11).shadow(radius: 6) }
+                }
+                .frame(maxHeight: .infinity).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if !isScrubbing { isScrubbing = true; feedback.prepare() }
+                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1))); scrubProgress = f * duration
+                        if abs(f - lastFeedbackProgress) > 0.04 { Haptics.scrubTick(feedback); lastFeedbackProgress = f }
+                    }
+                    .onEnded { value in
+                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1))); player.seek(to: f * duration)
+                        withAnimation(AG.spring) { isScrubbing = false }
+                    })
+            }.frame(height: 24)
+            HStack {
+                Text(player.formatted(effectiveProgress)).font(AG.text(.caption, .semibold).monospacedDigit()).foregroundStyle(AG.inkMuted)
+                Spacer(); center; Spacer()
+                Text("-" + player.formatted(max(0, player.duration - effectiveProgress))).font(AG.text(.caption, .semibold).monospacedDigit()).foregroundStyle(AG.inkMuted)
+            }
+        }.task { await player.observeTimeline() }.onChange(of: player.currentTrack?.id) { _, _ in isScrubbing = false }
+    }
+}
+
+struct AutoMixBadge: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let title = "Mixing"
+    private let sweepCycle: TimeInterval = 2.4
 
     var body: some View {
         Group {
+            if reduceMotion {
+                mark(sweep: nil)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                    let time = context.date.timeIntervalSinceReferenceDate
+                    let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
+                    mark(sweep: CGFloat(phase))
+                }
+            }
+        }
+        .accessibilityLabel(Text(title))
+        .allowsHitTesting(false)
+    }
+
+    private func mark(sweep: CGFloat?) -> some View {
+        let label = Text(title)
+            .font(.system(size: 13, weight: .semibold, design: .default))
+
+        return label
+            .foregroundStyle(.white.opacity(0.85))
+            .overlay {
+                if let sweep {
+                    GeometryReader { geo in
+                        let width = max(geo.size.width, 1)
+                        let band = max(width * 0.55, 24)
+                        let travel = width + band * 2
+
+                        LinearGradient(
+                            colors: [.clear, .white.opacity(0.40), .white, .white.opacity(0.40), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: band)
+                        .offset(x: -band + sweep * travel)
+                        .frame(width: width, height: geo.size.height, alignment: .leading)
+                        .clipped()
+                        .blendMode(.plusLighter)
+                    }
+                    .mask(label)
+                    .allowsHitTesting(false)
+                }
+            }
+            .shadow(color: .white.opacity(0.40), radius: 6)
+            .shadow(color: .white.opacity(0.15), radius: 12)
+            .fixedSize()
+            .compositingGroup()
+    }
+}
+
+struct NativeVolumeSlider: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let view = MPVolumeView(frame: .zero); view.showsRouteButton = false; view.showsVolumeSlider = true
+        DispatchQueue.main.async { style(view) }; return view
+    }
+    func updateUIView(_ uiView: MPVolumeView, context: Context) { DispatchQueue.main.async { style(uiView) } }
+    private func style(_ view: MPVolumeView) {
+        for case let slider as UISlider in view.subviews {
+            slider.isContinuous = true; slider.minimumTrackTintColor = .white.withAlphaComponent(0.85); slider.maximumTrackTintColor = .white.withAlphaComponent(0.25)
+        }
+    }
+}
+
+struct VideoShotPlayerView: UIViewRepresentable {
+    let player: AVPlayer?
+    var videoGravity: AVLayerVideoGravity = .resizeAspectFill
+
+    func makeUIView(context: Context) -> PlayerUIView {
+        let view = PlayerUIView()
+        view.videoGravity = videoGravity
+        view.player = player
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerUIView, context: Context) {
+        uiView.videoGravity = videoGravity
+        uiView.player = player
+    }
+
+    final class PlayerUIView: UIView {
+        override static var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        var videoGravity: AVLayerVideoGravity = .resizeAspectFill {
+            didSet { playerLayer.videoGravity = videoGravity }
+        }
+        var player: AVPlayer? {
+            get { playerLayer.player }
+            set {
+                playerLayer.player = newValue
+                playerLayer.videoGravity = videoGravity
+            }
+        }
+    }
+}
+
+struct PlayerQualityModalView: View {
+    @Bindable var player: ActivePlayerPresentation
+    let onDismiss: () -> Void
+    @State private var showingSettings = false
+
+    var body: some View {
+        NavigationStack {
             if showingSettings {
                 qualitySettingsList
             } else {
@@ -523,187 +742,6 @@ struct PlayerQualityModalView: View {
             return "Формат: \(codec) • \(brText)"
         }
         return nil
-    }
-    private var artistSelectionSheet: some View {
-        List(artistChoices) { artist in Button(artist.name) { activeModal = nil; selectedArtist = artist } }
-            .navigationTitle("Исполнители").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
-    }
-
-    private func updatePalette(from image: UIImage) async {
-        let hexes = await Task.detached(priority: .utility) { LibraryStore.artworkPalette(from: image) }.value
-        let colors = hexes.compactMap(Color.init(hex:)); guard !colors.isEmpty else { return }
-        withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
-    }
-    private func refreshPalette() async {
-        guard let track, paletteTrackId != track.id else { return }; paletteTrackId = track.id
-        if let image = LibraryStore.cachedArtworkImage(for: track) { await updatePalette(from: image); return }
-        if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) { await updatePalette(from: image) }
-        else if !track.palette.isEmpty { artworkPaletteColors = track.palette }
-    }
-    private func loadLyrics() async {
-        lyrics = nil; guard let requested = track else { lyricsLoading = false; return }
-        lyricsLoading = true; let result = try? await LyricsService.shared.fetchLyrics(for: requested)
-        guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }; lyrics = result; lyricsLoading = false
-    }
-    private func loadVideoShot() async {
-        guard let track else { videoShotURL = nil; teardownVideoLooper(); return }
-        let id = PlayerCore.yandexTrackID(from: track); guard !id.isEmpty else { videoShotURL = nil; teardownVideoLooper(); return }
-        let url = await YandexMusicService.shared.getVideoShotUrl(for: id)
-        guard !Task.isCancelled, player.currentTrack?.id == track.id else { return }
-        videoShotURL = url; if isVideoShotEnabled, let url { setupVideoLooper(url: url) } else { teardownVideoLooper() }
-    }
-    private func setupVideoLooper(url: URL) {
-        teardownVideoLooper()
-        let item = AVPlayerItem(url: url)
-        let player = AVQueuePlayer(playerItem: item)
-        player.isMuted = true
-        player.actionAtItemEnd = .none
-        player.preventsDisplaySleepDuringVideoPlayback = false
-        videoLooper = AVPlayerLooper(player: player, templateItem: item)
-        videoLooperPlayer = player
-        player.play()
-    }
-    private func teardownVideoLooper() { videoLooperPlayer?.pause(); videoLooperPlayer = nil; videoLooper = nil }
-    private func toggleVideoShot() { isVideoShotEnabled.toggle(); UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled"); if isVideoShotEnabled, let videoShotURL { setupVideoLooper(url: videoShotURL) } else { teardownVideoLooper() } }
-    private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }
-    private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
-    private func previousTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.previous() }
-    private func nextTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.next() }
-    private func close() { Haptics.tap(.light); isPresented = false }
-    private func openArtist() {
-        guard let track else { return }; resolvingArtist = true
-        Task { let result = await YandexMusicService.shared.resolvePlayerArtists(for: track); resolvingArtist = false; artistChoices = result; if result.count == 1 { selectedArtist = result[0] } else if !result.isEmpty { activeModal = .artistSelection } }
-    }
-    private func startTrackWave() {
-        guard let current = track else { return }; waveLoading = true
-        Task {
-            let tracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45); waveLoading = false
-            guard !tracks.isEmpty else { return }; player.queue = player.isV2Enabled ? [current] + tracks.filter { $0.id != current.id } : tracks
-            waveActive = true; waveMessage = "🌊 Моя волна запущена"; try? await Task.sleep(for: .seconds(2.5)); waveMessage = nil
-        }
-    }
-}
-
-struct PlayerTimelineSection<Center: View>: View {
-    @State private var player = ActivePlayerPresentation()
-    @State private var isScrubbing = false
-    @State private var scrubProgress = 0.0
-    @State private var lastFeedbackProgress = 0.0
-    private let feedback = UISelectionFeedbackGenerator()
-    private let center: Center
-    init(@ViewBuilder center: () -> Center) { self.center = center() }
-    private var effectiveProgress: Double { isScrubbing ? scrubProgress : player.progress }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            GeometryReader { geo in
-                let duration = max(player.duration, 0.01)
-                let fraction = min(1, max(0, effectiveProgress / duration))
-                let width = geo.size.width * fraction
-                let height: CGFloat = isScrubbing ? 10 : 4
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.20)).frame(height: height)
-                    Capsule().fill(.white).frame(width: max(height, width), height: height)
-                    if isScrubbing { Circle().fill(.white).frame(width: 22, height: 22).offset(x: width - 11).shadow(radius: 6) }
-                }
-                .frame(maxHeight: .infinity).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !isScrubbing { isScrubbing = true; feedback.prepare() }
-                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1))); scrubProgress = f * duration
-                        if abs(f - lastFeedbackProgress) > 0.04 { Haptics.scrubTick(feedback); lastFeedbackProgress = f }
-                    }
-                    .onEnded { value in
-                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1))); player.seek(to: f * duration)
-                        withAnimation(AG.spring) { isScrubbing = false }
-                    })
-            }.frame(height: 24)
-            HStack {
-                Text(player.formatted(effectiveProgress)).font(AG.text(.caption, .semibold).monospacedDigit()).foregroundStyle(AG.inkMuted)
-                Spacer(); center; Spacer()
-                Text("-" + player.formatted(max(0, player.duration - effectiveProgress))).font(AG.text(.caption, .semibold).monospacedDigit()).foregroundStyle(AG.inkMuted)
-            }
-        }.task { await player.observeTimeline() }.onChange(of: player.currentTrack?.id) { _, _ in isScrubbing = false }
-    }
-}
-
-struct AutoMixBadge: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let title = "Mixing"
-    private let sweepCycle: TimeInterval = 2.4
-
-    var body: some View {
-        Group {
-            if reduceMotion {
-                mark(sweep: nil)
-            } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-                    let time = context.date.timeIntervalSinceReferenceDate
-                    let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
-                    mark(sweep: CGFloat(phase))
-                }
-            }
-        }
-        .accessibilityLabel(Text(title))
-        .allowsHitTesting(false)
-    }
-
-    private func mark(sweep: CGFloat?) -> some View {
-        let label = Text(title)
-            .font(.system(size: 13, weight: .semibold, design: .default))
-
-        return label
-            .foregroundStyle(.white.opacity(0.85))
-            .overlay {
-                if let sweep {
-                    GeometryReader { geo in
-                        let width = max(geo.size.width, 1)
-                        let band = max(width * 0.55, 24)
-                        let travel = width + band * 2
-
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.40), .white, .white.opacity(0.40), .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: band)
-                        .offset(x: -band + sweep * travel)
-                        .frame(width: width, height: geo.size.height, alignment: .leading)
-                        .clipped()
-                        .blendMode(.plusLighter)
-                    }
-                    .mask(label)
-                    .allowsHitTesting(false)
-                }
-            }
-            .shadow(color: .white.opacity(0.40), radius: 6)
-            .shadow(color: .white.opacity(0.15), radius: 12)
-            .fixedSize()
-            .compositingGroup()
-    }
-}
-
-struct NativeVolumeSlider: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let view = MPVolumeView(frame: .zero); view.showsRouteButton = false; view.showsVolumeSlider = true
-        DispatchQueue.main.async { style(view) }; return view
-    }
-    func updateUIView(_ uiView: MPVolumeView, context: Context) { DispatchQueue.main.async { style(uiView) } }
-    private func style(_ view: MPVolumeView) {
-        for case let slider as UISlider in view.subviews {
-            slider.isContinuous = true; slider.minimumTrackTintColor = .white.withAlphaComponent(0.85); slider.maximumTrackTintColor = .white.withAlphaComponent(0.25)
-        }
-    }
-}
-
-struct VideoShotPlayerView: UIViewRepresentable {
-    let player: AVPlayer?
-    func makeUIView(context: Context) -> PlayerUIView { let view = PlayerUIView(); view.player = player; return view }
-    func updateUIView(_ uiView: PlayerUIView, context: Context) { uiView.player = player }
-    final class PlayerUIView: UIView {
-        override static var layerClass: AnyClass { AVPlayerLayer.self }
-        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
-        var player: AVPlayer? { get { playerLayer.player } set { playerLayer.player = newValue; playerLayer.videoGravity = .resizeAspectFill } }
     }
 }
 
