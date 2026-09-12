@@ -59,6 +59,7 @@ final class AutoMixV2Runtime {
         compositeSource = builtComposite; coordinator = builtCoordinator; lastError = startupError
         builtCoordinator?.onChange = { [weak self] state in self?.apply(state) }
     }
+    func applyUserEQ(gains: [Float], enabled: Bool) { coordinator?.applyUserEQ(gains: gains, enabled: enabled) }
     func engineSelectionChanged(isV2Enabled: Bool) async { if isV2Enabled { await adoptLegacyTrackIfNeeded() } else { await stop() } }
     func adoptLegacyTrackIfNeeded() async {
         guard currentTrack == nil, let track = PlayerCore.shared.currentTrack else { return }

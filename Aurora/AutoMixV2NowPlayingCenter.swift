@@ -37,11 +37,7 @@ final class AutoMixV2NowPlayingCenter {
 
     func setFullPlayerVisible(_ visible: Bool) {
         fullPlayerVisible = visible
-        if UIApplication.shared.applicationState == .active {
-            suppressSystemSurfacePreservingArtwork()
-        } else {
-            Task { @MainActor [weak self] in await self?.refresh() }
-        }
+        Task { @MainActor [weak self] in await self?.refresh() }
     }
 
     private func refresh() async {
@@ -52,13 +48,7 @@ final class AutoMixV2NowPlayingCenter {
             return
         }
 
-        // Preload and retain artwork while the app is visible so lock-screen and
-        // Dynamic Island metadata appear immediately after the app backgrounds.
         loadArtwork(for: track)
-        if UIApplication.shared.applicationState == .active {
-            suppressSystemSurfacePreservingArtwork()
-            return
-        }
 
         let timeline = await runtime.playbackTimeline()
         let duration = max(0, timeline?.duration ?? track.duration)

@@ -99,7 +99,8 @@ final class PlaybackAudioSessionCoordinator {
             .map { "\($0.portType.rawValue):\($0.portName)" }
             .joined(separator: ", ")
 
-        print("[AutoMix V2] audio session active actual=\(actualRate)Hz/\(actualBuffer)s route=\(route)")
+        let spatial = session.isSpatialAudioEnabled
+        print("[AutoMix V2] audio session active actual=\(actualRate)Hz/\(actualBuffer)s route=\(route) spatial=\(spatial)")
         Task {
             await AutoMixV2Runtime.shared.diagnostics.recordAudioSession(
                 preferredSampleRate: actualRate,
@@ -110,7 +111,7 @@ final class PlaybackAudioSessionCoordinator {
             await AutoMixV2Runtime.shared.diagnostics.record(
                 MixDiagnosticEvent(
                     category: "audio-session",
-                    message: "Active route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s"
+                    message: "Active route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s spatial=\(spatial)"
                 )
             )
         }

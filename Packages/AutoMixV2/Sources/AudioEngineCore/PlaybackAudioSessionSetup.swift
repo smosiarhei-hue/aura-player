@@ -38,7 +38,7 @@ public final class SystemPlaybackAudioSessionConfiguration: PlaybackAudioSession
         try session.setCategory(
             .playback,
             mode: .default,
-            policy: .longFormAudio,
+            policy: .default,
             options: Self.categoryOptions
         )
     }

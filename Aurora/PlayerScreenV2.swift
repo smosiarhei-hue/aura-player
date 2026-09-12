@@ -195,7 +195,7 @@ struct PlayerScreenV2: View {
             Menu {
                 Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: { Label("Текст песни", systemImage: "quote.bubble") }
                 Button { openModal(.queue) } label: { Label("Очередь", systemImage: "list.bullet") }
-                Button { openModal(.equalizer) } label: { Label("Эквалайзер", systemImage: "slider.vertical.3") }.disabled(player.isV2Enabled)
+                Button { openModal(.equalizer) } label: { Label("Эквалайзер", systemImage: "slider.vertical.3") }
                 Button { openModal(.sleepTimer) } label: { Label("Таймер сна", systemImage: "timer") }
                 Button { openModal(.settings) } label: { Label("Настройки", systemImage: "gearshape") }
                 Button {
@@ -363,9 +363,13 @@ struct PlayerScreenV2: View {
             }.padding(.horizontal, 4)
             HStack {
                 GlassIconButton(systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble", tint: showLyricsMode ? AG.amber : AG.inkMuted, accessibilityLabel: "Текст песни") { withAnimation(AG.spring) { showLyricsMode.toggle() } }
-                Spacer(); AirPlayButtonView().frame(width: tapSide, height: tapSide).glassCircle(); Spacer()
+                Spacer()
+                GlassIconButton(systemImage: "slider.vertical.3", tint: player.eqEnabled ? AG.amber : AG.inkMuted, accessibilityLabel: "Эквалайзер") { openModal(.equalizer) }
+                Spacer()
+                AirPlayButtonView().frame(width: tapSide, height: tapSide).glassCircle()
+                Spacer()
                 GlassIconButton(systemImage: "list.bullet", tint: AG.inkMuted, accessibilityLabel: "Очередь") { openModal(.queue) }
-            }.padding(.horizontal, 28)
+            }.padding(.horizontal, 24)
         }
     }
     private var metadataRow: some View {
@@ -483,7 +487,9 @@ struct PlayerScreenV2: View {
     private func setupVideoLooper(url: URL) {
         teardownVideoLooper()
         let itemA = AVPlayerItem(url: url)
+        itemA.allowedAudioSpatializationFormats = []
         let playerA = AVQueuePlayer(playerItem: itemA)
+        playerA.volume = 0
         playerA.isMuted = true
         playerA.actionAtItemEnd = .none
         playerA.preventsDisplaySleepDuringVideoPlayback = false
@@ -491,7 +497,9 @@ struct PlayerScreenV2: View {
         videoLooperPlayer = playerA
 
         let itemB = AVPlayerItem(url: url)
+        itemB.allowedAudioSpatializationFormats = []
         let playerB = AVQueuePlayer(playerItem: itemB)
+        playerB.volume = 0
         playerB.isMuted = true
         playerB.actionAtItemEnd = .none
         playerB.preventsDisplaySleepDuringVideoPlayback = false

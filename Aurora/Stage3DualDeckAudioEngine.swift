@@ -16,6 +16,7 @@ final class DualDeckAudioEngine {
         init(_ deck: Deck) { self.deck = deck }
     }
     private let graph = AVAudioEngine(); private let a = Slot(.a); private let b = Slot(.b)
+    private let userEQ = AVAudioUnitEQ(numberOfBands: 6)
     init() throws {
         for s in [a,b] {
             graph.attach(s.player); graph.attach(s.timePitch); graph.attach(s.eq); graph.attach(s.delay); graph.attach(s.mixer)
@@ -23,9 +24,38 @@ final class DualDeckAudioEngine {
             graph.connect(s.eq, to: s.delay, format: nil); graph.connect(s.delay, to: s.mixer, format: nil)
             graph.connect(s.mixer, to: graph.mainMixerNode, format: nil); neutral(s)
         }
+        graph.attach(userEQ)
+        configureUserEQ()
+        graph.connect(graph.mainMixerNode, to: userEQ, format: nil)
+        graph.connect(userEQ, to: graph.outputNode, format: nil)
         a.mixer.outputVolume = 1; b.mixer.outputVolume = 0
         // Fixed headroom prevents inter-sample clipping when two decks and delay overlap.
         graph.mainMixerNode.outputVolume = 0.82
+    }
+    private func configureUserEQ() {
+        let freqs: [Float] = [60, 150, 400, 1000, 2400, 15000]
+        for (i, freq) in freqs.enumerated() {
+            let band = userEQ.bands[i]
+            band.frequency = freq
+            band.bypass = false
+            if i == 0 {
+                band.filterType = .lowShelf
+            } else if i == freqs.count - 1 {
+                band.filterType = .highShelf
+            } else {
+                band.filterType = .parametric
+                band.bandwidth = 1.0
+            }
+            band.gain = 0
+        }
+        applyUserEQ(gains: PlayerCore.shared.eqGains, enabled: PlayerCore.shared.eqEnabled)
+    }
+    func applyUserEQ(gains: [Float], enabled: Bool) {
+        userEQ.bypass = !enabled
+        guard enabled else { return }
+        for (i, gain) in gains.prefix(userEQ.bands.count).enumerated() {
+            userEQ.bands[i].gain = gain
+        }
     }
     func prepare(_ deck: Deck, fileURL: URL, startTimeSeconds: Double = 0) async throws {
         try Task.checkCancellation(); let s=slot(deck); s.generation=UUID(); let generation=s.generation

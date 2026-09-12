@@ -39,6 +39,9 @@ final class PlaybackCoordinator {
         fallbackCrossfadeSeconds = min(12, max(0.75, crossfadeSeconds.isFinite ? crossfadeSeconds : 6))
         if automaticallyMonitor { startMonitor() }
     }
+    func applyUserEQ(gains: [Float], enabled: Bool) {
+        engine.applyUserEQ(gains: gains, enabled: enabled)
+    }
     func play(trackID: TrackID) async throws { try await play(queue: [trackID], startIndex: 0) }
     func play(queue: [TrackID], startIndex: Int) async throws {
         guard queue.indices.contains(startIndex) else { throw PlaybackCoordinatorError.noPreparedTrack }

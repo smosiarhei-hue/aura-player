@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var socialAuth = SocialAuthStore.shared
     @State private var engineSelection = AutoMixEngineSelectionStore.shared
     @State private var showYandexAuthSheet = false
+    @State private var showEqualizerSheet = false
     @State private var isSyncingLikes = false
 
     var body: some View {
@@ -75,6 +76,23 @@ struct SettingsView: View {
                     Text("Движок воспроизведения")
                 } footer: {
                     Text("Старый AutoMix и сетевое планирование Gemini отключены. Новый AutoMix анализирует и сводит треки только на устройстве.")
+                }
+
+                Section("Звук") {
+                    Button {
+                        showEqualizerSheet = true
+                    } label: {
+                        HStack {
+                            Label("Эквалайзер", systemImage: "slider.vertical.3")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text(player.eqEnabled ? "Включён" : "Выключен")
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
                 }
 
                 Section("Качество звука") {
@@ -150,6 +168,7 @@ struct SettingsView: View {
             }
             .navigationTitle("Настройки")
             .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
+            .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
             .onAppear {
                 if player.transitionMode == .automix {
                     player.transitionMode = .crossfade

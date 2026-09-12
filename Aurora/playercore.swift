@@ -220,7 +220,7 @@ final class PlayerCore {
     private func configureSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
+            try session.setCategory(.playback, mode: .default, policy: .default, options: [])
             try session.setActive(true)
         } catch {
             print("AVAudioSession error: \(error)")
@@ -429,6 +429,7 @@ final class PlayerCore {
         for (i, band) in eqNodeA.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in eqNodeB.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in looperEQ.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
+        AutoMixV2Runtime.shared.applyUserEQ(gains: eqGains, enabled: eqEnabled)
     }
 
     private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
