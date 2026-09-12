@@ -76,6 +76,31 @@ final class AutoMixV2Runtime {
             catch { guard token == requestID else { return }; lastError = Self.userMessage(for: error) }
         }
     }
+    func appendQueue(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        guard let coordinator else {
+            queue.append(contentsOf: tracks)
+            return
+        }
+        let token = beginRequest()
+        queueUpdateTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let registered = try await self.register(tracks, token: token)
+                try self.check(token)
+                self.queue.append(contentsOf: registered.tracks)
+                self.queueIDs.append(contentsOf: registered.ids)
+                try await coordinator.appendQueue(registered.ids)
+                try self.check(token)
+                self.apply(coordinator.snapshot())
+            } catch is CancellationError {
+                return
+            } catch {
+                guard token == self.requestID else { return }
+                self.lastError = Self.userMessage(for: error)
+            }
+        }
+    }
     func play(_ track: Track, queue newQueue: [Track]) async {
         guard let coordinator else { lastError = "AutoMix V2 audio engine недоступен"; return }
         let token = beginRequest(); isLoading = true; lastError = nil
