@@ -141,6 +141,8 @@ final class AutoMixEngineSelectionStore {
     }
 }
 
+typealias NeuroMixRuntime = AutoMixEngineSelectionStore.NeuroMixRuntime
+
 @Observable
 @MainActor
 final class AutoMixV2Runtime {
