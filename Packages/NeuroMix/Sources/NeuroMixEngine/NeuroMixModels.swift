@@ -51,7 +51,13 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
         self.vocalActivityCurve = vocalActivityCurve.map(Self.clamp)
     }
 
-    public struct NeuroBeatGrid: Sendable, Codable, Equatable {
+    private static func clamp(_ value: Double) -> Double {
+        guard value.isFinite else { return 0 }
+        return min(1, max(0, value))
+    }
+}
+
+public struct NeuroBeatGrid: Sendable, Codable, Equatable {
         public let bpm: Double
         public let offsetSeconds: Double
         public let beatsPerBar: Int
@@ -72,9 +78,9 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
         public var barDurationSeconds: Double {
             bpm > 0 ? Double(beatsPerBar) * 60 / bpm : 0
         }
-    }
+}
 
-    public struct NeuroPhraseMarker: Sendable, Codable, Equatable {
+public struct NeuroPhraseMarker: Sendable, Codable, Equatable {
         public let startSeconds: Double
         public let lengthBars: Int
         public let energy: Double
@@ -86,9 +92,9 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
             self.energy = min(1, max(0, energy.isFinite ? energy : 0))
             self.isDrop = isDrop
         }
-    }
+}
 
-    public enum NeuroSegmentKind: String, Sendable, Codable, Equatable {
+public enum NeuroSegmentKind: String, Sendable, Codable, Equatable {
         case intro
         case verse
         case chorus
@@ -98,9 +104,9 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
         case outro
         case silence
         case unknown
-    }
+}
 
-    public struct NeuroSegment: Sendable, Codable, Equatable {
+public struct NeuroSegment: Sendable, Codable, Equatable {
         public let startSeconds: Double
         public let endSeconds: Double
         public let kind: NeuroSegmentKind
@@ -110,12 +116,6 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
             self.endSeconds = max(self.startSeconds, endSeconds.isFinite ? endSeconds : self.startSeconds)
             self.kind = kind
         }
-    }
-
-    private static func clamp(_ value: Double) -> Double {
-        guard value.isFinite else { return 0 }
-        return min(1, max(0, value))
-    }
 }
 
 public enum NeuroTransitionKind: String, Sendable, Codable, Equatable {
