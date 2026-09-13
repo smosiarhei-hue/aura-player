@@ -280,6 +280,10 @@ final class NeuroMixRuntime {
                 let targetProfile = try await self.analyzer.profile(
                     for: TrackID(raw: targetTrack.id.uuidString), fileURL: targetTrack.url)
                 let plan = NeuroMixPlanningRuntime.shared.plan(from: sourceProfile, to: targetProfile)
+                self.currentProfile = sourceProfile
+                self.nextProfile = targetProfile
+                self.transitionPlan = plan
+                self.pipelineStatus = "DJ-переход: \(plan.kind.rawValue)"
                 let incomingDeck: Deck = self.activeDeck == .a ? .b : .a
                 let runner = NeuroMixRealtimeTransitionRunner(engine: engine)
                 try await runner.execute(plan, incomingURL: targetTrack.url,
@@ -288,11 +292,13 @@ final class NeuroMixRuntime {
                 self.activeDeck = incomingDeck
                 self.currentIndex = nextIndex
                 self.currentTrack = targetTrack
+                self.pipelineStatus = "Переход завершён"
                 self.transitionTask = nil
             } catch is CancellationError {
                 self.transitionTask = nil
             } catch {
                 self.lastError = String(describing: error)
+                self.pipelineStatus = "Ошибка перехода NeuroMix"
                 if force { self.isPlaying = false }
                 self.transitionTask = nil
             }

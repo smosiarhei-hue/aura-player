@@ -234,7 +234,7 @@ public struct NeuroMixSettings: Sendable, Equatable {
     public var minimumConfidence: Double
 
     public init(
-        crossfadeSeconds: Double = 10,
+        crossfadeSeconds: Double = 14,
         maxTempoCorrection: Double = 0.06,
         minimumConfidence: Double = 0.55
     ) {

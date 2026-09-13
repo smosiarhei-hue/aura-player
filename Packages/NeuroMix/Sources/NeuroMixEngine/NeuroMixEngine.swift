@@ -100,7 +100,7 @@ public struct NeuroMixEngine: Sendable {
     ) -> [NeuroTransitionPlan] {
         var candidates = [
             candidate(.crossfade, source: source, target: target,
-                      duration: settings.crossfadeSeconds, sourceRate: 1, targetRate: 1)
+                      duration: min(16, max(10, settings.crossfadeSeconds)), sourceRate: 1, targetRate: 1)
         ]
 
         if let sourceBPM = source.bpm, let targetBPM = target.bpm,
@@ -114,7 +114,7 @@ public struct NeuroMixEngine: Sendable {
                     .beatmatch,
                     source: source,
                     target: target,
-                    duration: min(16, max(8, settings.crossfadeSeconds * 1.5)),
+                    duration: min(16, max(10, settings.crossfadeSeconds)),
                     sourceRate: 1,
                     targetRate: targetRate
                 ))
@@ -244,9 +244,17 @@ public struct NeuroMixEngine: Sendable {
                 deck: .incoming,
                 kind: .lowPassSweep,
                 startSeconds: 0,
-                endSeconds: duration * 0.5,
-                fromValue: 1_200,
+                endSeconds: duration * 0.42,
+                fromValue: 700,
                 toValue: 20_000
+            ))
+            result.append(NeuroTransitionEvent(
+                deck: .incoming,
+                kind: .bassRestore,
+                startSeconds: duration * 0.55,
+                endSeconds: duration * 0.82,
+                fromValue: 0,
+                toValue: 1
             ))
         }
         if vocalConflict || kind == .filterOut {
@@ -256,7 +264,7 @@ public struct NeuroMixEngine: Sendable {
                 startSeconds: duration * 0.2,
                 endSeconds: duration,
                 fromValue: 20,
-                toValue: 4_500
+                toValue: 6_000
             ))
         }
         result.append(NeuroTransitionEvent(

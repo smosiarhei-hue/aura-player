@@ -93,6 +93,9 @@ final class NeuroMixRealtimeTransitionRunner {
             incomingDeck: incoming
         )
         try await NeuroMixTransitionExecutor(audio: adapter).execute(plan)
+        // Let the outgoing delay/echo tail decay instead of cutting it at the
+        // exact end of the automation timeline.
+        try await ContinuousClock().sleep(for: .milliseconds(700))
         await engine.stop(outgoing)
         await engine.resetEffects(incoming)
     }

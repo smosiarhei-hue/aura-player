@@ -10,6 +10,9 @@ struct AutoMixV2DiagnosticsView: View {
     @State private var neuroRuntime = NeuroMixRuntime.shared
     @State private var analysis = AutoMixV2AnalysisRuntime.shared
     @State private var neuroPlan: NeuroTransitionPlan?
+    private var activeNeuroPlan: NeuroTransitionPlan? {
+        neuroPlan ?? neuroRuntime.transitionPlan
+    }
 
     private var visibleError: String? {
         let value = runtime.lastError ?? analysis.lastError
@@ -96,16 +99,22 @@ struct AutoMixV2DiagnosticsView: View {
     @ViewBuilder
     private var neuroMixSection: some View {
         Section("NeuroMix preview") {
-            if let plan = neuroPlan {
+            if let plan = activeNeuroPlan {
                 LabeledContent("Тип", value: plan.kind.rawValue)
                 LabeledContent("Уверенность", value: String(format: "%.2f", plan.confidence))
                 LabeledContent("Длительность", value: String(format: "%.1f с", plan.durationSeconds))
                 LabeledContent("Rate A / B", value: String(format: "%.3f / %.3f", plan.sourceRate, plan.targetRate))
                 LabeledContent("События", value: String(plan.events.count))
+                Text("Проверять на локальных файлах. Онлайн-треки намеренно идут через AVPlayer для Spatial Audio и не используют этот realtime-граф.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text(plan.reason).font(.caption).foregroundStyle(.secondary)
+                ForEach(Array(plan.events.enumerated()), id: \.offset) { _, event in
+                    LabeledContent(event.kind.rawValue, value: "\(event.startSeconds, specifier: "%.1f")–\(event.endSeconds, specifier: "%.1f") с")
+                }
             } else {
                 Text("План ещё не рассчитан").foregroundStyle(.secondary)
-                Text("Нужны профили текущего и следующего трека.")
+                Text("Запусти минимум два локальных файла. NeuroMix анализирует их заранее и показывает DJ-события здесь.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
