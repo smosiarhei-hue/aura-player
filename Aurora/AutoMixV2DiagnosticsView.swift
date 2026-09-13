@@ -7,6 +7,7 @@ import SwiftUI
 struct AutoMixV2DiagnosticsView: View {
     @State private var selection = AutoMixEngineSelectionStore.shared
     @State private var runtime = AutoMixV2Runtime.shared
+    @State private var neuroRuntime = NeuroMixRuntime.shared
     @State private var analysis = AutoMixV2AnalysisRuntime.shared
     @State private var neuroPlan: NeuroTransitionPlan?
 
@@ -21,14 +22,38 @@ struct AutoMixV2DiagnosticsView: View {
     var body: some View {
         List {
             Section("Состояние") {
-                LabeledContent("Движок", value: selection.isV2Enabled ? "AutoMix V2" : "Обычный")
-                LabeledContent("Воспроизведение", value: runtime.isPlaying ? "Играет" : "Остановлено")
-                LabeledContent("Загрузка", value: runtime.isLoading ? "Да" : "Нет")
-                LabeledContent("Анализ", value: analysis.pipelineStatus)
-                if let error = visibleError { Text(error).font(.caption).foregroundStyle(.red) }
+                LabeledContent(
+                    "Движок",
+                    value: selection.isNeuroEnabled ? "NeuroMix" :
+                        (selection.isV2Enabled ? "AutoMix V2" : "Обычный")
+                )
+                LabeledContent(
+                    "Воспроизведение",
+                    value: selection.isNeuroEnabled
+                        ? (neuroRuntime.isPlaying ? "Играет" : "Остановлено")
+                        : (runtime.isPlaying ? "Играет" : "Остановлено")
+                )
+                LabeledContent(
+                    "Загрузка",
+                    value: selection.isNeuroEnabled ? "Не требуется для локального файла" :
+                        (runtime.isLoading ? "Да" : "Нет")
+                )
+                LabeledContent(
+                    "Анализ",
+                    value: selection.isNeuroEnabled ? neuroRuntime.pipelineStatus : analysis.pipelineStatus
+                )
+                if let error = selection.isNeuroEnabled ? neuroRuntime.lastError : visibleError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
             }
-            profileSection("Текущий трек", profile: analysis.currentProfile)
-            profileSection("Следующий трек", profile: analysis.nextProfile)
+            profileSection(
+                "Текущий трек",
+                profile: selection.isNeuroEnabled ? neuroRuntime.currentProfile : analysis.currentProfile
+            )
+            profileSection(
+                "Следующий трек",
+                profile: selection.isNeuroEnabled ? neuroRuntime.nextProfile : analysis.nextProfile
+            )
             if let plan = analysis.transitionPlan {
                 Section("План, синхронизация и FX") {
                     LabeledContent("Тип", value: plan.type.rawValue)
@@ -49,9 +74,15 @@ struct AutoMixV2DiagnosticsView: View {
             Section("Действия") {
                 Button("Пересчитать профиль текущего трека") { analysis.recalculateCurrent() }
                 Button("Рассчитать план NeuroMix") {
-                    guard let current = analysis.currentProfile,
-                          let next = analysis.nextProfile else { return }
-                    neuroPlan = NeuroMixPlanningRuntime.shared.plan(from: current, to: next)
+                    if selection.isNeuroEnabled {
+                        Task {
+                            await neuroRuntime.calculatePlan()
+                            neuroPlan = neuroRuntime.transitionPlan
+                        }
+                    } else if let current = analysis.currentProfile,
+                              let next = analysis.nextProfile {
+                        neuroPlan = NeuroMixPlanningRuntime.shared.plan(from: current, to: next)
+                    }
                 }
                 Button("Обновить runtime-отчёт") { Task { await runtime.refreshDiagnostics() } }
                 Text(runtime.diagnosticReport).font(.system(.caption, design: .monospaced)).textSelection(.enabled)

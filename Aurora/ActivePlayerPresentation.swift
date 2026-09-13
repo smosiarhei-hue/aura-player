@@ -13,6 +13,7 @@ import TrackSource
 final class ActivePlayerPresentation {
     private let legacy: PlayerCore
     private let runtime: AutoMixV2Runtime
+    private let neuroRuntime: NeuroMixRuntime
     private let selection: AutoMixEngineSelectionStore
     private let router: PlaybackCommandRouter
     private var timelineTrackID: UUID?
@@ -29,34 +30,43 @@ final class ActivePlayerPresentation {
 
     init(legacy: PlayerCore = .shared, runtime: AutoMixV2Runtime = .shared,
          selection: AutoMixEngineSelectionStore = .shared, router: PlaybackCommandRouter = .shared) {
-        self.legacy = legacy; self.runtime = runtime; self.selection = selection; self.router = router
+        self.legacy = legacy; self.runtime = runtime; self.neuroRuntime = .shared
+        self.selection = selection; self.router = router
     }
     private var v2OwnsPlayback: Bool { selection.isV2Enabled && runtime.currentTrack != nil }
-    var isV2Enabled: Bool { v2OwnsPlayback }
-    var currentTrack: Track? { v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack }
+    private var neuroOwnsPlayback: Bool { selection.isNeuroEnabled && neuroRuntime.currentTrack != nil }
+    var isV2Enabled: Bool { v2OwnsPlayback || neuroOwnsPlayback }
+    var currentTrack: Track? {
+        neuroOwnsPlayback ? neuroRuntime.currentTrack : (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
+    }
     var incomingTrack: Track? { v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack }
     var transitionProgress: Double { v2OwnsPlayback ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress }
     var displayTrack: Track? {
         if isTransitionActive, let incoming = incomingTrack {
             return incoming
         }
-        return v2OwnsPlayback ? runtime.currentTrack : legacy.displayTrack
+        return neuroOwnsPlayback ? neuroRuntime.currentTrack : (v2OwnsPlayback ? runtime.currentTrack : legacy.displayTrack)
     }
     var isPlaying: Bool {
-        v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying
+        neuroOwnsPlayback ? neuroRuntime.isPlaying :
+            (v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying)
     }
-    var isLoading: Bool {
-        v2OwnsPlayback ? (runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing) : false
-    }
+    var isLoading: Bool { v2OwnsPlayback && runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing }
     var isTransitionActive: Bool { v2OwnsPlayback ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive }
-    var progress: Double { v2OwnsPlayback ? (timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0) : legacy.progress }
+    var progress: Double {
+        neuroOwnsPlayback ? timelinePosition :
+            (v2OwnsPlayback ? (timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0) : legacy.progress)
+    }
     var duration: Double {
         guard v2OwnsPlayback else { return legacy.duration }
-        let value = timelineDuration > 0 ? timelineDuration : (runtime.currentTrack?.duration ?? 0)
+        let value = neuroOwnsPlayback ? (neuroRuntime.currentTrack?.duration ?? 0) :
+            (timelineDuration > 0 ? timelineDuration : (runtime.currentTrack?.duration ?? 0))
         return value.isFinite ? max(0, value) : 0
     }
     var downloadProgress: Double? {
-        if v2OwnsPlayback {
+        if neuroOwnsPlayback {
+            return 1.0
+        } else if v2OwnsPlayback {
             return networkFraction
         } else if legacy.currentTrack?.isStream == true {
             return legacy.streamBufferFraction > 0 ? legacy.streamBufferFraction : nil
@@ -68,7 +78,9 @@ final class ActivePlayerPresentation {
     var nextDownloadProgress: Double? { v2OwnsPlayback ? nextNetworkFraction : nil }
     var isNextDownloading: Bool { v2OwnsPlayback && nextNetworkDownloading }
     var queue: [Track] {
-        get { v2OwnsPlayback ? runtime.playbackQueue : legacy.queue }
+        get {
+            neuroOwnsPlayback ? neuroRuntime.playbackQueue : (v2OwnsPlayback ? runtime.playbackQueue : legacy.queue)
+        }
         set { if v2OwnsPlayback { runtime.replaceQueue(newValue) } else { legacy.queue = newValue } }
     }
     var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
@@ -91,22 +103,29 @@ final class ActivePlayerPresentation {
     }
 
     func togglePlay() {
-        if v2OwnsPlayback { Task { await runtime.toggle() } } else { legacy.togglePlay() }
+        if neuroOwnsPlayback {
+            Task { if neuroRuntime.isPlaying { await neuroRuntime.pause() } else { _ = await neuroRuntime.play() } }
+        } else if v2OwnsPlayback { Task { await runtime.toggle() } } else { legacy.togglePlay() }
     }
     func pause() {
-        if v2OwnsPlayback { Task { await runtime.pause() } } else { legacy.pause() }
+        if neuroOwnsPlayback { Task { await neuroRuntime.pause() } }
+        else if v2OwnsPlayback { Task { await runtime.pause() } } else { legacy.pause() }
     }
     func resume() {
-        if v2OwnsPlayback { Task { await runtime.play() } } else { legacy.resume() }
+        if neuroOwnsPlayback { Task { _ = await neuroRuntime.play() } }
+        else if v2OwnsPlayback { Task { await runtime.play() } } else { legacy.resume() }
     }
     func previous() {
-        if v2OwnsPlayback { Task { await runtime.previous() } } else { legacy.previous() }
+        if neuroOwnsPlayback { Task { await neuroRuntime.previous() } }
+        else if v2OwnsPlayback { Task { await runtime.previous() } } else { legacy.previous() }
     }
     func next() {
-        if v2OwnsPlayback { Task { await runtime.next() } } else { legacy.next() }
+        if neuroOwnsPlayback { Task { await neuroRuntime.next() } }
+        else if v2OwnsPlayback { Task { await runtime.next() } } else { legacy.next() }
     }
     func seek(to seconds: Double) {
-        if v2OwnsPlayback { Task { await runtime.seek(to: seconds) } } else { legacy.seek(to: seconds) }
+        if neuroOwnsPlayback { Task { await neuroRuntime.seek(to: seconds) } }
+        else if v2OwnsPlayback { Task { await runtime.seek(to: seconds) } } else { legacy.seek(to: seconds) }
     }
     func play(_ track: Track) { router.play(track, queue: queue) }
     func removeFromQueue(_ track: Track) {
@@ -114,7 +133,8 @@ final class ActivePlayerPresentation {
         else { legacy.removeFromQueue(track) }
     }
     func stopAndClear() {
-        if v2OwnsPlayback { Task { await runtime.stop() } } else { legacy.stopAndClear() }
+        if neuroOwnsPlayback { Task { await neuroRuntime.stop() } }
+        else if v2OwnsPlayback { Task { await runtime.stop() } } else { legacy.stopAndClear() }
     }
 
     func observeTimeline() async {

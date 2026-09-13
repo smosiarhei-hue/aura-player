@@ -67,6 +67,11 @@ final class NeuroMixRuntime {
     private(set) var currentTrack: Track?
     private(set) var isPlaying = false
     private(set) var lastError: String?
+    private(set) var pipelineStatus = "Ожидание воспроизведения"
+    private(set) var currentProfile: TrackProfile?
+    private(set) var nextProfile: TrackProfile?
+    private(set) var transitionPlan: NeuroTransitionPlan?
+    var playbackQueue: [Track] { queue }
 
     private init() {
         let directory = (try? TrackAnalyzer.defaultStorageDirectory())
@@ -105,6 +110,7 @@ final class NeuroMixRuntime {
             await audio.setGain(1, for: .a)
             try await audio.play(.a)
             isPlaying = true
+            pipelineStatus = "Анализ текущего трека"
             startMonitoring()
             warmProfiles(startingAt: index)
             return true
@@ -169,6 +175,41 @@ final class NeuroMixRuntime {
         currentIndex = nil
         currentTrack = nil
         isPlaying = false
+        pipelineStatus = "Ожидание воспроизведения"
+        currentProfile = nil
+        nextProfile = nil
+        transitionPlan = nil
+    }
+
+    func calculatePlan() async {
+        guard let currentIndex, queue.indices.contains(currentIndex) else {
+            pipelineStatus = "Ожидание воспроизведения"
+            return
+        }
+        guard currentIndex + 1 < queue.count else {
+            pipelineStatus = "Следующего локального трека нет"
+            transitionPlan = nil
+            return
+        }
+        let current = queue[currentIndex]
+        let next = queue[currentIndex + 1]
+        do {
+            pipelineStatus = "Анализ текущего трека"
+            let currentProfile = try await analyzer.profile(
+                for: TrackID(raw: current.id.uuidString), fileURL: current.url)
+            guard !Task.isCancelled else { return }
+            pipelineStatus = "Анализ следующего трека"
+            let nextProfile = try await analyzer.profile(
+                for: TrackID(raw: next.id.uuidString), fileURL: next.url)
+            guard !Task.isCancelled else { return }
+            self.currentProfile = currentProfile
+            self.nextProfile = nextProfile
+            transitionPlan = NeuroMixPlanningRuntime.shared.plan(from: currentProfile, to: nextProfile)
+            pipelineStatus = "План NeuroMix готов"
+        } catch {
+            lastError = String(describing: error)
+            pipelineStatus = "Ошибка анализа NeuroMix"
+        }
     }
 
     private func startMonitoring() {
