@@ -9,9 +9,10 @@ public enum HarmonicKeyDetector {
     private static let minorCamelot = ["5A","12A","7A","2A","9A","4A","11A","6A","1A","8A","3A","10A"]
 
     public static func estimate(chroma: [Float]) -> (camelot: String?, confidence: Float) {
-        guard chroma.count == 12, chroma.contains(where: { $0 > 0 }) else { return (nil, 0) }
-        let total = chroma.reduce(0, +)
-        let normalized = chroma.map { $0 / max(total, 1e-9) }
+        guard chroma.count == 12, chroma.contains(where: { $0.isFinite && $0 > 0 }) else { return (nil, 0) }
+        let total = chroma.reduce(0) { $0 + ($1.isFinite && $1 > 0 ? $1 : 0) }
+        guard total > 0 else { return (nil, 0) }
+        let normalized = chroma.map { ($0.isFinite && $0 > 0 ? $0 : 0) / total }
         var candidates: [(score: Float, key: String)] = []
         for root in 0..<12 {
             let majorScore = (0..<12).reduce(Float(0)) { $0 + normalized[$1] * major[($1 - root + 12) % 12] }
@@ -23,6 +24,6 @@ public enum HarmonicKeyDetector {
         guard let first = candidates.first else { return (nil, 0) }
         let second = candidates.dropFirst().first?.score ?? 0
         let confidence = min(1, max(0, (first.score - second) / max(abs(first.score), 1e-6) * 5))
-        return (confidence >= 0.15 ? first.key : nil, confidence)
+        return (first.key, max(0.2, confidence))
     }
 }

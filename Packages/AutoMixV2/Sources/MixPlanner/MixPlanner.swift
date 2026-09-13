@@ -18,7 +18,7 @@ public enum MixPlanner {
             return crossfade(a, b, settings, "Fallback: трек не предназначен для сведения")
         }
         guard let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) else {
-            return crossfade(a, b, settings, "Fallback: темпы нельзя безопасно совместить")
+            return filterEchoPlan(from: a, to: b, settings: settings, reason: "Filter + Echo Out (темпы различаются)")
         }
         let compatible = CamelotCompatibility.areCompatible(a.camelotKey, b.camelotKey)
         var bars: Double
@@ -35,10 +35,10 @@ public enum MixPlanner {
         var out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
         let incoming = BeatGridSynchronization.incomingCue(profile: b)
         let phaseA = a.downbeatsSec.min(by: { abs($0 - out) < abs($1 - out) }).map { abs(out - $0) } ?? 0
-        let phaseB = b.downbeatsSec.min(by: { abs($0 - b.mixInSec) < abs($1 - b.mixInSec) }).map { abs(b.mixInSec - $0) } ?? 0
+        let phaseB = b.downbeatsSec.min(by: { abs($0 - incoming) < abs($1 - incoming) }).map { abs(incoming - $0) } ?? 0
         let phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
         if phaseError > 80 {
-            return crossfade(a, b, settings, "Fallback: фазовое расхождение > 80ms")
+            return filterEchoPlan(from: a, to: b, settings: settings, reason: "Filter + Echo Out (фазовый сдвиг > 80ms)")
         } else if phaseError > 40 {
             bars = max(4.0, bars / 2)
             seconds = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
@@ -84,6 +84,46 @@ public enum MixPlanner {
                                   fromValue: 0, toValue: 55, curve: .sCurve, param: 45))
         }
         return events
+    }
+
+    private static func filterEchoPlan(from a: TrackProfile, to b: TrackProfile,
+                                       settings: MixSettings, reason: String) -> TransitionPlan {
+        let bars = 4.0
+        let targetBPM: Float = a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120.0)
+        let seconds = BeatGridSynchronization.duration(bars: bars, bpm: targetBPM)
+        let out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
+        let incoming = BeatGridSynchronization.incomingCue(profile: b)
+        let events: [FxEvent] = [
+            FxEvent(target: .a, kind: .volume, startBar: 0, endBar: bars,
+                    fromValue: 0, toValue: -60, curve: .linear),
+            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: bars,
+                    fromValue: -60, toValue: 0, curve: .linear),
+            FxEvent(target: .a, kind: .bassKill, startBar: 1.0, endBar: 2.0,
+                    fromValue: 0, toValue: 1, curve: .sCurve),
+            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 0,
+                    fromValue: 1, toValue: 1, curve: .linear),
+            FxEvent(target: .b, kind: .bassOn, startBar: 2.0, endBar: 2.8,
+                    fromValue: 1, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
+                    fromValue: 20, toValue: 4500, curve: .exp),
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: 2.0,
+                    fromValue: 1500, toValue: 20000, curve: .exp),
+            FxEvent(target: .a, kind: .echoOut, startBar: 1.5, endBar: bars,
+                    fromValue: 0, toValue: 65, curve: .sCurve, param: 52)
+        ]
+        return TransitionPlan(
+            type: .filterEcho,
+            aOutStartSec: out,
+            bInStartSec: incoming,
+            bars: bars,
+            tempoTargetBPM: targetBPM,
+            rateA: 1.0,
+            rateB: 1.0,
+            gainOffsetBdB: normalizationGain(profile: b, settings: settings),
+            loopBarsA: 0,
+            fx: events,
+            reason: reason
+        )
     }
 
     private static func crossfade(_ a: TrackProfile, _ b: TrackProfile,
