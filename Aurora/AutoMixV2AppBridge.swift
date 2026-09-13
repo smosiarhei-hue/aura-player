@@ -66,10 +66,12 @@ final class NeuroMixRuntime {
     private var resolvedURLs: [UUID: URL] = [:]
     private var currentIndex: Int?
     private var activeDeck: Deck = .a
+    private var transitionDeck: Deck?
     private var monitorTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
     private var profileWarmTask: Task<Void, Never>?
     private(set) var currentTrack: Track?
+    private(set) var transitionTrack: Track?
     private(set) var isPlaying = false
     private(set) var lastError: String?
     private(set) var pipelineStatus = "Ожидание воспроизведения"
@@ -96,6 +98,10 @@ final class NeuroMixRuntime {
     func play(_ track: Track, queue newQueue: [Track]) async -> Bool {
         do {
             try await stop()
+            // NeuroMix owns the PCM graph exclusively. Clear the legacy
+            // AVAudioPlayer path before preparing the first deck so a fallback
+            // or previous wave cannot keep sounding underneath it.
+            PlayerCore.shared.stopAndClear()
             queue = newQueue
             if !queue.contains(where: { $0.id == track.id }) { queue.insert(track, at: 0) }
             let firstURL = try await resolveURL(for: track)
@@ -142,6 +148,18 @@ final class NeuroMixRuntime {
         await transition(to: currentIndex + 1, force: true)
     }
 
+    func replaceQueue(_ newQueue: [Track]) {
+        guard let currentTrack else {
+            queue = newQueue
+            return
+        }
+        var updated = newQueue.filter { $0.id != currentTrack.id }
+        updated.insert(currentTrack, at: 0)
+        queue = updated
+        currentIndex = 0
+        warmProfiles(startingAt: 0)
+    }
+
     func previous() async {
         guard let currentIndex else { return }
         let snapshot = await engine?.snapshot()
@@ -154,7 +172,25 @@ final class NeuroMixRuntime {
     }
 
     func seek(to seconds: Double) async {
-        try? await engine?.seek(activeDeck, to: seconds)
+        transitionTask?.cancel()
+        if let task = transitionTask {
+            await task.value
+        }
+        transitionTask = nil
+        transitionTrack = nil
+        transitionDeck = nil
+        guard let engine else { return }
+        let snapshot = await engine.snapshot()
+        let deck = activeDeck == .a ? snapshot.deckA : snapshot.deckB
+        let duration = deck.durationSeconds ?? currentTrack?.duration ?? 0
+        let target = min(max(0, seconds.isFinite ? seconds : 0), max(0, duration))
+        do {
+            try await engine.seek(activeDeck, to: target)
+            isPlaying = true
+            pipelineStatus = "Воспроизведение"
+        } catch {
+            lastError = String(describing: error)
+        }
     }
 
     func engineConfigurationChanged() async {
@@ -173,6 +209,8 @@ final class NeuroMixRuntime {
         engine = nil
         currentIndex = nil
         currentTrack = nil
+        transitionTrack = nil
+        transitionDeck = nil
         isPlaying = false
         pipelineStatus = "Ожидание воспроизведения"
         currentProfile = nil
@@ -215,10 +253,13 @@ final class NeuroMixRuntime {
     func playbackTimeline() async -> (position: Double, duration: Double, isTransitioning: Bool, transitionProgress: Double)? {
         guard let engine, currentTrack != nil else { return nil }
         let snapshot = await engine.snapshot()
-        let deck = activeDeck == .a ? snapshot.deckA : snapshot.deckB
-        let duration = deck.durationSeconds ?? currentTrack?.duration ?? 0
+        let displayedDeck = transitionDeck ?? activeDeck
+        let deck = displayedDeck == .a ? snapshot.deckA : snapshot.deckB
+        let displayedTrack = transitionTrack ?? currentTrack
+        let duration = deck.durationSeconds ?? displayedTrack?.duration ?? 0
+        let position = min(max(0, deck.positionSeconds), max(0, duration))
         return (
-            max(0, deck.positionSeconds),
+            position,
             duration.isFinite ? max(0, duration) : 0,
             transitionTask != nil,
             transitionTask == nil ? 0 : 0.5
@@ -304,6 +345,8 @@ final class NeuroMixRuntime {
                 self.transitionPlan = plan
                 self.pipelineStatus = "DJ-переход: \(plan.kind.rawValue)"
                 let incomingDeck: Deck = self.activeDeck == .a ? .b : .a
+                self.transitionTrack = targetTrack
+                self.transitionDeck = incomingDeck
                 let runner = NeuroMixRealtimeTransitionRunner(engine: engine)
                 try await runner.execute(plan, incomingURL: try await self.resolveURL(for: targetTrack),
                                           targetBPM: Double(targetProfile.bpm),
@@ -311,11 +354,17 @@ final class NeuroMixRuntime {
                 self.activeDeck = incomingDeck
                 self.currentIndex = nextIndex
                 self.currentTrack = targetTrack
+                self.transitionTrack = nil
+                self.transitionDeck = nil
                 self.pipelineStatus = "Переход завершён"
                 self.transitionTask = nil
             } catch is CancellationError {
+                self.transitionTrack = nil
+                self.transitionDeck = nil
                 self.transitionTask = nil
             } catch {
+                self.transitionTrack = nil
+                self.transitionDeck = nil
                 self.lastError = String(describing: error)
                 self.pipelineStatus = "Ошибка перехода NeuroMix"
                 if force { self.isPlaying = false }

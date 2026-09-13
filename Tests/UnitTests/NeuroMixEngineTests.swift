@@ -39,7 +39,9 @@ struct NeuroMixEngineTests {
 
         #expect(plan.events.contains { $0.kind == .volume })
         #expect(plan.events.contains { $0.kind == .bassCut })
+        #expect(plan.events.contains { $0.kind == .bassRestore })
         #expect(plan.events.contains { $0.kind == .lowPassSweep })
+        #expect(plan.events.contains { $0.kind == .echoOut })
         #expect(plan.events.allSatisfy { $0.endSeconds >= $0.startSeconds })
     }
 
