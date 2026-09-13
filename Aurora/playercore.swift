@@ -221,6 +221,7 @@ final class PlayerCore {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, policy: .default, options: [])
+            try? session.setSupportsMultichannelContent(true)
             try session.setActive(true)
         } catch {
             print("AVAudioSession error: \(error)")
@@ -328,9 +329,9 @@ final class PlayerCore {
 
         looperPlayer.volume = 0
 
-        engine.attach(outputLimiter)
-        engine.connect(engine.mainMixerNode, to: outputLimiter, format: nil)
-        engine.connect(outputLimiter, to: engine.outputNode, format: nil)
+        // Connect mainMixerNode directly to outputNode so CoreAudio/AUHAL preserves
+        // native stereo channel layout (Stereo L/R) and AirPods Pro Spatialize Stereo HRTF.
+        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
 
         engine.mainMixerNode.outputVolume = volume
     }
@@ -2020,10 +2021,7 @@ final class PlayerCore {
     func installSpectrumTap() {
         guard !spectrumTapInstalled else { return }
         let mixer = engine.mainMixerNode
-        let format = mixer.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { return }
-
-        mixer.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.handleSpectrumTap)
+        mixer.installTap(onBus: 0, bufferSize: 2048, format: nil, block: Self.handleSpectrumTap)
         spectrumTapInstalled = true
     }
 }

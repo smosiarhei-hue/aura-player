@@ -41,6 +41,7 @@ public final class SystemPlaybackAudioSessionConfiguration: PlaybackAudioSession
             policy: .default,
             options: Self.categoryOptions
         )
+        try? session.setSupportsMultichannelContent(true)
     }
 
     public func setPreferredSampleRate(_ sampleRate: Double) throws {
