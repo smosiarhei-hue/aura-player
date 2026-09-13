@@ -172,7 +172,13 @@ final class AutoMixV2Runtime {
         let token = beginRequest(); await coordinator?.stop(); guard token == requestID else { return }
         isPlaying = false; isLoading = false; currentTrack = nil; queue = []; queueIDs = []
     }
-    func toggle() async { isPlaying ? await pause() : await play() }
+    func toggle() async {
+        if isPlaying {
+            await pause()
+        } else {
+            _ = await play()
+        }
+    }
     func next() async {
         if let index = coordinator?.snapshot().currentIndex, index >= queue.count - 2 {
             refillQueueIfNeeded()
