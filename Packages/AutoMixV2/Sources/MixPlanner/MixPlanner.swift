@@ -14,7 +14,9 @@ public enum MixPlanner {
             return none(a: a, reason: "Трек короче 60 секунд")
         }
         guard settings.mode == .automix else { return crossfade(a, b, settings, "Пользовательский кроссфейд") }
-        guard a.mixable, b.mixable else { return crossfade(a, b, settings, "Fallback: трек не предназначен для сведения") }
+        guard (a.mixable || a.confidence.bpm >= 0.55), (b.mixable || b.confidence.bpm >= 0.55) else {
+            return crossfade(a, b, settings, "Fallback: трек не предназначен для сведения")
+        }
         guard let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) else {
             return crossfade(a, b, settings, "Fallback: темпы нельзя безопасно совместить")
         }
@@ -48,7 +50,7 @@ public enum MixPlanner {
                               tempoTargetBPM: tempo.targetBPM, rateA: tempo.rateA, rateB: tempo.rateB,
                               gainOffsetBdB: normalizationGain(profile: b, settings: settings),
                               loopBarsA: 0, fx: stage4FX(bars: bars, tempo: tempo, compatible: compatible),
-                              reason: compatible ? "Beatmatch + Camelot + filter/bass/echo automation" : "Beatmatch + short filter automation")
+                              reason: compatible ? "Beatmatch + Camelot + filter/bass/echo automation" : "Beatmatch + filter/bass automation")
     }
 
     private static func stage4FX(bars: Double,
@@ -76,6 +78,10 @@ public enum MixPlanner {
             events.append(FxEvent(target: .a, kind: .echoOut,
                                   startBar: max(0, bars - 4), endBar: bars,
                                   fromValue: 0, toValue: 65, curve: .sCurve, param: 50))
+        } else {
+            events.append(FxEvent(target: .a, kind: .echoOut,
+                                  startBar: max(0, bars - 2), endBar: bars,
+                                  fromValue: 0, toValue: 55, curve: .sCurve, param: 45))
         }
         return events
     }

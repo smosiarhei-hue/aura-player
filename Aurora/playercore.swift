@@ -429,7 +429,9 @@ final class PlayerCore {
         for (i, band) in eqNodeA.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in eqNodeB.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in looperEQ.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
-        AutoMixV2Runtime.shared.applyUserEQ(gains: eqGains, enabled: eqEnabled)
+        Task { @MainActor in
+            AutoMixV2Runtime.shared.applyUserEQ(gains: self.eqGains, enabled: self.eqEnabled)
+        }
     }
 
     private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }

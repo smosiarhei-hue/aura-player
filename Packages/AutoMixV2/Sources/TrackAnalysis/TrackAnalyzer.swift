@@ -104,7 +104,7 @@ private enum TrackAnalysisComputer {
         let stability: Float = beats.count >= 2 ? 1 : 0
         let downbeatConfidence = min(1, tempo.confidence * 0.9)
         let confidence = Confidence(bpm: tempo.confidence, downbeats: downbeatConfidence, key: 0)
-        let mixable = confidence.bpm >= 0.7 && stability >= 0.9 && beats.count >= 64
+        let mixable = confidence.bpm >= 0.55 && stability >= 0.75 && beats.count >= 32
 
         return TrackProfile(trackID: id, durationSec: duration,
                             sourceSampleRate: sourceRate, sourceBitrateKbps: nil,

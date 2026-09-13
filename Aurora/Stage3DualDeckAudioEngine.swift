@@ -26,6 +26,7 @@ final class DualDeckAudioEngine {
         }
         graph.attach(userEQ)
         configureUserEQ()
+        graph.disconnectNodeOutput(graph.mainMixerNode)
         graph.connect(graph.mainMixerNode, to: userEQ, format: nil)
         graph.connect(userEQ, to: graph.outputNode, format: nil)
         a.mixer.outputVolume = 1; b.mixer.outputVolume = 0
@@ -48,7 +49,13 @@ final class DualDeckAudioEngine {
             }
             band.gain = 0
         }
-        applyUserEQ(gains: PlayerCore.shared.eqGains, enabled: PlayerCore.shared.eqEnabled)
+        let enabled = UserDefaults.standard.bool(forKey: "eq.enabled")
+        if let data = UserDefaults.standard.data(forKey: "eq.gains"),
+           let gains = try? JSONDecoder().decode([Float].self, from: data) {
+            applyUserEQ(gains: gains, enabled: enabled)
+        } else {
+            applyUserEQ(gains: [0, 0, 0, 0, 0, 0], enabled: enabled)
+        }
     }
     func applyUserEQ(gains: [Float], enabled: Bool) {
         userEQ.bypass = !enabled

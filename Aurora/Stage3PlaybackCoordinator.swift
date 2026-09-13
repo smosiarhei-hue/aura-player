@@ -226,14 +226,44 @@ final class PlaybackCoordinator {
     }
     private func beginFallback(_ item: Item, duration: Double) {
         guard transition == nil else { return }
-        setReadiness(.fallback, "Анализ не успел или план небезопасен; выполняется кроссфейд")
+        let clampedDuration = max(0.75, duration)
+        setReadiness(.fallback, "Анализ не успел или план небезопасен; выполняется DJ-фильтр кроссфейд")
+        let fallbackPlan = MixModels.TransitionPlan(
+            type: .crossfade,
+            aOutStartSec: 0,
+            bInStartSec: 0,
+            bars: clampedDuration,
+            tempoTargetBPM: 0,
+            rateA: 1,
+            rateB: 1,
+            gainOffsetBdB: 0,
+            loopBarsA: 0,
+            fx: [],
+            reason: "DJ Filter Fallback"
+        )
         transition = Task { @MainActor [weak self] in
             guard let self else { return }
+            let outgoing = self.activeDeck
+            let startHostTime = CACurrentMediaTime()
+            self.effects = Task { @MainActor [weak self] in
+                await self?.executeEffects(fallbackPlan, outgoing: outgoing, incoming: item.deck, duration: clampedDuration, startHostTime: startHostTime)
+            }
             do {
-                try await self.promote(item, duration: max(0.05, duration), plan: nil)
-                self.transition = nil; self.publish(); self.startPrefetch()
-            } catch is CancellationError { self.transition = nil }
-            catch { self.lastError = String(describing: error); self.transition = nil; self.setReadiness(.failed, self.lastError ?? "Ошибка кроссфейда"); self.publish() }
+                try await self.promote(item, duration: clampedDuration, plan: fallbackPlan)
+                self.effects?.cancel(); await self.effects?.value
+                self.effects = nil; self.transition = nil
+                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
+                self.publish(); self.startPrefetch()
+            } catch is CancellationError {
+                self.effects?.cancel(); await self.effects?.value
+                self.effects = nil; self.transition = nil
+                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
+            } catch {
+                self.effects?.cancel(); await self.effects?.value; self.effects = nil
+                self.lastError = String(describing: error); self.transition = nil
+                await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
+                self.setReadiness(.failed, self.lastError ?? "Ошибка кроссфейда"); self.publish()
+            }
         }
         publish()
     }
@@ -281,8 +311,20 @@ final class PlaybackCoordinator {
             let elapsedWall = max(0, now - startHostTime)
             if plan.type == .crossfade {
                 let p = min(1, max(0, elapsedWall / duration))
-                await engine.applyEffect(.highPass, value: Float(20 * pow(60, p)), param: nil, bpm: 0, to: outgoing)
-                await engine.applyEffect(.lowPass, value: Float(2_500 * pow(8, min(1, p * 2))), param: nil, bpm: 0, to: incoming)
+                // High Pass on outgoing: sweeps 20 Hz -> 4,500 Hz
+                await engine.applyEffect(.highPass, value: Float(20 * pow(225, p)), param: nil, bpm: 0, to: outgoing)
+                // Low Pass on incoming: opens 1,500 Hz -> 20,000 Hz
+                await engine.applyEffect(.lowPass, value: Float(1_500 * pow(13.33, min(1, p * 1.8))), param: nil, bpm: 0, to: incoming)
+                // Bass swap: outgoing bass cuts at p=0.2..0.5, incoming bass enters at p=0.5..0.8
+                let bassCutA = Float(min(1, max(0, (p - 0.2) / 0.3)))
+                await engine.applyEffect(.bassKill, value: bassCutA, param: nil, bpm: 0, to: outgoing)
+                let bassCutB = Float(min(1, max(0, 1.0 - (p - 0.5) / 0.3)))
+                await engine.applyEffect(.bassKill, value: bassCutB, param: nil, bpm: 0, to: incoming)
+                // Echo out on outgoing in the second half
+                if p >= 0.5 {
+                    let echoP = Float((p - 0.5) / 0.5)
+                    await engine.applyEffect(.echoOut, value: 55 * echoP, param: 45, bpm: 120, to: outgoing)
+                }
                 if p >= 1 { return }
             } else {
                 let bar = EffectAutomation.bar(atSeconds: elapsedWall, bpm: plan.tempoTargetBPM)
