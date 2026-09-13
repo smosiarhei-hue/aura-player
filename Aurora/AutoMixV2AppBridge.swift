@@ -59,8 +59,11 @@ final class NeuroMixRuntime {
     static let shared = NeuroMixRuntime()
     private let source = LocalTrackSource()
     private let analyzer: TrackAnalyzer
+    private let yandexClient = AutoMixV2YandexDownloadClient()
+    private let yandexSource: YandexTrackSource?
     private var engine: DualDeckAudioEngine?
     private var queue: [Track] = []
+    private var resolvedURLs: [UUID: URL] = [:]
     private var currentIndex: Int?
     private var activeDeck: Deck = .a
     private var monitorTask: Task<Void, Never>?
@@ -79,6 +82,11 @@ final class NeuroMixRuntime {
         let directory = (try? TrackAnalyzer.defaultStorageDirectory())
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("neuromix-profiles", isDirectory: true)
         analyzer = TrackAnalyzer(storageDirectory: directory)
+        if let cache = try? TrackFileCache(directory: TrackFileCache.defaultDirectory()) {
+            yandexSource = YandexTrackSource(client: yandexClient, cache: cache, maximumParallelDownloads: 2)
+        } else {
+            yandexSource = nil
+        }
     }
 
     func engineSelectionChanged(isEnabled: Bool) async {
@@ -86,29 +94,18 @@ final class NeuroMixRuntime {
     }
 
     func play(_ track: Track, queue newQueue: [Track]) async -> Bool {
-        guard !track.isStream, track.url.isFileURL else {
-            lastError = "NeuroMix пока работает только с локальными файлами"
-            return false
-        }
         do {
             try await stop()
-            queue = newQueue.filter { !$0.isStream && $0.url.isFileURL }
+            queue = newQueue
             if !queue.contains(where: { $0.id == track.id }) { queue.insert(track, at: 0) }
-            for item in queue {
-                await source.register(LocalTrackRecord(
-                    metadata: TrackMeta(id: TrackID(raw: item.id.uuidString), title: item.title,
-                                        artist: item.artist, albumID: item.album.isEmpty ? nil : item.album,
-                                        durationSec: item.duration,
-                                        artworkURL: item.coverURL.flatMap(URL.init(string:))),
-                    fileURL: item.url))
-            }
+            let firstURL = try await resolveURL(for: track)
             guard let index = queue.firstIndex(where: { $0.id == track.id }) else { return false }
             currentIndex = index
             currentTrack = track
             activeDeck = .a
             let audio = try DualDeckAudioEngine()
             engine = audio
-            try await audio.prepare(.a, fileURL: track.url)
+            try await audio.prepare(.a, fileURL: firstURL)
             await audio.setGain(1, for: .a)
             try await audio.play(.a)
             isPlaying = true
@@ -199,11 +196,11 @@ final class NeuroMixRuntime {
         do {
             pipelineStatus = "Анализ текущего трека"
             let currentProfile = try await analyzer.profile(
-                for: TrackID(raw: current.id.uuidString), fileURL: current.url)
+                for: TrackID(raw: current.id.uuidString), fileURL: try await resolveURL(for: current))
             guard !Task.isCancelled else { return }
             pipelineStatus = "Анализ следующего трека"
             let nextProfile = try await analyzer.profile(
-                for: TrackID(raw: next.id.uuidString), fileURL: next.url)
+                for: TrackID(raw: next.id.uuidString), fileURL: try await resolveURL(for: next))
             guard !Task.isCancelled else { return }
             self.currentProfile = currentProfile
             self.nextProfile = nextProfile
@@ -259,12 +256,34 @@ final class NeuroMixRuntime {
             guard let self else { return }
             for track in tracks {
                 guard !Task.isCancelled else { return }
-                _ = try? await self.analyzer.profile(
-                    for: TrackID(raw: track.id.uuidString),
-                    fileURL: track.url
-                )
+                if let url = try? await self.resolveURL(for: track) {
+                    _ = try? await self.analyzer.profile(
+                        for: TrackID(raw: track.id.uuidString), fileURL: url)
+                }
             }
         }
+    }
+
+    private func resolveURL(for track: Track) async throws -> URL {
+        if let cached = resolvedURLs[track.id] { return cached }
+        if !track.isStream, track.url.isFileURL {
+            resolvedURLs[track.id] = track.url
+            return track.url
+        }
+        guard let raw = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let source = yandexSource else {
+            throw TrackSourceError.noDownloadOption
+        }
+        let id = YandexMusicService.ymId(fromFileName: track.fileName) ?? raw
+        let trackID = TrackID(raw: id)
+        await yandexClient.register(TrackMeta(
+            id: trackID, title: track.title, artist: track.artist,
+            albumID: track.album.isEmpty ? nil : track.album,
+            durationSec: track.duration,
+            artworkURL: track.coverURL.flatMap(URL.init(string:))))
+        let url = try await source.localFileURL(for: trackID)
+        resolvedURLs[track.id] = url
+        return url
     }
 
     private func transition(to nextIndex: Int, force: Bool) async {
@@ -275,10 +294,10 @@ final class NeuroMixRuntime {
             guard let self else { return }
             do {
                 let sourceProfile = try await self.analyzer.profile(
-                    for: TrackID(raw: current.id.uuidString), fileURL: current.url)
+                    for: TrackID(raw: current.id.uuidString), fileURL: try await self.resolveURL(for: current))
                 let targetTrack = self.queue[nextIndex]
                 let targetProfile = try await self.analyzer.profile(
-                    for: TrackID(raw: targetTrack.id.uuidString), fileURL: targetTrack.url)
+                    for: TrackID(raw: targetTrack.id.uuidString), fileURL: try await self.resolveURL(for: targetTrack))
                 let plan = NeuroMixPlanningRuntime.shared.plan(from: sourceProfile, to: targetProfile)
                 self.currentProfile = sourceProfile
                 self.nextProfile = targetProfile
@@ -286,7 +305,7 @@ final class NeuroMixRuntime {
                 self.pipelineStatus = "DJ-переход: \(plan.kind.rawValue)"
                 let incomingDeck: Deck = self.activeDeck == .a ? .b : .a
                 let runner = NeuroMixRealtimeTransitionRunner(engine: engine)
-                try await runner.execute(plan, incomingURL: targetTrack.url,
+                try await runner.execute(plan, incomingURL: try await self.resolveURL(for: targetTrack),
                                           targetBPM: Double(targetProfile.bpm),
                                           outgoing: self.activeDeck, incoming: incomingDeck)
                 self.activeDeck = incomingDeck
@@ -655,10 +674,7 @@ final class PlaybackCommandRouter {
         }
     }
     func play(_ track: Track, queue: [Track]) {
-        if track.isStream || track.streamUrlString != nil {
-            legacyOwnsPlayback = true
-            PlayerCore.shared.play(track, newQueue: queue)
-        } else if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+        if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
             legacyOwnsPlayback = false
             Task {
                 if !(await NeuroMixRuntime.shared.play(track, queue: queue)) {
@@ -666,6 +682,9 @@ final class PlaybackCommandRouter {
                     PlayerCore.shared.play(track, newQueue: queue)
                 }
             }
+        } else if track.isStream || track.streamUrlString != nil {
+            legacyOwnsPlayback = true
+            PlayerCore.shared.play(track, newQueue: queue)
         } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
             legacyOwnsPlayback = false
             Task {
