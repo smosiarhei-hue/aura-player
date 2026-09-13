@@ -45,8 +45,9 @@ final class AutoMixEngineSelectionStore {
     }
     private init() {
         UserDefaults.standard.register(defaults: [Self.defaultsKey: true, Self.neuroDefaultsKey: false])
-        isNeuroEnabled = UserDefaults.standard.bool(forKey: Self.neuroDefaultsKey)
-        isV2Enabled = isNeuroEnabled ? false : UserDefaults.standard.bool(forKey: Self.defaultsKey)
+        let neuroEnabled = UserDefaults.standard.bool(forKey: Self.neuroDefaultsKey)
+        isNeuroEnabled = neuroEnabled
+        isV2Enabled = neuroEnabled ? false : UserDefaults.standard.bool(forKey: Self.defaultsKey)
     }
 
 }
