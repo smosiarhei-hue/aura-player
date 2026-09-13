@@ -104,7 +104,14 @@ final class DualDeckAudioEngine {
     func applyEffect(_ kind:FxKind,value:Float,param:Float?,bpm:Float,to deck:Deck) async { let s=slot(deck);guard value.isFinite else{return};switch kind {
         case .highPass: let x=s.eq.bands[1];x.frequency=min(18000,max(20,value));x.bypass=value<=21
         case .lowPass: let x=s.eq.bands[2];x.frequency=min(20000,max(100,value));x.bypass=value>=19900
-        case .bassKill,.bassOn:s.eq.bands[0].gain=min(0,max(-40,-40*min(1,max(0,value))))
+        case .bassKill:
+            // The automation value is the amount of cut (0 = neutral, 1 = -40 dB).
+            s.eq.bands[0].gain = min(0, max(-40, -40 * min(1, max(0, value))))
+        case .bassOn:
+            // bassOn uses the same normalized value, but means amount restored.
+            // Treating it like bassKill left the incoming deck bass-muted for
+            // the rest of every NeuroMix transition.
+            s.eq.bands[0].gain = min(0, max(-40, -40 * (1 - min(1, max(0, value)))))
         case .echoOut:s.delay.wetDryMix=min(70,max(0,value));s.delay.feedback=min(55,max(0,param ?? 28));s.delay.delayTime=bpm>0 ? min(2,max(0.05,60/Double(bpm)*0.75)):0.375
         case .rateRamp:await setRate(value,for:deck);case .volume:break }
     }

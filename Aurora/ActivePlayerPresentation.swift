@@ -37,10 +37,19 @@ final class ActivePlayerPresentation {
     private var neuroOwnsPlayback: Bool { selection.isNeuroEnabled && neuroRuntime.currentTrack != nil }
     var isV2Enabled: Bool { v2OwnsPlayback || neuroOwnsPlayback }
     var currentTrack: Track? {
-        neuroOwnsPlayback ? neuroRuntime.currentTrack : (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
+        if neuroOwnsPlayback, let transition = neuroRuntime.transitionTrack {
+            return transition
+        }
+        return neuroOwnsPlayback ? neuroRuntime.currentTrack :
+            (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
     }
-    var incomingTrack: Track? { v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack }
-    var transitionProgress: Double { v2OwnsPlayback ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress }
+    var incomingTrack: Track? {
+        neuroOwnsPlayback ? neuroRuntime.transitionTrack :
+            (v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack)
+    }
+    var transitionProgress: Double {
+        (neuroOwnsPlayback || v2OwnsPlayback) ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress
+    }
     var displayTrack: Track? {
         if isTransitionActive, let incoming = incomingTrack {
             return incoming
@@ -52,14 +61,16 @@ final class ActivePlayerPresentation {
             (v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying)
     }
     var isLoading: Bool { v2OwnsPlayback && runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing }
-    var isTransitionActive: Bool { v2OwnsPlayback ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive }
+    var isTransitionActive: Bool {
+        (neuroOwnsPlayback || v2OwnsPlayback) ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive
+    }
     var progress: Double {
         neuroOwnsPlayback ? timelinePosition :
             (v2OwnsPlayback ? (timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0) : legacy.progress)
     }
     var duration: Double {
         guard v2OwnsPlayback else { return legacy.duration }
-        let value = neuroOwnsPlayback ? (neuroRuntime.currentTrack?.duration ?? 0) :
+        let value = neuroOwnsPlayback ? (currentTrack?.duration ?? 0) :
             (timelineDuration > 0 ? timelineDuration : (runtime.currentTrack?.duration ?? 0))
         return value.isFinite ? max(0, value) : 0
     }

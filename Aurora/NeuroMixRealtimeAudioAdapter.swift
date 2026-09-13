@@ -84,19 +84,29 @@ final class NeuroMixRealtimeTransitionRunner {
             startTimeSeconds: plan.targetStartSeconds
         )
         await engine.setGain(0, for: incoming)
-        try await engine.play(outgoing)
-        try await engine.play(incoming)
         let adapter = NeuroMixRealtimeAudioAdapter(
             engine: engine,
             bpm: Float(targetBPM > 0 ? targetBPM : 120),
             outgoingDeck: outgoing,
             incomingDeck: incoming
         )
-        try await NeuroMixTransitionExecutor(audio: adapter).execute(plan)
-        // Let the outgoing delay/echo tail decay instead of cutting it at the
-        // exact end of the automation timeline.
-        try await ContinuousClock().sleep(for: .milliseconds(700))
-        await engine.stop(outgoing)
-        await engine.resetEffects(incoming)
+        do {
+            try await engine.play(outgoing)
+            try await engine.play(incoming)
+            try await NeuroMixTransitionExecutor(audio: adapter).execute(plan)
+            // Let the outgoing delay/echo tail decay instead of cutting it at
+            // the exact end of the automation timeline. A beat-scale tail
+            // prevents the delay from sounding like a clipped click.
+            let tailSeconds = max(1.2, min(2.4, 60 / max(targetBPM, 60)))
+            try await ContinuousClock().sleep(for: .seconds(tailSeconds))
+            await engine.stop(outgoing)
+            await engine.resetEffects(incoming)
+        } catch {
+            await engine.setGain(1, for: outgoing)
+            await engine.setGain(0, for: incoming)
+            await engine.stop(incoming)
+            await engine.resetEffects(outgoing)
+            throw error
+        }
     }
 }

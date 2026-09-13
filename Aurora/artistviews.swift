@@ -6,8 +6,11 @@ struct ArtistView: View {
     let artistId: String
     @State private var ym = YandexMusicService.shared
     @State private var artist: YandexMusicService.YMArtistItem?
+    @State private var artistTracks: [YandexMusicService.YMTrackItem] = []
     @State private var isLoading = true
     @State private var error: String?
+    @State private var heroGlow = false
+    @State private var heroReveal = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -19,7 +22,8 @@ struct ArtistView: View {
                     } else if let artist {
                         heroSection(artist)
                         artistStatsSection(artist)
-                        popularTracksSection(artist)
+                        popularSongsSection(artist)
+                        topTracksSection(artist)
                         latestAlbumsSection(artist)
                         albumsSection(artist)
                         similarArtistsSection(artist)
@@ -35,7 +39,12 @@ struct ArtistView: View {
         .navigationTitle(artist?.name ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
-        .task { await load() }
+        .task {
+            await load()
+            withAnimation(.easeOut(duration: 0.9)) {
+                heroReveal = true
+            }
+        }
     }
 
     private func heroSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
@@ -49,12 +58,14 @@ struct ArtistView: View {
                 RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
                     .blur(radius: 45)
                     .scaleEffect(1.3)
-                    .opacity(0.70)
+                    .opacity(heroGlow ? 0.82 : 0.58)
                     .frame(width: proxy.size.width, height: heroHeight)
 
                 // 2. High-res artist photo
                 RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
                     .frame(width: proxy.size.width, height: heroHeight)
+                    .scaleEffect(heroReveal ? 1.0 : 1.045)
+                    .animation(.easeOut(duration: 1.1), value: heroReveal)
 
                 // 3. Top subtle vignette/blur overlay (for clock, status bar, and back button)
                 LinearGradient(
@@ -90,6 +101,9 @@ struct ArtistView: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                         .shadow(color: Color.black.opacity(0.65), radius: 12, x: 0, y: 4)
+                        .offset(y: heroReveal ? 0 : 16)
+                        .opacity(heroReveal ? 1 : 0)
+                        .animation(.spring(response: 0.8, dampingFraction: 0.82).delay(0.12), value: heroReveal)
 
                     if !artist.subtitle.isEmpty {
                         Text(artist.subtitle)
@@ -97,6 +111,7 @@ struct ArtistView: View {
                             .foregroundStyle(AG.inkMuted)
                             .multilineTextAlignment(.center)
                             .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 2)
+                            .opacity(heroReveal ? 1 : 0)
                     }
 
                     HStack(spacing: 12) {
@@ -134,6 +149,11 @@ struct ArtistView: View {
             .frame(width: proxy.size.width, height: heroHeight)
             .clipped()
             .offset(y: minY > 0 ? -minY : 0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 3.8).repeatForever(autoreverses: true)) {
+                    heroGlow = true
+                }
+            }
         }
         .frame(height: 460)
     }
@@ -183,21 +203,86 @@ struct ArtistView: View {
         }
     }
 
-    private func popularTracksSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
+    private func popularSongsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         Group {
             if !artist.popularTracks.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    SonivoHeader(title: "Популярные", accent: "треки").padding(.horizontal, 16)
-                    LazyVStack(spacing: 2) {
-                        ForEach(artist.popularTracks.prefix(20).enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }) { row in
-                            ChartRowView(rank: row.rank, item: row.item) {
-                                SonivoPlay.track(row.item, in: artist.popularTracks)
+                    SonivoHeader(title: "Популярные", accent: "песни").padding(.horizontal, 16)
+                    LazyVGrid(columns: [
+                        GridItem(.flexible(), spacing: 10),
+                        GridItem(.flexible(), spacing: 10)
+                    ], spacing: 10) {
+                        ForEach(Array(artist.popularTracks.prefix(5).enumerated()), id: \.element.id) { index, item in
+                            Button {
+                                SonivoPlay.track(item, in: artist.popularTracks)
+                            } label: {
+                                popularSongCard(item, rank: index + 1)
                             }
+                            .buttonStyle(GlassPressStyle(scale: 0.975))
                         }
                     }
+                    .padding(.horizontal, 16)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .riseIn(delay: 0.08)
+            }
+        }
+    }
+
+    private func popularSongCard(_ item: YandexMusicService.YMTrackItem, rank: Int) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ZStack(alignment: .bottomLeading) {
+                RemoteArtwork(urlString: item.coverUrlString, corner: 18)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(1, contentMode: .fit)
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.72)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Text(rank < 10 ? "0\(rank)" : "\(rank)")
+                    .font(AG.display(.caption, .heavy).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(11)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(AG.text(.subheadline, .bold))
+                    .foregroundStyle(AG.ink)
+                    .lineLimit(1)
+                Text(item.artistName)
+                    .font(AG.text(.caption, .medium))
+                    .foregroundStyle(AG.inkMuted)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(9)
+        .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(.white.opacity(0.13), lineWidth: 0.8)
+        }
+    }
+
+    private func topTracksSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
+        let tracks = artistTracks.isEmpty ? artist.popularTracks : artistTracks
+        Group {
+            if !tracks.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    SonivoHeader(title: "Топ", accent: "все треки").padding(.horizontal, 16)
+                    LazyVStack(spacing: 2) {
+                        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, item in
+                            ChartRowView(rank: index + 1, item: item) {
+                                SonivoPlay.track(item, in: tracks)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 7)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .riseIn(delay: 0.12)
             }
         }
     }
@@ -345,7 +430,27 @@ struct ArtistView: View {
     private func load() async {
         isLoading = true
         error = nil
-        do { artist = try await ym.getArtistFixed(artistId: artistId) }
+        artistTracks = []
+        do {
+            let loadedArtist = try await ym.getArtistFixed(artistId: artistId)
+            artist = loadedArtist
+
+            var tracks: [YandexMusicService.YMTrackItem] = []
+            let expectedCount = loadedArtist.counts?.tracks ?? 0
+            for page in 0..<10 {
+                let pageTracks = try await ym.getArtistTracks(
+                    artistId: artistId,
+                    page: page,
+                    pageSize: 100
+                )
+                tracks.append(contentsOf: pageTracks)
+                if pageTracks.isEmpty || tracks.count >= expectedCount || pageTracks.count < 100 {
+                    break
+                }
+            }
+            var seen = Set<String>()
+            artistTracks = tracks.filter { seen.insert($0.id).inserted }
+        }
         catch { self.error = error.localizedDescription }
         isLoading = false
     }

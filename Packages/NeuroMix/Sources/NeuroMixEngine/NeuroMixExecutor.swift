@@ -53,6 +53,9 @@ public struct NeuroMixTransitionExecutor: Sendable {
             try await clock.sleep(for: .seconds(step))
             elapsed += step
         }
+        for event in plan.events where event.endSeconds <= plan.durationSeconds {
+            try await apply(event, value: event.toValue)
+        }
         await audio.setGain(0, for: .outgoing)
         await audio.setGain(plan.targetGain, for: .incoming)
     }
