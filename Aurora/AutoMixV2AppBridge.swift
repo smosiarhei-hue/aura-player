@@ -37,111 +37,175 @@ final class AutoMixEngineSelectionStore {
         isNeuroEnabled = UserDefaults.standard.bool(forKey: Self.neuroDefaultsKey)
     }
 
-    @MainActor
-    final class NeuroMixRuntime {
-        static let shared = NeuroMixRuntime()
-        private let source = LocalTrackSource()
-        private var coordinator: PlaybackCoordinator?
-        private var queue: [Track] = []
-        private(set) var currentTrack: Track?
-        private(set) var isPlaying = false
-        private(set) var lastError: String?
+}
 
-        private init() {}
+@MainActor
+final class NeuroMixRuntime {
+    static let shared = NeuroMixRuntime()
+    private let source = LocalTrackSource()
+    private let analyzer: TrackAnalyzer
+    private var engine: DualDeckAudioEngine?
+    private var queue: [Track] = []
+    private var currentIndex: Int?
+    private var activeDeck: Deck = .a
+    private var monitorTask: Task<Void, Never>?
+    private var transitionTask: Task<Void, Never>?
+    private(set) var currentTrack: Track?
+    private(set) var isPlaying = false
+    private(set) var lastError: String?
 
-        func engineSelectionChanged(isEnabled: Bool) async {
-            if !isEnabled {
-                await stop()
+    private init() {
+        let directory = (try? TrackAnalyzer.defaultStorageDirectory())
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("neuromix-profiles", isDirectory: true)
+        analyzer = TrackAnalyzer(storageDirectory: directory)
+    }
+
+    func engineSelectionChanged(isEnabled: Bool) async {
+        if !isEnabled { await stop() }
+    }
+
+    func play(_ track: Track, queue newQueue: [Track]) async -> Bool {
+        guard !track.isStream, track.url.isFileURL else {
+            lastError = "NeuroMix пока работает только с локальными файлами"
+            return false
+        }
+        do {
+            try await stop()
+            queue = newQueue.filter { !$0.isStream && $0.url.isFileURL }
+            if !queue.contains(where: { $0.id == track.id }) { queue.insert(track, at: 0) }
+            for item in queue {
+                await source.register(LocalTrackRecord(
+                    metadata: TrackMeta(id: TrackID(raw: item.id.uuidString), title: item.title,
+                                        artist: item.artist, albumID: item.album.isEmpty ? nil : item.album,
+                                        durationSec: item.duration,
+                                        artworkURL: item.coverURL.flatMap(URL.init(string:))),
+                    fileURL: item.url))
             }
+            guard let index = queue.firstIndex(where: { $0.id == track.id }) else { return false }
+            currentIndex = index
+            currentTrack = track
+            activeDeck = .a
+            let audio = try DualDeckAudioEngine()
+            engine = audio
+            try await audio.prepare(.a, fileURL: track.url)
+            await audio.setGain(1, for: .a)
+            try await audio.play(.a)
+            isPlaying = true
+            startMonitoring()
+            return true
+        } catch {
+            lastError = String(describing: error)
+            await stop()
+            return false
         }
+    }
 
-        func play(_ track: Track, queue newQueue: [Track]) async -> Bool {
-            guard !track.isStream, track.url.isFileURL else {
-                lastError = "NeuroMix пока работает только с локальными файлами"
-                return false
-            }
-            do {
-                let coordinator = try ensureCoordinator()
-                queue = newQueue.filter { !$0.isStream && $0.url.isFileURL }
-                if !queue.contains(where: { $0.id == track.id }) { queue.insert(track, at: 0) }
-                for item in queue {
-                    await source.register(LocalTrackRecord(
-                        metadata: TrackMeta(
-                            id: TrackID(raw: item.id.uuidString),
-                            title: item.title,
-                            artist: item.artist,
-                            albumID: item.album.isEmpty ? nil : item.album,
-                            durationSec: item.duration,
-                            artworkURL: item.coverURL.flatMap(URL.init(string:))
-                        ),
-                        fileURL: item.url
-                    ))
-                }
-                guard let index = queue.firstIndex(where: { $0.id == track.id }) else { return false }
-                try await coordinator.play(
-                    queue: queue.map { TrackID(raw: $0.id.uuidString) },
-                    startIndex: index
-                )
-                apply(coordinator.snapshot())
-                return true
-            } catch {
-                lastError = String(describing: error)
-                return false
-            }
+    func play() async -> Bool {
+        guard let engine else { return false }
+        do {
+            try await engine.resume(activeDeck)
+            isPlaying = true
+            return true
+        } catch {
+            lastError = String(describing: error)
+            return false
         }
+    }
 
-        func play() async -> Bool {
-            guard let coordinator else { return false }
-            do {
-                try await coordinator.resume()
-                apply(coordinator.snapshot())
-                return true
-            } catch {
-                lastError = String(describing: error)
-                return false
-            }
-        }
+    func pause() async {
+        await engine?.pause(activeDeck)
+        isPlaying = false
+    }
 
-        func pause() async { await coordinator?.pause(); if let coordinator { apply(coordinator.snapshot()) } }
-        func next() async { try? await coordinator?.next(); if let coordinator { apply(coordinator.snapshot()) } }
-        func previous() async { try? await coordinator?.previous(); if let coordinator { apply(coordinator.snapshot()) } }
-        func seek(to seconds: Double) async { try? await coordinator?.seek(to: seconds); if let coordinator { apply(coordinator.snapshot()) } }
-        func engineConfigurationChanged() async {
-            guard let coordinator else { return }
-            try? await coordinator.handleEngineConfigurationChange()
-            apply(coordinator.snapshot())
-        }
-        func stop() async {
-            await coordinator?.stop()
-            coordinator = nil
-            currentTrack = nil
-            isPlaying = false
-        }
+    func next() async {
+        guard let currentIndex, currentIndex + 1 < queue.count else { return }
+        await transition(to: currentIndex + 1, force: true)
+    }
 
-        private func ensureCoordinator() throws -> PlaybackCoordinator {
-            if let coordinator { return coordinator }
-            let engine = try DualDeckAudioEngine()
-            let built = PlaybackCoordinator(source: source, engine: engine, automaticallyMonitor: true)
-            built.onChange = { [weak self] snapshot in self?.apply(snapshot) }
-            coordinator = built
-            return built
+    func previous() async {
+        guard let currentIndex else { return }
+        let snapshot = await engine?.snapshot()
+        let deck = activeDeck == .a ? snapshot?.deckA : snapshot?.deckB
+        if (deck?.positionSeconds ?? 0) > 3 {
+            try? await engine?.seek(activeDeck, to: 0)
+        } else if currentIndex > 0 {
+            await transition(to: currentIndex - 1, force: true)
         }
+    }
 
-        private func apply(_ snapshot: PlaybackCoordinatorSnapshot) {
-            guard let index = snapshot.currentIndex, queue.indices.contains(index) else {
-                isPlaying = false
-                return
-            }
-            currentTrack = queue[index]
-            switch snapshot.phase {
-            case .playing: isPlaying = true
-            default: isPlaying = false
+    func seek(to seconds: Double) async {
+        try? await engine?.seek(activeDeck, to: seconds)
+    }
+
+    func engineConfigurationChanged() async {
+        let position = await engine?.snapshot()
+        let deck = activeDeck == .a ? position?.deckA : position?.deckB
+        if let seconds = deck?.positionSeconds { try? await engine?.seek(activeDeck, to: seconds) }
+    }
+
+    func stop() async {
+        monitorTask?.cancel()
+        transitionTask?.cancel()
+        monitorTask = nil
+        transitionTask = nil
+        await engine?.stopEngine()
+        engine = nil
+        currentIndex = nil
+        currentTrack = nil
+        isPlaying = false
+    }
+
+    private func startMonitoring() {
+        monitorTask?.cancel()
+        monitorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await ContinuousClock().sleep(for: .milliseconds(100))
+                await self?.monitor()
             }
         }
     }
-}
 
-typealias NeuroMixRuntime = AutoMixEngineSelectionStore.NeuroMixRuntime
+    private func monitor() async {
+        guard transitionTask == nil, isPlaying, let currentIndex,
+              currentIndex + 1 < queue.count, let engine else { return }
+        let snapshot = await engine.snapshot()
+        let deck = activeDeck == .a ? snapshot.deckA : snapshot.deckB
+        let remaining = max(0, (deck.durationSeconds ?? queue[currentIndex].duration) - deck.positionSeconds)
+        if remaining <= 12 { await transition(to: currentIndex + 1, force: false) }
+    }
+
+    private func transition(to nextIndex: Int, force: Bool) async {
+        guard let engine, queue.indices.contains(nextIndex), let currentIndex,
+              let current = currentTrack else { return }
+        transitionTask?.cancel()
+        transitionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let sourceProfile = try await self.analyzer.profile(
+                    for: TrackID(raw: current.id.uuidString), fileURL: current.url)
+                let targetTrack = self.queue[nextIndex]
+                let targetProfile = try await self.analyzer.profile(
+                    for: TrackID(raw: targetTrack.id.uuidString), fileURL: targetTrack.url)
+                let plan = NeuroMixPlanningRuntime.shared.plan(from: sourceProfile, to: targetProfile)
+                let incomingDeck: Deck = self.activeDeck == .a ? .b : .a
+                let runner = NeuroMixRealtimeTransitionRunner(engine: engine)
+                try await runner.execute(plan, incomingURL: targetTrack.url,
+                                          outgoing: self.activeDeck, incoming: incomingDeck)
+                self.activeDeck = incomingDeck
+                self.currentIndex = nextIndex
+                self.currentTrack = targetTrack
+                self.transitionTask = nil
+            } catch is CancellationError {
+                self.transitionTask = nil
+            } catch {
+                self.lastError = String(describing: error)
+                if force { self.isPlaying = false }
+                self.transitionTask = nil
+            }
+        }
+        await transitionTask?.value
+    }
+}
 
 @Observable
 @MainActor

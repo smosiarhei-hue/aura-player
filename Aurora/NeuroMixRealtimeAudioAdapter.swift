@@ -7,10 +7,19 @@ import NeuroMixEngine
 final class NeuroMixRealtimeAudioAdapter: NeuroMixRealtimeAudio {
     private let engine: DualDeckAudioEngine
     private let bpm: Float
+    private let outgoingDeck: Deck
+    private let incomingDeck: Deck
 
-    init(engine: DualDeckAudioEngine, bpm: Float = 120) {
+    init(
+        engine: DualDeckAudioEngine,
+        bpm: Float = 120,
+        outgoingDeck: Deck = .a,
+        incomingDeck: Deck = .b
+    ) {
         self.engine = engine
         self.bpm = bpm > 0 ? bpm : 120
+        self.outgoingDeck = outgoingDeck
+        self.incomingDeck = incomingDeck
     }
 
     func setGain(_ gain: Double, for deck: NeuroTransitionDeck) async {
@@ -39,7 +48,7 @@ final class NeuroMixRealtimeAudioAdapter: NeuroMixRealtimeAudio {
     }
 
     private func audioDeck(_ deck: NeuroTransitionDeck) -> Deck {
-        deck == .outgoing ? .a : .b
+        deck == .outgoing ? outgoingDeck : incomingDeck
     }
 
     private func effectKind(for kind: NeuroTransitionEventKind) -> FxKind? {
@@ -76,7 +85,12 @@ final class NeuroMixRealtimeTransitionRunner {
         await engine.setGain(0, for: incoming)
         try await engine.play(outgoing)
         try await engine.play(incoming)
-        let adapter = NeuroMixRealtimeAudioAdapter(engine: engine)
+        let adapter = NeuroMixRealtimeAudioAdapter(
+            engine: engine,
+            bpm: 120,
+            outgoingDeck: outgoing,
+            incomingDeck: incoming
+        )
         try await NeuroMixTransitionExecutor(audio: adapter).execute(plan)
         await engine.resetEffects(outgoing)
         await engine.resetEffects(incoming)
