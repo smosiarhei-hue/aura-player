@@ -21,7 +21,10 @@ final class AutoMixEngineSelectionStore {
             Task { await AutoMixV2Runtime.shared.engineSelectionChanged(isV2Enabled: isV2Enabled) }
         }
     }
-    private init() { isV2Enabled = UserDefaults.standard.bool(forKey: Self.defaultsKey) }
+    private init() {
+        UserDefaults.standard.register(defaults: [Self.defaultsKey: true])
+        isV2Enabled = UserDefaults.standard.bool(forKey: Self.defaultsKey)
+    }
 }
 
 @Observable
@@ -123,10 +126,11 @@ final class AutoMixV2Runtime {
             }
         }
     }
-    func play(_ track: Track, queue newQueue: [Track]) async {
+    @discardableResult
+    func play(_ track: Track, queue newQueue: [Track]) async -> Bool {
         guard let coordinator = ensureCoordinator() else {
             lastError = lastError ?? "AutoMix V2 audio engine недоступен"
-            return
+            return false
         }
         let token = beginRequest(); isLoading = true; lastError = nil
         var tracks = newQueue.isEmpty ? [track] : newQueue
@@ -138,13 +142,30 @@ final class AutoMixV2Runtime {
             try await coordinator.play(queue: registered.ids, startIndex: index); try check(token)
             apply(coordinator.snapshot())
             await diagnostics.record(MixDiagnosticEvent(category: "playback", message: "Queue playback started"))
-        } catch is CancellationError { return }
-        catch { guard token == requestID else { return }; await fail(Self.userMessage(for: error), category: "playback") }
+        } catch is CancellationError { return false }
+        catch {
+            guard token == requestID else { return false }
+            await fail(Self.userMessage(for: error), category: "playback")
+            return false
+        }
+        return true
     }
-    func play() async {
-        if currentTrack == nil { await adoptLegacyTrackIfNeeded(); return }
-        guard let coordinator = ensureCoordinator() else { return }
-        do { try await coordinator.resume() } catch is CancellationError { return } catch { lastError = Self.userMessage(for: error) }
+    @discardableResult
+    func play() async -> Bool {
+        if currentTrack == nil {
+            await adoptLegacyTrackIfNeeded()
+            return currentTrack != nil
+        }
+        guard let coordinator = ensureCoordinator() else { return false }
+        do {
+            try await coordinator.resume()
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            lastError = Self.userMessage(for: error)
+            return false
+        }
     }
     func pause() async { await coordinator?.pause() }
     func stop() async {
@@ -346,8 +367,28 @@ final class PlaybackCommandRouter {
             Task { @MainActor in Self.shared.seek(to: event.positionTime) }; return .success
         }
     }
-    func play(_ track: Track, queue: [Track]) { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.play(track, queue: queue) } } else { PlayerCore.shared.play(track, newQueue: queue) } }
-    func play() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.play() } } else { PlayerCore.shared.resume() } }
+    func play(_ track: Track, queue: [Track]) {
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task {
+                if !(await AutoMixV2Runtime.shared.play(track, queue: queue)) {
+                    PlayerCore.shared.play(track, newQueue: queue)
+                }
+            }
+        } else {
+            PlayerCore.shared.play(track, newQueue: queue)
+        }
+    }
+    func play() {
+        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            Task {
+                if !(await AutoMixV2Runtime.shared.play()) {
+                    PlayerCore.shared.resume()
+                }
+            }
+        } else {
+            PlayerCore.shared.resume()
+        }
+    }
     func pause() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.pause() } } else { PlayerCore.shared.pause() } }
     func toggle() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.toggle() } } else { PlayerCore.shared.togglePlay() } }
     func next() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.next() } } else { PlayerCore.shared.next() } }

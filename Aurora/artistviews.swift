@@ -141,7 +141,7 @@ struct ArtistView: View {
         Task {
             let tracks = await YandexMusicService.shared.buildArtistWave(artistId: artist.id, target: 45)
             guard let first = tracks.first else { return }
-            PlayerCore.shared.play(first, newQueue: tracks)
+            PlaybackCommandRouter.shared.play(first, queue: tracks)
         }
     }
 
