@@ -58,26 +58,27 @@ struct AutoMixV2DiagnosticsView: View {
             }
         }
 
-        @ViewBuilder
-        private var neuroMixSection: some View {
-            Section("NeuroMix preview") {
-                if let plan = neuroPlan {
-                    LabeledContent("Тип", value: plan.kind.rawValue)
-                    LabeledContent("Уверенность", value: String(format: "%.2f", plan.confidence))
-                    LabeledContent("Длительность", value: String(format: "%.1f с", plan.durationSeconds))
-                    LabeledContent("Rate A / B", value: String(format: "%.3f / %.3f", plan.sourceRate, plan.targetRate))
-                    LabeledContent("События", value: String(plan.events.count))
-                    Text(plan.reason).font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("План ещё не рассчитан").foregroundStyle(.secondary)
-                    Text("Нужны профили текущего и следующего трека.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
         .navigationTitle("AutoMix V2")
         .task { analysis.install(); await runtime.refreshDiagnostics() }
+    }
+
+    @ViewBuilder
+    private var neuroMixSection: some View {
+        Section("NeuroMix preview") {
+            if let plan = neuroPlan {
+                LabeledContent("Тип", value: plan.kind.rawValue)
+                LabeledContent("Уверенность", value: String(format: "%.2f", plan.confidence))
+                LabeledContent("Длительность", value: String(format: "%.1f с", plan.durationSeconds))
+                LabeledContent("Rate A / B", value: String(format: "%.3f / %.3f", plan.sourceRate, plan.targetRate))
+                LabeledContent("События", value: String(plan.events.count))
+                Text(plan.reason).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("План ещё не рассчитан").foregroundStyle(.secondary)
+                Text("Нужны профили текущего и следующего трека.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder
