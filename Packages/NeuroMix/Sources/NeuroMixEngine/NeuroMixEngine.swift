@@ -125,16 +125,6 @@ public struct NeuroMixEngine: Sendable {
                 targetRate: 1
             ))
         }
-        if source.endsInSilence || target.endsInSilence {
-            candidates.append(candidate(
-                .hardCut,
-                source: source,
-                target: target,
-                duration: 0,
-                sourceRate: 1,
-                targetRate: 1
-            ))
-        }
         return candidates
     }
 
@@ -235,7 +225,7 @@ public struct NeuroMixEngine: Sendable {
                 toValue: 1
             )
         ]
-        if kind == .beatmatch || kind == .filterOut {
+        if kind == .beatmatch || kind == .filterOut || kind == .crossfade {
             result.append(NeuroTransitionEvent(
                 deck: .outgoing,
                 kind: .bassCut,

@@ -93,7 +93,7 @@ final class NeuroMixRealtimeTransitionRunner {
             incomingDeck: incoming
         )
         try await NeuroMixTransitionExecutor(audio: adapter).execute(plan)
-        await engine.resetEffects(outgoing)
+        await engine.stop(outgoing)
         await engine.resetEffects(incoming)
     }
 }
