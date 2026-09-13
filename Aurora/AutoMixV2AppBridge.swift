@@ -7,6 +7,7 @@ import MixDiagnostics
 import MixModels
 import Observation
 import PlaybackCoordinator
+import TrackAnalysis
 import TrackSource
 
 @Observable

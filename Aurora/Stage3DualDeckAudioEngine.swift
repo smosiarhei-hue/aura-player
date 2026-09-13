@@ -90,6 +90,13 @@ final class DualDeckAudioEngine {
     func play(_ deck:Deck) async throws { let s=slot(deck);guard s.prepared,s.file != nil else{throw AudioEngineCoreError.deckNotPrepared(deck)};if !graph.isRunning{graph.prepare();try graph.start()};guard graph.isRunning else{throw AudioEngineCoreError.conversionFailed("Audio graph did not start")};if !s.player.isPlaying{s.player.play()};s.playing=true }
     func pause(_ deck:Deck) async { let s=slot(deck);s.lastPosition=currentPosition(s);s.player.pause();s.playing=false }
     func resume(_ deck:Deck) async throws { try await play(deck) }
+    func seek(_ deck: Deck, to seconds: Double) async throws {
+        let s = slot(deck)
+        guard let url = s.url else { throw AudioEngineCoreError.deckNotPrepared(deck) }
+        let wasPlaying = s.playing
+        try await prepare(deck, fileURL: url, startTimeSeconds: seconds)
+        if wasPlaying { try await play(deck) }
+    }
     func stop(_ deck:Deck) async { let s=slot(deck);s.generation=UUID();s.player.stop();s.player.reset();s.file=nil;s.url=nil;s.start=0;s.duration=0;s.lastPosition=0;s.prepared=false;s.playing=false;s.ended=false;neutral(s) }
     func stopEngine() async { await stop(.a);await stop(.b);graph.stop() }
     func setGain(_ gain:Float,for deck:Deck) async { slot(deck).mixer.outputVolume=min(1,max(0,gain.isFinite ? gain:0)) }
