@@ -5,6 +5,7 @@
 import AudioEngineCore
 import MixDiagnostics
 import MixModels
+import NeuroMixEngine
 import Observation
 import PlaybackCoordinator
 import TrackAnalysis
@@ -52,6 +53,7 @@ final class AutoMixEngineSelectionStore {
 
 }
 
+@Observable
 @MainActor
 final class NeuroMixRuntime {
     static let shared = NeuroMixRuntime()
