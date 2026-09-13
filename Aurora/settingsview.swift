@@ -70,7 +70,13 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Использовать AutoMix V2", isOn: $engineSelection.isV2Enabled).tint(settings.accentColor)
-                    LabeledContent("Текущий движок", value: engineSelection.isV2Enabled ? "AutoMix V2" : "Обычное воспроизведение")
+                    Toggle("Тестировать NeuroMix", isOn: $engineSelection.isNeuroEnabled).tint(settings.accentColor)
+                    LabeledContent(
+                        "Текущий движок",
+                        value: engineSelection.isNeuroEnabled
+                            ? "NeuroMix"
+                            : (engineSelection.isV2Enabled ? "AutoMix V2" : "Обычное воспроизведение")
+                    )
                     NavigationLink("Диагностика AutoMix V2") { AutoMixV2DiagnosticsView() }
                 } header: {
                     Text("Движок воспроизведения")

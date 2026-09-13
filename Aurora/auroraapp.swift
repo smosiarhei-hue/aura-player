@@ -34,8 +34,13 @@ struct RootView: View {
     @Namespace private var playerTransition
     static let playerZoomID = "now-playing-artwork"
     private var v2OwnsPlayback: Bool { engineSelection.isV2Enabled && v2.currentTrack != nil }
-    private var presentedTrack: Track? { v2OwnsPlayback ? v2.currentTrack : player.currentTrack }
-    private var presentedIsPlaying: Bool { v2OwnsPlayback ? v2.isPlaying : player.isPlaying }
+    private var neuroOwnsPlayback: Bool { engineSelection.isNeuroEnabled && NeuroMixRuntime.shared.currentTrack != nil }
+    private var presentedTrack: Track? {
+        neuroOwnsPlayback ? NeuroMixRuntime.shared.currentTrack : (v2OwnsPlayback ? v2.currentTrack : player.currentTrack)
+    }
+    private var presentedIsPlaying: Bool {
+        neuroOwnsPlayback ? NeuroMixRuntime.shared.isPlaying : (v2OwnsPlayback ? v2.isPlaying : player.isPlaying)
+    }
     private var miniVisible: Bool {
         guard let track = presentedTrack else { return false }
         return !track.title.isEmpty || track.isStream || track.duration > 0

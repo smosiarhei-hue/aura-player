@@ -28,7 +28,9 @@ final class PlaybackAudioSessionCoordinator {
                 guard let rawType, let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
                 switch type {
                 case .began:
-                    if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                    if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                        await NeuroMixRuntime.shared.pause()
+                    } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
                         await AutoMixV2Runtime.shared.interruptionBegan()
                     } else {
                         PlayerCore.shared.pause()
@@ -36,7 +38,9 @@ final class PlaybackAudioSessionCoordinator {
                 case .ended:
                     PlaybackAudioSessionCoordinator.shared.configure()
                     let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-                    if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                    if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                        _ = await NeuroMixRuntime.shared.play()
+                    } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
                         await AutoMixV2Runtime.shared.interruptionEnded(shouldResume: shouldResume)
                     }
                 @unknown default:
@@ -58,15 +62,21 @@ final class PlaybackAudioSessionCoordinator {
 
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { _ in
             Task { @MainActor in
-                guard AutoMixEngineSelectionStore.shared.isV2Enabled else { return }
-                await AutoMixV2Runtime.shared.engineConfigurationChanged()
+                guard AutoMixEngineSelectionStore.shared.isV2Enabled || AutoMixEngineSelectionStore.shared.isNeuroEnabled else { return }
+                if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                    await NeuroMixRuntime.shared.engineConfigurationChanged()
+                } else {
+                    await AutoMixV2Runtime.shared.engineConfigurationChanged()
+                }
             }
         })
 
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in
                 PlaybackAudioSessionCoordinator.shared.configure()
-                if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                    _ = await NeuroMixRuntime.shared.play()
+                } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
                     await AutoMixV2Runtime.shared.engineConfigurationChanged()
                 }
             }
@@ -83,7 +93,7 @@ final class PlaybackAudioSessionCoordinator {
 
     private func configure() {
         let session = AVAudioSession.sharedInstance()
-        let usesV2 = AutoMixEngineSelectionStore.shared.isV2Enabled
+        let usesV2 = AutoMixEngineSelectionStore.shared.isV2Enabled || AutoMixEngineSelectionStore.shared.isNeuroEnabled
         let result = PlaybackAudioSessionSetup.configure(
             session: SystemPlaybackAudioSessionConfiguration(session: session),
             usesV2: usesV2

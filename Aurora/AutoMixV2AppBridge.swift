@@ -14,16 +14,130 @@ import TrackSource
 final class AutoMixEngineSelectionStore {
     static let shared = AutoMixEngineSelectionStore()
     static let defaultsKey = "automix.v2.enabled"
+    static let neuroDefaultsKey = "neuromix.enabled"
     var isV2Enabled: Bool {
         didSet {
             UserDefaults.standard.set(isV2Enabled, forKey: Self.defaultsKey)
+            if isV2Enabled && isNeuroEnabled { isNeuroEnabled = false }
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
             Task { await AutoMixV2Runtime.shared.engineSelectionChanged(isV2Enabled: isV2Enabled) }
         }
     }
+    var isNeuroEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isNeuroEnabled, forKey: Self.neuroDefaultsKey)
+            if isNeuroEnabled && isV2Enabled { isV2Enabled = false }
+            PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+            Task { await NeuroMixRuntime.shared.engineSelectionChanged(isEnabled: isNeuroEnabled) }
+        }
+    }
     private init() {
-        UserDefaults.standard.register(defaults: [Self.defaultsKey: true])
+        UserDefaults.standard.register(defaults: [Self.defaultsKey: true, Self.neuroDefaultsKey: false])
         isV2Enabled = UserDefaults.standard.bool(forKey: Self.defaultsKey)
+        isNeuroEnabled = UserDefaults.standard.bool(forKey: Self.neuroDefaultsKey)
+    }
+
+    @MainActor
+    final class NeuroMixRuntime {
+        static let shared = NeuroMixRuntime()
+        private let source = LocalTrackSource()
+        private var coordinator: PlaybackCoordinator?
+        private var queue: [Track] = []
+        private(set) var currentTrack: Track?
+        private(set) var isPlaying = false
+        private(set) var lastError: String?
+
+        private init() {}
+
+        func engineSelectionChanged(isEnabled: Bool) async {
+            if !isEnabled {
+                await stop()
+            }
+        }
+
+        func play(_ track: Track, queue newQueue: [Track]) async -> Bool {
+            guard !track.isStream, track.url.isFileURL else {
+                lastError = "NeuroMix пока работает только с локальными файлами"
+                return false
+            }
+            do {
+                let coordinator = try ensureCoordinator()
+                queue = newQueue.filter { !$0.isStream && $0.url.isFileURL }
+                if !queue.contains(where: { $0.id == track.id }) { queue.insert(track, at: 0) }
+                for item in queue {
+                    await source.register(LocalTrackRecord(
+                        metadata: TrackMeta(
+                            id: TrackID(raw: item.id.uuidString),
+                            title: item.title,
+                            artist: item.artist,
+                            albumID: item.album.isEmpty ? nil : item.album,
+                            durationSec: item.duration,
+                            artworkURL: item.coverURL.flatMap(URL.init(string:))
+                        ),
+                        fileURL: item.url
+                    ))
+                }
+                guard let index = queue.firstIndex(where: { $0.id == track.id }) else { return false }
+                try await coordinator.play(
+                    queue: queue.map { TrackID(raw: $0.id.uuidString) },
+                    startIndex: index
+                )
+                apply(coordinator.snapshot())
+                return true
+            } catch {
+                lastError = String(describing: error)
+                return false
+            }
+        }
+
+        func play() async -> Bool {
+            guard let coordinator else { return false }
+            do {
+                try await coordinator.resume()
+                apply(coordinator.snapshot())
+                return true
+            } catch {
+                lastError = String(describing: error)
+                return false
+            }
+        }
+
+        func pause() async { await coordinator?.pause(); if let coordinator { apply(coordinator.snapshot()) } }
+        func next() async { try? await coordinator?.next(); if let coordinator { apply(coordinator.snapshot()) } }
+        func previous() async { try? await coordinator?.previous(); if let coordinator { apply(coordinator.snapshot()) } }
+        func seek(to seconds: Double) async { try? await coordinator?.seek(to: seconds); if let coordinator { apply(coordinator.snapshot()) } }
+        func engineConfigurationChanged() async {
+            guard let coordinator else { return }
+            try? await coordinator.handleEngineConfigurationChange()
+            apply(coordinator.snapshot())
+        }
+        func stop() async {
+            await coordinator?.stop()
+            coordinator = nil
+            currentTrack = nil
+            isPlaying = false
+        }
+
+        private func ensureCoordinator() throws -> PlaybackCoordinator {
+            if let coordinator { return coordinator }
+            let engine = try DualDeckAudioEngine()
+            let built = PlaybackCoordinator(source: source, engine: engine, automaticallyMonitor: true)
+            built.onChange = { [weak self] snapshot in self?.apply(snapshot) }
+            coordinator = built
+            return built
+        }
+
+        private func apply(_ snapshot: PlaybackCoordinatorSnapshot) {
+            guard let index = snapshot.currentIndex, queue.indices.contains(index) else {
+                isPlaying = false
+                return
+            }
+            currentTrack = queue[index]
+            switch snapshot.phase {
+            case .playing: isPlaying = true
+            default: isPlaying = false
+            }
+        }
     }
 }
 
@@ -378,6 +492,14 @@ final class PlaybackCommandRouter {
         if track.isStream || track.streamUrlString != nil {
             legacyOwnsPlayback = true
             PlayerCore.shared.play(track, newQueue: queue)
+        } else if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+            legacyOwnsPlayback = false
+            Task {
+                if !(await NeuroMixRuntime.shared.play(track, queue: queue)) {
+                    legacyOwnsPlayback = true
+                    PlayerCore.shared.play(track, newQueue: queue)
+                }
+            }
         } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
             legacyOwnsPlayback = false
             Task {
@@ -394,6 +516,13 @@ final class PlaybackCommandRouter {
     func play() {
         if legacyOwnsPlayback {
             PlayerCore.shared.resume()
+        } else if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+            Task {
+                if !(await NeuroMixRuntime.shared.play()) {
+                    legacyOwnsPlayback = true
+                    PlayerCore.shared.resume()
+                }
+            }
         } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
             Task {
                 if !(await AutoMixV2Runtime.shared.play()) {
@@ -407,26 +536,36 @@ final class PlaybackCommandRouter {
     }
     func pause() {
         if legacyOwnsPlayback { PlayerCore.shared.pause() }
+        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.pause() } }
         else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.pause() } }
         else { PlayerCore.shared.pause() }
     }
     func toggle() {
         if legacyOwnsPlayback { PlayerCore.shared.togglePlay() }
+        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+            Task {
+                if NeuroMixRuntime.shared.isPlaying { await NeuroMixRuntime.shared.pause() }
+                else { _ = await NeuroMixRuntime.shared.play() }
+            }
+        }
         else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.toggle() } }
         else { PlayerCore.shared.togglePlay() }
     }
     func next() {
         if legacyOwnsPlayback { PlayerCore.shared.next() }
+        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.next() } }
         else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.next() } }
         else { PlayerCore.shared.next() }
     }
     func previous() {
         if legacyOwnsPlayback { PlayerCore.shared.previous() }
+        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.previous() } }
         else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.previous() } }
         else { PlayerCore.shared.previous() }
     }
     func seek(to seconds: Double) {
         if legacyOwnsPlayback { PlayerCore.shared.seek(to: seconds) }
+        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.seek(to: seconds) } }
         else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.seek(to: seconds) } }
         else { PlayerCore.shared.seek(to: seconds) }
     }
