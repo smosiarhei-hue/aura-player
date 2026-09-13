@@ -357,6 +357,7 @@ final class AutoMixV2Runtime {
 @MainActor
 final class PlaybackCommandRouter {
     static let shared = PlaybackCommandRouter(); private var installed = false; private init() {}
+    private var legacyOwnsPlayback = false
     func install() {
         guard !installed else { return }; installed = true
         let center = MPRemoteCommandCenter.shared()
@@ -374,20 +375,29 @@ final class PlaybackCommandRouter {
         }
     }
     func play(_ track: Track, queue: [Track]) {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+        if track.isStream || track.streamUrlString != nil {
+            legacyOwnsPlayback = true
+            PlayerCore.shared.play(track, newQueue: queue)
+        } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            legacyOwnsPlayback = false
             Task {
                 if !(await AutoMixV2Runtime.shared.play(track, queue: queue)) {
+                    legacyOwnsPlayback = true
                     PlayerCore.shared.play(track, newQueue: queue)
                 }
             }
         } else {
+            legacyOwnsPlayback = true
             PlayerCore.shared.play(track, newQueue: queue)
         }
     }
     func play() {
-        if AutoMixEngineSelectionStore.shared.isV2Enabled {
+        if legacyOwnsPlayback {
+            PlayerCore.shared.resume()
+        } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
             Task {
                 if !(await AutoMixV2Runtime.shared.play()) {
+                    legacyOwnsPlayback = true
                     PlayerCore.shared.resume()
                 }
             }
@@ -395,11 +405,31 @@ final class PlaybackCommandRouter {
             PlayerCore.shared.resume()
         }
     }
-    func pause() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.pause() } } else { PlayerCore.shared.pause() } }
-    func toggle() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.toggle() } } else { PlayerCore.shared.togglePlay() } }
-    func next() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.next() } } else { PlayerCore.shared.next() } }
-    func previous() { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.previous() } } else { PlayerCore.shared.previous() } }
-    func seek(to seconds: Double) { if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.seek(to: seconds) } } else { PlayerCore.shared.seek(to: seconds) } }
+    func pause() {
+        if legacyOwnsPlayback { PlayerCore.shared.pause() }
+        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.pause() } }
+        else { PlayerCore.shared.pause() }
+    }
+    func toggle() {
+        if legacyOwnsPlayback { PlayerCore.shared.togglePlay() }
+        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.toggle() } }
+        else { PlayerCore.shared.togglePlay() }
+    }
+    func next() {
+        if legacyOwnsPlayback { PlayerCore.shared.next() }
+        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.next() } }
+        else { PlayerCore.shared.next() }
+    }
+    func previous() {
+        if legacyOwnsPlayback { PlayerCore.shared.previous() }
+        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.previous() } }
+        else { PlayerCore.shared.previous() }
+    }
+    func seek(to seconds: Double) {
+        if legacyOwnsPlayback { PlayerCore.shared.seek(to: seconds) }
+        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.seek(to: seconds) } }
+        else { PlayerCore.shared.seek(to: seconds) }
+    }
 }
 
 extension AutoMixV2Runtime {
