@@ -29,6 +29,31 @@ struct NeuroMixEngineTests {
         #expect(plan.targetRate == 1)
     }
 
+    @Test
+    func emitsMusicalEventsForBeatmatchedTransition() {
+        let engine = NeuroMixEngine()
+        let source = features(id: "a", bpm: 120, bpmConfidence: 0.95, vocal: 0.1)
+        let target = features(id: "b", bpm: 121, bpmConfidence: 0.95, vocal: 0.1)
+
+        let plan = engine.makePlan(source: source, target: target)
+
+        #expect(plan.events.contains { $0.kind == .volume })
+        #expect(plan.events.contains { $0.kind == .bassCut })
+        #expect(plan.events.contains { $0.kind == .lowPassSweep })
+        #expect(plan.events.allSatisfy { $0.endSeconds >= $0.startSeconds })
+    }
+
+    @Test
+    func penalizesVocalClashAndAddsFilterProtection() {
+        let engine = NeuroMixEngine()
+        let source = features(id: "a", bpm: 120, bpmConfidence: 0.95, vocal: 1)
+        let target = features(id: "b", bpm: 121, bpmConfidence: 0.95, vocal: 1)
+
+        let plan = engine.makePlan(source: source, target: target)
+
+        #expect(plan.events.contains { $0.kind == .highPassSweep })
+    }
+
     private func features(
         id: String,
         bpm: Double,

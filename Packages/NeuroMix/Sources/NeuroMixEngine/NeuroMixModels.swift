@@ -12,6 +12,10 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
     public let vocalActivity: Double
     public let hasFadeOut: Bool
     public let endsInSilence: Bool
+    public let beatGrid: NeuroBeatGrid?
+    public let phraseMarkers: [NeuroPhraseMarker]
+    public let segments: [NeuroSegment]
+    public let vocalActivityCurve: [Double]
 
     public init(
         trackID: String,
@@ -24,7 +28,11 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
         keyConfidence: Double,
         vocalActivity: Double,
         hasFadeOut: Bool,
-        endsInSilence: Bool
+        endsInSilence: Bool,
+        beatGrid: NeuroBeatGrid? = nil,
+        phraseMarkers: [NeuroPhraseMarker] = [],
+        segments: [NeuroSegment] = [],
+        vocalActivityCurve: [Double] = []
     ) {
         self.trackID = trackID
         self.durationSeconds = durationSeconds
@@ -37,6 +45,71 @@ public struct NeuroTrackFeatures: Sendable, Equatable {
         self.vocalActivity = Self.clamp(vocalActivity)
         self.hasFadeOut = hasFadeOut
         self.endsInSilence = endsInSilence
+        self.beatGrid = beatGrid
+        self.phraseMarkers = phraseMarkers
+        self.segments = segments
+        self.vocalActivityCurve = vocalActivityCurve.map(Self.clamp)
+    }
+
+    public struct NeuroBeatGrid: Sendable, Codable, Equatable {
+        public let bpm: Double
+        public let offsetSeconds: Double
+        public let beatsPerBar: Int
+        public let confidence: Double
+
+        public init(
+            bpm: Double,
+            offsetSeconds: Double,
+            beatsPerBar: Int = 4,
+            confidence: Double
+        ) {
+            self.bpm = bpm.isFinite && bpm > 0 ? bpm : 0
+            self.offsetSeconds = max(0, offsetSeconds.isFinite ? offsetSeconds : 0)
+            self.beatsPerBar = min(8, max(1, beatsPerBar))
+            self.confidence = min(1, max(0, confidence.isFinite ? confidence : 0))
+        }
+
+        public var barDurationSeconds: Double {
+            bpm > 0 ? Double(beatsPerBar) * 60 / bpm : 0
+        }
+    }
+
+    public struct NeuroPhraseMarker: Sendable, Codable, Equatable {
+        public let startSeconds: Double
+        public let lengthBars: Int
+        public let energy: Double
+        public let isDrop: Bool
+
+        public init(startSeconds: Double, lengthBars: Int = 8, energy: Double, isDrop: Bool = false) {
+            self.startSeconds = max(0, startSeconds.isFinite ? startSeconds : 0)
+            self.lengthBars = min(64, max(1, lengthBars))
+            self.energy = min(1, max(0, energy.isFinite ? energy : 0))
+            self.isDrop = isDrop
+        }
+    }
+
+    public enum NeuroSegmentKind: String, Sendable, Codable, Equatable {
+        case intro
+        case verse
+        case chorus
+        case breakdown
+        case drop
+        case bridge
+        case outro
+        case silence
+        case unknown
+    }
+
+    public struct NeuroSegment: Sendable, Codable, Equatable {
+        public let startSeconds: Double
+        public let endSeconds: Double
+        public let kind: NeuroSegmentKind
+
+        public init(startSeconds: Double, endSeconds: Double, kind: NeuroSegmentKind) {
+            self.startSeconds = max(0, startSeconds.isFinite ? startSeconds : 0)
+            self.endSeconds = max(self.startSeconds, endSeconds.isFinite ? endSeconds : self.startSeconds)
+            self.kind = kind
+        }
     }
 
     private static func clamp(_ value: Double) -> Double {
@@ -53,6 +126,46 @@ public enum NeuroTransitionKind: String, Sendable, Codable, Equatable {
     case none
 }
 
+public enum NeuroTransitionEventKind: String, Sendable, Codable, Equatable {
+    case volume
+    case bassCut
+    case bassRestore
+    case highPassSweep
+    case lowPassSweep
+    case echoOut
+    case rateRamp
+}
+
+public enum NeuroTransitionDeck: String, Sendable, Codable, Equatable {
+    case outgoing
+    case incoming
+}
+
+public struct NeuroTransitionEvent: Sendable, Codable, Equatable {
+    public let deck: NeuroTransitionDeck
+    public let kind: NeuroTransitionEventKind
+    public let startSeconds: Double
+    public let endSeconds: Double
+    public let fromValue: Double
+    public let toValue: Double
+
+    public init(
+        deck: NeuroTransitionDeck,
+        kind: NeuroTransitionEventKind,
+        startSeconds: Double,
+        endSeconds: Double,
+        fromValue: Double,
+        toValue: Double
+    ) {
+        self.deck = deck
+        self.kind = kind
+        self.startSeconds = max(0, startSeconds.isFinite ? startSeconds : 0)
+        self.endSeconds = max(self.startSeconds, endSeconds.isFinite ? endSeconds : self.startSeconds)
+        self.fromValue = fromValue.isFinite ? fromValue : 0
+        self.toValue = toValue.isFinite ? toValue : 0
+    }
+}
+
 public struct NeuroTransitionPlan: Sendable, Codable, Equatable {
     public let sourceTrackID: String
     public let targetTrackID: String
@@ -67,6 +180,8 @@ public struct NeuroTransitionPlan: Sendable, Codable, Equatable {
     public let score: Double
     public let reason: String
     public let usedFallback: Bool
+    public let events: [NeuroTransitionEvent]
+    public let confidence: Double
 
     public init(
         sourceTrackID: String,
@@ -81,7 +196,9 @@ public struct NeuroTransitionPlan: Sendable, Codable, Equatable {
         targetGain: Double,
         score: Double,
         reason: String,
-        usedFallback: Bool
+        usedFallback: Bool,
+        events: [NeuroTransitionEvent] = [],
+        confidence: Double? = nil
     ) {
         self.sourceTrackID = sourceTrackID
         self.targetTrackID = targetTrackID
@@ -96,6 +213,8 @@ public struct NeuroTransitionPlan: Sendable, Codable, Equatable {
         self.score = min(1, max(0, score.isFinite ? score : 0))
         self.reason = reason
         self.usedFallback = usedFallback
+        self.events = events
+        self.confidence = min(1, max(0, (confidence ?? score).isFinite ? (confidence ?? score) : 0))
     }
 
     private static func safeRate(_ value: Double) -> Double {

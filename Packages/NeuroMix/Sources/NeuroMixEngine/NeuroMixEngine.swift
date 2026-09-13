@@ -14,26 +14,56 @@ public struct NeuroHeuristicScorer: NeuroTransitionScoring {
     ) -> Double {
         let energyContinuity = 1 - min(1, abs(source.energy - target.energy))
         let vocalSafety = 1 - min(1, source.vocalActivity * target.vocalActivity)
-        let keySafety = source.key != nil && source.key == target.key
-            ? min(source.keyConfidence, target.keyConfidence)
-            : 0.5
+        let keySafety = harmonicCompatibility(source: source, target: target)
+        let phraseSafety = phraseCompatibility(source: source, target: target)
+        let loudnessSafety = loudnessCompatibility(source: source, target: target)
 
         switch kind {
         case .beatmatch:
             guard let sourceBPM = source.bpm, let targetBPM = target.bpm,
                   sourceBPM > 0, targetBPM > 0 else { return 0 }
             let ratio = min(sourceBPM, targetBPM) / max(sourceBPM, targetBPM)
-            return min(1, max(0, ratio * 0.55 + energyContinuity * 0.2
-                              + vocalSafety * 0.15 + keySafety * 0.1))
+            return min(1, max(0, ratio * 0.35 + energyContinuity * 0.15
+                              + vocalSafety * 0.15 + keySafety * 0.2
+                              + phraseSafety * 0.1 + loudnessSafety * 0.05))
         case .crossfade:
-            return energyContinuity * 0.55 + vocalSafety * 0.25 + keySafety * 0.2
+            return energyContinuity * 0.35 + vocalSafety * 0.2 + keySafety * 0.2
+                + phraseSafety * 0.1 + loudnessSafety * 0.15
         case .filterOut:
-            return energyContinuity * 0.35 + vocalSafety * 0.5 + keySafety * 0.15
+            return energyContinuity * 0.25 + vocalSafety * 0.4 + keySafety * 0.15
+                + phraseSafety * 0.1 + loudnessSafety * 0.1
         case .hardCut:
             return (target.endsInSilence || source.endsInSilence) ? 0.65 : 0.25
         case .none:
             return 0
         }
+    }
+
+    private func harmonicCompatibility(source: NeuroTrackFeatures, target: NeuroTrackFeatures) -> Double {
+        guard let sourceKey = source.key, let targetKey = target.key else { return 0.45 }
+        if sourceKey == targetKey {
+            return min(source.keyConfidence, target.keyConfidence)
+        }
+        let sourceParts = sourceKey.split(separator: "A")
+        let targetParts = targetKey.split(separator: "A")
+        guard sourceParts.count == 2, targetParts.count == 2,
+              sourceParts[1] == targetParts[1],
+              let sourceNumber = Int(sourceParts[0]),
+              let targetNumber = Int(targetParts[0]) else { return 0.25 }
+        let distance = abs(sourceNumber - targetNumber)
+        return distance == 1 || distance == 11 ? 0.8 : 0.35
+    }
+
+    private func phraseCompatibility(source: NeuroTrackFeatures, target: NeuroTrackFeatures) -> Double {
+        guard let outgoing = source.phraseMarkers.last,
+              let incoming = target.phraseMarkers.first else { return 0.5 }
+        return outgoing.isDrop == incoming.isDrop ? 1 : 0.45
+    }
+
+    private func loudnessCompatibility(source: NeuroTrackFeatures, target: NeuroTrackFeatures) -> Double {
+        guard let sourceLoudness = source.loudnessLUFS,
+              let targetLoudness = target.loudnessLUFS else { return 0.5 }
+        return max(0, 1 - min(1, abs(sourceLoudness - targetLoudness) / 12))
     }
 }
 
@@ -95,6 +125,16 @@ public struct NeuroMixEngine: Sendable {
                 targetRate: 1
             ))
         }
+        if source.endsInSilence || target.endsInSilence {
+            candidates.append(candidate(
+                .hardCut,
+                source: source,
+                target: target,
+                duration: 0,
+                sourceRate: 1,
+                targetRate: 1
+            ))
+        }
         return candidates
     }
 
@@ -106,6 +146,12 @@ public struct NeuroMixEngine: Sendable {
         sourceRate: Double,
         targetRate: Double
     ) -> NeuroTransitionPlan {
+        let events = events(
+            kind: kind,
+            duration: duration,
+            targetRate: targetRate,
+            vocalConflict: source.vocalActivity * target.vocalActivity > 0.45
+        )
         NeuroTransitionPlan(
             sourceTrackID: source.trackID,
             targetTrackID: target.trackID,
@@ -119,7 +165,8 @@ public struct NeuroMixEngine: Sendable {
             targetGain: 1,
             score: scorer.score(source: source, target: target, kind: kind),
             reason: reason(for: kind),
-            usedFallback: false
+            usedFallback: false,
+            events: events
         )
     }
 
@@ -141,8 +188,92 @@ public struct NeuroMixEngine: Sendable {
             targetGain: 1,
             score: 0.5,
             reason: "Недостаточная уверенность; безопасный crossfade",
-            usedFallback: true
+            usedFallback: true,
+            events: [
+                NeuroTransitionEvent(
+                    deck: .outgoing,
+                    kind: .volume,
+                    startSeconds: 0,
+                    endSeconds: settings.crossfadeSeconds,
+                    fromValue: 1,
+                    toValue: 0
+                ),
+                NeuroTransitionEvent(
+                    deck: .incoming,
+                    kind: .volume,
+                    startSeconds: 0,
+                    endSeconds: settings.crossfadeSeconds,
+                    fromValue: 0,
+                    toValue: 1
+                )
+            ]
         )
+    }
+
+    private func events(
+        kind: NeuroTransitionKind,
+        duration: Double,
+        targetRate: Double,
+        vocalConflict: Bool
+    ) -> [NeuroTransitionEvent] {
+        guard duration > 0 else { return [] }
+        var result = [
+            NeuroTransitionEvent(
+                deck: .outgoing,
+                kind: .volume,
+                startSeconds: 0,
+                endSeconds: duration,
+                fromValue: 1,
+                toValue: 0
+            ),
+            NeuroTransitionEvent(
+                deck: .incoming,
+                kind: .volume,
+                startSeconds: 0,
+                endSeconds: duration,
+                fromValue: 0,
+                toValue: 1
+            )
+        ]
+        if kind == .beatmatch || kind == .filterOut {
+            result.append(NeuroTransitionEvent(
+                deck: .outgoing,
+                kind: .bassCut,
+                startSeconds: duration * 0.45,
+                endSeconds: duration * 0.65,
+                fromValue: 0,
+                toValue: 1
+            ))
+            result.append(NeuroTransitionEvent(
+                deck: .incoming,
+                kind: .lowPassSweep,
+                startSeconds: 0,
+                endSeconds: duration * 0.5,
+                fromValue: 1_200,
+                toValue: 20_000
+            ))
+        }
+        if vocalConflict || kind == .filterOut {
+            result.append(NeuroTransitionEvent(
+                deck: .outgoing,
+                kind: .highPassSweep,
+                startSeconds: duration * 0.2,
+                endSeconds: duration,
+                fromValue: 20,
+                toValue: 4_500
+            ))
+        }
+        if targetRate != 1 {
+            result.append(NeuroTransitionEvent(
+                deck: .incoming,
+                kind: .rateRamp,
+                startSeconds: duration * 0.75,
+                endSeconds: duration,
+                fromValue: targetRate,
+                toValue: 1
+            ))
+        }
+        return result
     }
 
     private func reason(for kind: NeuroTransitionKind) -> String {
