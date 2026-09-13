@@ -16,7 +16,7 @@ final class DualDeckAudioEngine {
         init(_ deck: Deck) { self.deck = deck }
     }
     private let graph = AVAudioEngine(); private let a = Slot(.a); private let b = Slot(.b)
-    private let userEQ = AVAudioUnitEQ(numberOfBands: 6)
+    private let userEQ = AVAudioUnitEQ(numberOfBands: 10)
     init() throws {
         for s in [a,b] {
             graph.attach(s.player); graph.attach(s.timePitch); graph.attach(s.eq); graph.attach(s.delay); graph.attach(s.mixer)
@@ -26,6 +26,7 @@ final class DualDeckAudioEngine {
         }
         graph.attach(userEQ)
         configureUserEQ()
+        graph.disconnectNodeOutput(graph.mainMixerNode)
         graph.connect(graph.mainMixerNode, to: userEQ, format: nil)
         graph.connect(userEQ, to: graph.outputNode, format: nil)
         a.mixer.outputVolume = 1; b.mixer.outputVolume = 0
@@ -33,7 +34,7 @@ final class DualDeckAudioEngine {
         graph.mainMixerNode.outputVolume = 0.82
     }
     private func configureUserEQ() {
-        let freqs: [Float] = [60, 150, 400, 1000, 2400, 15000]
+        let freqs: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
         for (i, freq) in freqs.enumerated() {
             let band = userEQ.bands[i]
             band.frequency = freq
@@ -48,7 +49,14 @@ final class DualDeckAudioEngine {
             }
             band.gain = 0
         }
-        applyUserEQ(gains: PlayerCore.shared.eqGains, enabled: PlayerCore.shared.eqEnabled)
+        let enabled = UserDefaults.standard.bool(forKey: "eq.enabled")
+        if let data = UserDefaults.standard.data(forKey: "eq.gains"),
+           let gains = try? JSONDecoder().decode([Float].self, from: data),
+           gains.count == 10 {
+            applyUserEQ(gains: gains, enabled: enabled)
+        } else {
+            applyUserEQ(gains: Array(repeating: 0, count: 10), enabled: enabled)
+        }
     }
     func applyUserEQ(gains: [Float], enabled: Bool) {
         userEQ.bypass = !enabled
@@ -78,7 +86,7 @@ final class DualDeckAudioEngine {
     func stop(_ deck:Deck) async { let s=slot(deck);s.generation=UUID();s.player.stop();s.player.reset();s.file=nil;s.url=nil;s.start=0;s.duration=0;s.lastPosition=0;s.prepared=false;s.playing=false;s.ended=false;neutral(s) }
     func stopEngine() async { await stop(.a);await stop(.b);graph.stop() }
     func setGain(_ gain:Float,for deck:Deck) async { slot(deck).mixer.outputVolume=min(1,max(0,gain.isFinite ? gain:0)) }
-    func setRate(_ rate:Float,for deck:Deck) async { let v=min(1.08,max(0.92,rate.isFinite ? rate:1));slot(deck).rate=v;slot(deck).timePitch.rate=v }
+    func setRate(_ rate:Float,for deck:Deck) async { let v=min(1.30,max(0.70,rate.isFinite ? rate:1));slot(deck).rate=v;slot(deck).timePitch.rate=v }
     func applyEffect(_ kind:FxKind,value:Float,param:Float?,bpm:Float,to deck:Deck) async { let s=slot(deck);guard value.isFinite else{return};switch kind {
         case .highPass: let x=s.eq.bands[1];x.frequency=min(18000,max(20,value));x.bypass=value<=21
         case .lowPass: let x=s.eq.bands[2];x.frequency=min(20000,max(100,value));x.bypass=value>=19900

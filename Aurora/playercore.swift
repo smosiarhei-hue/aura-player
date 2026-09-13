@@ -79,7 +79,7 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
-    static let bandFrequencies: [Float] = [60, 150, 400, 1000, 2400, 15000]
+    static let bandFrequencies: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
     private static let streamHeadroomCeiling: Float = 0.89
 
     private(set) var isPlaying = false
@@ -221,6 +221,7 @@ final class PlayerCore {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, policy: .default, options: [])
+            try? session.setSupportsMultichannelContent(true)
             try session.setActive(true)
         } catch {
             print("AVAudioSession error: \(error)")
@@ -328,9 +329,9 @@ final class PlayerCore {
 
         looperPlayer.volume = 0
 
-        engine.attach(outputLimiter)
-        engine.connect(engine.mainMixerNode, to: outputLimiter, format: nil)
-        engine.connect(outputLimiter, to: engine.outputNode, format: nil)
+        // Connect mainMixerNode directly to outputNode so CoreAudio/AUHAL preserves
+        // native stereo channel layout (Stereo L/R) and AirPods Pro Spatialize Stereo HRTF.
+        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
 
         engine.mainMixerNode.outputVolume = volume
     }
@@ -429,7 +430,9 @@ final class PlayerCore {
         for (i, band) in eqNodeA.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in eqNodeB.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in looperEQ.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
-        AutoMixV2Runtime.shared.applyUserEQ(gains: eqGains, enabled: eqEnabled)
+        Task { @MainActor in
+            AutoMixV2Runtime.shared.applyUserEQ(gains: self.eqGains, enabled: self.eqEnabled)
+        }
     }
 
     private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
@@ -456,7 +459,11 @@ final class PlayerCore {
     func setApplicationSceneActive(_ active: Bool) {
         guard applicationIsActive != active else { return }
         applicationIsActive = active
-        updateNowPlayingInfo()
+        if active {
+            publishNowPlaying(nil, state: .stopped)
+        } else {
+            updateNowPlayingInfo()
+        }
     }
 
     private func shouldHandleRemote(_ name: String) -> Bool {
@@ -557,6 +564,28 @@ final class PlayerCore {
             return
         }
 
+        // When application is active in foreground, suppress Dynamic Island and lock screen
+        // so that the Island does not show a redundant mini-player inside the app (like Apple Music).
+        // It will smoothly expand on the Dynamic Island as soon as the user hides/leaves the app.
+        guard !applicationIsActive else {
+            publishNowPlaying(nil, state: .stopped)
+            if let cover = track.coverURL, let url = URL(string: cover),
+               LibraryStore.cachedArtworkImage(for: track) == nil,
+               remoteArtworkCache[track.id] == nil {
+                Task { [weak self] in
+                    guard let (data, _) = try? await URLSession.shared.data(from: url),
+                          let image = UIImage(data: data) else { return }
+                    guard let self, self.currentTrack?.id == track.id else { return }
+                    self.remoteArtworkCache[track.id] = image
+                    LibraryStore.cacheArtworkImage(image, for: track)
+                }
+            }
+            if let next = peekNext(auto: true) {
+                preloadArtwork(for: next)
+            }
+            return
+        }
+
         let elapsed = isUsingStreamPlayer ? progress : liveProgress()
 
         var info: [String: Any] = [
@@ -598,6 +627,7 @@ final class PlayerCore {
                 guard let self, self.currentTrack?.id == track.id else { return }
                 self.remoteArtworkCache[track.id] = image
                 LibraryStore.cacheArtworkImage(image, for: track)
+                guard !self.applicationIsActive else { return }
                 var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 current[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
                 self.publishNowPlaying(current, state: self.isPlaying ? .playing : .paused)
@@ -623,6 +653,7 @@ final class PlayerCore {
     }
 
     private func syncNowPlayingElapsedIfNeeded() {
+        guard !applicationIsActive else { return }
         guard currentTrack != nil else { return }
         let now = Date()
         if let last = lastNowPlayingSync, now.timeIntervalSince(last) < 2.0 { return }
@@ -1990,9 +2021,6 @@ final class PlayerCore {
     func installSpectrumTap() {
         guard !spectrumTapInstalled else { return }
         let mixer = engine.mainMixerNode
-        let format = mixer.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { return }
-
         mixer.installTap(onBus: 0, bufferSize: 2048, format: nil, block: Self.handleSpectrumTap)
         spectrumTapInstalled = true
     }

@@ -39,8 +39,7 @@ struct PlayerScreenV2: View {
     }
 
     init(isPresented: Binding<Bool>) { _isPresented = isPresented }
-    private var track: Track? { player.currentTrack }
-    private var displayedMetadataTrack: Track? { player.displayTrack }
+    private var track: Track? { player.displayTrack }
     private var palette: [Color] {
         if !artworkPaletteColors.isEmpty { return artworkPaletteColors }
         if let colors = track?.palette, !colors.isEmpty { return colors }
@@ -227,7 +226,7 @@ struct PlayerScreenV2: View {
                     .clipped()
             }
             if !isFullScreenVideoShot && !showLyricsMode {
-                AutoMixTransitionOverlay(side: side)
+                AutoMixTransitionOverlay(player: player, side: side)
             }
             if showLyricsMode { lyricsOverlay(side: side) }
         }
@@ -250,11 +249,11 @@ struct PlayerScreenV2: View {
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 15)
             .onChanged { value in
-                guard !player.isTransitionActive, abs(value.translation.width) > abs(value.translation.height) else { return }
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
                 coverDragX = value.translation.width / (1 + abs(value.translation.width) * 0.001)
             }
             .onEnded { value in
-                guard !player.isTransitionActive, abs(value.translation.width) > abs(value.translation.height) else {
+                guard abs(value.translation.width) > abs(value.translation.height) else {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }; return
                 }
                 let threshold: CGFloat = 65
@@ -373,7 +372,7 @@ struct PlayerScreenV2: View {
         }
     }
     private var metadataRow: some View {
-        let current = displayedMetadataTrack ?? track
+        let current = track
         let favorite = current.map(library.isTrackFavorite) ?? false
         return HStack(spacing: 14) {
             Button(action: openArtist) {

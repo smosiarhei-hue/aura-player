@@ -25,7 +25,7 @@ extension MixDiagnosticsStore {
         let progress: Double
         let activeFX: String
         let fallback: String
-        if let plan, plan.tempoTargetBPM > 0, plan.bars > 0 {
+        if state.isTransitioning, let plan, plan.tempoTargetBPM > 0, plan.bars > 0 {
             let elapsed = max(0, active.positionSeconds - plan.aOutStartSec)
             bar = EffectAutomation.bar(atSeconds: elapsed, bpm: plan.tempoTargetBPM)
             progress = min(1, max(0, bar / plan.bars))
@@ -36,8 +36,11 @@ extension MixDiagnosticsStore {
                 return "\(event.target.rawValue).\(event.kind.rawValue)=\(String(format: "%.2f", value))"
             }.joined(separator: ",")
             fallback = "none"
+        } else if let plan, plan.tempoTargetBPM > 0, plan.bars > 0 {
+            bar = 0; progress = 0; activeFX = "neutral"
+            fallback = "none"
         } else {
-            bar = 0; progress = 0; activeFX = readiness == .fallback ? "crossfade" : "neutral"
+            bar = 0; progress = 0; activeFX = (state.isTransitioning || readiness == .fallback) ? "crossfade" : "neutral"
             fallback = analysisError ?? plan?.reason ?? readinessReason
         }
         return ["Stage 4 effects executor", "phase=\(state.phase)",
