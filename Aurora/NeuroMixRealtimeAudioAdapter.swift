@@ -87,7 +87,7 @@ final class NeuroMixRealtimeTransitionRunner {
         try await engine.play(incoming)
         let adapter = NeuroMixRealtimeAudioAdapter(
             engine: engine,
-            bpm: 120,
+            bpm: Float(plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM : 120),
             outgoingDeck: outgoing,
             incomingDeck: incoming
         )

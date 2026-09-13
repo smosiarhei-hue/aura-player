@@ -242,7 +242,10 @@ final class NeuroMixRuntime {
               currentIndex + 1 < queue.count, let engine else { return }
         let snapshot = await engine.snapshot()
         let deck = activeDeck == .a ? snapshot.deckA : snapshot.deckB
-        let remaining = max(0, (deck.durationSeconds ?? queue[currentIndex].duration) - deck.positionSeconds)
+        let duration = deck.durationSeconds ?? queue[currentIndex].duration
+        guard duration.isFinite, duration > 0,
+              deck.positionSeconds.isFinite, deck.positionSeconds >= 0 else { return }
+        let remaining = max(0, duration - deck.positionSeconds)
         if remaining <= 30 { await transition(to: currentIndex + 1, force: false) }
     }
 

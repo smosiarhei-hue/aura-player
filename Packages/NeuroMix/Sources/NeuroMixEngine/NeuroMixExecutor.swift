@@ -37,24 +37,21 @@ public struct NeuroMixTransitionExecutor: Sendable {
             return
         }
 
-        let events = plan.events.flatMap { event in
-            [
-                (time: event.startSeconds, event: event, value: event.fromValue),
-                (time: event.endSeconds, event: event, value: event.toValue)
-            ]
-        }.sorted { $0.time < $1.time }
+        let tick = 0.02
         var elapsed = 0.0
-        for action in events {
-            let delay = max(0, action.time - elapsed)
-            if delay > 0 {
-                try await clock.sleep(for: .seconds(delay))
+        while elapsed < plan.durationSeconds {
+            for event in plan.events {
+                guard event.endSeconds > event.startSeconds,
+                      elapsed >= event.startSeconds,
+                      elapsed <= event.endSeconds else { continue }
+                let progress = min(1, max(0, (elapsed - event.startSeconds) /
+                    (event.endSeconds - event.startSeconds)))
+                let value = event.fromValue + (event.toValue - event.fromValue) * progress
+                try await apply(event, value: value)
             }
-            try await apply(action.event, value: action.value)
-            elapsed = action.time
-        }
-        let remaining = max(0, plan.durationSeconds - elapsed)
-        if remaining > 0 {
-            try await clock.sleep(for: .seconds(remaining))
+            let step = min(tick, plan.durationSeconds - elapsed)
+            try await clock.sleep(for: .seconds(step))
+            elapsed += step
         }
         await audio.setGain(0, for: .outgoing)
         await audio.setGain(plan.targetGain, for: .incoming)
