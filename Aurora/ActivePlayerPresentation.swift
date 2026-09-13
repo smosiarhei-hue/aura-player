@@ -81,7 +81,10 @@ final class ActivePlayerPresentation {
         get {
             neuroOwnsPlayback ? neuroRuntime.playbackQueue : (v2OwnsPlayback ? runtime.playbackQueue : legacy.queue)
         }
-        set { if v2OwnsPlayback { runtime.replaceQueue(newValue) } else { legacy.queue = newValue } }
+        set {
+            if v2OwnsPlayback { runtime.replaceQueue(newValue) }
+            else if !neuroOwnsPlayback { legacy.queue = newValue }
+        }
     }
     var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
     var currentBitrate: Int? { v2OwnsPlayback ? runtime.currentBitrate : legacy.currentBitrate }
@@ -139,7 +142,24 @@ final class ActivePlayerPresentation {
 
     func observeTimeline() async {
         while !Task.isCancelled {
-            if v2OwnsPlayback {
+            if neuroOwnsPlayback {
+                let track = neuroRuntime.currentTrack
+                let trackID = track?.id
+                if let timeline = await neuroRuntime.playbackTimeline(), !Task.isCancelled,
+                   neuroOwnsPlayback, neuroRuntime.currentTrack?.id == trackID {
+                    timelineTrackID = trackID
+                    previousTimelinePosition = timelinePosition
+                    timelinePosition = timeline.position
+                    timelineAdvancing = timeline.position > previousTimelinePosition + 0.005
+                    timelineDuration = timeline.duration
+                    timelineTransitioning = timeline.isTransitioning
+                    timelineTransitionProgress = timeline.transitionProgress
+                }
+                networkFraction = nil
+                networkDownloading = false
+                nextNetworkFraction = nil
+                nextNetworkDownloading = false
+            } else if v2OwnsPlayback {
                 let track = runtime.currentTrack; let trackID = track?.id
                 if let timeline = await runtime.playbackTimeline(), !Task.isCancelled,
                    v2OwnsPlayback, runtime.currentTrack?.id == trackID {
