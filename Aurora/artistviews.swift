@@ -268,7 +268,7 @@ struct ArtistView: View {
 
     private func topTracksSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         let tracks = artistTracks.isEmpty ? artist.popularTracks : artistTracks
-        Group {
+        return Group {
             if !tracks.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     SonivoHeader(title: "Топ", accent: "все треки").padding(.horizontal, 16)
