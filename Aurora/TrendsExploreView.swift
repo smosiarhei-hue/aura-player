@@ -30,7 +30,11 @@ struct TrendsExploreView: View {
         for track in chart {
             if let a = track.artists?.first, let id = a.id, !seen.contains(String(id)) {
                 seen.insert(String(id))
-                list.append(StyleArtist(id: String(id), name: a.name ?? "Артист", coverUrlString: track.coverUrlString))
+                list.append(StyleArtist(
+                    id: String(id),
+                    name: a.name ?? "Артист",
+                    coverUrlString: track.coverUrlString
+                ))
             }
             if list.count >= 6 { break }
         }
@@ -58,7 +62,7 @@ struct TrendsExploreView: View {
 
                         moreDiscoveriesTop100Section
 
-                        inStyleSection
+                        popularArtistsSection
 
                         premiereSection
                     }
@@ -453,34 +457,54 @@ struct TrendsExploreView: View {
         }
     }
 
-    // MARK: - В стиле (Фильтр по артистам)
+    // MARK: - Популярные артисты (агрегация официального Top-100)
 
-    private var inStyleSection: some View {
+    private var popularArtistsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("В стиле")
+            Text("Популярные артисты")
                 .font(AG.display(.title2, .heavy))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
 
+            Text("По позиции треков в чарте Яндекс Музыки")
+                .font(AG.text(.footnote, .regular))
+                .foregroundStyle(.white.opacity(0.60))
+                .padding(.horizontal, 16)
+                .padding(.top, -8)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(styleArtists) { artist in
+                    ForEach(Array(styleArtists.enumerated()), id: \.element.id) { index, artist in
                         NavigationLink {
                             ArtistView(artistId: String(artist.id))
                         } label: {
-                            HStack(spacing: 8) {
+                            VStack(spacing: 9) {
                                 RemoteArtwork(urlString: artist.coverUrlString, corner: 16)
-                                    .frame(width: 32, height: 32)
+                                    .frame(width: 72, height: 72)
                                     .clipShape(Circle())
 
                                 Text(artist.name)
                                     .font(AG.text(.footnote, .bold))
                                     .foregroundStyle(.white)
+                                    .lineLimit(1)
+
+                                Text("#\(index + 1) в чарте")
+                                    .font(AG.text(.caption2, .medium))
+                                    .foregroundStyle(AG.amber)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Capsule().fill(Color.white.opacity(0.08)))
-                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8))
+                            .frame(width: 104)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .fill(Color.white.opacity(index == 0 ? 0.14 : 0.08))
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .strokeBorder(
+                                        index == 0 ? AG.amber.opacity(0.55) : .white.opacity(0.10),
+                                        lineWidth: 0.8
+                                    )
+                            }
                         }
                         .buttonStyle(GlassPressStyle())
                     }

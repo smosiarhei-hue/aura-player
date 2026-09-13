@@ -18,7 +18,9 @@ struct ArtistView: View {
                         ProgressView().tint(AG.amber).frame(maxWidth: .infinity, minHeight: 400)
                     } else if let artist {
                         heroSection(artist)
+                        artistStatsSection(artist)
                         popularTracksSection(artist)
+                        latestAlbumsSection(artist)
                         albumsSection(artist)
                         similarArtistsSection(artist)
                     } else if let error {
@@ -136,6 +138,42 @@ struct ArtistView: View {
         .frame(height: 460)
     }
 
+    private func artistStatsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                statPill(value: "\(artist.popularTracks.count)", label: "популярных треков")
+                if let albums = artist.counts?.directAlbums {
+                    statPill(value: "\(albums)", label: "релизов")
+                }
+                if let genre = artist.genres.first {
+                    statPill(value: genre.capitalized, label: "жанр")
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private func statPill(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(AG.text(.subheadline, .bold))
+                .foregroundStyle(AG.ink)
+                .lineLimit(1)
+            Text(label)
+                .font(AG.text(.caption2, .medium))
+                .foregroundStyle(AG.inkMuted)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10)
+        .frame(minWidth: 92, alignment: .leading)
+        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .stroke(.white.opacity(0.10), lineWidth: 0.7)
+        }
+    }
+
     private func playArtistWave(_ artist: YandexMusicService.YMArtistItem) {
         Haptics.tap(.medium)
         Task {
@@ -171,7 +209,7 @@ struct ArtistView: View {
                     SonivoHeader(title: "Альбомы", accent: "и синглы").padding(.horizontal, 16)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 14) {
-                            ForEach(artist.albums.prefix(12)) { album in
+                            ForEach(sortedAlbums(artist.albums).prefix(12)) { album in
                                 NavigationLink {
                                     AlbumView(albumId: String(album.id), title: album.displayTitle)
                                 } label: {
@@ -184,6 +222,54 @@ struct ArtistView: View {
                                             .lineLimit(1)
                                         if let year = album.year {
                                             Text(String(year)).font(AG.text(.caption2)).foregroundStyle(AG.inkMuted)
+                                        }
+                                    }
+
+                                    private func latestAlbumsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
+                                        let latest = sortedAlbums(artist.albums).prefix(5)
+                                        return Group {
+                                            if !latest.isEmpty {
+                                                VStack(alignment: .leading, spacing: 12) {
+                                                    SonivoHeader(title: "Последние", accent: "релизы")
+                                                        .padding(.horizontal, 16)
+                                                    ForEach(Array(latest.enumerated()), id: \.element.id) { index, album in
+                                                        NavigationLink {
+                                                            AlbumView(albumId: String(album.id), title: album.displayTitle)
+                                                        } label: {
+                                                            HStack(spacing: 12) {
+                                                                RemoteArtwork(urlString: album.coverUrlString, corner: 12)
+                                                                    .frame(width: 58, height: 58)
+                                                                VStack(alignment: .leading, spacing: 4) {
+                                                                    Text(album.displayTitle)
+                                                                        .font(AG.text(.subheadline, .semibold))
+                                                                        .foregroundStyle(AG.ink)
+                                                                        .lineLimit(1)
+                                                                    Text([album.year.map(String.init), album.genre, album.trackCount.map { "\($0) треков" }]
+                                                                        .compactMap { $0 }.joined(separator: " · "))
+                                                                        .font(AG.text(.caption))
+                                                                        .foregroundStyle(AG.inkMuted)
+                                                                        .lineLimit(1)
+                                                                }
+                                                                Spacer()
+                                                                Text(index == 0 ? "Новый" : "Релиз")
+                                                                    .font(AG.text(.caption2, .bold))
+                                                                    .foregroundStyle(index == 0 ? AG.amber : AG.inkMuted)
+                                                            }
+                                                            .padding(.horizontal, 16)
+                                                            .padding(.vertical, 5)
+                                                        }
+                                                        .buttonStyle(.plain)
+                                                    }
+                                                }
+                                                .riseIn(delay: 0.12)
+                                            }
+                                        }
+                                    }
+
+                                    private func sortedAlbums(_ albums: [YandexMusicService.YMAlbumItem]) -> [YandexMusicService.YMAlbumItem] {
+                                        albums.sorted {
+                                            if $0.year != $1.year { return ($0.year ?? 0) > ($1.year ?? 0) }
+                                            return $0.id > $1.id
                                         }
                                     }
                                     .frame(width: 150, alignment: .leading)
