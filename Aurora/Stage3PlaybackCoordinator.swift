@@ -21,6 +21,7 @@ final class PlaybackCoordinator {
     private var index: Int?
     private var active: Item?
     private var prepared: Item?
+    private var transitioningItem: Item?
     private var activeDeck: Deck = .a
     private var wantsPlayback = false
     private var resumeIntent = false
@@ -77,20 +78,49 @@ final class PlaybackCoordinator {
     }
     func next() async throws {
         guard !ids.isEmpty, let currentIndex = index else { return }
+
+        // 1. If a transition is currently in progress:
+        // The incoming track is already playing! Cut outgoing track and snap to incoming track in 0 ms!
+        if transition != nil, let incoming = transitioningItem {
+            await cancelTransitionAndWait()
+            await engine.stop(otherDeck)
+            await engine.setGain(1, for: incoming.deck)
+            await engine.setRate(1, for: incoming.deck)
+            await engine.resetEffects(incoming.deck)
+            activeDeck = incoming.deck
+            active = incoming
+            index = incoming.index
+            transitioningItem = nil
+            phase = wantsPlayback ? .playing(incoming.meta) : .paused(incoming.meta)
+            setReadiness(.waitingForDeckB, "Трек переключён")
+            publish()
+            startPrefetch()
+            return
+        }
+
         let nextIndex = currentIndex + 1
         guard nextIndex < ids.count else { return }
         await cancelTransitionAndWait()
-        if prepared == nil, let pending = prefetch { await pending.value }
+
+        // 2. If Deck B is already prepared for nextIndex: instant promotion!
         if let item = prepared, item.index == nextIndex {
             try await engine.prepare(item.deck, fileURL: item.url, startTimeSeconds: 0)
-            await engine.setGain(0, for: item.deck)
+            await engine.setGain(1, for: item.deck)
             await engine.setRate(1, for: item.deck)
             await engine.resetEffects(item.deck)
             try await promote(item, duration: nil, plan: nil)
             startPrefetch()
-        } else {
-            try await load(nextIndex)
+            return
         }
+
+        // 3. Deck B not yet prepared: update UI immediately to avoid lag, then load
+        index = nextIndex
+        phase = .loading(ids[nextIndex])
+        publish()
+
+        prefetch?.cancel()
+        prefetch = nil
+        try await load(nextIndex)
     }
     func previous() async throws {
         guard !ids.isEmpty else { return }
@@ -98,13 +128,21 @@ final class PlaybackCoordinator {
         let deck = activeDeck == .a ? state.deckA : state.deckB
         let position = deck.positionSeconds
 
-        // 1. If currently in transition, user wants to cancel transition and stay on current song
+        // 1. If currently in transition, cancel transition and stay on outgoing track
         if transition != nil {
+            let stayDeck = otherDeck
+            let stayItem = active
             await cancelTransitionAndWait()
+            if let stayItem {
+                activeDeck = stayItem.deck
+                active = stayItem
+                index = stayItem.index
+            }
+            await engine.stop(otherDeck)
             await engine.setGain(1, for: activeDeck)
             await engine.setRate(1, for: activeDeck)
             await engine.resetEffects(activeDeck)
-            await engine.stop(otherDeck)
+            transitioningItem = nil
             setReadiness(.waitingForDeckB, "Переход отменён")
             publish()
             startPrefetch()
@@ -136,15 +174,25 @@ final class PlaybackCoordinator {
         publish(); startPrefetch()
     }
     func pause() async {
-        wantsPlayback = false; await engine.pause(activeDeck)
-        if let item = prepared, transition != nil { await engine.pause(item.deck) }
-        if let item = active { phase = .paused(item.meta) }; publish()
+        wantsPlayback = false
+        if transition != nil {
+            await cancelTransitionAndWait()
+            await engine.stop(otherDeck)
+            await engine.setGain(1, for: activeDeck)
+            transitioningItem = nil
+        }
+        await engine.pause(.a)
+        await engine.pause(.b)
+        if let item = active { phase = .paused(item.meta) }
+        publish()
     }
     func resume() async throws {
         guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
-        wantsPlayback = true; try await engine.resume(activeDeck)
-        if let next = prepared, transition != nil { try await engine.resume(next.deck) }
-        phase = .playing(item.meta); publish(); startMonitor()
+        wantsPlayback = true
+        try await engine.resume(activeDeck)
+        phase = .playing(item.meta)
+        publish()
+        startMonitor()
     }
     func seek(to seconds: Double) async throws {
         guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
@@ -177,7 +225,8 @@ final class PlaybackCoordinator {
         PlaybackCoordinatorSnapshot(phase: phase, activeDeck: activeDeck,
                                      shouldResumeAfterInterruption: resumeIntent,
                                      firstSoundLatencySeconds: nil, queue: ids, currentIndex: index,
-                                     preparedIndex: prepared?.index, isTransitioning: transition != nil,
+                                     preparedIndex: transitioningItem?.index ?? prepared?.index,
+                                     isTransitioning: transition != nil,
                                      waitingForNext: prefetch != nil, lastQueueError: lastError)
     }
     func engineSnapshot() async -> AudioEngineSnapshot { await engine.snapshot() }
@@ -263,6 +312,7 @@ final class PlaybackCoordinator {
     }
     private func beginFallback(_ item: Item, duration: Double) {
         guard transition == nil else { return }
+        transitioningItem = item
         let clampedDuration = max(0.75, duration)
         setReadiness(.fallback, "Анализ не успел или план небезопасен; выполняется DJ-фильтр кроссфейд")
         let fallbackPlan = MixModels.TransitionPlan(
@@ -291,17 +341,20 @@ final class PlaybackCoordinator {
                 try await self.promote(item, duration: clampedDuration, plan: fallbackPlan)
                 self.effects?.cancel(); await self.effects?.value
                 self.effects = nil; self.transition = nil
+                self.transitioningItem = nil
                 self.transitionStartHostTime = nil; self.transitionDuration = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
                 self.publish(); self.startPrefetch()
             } catch is CancellationError {
                 self.effects?.cancel(); await self.effects?.value
                 self.effects = nil; self.transition = nil
+                self.transitioningItem = nil
                 self.transitionStartHostTime = nil; self.transitionDuration = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
             } catch {
                 self.effects?.cancel(); await self.effects?.value; self.effects = nil
                 self.lastError = String(describing: error); self.transition = nil
+                self.transitioningItem = nil
                 self.transitionStartHostTime = nil; self.transitionDuration = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
                 self.setReadiness(.failed, self.lastError ?? "Ошибка кроссфейда"); self.publish()
@@ -311,6 +364,7 @@ final class PlaybackCoordinator {
     }
     private func begin(_ item: Item, plan: MixModels.TransitionPlan) {
         guard transition == nil else { return }
+        transitioningItem = item
         setReadiness(.transitioning, "Выполняется \(plan.type.rawValue)")
         transition = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -334,17 +388,20 @@ final class PlaybackCoordinator {
                 try await self.promote(item, duration: max(0.05, duration), plan: plan)
                 self.effects?.cancel(); await self.effects?.value
                 self.effects = nil; self.transition = nil
+                self.transitioningItem = nil
                 self.transitionStartHostTime = nil; self.transitionDuration = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
                 self.publish(); self.startPrefetch()
             } catch is CancellationError {
                 self.effects?.cancel(); await self.effects?.value
                 self.effects = nil; self.transition = nil
+                self.transitioningItem = nil
                 self.transitionStartHostTime = nil; self.transitionDuration = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
             } catch {
                 self.effects?.cancel(); await self.effects?.value; self.effects = nil
                 self.lastError = String(describing: error); self.transition = nil
+                self.transitioningItem = nil
                 self.transitionStartHostTime = nil; self.transitionDuration = nil
                 await self.engine.resetEffects(outgoing); await self.engine.resetEffects(item.deck)
                 self.setReadiness(.failed, self.lastError ?? "Ошибка перехода"); self.publish()
@@ -419,6 +476,7 @@ final class PlaybackCoordinator {
     private func cancelTransitionAndWait() async {
         transitionStartHostTime = nil
         transitionDuration = nil
+        transitioningItem = nil
         effects?.cancel(); let fx = effects; effects = nil
         let task = transition; transition = nil; task?.cancel()
         await task?.value; await fx?.value

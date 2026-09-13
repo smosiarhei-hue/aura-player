@@ -39,8 +39,7 @@ struct PlayerScreenV2: View {
     }
 
     init(isPresented: Binding<Bool>) { _isPresented = isPresented }
-    private var track: Track? { player.currentTrack }
-    private var displayedMetadataTrack: Track? { player.displayTrack }
+    private var track: Track? { player.displayTrack }
     private var palette: [Color] {
         if !artworkPaletteColors.isEmpty { return artworkPaletteColors }
         if let colors = track?.palette, !colors.isEmpty { return colors }

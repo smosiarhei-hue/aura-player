@@ -97,7 +97,7 @@ struct NativeMiniPlayer: View {
     let zoomNamespace: Namespace.ID
     @ScaledMetric(relativeTo: .body) private var controlSide: CGFloat = 44
     private var tapSide: CGFloat { max(44, min(controlSide, 56)) }
-    private var track: Track? { player.currentTrack }
+    private var track: Track? { player.displayTrack }
     private var isPlaying: Bool { player.isPlaying }
     private var isLoading: Bool { player.isLoading }
     private var playbackFraction: Double {

@@ -37,7 +37,7 @@ final class ActivePlayerPresentation {
     var incomingTrack: Track? { v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack }
     var transitionProgress: Double { v2OwnsPlayback ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress }
     var displayTrack: Track? {
-        if isTransitionActive, transitionProgress >= 0.5, let incoming = incomingTrack {
+        if isTransitionActive, let incoming = incomingTrack {
             return incoming
         }
         return v2OwnsPlayback ? runtime.currentTrack : legacy.displayTrack
