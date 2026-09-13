@@ -12,6 +12,7 @@ struct FluidWaveView: View {
     var midIntensity: Float?
     var highIntensity: Float?
     var isBackgroundMode: Bool
+    var isPlaying: Bool
 
     @State private var touchScale: CGFloat = 1.0
 
@@ -20,13 +21,15 @@ struct FluidWaveView: View {
         bass: Float? = nil,
         mid: Float? = nil,
         high: Float? = nil,
-        isBackgroundMode: Bool = false
+        isBackgroundMode: Bool = false,
+        isPlaying: Bool = true
     ) {
         self.colors = colors
         self.bassIntensity = bass
         self.midIntensity = mid
         self.highIntensity = high
         self.isBackgroundMode = isBackgroundMode
+        self.isPlaying = isPlaying
     }
 
     private var effectiveBass: Float {
@@ -53,7 +56,10 @@ struct FluidWaveView: View {
                 let c2 = colors.indices.contains(1) ? colors[1] : AG.ember
                 let c3 = colors.indices.contains(2) ? colors[2] : AG.amber
 
-                let bassPulse = 1.0 + CGFloat(effectiveBass) * 0.14
+                let bass = isPlaying ? effectiveBass : 0
+                let mids = isPlaying ? effectiveMids : 0
+                let highs = isPlaying ? effectiveHighs : 0
+                let bassPulse = 1.0 + CGFloat(bass) * 0.14
 
                 if reduceMotion {
                     // Fallback for accessibility reduce motion
@@ -73,9 +79,9 @@ struct FluidWaveView: View {
                                 ShaderLibrary.fluidAuraWave(
                                     .float4(0, 0, w, h),
                                     .float(elapsedTime),
-                                    .float(effectiveBass),
-                                    .float(effectiveMids),
-                                    .float(effectiveHighs),
+                                    .float(bass),
+                                    .float(mids),
+                                    .float(highs),
                                     .color(c1),
                                     .color(c2),
                                     .color(c3)
@@ -91,9 +97,9 @@ struct FluidWaveView: View {
                                 ShaderLibrary.fluidAuraWave(
                                     .float4(0, 0, w, h),
                                     .float(elapsedTime),
-                                    .float(effectiveBass),
-                                    .float(effectiveMids),
-                                    .float(effectiveHighs),
+                                    .float(bass),
+                                    .float(mids),
+                                    .float(highs),
                                     .color(c1),
                                     .color(c2),
                                     .color(c3)
@@ -103,7 +109,7 @@ struct FluidWaveView: View {
                             .opacity(isBackgroundMode ? 0.70 : 0.95)
                     }
                     .scaleEffect(bassPulse * touchScale)
-                    .animation(AG.fastSpring, value: effectiveBass)
+                    .animation(AG.fastSpring, value: bass)
                 }
             }
         }

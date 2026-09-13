@@ -47,6 +47,31 @@ struct HomeView: View {
                     .padding(.bottom, 96)
                 }
             }
+
+            private struct AudioPulseMark: View {
+                @State private var analyzer = SpectrumAnalyzer.shared
+
+                var body: some View {
+                    HStack(alignment: .center, spacing: 3) {
+                        ForEach(0..<4, id: \.self) { index in
+                            Capsule()
+                                .fill(AG.ink)
+                                .frame(width: 3, height: barHeight(for: index))
+                        }
+                    }
+                    .frame(width: 18, height: 20)
+                    .animation(.easeOut(duration: 0.12), value: analyzer.level)
+                    .accessibilityHidden(true)
+                }
+
+                private func barHeight(for index: Int) -> CGFloat {
+                    let values = analyzer.bands
+                    guard !values.isEmpty else { return 7 }
+                    let start = min(values.count - 1, index * max(1, values.count / 4))
+                    let value = CGFloat(values[start])
+                    return max(5, min(18, 5 + value * 13))
+                }
+            }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showPlayer) {
@@ -128,7 +153,8 @@ struct HomeView: View {
         ZStack(alignment: .center) {
             FluidWaveView(
                 colors: moodColors,
-                isBackgroundMode: false
+                isBackgroundMode: false,
+                isPlaying: player.isPlaying
             )
             .frame(height: 380)
             .scaleEffect(1.08)
@@ -153,21 +179,55 @@ struct HomeView: View {
                     .foregroundStyle(AG.ink)
                     .shadow(color: .black.opacity(0.55), radius: 14, x: 0, y: 4)
 
-                Button {
-                    handlePlayTap()
-                } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 30, weight: .black))
-                        .foregroundStyle(AG.ink)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 82, height: 82)
-                        .contentShape(Circle())
+                if player.isPlaying {
+                    HStack(spacing: 10) {
+                        Button {
+                            player.pause()
+                        } label: {
+                            HStack(spacing: 10) {
+                                AudioPulseMark()
+                                Text("Играет")
+                                    .font(AG.text(.callout, .bold))
+                                Image(systemName: "pause.fill")
+                                    .font(AG.text(.caption, .black))
+                            }
+                            .foregroundStyle(AG.ink)
+                            .padding(.horizontal, 18)
+                            .frame(height: 54)
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(.regular.tint(moodColors.first ?? AG.amber).interactive(), in: .capsule)
+                        .accessibilityLabel("Пауза")
+
+                        Button {
+                            Haptics.tap(.medium)
+                            SonivoPlay.wave(moodStation)
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(AG.glyph(.bold))
+                                .foregroundStyle(AG.ink)
+                                .frame(width: 54, height: 54)
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(.regular.tint(moodColors.last ?? AG.ember).interactive(), in: .circle)
+                        .accessibilityLabel("Запустить новую волну")
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                } else {
+                    Button {
+                        handlePlayTap()
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 30, weight: .black))
+                            .foregroundStyle(AG.ink)
+                            .frame(width: 82, height: 82)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.tint(moodColors.first ?? AG.amber).interactive(), in: .circle)
+                    .transition(.scale.combined(with: .opacity))
+                    .accessibilityLabel("Запустить Мою волну")
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.tint(moodColors.first ?? AG.amber).interactive(), in: .circle)
-                .scaleEffect(player.isPlaying ? 1.04 : 1.0)
-                .animation(AG.spring, value: player.isPlaying)
-                .accessibilityLabel(player.isPlaying ? "Пауза" : "Запустить Мою волну")
 
                 if let track = player.currentTrack {
                     Button {

@@ -334,6 +334,7 @@ final class PlayerCore {
         engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
 
         engine.mainMixerNode.outputVolume = volume
+        installSpectrumTap()
     }
 
     private func configureEQ(_ node: AVAudioUnitEQ) {

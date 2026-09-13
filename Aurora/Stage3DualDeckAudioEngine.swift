@@ -32,6 +32,12 @@ final class DualDeckAudioEngine {
         a.mixer.outputVolume = 1; b.mixer.outputVolume = 0
         // Fixed headroom prevents inter-sample clipping when two decks and delay overlap.
         graph.mainMixerNode.outputVolume = 0.82
+        graph.mainMixerNode.installTap(onBus: 0, bufferSize: 2048, format: nil) { buffer, _ in
+            SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
+        }
+    }
+    deinit {
+        graph.mainMixerNode.removeTap(onBus: 0)
     }
     private func configureUserEQ() {
         let freqs: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
