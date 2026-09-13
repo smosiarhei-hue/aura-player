@@ -189,18 +189,6 @@ final class NeuroMixRuntime {
             return
         }
 
-        func playbackTimeline() async -> (position: Double, duration: Double, isTransitioning: Bool, transitionProgress: Double)? {
-            guard let engine, currentTrack != nil else { return nil }
-            let snapshot = await engine.snapshot()
-            let deck = activeDeck == .a ? snapshot.deckA : snapshot.deckB
-            let duration = deck.durationSeconds ?? currentTrack?.duration ?? 0
-            return (
-                max(0, deck.positionSeconds),
-                duration.isFinite ? max(0, duration) : 0,
-                transitionTask != nil,
-                transitionTask == nil ? 0 : 0.5
-            )
-        }
         guard currentIndex + 1 < queue.count else {
             pipelineStatus = "Следующего локального трека нет"
             transitionPlan = nil
@@ -225,6 +213,19 @@ final class NeuroMixRuntime {
             lastError = String(describing: error)
             pipelineStatus = "Ошибка анализа NeuroMix"
         }
+    }
+
+    func playbackTimeline() async -> (position: Double, duration: Double, isTransitioning: Bool, transitionProgress: Double)? {
+        guard let engine, currentTrack != nil else { return nil }
+        let snapshot = await engine.snapshot()
+        let deck = activeDeck == .a ? snapshot.deckA : snapshot.deckB
+        let duration = deck.durationSeconds ?? currentTrack?.duration ?? 0
+        return (
+            max(0, deck.positionSeconds),
+            duration.isFinite ? max(0, duration) : 0,
+            transitionTask != nil,
+            transitionTask == nil ? 0 : 0.5
+        )
     }
 
     private func startMonitoring() {
