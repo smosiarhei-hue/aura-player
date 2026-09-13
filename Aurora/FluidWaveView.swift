@@ -49,9 +49,6 @@ struct FluidWaveView: View {
             let elapsedTime = Float(timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1000))
 
             GeometryReader { proxy in
-                let w = Float(proxy.size.width)
-                let h = Float(proxy.size.height)
-
                 let c1 = colors.indices.contains(0) ? colors[0] : AG.flame
                 let c2 = colors.indices.contains(1) ? colors[1] : AG.ember
                 let c3 = colors.indices.contains(2) ? colors[2] : AG.amber
@@ -72,42 +69,44 @@ struct FluidWaveView: View {
                         )
                     }
                 } else {
-                    ZStack {
-                        // 1. Мягкая фоновая аура (Ambient Glow)
-                        Rectangle()
-                            .colorEffect(
-                                ShaderLibrary.fluidAuraWave(
-                                    .float4(0, 0, w, h),
-                                    .float(elapsedTime),
-                                    .float(bass),
-                                    .float(mids),
-                                    .float(highs),
-                                    .color(c1),
-                                    .color(c2),
-                                    .color(c3)
-                                )
-                            )
-                            .blur(radius: isBackgroundMode ? 36 : 18)
-                            .opacity(0.65)
-                            .blendMode(.plusLighter)
+                    Canvas { context, size in
+                        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                        let baseRadius = min(size.width, size.height) * 0.24
+                        let pulse = 1 + CGFloat(bass) * 0.16
+                        let drift = CGFloat(sin(elapsedTime * 0.8)) * size.width * 0.06
+                        let layers: [(Color, CGFloat, CGFloat)] = [
+                            (c1, 1.55, drift),
+                            (c2, 1.20, -drift * 0.7),
+                            (c3, 0.88, drift * 0.45)
+                        ]
 
-                        // 2. Четкое сияющее ядро с HDR-лучами и спекулярными бликами
-                        Rectangle()
-                            .colorEffect(
-                                ShaderLibrary.fluidAuraWave(
-                                    .float4(0, 0, w, h),
-                                    .float(elapsedTime),
-                                    .float(bass),
-                                    .float(mids),
-                                    .float(highs),
-                                    .color(c1),
-                                    .color(c2),
-                                    .color(c3)
+                        for (index, layer) in layers.enumerated() {
+                            let phase = elapsedTime * (0.45 + Float(index) * 0.12)
+                            let offset = CGPoint(
+                                x: layer.2 + CGFloat(cos(phase)) * size.width * 0.08,
+                                y: CGFloat(sin(phase * 1.17)) * size.height * 0.08
+                            )
+                            let radius = baseRadius * layer.1 * pulse
+                            let rect = CGRect(
+                                x: center.x + offset.x - radius,
+                                y: center.y + offset.y - radius,
+                                width: radius * 2,
+                                height: radius * 2
+                            )
+                            context.fill(
+                                Path(ellipseIn: rect),
+                                with: .radialGradient(
+                                    Gradient(colors: [layer.0.opacity(0.92), layer.0.opacity(0)]),
+                                    center: CGPoint(x: rect.midX, y: rect.midY),
+                                    startRadius: 0,
+                                    endRadius: radius
                                 )
                             )
-                            .blur(radius: isBackgroundMode ? 32 : 12)
-                            .opacity(isBackgroundMode ? 0.70 : 0.95)
+                        }
                     }
+                    .blur(radius: isBackgroundMode ? 24 : 14)
+                    .opacity(0.82 + Double(highs) * 0.12)
+                    .blendMode(.plusLighter)
                     .scaleEffect(bassPulse * touchScale)
                     .animation(AG.fastSpring, value: bass)
                 }
