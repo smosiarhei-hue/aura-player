@@ -52,7 +52,7 @@ struct FavoritesListView: View {
                                 HStack(spacing: 10) {
                                     Button {
                                         if let first = library.favorites.first {
-                                            player.play(first, newQueue: library.favorites)
+                                            PlaybackCommandRouter.shared.play(first, queue: library.favorites)
                                         }
                                     } label: {
                                         HStack(spacing: 5) {
@@ -71,7 +71,7 @@ struct FavoritesListView: View {
                                     Button {
                                         let shuffled = library.favorites.shuffled()
                                         if let first = shuffled.first {
-                                            player.play(first, newQueue: shuffled)
+                                            PlaybackCommandRouter.shared.play(first, queue: shuffled)
                                         }
                                     } label: {
                                         Image(systemName: "shuffle")
@@ -93,7 +93,7 @@ struct FavoritesListView: View {
                         LazyVStack(spacing: 4) {
                             ForEach(library.favorites) { track in
                                 Button {
-                                    player.play(track, newQueue: library.favorites)
+                                    PlaybackCommandRouter.shared.play(track, queue: library.favorites)
                                 } label: {
                                     HStack(spacing: 12) {
                                         SmallArtwork(track: track, size: 46)
@@ -223,7 +223,7 @@ struct HistoryListView: View {
                         LazyVStack(spacing: 4) {
                             ForEach(historyTracks) { track in
                                 Button {
-                                    player.play(track, newQueue: historyTracks)
+                                    PlaybackCommandRouter.shared.play(track, queue: historyTracks)
                                 } label: {
                                     HStack(spacing: 12) {
                                         SmallArtwork(track: track, size: 46)

@@ -209,7 +209,7 @@ struct SearchCatalogView: View {
 
             ForEach(localResults) { track in
                 Button {
-                    player.play(track)
+                    PlaybackCommandRouter.shared.play(track, queue: [track])
                 } label: {
                     HStack(spacing: 12) {
                         SmallArtwork(track: track, size: 46)

@@ -54,7 +54,7 @@ struct AutoMixV2DiagnosticsView: View {
                 "Следующий трек",
                 profile: selection.isNeuroEnabled ? neuroRuntime.nextProfile : analysis.nextProfile
             )
-            if let plan = analysis.transitionPlan {
+            if !selection.isNeuroEnabled, let plan = analysis.transitionPlan {
                 Section("План, синхронизация и FX") {
                     LabeledContent("Тип", value: plan.type.rawValue)
                     LabeledContent("Причина", value: plan.reason)

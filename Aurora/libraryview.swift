@@ -319,7 +319,7 @@ struct LibraryView: View {
         let local = localAudioTracks
         guard let first = local.first, local.count >= 2 else { return }
         player.transitionMode = .automix
-        player.play(first, newQueue: local)
+        PlaybackCommandRouter.shared.play(first, queue: local)
 
         let previewStart = max(0, first.duration - 42)
         SonivoDiagnostics.log(
@@ -425,7 +425,7 @@ struct LibraryView: View {
                 HStack(spacing: 14) {
                     ForEach(Array(library.tracks.prefix(8))) { track in
                         Button {
-                            player.play(track, newQueue: library.tracks)
+                            PlaybackCommandRouter.shared.play(track, queue: library.tracks)
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 SmallArtwork(track: track, size: 140)
@@ -485,7 +485,7 @@ struct LibraryView: View {
 
     private func trackRow(_ track: Track) -> some View {
         Button {
-            player.play(track, newQueue: filteredTracks)
+            PlaybackCommandRouter.shared.play(track, queue: filteredTracks)
         } label: {
             HStack(spacing: 14) {
                 SmallArtwork(track: track, size: 50)
