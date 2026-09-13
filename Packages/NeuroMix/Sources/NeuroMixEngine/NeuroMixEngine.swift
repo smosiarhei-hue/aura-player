@@ -80,11 +80,17 @@ public struct NeuroMixEngine: Sendable {
         settings: NeuroMixSettings = NeuroMixSettings()
     ) -> NeuroTransitionPlan {
         let candidates = makeCandidates(source: source, target: target, settings: settings)
-        guard let best = candidates.max(by: { $0.score < $1.score }),
+        guard let best = candidates.max(by: {
+            adjustedScore($0) < adjustedScore($1)
+        }),
               best.score >= settings.minimumConfidence else {
             return fallback(source: source, target: target, settings: settings)
         }
         return best
+    }
+
+    private func adjustedScore(_ plan: NeuroTransitionPlan) -> Double {
+        plan.score + (plan.kind == .beatmatch ? 0.08 : 0)
     }
 
     private func makeCandidates(
@@ -108,7 +114,7 @@ public struct NeuroMixEngine: Sendable {
                     .beatmatch,
                     source: source,
                     target: target,
-                    duration: min(16, max(4, settings.crossfadeSeconds * 2)),
+                    duration: min(16, max(8, settings.crossfadeSeconds * 1.5)),
                     sourceRate: 1,
                     targetRate: targetRate
                 ))
@@ -253,6 +259,14 @@ public struct NeuroMixEngine: Sendable {
                 toValue: 4_500
             ))
         }
+        result.append(NeuroTransitionEvent(
+            deck: .outgoing,
+            kind: .echoOut,
+            startSeconds: duration * 0.72,
+            endSeconds: duration,
+            fromValue: 0,
+            toValue: 42
+        ))
         if targetRate != 1 {
             result.append(NeuroTransitionEvent(
                 deck: .incoming,
