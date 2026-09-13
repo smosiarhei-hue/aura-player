@@ -13,10 +13,6 @@ final class PlaybackSessionPersistence {
         guard task == nil else { return }
         task = Task { @MainActor [weak self] in
             guard let self else { return }
-            if AutoMixEngineSelectionStore.shared.isV2Enabled {
-                PlayerCore.shared.stopAndClear()
-                await restore()
-            }
             while !Task.isCancelled {
                 await saveOrClear()
                 do { try await ContinuousClock().sleep(for: .seconds(1)) } catch { return }
@@ -26,14 +22,6 @@ final class PlaybackSessionPersistence {
                                                 object: nil, queue: .main) { _ in
             Task { @MainActor in await Self.shared.saveOrClear() }
         }
-    }
-    private func restore() async {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let state = try? JSONDecoder().decode(State.self, from: data),
-              let track = state.queue.first(where: { $0.id == state.trackID }) else { return }
-        await AutoMixV2Runtime.shared.play(track, queue: state.queue)
-        await AutoMixV2Runtime.shared.seek(to: max(0, state.position))
-        await AutoMixV2Runtime.shared.pause()
     }
     private func saveOrClear() async {
         let runtime = AutoMixV2Runtime.shared
