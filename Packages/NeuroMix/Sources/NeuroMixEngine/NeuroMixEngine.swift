@@ -152,7 +152,7 @@ public struct NeuroMixEngine: Sendable {
             targetRate: targetRate,
             vocalConflict: source.vocalActivity * target.vocalActivity > 0.45
         )
-        NeuroTransitionPlan(
+        return NeuroTransitionPlan(
             sourceTrackID: source.trackID,
             targetTrackID: target.trackID,
             kind: kind,
