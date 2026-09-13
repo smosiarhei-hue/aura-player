@@ -10,105 +10,134 @@ public enum MixPlanner {
            album == bMeta.albumID, !a.endsInSilence {
             return none(a: a, reason: "Сохранён непрерывный альбомный переход")
         }
-        if a.durationSec < 60 || b.durationSec < 60 {
-            return none(a: a, reason: "Трек короче 60 секунд")
+        if a.durationSec < 45 || b.durationSec < 45 {
+            return none(a: a, reason: "Трек короче 45 секунд")
         }
         guard settings.mode == .automix else { return crossfade(a, b, settings, "Пользовательский кроссфейд") }
-        guard (a.mixable || a.confidence.bpm >= 0.55), (b.mixable || b.confidence.bpm >= 0.55) else {
-            return crossfade(a, b, settings, "Fallback: трек не предназначен для сведения")
+        guard (a.mixable || a.confidence.bpm >= 0.40), (b.mixable || b.confidence.bpm >= 0.40) else {
+            return filterEchoPlan(from: a, to: b, settings: settings, reason: "DJ Filter Sweep (недостаточная сетка)")
         }
+
+        // 1. Match Tempos with DJ dynamic pitch fader logic (octaves, direct & mutual sync)
         guard let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) else {
-            return filterEchoPlan(from: a, to: b, settings: settings, reason: "Filter + Echo Out (темпы различаются)")
+            return filterEchoPlan(from: a, to: b, settings: settings, reason: "DJ Filter + Echo Out (темпы слишком далеки)")
         }
+
         let compatible = CamelotCompatibility.areCompatible(a.camelotKey, b.camelotKey)
+
+        // 2. Determine Bars: 16 bars for high confidence/compatible, 12 or 8 bars otherwise. Never rushed 4 bars!
         var bars: Double
-        if a.confidence.bpm >= 0.85, b.confidence.bpm >= 0.85, a.tempoStability >= 0.9, b.tempoStability >= 0.9 {
-            bars = compatible ? 16.0 : 8.0
-        } else if a.confidence.bpm >= 0.70, b.confidence.bpm >= 0.70, a.tempoStability >= 0.85, b.tempoStability >= 0.85 {
-            bars = compatible ? 8.0 : 4.0
-        } else if a.confidence.bpm >= 0.55, b.confidence.bpm >= 0.55, a.tempoStability >= 0.75, b.tempoStability >= 0.75 {
-            bars = 4.0
+        if compatible {
+            bars = (a.confidence.bpm >= 0.60 && b.confidence.bpm >= 0.60) ? 16.0 : 12.0
         } else {
-            return crossfade(a, b, settings, "Fallback: недостаточная уверенность ритмической сетки")
+            bars = (a.confidence.bpm >= 0.60 && b.confidence.bpm >= 0.60) ? 12.0 : 8.0
         }
-        var seconds = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
-        var out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
-        let incoming = BeatGridSynchronization.incomingCue(profile: b)
-        let phaseA = a.downbeatsSec.min(by: { abs($0 - out) < abs($1 - out) }).map { abs(out - $0) } ?? 0
-        let phaseB = b.downbeatsSec.min(by: { abs($0 - incoming) < abs($1 - incoming) }).map { abs(incoming - $0) } ?? 0
-        let phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
-        if phaseError > 80 {
-            return filterEchoPlan(from: a, to: b, settings: settings, reason: "Filter + Echo Out (фазовый сдвиг > 80ms)")
-        } else if phaseError > 40 {
-            bars = max(4.0, bars / 2)
-            seconds = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
-            out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
+
+        // Check how much outro time is available in Track A
+        let durationAtBars = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
+        let availableOutro = max(0, a.durationSec - a.mixOutSec)
+        if availableOutro < durationAtBars && bars > 8.0 {
+            let durationAt8 = BeatGridSynchronization.duration(bars: 8.0, bpm: tempo.targetBPM)
+            if availableOutro >= durationAt8 || a.durationSec > 60 {
+                bars = 8.0
+            }
         }
+
+        let seconds = BeatGridSynchronization.duration(bars: bars, bpm: tempo.targetBPM)
+
+        // 3. Perfect Cue Snapping: snap both cues to exact downbeats so phase difference is 0 ms!
+        let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
+        let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
+
+        let rawIncoming = BeatGridSynchronization.incomingCue(profile: b)
+        let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
+
         let finalType: TransitionType = (bars >= 16 && compatible) ? .beatmatchedLong : .beatmatchedShort
         return TransitionPlan(type: finalType,
                               aOutStartSec: out, bInStartSec: incoming, bars: bars,
                               tempoTargetBPM: tempo.targetBPM, rateA: tempo.rateA, rateB: tempo.rateB,
                               gainOffsetBdB: normalizationGain(profile: b, settings: settings),
                               loopBarsA: 0, fx: stage4FX(bars: bars, tempo: tempo, compatible: compatible),
-                              reason: compatible ? "Beatmatch + Camelot + filter/bass/echo automation" : "Beatmatch + filter/bass automation")
+                              reason: compatible
+                                ? "Beatmatch + Camelot (\(a.camelotKey ?? "?") -> \(b.camelotKey ?? "?"))"
+                                : "Beatmatch (\(Int(round(a.bpm))) -> \(Int(round(b.bpm))) @ \(Int(round(tempo.targetBPM))) BPM)")
     }
 
     private static func stage4FX(bars: Double,
                                  tempo: BeatGridSynchronization.TempoMatch,
                                  compatible: Bool) -> [FxEvent] {
+        let half = max(2.0, bars / 2.0)
+        let bassCutStart = max(0, half - 1.5)
+        let bassCutEnd = half
+        let bassDropStart = half
+        let bassDropEnd = min(bars, half + 1.0)
+        let echoStart = max(0, half - 1.0)
+
         var events = [
-            FxEvent(target: .a, kind: .volume, startBar: 0, endBar: bars,
-                    fromValue: 0, toValue: -60, curve: .linear),
-            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: bars,
-                    fromValue: -60, toValue: 0, curve: .linear),
-            FxEvent(target: .a, kind: .bassKill, startBar: 0, endBar: 2,
+            // Outgoing volume fades over the second half
+            FxEvent(target: .a, kind: .volume, startBar: half * 0.5, endBar: bars,
+                    fromValue: 0, toValue: -60, curve: .sCurve),
+            // Incoming volume rises smoothly into the drop
+            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: half,
+                    fromValue: -40, toValue: 0, curve: .sCurve),
+
+            // Bass Swap: Outgoing bass cuts smoothly right before the drop
+            FxEvent(target: .a, kind: .bassKill, startBar: bassCutStart, endBar: bassCutEnd,
                     fromValue: 0, toValue: 1, curve: .sCurve),
-            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 0,
+            // Incoming bass is muted during buildup
+            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: bassDropStart,
                     fromValue: 1, toValue: 1, curve: .linear),
-            FxEvent(target: .b, kind: .bassOn, startBar: 2, endBar: 3,
+            // Incoming bass DROPS on the downbeat!
+            FxEvent(target: .b, kind: .bassOn, startBar: bassDropStart, endBar: bassDropEnd,
                     fromValue: 1, toValue: 0, curve: .sCurve),
+
+            // High-Pass on outgoing sweeps mud and bass away, keeping vocals clean
             FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
-                    fromValue: 20, toValue: compatible ? 4500 : 2500, curve: .exp),
-            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: 2,
+                    fromValue: 20, toValue: compatible ? 4500 : 3200, curve: .exp),
+            // Low-Pass on incoming sweeps open into the drop
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: half,
                     fromValue: 1200, toValue: 20000, curve: .exp),
-            FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 1), endBar: bars,
+
+            // Rate ramp: smoothly returns Track B to 1.0 over the final 2-3 bars
+            FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 2), endBar: bars,
                     fromValue: tempo.rateB, toValue: 1, curve: .sCurve)
         ]
-        if compatible {
-            events.append(FxEvent(target: .a, kind: .echoOut,
-                                  startBar: max(0, bars - 4), endBar: bars,
-                                  fromValue: 0, toValue: 65, curve: .sCurve, param: 50))
-        } else {
-            events.append(FxEvent(target: .a, kind: .echoOut,
-                                  startBar: max(0, bars - 2), endBar: bars,
-                                  fromValue: 0, toValue: 55, curve: .sCurve, param: 45))
-        }
+
+        // Echo Out wash on outgoing track during and after the drop
+        events.append(FxEvent(target: .a, kind: .echoOut,
+                              startBar: echoStart, endBar: bars,
+                              fromValue: 0, toValue: compatible ? 65 : 55,
+                              curve: .sCurve, param: 48))
+
         return events
     }
 
     private static func filterEchoPlan(from a: TrackProfile, to b: TrackProfile,
                                        settings: MixSettings, reason: String) -> TransitionPlan {
-        let bars = 4.0
+        let bars = 10.0 // 10 full bars (~18-20s, NOT rushed 4 bars / 7s!)
         let targetBPM: Float = a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120.0)
         let seconds = BeatGridSynchronization.duration(bars: bars, bpm: targetBPM)
-        let out = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
-        let incoming = BeatGridSynchronization.incomingCue(profile: b)
+        let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
+        let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
+        let rawIncoming = BeatGridSynchronization.incomingCue(profile: b)
+        let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
+
         let events: [FxEvent] = [
-            FxEvent(target: .a, kind: .volume, startBar: 0, endBar: bars,
-                    fromValue: 0, toValue: -60, curve: .linear),
-            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: bars,
-                    fromValue: -60, toValue: 0, curve: .linear),
-            FxEvent(target: .a, kind: .bassKill, startBar: 1.0, endBar: 2.0,
+            FxEvent(target: .a, kind: .volume, startBar: 4.0, endBar: bars,
+                    fromValue: 0, toValue: -60, curve: .sCurve),
+            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: 5.0,
+                    fromValue: -40, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .bassKill, startBar: 3.0, endBar: 5.0,
                     fromValue: 0, toValue: 1, curve: .sCurve),
-            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 0,
+            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 5.0,
                     fromValue: 1, toValue: 1, curve: .linear),
-            FxEvent(target: .b, kind: .bassOn, startBar: 2.0, endBar: 2.8,
+            FxEvent(target: .b, kind: .bassOn, startBar: 5.0, endBar: 6.0,
                     fromValue: 1, toValue: 0, curve: .sCurve),
             FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
                     fromValue: 20, toValue: 4500, curve: .exp),
-            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: 2.0,
-                    fromValue: 1500, toValue: 20000, curve: .exp),
-            FxEvent(target: .a, kind: .echoOut, startBar: 1.5, endBar: bars,
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: 5.0,
+                    fromValue: 1000, toValue: 20000, curve: .exp),
+            FxEvent(target: .a, kind: .echoOut, startBar: 3.0, endBar: bars,
                     fromValue: 0, toValue: 65, curve: .sCurve, param: 52)
         ]
         return TransitionPlan(
@@ -128,7 +157,7 @@ public enum MixPlanner {
 
     private static func crossfade(_ a: TrackProfile, _ b: TrackProfile,
                                   _ settings: MixSettings, _ reason: String) -> TransitionPlan {
-        let seconds = min(12, max(1, settings.crossfadeSeconds))
+        let seconds = min(16, max(6, settings.crossfadeSeconds))
         let start = min(max(0, a.mixOutSec), max(0, a.durationSec - seconds))
         return TransitionPlan(type: .crossfade, aOutStartSec: start,
                               bInStartSec: max(0, b.mixInSec), bars: seconds,
@@ -151,12 +180,40 @@ public enum MixPlanner {
 
 public enum BeatGridSynchronization {
     public struct TempoMatch: Sendable, Equatable { public let targetBPM: Float; public let rateA: Float; public let rateB: Float }
-    public static func tempoMatch(aBPM: Float, bBPM: Float, maximumRateChange: Float = 0.08) -> TempoMatch? {
+    public static func tempoMatch(aBPM: Float, bBPM: Float, maximumRateChange: Float = 0.16) -> TempoMatch? {
         guard aBPM.isFinite, bBPM.isFinite, aBPM > 30, bBPM > 30 else { return nil }
-        var b = bBPM; while b / aBPM > 1.5 { b /= 2 }; while aBPM / b > 1.5 { b *= 2 }
-        let target = aBPM, rateA: Float = 1.0, rateB = aBPM / b
-        guard abs(rateB - 1) <= maximumRateChange else { return nil }
-        return TempoMatch(targetBPM: target, rateA: rateA, rateB: rateB)
+
+        // Find the best octave / multiple for B (1x, 0.5x half-time, 2x double-time)
+        var candidates: [Float] = [bBPM, bBPM * 2.0, bBPM * 0.5]
+        if bBPM > 175 { candidates.append(bBPM / 2.0) }
+        if bBPM < 75 { candidates.append(bBPM * 2.0) }
+
+        // Pick candidate closest to aBPM
+        let bBest = candidates.min(by: { abs($0 - aBPM) < abs($1 - aBPM) }) ?? bBPM
+
+        // 1. Direct match: only Track B adjusts if within 8%
+        let directRatio = aBPM / bBest
+        if abs(directRatio - 1.0) <= 0.08 {
+            return TempoMatch(targetBPM: aBPM, rateA: 1.0, rateB: directRatio)
+        }
+
+        // 2. Mutual match: A and B meet at target tempo (geometric mean)
+        // e.g. 115 vs 128 -> target 121.3 BPM. rateA = 0.948 (-5.2%), rateB = 1.055 (+5.5%).
+        let targetBPM = sqrt(aBPM * bBest)
+        let rateA = targetBPM / aBPM
+        let rateB = targetBPM / bBest
+
+        let maxShift = max(abs(rateA - 1.0), abs(rateB - 1.0))
+        if maxShift <= maximumRateChange {
+            return TempoMatch(targetBPM: targetBPM, rateA: rateA, rateB: rateB)
+        }
+
+        // 3. Direct shift up to 16% on Track B alone if Track A is at natural tempo
+        if abs(directRatio - 1.0) <= 0.16 {
+            return TempoMatch(targetBPM: aBPM, rateA: 1.0, rateB: directRatio)
+        }
+
+        return nil
     }
     public static func duration(bars: Double, bpm: Float) -> Double { bpm > 0 ? bars * 240 / Double(bpm) : 0 }
     public static func outgoingCue(profile: TrackProfile, duration: Double) -> Double {

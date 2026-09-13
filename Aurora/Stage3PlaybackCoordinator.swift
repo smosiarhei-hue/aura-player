@@ -314,8 +314,9 @@ final class PlaybackCoordinator {
         setReadiness(.transitioning, "Выполняется \(plan.type.rawValue)")
         transition = Task { @MainActor [weak self] in
             guard let self else { return }
-            let duration = plan.type == .crossfade ? plan.bars
-                : BeatGridSynchronization.duration(bars: plan.bars, bpm: plan.tempoTargetBPM)
+            let duration = (plan.tempoTargetBPM > 0)
+                ? BeatGridSynchronization.duration(bars: plan.bars, bpm: plan.tempoTargetBPM)
+                : plan.bars
             let outgoing = self.activeDeck
             let state = await self.engine.snapshot()
             let deck = outgoing == .a ? state.deckA : state.deckB
@@ -323,6 +324,9 @@ final class PlaybackCoordinator {
             let startHostTime = delay > 0 && delay <= 0.5 ? CACurrentMediaTime() + delay : CACurrentMediaTime()
             self.transitionStartHostTime = startHostTime
             self.transitionDuration = duration
+            if plan.rateA != 1.0 {
+                await self.engine.setRate(plan.rateA, for: outgoing)
+            }
             self.effects = Task { @MainActor [weak self] in
                 await self?.executeEffects(plan, outgoing: outgoing, incoming: item.deck, duration: duration, startHostTime: startHostTime)
             }
@@ -391,7 +395,7 @@ final class PlaybackCoordinator {
         let outgoing = activeDeck
         activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
         if let plan {
-            await engine.setRate(1, for: outgoing)
+            await engine.setRate(plan.rateA, for: outgoing)
             await engine.setRate(plan.rateB, for: item.deck)
         }
         if let duration {
@@ -405,8 +409,8 @@ final class PlaybackCoordinator {
         }
         if let plan, plan.rateB != 1 {
             let tempoB = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
-            let twoBarsDuration = BeatGridSynchronization.duration(bars: 2, bpm: tempoB)
-            await engine.rampRate(item.deck, from: plan.rateB, to: 1.0, duration: twoBarsDuration > 0 ? twoBarsDuration : 2.0)
+            let rampDuration = BeatGridSynchronization.duration(bars: 4, bpm: tempoB)
+            await engine.rampRate(item.deck, from: plan.rateB, to: 1.0, duration: rampDuration > 0 ? rampDuration : 3.0)
         }
         if !wantsPlayback { await engine.pause(activeDeck) }
         phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)

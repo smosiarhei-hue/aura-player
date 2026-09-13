@@ -86,7 +86,7 @@ final class DualDeckAudioEngine {
     func stop(_ deck:Deck) async { let s=slot(deck);s.generation=UUID();s.player.stop();s.player.reset();s.file=nil;s.url=nil;s.start=0;s.duration=0;s.lastPosition=0;s.prepared=false;s.playing=false;s.ended=false;neutral(s) }
     func stopEngine() async { await stop(.a);await stop(.b);graph.stop() }
     func setGain(_ gain:Float,for deck:Deck) async { slot(deck).mixer.outputVolume=min(1,max(0,gain.isFinite ? gain:0)) }
-    func setRate(_ rate:Float,for deck:Deck) async { let v=min(1.08,max(0.92,rate.isFinite ? rate:1));slot(deck).rate=v;slot(deck).timePitch.rate=v }
+    func setRate(_ rate:Float,for deck:Deck) async { let v=min(1.30,max(0.70,rate.isFinite ? rate:1));slot(deck).rate=v;slot(deck).timePitch.rate=v }
     func applyEffect(_ kind:FxKind,value:Float,param:Float?,bpm:Float,to deck:Deck) async { let s=slot(deck);guard value.isFinite else{return};switch kind {
         case .highPass: let x=s.eq.bands[1];x.frequency=min(18000,max(20,value));x.bypass=value<=21
         case .lowPass: let x=s.eq.bands[2];x.frequency=min(20000,max(100,value));x.bypass=value>=19900
