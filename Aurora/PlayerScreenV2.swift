@@ -372,7 +372,7 @@ struct PlayerScreenV2: View {
         }
     }
     private var metadataRow: some View {
-        let current = displayedMetadataTrack ?? track
+        let current = track
         let favorite = current.map(library.isTrackFavorite) ?? false
         return HStack(spacing: 14) {
             Button(action: openArtist) {
