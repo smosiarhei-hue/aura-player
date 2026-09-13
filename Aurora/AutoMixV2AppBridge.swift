@@ -16,10 +16,16 @@ final class AutoMixEngineSelectionStore {
     static let shared = AutoMixEngineSelectionStore()
     static let defaultsKey = "automix.v2.enabled"
     static let neuroDefaultsKey = "neuromix.enabled"
+    private var isUpdatingSelection = false
     var isV2Enabled: Bool {
         didSet {
             UserDefaults.standard.set(isV2Enabled, forKey: Self.defaultsKey)
-            if isV2Enabled && isNeuroEnabled { isNeuroEnabled = false }
+            guard !isUpdatingSelection else { return }
+            if isV2Enabled && isNeuroEnabled {
+                isUpdatingSelection = true
+                isNeuroEnabled = false
+                isUpdatingSelection = false
+            }
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
             Task { await AutoMixV2Runtime.shared.engineSelectionChanged(isV2Enabled: isV2Enabled) }
         }
@@ -27,15 +33,20 @@ final class AutoMixEngineSelectionStore {
     var isNeuroEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isNeuroEnabled, forKey: Self.neuroDefaultsKey)
-            if isNeuroEnabled && isV2Enabled { isV2Enabled = false }
+            guard !isUpdatingSelection else { return }
+            if isNeuroEnabled && isV2Enabled {
+                isUpdatingSelection = true
+                isV2Enabled = false
+                isUpdatingSelection = false
+            }
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
             Task { await NeuroMixRuntime.shared.engineSelectionChanged(isEnabled: isNeuroEnabled) }
         }
     }
     private init() {
         UserDefaults.standard.register(defaults: [Self.defaultsKey: true, Self.neuroDefaultsKey: false])
-        isV2Enabled = UserDefaults.standard.bool(forKey: Self.defaultsKey)
         isNeuroEnabled = UserDefaults.standard.bool(forKey: Self.neuroDefaultsKey)
+        isV2Enabled = isNeuroEnabled ? false : UserDefaults.standard.bool(forKey: Self.defaultsKey)
     }
 
 }
