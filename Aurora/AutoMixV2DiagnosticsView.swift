@@ -110,7 +110,10 @@ struct AutoMixV2DiagnosticsView: View {
                     .foregroundStyle(.secondary)
                 Text(plan.reason).font(.caption).foregroundStyle(.secondary)
                 ForEach(Array(plan.events.enumerated()), id: \.offset) { _, event in
-                    LabeledContent(event.kind.rawValue, value: "\(event.startSeconds, specifier: "%.1f")–\(event.endSeconds, specifier: "%.1f") с")
+                    LabeledContent(
+                        event.kind.rawValue,
+                        value: String(format: "%.1f–%.1f с", event.startSeconds, event.endSeconds)
+                    )
                 }
             } else {
                 Text("План ещё не рассчитан").foregroundStyle(.secondary)
