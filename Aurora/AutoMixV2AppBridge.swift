@@ -283,6 +283,7 @@ final class NeuroMixRuntime {
                 let incomingDeck: Deck = self.activeDeck == .a ? .b : .a
                 let runner = NeuroMixRealtimeTransitionRunner(engine: engine)
                 try await runner.execute(plan, incomingURL: targetTrack.url,
+                                          targetBPM: targetProfile.bpm,
                                           outgoing: self.activeDeck, incoming: incomingDeck)
                 self.activeDeck = incomingDeck
                 self.currentIndex = nextIndex

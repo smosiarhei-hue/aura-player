@@ -74,6 +74,7 @@ final class NeuroMixRealtimeTransitionRunner {
     func execute(
         _ plan: NeuroTransitionPlan,
         incomingURL: URL,
+        targetBPM: Double = 120,
         outgoing: Deck = .a,
         incoming: Deck = .b
     ) async throws {
@@ -87,7 +88,7 @@ final class NeuroMixRealtimeTransitionRunner {
         try await engine.play(incoming)
         let adapter = NeuroMixRealtimeAudioAdapter(
             engine: engine,
-            bpm: Float(plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM : 120),
+            bpm: Float(targetBPM > 0 ? targetBPM : 120),
             outgoingDeck: outgoing,
             incomingDeck: incoming
         )
