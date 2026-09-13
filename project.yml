@@ -7,6 +7,8 @@ options:
 packages:
   AutoMixV2:
     path: Packages/AutoMixV2
+  NeuroMix:
+    path: Packages/NeuroMix
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -41,6 +43,8 @@ targets:
         product: PlaybackCoordinator
       - package: AutoMixV2
         product: MixDiagnostics
+      - package: NeuroMix
+        product: NeuroMixEngine
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo
@@ -94,6 +98,8 @@ targets:
         product: PlaybackCoordinator
       - package: AutoMixV2
         product: MixDiagnostics
+      - package: NeuroMix
+        product: NeuroMixEngine
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo.UnitTests
