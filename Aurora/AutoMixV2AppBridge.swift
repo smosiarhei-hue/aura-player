@@ -31,7 +31,7 @@ final class AutoMixV2Runtime {
     private let localSource: LocalTrackSource
     private let yandexClient: AutoMixV2YandexDownloadClient
     private let compositeSource: CompositeTrackSource?
-    private let coordinator: PlaybackCoordinator?
+    private var coordinator: PlaybackCoordinator?
     let diagnostics = MixDiagnosticsStore()
     private var queue: [Track] = []
     private var queueIDs: [TrackID] = []
@@ -48,16 +48,37 @@ final class AutoMixV2Runtime {
     private init() {
         let local = LocalTrackSource(); let client = AutoMixV2YandexDownloadClient()
         localSource = local; yandexClient = client
-        var builtComposite: CompositeTrackSource?; var builtCoordinator: PlaybackCoordinator?; var startupError: String?
+        var builtComposite: CompositeTrackSource?; var startupError: String?
         do {
             let cache = try TrackFileCache(directory: TrackFileCache.defaultDirectory())
             let yandex = YandexTrackSource(client: client, cache: cache, maximumParallelDownloads: 2)
             let composite = CompositeTrackSource(localSource: local, yandexSource: yandex)
+            builtComposite = composite
+        } catch {
+            builtComposite = nil
+            startupError = String(describing: error)
+        }
+        compositeSource = builtComposite
+        coordinator = nil
+        lastError = startupError
+    }
+    private func ensureCoordinator() -> PlaybackCoordinator? {
+        if let coordinator { return coordinator }
+        guard let compositeSource else {
+            lastError = lastError ?? "AutoMix V2 source недоступен"
+            return nil
+        }
+        do {
             let engine = try DualDeckAudioEngine()
-            builtComposite = composite; builtCoordinator = PlaybackCoordinator(source: composite, engine: engine)
-        } catch { builtComposite = nil; builtCoordinator = nil; startupError = String(describing: error) }
-        compositeSource = builtComposite; coordinator = builtCoordinator; lastError = startupError
-        builtCoordinator?.onChange = { [weak self] state in self?.apply(state) }
+            let builtCoordinator = PlaybackCoordinator(source: compositeSource, engine: engine)
+            builtCoordinator.onChange = { [weak self] state in self?.apply(state) }
+            coordinator = builtCoordinator
+            lastError = nil
+            return builtCoordinator
+        } catch {
+            lastError = String(describing: error)
+            return nil
+        }
     }
     func applyUserEQ(gains: [Float], enabled: Bool) { coordinator?.applyUserEQ(gains: gains, enabled: enabled) }
     func engineSelectionChanged(isV2Enabled: Bool) async { if isV2Enabled { await adoptLegacyTrackIfNeeded() } else { await stop() } }
@@ -103,7 +124,10 @@ final class AutoMixV2Runtime {
         }
     }
     func play(_ track: Track, queue newQueue: [Track]) async {
-        guard let coordinator else { lastError = "AutoMix V2 audio engine недоступен"; return }
+        guard let coordinator = ensureCoordinator() else {
+            lastError = lastError ?? "AutoMix V2 audio engine недоступен"
+            return
+        }
         let token = beginRequest(); isLoading = true; lastError = nil
         var tracks = newQueue.isEmpty ? [track] : newQueue
         if !tracks.contains(where: { $0.id == track.id }) { tracks.insert(track, at: 0) }
@@ -119,7 +143,7 @@ final class AutoMixV2Runtime {
     }
     func play() async {
         if currentTrack == nil { await adoptLegacyTrackIfNeeded(); return }
-        guard let coordinator else { return }
+        guard let coordinator = ensureCoordinator() else { return }
         do { try await coordinator.resume() } catch is CancellationError { return } catch { lastError = Self.userMessage(for: error) }
     }
     func pause() async { await coordinator?.pause() }

@@ -1993,7 +1993,7 @@ final class PlayerCore {
         let format = mixer.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { return }
 
-        mixer.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.handleSpectrumTap)
+        mixer.installTap(onBus: 0, bufferSize: 2048, format: nil, block: Self.handleSpectrumTap)
         spectrumTapInstalled = true
     }
 }
