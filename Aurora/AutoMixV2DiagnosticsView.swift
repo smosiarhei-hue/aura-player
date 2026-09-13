@@ -1,12 +1,14 @@
 import AudioEngineCore
 import MixModels
 import MixPlanner
+import NeuroMixEngine
 import SwiftUI
 
 struct AutoMixV2DiagnosticsView: View {
     @State private var selection = AutoMixEngineSelectionStore.shared
     @State private var runtime = AutoMixV2Runtime.shared
     @State private var analysis = AutoMixV2AnalysisRuntime.shared
+    @State private var neuroPlan: NeuroTransitionPlan?
 
     private var visibleError: String? {
         let value = runtime.lastError ?? analysis.lastError
@@ -43,10 +45,35 @@ struct AutoMixV2DiagnosticsView: View {
                     }
                 }
             }
+            neuroMixSection
             Section("Действия") {
                 Button("Пересчитать профиль текущего трека") { analysis.recalculateCurrent() }
+                Button("Рассчитать план NeuroMix") {
+                    guard let current = analysis.currentProfile,
+                          let next = analysis.nextProfile else { return }
+                    neuroPlan = NeuroMixPlanningRuntime.shared.plan(from: current, to: next)
+                }
                 Button("Обновить runtime-отчёт") { Task { await runtime.refreshDiagnostics() } }
                 Text(runtime.diagnosticReport).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            }
+        }
+
+        @ViewBuilder
+        private var neuroMixSection: some View {
+            Section("NeuroMix preview") {
+                if let plan = neuroPlan {
+                    LabeledContent("Тип", value: plan.kind.rawValue)
+                    LabeledContent("Уверенность", value: String(format: "%.2f", plan.confidence))
+                    LabeledContent("Длительность", value: String(format: "%.1f с", plan.durationSeconds))
+                    LabeledContent("Rate A / B", value: String(format: "%.3f / %.3f", plan.sourceRate, plan.targetRate))
+                    LabeledContent("События", value: String(plan.events.count))
+                    Text(plan.reason).font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("План ещё не рассчитан").foregroundStyle(.secondary)
+                    Text("Нужны профили текущего и следующего трека.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .navigationTitle("AutoMix V2")
