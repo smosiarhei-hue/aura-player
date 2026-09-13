@@ -48,30 +48,6 @@ struct HomeView: View {
                 }
             }
 
-            private struct AudioPulseMark: View {
-                @State private var analyzer = SpectrumAnalyzer.shared
-
-                var body: some View {
-                    HStack(alignment: .center, spacing: 3) {
-                        ForEach(0..<4, id: \.self) { index in
-                            Capsule()
-                                .fill(AG.ink)
-                                .frame(width: 3, height: barHeight(for: index))
-                        }
-                    }
-                    .frame(width: 18, height: 20)
-                    .animation(.easeOut(duration: 0.12), value: analyzer.level)
-                    .accessibilityHidden(true)
-                }
-
-                private func barHeight(for index: Int) -> CGFloat {
-                    let values = analyzer.bands
-                    guard !values.isEmpty else { return 7 }
-                    let start = min(values.count - 1, index * max(1, values.count / 4))
-                    let value = CGFloat(values[start])
-                    return max(5, min(18, 5 + value * 13))
-                }
-            }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showPlayer) {
@@ -398,5 +374,30 @@ struct HomeView: View {
         chart = (try? await ym.getChart()) ?? []
         isLoading = false
         albums = (try? await ym.getNewAlbums()) ?? []
+    }
+}
+
+private struct AudioPulseMark: View {
+    @State private var analyzer = SpectrumAnalyzer.shared
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(0..<4, id: \.self) { index in
+                Capsule()
+                    .fill(AG.ink)
+                    .frame(width: 3, height: barHeight(for: index))
+            }
+        }
+        .frame(width: 18, height: 20)
+        .animation(.easeOut(duration: 0.12), value: analyzer.level)
+        .accessibilityHidden(true)
+    }
+
+    private func barHeight(for index: Int) -> CGFloat {
+        let values = analyzer.bands
+        guard !values.isEmpty else { return 7 }
+        let start = min(values.count - 1, index * max(1, values.count / 4))
+        let value = CGFloat(values[start])
+        return max(5, min(18, 5 + value * 13))
     }
 }
