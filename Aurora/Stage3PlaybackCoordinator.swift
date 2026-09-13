@@ -390,17 +390,19 @@ final class PlaybackCoordinator {
     private func promote(_ item: Item, duration: Double?, plan: MixModels.TransitionPlan?) async throws {
         let outgoing = activeDeck
         activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
-        try await engine.play(item.deck)
-        if let duration, duration > 0 {
-            let clamped = max(0.05, duration)
-            await engine.fadeVolume(from: 1, to: 0, duration: clamped, for: outgoing)
-            await engine.fadeVolume(from: 0, to: 1, duration: clamped, for: item.deck)
-            try await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))
-        } else {
-            await engine.setGain(0, for: outgoing)
-            await engine.setGain(1, for: item.deck)
+        if let plan {
+            await engine.setRate(1, for: outgoing)
+            await engine.setRate(plan.rateB, for: item.deck)
         }
-        await engine.stop(outgoing)
+        if let duration {
+            if let plan, plan.type != .crossfade {
+                try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration, alignedToCueSeconds: plan.aOutStartSec)
+            } else {
+                try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration)
+            }
+        } else if wantsPlayback {
+            try await engine.skip(from: outgoing, to: item.deck)
+        }
         if let plan, plan.rateB != 1 {
             let tempoB = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
             let twoBarsDuration = BeatGridSynchronization.duration(bars: 2, bpm: tempoB)

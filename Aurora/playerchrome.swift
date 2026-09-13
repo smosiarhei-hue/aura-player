@@ -326,7 +326,7 @@ struct InteractiveEQGraph: View {
                                     guard enabled, i < gains.count else { return }
                                     let deltaY = midY - val.location.y
                                     let maxRange = graphH / 2 - 10
-                                    let rawGain = Float(deltaY / maxRange * Float(maxGain))
+                                    let rawGain = Float((deltaY / maxRange) * maxGain)
                                     let clamped = min(Float(maxGain), max(-Float(maxGain), rawGain))
                                     if abs(clamped) < 0.4 {
                                         gains[i] = 0
