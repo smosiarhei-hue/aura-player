@@ -444,7 +444,9 @@ struct ArtistView: View {
                     pageSize: 100
                 )
                 tracks.append(contentsOf: pageTracks)
-                if pageTracks.isEmpty || tracks.count >= expectedCount || pageTracks.count < 100 {
+                if pageTracks.isEmpty ||
+                    (expectedCount > 0 && tracks.count >= expectedCount) ||
+                    pageTracks.count < 100 {
                     break
                 }
             }

@@ -69,8 +69,12 @@ final class ActivePlayerPresentation {
             (v2OwnsPlayback ? (timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0) : legacy.progress)
     }
     var duration: Double {
+        if neuroOwnsPlayback {
+            let value = timelineDuration > 0 ? timelineDuration : (currentTrack?.duration ?? 0)
+            return value.isFinite ? max(0, value) : 0
+        }
         guard v2OwnsPlayback else { return legacy.duration }
-        let value = neuroOwnsPlayback ? (currentTrack?.duration ?? 0) :
+        let value =
             (timelineDuration > 0 ? timelineDuration : (runtime.currentTrack?.duration ?? 0))
         return value.isFinite ? max(0, value) : 0
     }

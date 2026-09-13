@@ -428,7 +428,7 @@ final class YandexMusicService {
 
     /// Популярные треки артиста (отдельно, если нужно больше).
     func getArtistTracks(artistId: String, page: Int = 0, pageSize: Int = 30) async throws -> [YMTrackItem] {
-        let key = artistId + ":" + String(page)
+        let key = artistId + ":" + String(page) + ":" + String(pageSize)
         if let cached = artistTracksCache[key] { return cached }
         var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/tracks")!
         comps.queryItems = [
