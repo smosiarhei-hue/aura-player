@@ -63,6 +63,7 @@ final class NeuroMixRuntime {
     private var activeDeck: Deck = .a
     private var monitorTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
+    private var profileWarmTask: Task<Void, Never>?
     private(set) var currentTrack: Track?
     private(set) var isPlaying = false
     private(set) var lastError: String?
@@ -105,6 +106,7 @@ final class NeuroMixRuntime {
             try await audio.play(.a)
             isPlaying = true
             startMonitoring()
+            warmProfiles(startingAt: index)
             return true
         } catch {
             lastError = String(describing: error)
@@ -159,6 +161,7 @@ final class NeuroMixRuntime {
     func stop() async {
         monitorTask?.cancel()
         transitionTask?.cancel()
+        profileWarmTask?.cancel()
         monitorTask = nil
         transitionTask = nil
         await engine?.stopEngine()
@@ -184,7 +187,24 @@ final class NeuroMixRuntime {
         let snapshot = await engine.snapshot()
         let deck = activeDeck == .a ? snapshot.deckA : snapshot.deckB
         let remaining = max(0, (deck.durationSeconds ?? queue[currentIndex].duration) - deck.positionSeconds)
-        if remaining <= 12 { await transition(to: currentIndex + 1, force: false) }
+        if remaining <= 30 { await transition(to: currentIndex + 1, force: false) }
+    }
+
+    private func warmProfiles(startingAt index: Int) {
+        profileWarmTask?.cancel()
+        guard queue.indices.contains(index) else { return }
+        let ids = [index, index + 1].filter { queue.indices.contains($0) }
+        let tracks = ids.map { queue[$0] }
+        profileWarmTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for track in tracks {
+                guard !Task.isCancelled else { return }
+                _ = try? await self.analyzer.profile(
+                    for: TrackID(raw: track.id.uuidString),
+                    fileURL: track.url
+                )
+            }
+        }
     }
 
     private func transition(to nextIndex: Int, force: Bool) async {
