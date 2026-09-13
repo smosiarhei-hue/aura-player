@@ -21,7 +21,18 @@ final class AutoMixV2NowPlayingCenter {
     private var imageCache: [String: UIImage] = [:]
     private var ownsNowPlaying = false
     private var fullPlayerVisible = false
+    private var applicationIsActive = true
     private init() {}
+
+    func setApplicationSceneActive(_ active: Bool) {
+        guard applicationIsActive != active else { return }
+        applicationIsActive = active
+        if active {
+            suppressSystemSurfacePreservingArtwork()
+        } else {
+            Task { @MainActor [weak self] in await self?.refresh() }
+        }
+    }
 
     func install() {
         guard updateTask == nil else { return }
@@ -49,6 +60,11 @@ final class AutoMixV2NowPlayingCenter {
         }
 
         loadArtwork(for: track)
+
+        if applicationIsActive {
+            suppressSystemSurfacePreservingArtwork()
+            return
+        }
 
         let timeline = await runtime.playbackTimeline()
         let duration = max(0, timeline?.duration ?? track.duration)
@@ -95,10 +111,11 @@ final class AutoMixV2NowPlayingCenter {
     }
 
     private func suppressSystemSurfacePreservingArtwork() {
-        guard ownsNowPlaying else { return }
         let center = MPNowPlayingInfoCenter.default()
-        center.nowPlayingInfo = nil
-        center.playbackState = .stopped
+        if center.nowPlayingInfo != nil || center.playbackState != .stopped {
+            center.nowPlayingInfo = nil
+            center.playbackState = .stopped
+        }
         ownsNowPlaying = false
     }
 

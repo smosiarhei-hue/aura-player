@@ -57,16 +57,20 @@ struct RootView: View {
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
-            player.setApplicationSceneActive(scenePhase == .active)
+            let active = (scenePhase == .active)
+            player.setApplicationSceneActive(active)
+            AutoMixV2NowPlayingCenter.shared.setApplicationSceneActive(active)
             AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(showPlayer)
         }
         .onChange(of: showPlayer) { _, visible in
             AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(visible)
         }
         .onChange(of: scenePhase) { _, phase in
-            player.setApplicationSceneActive(phase == .active)
+            let active = (phase == .active)
+            player.setApplicationSceneActive(active)
+            AutoMixV2NowPlayingCenter.shared.setApplicationSceneActive(active)
             AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(showPlayer)
-            if phase == .active, presentedIsPlaying { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
+            if active, presentedIsPlaying { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
         .onOpenURL { _ in showPlayer = true }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in showPlayer = true }

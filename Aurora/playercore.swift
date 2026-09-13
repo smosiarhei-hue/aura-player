@@ -458,7 +458,11 @@ final class PlayerCore {
     func setApplicationSceneActive(_ active: Bool) {
         guard applicationIsActive != active else { return }
         applicationIsActive = active
-        updateNowPlayingInfo()
+        if active {
+            publishNowPlaying(nil, state: .stopped)
+        } else {
+            updateNowPlayingInfo()
+        }
     }
 
     private func shouldHandleRemote(_ name: String) -> Bool {
@@ -559,6 +563,28 @@ final class PlayerCore {
             return
         }
 
+        // When application is active in foreground, suppress Dynamic Island and lock screen
+        // so that the Island does not show a redundant mini-player inside the app (like Apple Music).
+        // It will smoothly expand on the Dynamic Island as soon as the user hides/leaves the app.
+        guard !applicationIsActive else {
+            publishNowPlaying(nil, state: .stopped)
+            if let cover = track.coverURL, let url = URL(string: cover),
+               LibraryStore.cachedArtworkImage(for: track) == nil,
+               remoteArtworkCache[track.id] == nil {
+                Task { [weak self] in
+                    guard let (data, _) = try? await URLSession.shared.data(from: url),
+                          let image = UIImage(data: data) else { return }
+                    guard let self, self.currentTrack?.id == track.id else { return }
+                    self.remoteArtworkCache[track.id] = image
+                    LibraryStore.cacheArtworkImage(image, for: track)
+                }
+            }
+            if let next = peekNext(auto: true) {
+                preloadArtwork(for: next)
+            }
+            return
+        }
+
         let elapsed = isUsingStreamPlayer ? progress : liveProgress()
 
         var info: [String: Any] = [
@@ -600,6 +626,7 @@ final class PlayerCore {
                 guard let self, self.currentTrack?.id == track.id else { return }
                 self.remoteArtworkCache[track.id] = image
                 LibraryStore.cacheArtworkImage(image, for: track)
+                guard !self.applicationIsActive else { return }
                 var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 current[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
                 self.publishNowPlaying(current, state: self.isPlaying ? .playing : .paused)
@@ -625,6 +652,7 @@ final class PlayerCore {
     }
 
     private func syncNowPlayingElapsedIfNeeded() {
+        guard !applicationIsActive else { return }
         guard currentTrack != nil else { return }
         let now = Date()
         if let last = lastNowPlayingSync, now.timeIntervalSince(last) < 2.0 { return }
