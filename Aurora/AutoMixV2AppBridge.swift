@@ -333,13 +333,22 @@ final class PlaybackCommandRouter {
 
 extension AutoMixV2Runtime {
     var playbackQueue: [Track] { queue }
-    func playbackTimeline() async -> (position: Double, duration: Double, isTransitioning: Bool)? {
+    var incomingTrack: Track? {
+        guard let coordinator else { return nil }
+        let s = coordinator.snapshot()
+        if s.isTransitioning, let idx = s.preparedIndex, queue.indices.contains(idx) {
+            return queue[idx]
+        }
+        return nil
+    }
+    func playbackTimeline() async -> (position: Double, duration: Double, isTransitioning: Bool, transitionProgress: Double)? {
         guard let coordinator else { return nil }
         let token = requestID; let before = coordinator.snapshot(); let engine = await coordinator.engineSnapshot(); let after = coordinator.snapshot()
         guard token == requestID, before.activeDeck == after.activeDeck,
               before.currentIndex == after.currentIndex, before.phase == after.phase else { return nil }
         let deck = after.activeDeck == .a ? engine.deckA : engine.deckB
         let duration = deck.durationSeconds ?? currentTrack?.duration ?? 0
-        return (max(0, deck.positionSeconds), duration.isFinite ? max(0, duration) : 0, after.isTransitioning)
+        let progress = coordinator.transitionProgress ?? (after.isTransitioning ? 0.5 : 0.0)
+        return (max(0, deck.positionSeconds), duration.isFinite ? max(0, duration) : 0, after.isTransitioning, progress)
     }
 }

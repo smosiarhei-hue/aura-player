@@ -21,6 +21,7 @@ final class ActivePlayerPresentation {
     private var previousTimelinePosition = 0.0
     private var timelineAdvancing = false
     private var timelineTransitioning = false
+    private var timelineTransitionProgress = 0.0
     private var networkFraction: Double?
     private var networkDownloading = false
     private var nextNetworkFraction: Double?
@@ -33,7 +34,14 @@ final class ActivePlayerPresentation {
     private var v2OwnsPlayback: Bool { selection.isV2Enabled && runtime.currentTrack != nil }
     var isV2Enabled: Bool { v2OwnsPlayback }
     var currentTrack: Track? { v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack }
-    var displayTrack: Track? { v2OwnsPlayback ? runtime.currentTrack : legacy.displayTrack }
+    var incomingTrack: Track? { v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack }
+    var transitionProgress: Double { v2OwnsPlayback ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress }
+    var displayTrack: Track? {
+        if isTransitionActive, transitionProgress >= 0.5, let incoming = incomingTrack {
+            return incoming
+        }
+        return v2OwnsPlayback ? runtime.currentTrack : legacy.displayTrack
+    }
     var isPlaying: Bool {
         v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying
     }
@@ -121,6 +129,7 @@ final class ActivePlayerPresentation {
                     timelineAdvancing = timeline.position > previousTimelinePosition + 0.005
                     timelineDuration = timeline.duration
                     timelineTransitioning = timeline.isTransitioning
+                    timelineTransitionProgress = timeline.transitionProgress
                 }
                 let currentState = await downloadState(for: track)
                 networkFraction = currentState?.fraction; networkDownloading = currentState?.isDownloading ?? false
@@ -133,6 +142,7 @@ final class ActivePlayerPresentation {
             } else {
                 timelineTrackID = nil; timelinePosition = 0; timelineDuration = 0
                 previousTimelinePosition = 0; timelineAdvancing = false; timelineTransitioning = false
+                timelineTransitionProgress = 0.0
                 networkFraction = nil; networkDownloading = false; nextNetworkFraction = nil; nextNetworkDownloading = false
             }
             do { try await ContinuousClock().sleep(for: .milliseconds(200)) } catch { return }

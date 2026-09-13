@@ -79,7 +79,7 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
-    static let bandFrequencies: [Float] = [60, 150, 400, 1000, 2400, 15000]
+    static let bandFrequencies: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
     private static let streamHeadroomCeiling: Float = 0.89
 
     private(set) var isPlaying = false

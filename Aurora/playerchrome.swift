@@ -143,7 +143,7 @@ struct PlayerEQSheetView: View {
     @State private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
 
-    private let frequencies = ["60 Hz", "150 Hz", "400 Hz", "1.0 kHz", "2.4 kHz", "15 kHz"]
+    private let frequencies = ["20", "40", "60", "90", "160", "400", "1k", "2.5k", "6k", "16k"]
 
     private var activePresetName: String {
         for preset in EQPresets.all {
@@ -195,7 +195,7 @@ struct PlayerEQSheetView: View {
                         frequencies: frequencies,
                         gains: Binding(
                             get: {
-                                if player.eqGains.count == 6 { return player.eqGains }
+                                if player.eqGains.count == 10 { return player.eqGains }
                                 return EQPresets.flat.gains
                             },
                             set: { player.eqGains = $0 }
@@ -271,16 +271,17 @@ struct InteractiveEQGraph: View {
     let enabled: Bool
 
     private let yellow = Color(red: 0.90, green: 0.98, blue: 0.12)
-    private let nodeCount = 6
+    private let nodeCount = 10
+    private let maxGain: CGFloat = 20.0
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let topLabelH: CGFloat = 24
-            let bottomLabelH: CGFloat = 24
+            let topLabelH: CGFloat = 22
+            let bottomLabelH: CGFloat = 22
             let graphH = max(80, geo.size.height - topLabelH - bottomLabelH)
             let midY = topLabelH + graphH / 2
-            let sidePad: CGFloat = 20
+            let sidePad: CGFloat = 16
             let stepX = (w - 2 * sidePad) / CGFloat(max(1, nodeCount - 1))
 
             ZStack {
@@ -289,7 +290,7 @@ struct InteractiveEQGraph: View {
                     ForEach(0..<nodeCount, id: \.self) { i in
                         let g = i < gains.count ? gains[i] : 0
                         Text(formatDB(g))
-                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
                             .foregroundStyle(enabled ? yellow : yellow.opacity(0.4))
                             .frame(width: stepX, alignment: .center)
                     }
@@ -308,26 +309,26 @@ struct InteractiveEQGraph: View {
                 splinePath(width: w, midY: midY, graphH: graphH, sidePad: sidePad, stepX: stepX)
                     .stroke(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2)
 
-                // 6 Draggable Circular Nodes
+                // 10 Draggable Circular Nodes
                 ForEach(0..<nodeCount, id: \.self) { i in
                     let x = sidePad + CGFloat(i) * stepX
                     let gain = CGFloat(i < gains.count ? gains[i] : 0)
-                    let y = midY - (gain / 12.0) * (graphH / 2 - 12)
+                    let y = midY - (gain / maxGain) * (graphH / 2 - 10)
 
                     Circle()
                         .strokeBorder(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2.5)
                         .background(Circle().fill(Color.black))
-                        .frame(width: 22, height: 22)
+                        .frame(width: 18, height: 18)
                         .position(x: x, y: y)
                         .gesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { val in
                                     guard enabled, i < gains.count else { return }
                                     let deltaY = midY - val.location.y
-                                    let maxRange = graphH / 2 - 12
-                                    let rawGain = Float(deltaY / maxRange * 12.0)
-                                    let clamped = min(12.0, max(-12.0, rawGain))
-                                    if abs(clamped) < 0.3 {
+                                    let maxRange = graphH / 2 - 10
+                                    let rawGain = Float(deltaY / maxRange * Float(maxGain))
+                                    let clamped = min(Float(maxGain), max(-Float(maxGain), rawGain))
+                                    if abs(clamped) < 0.4 {
                                         gains[i] = 0
                                     } else {
                                         gains[i] = round(clamped)
@@ -340,7 +341,7 @@ struct InteractiveEQGraph: View {
                 HStack(spacing: 0) {
                     ForEach(0..<nodeCount, id: \.self) { i in
                         Text(frequencies[i])
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color(white: 0.6))
                             .frame(width: stepX, alignment: .center)
                     }
@@ -353,8 +354,8 @@ struct InteractiveEQGraph: View {
 
     private func formatDB(_ value: Float) -> String {
         let rounded = Int(round(value))
-        if rounded > 0 { return "+\(rounded) dB" }
-        return "\(rounded) dB"
+        if rounded > 0 { return "+\(rounded)" }
+        return "\(rounded)"
     }
 
     private func splinePath(width: CGFloat, midY: CGFloat, graphH: CGFloat, sidePad: CGFloat, stepX: CGFloat) -> Path {
@@ -362,7 +363,7 @@ struct InteractiveEQGraph: View {
         for i in 0..<nodeCount {
             let x = sidePad + CGFloat(i) * stepX
             let gain = CGFloat(i < gains.count ? gains[i] : 0)
-            let y = midY - (gain / 12.0) * (graphH / 2 - 12)
+            let y = midY - (gain / maxGain) * (graphH / 2 - 10)
             points.append(CGPoint(x: x, y: y))
         }
 

@@ -16,7 +16,7 @@ final class DualDeckAudioEngine {
         init(_ deck: Deck) { self.deck = deck }
     }
     private let graph = AVAudioEngine(); private let a = Slot(.a); private let b = Slot(.b)
-    private let userEQ = AVAudioUnitEQ(numberOfBands: 6)
+    private let userEQ = AVAudioUnitEQ(numberOfBands: 10)
     init() throws {
         for s in [a,b] {
             graph.attach(s.player); graph.attach(s.timePitch); graph.attach(s.eq); graph.attach(s.delay); graph.attach(s.mixer)
@@ -34,7 +34,7 @@ final class DualDeckAudioEngine {
         graph.mainMixerNode.outputVolume = 0.82
     }
     private func configureUserEQ() {
-        let freqs: [Float] = [60, 150, 400, 1000, 2400, 15000]
+        let freqs: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
         for (i, freq) in freqs.enumerated() {
             let band = userEQ.bands[i]
             band.frequency = freq
@@ -51,10 +51,11 @@ final class DualDeckAudioEngine {
         }
         let enabled = UserDefaults.standard.bool(forKey: "eq.enabled")
         if let data = UserDefaults.standard.data(forKey: "eq.gains"),
-           let gains = try? JSONDecoder().decode([Float].self, from: data) {
+           let gains = try? JSONDecoder().decode([Float].self, from: data),
+           gains.count == 10 {
             applyUserEQ(gains: gains, enabled: enabled)
         } else {
-            applyUserEQ(gains: [0, 0, 0, 0, 0, 0], enabled: enabled)
+            applyUserEQ(gains: Array(repeating: 0, count: 10), enabled: enabled)
         }
     }
     func applyUserEQ(gains: [Float], enabled: Bool) {
