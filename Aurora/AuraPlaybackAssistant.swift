@@ -82,7 +82,7 @@ final class AuraPlaybackAssistant {
 struct AuraPlaybackIntent: AppIntent {
     static let title: LocalizedStringResource = "Управление Aura Player"
     static let description = IntentDescription("Управляет воспроизведением, AutoMix и эквалайзером в Aura Player.")
-    static var openAppWhenRun: Bool = false
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Команда")
     var command: String
@@ -99,6 +99,6 @@ struct AuraPlaybackIntent: AppIntent {
         let response = await MainActor.run {
             AuraPlaybackAssistant.shared.execute(command)
         }
-        return .result(dialog: response)
+        return .result(dialog: IntentDialog(stringLiteral: response))
     }
 }
