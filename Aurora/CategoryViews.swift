@@ -4,7 +4,7 @@ import SwiftUI
 
 struct FavoritesListView: View {
     @State private var library = LibraryStore.shared
-    @State private var player = PlayerCore.shared
+    @State private var player = ActivePlayerPresentation()
 
     var body: some View {
         ZStack {
@@ -94,7 +94,7 @@ struct FavoritesListView: View {
                                             VStack(alignment: .leading, spacing: 3) {
                                                 Text(track.title)
                                                     .font(AG.text(.subheadline, .semibold))
-                                                    .foregroundStyle(player.currentTrack?.id == track.id ? AG.heart : .white)
+                                                    .foregroundStyle(player.displayTrack?.id == track.id ? AG.heart : .white)
                                                     .lineLimit(1)
                                                 Text(track.artist)
                                                     .font(AG.text(.footnote))
@@ -121,7 +121,7 @@ struct FavoritesListView: View {
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 4)
-                                .background(player.currentTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
+                                .background(player.displayTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                         }
@@ -132,6 +132,7 @@ struct FavoritesListView: View {
         }
         .navigationTitle("Мне нравится")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await player.observeTimeline() }
     }
 }
 
@@ -140,7 +141,7 @@ struct FavoritesListView: View {
 struct HistoryListView: View {
     @State private var ym = YandexMusicService.shared
     @State private var library = LibraryStore.shared
-    @State private var player = PlayerCore.shared
+    @State private var player = ActivePlayerPresentation()
 
     private var historyTracks: [Track] {
         var result: [Track] = []
@@ -218,7 +219,7 @@ struct HistoryListView: View {
                                         VStack(alignment: .leading, spacing: 3) {
                                             Text(track.title)
                                                 .font(AG.text(.subheadline, .semibold))
-                                                .foregroundStyle(player.currentTrack?.id == track.id ? AG.amber : .white)
+                                                .foregroundStyle(player.displayTrack?.id == track.id ? AG.amber : .white)
                                                 .lineLimit(1)
                                             Text(track.artist)
                                                 .font(AG.text(.footnote))
@@ -234,7 +235,7 @@ struct HistoryListView: View {
                                     }
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 8)
-                                    .background(player.currentTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
+                                    .background(player.displayTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
@@ -247,6 +248,7 @@ struct HistoryListView: View {
         }
         .navigationTitle("История")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await player.observeTimeline() }
     }
 }
 
@@ -294,7 +296,7 @@ enum TrendsCatalogCategory: String, Identifiable {
 
 struct CategoryCatalogView: View {
     let category: TrendsCatalogCategory
-    @State private var player = PlayerCore.shared
+    @State private var player = ActivePlayerPresentation()
     @State private var ym = YandexMusicService.shared
     @State private var results = YandexMusicService.GlobalSearchResults()
     @State private var isLoading = true
@@ -417,7 +419,7 @@ struct CategoryCatalogView: View {
                                                 VStack(alignment: .leading, spacing: 3) {
                                                     Text(item.title)
                                                         .font(AG.text(.subheadline, .semibold))
-                                                        .foregroundStyle(player.currentTrack?.title == item.title ? (category.gradient.first ?? .white) : .white)
+                                                        .foregroundStyle(player.displayTrack?.title == item.title ? (category.gradient.first ?? .white) : .white)
                                                         .lineLimit(1)
                                                     Text(item.artists?.first?.name ?? "Разные исполнители")
                                                         .font(AG.text(.footnote))
@@ -433,7 +435,7 @@ struct CategoryCatalogView: View {
                                             }
                                             .padding(.horizontal, 16)
                                             .padding(.vertical, 8)
-                                            .background(player.currentTrack?.title == item.title ? Color.white.opacity(0.06) : Color.clear)
+                                            .background(player.displayTrack?.title == item.title ? Color.white.opacity(0.06) : Color.clear)
                                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                         }
                                         .buttonStyle(.plain)
@@ -453,5 +455,6 @@ struct CategoryCatalogView: View {
             results = await ym.searchAllFixed(query: category.searchQuery)
             isLoading = false
         }
+        .task { await player.observeTimeline() }
     }
 }
