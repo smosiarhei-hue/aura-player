@@ -105,7 +105,7 @@ struct SearchCatalogView: View {
                             .foregroundStyle(AG.ink)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
-                            .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .background(Capsule().fill(AG.card.opacity(0.82)))
                             .overlay(Capsule().strokeBorder(AG.hairline, lineWidth: 0.8))
                     }
                     .buttonStyle(.plain)
@@ -274,7 +274,7 @@ struct SearchCatalogView: View {
             HStack {
                 Text("Недавние поиски")
                     .font(AG.text(.body, .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
                 Spacer()
                 Button("Очистить") {
                     withAnimation {
@@ -283,7 +283,7 @@ struct SearchCatalogView: View {
                     }
                 }
                 .font(AG.text(.footnote, .medium))
-                .foregroundStyle(.white.opacity(0.60))
+                .foregroundStyle(AG.inkMuted)
             }
             .padding(.horizontal, 16)
 
@@ -297,14 +297,14 @@ struct SearchCatalogView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "magnifyingglass")
                                     .font(AG.text(.caption2, .bold))
-                                    .foregroundStyle(.white.opacity(0.60))
+                                    .foregroundStyle(AG.inkMuted)
                                 Text(item)
                                     .font(AG.text(.footnote, .medium))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
-                            .background(Capsule().fill(Color.white.opacity(0.10)))
+                            .background(Capsule().fill(AG.card.opacity(0.82)))
                         }
                         .buttonStyle(GlassPressStyle())
                     }

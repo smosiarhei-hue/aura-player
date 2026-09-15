@@ -174,9 +174,9 @@ struct SettingsView: View {
             }
             .navigationTitle("Настройки")
             .scrollContentBackground(.hidden)
-            .background(AuraScreenBackground(colors: [AG.ember, AG.bgRaised], showsMesh: false))
+            .background(AuraScreenBackground(colors: [AG.bgRaised, AG.bg, AG.card], showsMesh: false))
             .listRowBackground(AG.card.opacity(0.78))
-            .listRowSeparatorTint(.white.opacity(0.10))
+            .listRowSeparatorTint(AG.ink.opacity(0.10))
             .tint(settings.accentColor)
             .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
             .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
