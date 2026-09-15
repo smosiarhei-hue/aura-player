@@ -3,6 +3,7 @@ import SwiftUI
 struct AuraHomeRedesignedView: View {
     @State private var player = ActivePlayerPresentation()
     @State private var ym = YandexMusicService.shared
+    @State private var library = LibraryStore.shared
     @State private var chart: [YandexMusicService.YMTrackItem] = []
     @State private var newTracks: [YandexMusicService.YMTrackItem] = []
     @State private var isLoading = true
@@ -16,9 +17,7 @@ struct AuraHomeRedesignedView: View {
         return colors.isEmpty ? [AG.flame, AG.ember, AG.amber] : colors
     }
     private var currentTrack: Track? { player.displayTrack }
-    private var topThree: [RankedTrack] {
-        chart.prefix(3).enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
-    }
+    private var topSix: [YandexMusicService.YMTrackItem] { Array(chart.prefix(6)) }
 
     var body: some View {
         NavigationStack {
@@ -30,8 +29,9 @@ struct AuraHomeRedesignedView: View {
                         header
                         hero
                         moodSection
+                        playlistsSection
                         chartSection
-                    newTracksSection
+                        newTracksSection
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
@@ -163,7 +163,7 @@ struct AuraHomeRedesignedView: View {
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                AuraSectionHeader(title: "Чарт", subtitle: "Три трека, которые сейчас слушают")
+            AuraSectionHeader(title: "Чарт", subtitle: "Топ-6 · три строки в две колонки")
                 NavigationLink {
                     Top100ChartView(title: "Чарт", tracks: chart)
                 } label: {
@@ -179,22 +179,89 @@ struct AuraHomeRedesignedView: View {
             } else if let loadError, chart.isEmpty {
                 AuraErrorState(message: loadError) { Task { await load() } }
             } else {
-                VStack(spacing: 4) {
-                    ForEach(topThree) { row in
-                        ChartRowView(rank: row.rank, item: row.item) {
-                            SonivoPlay.track(row.item, in: chart)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(Array(topSix.enumerated()), id: \.element.id) { index, item in
+                        AuraCompactTrackCard(item: item, rank: index + 1) {
+                            SonivoPlay.track(item, in: chart)
                         }
                     }
                 }
-                .padding(8)
-                .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
+        }
+    }
+
+    private var playlistsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                AuraSectionHeader(title: "Мои плейлисты", subtitle: "Твои подборки в одном месте")
+                NavigationLink { LibraryView() } label: {
+                    Text("Все")
+                        .font(AG.text(.footnote, .semibold))
+                        .foregroundStyle(AG.amber)
+                        .frame(minWidth: AG.tapTarget, minHeight: AG.tapTarget)
+                }
+            }
+
+            if library.playlists.isEmpty {
+                NavigationLink { LibraryView() } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "plus")
+                            .font(AG.glyph(.bold))
+                            .foregroundStyle(AG.amber)
+                            .frame(width: 44, height: 44)
+                            .glassCircle(interactive: false)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Создай первую подборку")
+                                .font(AG.text(.body, .semibold))
+                                .foregroundStyle(AG.ink)
+                            Text("Сохраняй треки по настроению")
+                                .font(AG.text(.caption))
+                                .foregroundStyle(AG.inkMuted)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(AG.inkMuted)
+                    }
+                    .padding(12)
+                    .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                .buttonStyle(CardPressStyle(haptic: false))
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(library.playlists.prefix(6)) { playlist in
+                        NavigationLink { LibraryView() } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ZStack {
+                                    LinearGradient(
+                                        colors: playlist.coverGradient.compactMap { Color(hex: $0) },
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                    Image(systemName: "music.note.list")
+                                        .font(.title2.weight(.bold))
+                                        .foregroundStyle(.white)
+                                }
+                                .frame(height: 86)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                Text(playlist.title)
+                                    .font(AG.text(.subheadline, .semibold))
+                                    .foregroundStyle(AG.ink)
+                                    .lineLimit(1)
+                                Text("\(playlist.trackIds.count) треков")
+                                    .font(AG.text(.caption))
+                                    .foregroundStyle(AG.inkMuted)
+                            }
+                        }
+                        .buttonStyle(CardPressStyle(haptic: false))
+                    }
+                }
             }
         }
     }
 
     private var newTracksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AuraSectionHeader(title: "Свежие треки", subtitle: "Недавно вышли в Яндекс Музыке")
+            AuraSectionHeader(title: "Свежие треки", subtitle: "Топ-6 новинок · три строки в две колонки")
 
             if isLoading && newTracks.isEmpty {
                 AuraLoadingState(title: "Загружаем новинки…")
@@ -205,15 +272,13 @@ struct AuraHomeRedesignedView: View {
                     message: "Попробуйте обновить ленту позже."
                 )
             } else {
-                VStack(spacing: 4) {
-                    ForEach(newTracks) { item in
-                        ChartRowView(rank: nil, item: item) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(Array(newTracks.prefix(6).enumerated()), id: \.element.id) { index, item in
+                        AuraCompactTrackCard(item: item, rank: index + 1) {
                             SonivoPlay.track(item, in: newTracks)
                         }
                     }
                 }
-                .padding(8)
-                .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
         }
     }

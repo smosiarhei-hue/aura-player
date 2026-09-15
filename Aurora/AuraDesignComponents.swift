@@ -263,3 +263,54 @@ struct AuraTrackRow: View {
         .accessibilityLabel(isPlaying ? "(track.title), играет" : "(track.title), (track.artist)")
     }
 }
+
+struct AuraCompactTrackCard: View {
+    let item: YandexMusicService.YMTrackItem
+    var rank: Int?
+    let action: () -> Void
+    @State private var presentation = ActivePlayerPresentation()
+
+    private var isActive: Bool {
+        guard let track = presentation.displayTrack else { return false }
+        return track.title == item.title && track.artist == item.artistName
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if let rank {
+                    Text(String(format: "%02d", rank))
+                        .font(AG.text(.caption2, .bold).monospacedDigit())
+                        .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
+                        .frame(width: 20, alignment: .leading)
+                }
+
+                RemoteArtwork(urlString: item.coverUrlString, corner: 10)
+                    .frame(width: 46, height: 46)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title)
+                        .font(AG.text(.caption, .semibold))
+                        .foregroundStyle(isActive ? AG.amber : AG.ink)
+                        .lineLimit(1)
+                    Text(item.artistName)
+                        .font(AG.text(.caption2))
+                        .foregroundStyle(AG.inkMuted)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .background(.white.opacity(isActive ? 0.12 : 0.055), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                if isActive {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(AG.amber.opacity(0.55), lineWidth: 1)
+                }
+            }
+        }
+        .buttonStyle(CardPressStyle(haptic: false))
+        .accessibilityLabel(isActive ? "(item.title), играет" : "(item.title), (item.artistName)")
+    }
+}
