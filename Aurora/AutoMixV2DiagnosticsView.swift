@@ -93,6 +93,11 @@ struct AutoMixV2DiagnosticsView: View {
         }
 
         .navigationTitle("AutoMix V2")
+        .scrollContentBackground(.hidden)
+        .background(AuraScreenBackground(colors: [AG.ember, AG.bgRaised], showsMesh: false))
+        .listRowBackground(AG.card.opacity(0.78))
+        .listRowSeparatorTint(.white.opacity(0.10))
+        .tint(AG.amber)
         .task { analysis.install(); await runtime.refreshDiagnostics() }
     }
 

@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var chart: [YandexMusicService.YMTrackItem] = []
     @State private var albums: [YandexMusicService.YMAlbumItem] = []
     @State private var isLoading = false
+    @State private var loadError: String?
     @State private var showSettings = false
     @State private var showPlayer = false
 
@@ -317,6 +318,8 @@ struct HomeView: View {
 
             if isLoading && chart.isEmpty {
                 AuraLoadingState(title: "Обновляем чарт…")
+            } else if let loadError, chart.isEmpty {
+                AuraErrorState(message: loadError) { Task { await load() } }
             } else {
                 VStack(spacing: 2) {
                     ForEach(topThree) { row in
@@ -357,7 +360,13 @@ struct HomeView: View {
 
     private func load() async {
         isLoading = true
-        chart = (try? await ym.getChart()) ?? []
+        loadError = nil
+        do {
+            chart = try await ym.getChart()
+        } catch {
+            chart = []
+            loadError = "Не удалось получить чарт из Яндекс Музыки. Проверьте соединение и повторите попытку."
+        }
         isLoading = false
         albums = (try? await ym.getNewAlbums()) ?? []
     }

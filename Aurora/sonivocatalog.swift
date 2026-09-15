@@ -322,6 +322,14 @@ struct Top100ChartView: View {
                             SonivoPlay.track(row.item, in: tracks)
                         }
                     }
+
+                    if tracks.isEmpty {
+                        AuraEmptyState(
+                            systemImage: "chart.bar.xaxis",
+                            title: "Чарт пока недоступен",
+                            message: "Яндекс Музыка не вернула треки. Попробуйте открыть раздел позже."
+                        )
+                    }
                 }
                 .padding(.top, 10)
                 .padding(.bottom, 28)

@@ -11,6 +11,7 @@ struct TrendsExploreView: View {
     @State private var newAlbums: [YandexMusicService.YMAlbumItem] = []
     @State private var premiereTracks: [YandexMusicService.YMTrackItem] = []
     @State private var isLoading = true
+    @State private var loadError: String?
     @State private var selectedFilter: String = "top"
     @State private var selectedArtistStyleId: String = ""
 
@@ -71,6 +72,10 @@ struct TrendsExploreView: View {
                 }
                 .refreshable {
                     await load(force: true)
+                }
+
+                if let loadError, !isLoading, chart.isEmpty, newAlbums.isEmpty {
+                    AuraErrorState(message: loadError) { Task { await load(force: true) } }
                 }
             }
             .navigationBarHidden(true)
@@ -542,17 +547,25 @@ struct TrendsExploreView: View {
 
     private func load(force: Bool = false) async {
         isLoading = true
+        loadError = nil
+        var didLoadAnyContent = false
         do {
             chart = try await ym.getChart(force: force)
+            didLoadAnyContent = !chart.isEmpty
         } catch {
             chart = []
         }
         do {
             newAlbums = try await ym.getNewAlbums(force: force)
+            didLoadAnyContent = didLoadAnyContent || !newAlbums.isEmpty
         } catch {
             newAlbums = []
         }
         premiereTracks = await ym.getNewTracks(limit: 20, force: force)
+        didLoadAnyContent = didLoadAnyContent || !premiereTracks.isEmpty
+        if !didLoadAnyContent {
+            loadError = "Не удалось загрузить рекомендации Яндекс Музыки. Проверьте соединение и повторите попытку."
+        }
         isLoading = false
     }
 }
