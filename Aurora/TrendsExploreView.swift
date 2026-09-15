@@ -323,55 +323,42 @@ struct TrendsExploreView: View {
         }
     }
 
-    // MARK: - Новые релизы >
+    // MARK: - Премьера
 
     private var newReleasesSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Новые релизы")
-                    .font(AG.display(.title2, .heavy))
-                    .foregroundStyle(.white)
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(AG.ember)
+                    .frame(width: 48, height: 48)
+                    .glassCircle(interactive: false)
 
-                Image(systemName: "chevron.right")
-                    .font(AG.text(.subheadline, .bold))
-                    .foregroundStyle(.white.opacity(0.6))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Премьера")
+                        .font(AG.display(.title2, .bold))
+                        .foregroundStyle(AG.ink)
+                    Text("Лучшие новые треки для вас")
+                        .font(AG.text(.subheadline))
+                        .foregroundStyle(AG.inkMuted)
+                }
 
                 Spacer()
+                Image(systemName: "chevron.right")
+                    .font(AG.text(.headline, .bold))
+                    .foregroundStyle(AG.inkMuted)
             }
             .padding(.horizontal, 16)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(newAlbums.prefix(12)) { album in
-                        NavigationLink {
-                            AlbumView(albumId: String(album.id), title: album.displayTitle)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                RemoteArtwork(urlString: album.coverUrlString, corner: 18)
-                                    .frame(width: 136, height: 136)
-
-                                Text(album.displayTitle)
-                                    .font(AG.text(.footnote, .semibold))
-                                    .foregroundStyle(.white)
-                                    .lineLimit(2)
-
-                                Text(album.artistName)
-                                    .font(AG.text(.caption2, .regular))
-                                    .foregroundStyle(.white.opacity(0.60))
-                                    .lineLimit(1)
-                            }
-                            .frame(width: 136, alignment: .leading)
-                        }
-                        .buttonStyle(GlassPressStyle())
-                        .contextMenu {
-                            Button { SonivoPlay.album(album) } label: {
-                                Label("Слушать релиз", systemImage: "play.fill")
-                            }
-                        }
+            LazyVStack(spacing: 2) {
+                let items = premiereTracks.isEmpty ? Array(chart.prefix(6)) : Array(premiereTracks.prefix(6))
+                ForEach(items) { item in
+                    AuraCatalogTrackRow(item: item, rank: nil) {
+                        SonivoPlay.track(item, in: items)
                     }
                 }
-                .padding(.horizontal, 16)
             }
+            .padding(.horizontal, 16)
         }
     }
 
@@ -422,7 +409,7 @@ struct TrendsExploreView: View {
             } else {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(chart.prefix(25).enumerated()), id: \.element.id) { index, item in
-                        ChartRowView(rank: index + 1, item: item) {
+                        AuraCatalogTrackRow(item: item, rank: index + 1) {
                             SonivoPlay.track(item, in: chart)
                         }
                     }

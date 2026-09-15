@@ -318,7 +318,7 @@ struct Top100ChartView: View {
                     .padding(.bottom, 10)
 
                     ForEach(ranked) { row in
-                        ChartRowView(rank: row.rank, item: row.item) {
+                        AuraCatalogTrackRow(item: row.item, rank: row.rank) {
                             SonivoPlay.track(row.item, in: tracks)
                         }
                     }
