@@ -113,6 +113,8 @@ struct QueueSheetView: View {
             } header: { HStack { Text("Далее в очереди"); Spacer(); Text(String(player.queue.count)) } }
         }
         .listStyle(.insetGrouped).scrollContentBackground(.hidden).environment(\.editMode, $editMode)
+        .background(AuraScreenBackground(colors: [AG.ember, AG.bgRaised], showsMesh: false))
+        .listRowSeparatorTint(.white.opacity(0.10))
         .navigationTitle("Очередь").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -164,7 +166,7 @@ struct PlayerEQSheetView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            AuraScreenBackground(colors: [AG.ember, AG.bgRaised], showsMesh: false)
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
@@ -185,10 +187,15 @@ struct PlayerEQSheetView: View {
                     .padding(.top, 16)
 
                     // Title
-                    Text("Эквалайзер")
-                        .font(.system(size: 30, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 20)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Эквалайзер")
+                            .font(AG.display(.largeTitle, .heavy))
+                            .foregroundStyle(AG.ink)
+                        Text(player.eqEnabled ? "Работает независимо от AutoMix" : "Выключен")
+                            .font(AG.text(.subheadline, .medium))
+                            .foregroundStyle(player.eqEnabled ? AG.positive : AG.inkMuted)
+                    }
+                    .padding(.horizontal, 20)
 
                     // Interactive EQ Graph with dB values and Frequencies
                     InteractiveEQGraph(
@@ -208,12 +215,12 @@ struct PlayerEQSheetView: View {
                     // Toggle row
                     HStack {
                         Text("Эквалайзер")
-                            .font(.system(size: 17, weight: .regular))
-                            .foregroundStyle(.white)
+                            .font(AG.text(.body, .semibold))
+                            .foregroundStyle(AG.ink)
                         Spacer()
                         Toggle("", isOn: $player.eqEnabled)
                             .labelsHidden()
-                            .tint(Color(red: 0.90, green: 0.98, blue: 0.12))
+                            .tint(AG.amber)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 10)

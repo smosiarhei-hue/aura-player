@@ -22,8 +22,8 @@ struct HomeView: View {
         return cols
     }
 
-    private var topFive: [RankedTrack] {
-        chart.prefix(5).enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
+    private var topThree: [RankedTrack] {
+        chart.prefix(3).enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
     }
 
     var body: some View {
@@ -302,7 +302,7 @@ struct HomeView: View {
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center) {
-                SonivoHeader(title: "Чарт", accent: "сегодня")
+                SonivoHeader(title: "Чарт", accent: "топ-3", subtitle: "Главные треки сегодня")
                 Spacer()
                 NavigationLink {
                     Top100ChartView(title: "Чарт", tracks: chart)
@@ -317,7 +317,7 @@ struct HomeView: View {
                 AuraLoadingState(title: "Обновляем чарт…")
             } else {
                 VStack(spacing: 2) {
-                    ForEach(topFive) { row in
+                    ForEach(topThree) { row in
                         ChartRowView(rank: row.rank, item: row.item) {
                             SonivoPlay.track(row.item, in: chart)
                         }
@@ -337,11 +337,11 @@ struct HomeView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 14) {
-                    ForEach(albums.prefix(12)) { album in
+                    ForEach(albums.prefix(8)) { album in
                         NavigationLink {
                             AlbumView(albumId: String(album.id), title: album.displayTitle)
                         } label: {
-                            AuraArtworkCard(title: album.displayTitle, subtitle: album.artistName, width: 140) {
+                            AuraArtworkCard(title: album.displayTitle, subtitle: album.artistName, width: 128) {
                                 RemoteArtwork(urlString: album.coverUrlString, corner: 16)
                             }
                         }

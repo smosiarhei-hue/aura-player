@@ -120,10 +120,10 @@ struct ChartRowView: View {
     let item: YandexMusicService.YMTrackItem
     let onPlay: () -> Void
 
-    @State private var player = PlayerCore.shared
+    @State private var presentation = ActivePlayerPresentation()
 
     private var isCurrentPlaying: Bool {
-        guard let current = player.currentTrack else { return false }
+        guard let current = presentation.displayTrack else { return false }
         return current.title == item.title && current.artist == item.artistName
     }
 
@@ -136,10 +136,10 @@ struct ChartRowView: View {
         Button(action: onPlay) {
             HStack(spacing: 12) {
                 if let rank {
-                    Text(String(rank))
-                        .font(AG.display(.subheadline, .heavy).monospacedDigit())
+                    Text(String(format: "%02d", rank))
+                        .font(AG.text(.footnote, .bold).monospacedDigit())
                         .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
-                        .frame(width: 26, alignment: .center)
+                        .frame(width: 30, alignment: .leading)
                 }
 
                 ZStack {
@@ -149,18 +149,18 @@ struct ChartRowView: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Color.black.opacity(0.45))
                             .frame(width: 50, height: 50)
-                        LiveWaveEqualizer(isPlaying: player.isPlaying, color: AG.amber)
+                        LiveWaveEqualizer(isPlaying: presentation.isPlaying, color: AG.amber)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
-                        .font(AG.text(.subheadline, .semibold))
+                        .font(AG.text(.body, .semibold))
                         .foregroundStyle(isCurrentPlaying ? AG.amber : AG.ink)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Text(item.artistName)
-                        .font(AG.text(.caption, .medium))
+                        .font(AG.text(.caption, .regular))
                         .foregroundStyle(isCurrentPlaying ? AG.amber.opacity(0.75) : AG.inkMuted)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -181,7 +181,7 @@ struct ChartRowView: View {
                     Image(systemName: "ellipsis")
                         .font(AG.text(.subheadline, .bold))
                         .foregroundStyle(AG.inkMuted)
-                        .frame(width: 32, height: AG.tapTarget)
+                        .frame(width: AG.tapTarget, height: AG.tapTarget)
                         .contentShape(Rectangle())
                 }
             }

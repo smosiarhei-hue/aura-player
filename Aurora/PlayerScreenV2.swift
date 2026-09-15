@@ -27,6 +27,7 @@ struct PlayerScreenV2: View {
     @State private var videoLooper: AVPlayerLooper?
     @State private var ambientLooperPlayer: AVQueuePlayer?
     @State private var ambientLooper: AVPlayerLooper?
+    @State private var videoShotTrackID: UUID?
     @State private var artworkPaletteColors: [Color] = []
     @State private var paletteTrackId: UUID?
     @State private var artworkTrackId: UUID?
@@ -101,11 +102,16 @@ struct PlayerScreenV2: View {
                 ambientLooperPlayer?.pause()
             }
         }
+        .onChange(of: track?.id) { _, _ in
+            videoShotURL = nil
+            videoShotTrackID = nil
+            teardownVideoLooper()
+        }
         .onDisappear { teardownVideoLooper() }
     }
 
     private var isFullScreenVideoShot: Bool {
-        isVideoShotEnabled && videoLooperPlayer != nil && !showLyricsMode
+        isVideoShotEnabled && videoShotTrackID == track?.id && videoLooperPlayer != nil && !showLyricsMode
     }
 
     private var background: some View {
@@ -477,11 +483,20 @@ struct PlayerScreenV2: View {
         guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }; lyrics = result; lyricsLoading = false
     }
     private func loadVideoShot() async {
-        guard let track else { videoShotURL = nil; teardownVideoLooper(); return }
-        let id = PlayerCore.yandexTrackID(from: track); guard !id.isEmpty else { videoShotURL = nil; teardownVideoLooper(); return }
+        videoShotURL = nil
+        videoShotTrackID = nil
+        teardownVideoLooper()
+        guard let track else { return }
+        let requestedTrackID = track.id
+        let id = PlayerCore.yandexTrackID(from: track)
+        guard !id.isEmpty else { return }
         let url = await YandexMusicService.shared.getVideoShotUrl(for: id)
-        guard !Task.isCancelled, player.currentTrack?.id == track.id else { return }
-        videoShotURL = url; if isVideoShotEnabled, let url { setupVideoLooper(url: url) } else { teardownVideoLooper() }
+        guard !Task.isCancelled, player.currentTrack?.id == requestedTrackID else { return }
+        videoShotURL = url
+        videoShotTrackID = requestedTrackID
+        if isVideoShotEnabled, let url {
+            setupVideoLooper(url: url)
+        }
     }
     private func setupVideoLooper(url: URL) {
         teardownVideoLooper()
@@ -516,7 +531,15 @@ struct PlayerScreenV2: View {
         ambientLooperPlayer = nil
         ambientLooper = nil
     }
-    private func toggleVideoShot() { isVideoShotEnabled.toggle(); UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled"); if isVideoShotEnabled, let videoShotURL { setupVideoLooper(url: videoShotURL) } else { teardownVideoLooper() } }
+    private func toggleVideoShot() {
+        isVideoShotEnabled.toggle()
+        UserDefaults.standard.set(isVideoShotEnabled, forKey: "aurora_videoshot_enabled")
+        if isVideoShotEnabled, videoShotTrackID == track?.id, let videoShotURL {
+            setupVideoLooper(url: videoShotURL)
+        } else {
+            teardownVideoLooper()
+        }
+    }
     private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }
     private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
     private func previousTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.previous() }

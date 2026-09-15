@@ -11,15 +11,7 @@ struct LyricsView: View {
     var body: some View {
         Group {
             if isLoading {
-                VStack(spacing: 14) {
-                    ProgressView()
-                        .tint(AG.amber)
-                        .scaleEffect(1.2)
-                    Text("Загрузка текста…")
-                        .font(AG.text(.subheadline, .semibold))
-                        .foregroundStyle(.white.opacity(0.70))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                AuraLoadingState(title: "Загрузка текста…")
             } else if let lyrics, !lyrics.lines.isEmpty {
                 if lyrics.isSynchronized {
                     SyncedLyrics(lyrics: lyrics)
@@ -170,7 +162,7 @@ private struct EmptyLyricsState: View {
 
             Text("Текст песни не найден")
                 .font(AG.display(.headline, .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(AG.ink)
 
             if let staticText = player.currentTrack?.lyricsText, !staticText.isEmpty {
                 ScrollView {
