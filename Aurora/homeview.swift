@@ -206,33 +206,35 @@ struct HomeView: View {
                 }
 
                 if let track = player.currentTrack {
-                    Button {
-                        showPlayer = true
-                    } label: {
-                        HStack(spacing: 9) {
+                    HStack(spacing: 9) {
+                        Button {
+                            showPlayer = true
+                        } label: {
                             Text("\(track.title) — \(track.artist)")
                                 .font(AG.text(.footnote, .semibold))
                                 .foregroundStyle(AG.ink)
                                 .lineLimit(1)
-
-                            Button {
-                                Haptics.tap(.light)
-                                library.toggleFavorite(track)
-                            } label: {
-                                Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
-                                    .font(AG.text(.footnote, .bold))
-                                    .foregroundStyle(library.isTrackFavorite(track) ? AG.heart : AG.ink.opacity(0.85))
-                                    .contentTransition(.symbolEffect(.replace))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("В избранное")
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Открыть плеер: \(track.title)")
+
+                        Button {
+                            Haptics.tap(.light)
+                            library.toggleFavorite(track)
+                        } label: {
+                            Image(systemName: library.isTrackFavorite(track) ? "heart.fill" : "heart")
+                                .font(AG.text(.footnote, .bold))
+                                .foregroundStyle(library.isTrackFavorite(track) ? AG.heart : AG.ink.opacity(0.85))
+                                .contentTransition(.symbolEffect(.replace))
+                                .frame(width: AG.tapTarget, height: AG.tapTarget)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(library.isTrackFavorite(track) ? "Убрать из избранного" : "Добавить в избранное")
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
                     .glassCapsule(interactive: true)
-                    .accessibilityLabel("Открыть плеер")
                 }
 
                 HStack(spacing: 7) {

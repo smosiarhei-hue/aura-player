@@ -342,36 +342,27 @@ struct TrendsExploreView: View {
                             AlbumView(albumId: String(album.id), title: album.displayTitle)
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
-                                ZStack(alignment: .bottomTrailing) {
-                                    RemoteArtwork(urlString: album.coverUrlString, corner: 18)
-                                        .frame(width: 156, height: 156)
-
-                                    Button {
-                                        SonivoPlay.album(album)
-                                    } label: {
-                                        Image(systemName: "play.fill")
-                                            .font(AG.text(.subheadline, .bold))
-                                            .foregroundStyle(.black)
-                                            .frame(width: 36, height: 36)
-                                            .background(Circle().fill(.white))
-                                            .shadow(color: .black.opacity(0.4), radius: 6, x: 0, y: 2)
-                                    }
-                                    .padding(8)
-                                }
+                                RemoteArtwork(urlString: album.coverUrlString, corner: 18)
+                                    .frame(width: 136, height: 136)
 
                                 Text(album.displayTitle)
                                     .font(AG.text(.footnote, .semibold))
                                     .foregroundStyle(.white)
-                                    .lineLimit(1)
+                                    .lineLimit(2)
 
                                 Text(album.artistName)
                                     .font(AG.text(.caption2, .regular))
                                     .foregroundStyle(.white.opacity(0.60))
                                     .lineLimit(1)
                             }
-                            .frame(width: 156, alignment: .leading)
+                            .frame(width: 136, alignment: .leading)
                         }
                         .buttonStyle(GlassPressStyle())
+                        .contextMenu {
+                            Button { SonivoPlay.album(album) } label: {
+                                Label("Слушать релиз", systemImage: "play.fill")
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -422,7 +413,7 @@ struct TrendsExploreView: View {
             .padding(.horizontal, 16)
 
             if isLoading && chart.isEmpty {
-                ProgressView().tint(.yellow).frame(maxWidth: .infinity, minHeight: 120)
+                AuraLoadingState(title: "Загружаем чарт…")
             } else {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(chart.prefix(25).enumerated()), id: \.element.id) { index, item in

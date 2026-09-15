@@ -214,19 +214,13 @@ struct ArtistView: View {
                                 NavigationLink {
                                     AlbumView(albumId: String(album.id), title: album.displayTitle)
                                 } label: {
-                                    VStack(alignment: .leading, spacing: 7) {
+                                    AuraArtworkCard(
+                                        title: album.displayTitle,
+                                        subtitle: album.year.map(String.init),
+                                        width: 142
+                                    ) {
                                         RemoteArtwork(urlString: album.coverUrlString, corner: 16)
-                                            .frame(width: 150, height: 150)
-                                        Text(album.displayTitle)
-                                            .font(AG.text(.footnote, .semibold))
-                                            .foregroundStyle(AG.ink)
-                                            .lineLimit(1)
-                                        if let year = album.year {
-                                            Text(String(year)).font(AG.text(.caption2)).foregroundStyle(AG.inkMuted)
-                                        }
                                     }
-
-                                    .frame(width: 150, alignment: .leading)
                                 }
                                 .buttonStyle(GlassPressStyle())
                             }
@@ -301,14 +295,14 @@ struct ArtistView: View {
                                 } label: {
                                     VStack(spacing: 8) {
                                         RemoteArtwork(urlString: similar.coverUrlString, corner: 999)
-                                            .frame(width: 110, height: 110)
+                                            .frame(width: 96, height: 96)
                                         Text(similar.name)
                                             .font(AG.text(.caption, .semibold))
                                             .foregroundStyle(AG.ink)
                                             .lineLimit(2)
                                             .multilineTextAlignment(.center)
                                     }
-                                    .frame(width: 110)
+                                    .frame(width: 104)
                                 }
                                 .buttonStyle(GlassPressStyle())
                             }
