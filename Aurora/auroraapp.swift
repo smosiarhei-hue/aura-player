@@ -5,16 +5,16 @@ import UIKit
 struct SonivoApp: App {
     init() {
         let appearance = UITabBarAppearance(); appearance.configureWithTransparentBackground()
-        appearance.stackedLayoutAppearance.normal.iconColor = UIColor.white.withAlphaComponent(0.72)
-        appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.white.withAlphaComponent(0.72)]
-        appearance.stackedLayoutAppearance.selected.iconColor = .white
-        appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.white]
+        appearance.stackedLayoutAppearance.normal.iconColor = .secondaryLabel
+        appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.secondaryLabel]
+        appearance.stackedLayoutAppearance.selected.iconColor = .label
+        appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.label]
         appearance.inlineLayoutAppearance = appearance.stackedLayoutAppearance
         appearance.compactInlineLayoutAppearance = appearance.stackedLayoutAppearance
         let tabBar = UITabBar.appearance(); tabBar.standardAppearance = appearance; tabBar.scrollEdgeAppearance = appearance
-        tabBar.tintColor = .white; tabBar.unselectedItemTintColor = UIColor.white.withAlphaComponent(0.72)
+        tabBar.tintColor = .label; tabBar.unselectedItemTintColor = .secondaryLabel
     }
-    var body: some Scene { WindowGroup { RootView().preferredColorScheme(.dark).tint(.white) } }
+    var body: some Scene { WindowGroup { RootView().tint(AG.amber) } }
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
@@ -53,7 +53,7 @@ struct RootView: View {
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
             Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) { SearchCatalogView() }
         }
-        .tint(.white).toolbarColorScheme(.dark, for: .tabBar).tabBarMinimizeBehavior(.onScrollDown)
+        .tint(AG.amber).tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
             if miniVisible { NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition) }
         }

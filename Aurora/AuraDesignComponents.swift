@@ -5,6 +5,7 @@ struct AuraScreenBackground: View {
     var showsMesh: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
 
     private var resolvedColors: [Color] {
         let fallback = [AG.bgRaised, AG.bg, .black]
@@ -25,7 +26,9 @@ struct AuraScreenBackground: View {
             }
 
             LinearGradient(
-                colors: [.black.opacity(0.08), .black.opacity(0.52), .black.opacity(0.92)],
+                colors: colorScheme == .dark
+                    ? [.black.opacity(0.08), .black.opacity(0.52), .black.opacity(0.92)]
+                    : [.white.opacity(0.05), .white.opacity(0.34), .white.opacity(0.82)],
                 startPoint: .top,
                 endPoint: .bottom
             )

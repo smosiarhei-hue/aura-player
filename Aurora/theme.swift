@@ -23,17 +23,22 @@ enum AG {
     static let radiusSmall: CGFloat = 12
     static let radiusLarge: CGFloat = 28
 
-    // MARK: Canvas — a deep neutral that lets artwork colour own the screen.
-    static let bg       = Color(hex: "#09090B") ?? .black
-    static let bgRaised = Color(hex: "#111114") ?? .black
-    static let card     = Color(hex: "#18181C") ?? .black
-    static let coal     = Color(hex: "#202026") ?? .black
+    // MARK: Canvas — OLED black in dark mode, native system surfaces in light mode.
+    private static func adaptive(_ dark: UIColor, _ light: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
 
-    // MARK: Ink — the app always renders on a dark canvas, so text tokens are
-    // fixed white with stepped opacity (matches Apple Music's player).
-    static let ink       = Color.white
-    static let inkMuted  = Color.white.opacity(0.62)
-    static let inkFaint  = Color.white.opacity(0.38)
+    static let bg       = adaptive(.black, .systemGroupedBackground)
+    static let bgRaised = adaptive(UIColor(red: 0.067, green: 0.067, blue: 0.078, alpha: 1), .secondarySystemGroupedBackground)
+    static let card     = adaptive(UIColor(red: 0.094, green: 0.094, blue: 0.110, alpha: 1), .secondarySystemBackground)
+    static let coal     = adaptive(UIColor(red: 0.125, green: 0.125, blue: 0.149, alpha: 1), .tertiarySystemBackground)
+
+    // MARK: Ink — semantic labels keep the same hierarchy in both themes.
+    static let ink       = adaptive(.white, .label)
+    static let inkMuted  = adaptive(UIColor.white.withAlphaComponent(0.62), .secondaryLabel)
+    static let inkFaint  = adaptive(UIColor.white.withAlphaComponent(0.38), .tertiaryLabel)
 
     // MARK: Accent — a single warm accent; everything else comes from artwork.
     static let amber    = Color(hex: "#FBBF24") ?? .yellow
@@ -66,7 +71,7 @@ enum AG {
     }
 
     static var hairline: LinearGradient {
-        LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0.04), Color.black.opacity(0.22)],
+        LinearGradient(colors: [ink.opacity(0.22), ink.opacity(0.04), bg.opacity(0.22)],
                        startPoint: .topLeading,
                        endPoint: .bottomTrailing)
     }

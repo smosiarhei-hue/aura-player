@@ -65,7 +65,7 @@ struct PlayerScreenV2: View {
                 }
             }
         }
-        .background(Color.black.ignoresSafeArea()).preferredColorScheme(.dark)
+        .background(AG.bg.ignoresSafeArea())
         .simultaneousGesture(DragGesture().onEnded { value in
             if value.translation.height > 80 && value.predictedEndTranslation.height > 120 { close() }
         })
@@ -83,9 +83,9 @@ struct PlayerScreenV2: View {
                         .navigationTitle("Текст песни").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
                 }
-            }.preferredColorScheme(.dark)
+            }
         }
-        .sheet(item: $selectedArtist) { artist in NavigationStack { ArtistView(artistId: artist.id) }.preferredColorScheme(.dark) }
+        .sheet(item: $selectedArtist) { artist in NavigationStack { ArtistView(artistId: artist.id) } }
         .task { await player.observeTimeline() }
         .task(id: track?.id) {
             async let p: () = refreshPalette()
