@@ -11,20 +11,11 @@ struct FavoritesListView: View {
             SonivoBackdrop()
 
             if library.favorites.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "heart.slash")
-                        .font(.system(size: 48, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.40))
-                    Text("В избранном пока ничего нет")
-                        .font(AG.text(.headline, .bold))
-                        .foregroundStyle(.white)
-                    Text("Нажимайте на сердечко в плеере или треках, чтобы собирать любимую музыку здесь.")
-                        .font(AG.text(.subheadline))
-                        .foregroundStyle(.white.opacity(0.60))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                AuraEmptyState(
+                    systemImage: "heart.slash",
+                    title: "В избранном пока ничего нет",
+                    message: "Нажимайте на сердечко в плеере или треках, чтобы собирать любимую музыку здесь."
+                )
             } else {
                 ScrollView {
                     VStack(spacing: 18) {
@@ -92,10 +83,11 @@ struct FavoritesListView: View {
                         // Track List
                         LazyVStack(spacing: 4) {
                             ForEach(library.favorites) { track in
-                                Button {
-                                    PlaybackCommandRouter.shared.play(track, queue: library.favorites)
-                                } label: {
-                                    HStack(spacing: 12) {
+                                HStack(spacing: 8) {
+                                    Button {
+                                        PlaybackCommandRouter.shared.play(track, queue: library.favorites)
+                                    } label: {
+                                        HStack(spacing: 12) {
                                         SmallArtwork(track: track, size: 46)
                                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
@@ -110,24 +102,26 @@ struct FavoritesListView: View {
                                                 .lineLimit(1)
                                         }
 
-                                        Spacer()
-
-                                        Button {
-                                            library.toggleFavorite(track)
-                                        } label: {
-                                            Image(systemName: "heart.fill")
-                                                .font(AG.text(.callout, .semibold))
-                                                .foregroundStyle(AG.heart)
-                                                .frame(width: 36, height: 36)
-                                        }
-                                        .buttonStyle(.plain)
+                                        Spacer(minLength: 0)
                                     }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                                    .background(player.currentTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .buttonStyle(.plain)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    Button {
+                                        library.toggleFavorite(track)
+                                    } label: {
+                                        Image(systemName: "heart.fill")
+                                            .font(AG.text(.callout, .semibold))
+                                            .foregroundStyle(AG.heart)
+                                            .frame(width: AG.tapTarget, height: AG.tapTarget)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Убрать из избранного")
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 4)
+                                .background(player.currentTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                         }
                     }
@@ -177,20 +171,11 @@ struct HistoryListView: View {
             SonivoBackdrop()
 
             if historyTracks.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 48, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.40))
-                    Text("История прослушиваний пуста")
-                        .font(AG.text(.headline, .bold))
-                        .foregroundStyle(.white)
-                    Text("Здесь будут сохраняться все треки, которые вы включали.")
-                        .font(AG.text(.subheadline))
-                        .foregroundStyle(.white.opacity(0.60))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                AuraEmptyState(
+                    systemImage: "clock.arrow.circlepath",
+                    title: "История прослушиваний пуста",
+                    message: "Здесь будут сохраняться все треки, которые вы включали."
+                )
             } else {
                 ScrollView {
                     VStack(spacing: 18) {
@@ -347,19 +332,13 @@ struct CategoryCatalogView: View {
                     .padding(.top, 8)
 
                     if isLoading {
-                        ProgressView()
-                            .tint(.white)
-                            .frame(maxWidth: .infinity, minHeight: 120)
+                        AuraLoadingState(title: "Загружаем подборку…")
                     } else if results.tracks.isEmpty && results.albums.isEmpty {
-                        VStack(spacing: 8) {
-                            Text("Ничего не найдено")
-                                .font(AG.text(.callout, .bold))
-                                .foregroundStyle(.white)
-                            Text("Попробуйте обновить страницу")
-                                .font(AG.text(.footnote))
-                                .foregroundStyle(.white.opacity(0.60))
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 120)
+                        AuraEmptyState(
+                            systemImage: category.icon,
+                            title: "Ничего не найдено",
+                            message: "Попробуйте обновить страницу или выбрать другой раздел."
+                        )
                     } else {
                         // Play All Button
                         if !results.tracks.isEmpty {
@@ -405,20 +384,9 @@ struct CategoryCatalogView: View {
                                             Button {
                                                 SonivoPlay.album(album)
                                             } label: {
-                                                VStack(alignment: .leading, spacing: 6) {
+                                                AuraArtworkCard(title: album.displayTitle, subtitle: album.artistName, width: 130) {
                                                     RemoteArtwork(urlString: album.coverUrlString, corner: 14)
-                                                        .frame(width: 130, height: 130)
-
-                                                    Text(album.displayTitle)
-                                                        .font(AG.text(.footnote, .semibold))
-                                                        .foregroundStyle(.white)
-                                                        .lineLimit(1)
-                                                    Text(album.artistName)
-                                                        .font(AG.text(.caption))
-                                                        .foregroundStyle(.white.opacity(0.60))
-                                                        .lineLimit(1)
                                                 }
-                                                .frame(width: 130)
                                             }
                                             .buttonStyle(.plain)
                                         }
