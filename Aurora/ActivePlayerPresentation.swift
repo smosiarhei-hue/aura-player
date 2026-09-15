@@ -51,7 +51,9 @@ final class ActivePlayerPresentation {
         neuroOwnsPlayback ? neuroRuntime.isPlaying :
             (v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying)
     }
-    var isLoading: Bool { v2OwnsPlayback && runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing }
+    var isLoading: Bool {
+        router.isBusy || (v2OwnsPlayback && runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing)
+    }
     var isTransitionActive: Bool { v2OwnsPlayback ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive }
     var progress: Double {
         neuroOwnsPlayback ? timelinePosition :
@@ -106,29 +108,22 @@ final class ActivePlayerPresentation {
     }
 
     func togglePlay() {
-        if neuroOwnsPlayback {
-            Task { if neuroRuntime.isPlaying { await neuroRuntime.pause() } else { _ = await neuroRuntime.play() } }
-        } else if v2OwnsPlayback { Task { await runtime.toggle() } } else { legacy.togglePlay() }
+        router.toggle()
     }
     func pause() {
-        if neuroOwnsPlayback { Task { await neuroRuntime.pause() } }
-        else if v2OwnsPlayback { Task { await runtime.pause() } } else { legacy.pause() }
+        router.pause()
     }
     func resume() {
-        if neuroOwnsPlayback { Task { _ = await neuroRuntime.play() } }
-        else if v2OwnsPlayback { Task { await runtime.play() } } else { legacy.resume() }
+        router.play()
     }
     func previous() {
-        if neuroOwnsPlayback { Task { await neuroRuntime.previous() } }
-        else if v2OwnsPlayback { Task { await runtime.previous() } } else { legacy.previous() }
+        router.previous()
     }
     func next() {
-        if neuroOwnsPlayback { Task { await neuroRuntime.next() } }
-        else if v2OwnsPlayback { Task { await runtime.next() } } else { legacy.next() }
+        router.next()
     }
     func seek(to seconds: Double) {
-        if neuroOwnsPlayback { Task { await neuroRuntime.seek(to: seconds) } }
-        else if v2OwnsPlayback { Task { await runtime.seek(to: seconds) } } else { legacy.seek(to: seconds) }
+        router.seek(to: seconds)
     }
     func play(_ track: Track) { router.play(track, queue: queue) }
     func removeFromQueue(_ track: Track) {
@@ -136,8 +131,7 @@ final class ActivePlayerPresentation {
         else { legacy.removeFromQueue(track) }
     }
     func stopAndClear() {
-        if neuroOwnsPlayback { Task { await neuroRuntime.stop() } }
-        else if v2OwnsPlayback { Task { await runtime.stop() } } else { legacy.stopAndClear() }
+        router.stopAndClear()
     }
 
     func observeTimeline() async {

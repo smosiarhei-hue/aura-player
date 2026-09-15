@@ -669,6 +669,9 @@ final class AutoMixV2Runtime {
 final class PlaybackCommandRouter {
     static let shared = PlaybackCommandRouter(); private var installed = false; private init() {}
     private(set) var owner: PlaybackOwner = .legacy
+    private(set) var isBusy = false
+    private var requestID = 0
+    private var transportTask: Task<Void, Never>?
 
     func install() {
         guard !installed else { return }; installed = true
@@ -690,6 +693,9 @@ final class PlaybackCommandRouter {
     }
 
     func selectionChanged() {
+        transportTask?.cancel()
+        requestID += 1
+        isBusy = false
         let target: PlaybackOwner = AutoMixEngineSelectionStore.shared.isNeuroEnabled ? .neuroMix :
             (AutoMixEngineSelectionStore.shared.isV2Enabled ? .autoMixV2 : .legacy)
         let legacyTrack = PlayerCore.shared.currentTrack
@@ -741,47 +747,97 @@ final class PlaybackCommandRouter {
 
     func play(_ track: Track, queue: [Track]) {
         let target = owner(for: track)
+        if target == owner {
+            let activeTrack: Track? = switch target {
+            case .legacy: PlayerCore.shared.currentTrack
+            case .autoMixV2: AutoMixV2Runtime.shared.currentTrack
+            case .neuroMix: NeuroMixRuntime.shared.currentTrack
+            }
+            if activeTrack?.id == track.id {
+                switch target {
+                case .legacy where PlayerCore.shared.isPlaying: return
+                case .autoMixV2 where AutoMixV2Runtime.shared.isPlaying || AutoMixV2Runtime.shared.isLoading: return
+                case .neuroMix where NeuroMixRuntime.shared.isPlaying: return
+                default: break
+                }
+            }
+        }
         owner = target
-        Task { @MainActor in
+        transportTask?.cancel()
+        requestID += 1
+        let request = requestID
+        isBusy = true
+        transportTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             await stopOtherEngines(except: target)
+            guard request == requestID, !Task.isCancelled else { return }
             switch target {
             case .legacy:
                 PlayerCore.shared.play(track, newQueue: queue)
             case .autoMixV2:
                 if !(await AutoMixV2Runtime.shared.play(track, queue: queue)) {
+                    guard request == requestID, !Task.isCancelled else { return }
                     owner = .legacy
                     PlayerCore.shared.play(track, newQueue: queue)
                 }
             case .neuroMix:
                 if !(await NeuroMixRuntime.shared.play(track, queue: queue)) {
+                    guard request == requestID, !Task.isCancelled else { return }
                     owner = .legacy
                     PlayerCore.shared.play(track, newQueue: queue)
                 }
             }
+            if request == requestID { self.isBusy = false }
         }
     }
     func play() {
-        switch owner {
-        case .legacy:
-            PlayerCore.shared.resume()
-        case .autoMixV2:
-            Task { @MainActor in
-                if !(await AutoMixV2Runtime.shared.play()) { owner = .legacy; PlayerCore.shared.resume() }
+        transportTask?.cancel()
+        requestID += 1
+        let request = requestID
+        isBusy = true
+        transportTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            switch owner {
+            case .legacy:
+                PlayerCore.shared.resume()
+            case .autoMixV2:
+                if !(await AutoMixV2Runtime.shared.play()) {
+                    guard request == requestID, !Task.isCancelled else { return }
+                    owner = .legacy
+                    PlayerCore.shared.resume()
+                }
+            case .neuroMix:
+                if !(await NeuroMixRuntime.shared.play()) {
+                    guard request == requestID, !Task.isCancelled else { return }
+                    owner = .legacy
+                    PlayerCore.shared.resume()
+                }
             }
-        case .neuroMix:
-            Task { @MainActor in
-                if !(await NeuroMixRuntime.shared.play()) { owner = .legacy; PlayerCore.shared.resume() }
-            }
+            if request == requestID { self.isBusy = false }
         }
     }
     func pause() {
+        transportTask?.cancel(); requestID += 1; isBusy = false
         switch owner {
         case .legacy: PlayerCore.shared.pause()
         case .autoMixV2: Task { await AutoMixV2Runtime.shared.pause() }
         case .neuroMix: Task { await NeuroMixRuntime.shared.pause() }
         }
     }
+    func stopAndClear() {
+        transportTask?.cancel(); requestID += 1; isBusy = false
+        PlayerCore.shared.stopAndClear()
+        let target = owner
+        Task { @MainActor in
+            switch target {
+            case .legacy: break
+            case .autoMixV2: await AutoMixV2Runtime.shared.stop()
+            case .neuroMix: await NeuroMixRuntime.shared.stop()
+            }
+        }
+    }
     func toggle() {
+        transportTask?.cancel(); requestID += 1
         switch owner {
         case .legacy: PlayerCore.shared.togglePlay()
         case .autoMixV2: Task { await AutoMixV2Runtime.shared.toggle() }
@@ -790,24 +846,41 @@ final class PlaybackCommandRouter {
         }
     }
     func next() {
-        switch owner {
-        case .legacy: PlayerCore.shared.next()
-        case .autoMixV2: Task { await AutoMixV2Runtime.shared.next() }
-        case .neuroMix: Task { await NeuroMixRuntime.shared.next() }
+        enqueueTransport { owner in
+            switch owner {
+            case .legacy: PlayerCore.shared.next()
+            case .autoMixV2: await AutoMixV2Runtime.shared.next()
+            case .neuroMix: await NeuroMixRuntime.shared.next()
+            }
         }
     }
     func previous() {
-        switch owner {
-        case .legacy: PlayerCore.shared.previous()
-        case .autoMixV2: Task { await AutoMixV2Runtime.shared.previous() }
-        case .neuroMix: Task { await NeuroMixRuntime.shared.previous() }
+        enqueueTransport { owner in
+            switch owner {
+            case .legacy: PlayerCore.shared.previous()
+            case .autoMixV2: await AutoMixV2Runtime.shared.previous()
+            case .neuroMix: await NeuroMixRuntime.shared.previous()
+            }
         }
     }
     func seek(to seconds: Double) {
-        switch owner {
-        case .legacy: PlayerCore.shared.seek(to: seconds)
-        case .autoMixV2: Task { await AutoMixV2Runtime.shared.seek(to: seconds) }
-        case .neuroMix: Task { await NeuroMixRuntime.shared.seek(to: seconds) }
+        enqueueTransport { owner in
+            switch owner {
+            case .legacy: PlayerCore.shared.seek(to: seconds)
+            case .autoMixV2: await AutoMixV2Runtime.shared.seek(to: seconds)
+            case .neuroMix: await NeuroMixRuntime.shared.seek(to: seconds)
+            }
+        }
+    }
+    private func enqueueTransport(_ operation: @escaping @MainActor (PlaybackOwner) async -> Void) {
+        transportTask?.cancel()
+        requestID += 1
+        let request = requestID
+        let target = owner
+        transportTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await operation(target)
+            if request == requestID { self.isBusy = false }
         }
     }
 }
