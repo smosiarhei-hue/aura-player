@@ -48,7 +48,7 @@ struct RootView: View {
     }
     var body: some View {
         TabView(selection: $tab) {
-            Tab(AppTab.wave.label, systemImage: AppTab.wave.icon, value: .wave) { HomeView() }
+            Tab(AppTab.wave.label, systemImage: AppTab.wave.icon, value: .wave) { AuraHomeRedesignedView() }
             Tab(AppTab.trends.label, systemImage: AppTab.trends.icon, value: .trends) { TrendsExploreView() }
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
             Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) { SearchCatalogView() }
