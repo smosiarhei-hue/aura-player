@@ -56,7 +56,7 @@ struct YandexAuthSheet: View {
                                 .scaleEffect(1.4)
                             Text(statusMessage ?? "Авторизация в Яндекс ID...")
                                 .font(AG.text(.subheadline, .semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(AG.ink)
                         }
                         .padding(24)
                         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(AG.card))
@@ -70,7 +70,7 @@ struct YandexAuthSheet: View {
                     Button("Закрыть") {
                         dismiss()
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
                 }
             }
         }
@@ -82,16 +82,16 @@ struct YandexAuthSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("OAuth-токен аккаунта")
                         .font(AG.text(.subheadline, .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AG.ink)
 
                     Text("Если вы уже получали токен Яндекс Музыки ранее (начинается с y0_...), вы можете просто вставить его сюда:")
                         .font(AG.text(.footnote))
-                        .foregroundStyle(.white.opacity(0.70))
+                    .foregroundStyle(AG.inkMuted)
 
                     SecureField("Вставьте токен y0_...", text: $manualToken)
                         .padding(12)
                         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.08)))
-                        .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.15), lineWidth: 1))
                 }
 
@@ -108,7 +108,7 @@ struct YandexAuthSheet: View {
                         Spacer()
                         Text("Войти по токену")
                             .font(AG.text(.subheadline, .bold))
-                            .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
                         Spacer()
                     }
                     .padding(.vertical, 14)
@@ -124,7 +124,7 @@ struct YandexAuthSheet: View {
 
                     Text("• Максимальное качество 320 kbps и Lossless FLAC\n• Синхронизация ваших лайков в раздел «Мне нравится»\n• Персональная «Моя волна», обучающаяся на вашем вкусе\n• Возможность ставить лайки прямо в плеере с сохранением на сервере Яндекса")
                         .font(.system(size: 12.5))
-                        .foregroundStyle(.white.opacity(0.60))
+                    .foregroundStyle(AG.inkMuted)
                         .lineSpacing(3)
                 }
                 .padding(.top, 10)

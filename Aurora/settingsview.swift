@@ -22,7 +22,7 @@ struct SettingsView: View {
                             } else {
                                 ZStack {
                                     Circle().fill(LinearGradient(colors: [AG.ember, AG.amber], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 52, height: 52)
-                                    Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased()).font(AG.text(.title3, .bold)).foregroundStyle(.white)
+                                    Text(String(user.displayName?.prefix(1) ?? user.login.prefix(1)).uppercased()).font(AG.text(.title3, .bold)).foregroundStyle(AG.ink)
                                 }
                             }
                             VStack(alignment: .leading, spacing: 3) {

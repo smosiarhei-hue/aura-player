@@ -92,7 +92,7 @@ struct TrendsExploreView: View {
             Spacer()
             Text("Что послушать")
                 .font(AG.display(.title3, .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(AG.ink)
             Spacer()
 
             NavigationLink {
@@ -181,7 +181,7 @@ struct TrendsExploreView: View {
 
                 Image(systemName: icon)
                     .font(AG.display(.title, .black))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
             }
 
             HStack(spacing: 4) {
@@ -192,7 +192,7 @@ struct TrendsExploreView: View {
                 }
                 Text(title)
                     .font(AG.text(.footnote, .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
             }
         }
     }
@@ -218,11 +218,11 @@ struct TrendsExploreView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Мне\nнравится")
                             .font(AG.text(.footnote, .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AG.ink)
                             .lineLimit(2)
                         Text("\(library.favorites.count) треков")
                             .font(AG.text(.caption2, .regular))
-                            .foregroundStyle(.white.opacity(0.60))
+                            .foregroundStyle(AG.inkMuted)
                     }
                     Spacer(minLength: 0)
                 }
@@ -248,10 +248,10 @@ struct TrendsExploreView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("История")
                             .font(AG.text(.footnote, .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AG.ink)
                         Text("Недавно играло")
                             .font(AG.text(.caption2, .regular))
-                            .foregroundStyle(.white.opacity(0.60))
+                            .foregroundStyle(AG.inkMuted)
                     }
                     Spacer(minLength: 0)
                 }
@@ -269,7 +269,7 @@ struct TrendsExploreView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Артист рекомендует")
                 .font(AG.display(.title2, .heavy))
-                .foregroundStyle(.white)
+                .foregroundStyle(AG.ink)
                 .padding(.horizontal, 16)
 
             ZStack(alignment: .bottomLeading) {
@@ -290,12 +290,12 @@ struct TrendsExploreView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(album.displayTitle)
                             .font(AG.display(.title3, .heavy))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AG.ink)
                             .lineLimit(1)
 
                         Text(album.artistName)
                             .font(AG.text(.subheadline, .medium))
-                            .foregroundStyle(.white.opacity(0.80))
+                            .foregroundStyle(AG.ink.opacity(0.80))
                     }
 
                     Spacer()
@@ -369,7 +369,7 @@ struct TrendsExploreView: View {
             HStack(alignment: .center) {
                 Text("Больше открытий")
                     .font(AG.display(.title2, .heavy))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
 
                 Spacer()
 
@@ -446,12 +446,12 @@ struct TrendsExploreView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Популярные артисты")
                 .font(AG.display(.title2, .heavy))
-                .foregroundStyle(.white)
+                .foregroundStyle(AG.ink)
                 .padding(.horizontal, 16)
 
             Text("По позиции треков в чарте Яндекс Музыки")
                 .font(AG.text(.footnote, .regular))
-                .foregroundStyle(.white.opacity(0.60))
+                .foregroundStyle(AG.inkMuted)
                 .padding(.horizontal, 16)
                 .padding(.top, -8)
 
@@ -468,7 +468,7 @@ struct TrendsExploreView: View {
 
                                 Text(artist.name)
                                     .font(AG.text(.footnote, .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                                     .lineLimit(1)
 
                                 Text("#\(index + 1) в чарте")
@@ -505,7 +505,7 @@ struct TrendsExploreView: View {
                 HStack(spacing: 8) {
                     Text("Премьера")
                         .font(AG.display(.title2, .heavy))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AG.ink)
 
                     Image(systemName: "chevron.right")
                         .font(AG.text(.subheadline, .bold))
@@ -517,7 +517,7 @@ struct TrendsExploreView: View {
 
             Text("Лучшие новые треки для вас")
                 .font(AG.text(.footnote, .regular))
-                .foregroundStyle(.white.opacity(0.60))
+                        .foregroundStyle(AG.inkMuted)
                 .padding(.horizontal, 16)
                 .padding(.top, -8)
 
