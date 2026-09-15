@@ -274,11 +274,7 @@ struct HomeView: View {
     }
 
     private var solidMoodBackdrop: some View {
-        let accent = moodColors.first ?? AG.ember
-        return ZStack {
-            AG.bg.ignoresSafeArea()
-            accent.opacity(0.12).ignoresSafeArea()
-        }
+        AuraScreenBackground(colors: moodColors)
     }
 
     // MARK: - Карточки настроения (Компактные аккуратные кнопки)
@@ -318,7 +314,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
 
             if isLoading && chart.isEmpty {
-                ProgressView().tint(AG.amber).frame(maxWidth: .infinity, minHeight: 100)
+                AuraLoadingState(title: "Обновляем чарт…")
             } else {
                 VStack(spacing: 2) {
                     ForEach(topFive) { row in
@@ -345,21 +341,9 @@ struct HomeView: View {
                         NavigationLink {
                             AlbumView(albumId: String(album.id), title: album.displayTitle)
                         } label: {
-                            VStack(alignment: .leading, spacing: 7) {
+                            AuraArtworkCard(title: album.displayTitle, subtitle: album.artistName, width: 140) {
                                 RemoteArtwork(urlString: album.coverUrlString, corner: 16)
-                                    .frame(width: 140, height: 140)
-
-                                Text(album.displayTitle)
-                                    .font(AG.text(.footnote, .semibold))
-                                    .foregroundStyle(AG.ink)
-                                    .lineLimit(1)
-
-                                Text(album.artistName)
-                                    .font(AG.text(.caption2))
-                                    .foregroundStyle(AG.inkMuted)
-                                    .lineLimit(1)
                             }
-                            .frame(width: 140, alignment: .leading)
                         }
                         .buttonStyle(GlassPressStyle())
                     }

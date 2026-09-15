@@ -15,7 +15,8 @@ struct ArtistView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if isLoading {
-                        ProgressView().tint(AG.amber).frame(maxWidth: .infinity, minHeight: 400)
+                        AuraLoadingState(title: "Загружаем страницу артиста…")
+                            .frame(minHeight: 400)
                     } else if let artist {
                         heroSection(artist)
                         artistStatsSection(artist)
@@ -24,7 +25,7 @@ struct ArtistView: View {
                         albumsSection(artist)
                         similarArtistsSection(artist)
                     } else if let error {
-                        errorView(error)
+                        AuraErrorState(message: error) { Task { await load() } }
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -322,24 +323,7 @@ struct ArtistView: View {
     }
 
     private func errorView(_ message: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 40, weight: .light)).foregroundStyle(AG.inkMuted)
-            Text("Не удалось загрузить").font(AG.text(.body, .semibold)).foregroundStyle(AG.ink)
-            Text(message)
-                .font(AG.text(.footnote)).foregroundStyle(AG.inkMuted)
-                .multilineTextAlignment(.center)
-            Button { Task { await load() } } label: {
-                Text("Повторить")
-                    .font(AG.text(.footnote, .bold)).foregroundStyle(.black.opacity(0.86))
-                    .padding(.horizontal, 20).padding(.vertical, 10)
-                    .glassProminent()
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 32)
-        .padding(.vertical, 60)
+        AuraErrorState(message: message) { Task { await load() } }
     }
 
     private func load() async {
@@ -367,7 +351,8 @@ struct AlbumView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     if isLoading {
-                        ProgressView().tint(AG.amber).frame(maxWidth: .infinity, minHeight: 400)
+                        AuraLoadingState(title: "Загружаем альбом…")
+                            .frame(minHeight: 400)
                     } else if let album {
                         heroSection(album)
                         tracksSection

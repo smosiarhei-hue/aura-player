@@ -564,37 +564,21 @@ struct LibraryView: View {
     // MARK: - Empty State
 
     private var emptyStateView: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "music.note.house.fill")
-                .font(.system(size: 64, weight: .ultraLight))
-                .foregroundStyle(settings.accentColor)
-
-            Text("Ваша медиатека пуста")
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-
-            Text("Загрузите минимум два локальных аудиофайла через системный UI «Файлы», чтобы протестировать AutoMix без стримов.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-
-            Button {
-                showFilePicker = true
-            } label: {
-                Label(library.isImportingFiles ? "Загрузка…" : "Загрузить аудио", systemImage: "square.and.arrow.down")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 44)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(settings.accentColor)
+        ZStack {
+            AuraEmptyState(
+                systemImage: "music.note.house.fill",
+                title: "Ваша медиатека пуста",
+                message: "Загрузите минимум два локальных аудиофайла через системный UI «Файлы», чтобы протестировать AutoMix без стримов.",
+                actionTitle: library.isImportingFiles ? "Загрузка…" : "Загрузить аудио",
+                action: { showFilePicker = true }
+            )
             .disabled(library.isImportingFiles)
 
             if library.isImportingFiles, let progress = library.importProgress, progress >= 0 {
                 ProgressView(value: progress)
+                    .tint(settings.accentColor)
                     .padding(.horizontal, 32)
+                    .offset(y: 150)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
