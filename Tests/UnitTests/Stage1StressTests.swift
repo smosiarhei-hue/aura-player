@@ -130,6 +130,7 @@ private actor Stage1StressEngine: PlaybackEngine {
     func setGain(_ gain: Float, for deck: Deck) async {
         mutate(deck) { $0.gain = gain }
     }
+    func applyUserEQ(gains: [Float], enabled: Bool) async {}
 
     func skip(from current: Deck, to next: Deck) async throws {
         set(current, StressDeck())

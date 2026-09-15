@@ -16,6 +16,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
     private let preloadPolicy: PCMPreloadPolicy
     private let deckA: DeckSlot
     private let deckB: DeckSlot
+    private let userEQ: AVAudioUnitEQ
     private var fade: FadeState?
 
     public init(preloadPolicy: PCMPreloadPolicy = PCMPreloadPolicy()) throws {
@@ -30,21 +31,35 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let engine = AVAudioEngine()
             let a = DeckSlot(deck: .a, capacity: preloadPolicy.initialChunksPerDeck)
             let b = DeckSlot(deck: .b, capacity: preloadPolicy.initialChunksPerDeck)
+            let userEQ = AVAudioUnitEQ(numberOfBands: 10)
             for slot in [a, b] {
                 engine.attach(slot.player)
                 engine.attach(slot.gainMixer)
                 engine.connect(slot.player, to: slot.gainMixer, format: format)
                 engine.connect(slot.gainMixer, to: engine.mainMixerNode, format: format)
             }
+            engine.attach(userEQ)
+            let frequencies: [Float] = [20, 40, 60, 90, 160, 400, 1_000, 2_500, 6_000, 16_000]
+            for (index, band) in userEQ.bands.enumerated() {
+                band.frequency = frequencies[index]
+                band.bandwidth = 1.0
+                band.filterType = index == 0 ? .lowShelf : (index == frequencies.count - 1 ? .highShelf : .parametric)
+                band.gain = 0
+                band.bypass = false
+            }
+            userEQ.bypass = true
+            engine.connect(engine.mainMixerNode, to: userEQ, format: format)
+            engine.connect(userEQ, to: engine.outputNode, format: format)
             a.gainMixer.outputVolume = 1
             b.gainMixer.outputVolume = 0
-            return (engine, format, a, b)
+            return (engine, format, a, b, userEQ)
         }
         controlQueue = queue
         engine = graph.0
         outputFormat = graph.1
         deckA = graph.2
         deckB = graph.3
+        userEQ = graph.4
         self.preloadPolicy = preloadPolicy
     }
     public func startEngine() async throws { try await command { try $0.startLocked() } }
@@ -112,6 +127,14 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
     public func setGain(_ gain: Float, for deck: Deck) async {
         await inspect { owner in
             owner.slot(for: deck).gainMixer.outputVolume = gain.isFinite ? min(max(gain, 0), 1) : 0
+        }
+    }
+    public func applyUserEQ(gains: [Float], enabled: Bool) async {
+        await inspect { owner in
+            owner.userEQ.bypass = !enabled
+            for (index, band) in owner.userEQ.bands.enumerated() {
+                band.gain = enabled && index < gains.count && gains[index].isFinite ? gains[index] : 0
+            }
         }
     }
     public func crossfade(from outgoing: Deck, to incoming: Deck, durationSeconds: Double) async throws {

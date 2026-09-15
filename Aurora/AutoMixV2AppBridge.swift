@@ -11,6 +11,12 @@ import PlaybackCoordinator
 import TrackAnalysis
 import TrackSource
 
+enum PlaybackOwner: String, Sendable {
+    case legacy
+    case autoMixV2
+    case neuroMix
+}
+
 @Observable
 @MainActor
 final class AutoMixEngineSelectionStore {
@@ -28,7 +34,7 @@ final class AutoMixEngineSelectionStore {
                 isUpdatingSelection = false
             }
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-            Task { await AutoMixV2Runtime.shared.engineSelectionChanged(isV2Enabled: isV2Enabled) }
+            PlaybackCommandRouter.shared.selectionChanged()
         }
     }
     var isNeuroEnabled: Bool {
@@ -41,7 +47,7 @@ final class AutoMixEngineSelectionStore {
                 isUpdatingSelection = false
             }
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-            Task { await NeuroMixRuntime.shared.engineSelectionChanged(isEnabled: isNeuroEnabled) }
+            PlaybackCommandRouter.shared.selectionChanged()
         }
     }
     private init() {
@@ -105,6 +111,7 @@ final class NeuroMixRuntime {
             activeDeck = .a
             let audio = try DualDeckAudioEngine()
             engine = audio
+            await audio.applyUserEQ(gains: PlayerCore.shared.eqGains, enabled: PlayerCore.shared.eqEnabled)
             try await audio.prepare(.a, fileURL: firstURL)
             await audio.setGain(1, for: .a)
             try await audio.play(.a)
@@ -373,6 +380,10 @@ final class AutoMixV2Runtime {
         do {
             let engine = try DualDeckAudioEngine()
             let builtCoordinator = PlaybackCoordinator(source: compositeSource, engine: engine)
+            builtCoordinator.applyUserEQ(
+                gains: PlayerCore.shared.eqGains,
+                enabled: PlayerCore.shared.eqEnabled
+            )
             builtCoordinator.onChange = { [weak self] state in self?.apply(state) }
             coordinator = builtCoordinator
             lastError = nil
@@ -654,11 +665,15 @@ final class AutoMixV2Runtime {
 }
 
 @MainActor
+@Observable
 final class PlaybackCommandRouter {
     static let shared = PlaybackCommandRouter(); private var installed = false; private init() {}
-    private var legacyOwnsPlayback = false
+    private(set) var owner: PlaybackOwner = .legacy
+
     func install() {
         guard !installed else { return }; installed = true
+        owner = AutoMixEngineSelectionStore.shared.isNeuroEnabled ? .neuroMix :
+            (AutoMixEngineSelectionStore.shared.isV2Enabled ? .autoMixV2 : .legacy)
         let center = MPRemoteCommandCenter.shared()
         let commands: [MPRemoteCommand] = [center.playCommand, center.pauseCommand, center.togglePlayPauseCommand,
             center.nextTrackCommand, center.previousTrackCommand, center.changePlaybackPositionCommand]
@@ -673,86 +688,127 @@ final class PlaybackCommandRouter {
             Task { @MainActor in Self.shared.seek(to: event.positionTime) }; return .success
         }
     }
+
+    func selectionChanged() {
+        let target: PlaybackOwner = AutoMixEngineSelectionStore.shared.isNeuroEnabled ? .neuroMix :
+            (AutoMixEngineSelectionStore.shared.isV2Enabled ? .autoMixV2 : .legacy)
+        let legacyTrack = PlayerCore.shared.currentTrack
+        let legacyQueue = PlayerCore.shared.queue
+        owner = target
+        if target != .legacy {
+            PlayerCore.shared.stopAndClear()
+        }
+        Task { @MainActor in
+            switch target {
+            case .legacy:
+                await AutoMixV2Runtime.shared.stop()
+                await NeuroMixRuntime.shared.stop()
+            case .autoMixV2:
+                await NeuroMixRuntime.shared.stop()
+                if let legacyTrack {
+                    if !(await AutoMixV2Runtime.shared.play(legacyTrack, queue: legacyQueue)) {
+                        owner = .legacy
+                        PlayerCore.shared.play(legacyTrack, newQueue: legacyQueue)
+                    }
+                }
+            case .neuroMix:
+                await AutoMixV2Runtime.shared.stop()
+                if let legacyTrack, !legacyTrack.isStream, legacyTrack.streamUrlString == nil {
+                    if !(await NeuroMixRuntime.shared.play(legacyTrack, queue: legacyQueue)) {
+                        owner = .legacy
+                        PlayerCore.shared.play(legacyTrack, newQueue: legacyQueue)
+                    }
+                } else {
+                    owner = .legacy
+                }
+            }
+        }
+    }
+
+    private func owner(for track: Track) -> PlaybackOwner {
+        if AutoMixEngineSelectionStore.shared.isNeuroEnabled, !track.isStream, track.streamUrlString == nil {
+            return .neuroMix
+        }
+        if AutoMixEngineSelectionStore.shared.isV2Enabled { return .autoMixV2 }
+        return .legacy
+    }
+
+    private func stopOtherEngines(except target: PlaybackOwner) async {
+        if target != .legacy { PlayerCore.shared.stopAndClear() }
+        if target != .autoMixV2 { await AutoMixV2Runtime.shared.stop() }
+        if target != .neuroMix { await NeuroMixRuntime.shared.stop() }
+    }
+
     func play(_ track: Track, queue: [Track]) {
-        if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
-            legacyOwnsPlayback = false
-            Task {
-                if !(await NeuroMixRuntime.shared.play(track, queue: queue)) {
-                    legacyOwnsPlayback = true
-                    PlayerCore.shared.play(track, newQueue: queue)
-                }
-            }
-        } else if track.isStream || track.streamUrlString != nil {
-            legacyOwnsPlayback = true
-            PlayerCore.shared.play(track, newQueue: queue)
-        } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
-            legacyOwnsPlayback = false
-            Task {
+        let target = owner(for: track)
+        owner = target
+        Task { @MainActor in
+            await stopOtherEngines(except: target)
+            switch target {
+            case .legacy:
+                PlayerCore.shared.play(track, newQueue: queue)
+            case .autoMixV2:
                 if !(await AutoMixV2Runtime.shared.play(track, queue: queue)) {
-                    legacyOwnsPlayback = true
+                    owner = .legacy
+                    PlayerCore.shared.play(track, newQueue: queue)
+                }
+            case .neuroMix:
+                if !(await NeuroMixRuntime.shared.play(track, queue: queue)) {
+                    owner = .legacy
                     PlayerCore.shared.play(track, newQueue: queue)
                 }
             }
-        } else {
-            legacyOwnsPlayback = true
-            PlayerCore.shared.play(track, newQueue: queue)
         }
     }
     func play() {
-        if legacyOwnsPlayback {
+        switch owner {
+        case .legacy:
             PlayerCore.shared.resume()
-        } else if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
-            Task {
-                if !(await NeuroMixRuntime.shared.play()) {
-                    legacyOwnsPlayback = true
-                    PlayerCore.shared.resume()
-                }
+        case .autoMixV2:
+            Task { @MainActor in
+                if !(await AutoMixV2Runtime.shared.play()) { owner = .legacy; PlayerCore.shared.resume() }
             }
-        } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
-            Task {
-                if !(await AutoMixV2Runtime.shared.play()) {
-                    legacyOwnsPlayback = true
-                    PlayerCore.shared.resume()
-                }
+        case .neuroMix:
+            Task { @MainActor in
+                if !(await NeuroMixRuntime.shared.play()) { owner = .legacy; PlayerCore.shared.resume() }
             }
-        } else {
-            PlayerCore.shared.resume()
         }
     }
     func pause() {
-        if legacyOwnsPlayback { PlayerCore.shared.pause() }
-        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.pause() } }
-        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.pause() } }
-        else { PlayerCore.shared.pause() }
+        switch owner {
+        case .legacy: PlayerCore.shared.pause()
+        case .autoMixV2: Task { await AutoMixV2Runtime.shared.pause() }
+        case .neuroMix: Task { await NeuroMixRuntime.shared.pause() }
+        }
     }
     func toggle() {
-        if legacyOwnsPlayback { PlayerCore.shared.togglePlay() }
-        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
-            Task {
-                if NeuroMixRuntime.shared.isPlaying { await NeuroMixRuntime.shared.pause() }
-                else { _ = await NeuroMixRuntime.shared.play() }
-            }
+        switch owner {
+        case .legacy: PlayerCore.shared.togglePlay()
+        case .autoMixV2: Task { await AutoMixV2Runtime.shared.toggle() }
+        case .neuroMix:
+            Task { if NeuroMixRuntime.shared.isPlaying { await NeuroMixRuntime.shared.pause() } else { _ = await NeuroMixRuntime.shared.play() } }
         }
-        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.toggle() } }
-        else { PlayerCore.shared.togglePlay() }
     }
     func next() {
-        if legacyOwnsPlayback { PlayerCore.shared.next() }
-        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.next() } }
-        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.next() } }
-        else { PlayerCore.shared.next() }
+        switch owner {
+        case .legacy: PlayerCore.shared.next()
+        case .autoMixV2: Task { await AutoMixV2Runtime.shared.next() }
+        case .neuroMix: Task { await NeuroMixRuntime.shared.next() }
+        }
     }
     func previous() {
-        if legacyOwnsPlayback { PlayerCore.shared.previous() }
-        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.previous() } }
-        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.previous() } }
-        else { PlayerCore.shared.previous() }
+        switch owner {
+        case .legacy: PlayerCore.shared.previous()
+        case .autoMixV2: Task { await AutoMixV2Runtime.shared.previous() }
+        case .neuroMix: Task { await NeuroMixRuntime.shared.previous() }
+        }
     }
     func seek(to seconds: Double) {
-        if legacyOwnsPlayback { PlayerCore.shared.seek(to: seconds) }
-        else if AutoMixEngineSelectionStore.shared.isNeuroEnabled { Task { await NeuroMixRuntime.shared.seek(to: seconds) } }
-        else if AutoMixEngineSelectionStore.shared.isV2Enabled { Task { await AutoMixV2Runtime.shared.seek(to: seconds) } }
-        else { PlayerCore.shared.seek(to: seconds) }
+        switch owner {
+        case .legacy: PlayerCore.shared.seek(to: seconds)
+        case .autoMixV2: Task { await AutoMixV2Runtime.shared.seek(to: seconds) }
+        case .neuroMix: Task { await NeuroMixRuntime.shared.seek(to: seconds) }
+        }
     }
 }
 

@@ -33,8 +33,8 @@ final class ActivePlayerPresentation {
         self.legacy = legacy; self.runtime = runtime; self.neuroRuntime = .shared
         self.selection = selection; self.router = router
     }
-    private var v2OwnsPlayback: Bool { selection.isV2Enabled && runtime.currentTrack != nil }
-    private var neuroOwnsPlayback: Bool { selection.isNeuroEnabled && neuroRuntime.currentTrack != nil }
+    private var v2OwnsPlayback: Bool { router.owner == .autoMixV2 && runtime.currentTrack != nil }
+    private var neuroOwnsPlayback: Bool { router.owner == .neuroMix && neuroRuntime.currentTrack != nil }
     var isV2Enabled: Bool { v2OwnsPlayback || neuroOwnsPlayback }
     var currentTrack: Track? {
         neuroOwnsPlayback ? neuroRuntime.currentTrack : (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
@@ -58,7 +58,7 @@ final class ActivePlayerPresentation {
             (v2OwnsPlayback ? (timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0) : legacy.progress)
     }
     var duration: Double {
-        guard v2OwnsPlayback else { return legacy.duration }
+        guard v2OwnsPlayback || neuroOwnsPlayback else { return legacy.duration }
         let value = neuroOwnsPlayback ? (neuroRuntime.currentTrack?.duration ?? 0) :
             (timelineDuration > 0 ? timelineDuration : (runtime.currentTrack?.duration ?? 0))
         return value.isFinite ? max(0, value) : 0

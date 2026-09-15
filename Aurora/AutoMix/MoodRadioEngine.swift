@@ -228,7 +228,7 @@ final class MoodRadioEngine {
                 }
             } else {
                 self.queue.append(contentsOf: freshSequenced)
-                if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                if PlaybackCommandRouter.shared.owner == .autoMixV2 {
                     AutoMixV2Runtime.shared.appendQueue(freshSequenced)
                 } else {
                     PlayerCore.shared.appendToQueue(freshSequenced)

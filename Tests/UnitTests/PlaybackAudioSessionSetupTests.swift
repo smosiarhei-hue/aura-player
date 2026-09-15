@@ -12,7 +12,7 @@ struct PlaybackAudioSessionSetupTests {
         #expect(SystemPlaybackAudioSessionConfiguration.categoryOptions.isEmpty)
     }
 
-    @Test("V2 configures category and activation without requesting hardware preferences")
+    @Test("V2 configures category, stable hardware preferences, and activation")
     func successfulV2Setup() {
         let client = RecordingAudioSession()
         var reportedSteps: [AudioSessionSetupStep] = []
@@ -23,20 +23,20 @@ struct PlaybackAudioSessionSetupTests {
         #expect(result.isActive)
         #expect(result.failedSteps.isEmpty)
         #expect(reportedSteps.isEmpty)
-        #expect(client.steps == [.category, .activation])
-        #expect(client.preferredSampleRate == nil)
-        #expect(client.preferredBufferDuration == nil)
+        #expect(client.steps == [.category, .sampleRate, .bufferDuration, .activation])
+        #expect(client.preferredSampleRate == 48_000)
+        #expect(client.preferredBufferDuration == 0.005)
     }
 
-    @Test("Legacy configures category and activation without requesting hardware preferences")
+    @Test("Legacy configures category, stable hardware preferences, and activation")
     func legacySetup() {
         let client = RecordingAudioSession()
         let result = PlaybackAudioSessionSetup.configure(session: client, usesV2: false) { _, _ in }
 
         #expect(result.isActive)
-        #expect(client.steps == [.category, .activation])
-        #expect(client.preferredSampleRate == nil)
-        #expect(client.preferredBufferDuration == nil)
+        #expect(client.steps == [.category, .sampleRate, .bufferDuration, .activation])
+        #expect(client.preferredSampleRate == 48_000)
+        #expect(client.preferredBufferDuration == 0.005)
     }
 
     @Test("Category failure stops setup before activation")
@@ -64,7 +64,7 @@ struct PlaybackAudioSessionSetupTests {
         #expect(!result.isActive)
         #expect(result.failedSteps == [.activation])
         #expect(reportedSteps == [.activation])
-        #expect(client.steps == [.category, .activation])
+        #expect(client.steps == [.category, .sampleRate, .bufferDuration, .activation])
     }
 }
 

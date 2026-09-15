@@ -53,7 +53,7 @@ final class AutoMixV2NowPlayingCenter {
 
     private func refresh() async {
         let runtime = AutoMixV2Runtime.shared
-        guard AutoMixEngineSelectionStore.shared.isV2Enabled,
+        guard PlaybackCommandRouter.shared.owner == .autoMixV2,
               let track = runtime.currentTrack else {
             clearOnlyIfOwned()
             return

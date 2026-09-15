@@ -263,7 +263,7 @@ enum SonivoPlay {
                 .map { service.convertToTrack($0) }
                 .filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
 
-            if AutoMixEngineSelectionStore.shared.isV2Enabled {
+            if PlaybackCommandRouter.shared.owner == .autoMixV2 {
                 guard let current = AutoMixV2Runtime.shared.currentTrack else {
                     if let first = filtered.first { router.play(first, queue: filtered) }
                     return

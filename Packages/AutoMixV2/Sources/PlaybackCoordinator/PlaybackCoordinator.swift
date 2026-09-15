@@ -40,6 +40,9 @@ public final class PlaybackCoordinator {
         self.crossfadeSeconds = crossfadeSeconds.isFinite ? max(0, crossfadeSeconds) : 6
         self.automaticallyMonitor = automaticallyMonitor
     }
+    public func applyUserEQ(gains: [Float], enabled: Bool) {
+        Task { await engine.applyUserEQ(gains: gains, enabled: enabled) }
+    }
     deinit {
         commandTask?.cancel()
         prefetchTask?.cancel()

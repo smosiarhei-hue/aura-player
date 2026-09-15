@@ -28,9 +28,9 @@ final class PlaybackAudioSessionCoordinator {
                 guard let rawType, let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
                 switch type {
                 case .began:
-                    if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                    if PlaybackCommandRouter.shared.owner == .neuroMix {
                         await NeuroMixRuntime.shared.pause()
-                    } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                    } else if PlaybackCommandRouter.shared.owner == .autoMixV2 {
                         await AutoMixV2Runtime.shared.interruptionBegan()
                     } else {
                         PlayerCore.shared.pause()
@@ -38,9 +38,9 @@ final class PlaybackAudioSessionCoordinator {
                 case .ended:
                     PlaybackAudioSessionCoordinator.shared.configure()
                     let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-                    if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                    if PlaybackCommandRouter.shared.owner == .neuroMix {
                         _ = await NeuroMixRuntime.shared.play()
-                    } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                    } else if PlaybackCommandRouter.shared.owner == .autoMixV2 {
                         await AutoMixV2Runtime.shared.interruptionEnded(shouldResume: shouldResume)
                     }
                 @unknown default:
@@ -62,8 +62,8 @@ final class PlaybackAudioSessionCoordinator {
 
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { _ in
             Task { @MainActor in
-                guard AutoMixEngineSelectionStore.shared.isV2Enabled || AutoMixEngineSelectionStore.shared.isNeuroEnabled else { return }
-                if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                guard PlaybackCommandRouter.shared.owner != .legacy else { return }
+                if PlaybackCommandRouter.shared.owner == .neuroMix {
                     await NeuroMixRuntime.shared.engineConfigurationChanged()
                 } else {
                     await AutoMixV2Runtime.shared.engineConfigurationChanged()
@@ -74,9 +74,9 @@ final class PlaybackAudioSessionCoordinator {
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in
                 PlaybackAudioSessionCoordinator.shared.configure()
-                if AutoMixEngineSelectionStore.shared.isNeuroEnabled {
+                if PlaybackCommandRouter.shared.owner == .neuroMix {
                     _ = await NeuroMixRuntime.shared.play()
-                } else if AutoMixEngineSelectionStore.shared.isV2Enabled {
+                } else if PlaybackCommandRouter.shared.owner == .autoMixV2 {
                     await AutoMixV2Runtime.shared.engineConfigurationChanged()
                 }
             }

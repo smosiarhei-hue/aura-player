@@ -76,6 +76,7 @@ private actor IntentTestEngine: PlaybackEngine {
     func stop(_ deck: Deck) async {}
     func stopEngine() async { playing = false; prepared = false; url = nil }
     func setGain(_ gain: Float, for deck: Deck) async {}
+    func applyUserEQ(gains: [Float], enabled: Bool) async {}
     func skip(from current: Deck, to next: Deck) async throws {}
     func crossfade(from outgoing: Deck, to incoming: Deck, durationSeconds: Double) async throws {}
     func snapshot() async -> AudioEngineSnapshot {

@@ -242,6 +242,7 @@ private actor QueueTestEngine: PlaybackEngine {
     func stop(_ deck: Deck) async { set(deck, QueueTestDeck()) }
     func stopEngine() async { a = QueueTestDeck(); b = QueueTestDeck(); running = false }
     func setGain(_ gain: Float, for deck: Deck) async { mutate(deck) { $0.gain = gain } }
+    func applyUserEQ(gains: [Float], enabled: Bool) async {}
     func skip(from current: Deck, to next: Deck) async throws {
         skipCount += 1
         await stop(current)

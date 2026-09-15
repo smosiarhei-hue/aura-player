@@ -29,12 +29,13 @@ struct RootView: View {
     @State private var player = PlayerCore.shared
     @State private var v2 = AutoMixV2Runtime.shared
     @State private var engineSelection = AutoMixEngineSelectionStore.shared
+    @State private var router = PlaybackCommandRouter.shared
     @State private var tab: AppTab = .wave
     @State private var showPlayer = false
     @Namespace private var playerTransition
     static let playerZoomID = "now-playing-artwork"
-    private var v2OwnsPlayback: Bool { engineSelection.isV2Enabled && v2.currentTrack != nil }
-    private var neuroOwnsPlayback: Bool { engineSelection.isNeuroEnabled && NeuroMixRuntime.shared.currentTrack != nil }
+    private var v2OwnsPlayback: Bool { router.owner == .autoMixV2 && v2.currentTrack != nil }
+    private var neuroOwnsPlayback: Bool { router.owner == .neuroMix && NeuroMixRuntime.shared.currentTrack != nil }
     private var presentedTrack: Track? {
         neuroOwnsPlayback ? NeuroMixRuntime.shared.currentTrack : (v2OwnsPlayback ? v2.currentTrack : player.currentTrack)
     }
