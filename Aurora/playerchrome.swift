@@ -116,6 +116,7 @@ struct QueueSheetView: View {
         .background(AuraScreenBackground(colors: [AG.ember, AG.bgRaised], showsMesh: false))
         .listRowSeparatorTint(.white.opacity(0.10))
         .navigationTitle("Очередь").navigationBarTitleDisplayMode(.inline)
+        .task { await player.observeTimeline() }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button(editMode == .active ? "Готово" : "Изменить") {

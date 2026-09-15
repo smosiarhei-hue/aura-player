@@ -5,7 +5,7 @@ import SwiftUI
 struct LyricsView: View {
     let lyrics: Lyrics?
     let isLoading: Bool
-    @State private var player = PlayerCore.shared
+    @State private var player = ActivePlayerPresentation()
     @State private var settings = SettingsStore.shared
 
     var body: some View {
@@ -23,6 +23,7 @@ struct LyricsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task { await player.observeTimeline() }
     }
 }
 
@@ -30,7 +31,7 @@ struct LyricsView: View {
 
 private struct SyncedLyrics: View {
     let lyrics: Lyrics
-    @State private var player = PlayerCore.shared
+    @State private var player = ActivePlayerPresentation()
     @State private var settings = SettingsStore.shared
 
     // Built-in acoustic lead compensation (-0.12s) + user offset for vocal precision
@@ -89,6 +90,7 @@ private struct SyncedLyrics: View {
             }
         }
         .compositingGroup()
+        .task { await player.observeTimeline() }
     }
 }
 
@@ -151,7 +153,7 @@ private struct StaticLyricsList: View {
 // MARK: - Empty / Not Found State
 
 private struct EmptyLyricsState: View {
-    @State private var player = PlayerCore.shared
+    @State private var player = ActivePlayerPresentation()
     @State private var settings = SettingsStore.shared
 
     var body: some View {
@@ -164,7 +166,7 @@ private struct EmptyLyricsState: View {
                 .font(AG.display(.headline, .bold))
                 .foregroundStyle(AG.ink)
 
-            if let staticText = player.currentTrack?.lyricsText, !staticText.isEmpty {
+            if let staticText = player.displayTrack?.lyricsText, !staticText.isEmpty {
                 ScrollView {
                     Text(staticText)
                         .font(AG.text(.subheadline))
