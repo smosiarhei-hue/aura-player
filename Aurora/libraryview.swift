@@ -158,6 +158,16 @@ struct LibraryView: View {
     private var mainLibraryContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Коллекция")
+                        .font(AG.display(.largeTitle, .bold))
+                    Text("Офлайн-музыка, плейлисты и история")
+                        .font(AG.text(.subheadline))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+
                 mediaScanActionCard
                 localAutoMixTestCard
                 filterChips
@@ -211,7 +221,7 @@ struct LibraryView: View {
 
     private var mediaScanText: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Локальные аудио")
+            Text("Офлайн-музыка")
                 .font(.subheadline.weight(.semibold))
 
             if library.isImportingFiles {
@@ -225,7 +235,7 @@ struct LibraryView: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("Загрузите MP3, M4A, WAV, FLAC, AIFF или CAF через системный UI «Файлы»")
+                Text("Добавьте аудио из приложения «Файлы», чтобы слушать без сети")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -265,11 +275,11 @@ struct LibraryView: View {
                     .foregroundStyle(settings.accentColor)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Тест AutoMix на локальных файлах")
+                    Text("Офлайн-переходы")
                         .font(.subheadline.weight(.semibold))
                     Text(count >= 2
-                         ? "Быстрый тест: запустим локальную очередь и сразу подведём первый трек к зоне сведения."
-                         : "Загрузите минимум 2 локальных аудио, чтобы проверить переход без стримов.")
+                         ? "Проверьте плавный переход между локальными треками без сети."
+                         : "Загрузите минимум 2 трека, чтобы проверить переход офлайн.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

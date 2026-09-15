@@ -4,7 +4,7 @@ import SwiftUI
 
 struct SonivoBackdrop: View {
     var body: some View {
-        AuraScreenBackground(colors: [AG.ember, AG.amber, AG.bgRaised], showsMesh: false)
+        AuraScreenBackground(colors: [AG.bgRaised, AG.bg, AG.card], showsMesh: false)
     }
 }
 

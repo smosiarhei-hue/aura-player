@@ -22,7 +22,7 @@ struct AuraHomeRedesignedView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AuraScreenBackground(colors: moodColors)
+                AuraScreenBackground(colors: [AG.bgRaised, AG.bg, AG.card], showsMesh: false)
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 28) {
@@ -127,8 +127,8 @@ struct AuraHomeRedesignedView: View {
             }
         }
         .padding(18)
-        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1))
+        .background(AG.card.opacity(0.88), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(AG.ink.opacity(0.10), lineWidth: 1))
     }
 
     @ViewBuilder
@@ -138,7 +138,7 @@ struct AuraHomeRedesignedView: View {
                 .frame(width: 132, height: 132)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         } else {
-            FluidWaveView(colors: moodColors, isBackgroundMode: false, isPlaying: player.isPlaying)
+            FluidWaveView(colors: [AG.coal, AG.bgRaised, AG.card], isBackgroundMode: false, isPlaying: player.isPlaying)
                 .frame(width: 132, height: 132)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
@@ -231,7 +231,7 @@ struct AuraHomeRedesignedView: View {
                             .foregroundStyle(AG.inkMuted)
                     }
                     .padding(12)
-                    .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(AG.card.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .buttonStyle(CardPressStyle(haptic: false))
             } else {

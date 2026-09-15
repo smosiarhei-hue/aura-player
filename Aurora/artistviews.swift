@@ -40,103 +40,50 @@ struct ArtistView: View {
     }
 
     private func heroSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
-        GeometryReader { proxy in
-            let minY = proxy.frame(in: .global).minY
-            let baseHeight: CGFloat = 460
-            let heroHeight = max(baseHeight, baseHeight + (minY > 0 ? minY : 0))
+        VStack(spacing: 16) {
+            RemoteArtwork(urlString: artist.coverUrlString, corner: 999)
+                .frame(width: 132, height: 132)
+                .overlay(Circle().strokeBorder(AG.ink.opacity(0.12), lineWidth: 1))
+                .shadow(color: AG.bg.opacity(0.45), radius: 18, y: 8)
 
-            ZStack(alignment: .bottom) {
-                // 1. Ambient blurred background wash for wide screens / edge bleed
-                RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
-                    .blur(radius: 45)
-                    .scaleEffect(1.3)
-                    .opacity(0.70)
-                    .frame(width: proxy.size.width, height: heroHeight)
-
-                // 2. High-res artist photo
-                RemoteArtwork(urlString: artist.coverUrlString, corner: 0)
-                    .frame(width: proxy.size.width, height: heroHeight)
-
-                // 3. Top subtle vignette/blur overlay (for clock, status bar, and back button)
-                LinearGradient(
-                    stops: [
-                        .init(color: Color.black.opacity(0.82), location: 0.0),
-                        .init(color: Color.black.opacity(0.40), location: 0.20),
-                        .init(color: .clear, location: 0.40)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(width: proxy.size.width, height: heroHeight)
-
-                // 4. Bottom Apple Music soft dissolving gradient
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .clear, location: 0.42),
-                        .init(color: AG.bg.opacity(0.45), location: 0.68),
-                        .init(color: AG.bg.opacity(0.85), location: 0.88),
-                        .init(color: AG.bg, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(width: proxy.size.width, height: heroHeight)
-
-                // 5. Artist Name and Play Button docked at the bottom of the hero
-                VStack(spacing: 12) {
-                    Text(artist.name)
-                        .font(AG.display(.largeTitle, .heavy))
-                        .foregroundStyle(AG.ink)
+            VStack(spacing: 5) {
+                Text(artist.name)
+                    .font(AG.display(.largeTitle, .heavy))
+                    .foregroundStyle(AG.ink)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                if !artist.subtitle.isEmpty {
+                    Text(artist.subtitle)
+                        .font(AG.text(.subheadline))
+                        .foregroundStyle(AG.inkMuted)
                         .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .shadow(color: Color.black.opacity(0.65), radius: 12, x: 0, y: 4)
-
-                    if !artist.subtitle.isEmpty {
-                        Text(artist.subtitle)
-                            .font(AG.text(.footnote, .medium))
-                            .foregroundStyle(AG.inkMuted)
-                            .multilineTextAlignment(.center)
-                            .shadow(color: Color.black.opacity(0.50), radius: 8, x: 0, y: 2)
-                    }
-
-                    HStack(spacing: 12) {
-                        if let first = artist.popularTracks.first {
-                            Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
-                                Label("Слушать", systemImage: "play.fill")
-                                    .font(AG.text(.subheadline, .bold))
-                                    .foregroundStyle(.black.opacity(0.92))
-                                    .padding(.horizontal, 22)
-                                    .padding(.vertical, 12)
-                                    .glassProminent()
-                            }
-                            .buttonStyle(GlassPressStyle())
-                            
-                        }
-
-                        Button {
-                            playArtistWave(artist)
-                        } label: {
-                            Label("Волна", systemImage: "dot.radiowaves.left.and.right")
-                                .font(AG.text(.subheadline, .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 22)
-                                .padding(.vertical, 12)
-                                .glassCapsule(interactive: true)
-                                .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1.0))
-                        }
-                        .buttonStyle(GlassPressStyle())
-                    }
-                    .padding(.top, 4)
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 20)
             }
-            .frame(width: proxy.size.width, height: heroHeight)
-            .clipped()
-            .offset(y: minY > 0 ? -minY : 0)
+
+            HStack(spacing: 10) {
+                if let first = artist.popularTracks.first {
+                    Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
+                        Label("Слушать", systemImage: "play.fill")
+                            .font(AG.text(.subheadline, .bold))
+                            .foregroundStyle(.black.opacity(0.88))
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                    }
+                    .glassProminent()
+                    .buttonStyle(GlassPressStyle())
+                }
+                Button { playArtistWave(artist) } label: {
+                    Label("Волна", systemImage: "dot.radiowaves.left.and.right")
+                        .font(AG.text(.subheadline, .semibold))
+                        .foregroundStyle(AG.ink)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                }
+                .glassCapsule(interactive: true)
+                .buttonStyle(GlassPressStyle())
+            }
         }
-        .frame(height: 460)
+        .padding(.horizontal, 20)
+        .padding(.top, 24)
+        .padding(.bottom, 4)
     }
 
     private func artistStatsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
