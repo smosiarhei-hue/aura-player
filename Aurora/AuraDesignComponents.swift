@@ -314,3 +314,65 @@ struct AuraCompactTrackCard: View {
         .accessibilityLabel(isActive ? "(item.title), играет" : "(item.title), (item.artistName)")
     }
 }
+
+struct AuraCatalogTrackRow: View {
+    let item: YandexMusicService.YMTrackItem
+    var rank: Int?
+    let onPlay: () -> Void
+    @State private var presentation = ActivePlayerPresentation()
+
+    private var isActive: Bool {
+        guard let track = presentation.displayTrack else { return false }
+        return track.title == item.title && track.artist == item.artistName
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: onPlay) {
+                HStack(spacing: 12) {
+                    if let rank {
+                        Text(String(format: "%02d", rank))
+                            .font(AG.text(.caption, .bold).monospacedDigit())
+                            .foregroundStyle(rank <= 3 ? AG.amber : AG.inkMuted)
+                            .frame(width: 24, alignment: .leading)
+                    }
+
+                    RemoteArtwork(urlString: item.coverUrlString, corner: 10)
+                        .frame(width: 58, height: 58)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title)
+                            .font(AG.text(.body, .semibold))
+                            .foregroundStyle(isActive ? AG.amber : AG.ink)
+                            .lineLimit(1)
+                        Text(item.artistName)
+                            .font(AG.text(.subheadline))
+                            .foregroundStyle(AG.inkMuted)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Menu {
+                Button(action: onPlay) {
+                    Label("Слушать", systemImage: "play.fill")
+                }
+                Button { SonivoPlay.download(item) } label: {
+                    Label("Скачать", systemImage: "arrow.down.circle")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(AG.glyph(.bold))
+                    .foregroundStyle(AG.inkMuted)
+                    .frame(width: AG.tapTarget, height: AG.tapTarget)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Действия для (item.title)")
+        }
+        .padding(.vertical, 6)
+        .background(isActive ? .white.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}

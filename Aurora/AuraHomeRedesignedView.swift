@@ -162,8 +162,22 @@ struct AuraHomeRedesignedView: View {
 
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-            AuraSectionHeader(title: "Чарт", subtitle: "Топ-6 · три строки в две колонки")
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(AG.amber)
+                    .frame(width: 48, height: 48)
+                    .glassCircle(interactive: false)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Чарт")
+                        .font(AG.display(.title2, .bold))
+                        .foregroundStyle(AG.ink)
+                    Text("Популярные треки сегодня")
+                        .font(AG.text(.subheadline))
+                        .foregroundStyle(AG.inkMuted)
+                }
+                Spacer()
                 NavigationLink {
                     Top100ChartView(title: "Чарт", tracks: chart)
                 } label: {
@@ -179,13 +193,7 @@ struct AuraHomeRedesignedView: View {
             } else if let loadError, chart.isEmpty {
                 AuraErrorState(message: loadError) { Task { await load() } }
             } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                    ForEach(Array(topSix.enumerated()), id: \.element.id) { index, item in
-                        AuraCompactTrackCard(item: item, rank: index + 1) {
-                            SonivoPlay.track(item, in: chart)
-                        }
-                    }
-                }
+                trackColumns(topSix, includeRank: true, queue: chart)
             }
         }
     }
@@ -261,7 +269,26 @@ struct AuraHomeRedesignedView: View {
 
     private var newTracksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AuraSectionHeader(title: "Свежие треки", subtitle: "Топ-6 новинок · три строки в две колонки")
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(AG.ember)
+                    .frame(width: 48, height: 48)
+                    .glassCircle(interactive: false)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Премьера")
+                        .font(AG.display(.title2, .bold))
+                        .foregroundStyle(AG.ink)
+                    Text("Лучшие новые треки для вас")
+                        .font(AG.text(.subheadline))
+                        .foregroundStyle(AG.inkMuted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(AG.text(.headline, .bold))
+                    .foregroundStyle(AG.inkMuted)
+            }
 
             if isLoading && newTracks.isEmpty {
                 AuraLoadingState(title: "Загружаем новинки…")
@@ -272,12 +299,34 @@ struct AuraHomeRedesignedView: View {
                     message: "Попробуйте обновить ленту позже."
                 )
             } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                    ForEach(Array(newTracks.prefix(6).enumerated()), id: \.element.id) { index, item in
-                        AuraCompactTrackCard(item: item, rank: index + 1) {
-                            SonivoPlay.track(item, in: newTracks)
+                trackColumns(Array(newTracks.prefix(6)), includeRank: false, queue: newTracks)
+            }
+        }
+    }
+
+    private func trackColumns(
+        _ items: [YandexMusicService.YMTrackItem],
+        includeRank: Bool,
+        queue: [YandexMusicService.YMTrackItem]
+    ) -> some View {
+        let groups = stride(from: 0, to: items.count, by: 3).map { start in
+            Array(items[start..<min(start + 3, items.count)])
+        }
+
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 18) {
+                ForEach(groups.indices, id: \.self) { groupIndex in
+                    VStack(spacing: 2) {
+                        ForEach(Array(groups[groupIndex].enumerated()), id: \.element.id) { rowIndex, item in
+                            AuraCatalogTrackRow(
+                                item: item,
+                                rank: includeRank ? groupIndex * 3 + rowIndex + 1 : nil
+                            ) {
+                                SonivoPlay.track(item, in: queue)
+                            }
                         }
                     }
+                    .frame(width: 340, alignment: .top)
                 }
             }
         }
