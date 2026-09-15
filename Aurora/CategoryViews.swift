@@ -88,21 +88,22 @@ struct FavoritesListView: View {
                                         PlaybackCommandRouter.shared.play(track, queue: library.favorites)
                                     } label: {
                                         HStack(spacing: 12) {
-                                        SmallArtwork(track: track, size: 46)
-                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                            SmallArtwork(track: track, size: 46)
+                                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(track.title)
-                                                .font(AG.text(.subheadline, .semibold))
-                                                .foregroundStyle(player.currentTrack?.id == track.id ? (AG.heart) : .white)
-                                                .lineLimit(1)
-                                            Text(track.artist)
-                                                .font(AG.text(.footnote))
-                                                .foregroundStyle(.white.opacity(0.60))
-                                                .lineLimit(1)
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(track.title)
+                                                    .font(AG.text(.subheadline, .semibold))
+                                                    .foregroundStyle(player.currentTrack?.id == track.id ? AG.heart : .white)
+                                                    .lineLimit(1)
+                                                Text(track.artist)
+                                                    .font(AG.text(.footnote))
+                                                    .foregroundStyle(.white.opacity(0.60))
+                                                    .lineLimit(1)
+                                            }
+
+                                            Spacer(minLength: 0)
                                         }
-
-                                        Spacer(minLength: 0)
                                     }
                                     .buttonStyle(.plain)
                                     .frame(maxWidth: .infinity, alignment: .leading)
