@@ -61,9 +61,7 @@ struct SearchCatalogView: View {
                             if !localResults.isEmpty { localSection }
 
                             if isSearching {
-                                ProgressView()
-                                    .tint(AG.amber)
-                                    .frame(maxWidth: .infinity, minHeight: 100)
+                                AuraLoadingState(title: "Ищем музыку…")
                             } else if didSearch && isEmptyResult {
                                 emptyState
                             }
@@ -161,21 +159,9 @@ struct SearchCatalogView: View {
                         NavigationLink {
                             AlbumView(albumId: String(album.id), title: album.displayTitle)
                         } label: {
-                            VStack(alignment: .leading, spacing: 7) {
+                            AuraArtworkCard(title: album.displayTitle, subtitle: album.artistName, width: 140) {
                                 RemoteArtwork(urlString: album.coverUrlString, corner: 14)
-                                    .frame(width: 140, height: 140)
-
-                                Text(album.displayTitle)
-                                    .font(AG.text(.footnote, .semibold))
-                                    .foregroundStyle(AG.ink)
-                                    .lineLimit(1)
-
-                                Text(album.artistName)
-                                    .font(AG.text(.caption2))
-                                    .foregroundStyle(AG.inkMuted)
-                                    .lineLimit(1)
                             }
-                            .frame(width: 140, alignment: .leading)
                         }
                         .buttonStyle(GlassPressStyle())
                     }
@@ -238,32 +224,13 @@ struct SearchCatalogView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(AG.inkMuted)
-            Text("Ничего не найдено")
-                .font(AG.text(.callout, .semibold))
-                .foregroundStyle(AG.ink)
-            Text("Проверьте написание или выберите подсказку выше.")
-                .font(AG.text(.footnote))
-                .foregroundStyle(AG.inkMuted)
-                .multilineTextAlignment(.center)
-            Button {
-                performSearch(immediate: true)
-            } label: {
-                Text("Повторить")
-                    .font(AG.text(.footnote, .bold))
-                    .foregroundStyle(Color.black.opacity(0.86))
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(AG.emberGradient))
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 32)
-        .padding(.vertical, 40)
+        AuraEmptyState(
+            systemImage: "magnifyingglass",
+            title: "Ничего не найдено",
+            message: "Проверьте написание или выберите подсказку выше.",
+            actionTitle: "Повторить",
+            action: { performSearch(immediate: true) }
+        )
     }
 
     private var genresGrid: some View {

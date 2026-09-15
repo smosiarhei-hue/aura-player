@@ -428,19 +428,9 @@ struct LibraryView: View {
                             PlaybackCommandRouter.shared.play(track, queue: library.tracks)
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
-                                SmallArtwork(track: track, size: 140)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-
-                                Text(track.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                                    .foregroundStyle(.primary)
-
-                                Text(track.artist)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                    .foregroundStyle(.secondary)
+                                AuraArtworkCard(title: track.title, subtitle: track.artist, width: 140) {
+                                    SmallArtwork(track: track, size: 140)
+                                }
                             }
                             .frame(width: 140)
                         }
