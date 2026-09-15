@@ -3,9 +3,8 @@ import SwiftUI
 struct AuraHomeRedesignedView: View {
     @State private var player = ActivePlayerPresentation()
     @State private var ym = YandexMusicService.shared
-    @State private var library = LibraryStore.shared
     @State private var chart: [YandexMusicService.YMTrackItem] = []
-    @State private var albums: [YandexMusicService.YMAlbumItem] = []
+    @State private var newTracks: [YandexMusicService.YMTrackItem] = []
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var showSettings = false
@@ -32,7 +31,7 @@ struct AuraHomeRedesignedView: View {
                         hero
                         moodSection
                         chartSection
-                        releasesSection
+                    newTracksSection
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
@@ -193,27 +192,28 @@ struct AuraHomeRedesignedView: View {
         }
     }
 
-    private var releasesSection: some View {
+    private var newTracksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AuraSectionHeader(title: "Свежие релизы", subtitle: "Новинки из Яндекс Музыки")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(albums.prefix(8)) { album in
-                        NavigationLink {
-                            AlbumView(albumId: String(album.id), title: album.displayTitle)
-                        } label: {
-                            AuraArtworkCard(title: album.displayTitle, subtitle: album.artistName, width: 128) {
-                                RemoteArtwork(urlString: album.coverUrlString, corner: 18)
-                            }
-                        }
-                        .buttonStyle(GlassPressStyle())
-                        .contextMenu {
-                            Button { SonivoPlay.album(album) } label: {
-                                Label("Слушать релиз", systemImage: "play.fill")
-                            }
+            AuraSectionHeader(title: "Свежие треки", subtitle: "Недавно вышли в Яндекс Музыке")
+
+            if isLoading && newTracks.isEmpty {
+                AuraLoadingState(title: "Загружаем новинки…")
+            } else if newTracks.isEmpty {
+                AuraEmptyState(
+                    systemImage: "music.note.list",
+                    title: "Новинки пока недоступны",
+                    message: "Попробуйте обновить ленту позже."
+                )
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(newTracks) { item in
+                        ChartRowView(rank: nil, item: item) {
+                            SonivoPlay.track(item, in: newTracks)
                         }
                     }
                 }
+                .padding(8)
+                .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
         }
     }
@@ -227,7 +227,7 @@ struct AuraHomeRedesignedView: View {
             chart = []
             loadError = "Не удалось обновить чарт. Проверь подключение к Яндекс Музыке."
         }
-        albums = (try? await ym.getNewAlbums()) ?? []
+        newTracks = await ym.getNewTracks(limit: 8)
         isLoading = false
     }
 }

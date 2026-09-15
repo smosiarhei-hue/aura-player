@@ -385,7 +385,6 @@ final class PlayerCore {
             eqGains = gains
         }
         applyEQ()
-        restorePlaybackState()
     }
 
     func savePlaybackState() {
