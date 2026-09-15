@@ -4,16 +4,7 @@ import SwiftUI
 
 struct SonivoBackdrop: View {
     var body: some View {
-        ZStack {
-            AG.bg
-            RadialGradient(
-                colors: [AG.ember.opacity(0.16), Color.clear],
-                center: .topTrailing,
-                startRadius: 8,
-                endRadius: 430
-            )
-        }
-        .ignoresSafeArea()
+        AuraScreenBackground(colors: [AG.ember, AG.amber, AG.bgRaised], showsMesh: false)
     }
 }
 
