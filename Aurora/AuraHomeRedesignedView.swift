@@ -284,10 +284,15 @@ struct AuraHomeRedesignedView: View {
                         .font(AG.text(.subheadline))
                         .foregroundStyle(AG.inkMuted)
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(AG.text(.headline, .bold))
-                    .foregroundStyle(AG.inkMuted)
+                NavigationLink {
+                    PremiereTracksView(tracks: newTracks)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(AG.text(.headline, .bold))
+                        .foregroundStyle(AG.inkMuted)
+                        .frame(width: AG.tapTarget, height: AG.tapTarget)
+                }
+                .buttonStyle(.plain)
             }
 
             if isLoading && newTracks.isEmpty {
@@ -341,7 +346,7 @@ struct AuraHomeRedesignedView: View {
             chart = []
             loadError = "Не удалось обновить чарт. Проверь подключение к Яндекс Музыке."
         }
-        newTracks = await ym.getNewTracks(limit: 8)
+        newTracks = await ym.getNewTracks(limit: 100)
         isLoading = false
     }
 }

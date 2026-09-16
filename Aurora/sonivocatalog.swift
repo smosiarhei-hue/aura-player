@@ -340,3 +340,47 @@ struct Top100ChartView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
     }
 }
+
+struct PremiereTracksView: View {
+    let tracks: [YandexMusicService.YMTrackItem]
+
+    private var ranked: [RankedTrack] {
+        tracks.enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
+    }
+
+    var body: some View {
+        ZStack {
+            SonivoBackdrop()
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    SonivoHeader(
+                        title: "Премьера",
+                        accent: "100",
+                        subtitle: "Свежие треки и последние релизы · " + String(tracks.count) + " треков"
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                    ForEach(ranked) { row in
+                        AuraCatalogTrackRow(item: row.item, rank: row.rank) {
+                            SonivoPlay.track(row.item, in: tracks)
+                        }
+                    }
+
+                    if tracks.isEmpty {
+                        AuraEmptyState(
+                            systemImage: "sparkles",
+                            title: "Премьеры пока недоступны",
+                            message: "Яндекс Музыка не вернула свежие релизы. Попробуйте обновить раздел позже."
+                        )
+                    }
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 28)
+            }
+        }
+        .navigationTitle("Премьера")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+    }
+}

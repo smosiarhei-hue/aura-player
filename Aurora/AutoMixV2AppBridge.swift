@@ -682,6 +682,8 @@ final class PlaybackCommandRouter {
     private(set) var isBusy = false
     private var requestID = 0
     private var transportTask: Task<Void, Never>?
+    private var seekTask: Task<Void, Never>?
+    private var seekRequestID = 0
 
     func install() {
         guard !installed else { return }; installed = true
@@ -880,12 +882,20 @@ final class PlaybackCommandRouter {
         }
     }
     func seek(to seconds: Double) {
-        enqueueTransport { owner in
-            switch owner {
+        seekTask?.cancel()
+        seekRequestID += 1
+        let request = seekRequestID
+        let target = owner
+        seekTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 35_000_000)
+            guard !Task.isCancelled, request == self.seekRequestID else { return }
+            switch target {
             case .legacy: PlayerCore.shared.seek(to: seconds)
             case .autoMixV2: await AutoMixV2Runtime.shared.seek(to: seconds)
             case .neuroMix: await NeuroMixRuntime.shared.seek(to: seconds)
             }
+            if request == self.seekRequestID { self.seekTask = nil }
         }
     }
     private func enqueueTransport(_ operation: @escaping @MainActor (PlaybackOwner) async -> Void) {

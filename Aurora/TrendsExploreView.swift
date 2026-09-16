@@ -344,9 +344,15 @@ struct TrendsExploreView: View {
                 }
 
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(AG.text(.headline, .bold))
-                    .foregroundStyle(AG.inkMuted)
+                NavigationLink {
+                    PremiereTracksView(tracks: premiereTracks)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(AG.text(.headline, .bold))
+                        .foregroundStyle(AG.inkMuted)
+                        .frame(width: AG.tapTarget, height: AG.tapTarget)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
 
@@ -372,7 +378,6 @@ struct TrendsExploreView: View {
                     .foregroundStyle(AG.ink)
 
                 Spacer()
-
                 // Фильтры: [ТОП] и [ПО ЯЗЫКУ]
                 HStack(spacing: 6) {
                     Button {
@@ -512,6 +517,15 @@ struct TrendsExploreView: View {
                         .foregroundStyle(AG.inkMuted)
                 }
                 Spacer()
+                NavigationLink {
+                    PremiereTracksView(tracks: premiereTracks)
+                } label: {
+                    Text("Все")
+                        .font(AG.text(.footnote, .semibold))
+                        .foregroundStyle(AG.amber)
+                        .frame(minWidth: AG.tapTarget, minHeight: AG.tapTarget)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
 
@@ -548,7 +562,7 @@ struct TrendsExploreView: View {
         } catch {
             newAlbums = []
         }
-        premiereTracks = await ym.getNewTracks(limit: 20, force: force)
+        premiereTracks = await ym.getNewTracks(limit: 100, force: force)
         didLoadAnyContent = didLoadAnyContent || !premiereTracks.isEmpty
         if !didLoadAnyContent {
             loadError = "Не удалось загрузить рекомендации Яндекс Музыки. Проверьте соединение и повторите попытку."
