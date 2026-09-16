@@ -1023,7 +1023,6 @@ final class PlayerCore {
     private func beginStream(_ url: URL, at seconds: Double) {
         let item = AVPlayerItem(url: url)
         item.audioTimePitchAlgorithm = .timeDomain
-        item.isAudioSpatializationAllowed = true
         item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         StreamBeatTap.shared.attach(to: item)
         activeStreamingPlayer.replaceCurrentItem(with: item)
@@ -1135,7 +1134,6 @@ final class PlayerCore {
                     let resolvedStart = self.activeTransitionPlan != nil ? targetStart : 0
                     let nextItem = AVPlayerItem(url: info.url)
                     nextItem.audioTimePitchAlgorithm = .timeDomain
-                    nextItem.isAudioSpatializationAllowed = true
                     nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
                     StreamBeatTap.shared.attach(to: nextItem)
                     self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
@@ -1331,7 +1329,6 @@ final class PlayerCore {
                         let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                         let nextItem = AVPlayerItem(url: info.url)
                         nextItem.audioTimePitchAlgorithm = .timeDomain
-                        nextItem.isAudioSpatializationAllowed = true
                         nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
                         StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)

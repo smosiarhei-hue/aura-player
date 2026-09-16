@@ -60,6 +60,16 @@ final class PlaybackAudioSessionCoordinator {
             }
         })
 
+        observers.append(center.addObserver(
+            forName: AVAudioSession.spatialPlaybackCapabilitiesChangedNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                PlaybackAudioSessionCoordinator.shared.configure()
+            }
+        })
+
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { _ in
             Task { @MainActor in
                 guard PlaybackCommandRouter.shared.owner != .legacy else { return }
@@ -108,8 +118,13 @@ final class PlaybackAudioSessionCoordinator {
         let route = session.currentRoute.outputs
             .map { "\($0.portType.rawValue):\($0.portName)" }
             .joined(separator: ", ")
+        let spatialRoute = session.currentRoute.outputs
+            .filter { $0.isSpatialAudioEnabled }
+            .map(\.portName)
+            .joined(separator: ", ")
+        let spatialState = spatialRoute.isEmpty ? "off-or-unsupported" : "enabled:\(spatialRoute)"
 
-        print("[AutoMix V2] audio session active actual=\(actualRate)Hz/\(actualBuffer)s route=\(route)")
+        print("[Audio] session active actual=\(actualRate)Hz/\(actualBuffer)s route=\(route) spatial=\(spatialState)")
         Task {
             await AutoMixV2Runtime.shared.diagnostics.recordAudioSession(
                 preferredSampleRate: actualRate,
@@ -120,7 +135,7 @@ final class PlaybackAudioSessionCoordinator {
             await AutoMixV2Runtime.shared.diagnostics.record(
                 MixDiagnosticEvent(
                     category: "audio-session",
-                    message: "Active route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s"
+                    message: "Active route=\(route.isEmpty ? "none" : route) actual=\(actualRate)Hz/\(actualBuffer)s spatial=\(spatialState)"
                 )
             )
         }
