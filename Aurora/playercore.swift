@@ -220,7 +220,7 @@ final class PlayerCore {
     private func configureSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, policy: .default, options: [])
+            try session.setCategory(.playback, mode: .moviePlayback, policy: .default, options: [])
             try? session.setSupportsMultichannelContent(true)
             try session.setActive(true)
         } catch {

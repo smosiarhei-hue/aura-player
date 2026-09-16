@@ -80,9 +80,12 @@ struct RemoteArtwork: View {
         Color.clear
             .overlay {
                 if let value = urlString, let url = URL(string: value) {
-                    AsyncImage(url: url) { phase in
+                    AsyncImage(
+                        urlRequest: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
+                        transaction: Transaction(animation: .easeOut(duration: 0.2))
+                    ) { phase in
                         if let image = phase.image {
-                            image.resizable().aspectRatio(contentMode: .fill)
+                            image.resizable().interpolation(.high).aspectRatio(contentMode: .fill)
                         } else {
                             placeholder
                         }
@@ -143,8 +146,8 @@ struct ChartRowView: View {
                 }
 
                 ZStack {
-                    RemoteArtwork(urlString: item.coverUrlString, corner: 10)
-                        .frame(width: 50, height: 50)
+                    RemoteArtwork(urlString: item.coverUrlString, corner: 11)
+                        .frame(width: 56, height: 56)
                     if isCurrentPlaying {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Color.black.opacity(0.45))

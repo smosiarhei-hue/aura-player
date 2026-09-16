@@ -340,8 +340,8 @@ struct AuraCatalogTrackRow: View {
                             .frame(width: 24, alignment: .leading)
                     }
 
-                    RemoteArtwork(urlString: item.coverUrlString, corner: 10)
-                        .frame(width: 58, height: 58)
+                    RemoteArtwork(urlString: item.coverUrlString, corner: 11)
+                        .frame(width: 64, height: 64)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
