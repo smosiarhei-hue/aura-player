@@ -229,8 +229,27 @@ enum SonivoPlay {
             return
         }
 
+        service.beginStationSession(station.stationId)
+        let active = AutoMixV2Runtime.shared.currentTrack
+            ?? NeuroMixRuntime.shared.currentTrack
+            ?? PlayerCore.shared.currentTrack
+        let immediate = active
+            ?? LibraryStore.shared.favorites.first
+            ?? service.chartCache.first.map { service.convertToTrack($0) }
+        let startedImmediately = immediate != nil
+        if let immediate {
+            if active == nil {
+                router.play(immediate, queue: [immediate])
+            } else if PlaybackCommandRouter.shared.owner == .autoMixV2 {
+                AutoMixV2Runtime.shared.replaceQueue([immediate])
+            } else if PlaybackCommandRouter.shared.owner == .neuroMix {
+                NeuroMixRuntime.shared.replaceQueue([immediate])
+            } else {
+                PlayerCore.shared.queue = [immediate]
+            }
+        }
+
         Task {
-            service.beginStationSession(station.stationId)
 
             let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
             let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
@@ -240,8 +259,8 @@ enum SonivoPlay {
             if !candidates.isEmpty {
                 let available = candidates
                     .map { service.convertToTrack($0) }
-                    .filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
-                if let first = available.first {
+                    .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
+                if active == nil && !startedImmediately, let first = available.first {
                     router.play(first, queue: available)
                 }
             }
@@ -252,11 +271,11 @@ enum SonivoPlay {
 
             let filtered = tracks
                 .map { service.convertToTrack($0) }
-                .filter { !UserTasteEngine.shared.dislikedTrackIDs.contains($0.id) }
+                .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
 
             if PlaybackCommandRouter.shared.owner == .autoMixV2 {
                 guard let current = AutoMixV2Runtime.shared.currentTrack else {
-                    if let first = filtered.first { router.play(first, queue: filtered) }
+                    if !startedImmediately, let first = filtered.first { router.play(first, queue: filtered) }
                     return
                 }
                 var newQueue = filtered.filter { $0.id != current.id }
@@ -266,7 +285,7 @@ enum SonivoPlay {
                 var newQueue = filtered.filter { $0.id != current.id }
                 newQueue.insert(current, at: 0)
                 PlayerCore.shared.queue = newQueue
-            } else if let first = filtered.first {
+            } else if !startedImmediately, let first = filtered.first {
                 router.play(first, queue: filtered)
             }
         }

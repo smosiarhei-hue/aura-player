@@ -593,6 +593,7 @@ struct PlayerScreenV2: View {
         guard let current = track else { return }; waveLoading = true
         waveActive = true
         MoodRadioEngine.shared.start(seed: current)
+        player.queue = [current]
         Task {
             let tracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45)
             await MainActor.run {

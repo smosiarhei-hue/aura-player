@@ -255,20 +255,6 @@ final class MoodRadioEngine {
         queue = [seed]
         recentPlayedTracks.removeAll()
         playedArtistHistory.removeAll()
-        let active = AutoMixV2Runtime.shared.currentTrack
-            ?? NeuroMixRuntime.shared.currentTrack
-            ?? PlayerCore.shared.currentTrack
-        let ownerIsPlaying: Bool = switch PlaybackCommandRouter.shared.owner {
-        case .autoMixV2: AutoMixV2Runtime.shared.isPlaying
-        case .neuroMix: NeuroMixRuntime.shared.isPlaying
-        case .legacy: PlayerCore.shared.isPlaying
-        }
-        if active?.id != seed.id {
-            PlaybackCommandRouter.shared.play(seed, queue: queue)
-        } else if !ownerIsPlaying {
-            PlaybackCommandRouter.shared.play()
-        }
-        rememberPlayed(seed)
     }
 
     func appendRelatedTracks(_ relatedTracks: [Track]) {
