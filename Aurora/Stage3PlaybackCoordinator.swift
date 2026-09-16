@@ -124,10 +124,6 @@ final class PlaybackCoordinator {
     }
     func previous() async throws {
         guard !ids.isEmpty else { return }
-        let state = await engine.snapshot()
-        let deck = activeDeck == .a ? state.deckA : state.deckB
-        let position = deck.positionSeconds
-
         // 1. If currently in transition, cancel transition and stay on outgoing track
         if transition != nil {
             let stayDeck = otherDeck
@@ -149,13 +145,8 @@ final class PlaybackCoordinator {
             return
         }
 
-        // 2. Standard Apple Music behavior: if playback > 3.0s, restart current track from 0:00
-        if position > 3.0 {
-            try await seek(to: 0)
-            return
-        }
-
-        // 3. If within first 3.0s, go to previous track in queue (if at start, restart track 0)
+        // Explicit previous commands return to the previous track even when the
+        // current track has already played for more than three seconds.
         guard let currentIndex = index, currentIndex > 0 else {
             try await seek(to: 0)
             return

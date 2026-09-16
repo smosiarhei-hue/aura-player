@@ -682,6 +682,7 @@ final class PlaybackCommandRouter {
     private(set) var isBusy = false
     private var requestID = 0
     private var transportTask: Task<Void, Never>?
+    private var pendingTransportOperation: (@MainActor (PlaybackOwner) async -> Void)?
     private var seekTask: Task<Void, Never>?
     private var seekRequestID = 0
 
@@ -899,7 +900,10 @@ final class PlaybackCommandRouter {
         }
     }
     private func enqueueTransport(_ operation: @escaping @MainActor (PlaybackOwner) async -> Void) {
-        guard transportTask == nil else { return }
+        if transportTask != nil {
+            pendingTransportOperation = operation
+            return
+        }
         requestID += 1
         let request = requestID
         let target = owner
@@ -907,6 +911,10 @@ final class PlaybackCommandRouter {
             guard let self else { return }
             await operation(target)
             if request == requestID {
+                while let pending = self.pendingTransportOperation {
+                    self.pendingTransportOperation = nil
+                    await pending(target)
+                }
                 self.isBusy = false
                 self.transportTask = nil
             }
