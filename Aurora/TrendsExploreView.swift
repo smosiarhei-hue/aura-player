@@ -227,7 +227,7 @@ struct TrendsExploreView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(10)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.06)))
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(AG.card.opacity(0.82)))
             }
             .buttonStyle(GlassPressStyle())
 
@@ -256,7 +256,7 @@ struct TrendsExploreView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(10)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.06)))
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(AG.card.opacity(0.82)))
             }
             .buttonStyle(GlassPressStyle())
         }
@@ -384,7 +384,7 @@ struct TrendsExploreView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule().fill(selectedFilter == "top" ? AG.amber : Color.white.opacity(0.12))
+                                Capsule().fill(selectedFilter == "top" ? AG.amber : AG.ink.opacity(0.12))
                             )
                     }
 
@@ -397,7 +397,7 @@ struct TrendsExploreView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule().fill(selectedFilter == "lang" ? AG.amber : Color.white.opacity(0.12))
+                                Capsule().fill(selectedFilter == "lang" ? AG.amber : AG.ink.opacity(0.12))
                             )
                     }
                 }
@@ -479,7 +479,7 @@ struct TrendsExploreView: View {
                             .padding(.vertical, 12)
                             .background(
                                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .fill(Color.white.opacity(index == 0 ? 0.14 : 0.08))
+                                    .fill(AG.ink.opacity(index == 0 ? 0.14 : 0.08))
                             )
                             .overlay {
                                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -509,7 +509,7 @@ struct TrendsExploreView: View {
 
                     Image(systemName: "chevron.right")
                         .font(AG.text(.subheadline, .bold))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(AG.inkMuted)
                 }
                 Spacer()
             }
