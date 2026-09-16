@@ -492,6 +492,7 @@ final class AutoMixV2Runtime {
     func next() async {
         if let index = coordinator?.snapshot().currentIndex, index >= queue.count - 2 {
             refillQueueIfNeeded()
+            await waitForNextTrack()
         }
         await runCommand { try await $0.next() }
     }
@@ -574,6 +575,15 @@ final class AutoMixV2Runtime {
 
     private var isRefillingWave = false
     private var lastRefillDate: Date?
+
+    private func waitForNextTrack() async {
+        for _ in 0..<40 {
+            guard let index = coordinator?.snapshot().currentIndex else { return }
+            if index + 1 < queue.count { return }
+            if !isRefillingWave { refillQueueIfNeeded() }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
 
     func refillQueueIfNeeded() {
         guard !isRefillingWave, let current = currentTrack, let coordinator else { return }
@@ -873,14 +883,17 @@ final class PlaybackCommandRouter {
         }
     }
     private func enqueueTransport(_ operation: @escaping @MainActor (PlaybackOwner) async -> Void) {
-        transportTask?.cancel()
+        guard transportTask == nil else { return }
         requestID += 1
         let request = requestID
         let target = owner
         transportTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await operation(target)
-            if request == requestID { self.isBusy = false }
+            if request == requestID {
+                self.isBusy = false
+                self.transportTask = nil
+            }
         }
     }
 }
