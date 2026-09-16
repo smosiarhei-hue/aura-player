@@ -74,6 +74,7 @@ final class NeuroMixRuntime {
     private var activeDeck: Deck = .a
     private var monitorTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
+    private var activeTransitionID: UUID?
     private var profileWarmTask: Task<Void, Never>?
     private(set) var currentTrack: Track?
     private(set) var isPlaying = false
@@ -151,12 +152,10 @@ final class NeuroMixRuntime {
 
     func previous() async {
         guard let currentIndex else { return }
-        let snapshot = await engine?.snapshot()
-        let deck = activeDeck == .a ? snapshot?.deckA : snapshot?.deckB
-        if (deck?.positionSeconds ?? 0) > 3 {
-            try? await engine?.seek(activeDeck, to: 0)
-        } else if currentIndex > 0 {
+        if currentIndex > 0 {
             await transition(to: currentIndex - 1, force: true)
+        } else {
+            try? await engine?.seek(activeDeck, to: 0)
         }
     }
 
@@ -172,10 +171,13 @@ final class NeuroMixRuntime {
 
     func stop() async {
         monitorTask?.cancel()
-        transitionTask?.cancel()
+        let transition = transitionTask
+        transitionTask = nil
+        activeTransitionID = nil
+        transition?.cancel()
+        await transition?.value
         profileWarmTask?.cancel()
         monitorTask = nil
-        transitionTask = nil
         await engine?.stopEngine()
         engine = nil
         currentIndex = nil
@@ -294,9 +296,12 @@ final class NeuroMixRuntime {
     }
 
     private func transition(to nextIndex: Int, force: Bool) async {
+        transitionTask?.cancel()
+        await transitionTask?.value
         guard let engine, queue.indices.contains(nextIndex), let currentIndex,
               let current = currentTrack else { return }
-        transitionTask?.cancel()
+        let transitionID = UUID()
+        activeTransitionID = transitionID
         transitionTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -305,6 +310,7 @@ final class NeuroMixRuntime {
                 let targetTrack = self.queue[nextIndex]
                 let targetProfile = try await self.analyzer.profile(
                     for: TrackID(raw: targetTrack.id.uuidString), fileURL: try await self.resolveURL(for: targetTrack))
+                guard !Task.isCancelled, self.activeTransitionID == transitionID else { return }
                 let plan = NeuroMixPlanningRuntime.shared.plan(from: sourceProfile, to: targetProfile)
                 self.currentProfile = sourceProfile
                 self.nextProfile = targetProfile
@@ -315,17 +321,26 @@ final class NeuroMixRuntime {
                 try await runner.execute(plan, incomingURL: try await self.resolveURL(for: targetTrack),
                                           targetBPM: Double(targetProfile.bpm),
                                           outgoing: self.activeDeck, incoming: incomingDeck)
+                guard !Task.isCancelled, self.activeTransitionID == transitionID else { return }
                 self.activeDeck = incomingDeck
                 self.currentIndex = nextIndex
                 self.currentTrack = targetTrack
                 self.pipelineStatus = "Переход завершён"
-                self.transitionTask = nil
+                if self.activeTransitionID == transitionID {
+                    self.activeTransitionID = nil
+                    self.transitionTask = nil
+                }
             } catch is CancellationError {
-                self.transitionTask = nil
+                if self.activeTransitionID == transitionID {
+                    self.activeTransitionID = nil
+                    self.transitionTask = nil
+                }
             } catch {
+                guard self.activeTransitionID == transitionID else { return }
                 self.lastError = String(describing: error)
                 self.pipelineStatus = "Ошибка перехода NeuroMix"
                 if force { self.isPlaying = false }
+                self.activeTransitionID = nil
                 self.transitionTask = nil
             }
         }
