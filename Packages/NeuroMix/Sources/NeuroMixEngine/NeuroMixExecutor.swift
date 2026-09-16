@@ -37,7 +37,7 @@ public struct NeuroMixTransitionExecutor: Sendable {
             return
         }
 
-        let tick = 0.02
+        let tick = 0.05
         var elapsed = 0.0
         while elapsed < plan.durationSeconds {
             for event in plan.events {

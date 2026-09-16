@@ -7,6 +7,7 @@ final class PlaybackSessionPersistence {
     private struct State: Codable { let queue: [Track]; let trackID: UUID; let position: Double }
     private let key = "automix.v2.last-session.v1"
     private var task: Task<Void, Never>?
+    private var lastSavedData: Data?
     private init() {}
 
     func install() {
@@ -15,7 +16,7 @@ final class PlaybackSessionPersistence {
             guard let self else { return }
             while !Task.isCancelled {
                 await saveOrClear()
-                do { try await ContinuousClock().sleep(for: .seconds(1)) } catch { return }
+                do { try await ContinuousClock().sleep(for: .seconds(5)) } catch { return }
             }
         }
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
@@ -31,6 +32,9 @@ final class PlaybackSessionPersistence {
             return
         }
         let state = State(queue: runtime.playbackQueue, trackID: track.id, position: timeline.position)
-        if let data = try? JSONEncoder().encode(state) { UserDefaults.standard.set(data, forKey: key) }
+        if let data = try? JSONEncoder().encode(state), data != lastSavedData {
+            UserDefaults.standard.set(data, forKey: key)
+            lastSavedData = data
+        }
     }
 }

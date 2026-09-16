@@ -238,7 +238,7 @@ final class NeuroMixRuntime {
         monitorTask?.cancel()
         monitorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await ContinuousClock().sleep(for: .milliseconds(100))
+                try? await ContinuousClock().sleep(for: .milliseconds(250))
                 await self?.monitor()
             }
         }

@@ -75,28 +75,29 @@ private enum TrackAnalysisComputer {
         guard sourceRate > 0 else { throw TrackAnalysisError.invalidAudioFormat }
         let duration = Double(source.length) / sourceRate
 
-        let rhythm = try AudioDecoder.decodeMono(fileURL: fileURL, sampleRate: 22_050)
+        let analysisSampleRate = 22_050.0
+        let rhythm = try AudioDecoder.decodeMono(fileURL: fileURL, sampleRate: analysisSampleRate)
         try Task.checkCancellation()
-        let loudness = try AudioDecoder.decodeMono(fileURL: fileURL, sampleRate: 48_000)
+        let loudness = try AudioDecoder.decodeMono(fileURL: fileURL, sampleRate: analysisSampleRate)
         try Task.checkCancellation()
         guard !rhythm.isEmpty, !loudness.isEmpty else { throw TrackAnalysisError.noAudioSamples }
 
-        let tempo = TempoDetector.estimate(samples: rhythm, sampleRate: 22_050)
+        let tempo = TempoDetector.estimate(samples: rhythm, sampleRate: analysisSampleRate)
         let beatPeriod = tempo.bpm > 0 ? 60.0 / Double(tempo.bpm) : 0
-        let phase = TempoDetector.bestPhase(samples: rhythm, sampleRate: 22_050, period: beatPeriod)
+        let phase = TempoDetector.bestPhase(samples: rhythm, sampleRate: analysisSampleRate, period: beatPeriod)
         let beats = beatPeriod > 0 ? stride(from: phase, through: duration, by: beatPeriod).map { $0 } : []
-        let downbeatPhase = TempoDetector.downbeatPhase(samples: rhythm, sampleRate: 22_050, beats: beats)
+        let downbeatPhase = TempoDetector.downbeatPhase(samples: rhythm, sampleRate: analysisSampleRate, beats: beats)
         let downbeats = beats.enumerated().compactMap { index, value in
             index % 4 == downbeatPhase ? value : nil
         }
         let phraseStarts = downbeats.enumerated().compactMap { index, value in index % 8 == 0 ? value : nil }
         try Task.checkCancellation()
 
-        let weighted = LoudnessMeter.kWeighted(loudness, sampleRate: 48_000)
-        let loudnessResult = LoudnessMeter.measure(weighted, sampleRate: 48_000)
-        let energy = EnergyMeter.curve(loudness, sampleRate: 48_000)
-        let hasFade = EnergyMeter.hasFadeOut(loudness, sampleRate: 48_000)
-        let endsSilent = EnergyMeter.endsInSilence(loudness, sampleRate: 48_000)
+        let weighted = LoudnessMeter.kWeighted(loudness, sampleRate: analysisSampleRate)
+        let loudnessResult = LoudnessMeter.measure(weighted, sampleRate: analysisSampleRate)
+        let energy = EnergyMeter.curve(loudness, sampleRate: analysisSampleRate)
+        let hasFade = EnergyMeter.hasFadeOut(loudness, sampleRate: analysisSampleRate)
+        let endsSilent = EnergyMeter.endsInSilence(loudness, sampleRate: analysisSampleRate)
         let segments = CueDetector.segments(energy: energy, duration: duration, endsSilent: endsSilent)
         let cues = CueDetector.cues(duration: duration, energy: energy,
                                     downbeats: downbeats, phrases: phraseStarts,
