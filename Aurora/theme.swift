@@ -23,22 +23,16 @@ enum AG {
     static let radiusSmall: CGFloat = 12
     static let radiusLarge: CGFloat = 28
 
-    // MARK: Canvas — OLED black in dark mode, native system surfaces in light mode.
-    private static func adaptive(_ dark: UIColor, _ light: UIColor) -> Color {
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark ? dark : light
-        })
-    }
-
-    static let bg       = adaptive(.black, .systemGroupedBackground)
-    static let bgRaised = adaptive(UIColor(red: 0.067, green: 0.067, blue: 0.078, alpha: 1), .secondarySystemGroupedBackground)
-    static let card     = adaptive(UIColor(red: 0.094, green: 0.094, blue: 0.110, alpha: 1), .secondarySystemBackground)
-    static let coal     = adaptive(UIColor(red: 0.125, green: 0.125, blue: 0.149, alpha: 1), .tertiarySystemBackground)
+    // MARK: Canvas — system semantic colors resolve safely in SwiftUI rendering.
+    static let bg       = Color(uiColor: .systemBackground)
+    static let bgRaised = Color(uiColor: .secondarySystemBackground)
+    static let card     = Color(uiColor: .secondarySystemBackground)
+    static let coal     = Color(uiColor: .tertiarySystemBackground)
 
     // MARK: Ink — semantic labels keep the same hierarchy in both themes.
-    static let ink       = adaptive(.white, .label)
-    static let inkMuted  = adaptive(UIColor.white.withAlphaComponent(0.62), .secondaryLabel)
-    static let inkFaint  = adaptive(UIColor.white.withAlphaComponent(0.38), .tertiaryLabel)
+    static let ink       = Color(uiColor: .label)
+    static let inkMuted  = Color(uiColor: .secondaryLabel)
+    static let inkFaint  = Color(uiColor: .tertiaryLabel)
 
     // MARK: Accent — a single warm accent; everything else comes from artwork.
     static let amber    = Color(hex: "#FBBF24") ?? .yellow
