@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Fluid Aura Wave (Organic SDF Morphing & Chromatic Dispersion Visualizer)
 // Музыкально-чувствительная волна с HDR Glow бликами, каустикой и хроматической дисперсией
@@ -44,8 +45,13 @@ struct FluidWaveView: View {
         highIntensity ?? max(analyzer.highs, analyzer.streamLevel * 0.50)
     }
 
+    private var displayAnimationInterval: TimeInterval {
+        let maximumFramesPerSecond = max(UIScreen.main.maximumFramesPerSecond, 30)
+        return 1.0 / Double(maximumFramesPerSecond)
+    }
+
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: displayAnimationInterval, paused: reduceMotion || !isPlaying)) { timeline in
             let elapsedTime = Float(timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1000))
 
             GeometryReader { proxy in
