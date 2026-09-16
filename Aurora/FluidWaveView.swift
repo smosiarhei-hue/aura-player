@@ -46,7 +46,7 @@ struct FluidWaveView: View {
     }
 
     private var displayAnimationInterval: TimeInterval {
-        let maximumFramesPerSecond = max(UIScreen.main.maximumFramesPerSecond, 30)
+        let maximumFramesPerSecond = max(UIScreen.main.maximumFramesPerSecond, 60)
         return 1.0 / Double(maximumFramesPerSecond)
     }
 
