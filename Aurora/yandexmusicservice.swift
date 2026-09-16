@@ -245,7 +245,7 @@ final class YandexMusicService {
     /// Глобальный поиск по всей базе Яндекс.Музыки.
     func searchAll(query: String) async -> GlobalSearchResults {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return GlobalSearchResults() }
-        var comps = URLComponents(string: Self.apiBase + "/search")!
+        guard var comps = URLComponents(string: Self.apiBase + "/search") else { return GlobalSearchResults() }
         comps.queryItems = [
             URLQueryItem(name: "text", value: query),
             URLQueryItem(name: "type", value: "all"),
@@ -342,7 +342,7 @@ final class YandexMusicService {
     /// Подсказки для поиска (точность ввода).
     func searchSuggestions(query: String) async -> [String] {
         guard query.count >= 2 else { return [] }
-        var comps = URLComponents(string: Self.apiBase + "/search/suggest")!
+        guard var comps = URLComponents(string: Self.apiBase + "/search/suggest") else { return [] }
         comps.queryItems = [URLQueryItem(name: "part", value: query)]
         guard let url = comps.url,
               let pair = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return [] }
@@ -363,7 +363,7 @@ final class YandexMusicService {
 
     func getArtist(artistId: String) async throws -> YMArtistItem {
         if let cached = artistCache[artistId] { return cached }
-        var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info")!
+        guard var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info") else { throw URLError(.badURL) }
         comps.queryItems = [
             URLQueryItem(name: "popularTracks", value: "true"),
             URLQueryItem(name: "discography", value: "true"),
@@ -430,7 +430,7 @@ final class YandexMusicService {
     func getArtistTracks(artistId: String, page: Int = 0, pageSize: Int = 30) async throws -> [YMTrackItem] {
         let key = artistId + ":" + String(page)
         if let cached = artistTracksCache[key] { return cached }
-        var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/tracks")!
+        guard var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/tracks") else { throw URLError(.badURL) }
         comps.queryItems = [
             URLQueryItem(name: "page", value: String(page)),
             URLQueryItem(name: "page-size", value: String(pageSize)),
@@ -454,7 +454,7 @@ final class YandexMusicService {
             return chartCache
         }
 
-        let url = URL(string: Self.apiBase + "/landing3/chart/russia")!
+        guard let url = URL(string: Self.apiBase + "/landing3/chart/russia") else { throw URLError(.badURL) }
         let req = authorizedRequest(url: url)
         let (data, _) = try await URLSession.shared.data(for: req)
 
@@ -502,7 +502,9 @@ final class YandexMusicService {
     }
 
     private func newReleaseIds() async throws -> [Int] {
-        let url = URL(string: Self.apiBase + "/landing3/new-releases")!
+        guard let url = URL(string: Self.apiBase + "/landing3/new-releases") else {
+            throw URLError(.badURL)
+        }
         let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
 
         struct Response: Decodable {
@@ -517,9 +519,12 @@ final class YandexMusicService {
     }
 
     private func landingBlockAlbumIds() async throws -> [Int] {
-        var comps = URLComponents(string: Self.apiBase + "/landing3")!
+        guard var comps = URLComponents(string: Self.apiBase + "/landing3") else {
+            throw URLError(.badURL)
+        }
         comps.queryItems = [URLQueryItem(name: "blocks", value: "new-releases")]
-        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: comps.url!))
+        guard let url = comps.url else { throw URLError(.badURL) }
+        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
 
         struct Response: Decodable {
             struct Result: Decodable {
@@ -542,7 +547,7 @@ final class YandexMusicService {
 
     func fetchAlbums(ids: [Int]) async throws -> [YMAlbumItem] {
         guard !ids.isEmpty else { return [] }
-        let url = URL(string: Self.apiBase + "/albums")!
+        guard let url = URL(string: Self.apiBase + "/albums") else { throw URLError(.badURL) }
         var req = authorizedRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -559,7 +564,7 @@ final class YandexMusicService {
     }
 
     func getAlbumTracks(albumId: Int) async throws -> [YMTrackItem] {
-        let url = URL(string: Self.apiBase + "/albums/" + String(albumId) + "/with-tracks")!
+        guard let url = URL(string: Self.apiBase + "/albums/" + String(albumId) + "/with-tracks") else { throw URLError(.badURL) }
         let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
 
         struct Response: Decodable {
@@ -983,7 +988,7 @@ final class YandexMusicService {
             }
         }
 
-        let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info")!
+        guard let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info") else { throw URLError(.badURL) }
         let req = authorizedRequest(url: downloadInfoListURL)
         let (data, _) = try await URLSession.shared.data(for: req)
 
@@ -1198,7 +1203,7 @@ final class YandexMusicService {
             guard let acc = decoded.result?.account, let uid = acc.uid else { return nil }
 
             let avatarId = acc.default_avatar_id ?? decoded.result?.default_avatar_id
-            let avatarUrl: String? = avatarId != nil ? "https://avatars.yandex.net/get-yapic/\(avatarId!)/islands-200" : nil
+            let avatarUrl = avatarId.map { "https://avatars.yandex.net/get-yapic/\($0)/islands-200" }
             let hasPlus = decoded.result?.plus?.hasPlus ?? true
 
             let profile = YMUserProfile(

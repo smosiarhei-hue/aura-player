@@ -31,7 +31,7 @@ extension YandexMusicService {
     }
 
     private func loadArtistsForPlayerTrack(_ trackId: String) async -> [PlayerArtistLink]? {
-        var components = URLComponents(string: Self.apiBase + "/tracks")!
+        guard var components = URLComponents(string: Self.apiBase + "/tracks") else { return nil }
         components.queryItems = [URLQueryItem(name: "track-ids", value: trackId)]
         guard let url = components.url else { return nil }
         var request = URLRequest(url: url)

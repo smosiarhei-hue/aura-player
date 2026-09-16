@@ -751,15 +751,15 @@ struct VideoShotPlayerView: UIViewRepresentable {
 
     final class PlayerUIView: UIView {
         override static var layerClass: AnyClass { AVPlayerLayer.self }
-        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        private var playerLayer: AVPlayerLayer? { layer as? AVPlayerLayer }
         var videoGravity: AVLayerVideoGravity = .resizeAspectFill {
-            didSet { playerLayer.videoGravity = videoGravity }
+            didSet { playerLayer?.videoGravity = videoGravity }
         }
         var player: AVPlayer? {
-            get { playerLayer.player }
+            get { playerLayer?.player }
             set {
-                playerLayer.player = newValue
-                playerLayer.videoGravity = videoGravity
+                playerLayer?.player = newValue
+                playerLayer?.videoGravity = videoGravity
             }
         }
     }

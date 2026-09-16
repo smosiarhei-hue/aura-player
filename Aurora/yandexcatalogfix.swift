@@ -82,7 +82,7 @@ extension YandexMusicService {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return GlobalSearchResults() }
 
-        var components = URLComponents(string: Self.apiBase + "/search")!
+        guard var components = URLComponents(string: Self.apiBase + "/search") else { return GlobalSearchResults() }
         components.queryItems = [
             URLQueryItem(name: "text", value: clean),
             URLQueryItem(name: "type", value: "all"),
@@ -251,7 +251,7 @@ extension YandexMusicService {
     }
 
     private func loadArtistBrief(artistId: String) async -> YMArtistItem? {
-        var components = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info")!
+        guard var components = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info") else { return nil }
         components.queryItems = [
             URLQueryItem(name: "popularTracks", value: "true"),
             URLQueryItem(name: "discography", value: "true"),
