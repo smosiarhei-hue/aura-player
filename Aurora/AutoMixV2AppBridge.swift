@@ -147,15 +147,52 @@ final class NeuroMixRuntime {
 
     func next() async {
         guard let currentIndex, currentIndex + 1 < queue.count else { return }
-        await transition(to: currentIndex + 1, force: true)
+        await manualSwitch(to: currentIndex + 1)
     }
 
     func previous() async {
         guard let currentIndex else { return }
         if currentIndex > 0 {
-            await transition(to: currentIndex - 1, force: true)
+            await manualSwitch(to: currentIndex - 1)
         } else {
             try? await engine?.seek(activeDeck, to: 0)
+        }
+    }
+
+    private func manualSwitch(to nextIndex: Int) async {
+        guard queue.indices.contains(nextIndex), let engine else { return }
+        let wasPlaying = isPlaying
+        let pending = transitionTask
+        transitionTask = nil
+        activeTransitionID = nil
+        pending?.cancel()
+        await pending?.value
+
+        do {
+            let nextTrack = queue[nextIndex]
+            let nextURL = try await resolveURL(for: nextTrack)
+            let incomingDeck: Deck = activeDeck == .a ? .b : .a
+            try await engine.prepare(incomingDeck, fileURL: nextURL, startTimeSeconds: 0)
+            if wasPlaying {
+                try await engine.skip(from: activeDeck, to: incomingDeck)
+            } else {
+                await engine.stop(activeDeck)
+                await engine.setGain(1, for: incomingDeck)
+            }
+            activeDeck = incomingDeck
+            currentIndex = nextIndex
+            currentTrack = nextTrack
+            currentProfile = nil
+            nextProfile = nil
+            transitionPlan = nil
+            pipelineStatus = "Ручное переключение"
+            startMonitoring()
+            warmProfiles(startingAt: nextIndex)
+        } catch is CancellationError {
+            return
+        } catch {
+            lastError = String(describing: error)
+            pipelineStatus = "Ошибка ручного переключения"
         }
     }
 
@@ -516,7 +553,6 @@ final class AutoMixV2Runtime {
     func next() async {
         if let index = coordinator?.snapshot().currentIndex, index >= queue.count - 2 {
             refillQueueIfNeeded()
-            await waitForNextTrack()
         }
         await runCommand { try await $0.next() }
     }
