@@ -309,11 +309,7 @@ struct Top100ChartView: View {
             SonivoBackdrop()
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    SonivoHeader(
-                        title: "Топ",
-                        accent: "100",
-                        subtitle: "Самые популярные треки прямо сейчас · " + String(tracks.count) + " треков"
-                    )
+                    SonivoHeader(title: title)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
 
@@ -353,11 +349,7 @@ struct PremiereTracksView: View {
             SonivoBackdrop()
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    SonivoHeader(
-                        title: "Премьера",
-                        accent: "100",
-                        subtitle: "Свежие треки и последние релизы · " + String(tracks.count) + " треков"
-                    )
+                    SonivoHeader(title: "Премьера")
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
 

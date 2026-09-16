@@ -24,27 +24,41 @@ enum AG {
     static let radiusLarge: CGFloat = 28
 
     // MARK: Canvas — system semantic colors resolve safely in SwiftUI rendering.
-    static let bg       = Color(uiColor: .systemBackground)
-    static let bgRaised = Color(uiColor: .secondarySystemBackground)
-    static let card     = Color(uiColor: .secondarySystemBackground)
-    static let coal     = Color(uiColor: .tertiarySystemBackground)
+    private static func surface(light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
+    static let bg       = surface(light: UIColor(red: 0.97, green: 0.97, blue: 0.98, alpha: 1), dark: .black)
+    static let bgRaised = surface(light: .white, dark: UIColor(white: 0.07, alpha: 1))
+    static let card     = surface(light: .white, dark: UIColor(white: 0.09, alpha: 1))
+    static let coal     = surface(light: UIColor(white: 0.93, alpha: 1), dark: UIColor(white: 0.13, alpha: 1))
 
     // MARK: Ink — semantic labels keep the same hierarchy in both themes.
     static let ink       = Color(uiColor: .label)
     static let inkMuted  = Color(uiColor: .secondaryLabel)
     static let inkFaint  = Color(uiColor: .tertiaryLabel)
 
-    // MARK: Accent — a single warm accent; everything else comes from artwork.
-    static let amber    = Color(hex: "#FBBF24") ?? .yellow
-    static let ember    = Color(hex: "#F97316") ?? .orange
-    static let flame    = Color(hex: "#EA580C") ?? .orange
+    // MARK: Accent — a cool system-aware accent; artwork supplies atmosphere.
+    static let accent = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.68, green: 0.73, blue: 1.0, alpha: 1)
+            : UIColor(red: 0.19, green: 0.27, blue: 0.78, alpha: 1)
+    })
+    static let amber    = accent
+    static let ember    = accent
+    static let flame    = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.38, green: 0.43, blue: 0.75, alpha: 1)
+            : UIColor(red: 0.28, green: 0.35, blue: 0.86, alpha: 1)
+    })
     /// Favourite / like state, matches the system Music red.
     static let heart    = Color(hex: "#FF2D55") ?? .pink
     /// Positive status (AI online, video-shot on).
     static let positive = Color(hex: "#30D158") ?? .green
 
     static var emberGradient: LinearGradient {
-        LinearGradient(colors: [amber, ember, flame], startPoint: .topLeading, endPoint: .bottomTrailing)
+        LinearGradient(colors: [accent, flame], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     /// Fixed palette for category and genre tiles. Tiles are the one place

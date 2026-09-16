@@ -162,30 +162,8 @@ struct AuraHomeRedesignedView: View {
 
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(AG.amber)
-                    .frame(width: 48, height: 48)
-                    .glassCircle(interactive: false)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Чарт")
-                        .font(AG.display(.title2, .bold))
-                        .foregroundStyle(AG.ink)
-                    Text("Популярные треки сегодня")
-                        .font(AG.text(.subheadline))
-                        .foregroundStyle(AG.inkMuted)
-                }
-                Spacer()
-                NavigationLink {
-                    Top100ChartView(title: "Чарт", tracks: chart)
-                } label: {
-                    Text("Все")
-                        .font(AG.text(.footnote, .semibold))
-                        .foregroundStyle(AG.amber)
-                        .frame(minWidth: AG.tapTarget, minHeight: AG.tapTarget)
-                }
+            sectionHeader(title: "Чарт") {
+                Top100ChartView(title: "Чарт", tracks: chart)
             }
 
             if isLoading && chart.isEmpty {
@@ -193,7 +171,7 @@ struct AuraHomeRedesignedView: View {
             } else if let loadError, chart.isEmpty {
                 AuraErrorState(message: loadError) { Task { await load() } }
             } else {
-                trackColumns(topSix, includeRank: true, queue: chart)
+                trackList(topSix, includeRank: true, queue: chart)
             }
         }
     }
@@ -269,30 +247,8 @@ struct AuraHomeRedesignedView: View {
 
     private var newTracksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(AG.ember)
-                    .frame(width: 48, height: 48)
-                    .glassCircle(interactive: false)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Премьера")
-                        .font(AG.display(.title2, .bold))
-                        .foregroundStyle(AG.ink)
-                    Text("Лучшие новые треки для вас")
-                        .font(AG.text(.subheadline))
-                        .foregroundStyle(AG.inkMuted)
-                }
-                NavigationLink {
-                    PremiereTracksView(tracks: newTracks)
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(AG.text(.headline, .bold))
-                        .foregroundStyle(AG.inkMuted)
-                        .frame(width: AG.tapTarget, height: AG.tapTarget)
-                }
-                .buttonStyle(.plain)
+            sectionHeader(title: "Премьера") {
+                PremiereTracksView(tracks: newTracks)
             }
 
             if isLoading && newTracks.isEmpty {
@@ -304,34 +260,35 @@ struct AuraHomeRedesignedView: View {
                     message: "Попробуйте обновить ленту позже."
                 )
             } else {
-                trackColumns(Array(newTracks.prefix(6)), includeRank: false, queue: newTracks)
+                trackList(Array(newTracks.prefix(6)), includeRank: false, queue: newTracks)
             }
         }
     }
 
-    private func trackColumns(
+    private func sectionHeader<Destination: View>(title: String, @ViewBuilder destination: @escaping () -> Destination) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(AG.display(.title2, .bold))
+                .foregroundStyle(AG.ink)
+            Spacer()
+            NavigationLink { destination() } label: {
+                Text("Все")
+                    .font(AG.text(.subheadline, .semibold))
+                    .foregroundStyle(AG.accent)
+                    .frame(minWidth: AG.tapTarget, minHeight: AG.tapTarget)
+            }
+        }
+    }
+
+    private func trackList(
         _ items: [YandexMusicService.YMTrackItem],
         includeRank: Bool,
         queue: [YandexMusicService.YMTrackItem]
     ) -> some View {
-        let groups = stride(from: 0, to: items.count, by: 3).map { start in
-            Array(items[start..<min(start + 3, items.count)])
-        }
-
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 18) {
-                ForEach(groups.indices, id: \.self) { groupIndex in
-                    VStack(spacing: 2) {
-                        ForEach(Array(groups[groupIndex].enumerated()), id: \.element.id) { rowIndex, item in
-                            AuraCatalogTrackRow(
-                                item: item,
-                                rank: includeRank ? groupIndex * 3 + rowIndex + 1 : nil
-                            ) {
-                                SonivoPlay.track(item, in: queue)
-                            }
-                        }
-                    }
-                    .frame(width: 340, alignment: .top)
+        LazyVStack(spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                AuraCatalogTrackRow(item: item, rank: includeRank ? index + 1 : nil) {
+                    SonivoPlay.track(item, in: queue)
                 }
             }
         }

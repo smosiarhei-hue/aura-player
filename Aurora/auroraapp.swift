@@ -14,7 +14,7 @@ struct SonivoApp: App {
         let tabBar = UITabBar.appearance(); tabBar.standardAppearance = appearance; tabBar.scrollEdgeAppearance = appearance
         tabBar.tintColor = .label; tabBar.unselectedItemTintColor = .secondaryLabel
     }
-    var body: some Scene { WindowGroup { RootView().tint(AG.amber) } }
+    var body: some Scene { WindowGroup { RootView().tint(AG.accent) } }
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
@@ -53,7 +53,7 @@ struct RootView: View {
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
             Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) { SearchCatalogView() }
         }
-        .tint(AG.amber).tabBarMinimizeBehavior(.onScrollDown)
+        .tint(AG.accent).tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
             if miniVisible { NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition) }
         }

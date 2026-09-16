@@ -69,8 +69,8 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Использовать AutoMix V2", isOn: $engineSelection.isV2Enabled).tint(settings.accentColor)
-                    Toggle("Тестировать NeuroMix", isOn: $engineSelection.isNeuroEnabled).tint(settings.accentColor)
+                    Toggle("AutoMix V2", isOn: $engineSelection.isV2Enabled).tint(settings.accentColor)
+                    Toggle("NeuroMix", isOn: $engineSelection.isNeuroEnabled).tint(settings.accentColor)
                     LabeledContent(
                         "Текущий движок",
                         value: engineSelection.isNeuroEnabled
@@ -81,7 +81,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Движок воспроизведения")
                 } footer: {
-                    Text("Онлайн- и локальные треки проходят через единый аудиограф: эквалайзер, AutoMix и переходы работают одинаково для всех источников.")
+                    Text("Локальные и онлайн-треки используют один граф воспроизведения. EQ, AutoMix и ручные переходы больше не переключаются между плеерами.")
                 }
 
                 Section("Звук") {

@@ -340,16 +340,16 @@ struct AuraCatalogTrackRow: View {
                             .frame(width: 24, alignment: .leading)
                     }
 
-                    RemoteArtwork(urlString: item.coverUrlString, corner: 11)
-                        .frame(width: 64, height: 64)
+                    RemoteArtwork(urlString: item.coverUrlString, corner: 10)
+                        .frame(width: 52, height: 52)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
-                            .font(AG.text(.body, .semibold))
+                            .font(AG.text(.subheadline, .semibold))
                             .foregroundStyle(isActive ? AG.amber : AG.ink)
                             .lineLimit(1)
                         Text(item.artistName)
-                            .font(AG.text(.subheadline))
+                            .font(AG.text(.caption))
                             .foregroundStyle(AG.inkMuted)
                             .lineLimit(1)
                     }
@@ -375,7 +375,7 @@ struct AuraCatalogTrackRow: View {
             }
             .accessibilityLabel("Действия для \(item.title)")
         }
-        .padding(.vertical, 6)
+            .padding(.vertical, 4)
         .background(isActive ? AG.ink.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
