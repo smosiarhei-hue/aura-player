@@ -797,7 +797,10 @@ final class PlaybackCommandRouter {
                     PlayerCore.shared.play(track, newQueue: queue)
                 }
             }
-            if request == requestID { self.isBusy = false }
+            if request == requestID {
+                self.isBusy = false
+                self.transportTask = nil
+            }
         }
     }
     func play() {
@@ -823,7 +826,10 @@ final class PlaybackCommandRouter {
                     PlayerCore.shared.resume()
                 }
             }
-            if request == requestID { self.isBusy = false }
+            if request == requestID {
+                self.isBusy = false
+                self.transportTask = nil
+            }
         }
     }
     func pause() {
