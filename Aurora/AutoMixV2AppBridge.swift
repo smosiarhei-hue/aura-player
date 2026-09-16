@@ -317,6 +317,15 @@ final class NeuroMixRuntime {
                 self.transitionPlan = plan
                 self.pipelineStatus = "DJ-переход: \(plan.kind.rawValue)"
                 let incomingDeck: Deck = self.activeDeck == .a ? .b : .a
+                if !force {
+                    while !Task.isCancelled, self.activeTransitionID == transitionID {
+                        let snapshot = await engine.snapshot()
+                        let outgoing = self.activeDeck == .a ? snapshot.deckA : snapshot.deckB
+                        guard outgoing.positionSeconds < plan.sourceStartSeconds else { break }
+                        try await ContinuousClock().sleep(for: .milliseconds(100))
+                    }
+                }
+                guard !Task.isCancelled, self.activeTransitionID == transitionID else { return }
                 let runner = NeuroMixRealtimeTransitionRunner(engine: engine)
                 try await runner.execute(plan, incomingURL: try await self.resolveURL(for: targetTrack),
                                           targetBPM: Double(targetProfile.bpm),
@@ -747,22 +756,18 @@ final class PlaybackCommandRouter {
                 }
             case .neuroMix:
                 await AutoMixV2Runtime.shared.stop()
-                if let legacyTrack, !legacyTrack.isStream, legacyTrack.streamUrlString == nil {
+                if let legacyTrack {
                     if !(await NeuroMixRuntime.shared.play(legacyTrack, queue: legacyQueue)) {
                         owner = .legacy
                         PlayerCore.shared.play(legacyTrack, newQueue: legacyQueue)
                     }
-                } else {
-                    owner = .legacy
                 }
             }
         }
     }
 
     private func owner(for track: Track) -> PlaybackOwner {
-        if AutoMixEngineSelectionStore.shared.isNeuroEnabled, !track.isStream, track.streamUrlString == nil {
-            return .neuroMix
-        }
+        if AutoMixEngineSelectionStore.shared.isNeuroEnabled { return .neuroMix }
         if AutoMixEngineSelectionStore.shared.isV2Enabled { return .autoMixV2 }
         return .legacy
     }

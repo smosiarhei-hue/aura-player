@@ -83,6 +83,7 @@ final class NeuroMixRealtimeTransitionRunner {
             fileURL: incomingURL,
             startTimeSeconds: plan.targetStartSeconds
         )
+        await engine.setRate(Float(plan.targetRate), for: incoming)
         await engine.setGain(0, for: incoming)
         try await engine.play(outgoing)
         try await engine.play(incoming)
@@ -97,6 +98,7 @@ final class NeuroMixRealtimeTransitionRunner {
         // exact end of the automation timeline.
         try await ContinuousClock().sleep(for: .milliseconds(700))
         await engine.stop(outgoing)
+        await engine.setRate(1, for: incoming)
         await engine.resetEffects(incoming)
     }
 }
