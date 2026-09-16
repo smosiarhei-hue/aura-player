@@ -18,6 +18,7 @@ struct PlayerScreenV2: View {
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
     @State private var coverDragX: CGFloat = 0
+    @State private var isCoverSwitching = false
     @State private var waveLoading = false
     @State private var waveActive = false
     @State private var waveMessage: String?
@@ -92,6 +93,9 @@ struct PlayerScreenV2: View {
             async let l: () = loadLyrics()
             async let v: () = loadVideoShot()
             _ = await (p, l, v)
+        }
+        .onChange(of: player.currentTrack?.id) { _, _ in
+            isCoverSwitching = false
         }
         .onChange(of: player.isPlaying) { _, playing in
             if playing {
@@ -263,7 +267,7 @@ struct PlayerScreenV2: View {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }; return
                 }
                 let threshold: CGFloat = 65
-                if value.translation.width < -threshold {
+                if value.translation.width < -threshold, !isCoverSwitching {
                     Haptics.tap(.light)
                     withAnimation(.easeOut(duration: 0.16)) {
                         coverDragX = -side * 1.15
@@ -275,7 +279,7 @@ struct PlayerScreenV2: View {
                             coverDragX = 0
                         }
                     }
-                } else if value.translation.width > threshold {
+                } else if value.translation.width > threshold, !isCoverSwitching {
                     Haptics.tap(.light)
                     withAnimation(.easeOut(duration: 0.16)) {
                         coverDragX = side * 1.15
@@ -542,8 +546,27 @@ struct PlayerScreenV2: View {
     }
     private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }
     private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
-    private func previousTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.previous() }
-    private func nextTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.next() }
+    private func previousTrack() {
+        guard !isCoverSwitching else { return }
+        isCoverSwitching = true
+        Haptics.tap(.light)
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        player.previous()
+        releaseCoverSwitchLock()
+    }
+    private func nextTrack() {
+        guard !isCoverSwitching else { return }
+        isCoverSwitching = true
+        Haptics.tap(.light)
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        player.next()
+        releaseCoverSwitchLock()
+    }
+    private func releaseCoverSwitchLock() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
+            isCoverSwitching = false
+        }
+    }
     private func close() { Haptics.tap(.light); isPresented = false }
     private func openArtist() {
         guard let track else { return }; resolvingArtist = true
