@@ -528,12 +528,16 @@ struct PlayerScreenV2: View {
         playerB.play()
     }
     private func teardownVideoLooper() {
+        videoLooper?.disableLooping()
         videoLooperPlayer?.pause()
-        videoLooperPlayer = nil
+        videoLooperPlayer?.removeAllItems()
         videoLooper = nil
+        videoLooperPlayer = nil
+        ambientLooper?.disableLooping()
         ambientLooperPlayer?.pause()
-        ambientLooperPlayer = nil
+        ambientLooperPlayer?.removeAllItems()
         ambientLooper = nil
+        ambientLooperPlayer = nil
     }
     private func toggleVideoShot() {
         isVideoShotEnabled.toggle()
@@ -747,6 +751,10 @@ struct VideoShotPlayerView: UIViewRepresentable {
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
         uiView.videoGravity = videoGravity
         uiView.player = player
+    }
+
+    static func dismantleUIView(_ uiView: PlayerUIView, coordinator: Context) {
+        uiView.player = nil
     }
 
     final class PlayerUIView: UIView {
