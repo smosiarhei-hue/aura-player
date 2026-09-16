@@ -26,8 +26,6 @@ struct PlayerScreenV2: View {
     @State private var isVideoShotEnabled = UserDefaults.standard.object(forKey: "aurora_videoshot_enabled") as? Bool ?? true
     @State private var videoLooperPlayer: AVQueuePlayer?
     @State private var videoLooper: AVPlayerLooper?
-    @State private var ambientLooperPlayer: AVQueuePlayer?
-    @State private var ambientLooper: AVPlayerLooper?
     @State private var videoShotTrackID: UUID?
     @State private var artworkPaletteColors: [Color] = []
     @State private var paletteTrackId: UUID?
@@ -100,10 +98,8 @@ struct PlayerScreenV2: View {
         .onChange(of: player.isPlaying) { _, playing in
             if playing {
                 videoLooperPlayer?.play()
-                ambientLooperPlayer?.play()
             } else {
                 videoLooperPlayer?.pause()
-                ambientLooperPlayer?.pause()
             }
         }
         .onChange(of: track?.id) { _, _ in
@@ -122,8 +118,8 @@ struct PlayerScreenV2: View {
         ZStack {
             if isFullScreenVideoShot {
                 // Размытый атмосферный фон на весь экран (ambient blur по краям)
-                if let ambientLooperPlayer {
-                    VideoShotPlayerView(player: ambientLooperPlayer, videoGravity: .resizeAspectFill)
+                if let videoLooperPlayer {
+                    VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .scaledToFill()
                         .blur(radius: 40)
@@ -514,30 +510,13 @@ struct PlayerScreenV2: View {
         videoLooper = AVPlayerLooper(player: playerA, templateItem: itemA)
         videoLooperPlayer = playerA
 
-        let itemB = AVPlayerItem(url: url)
-        itemB.allowedAudioSpatializationFormats = []
-        let playerB = AVQueuePlayer(playerItem: itemB)
-        playerB.volume = 0
-        playerB.isMuted = true
-        playerB.actionAtItemEnd = .none
-        playerB.preventsDisplaySleepDuringVideoPlayback = false
-        ambientLooper = AVPlayerLooper(player: playerB, templateItem: itemB)
-        ambientLooperPlayer = playerB
-
         playerA.play()
-        playerB.play()
     }
     private func teardownVideoLooper() {
         videoLooper?.disableLooping()
         videoLooperPlayer?.pause()
-        videoLooperPlayer?.removeAllItems()
         videoLooper = nil
         videoLooperPlayer = nil
-        ambientLooper?.disableLooping()
-        ambientLooperPlayer?.pause()
-        ambientLooperPlayer?.removeAllItems()
-        ambientLooper = nil
-        ambientLooperPlayer = nil
     }
     private func toggleVideoShot() {
         isVideoShotEnabled.toggle()
