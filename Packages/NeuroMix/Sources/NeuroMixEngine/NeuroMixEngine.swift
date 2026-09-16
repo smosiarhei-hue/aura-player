@@ -257,14 +257,14 @@ public struct NeuroMixEngine: Sendable {
                 toValue: 1
             ))
         }
-        if vocalConflict || kind == .filterOut {
+        if kind == .beatmatch || kind == .crossfade || vocalConflict || kind == .filterOut {
             result.append(NeuroTransitionEvent(
                 deck: .outgoing,
                 kind: .highPassSweep,
-                startSeconds: duration * 0.2,
-                endSeconds: duration,
+                startSeconds: duration * 0.12,
+                endSeconds: duration * 0.92,
                 fromValue: 20,
-                toValue: 6_000
+                toValue: 4_200
             ))
         }
         result.append(NeuroTransitionEvent(

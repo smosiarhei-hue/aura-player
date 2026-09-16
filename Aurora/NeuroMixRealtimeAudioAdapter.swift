@@ -84,6 +84,8 @@ final class NeuroMixRealtimeTransitionRunner {
                 fileURL: incomingURL,
                 startTimeSeconds: plan.targetStartSeconds
             )
+            await engine.resetEffects(outgoing)
+            await engine.resetEffects(incoming)
             await engine.setRate(Float(plan.targetRate), for: incoming)
             await engine.setGain(0, for: incoming)
             try await engine.play(outgoing)
