@@ -80,10 +80,7 @@ struct RemoteArtwork: View {
         Color.clear
             .overlay {
                 if let value = urlString, let url = URL(string: value) {
-                    AsyncImage(
-                        urlRequest: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
-                        transaction: Transaction(animation: .easeOut(duration: 0.2))
-                    ) { phase in
+                    AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
                         if let image = phase.image {
                             image.resizable().interpolation(.high).aspectRatio(contentMode: .fill)
                         } else {
