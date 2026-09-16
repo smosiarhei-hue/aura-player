@@ -753,7 +753,7 @@ struct VideoShotPlayerView: UIViewRepresentable {
         uiView.player = player
     }
 
-    static func dismantleUIView(_ uiView: PlayerUIView, coordinator: Context) {
+    static func dismantleUIView(_ uiView: PlayerUIView, coordinator: ()) {
         uiView.player = nil
     }
 
