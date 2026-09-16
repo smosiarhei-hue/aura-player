@@ -561,12 +561,23 @@ final class AutoMixV2Runtime {
         }
     }
     func next() async {
+        if queue.count <= 1 {
+            refillQueueIfNeeded()
+            await waitForNextTrack()
+        }
+        guard queue.count > 1 else { return }
         if let index = coordinator?.snapshot().currentIndex, index >= queue.count - 2 {
             refillQueueIfNeeded()
         }
         await runCommand { try await $0.next() }
     }
-    func previous() async { await runCommand { try await $0.previous() } }
+    func previous() async {
+        guard queue.count > 1 else {
+            await seek(to: 0)
+            return
+        }
+        await runCommand { try await $0.previous() }
+    }
     func seek(to seconds: Double) async { await runCommand { try await $0.seek(to: seconds) } }
     private func runCommand(_ command: @escaping @MainActor (PlaybackCoordinator) async throws -> Void) async {
         guard let coordinator else { return }; let token = beginRequest()

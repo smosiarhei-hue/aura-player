@@ -237,16 +237,8 @@ enum SonivoPlay {
             ?? LibraryStore.shared.favorites.first
             ?? service.chartCache.first.map { service.convertToTrack($0) }
         let startedImmediately = immediate != nil
-        if let immediate {
-            if active == nil {
-                router.play(immediate, queue: [immediate])
-            } else if PlaybackCommandRouter.shared.owner == .autoMixV2 {
-                AutoMixV2Runtime.shared.replaceQueue([immediate])
-            } else if PlaybackCommandRouter.shared.owner == .neuroMix {
-                NeuroMixRuntime.shared.replaceQueue([immediate])
-            } else {
-                PlayerCore.shared.queue = [immediate]
-            }
+        if let immediate, active == nil {
+            router.play(immediate, queue: [immediate])
         }
 
         Task {
