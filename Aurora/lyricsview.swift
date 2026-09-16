@@ -111,12 +111,12 @@ private struct LyricsLineView: View {
     var body: some View {
         Text(line.text)
             .font(lineFont)
-            .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.36))
+            .foregroundStyle(isActive ? AG.ink : AG.inkFaint)
             .multilineTextAlignment(.leading)
             .lineSpacing(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .scaleEffect(isActive ? 1.0 : 0.96, anchor: .leading)
-            .shadow(color: isActive ? Color.white.opacity(0.35) : .clear, radius: isActive ? 12 : 0)
+            .shadow(color: isActive ? AG.ink.opacity(0.35) : .clear, radius: isActive ? 12 : 0)
             .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isActive)
     }
 }
@@ -160,7 +160,7 @@ private struct EmptyLyricsState: View {
         VStack(spacing: 16) {
             Image(systemName: "quote.bubble")
                 .font(.system(size: 44, weight: .light))
-                .foregroundStyle(.white.opacity(0.40))
+                .foregroundStyle(AG.inkFaint)
 
             Text("Текст песни не найден")
                 .font(AG.display(.headline, .bold))
@@ -170,7 +170,7 @@ private struct EmptyLyricsState: View {
                 ScrollView {
                     Text(staticText)
                         .font(AG.text(.subheadline))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(AG.inkMuted)
                         .multilineTextAlignment(.center)
                         .lineSpacing(6)
                         .padding(.horizontal, 28)
@@ -178,7 +178,7 @@ private struct EmptyLyricsState: View {
             } else {
                 Text("Для этого трека пока нет синхронизированного караоке.")
                     .font(AG.text(.footnote))
-                    .foregroundStyle(.white.opacity(0.50))
+                        .foregroundStyle(AG.inkMuted)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }

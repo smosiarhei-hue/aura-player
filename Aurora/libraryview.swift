@@ -394,7 +394,7 @@ struct LibraryView: View {
 
                                 Image(systemName: "music.note.list")
                                     .font(.system(size: 36, weight: .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                             }
                             .frame(height: 140)
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

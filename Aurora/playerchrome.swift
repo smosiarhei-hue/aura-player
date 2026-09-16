@@ -82,7 +82,7 @@ struct QueueSheetView: View {
     var body: some View {
         List {
             if let current = player.currentTrack {
-                Section { queueRow(current, isCurrent: true).listRowBackground(Color.white.opacity(0.06)) }
+                Section { queueRow(current, isCurrent: true).listRowBackground(AG.card.opacity(0.82)) }
                     header: { Text("Сейчас играет") }
             }
             Section {
@@ -179,9 +179,9 @@ struct PlayerEQSheetView: View {
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(AG.ink)
                                 .frame(width: 32, height: 32)
-                                .background(Color.white.opacity(0.12), in: Circle())
+                                .background(AG.ink.opacity(0.12), in: Circle())
                         }
                     }
                     .padding(.horizontal, 20)
@@ -226,7 +226,7 @@ struct PlayerEQSheetView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 10)
 
-                    Divider().background(Color.white.opacity(0.12)).padding(.horizontal, 20)
+                    Divider().background(AG.ink.opacity(0.12)).padding(.horizontal, 20)
 
                     // Presets List
                     VStack(spacing: 0) {
@@ -250,7 +250,7 @@ struct PlayerEQSheetView: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(Color.black)
+        .presentationBackground(AG.bg)
     }
 
     private func presetRow(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -258,12 +258,12 @@ struct PlayerEQSheetView: View {
             HStack {
                 Text(title)
                     .font(.system(size: 17, weight: .regular))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AG.ink)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AG.ink)
                 }
             }
             .frame(height: 50)
@@ -325,7 +325,7 @@ struct InteractiveEQGraph: View {
 
                     Circle()
                         .strokeBorder(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2.5)
-                        .background(Circle().fill(Color.black))
+                        .background(Circle().fill(AG.bg))
                         .frame(width: 18, height: 18)
                         .position(x: x, y: y)
                         .gesture(

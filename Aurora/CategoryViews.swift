@@ -29,16 +29,16 @@ struct FavoritesListView: View {
 
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: 40, weight: .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                             }
 
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Мне нравится")
                                     .font(AG.display(.title2, .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                                 Text("\(library.favorites.count) треков в коллекции")
                                     .font(AG.text(.footnote, .medium))
-                                    .foregroundStyle(.white.opacity(0.65))
+                                    .foregroundStyle(AG.inkMuted)
 
                                 HStack(spacing: 10) {
                                     Button {
@@ -67,9 +67,9 @@ struct FavoritesListView: View {
                                     } label: {
                                         Image(systemName: "shuffle")
                                             .font(AG.text(.subheadline, .bold))
-                                            .foregroundStyle(.white)
+                                            .foregroundStyle(AG.ink)
                                             .frame(width: 32, height: 32)
-                                            .background(Circle().fill(Color.white.opacity(0.12)))
+                                            .background(Circle().fill(AG.ink.opacity(0.12)))
                                     }
                                     .buttonStyle(GlassPressStyle())
                                 }
@@ -98,7 +98,7 @@ struct FavoritesListView: View {
                                                     .lineLimit(1)
                                                 Text(track.artist)
                                                     .font(AG.text(.footnote))
-                                                    .foregroundStyle(.white.opacity(0.60))
+                                                    .foregroundStyle(AG.inkMuted)
                                                     .lineLimit(1)
                                             }
 
@@ -121,7 +121,7 @@ struct FavoritesListView: View {
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 4)
-                                .background(player.displayTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
+                                .background(player.displayTrack?.id == track.id ? AG.ink.opacity(0.06) : Color.clear)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                         }
@@ -185,10 +185,10 @@ struct HistoryListView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("История прослушиваний")
                                     .font(AG.display(.title2, .bold))
-                                    .foregroundStyle(.white)
+                                                    .foregroundStyle(AG.ink)
                                 Text("\(historyTracks.count) последних треков")
                                     .font(AG.text(.footnote))
-                                    .foregroundStyle(.white.opacity(0.60))
+                                                    .foregroundStyle(AG.inkMuted)
                             }
                             Spacer()
 
@@ -197,10 +197,10 @@ struct HistoryListView: View {
                             } label: {
                                 Text("Очистить")
                                     .font(AG.text(.footnote, .semibold))
-                                    .foregroundStyle(.white.opacity(0.70))
+                                    .foregroundStyle(AG.inkMuted)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
-                                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                                    .background(Capsule().fill(AG.ink.opacity(0.10)))
                             }
                             .buttonStyle(GlassPressStyle())
                         }
@@ -223,7 +223,7 @@ struct HistoryListView: View {
                                                 .lineLimit(1)
                                             Text(track.artist)
                                                 .font(AG.text(.footnote))
-                                                .foregroundStyle(.white.opacity(0.60))
+                                                .foregroundStyle(AG.inkMuted)
                                                 .lineLimit(1)
                                         }
 
@@ -231,11 +231,11 @@ struct HistoryListView: View {
 
                                         Image(systemName: "play.circle.fill")
                                             .font(.system(size: 24))
-                                            .foregroundStyle(.white.opacity(0.40))
+                                                .foregroundStyle(AG.inkFaint)
                                     }
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 8)
-                                    .background(player.displayTrack?.id == track.id ? Color.white.opacity(0.06) : Color.clear)
+                                    .background(player.displayTrack?.id == track.id ? AG.ink.opacity(0.06) : Color.clear)
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
@@ -317,15 +317,15 @@ struct CategoryCatalogView: View {
                         HStack(alignment: .bottom, spacing: 16) {
                             Image(systemName: category.icon)
                                 .font(.system(size: 48, weight: .black))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(AG.ink)
 
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(category.rawValue)
                                     .font(AG.display(.title, .black))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                                 Text(category.subtitle)
                                     .font(AG.text(.footnote, .medium))
-                                    .foregroundStyle(.white.opacity(0.85))
+                                    .foregroundStyle(AG.inkMuted)
                                     .lineLimit(2)
                             }
                         }
@@ -368,7 +368,7 @@ struct CategoryCatalogView: View {
 
                                 Text("\(results.tracks.count) выпусков")
                                     .font(AG.text(.footnote, .medium))
-                                    .foregroundStyle(.white.opacity(0.60))
+                                    .foregroundStyle(AG.inkMuted)
                             }
                             .padding(.horizontal, 16)
                         }
@@ -378,7 +378,7 @@ struct CategoryCatalogView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Коллекции и циклы")
                                     .font(AG.text(.headline, .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                                     .padding(.horizontal, 16)
 
                                 ScrollView(.horizontal, showsIndicators: false) {
@@ -404,7 +404,7 @@ struct CategoryCatalogView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Выпуски")
                                     .font(AG.text(.headline, .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(AG.ink)
                                     .padding(.horizontal, 16)
 
                                 LazyVStack(spacing: 4) {
@@ -423,7 +423,7 @@ struct CategoryCatalogView: View {
                                                         .lineLimit(1)
                                                     Text(item.artists?.first?.name ?? "Разные исполнители")
                                                         .font(AG.text(.footnote))
-                                                        .foregroundStyle(.white.opacity(0.60))
+                                                        .foregroundStyle(AG.inkMuted)
                                                         .lineLimit(1)
                                                 }
 
@@ -431,11 +431,11 @@ struct CategoryCatalogView: View {
 
                                                 Image(systemName: "play.circle.fill")
                                                     .font(.system(size: 22))
-                                                    .foregroundStyle(.white.opacity(0.40))
+                                                    .foregroundStyle(AG.inkFaint)
                                             }
                                             .padding(.horizontal, 16)
                                             .padding(.vertical, 8)
-                                            .background(player.displayTrack?.title == item.title ? Color.white.opacity(0.06) : Color.clear)
+                                            .background(player.displayTrack?.title == item.title ? AG.ink.opacity(0.06) : Color.clear)
                                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                         }
                                         .buttonStyle(.plain)

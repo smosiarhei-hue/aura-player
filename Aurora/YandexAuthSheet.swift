@@ -90,9 +90,9 @@ struct YandexAuthSheet: View {
 
                     SecureField("Вставьте токен y0_...", text: $manualToken)
                         .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.08)))
+                        .background(RoundedRectangle(cornerRadius: 12).fill(AG.card.opacity(0.82)))
                     .foregroundStyle(AG.ink)
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.15), lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(AG.ink.opacity(0.15), lineWidth: 1))
                 }
 
                 if let msg = statusMessage {
@@ -120,7 +120,7 @@ struct YandexAuthSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Зачем нужен вход:")
                         .font(AG.text(.subheadline, .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AG.ink)
 
                     Text("• Максимальное качество 320 kbps и Lossless FLAC\n• Синхронизация ваших лайков в раздел «Мне нравится»\n• Персональная «Моя волна», обучающаяся на вашем вкусе\n• Возможность ставить лайки прямо в плеере с сохранением на сервере Яндекса")
                         .font(.system(size: 12.5))
