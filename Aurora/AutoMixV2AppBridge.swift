@@ -159,6 +159,16 @@ final class NeuroMixRuntime {
         }
     }
 
+    func replaceQueue(_ newQueue: [Track]) {
+        queue = newQueue
+    }
+
+    func appendQueue(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        let existing = Set(queue.map(\.id))
+        queue.append(contentsOf: tracks.filter { !existing.contains($0.id) })
+    }
+
     private func manualSwitch(to nextIndex: Int) async {
         guard queue.indices.contains(nextIndex), let engine else { return }
         let wasPlaying = isPlaying
@@ -659,10 +669,15 @@ final class AutoMixV2Runtime {
         Task { [weak self] in
             defer { self?.isRefillingWave = false }
             guard let self else { return }
-            let seed = self.queue.last ?? current
-            let freshTracks = await YandexMusicService.shared.buildTrackWave(from: seed, target: 20)
+            let freshTracks = (await YandexMusicService.shared.buildWaveQueue(
+                stationId: YandexMusicService.shared.waveMoodStation.stationId,
+                target: 30
+            )).map { $0.toTrack() }
             let existing = Set(self.queue.map(\.id))
-            let fresh = freshTracks.filter { !existing.contains($0.id) && $0.id != current.id }
+            let fresh = freshTracks.filter {
+                !existing.contains($0.id) && $0.id != current.id &&
+                !UserTasteEngine.shared.isDisliked(track: $0)
+            }
             guard !fresh.isEmpty else { return }
 
             do {

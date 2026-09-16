@@ -208,10 +208,15 @@ final class MoodRadioEngine {
         Task {
             let stationId = stationIdForMood(mood)
             let ym = YandexMusicService.shared
-            let rotorTracks = await ym.buildWaveQueue(stationId: stationId, target: 30)
+            let rotorTracks = await ym.buildWaveQueue(stationId: stationId, target: 45)
             let unplayed = rotorTracks.filter { !ym.isRecentlyPlayed(ymTrackId: $0.id) }
             let picked = unplayed.isEmpty ? rotorTracks.shuffled() : unplayed
-            let converted = picked.map { $0.toTrack() }.filter { !self.playedTrackIDs.contains($0.id) }
+            let existing = Set(self.queue.map { PlayerCore.yandexTrackID(from: $0) })
+            let converted = picked.map { $0.toTrack() }.filter {
+                !self.playedTrackIDs.contains($0.id) &&
+                !existing.contains(PlayerCore.yandexTrackID(from: $0)) &&
+                !UserTasteEngine.shared.isDisliked(track: $0)
+            }
 
             // Сначала подтягиваем уже измеренный анализ (BPM/тональность/энергия) из кэша,
             // чтобы ранжировать по реальным числам, а не по словам в названии трека.
@@ -230,11 +235,29 @@ final class MoodRadioEngine {
                 self.queue.append(contentsOf: freshSequenced)
                 if PlaybackCommandRouter.shared.owner == .autoMixV2 {
                     AutoMixV2Runtime.shared.appendQueue(freshSequenced)
+                } else if PlaybackCommandRouter.shared.owner == .neuroMix {
+                    NeuroMixRuntime.shared.appendQueue(freshSequenced)
                 } else {
                     PlayerCore.shared.appendToQueue(freshSequenced)
                 }
             }
         }
+    }
+
+    func start(seed: Track, relatedTracks: [Track]) {
+        activeMood = activeMood ?? .dreamy
+        sessionVector = extractVector(for: seed)
+        queue = [seed]
+        var seen = Set([PlayerCore.yandexTrackID(from: seed)])
+        let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: relatedTracks)
+        queue.append(contentsOf: ranked.filter {
+            let key = PlayerCore.yandexTrackID(from: $0)
+            return !key.isEmpty ? seen.insert(key).inserted : seen.insert($0.id.uuidString).inserted
+        })
+        recentPlayedTracks.removeAll()
+        playedArtistHistory.removeAll()
+        PlaybackCommandRouter.shared.play(seed, queue: queue)
+        rememberPlayed(seed)
     }
 
     // MARK: - API: Сигнал обратной связи (POST /mood/feedback)
@@ -348,6 +371,14 @@ final class MoodRadioEngine {
         var pool: [Track] = []
         let ym = YandexMusicService.shared
 
+        // Liked tracks are a first-class signal. They seed the wave even when
+        // the current station has a small or repetitive catalog response.
+        let favorites = LibraryStore.shared.favorites.filter { track in
+            !playedTrackIDs.contains(track.id) &&
+            !UserTasteEngine.shared.isDisliked(track: track)
+        }
+        pool.append(contentsOf: favorites)
+
         // 1. Локальная библиотека: отбираем ТОЛЬКО еще не игравшие треки под вектор настроения
         let localTracks = LibraryStore.shared.tracks.filter { track in
             let yId = PlayerCore.yandexTrackID(from: track)
@@ -366,7 +397,13 @@ final class MoodRadioEngine {
         }
         pool.append(contentsOf: ymTracks.shuffled())
 
-        return pool.shuffled()
+        var seen = Set<String>()
+        return pool.shuffled().filter { track in
+            let key = PlayerCore.yandexTrackID(from: track).isEmpty
+                ? track.id.uuidString
+                : PlayerCore.yandexTrackID(from: track)
+            return seen.insert(key).inserted
+        }
     }
 
     // MARK: - Ранжирование, Diversity & Sequencing Filter (ТЗ 3.3, 3.4)
@@ -378,7 +415,10 @@ final class MoodRadioEngine {
         var scored: [(track: Track, sim: Double)] = candidates.compactMap { track in
             if UserTasteEngine.shared.isDisliked(track: track) { return nil }
             let vec = extractVector(for: track)
-            let sim = vec.cosineSimilarity(to: targetVector)
+            let artistScore = UserTasteEngine.shared.artistScores[track.artist, default: 0]
+            let favoriteBoost = LibraryStore.shared.isTrackFavorite(track) ? 0.18 : 0
+            let tasteBoost = min(0.24, max(-0.24, artistScore / 25.0))
+            let sim = vec.cosineSimilarity(to: targetVector) + tasteBoost + favoriteBoost
             return (track, sim)
         }
 
@@ -424,15 +464,26 @@ final class MoodRadioEngine {
         // Дозапрашиваем новую волну треков из станции Яндекс Музыки
         let stationId = stationIdForMood(mood)
         let freshRotorTracks = (try? await YandexMusicService.shared.getStationTracks(stationId: stationId)) ?? []
-        let converted = freshRotorTracks.map { $0.toTrack() }.filter { !playedTrackIDs.contains($0.id) }
+        let queuedKeys = Set(queue.map { PlayerCore.yandexTrackID(from: $0) })
+        let converted = freshRotorTracks.map { $0.toTrack() }.filter {
+            !playedTrackIDs.contains($0.id) &&
+            !queuedKeys.contains(PlayerCore.yandexTrackID(from: $0)) &&
+            !UserTasteEngine.shared.isDisliked(track: $0)
+        }
 
         // Подтягиваем измеренный анализ из кэша перед ранжированием новой волны
         await AutoMixAnalysisSnapshot.shared.refreshFromCache(converted)
 
-        let sequenced = sequenceCandidates(converted, targetVector: sessionVector, count: 12)
+        let sequenced = sequenceCandidates(converted, targetVector: sessionVector, count: 24)
         if !sequenced.isEmpty {
             queue.append(contentsOf: sequenced)
-            PlayerCore.shared.appendToQueue(sequenced)
+            if PlaybackCommandRouter.shared.owner == .autoMixV2 {
+                AutoMixV2Runtime.shared.appendQueue(sequenced)
+            } else if PlaybackCommandRouter.shared.owner == .neuroMix {
+                NeuroMixRuntime.shared.appendQueue(sequenced)
+            } else {
+                PlayerCore.shared.appendToQueue(sequenced)
+            }
         }
     }
 

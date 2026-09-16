@@ -84,7 +84,8 @@ final class ActivePlayerPresentation {
             neuroOwnsPlayback ? neuroRuntime.playbackQueue : (v2OwnsPlayback ? runtime.playbackQueue : legacy.queue)
         }
         set {
-            if v2OwnsPlayback { runtime.replaceQueue(newValue) }
+            if neuroOwnsPlayback { neuroRuntime.replaceQueue(newValue) }
+            else if v2OwnsPlayback { runtime.replaceQueue(newValue) }
             else if !neuroOwnsPlayback { legacy.queue = newValue }
         }
     }

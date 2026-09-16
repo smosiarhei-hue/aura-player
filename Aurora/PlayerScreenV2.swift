@@ -401,6 +401,34 @@ struct PlayerScreenV2: View {
             .glassCircle()
             .disabled(current == nil)
             .accessibilityLabel(favorite ? "Убрать из избранного" : "Добавить в избранное")
+            if let current {
+                let disliked = UserTasteEngine.shared.isDisliked(track: current)
+                Menu {
+                    if disliked {
+                        Button {
+                            UserTasteEngine.shared.removeDislike(track: current)
+                            waveMessage = "Трек снова может появиться в волне"
+                        } label: {
+                            Label("Отменить дизлайк", systemImage: "arrow.uturn.backward")
+                        }
+                    } else {
+                        Button(role: .destructive) {
+                            UserTasteEngine.shared.recordDislike(track: current)
+                            MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
+                            waveMessage = "Трек исключён из Моей волны"
+                            player.next()
+                        } label: {
+                            Label("Не рекомендовать", systemImage: "hand.thumbsdown")
+                        }
+                    }
+                } label: {
+                    Image(systemName: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                        .foregroundStyle(disliked ? AG.heart : AG.inkMuted)
+                        .frame(width: tapSide, height: tapSide)
+                }
+                .glassCircle()
+                .accessibilityLabel(disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек")
+            }
         }
     }
     @ViewBuilder private var centerStatusLabel: some View {
@@ -565,7 +593,8 @@ struct PlayerScreenV2: View {
         guard let current = track else { return }; waveLoading = true
         Task {
             let tracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45); waveLoading = false
-            guard !tracks.isEmpty else { return }; player.queue = player.isV2Enabled ? [current] + tracks.filter { $0.id != current.id } : tracks
+            guard !tracks.isEmpty else { return }
+            MoodRadioEngine.shared.start(seed: current, relatedTracks: tracks.filter { $0.id != current.id })
             waveActive = true; waveMessage = "🌊 Моя волна запущена"; try? await Task.sleep(for: .seconds(2.5)); waveMessage = nil
         }
     }

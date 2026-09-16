@@ -23,6 +23,7 @@ extension YandexMusicService {
             guard item.available != false else { return }
             if let seedID, item.id == seedID { return }
             if isRecentlyPlayed(ymTrackId: item.id) { return }
+            if UserTasteEngine.shared.isDisliked(track: convertToTrack(item)) { return }
 
             var score = baseScore - Double(rank) * 0.65
             let normalizedSeedArtists = Set(

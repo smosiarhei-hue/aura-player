@@ -11,15 +11,20 @@ final class UserTasteEngine: @unchecked Sendable {
     static let shared = UserTasteEngine()
 
     private let defaults = UserDefaults.standard
-    private let dislikesKey = "sonivo_disliked_tracks_v1"
+    private let dislikesKey = "sonivo_disliked_tracks_v2"
     private let artistScoresKey = "sonivo_artist_scores_v1"
 
     private(set) var dislikedTrackIDs: Set<UUID> = []
+    private(set) var dislikedTrackKeys: Set<String> = []
     private(set) var artistScores: [String: Double] = [:]
 
     init() {
-        if let savedDislikes = defaults.stringArray(forKey: dislikesKey) {
+        if let savedDislikes = defaults.stringArray(forKey: dislikesKey)
+            ?? defaults.stringArray(forKey: "sonivo_disliked_tracks_v1") {
             dislikedTrackIDs = Set(savedDislikes.compactMap { UUID(uuidString: $0) })
+        }
+        if let savedKeys = defaults.stringArray(forKey: "sonivo_disliked_track_keys_v1") {
+            dislikedTrackKeys = Set(savedKeys)
         }
         if let savedScores = defaults.dictionary(forKey: artistScoresKey) as? [String: Double] {
             artistScores = savedScores
@@ -29,6 +34,7 @@ final class UserTasteEngine: @unchecked Sendable {
     // MARK: - Actions
 
     func recordLike(track: Track) {
+        removeDislike(track: track)
         let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
         if !artist.isEmpty {
             artistScores[artist, default: 0] += 5.0
@@ -38,6 +44,7 @@ final class UserTasteEngine: @unchecked Sendable {
 
     func recordDislike(track: Track) {
         dislikedTrackIDs.insert(track.id)
+        dislikedTrackKeys.insert(stableKey(for: track))
         let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
         if !artist.isEmpty {
             artistScores[artist, default: 0] -= 8.0
@@ -47,6 +54,7 @@ final class UserTasteEngine: @unchecked Sendable {
 
     func removeDislike(track: Track) {
         dislikedTrackIDs.remove(track.id)
+        dislikedTrackKeys.remove(stableKey(for: track))
         save()
     }
 
@@ -65,7 +73,24 @@ final class UserTasteEngine: @unchecked Sendable {
     }
 
     func isDisliked(track: Track) -> Bool {
-        dislikedTrackIDs.contains(track.id)
+        dislikedTrackIDs.contains(track.id) || dislikedTrackKeys.contains(stableKey(for: track))
+    }
+
+    func toggleDislike(track: Track) {
+        if isDisliked(track: track) { removeDislike(track: track) }
+        else { recordDislike(track: track) }
+    }
+
+    private func stableKey(for track: Track) -> String {
+        if let stream = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !stream.isEmpty, !stream.hasPrefix("http") {
+            return "ym:\(stream.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: ""))"
+        }
+        if track.fileName.hasPrefix("ym_"), track.fileName.hasSuffix(".mp3") {
+            let id = String(track.fileName.dropFirst(3).dropLast(4))
+            if !id.isEmpty { return "ym:\(id)" }
+        }
+        return "local:\(track.id.uuidString)"
     }
 
     /// Ranks a wave queue by taste but stays non-deterministic: equal-score
@@ -73,7 +98,7 @@ final class UserTasteEngine: @unchecked Sendable {
     /// performer never stacks at the top, and tracks that already opened a
     /// recent wave are demoted so two sessions never start identically.
     func filterAndRankWave(tracks: [Track]) -> [Track] {
-        let available = tracks.filter { !dislikedTrackIDs.contains($0.id) }
+        let available = tracks.filter { !isDisliked(track: $0) }
         guard available.count > 1 else { return available }
 
         // Fisher-Yates shuffle first: inside a taste tier the order rotates.
@@ -151,6 +176,7 @@ final class UserTasteEngine: @unchecked Sendable {
 
     private func save() {
         defaults.set(dislikedTrackIDs.map(\.uuidString), forKey: dislikesKey)
+        defaults.set(Array(dislikedTrackKeys), forKey: "sonivo_disliked_track_keys_v1")
         defaults.set(artistScores, forKey: artistScoresKey)
     }
 }
