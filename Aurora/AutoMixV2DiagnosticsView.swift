@@ -110,7 +110,7 @@ struct AutoMixV2DiagnosticsView: View {
                 LabeledContent("Длительность", value: String(format: "%.1f с", plan.durationSeconds))
                 LabeledContent("Rate A / B", value: String(format: "%.3f / %.3f", plan.sourceRate, plan.targetRate))
                 LabeledContent("События", value: String(plan.events.count))
-                Text("Проверять на локальных файлах. Онлайн-треки намеренно идут через AVPlayer для Spatial Audio и не используют этот realtime-граф.")
+                Text("Все треки, включая онлайн-треки, проходят через единый realtime-граф AutoMix и используют общий эквалайзер.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(plan.reason).font(.caption).foregroundStyle(.secondary)

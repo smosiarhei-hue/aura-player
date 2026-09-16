@@ -785,18 +785,12 @@ final class PlaybackCommandRouter {
             case .autoMixV2:
                 await NeuroMixRuntime.shared.stop()
                 if let legacyTrack {
-                    if !(await AutoMixV2Runtime.shared.play(legacyTrack, queue: legacyQueue)) {
-                        owner = .legacy
-                        PlayerCore.shared.play(legacyTrack, newQueue: legacyQueue)
-                    }
+                    _ = await AutoMixV2Runtime.shared.play(legacyTrack, queue: legacyQueue)
                 }
             case .neuroMix:
                 await AutoMixV2Runtime.shared.stop()
                 if let legacyTrack {
-                    if !(await NeuroMixRuntime.shared.play(legacyTrack, queue: legacyQueue)) {
-                        owner = .legacy
-                        PlayerCore.shared.play(legacyTrack, newQueue: legacyQueue)
-                    }
+                    _ = await NeuroMixRuntime.shared.play(legacyTrack, queue: legacyQueue)
                 }
             }
         }
@@ -844,17 +838,9 @@ final class PlaybackCommandRouter {
             case .legacy:
                 PlayerCore.shared.play(track, newQueue: queue)
             case .autoMixV2:
-                if !(await AutoMixV2Runtime.shared.play(track, queue: queue)) {
-                    guard request == requestID, !Task.isCancelled else { return }
-                    owner = .legacy
-                    PlayerCore.shared.play(track, newQueue: queue)
-                }
+                _ = await AutoMixV2Runtime.shared.play(track, queue: queue)
             case .neuroMix:
-                if !(await NeuroMixRuntime.shared.play(track, queue: queue)) {
-                    guard request == requestID, !Task.isCancelled else { return }
-                    owner = .legacy
-                    PlayerCore.shared.play(track, newQueue: queue)
-                }
+                _ = await NeuroMixRuntime.shared.play(track, queue: queue)
             }
             if request == requestID {
                 self.isBusy = false
@@ -873,17 +859,9 @@ final class PlaybackCommandRouter {
             case .legacy:
                 PlayerCore.shared.resume()
             case .autoMixV2:
-                if !(await AutoMixV2Runtime.shared.play()) {
-                    guard request == requestID, !Task.isCancelled else { return }
-                    owner = .legacy
-                    PlayerCore.shared.resume()
-                }
+                _ = await AutoMixV2Runtime.shared.play()
             case .neuroMix:
-                if !(await NeuroMixRuntime.shared.play()) {
-                    guard request == requestID, !Task.isCancelled else { return }
-                    owner = .legacy
-                    PlayerCore.shared.resume()
-                }
+                _ = await NeuroMixRuntime.shared.play()
             }
             if request == requestID {
                 self.isBusy = false
