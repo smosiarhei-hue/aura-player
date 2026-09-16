@@ -78,27 +78,33 @@ final class NeuroMixRealtimeTransitionRunner {
         outgoing: Deck = .a,
         incoming: Deck = .b
     ) async throws {
-        try await engine.prepare(
-            incoming,
-            fileURL: incomingURL,
-            startTimeSeconds: plan.targetStartSeconds
-        )
-        await engine.setRate(Float(plan.targetRate), for: incoming)
-        await engine.setGain(0, for: incoming)
-        try await engine.play(outgoing)
-        try await engine.play(incoming)
-        let adapter = NeuroMixRealtimeAudioAdapter(
-            engine: engine,
-            bpm: Float(targetBPM > 0 ? targetBPM : 120),
-            outgoingDeck: outgoing,
-            incomingDeck: incoming
-        )
-        try await NeuroMixTransitionExecutor(audio: adapter).execute(plan)
-        // Let the outgoing delay/echo tail decay instead of cutting it at the
-        // exact end of the automation timeline.
-        try await ContinuousClock().sleep(for: .milliseconds(700))
-        await engine.stop(outgoing)
-        await engine.setRate(1, for: incoming)
-        await engine.resetEffects(incoming)
+        do {
+            try await engine.prepare(
+                incoming,
+                fileURL: incomingURL,
+                startTimeSeconds: plan.targetStartSeconds
+            )
+            await engine.setRate(Float(plan.targetRate), for: incoming)
+            await engine.setGain(0, for: incoming)
+            try await engine.play(outgoing)
+            try await engine.play(incoming)
+            let adapter = NeuroMixRealtimeAudioAdapter(
+                engine: engine,
+                bpm: Float(targetBPM > 0 ? targetBPM : 120),
+                outgoingDeck: outgoing,
+                incomingDeck: incoming
+            )
+            try await NeuroMixTransitionExecutor(audio: adapter).execute(plan)
+            try await ContinuousClock().sleep(for: .milliseconds(700))
+            await engine.stop(outgoing)
+            await engine.setRate(1, for: incoming)
+            await engine.resetEffects(incoming)
+        } catch {
+            await engine.stop(incoming)
+            await engine.setGain(1, for: outgoing)
+            await engine.setRate(1, for: outgoing)
+            await engine.resetEffects(outgoing)
+            throw error
+        }
     }
 }
