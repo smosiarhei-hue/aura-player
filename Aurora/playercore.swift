@@ -1951,7 +1951,7 @@ final class PlayerCore {
 
     private func startTimer() {
         progressTimer?.invalidate()
-        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickProgress() }
         }
         RunLoop.main.add(timer, forMode: .common)

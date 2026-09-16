@@ -227,7 +227,7 @@ final class PlaybackCoordinator {
         guard monitor == nil else { return }
         monitor = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                do { try await ContinuousClock().sleep(for: .milliseconds(20)) } catch { return }
+                do { try await ContinuousClock().sleep(for: .milliseconds(100)) } catch { return }
                 await self?.tick()
             }
         }
