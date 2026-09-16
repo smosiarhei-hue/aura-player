@@ -58,6 +58,7 @@ struct FavoritesListView: View {
                                         .background(Capsule().fill(.white))
                                     }
                                     .buttonStyle(GlassPressStyle())
+                                    .accessibilityLabel("Слушать избранное")
 
                                     Button {
                                         let shuffled = library.favorites.shuffled()
@@ -68,10 +69,11 @@ struct FavoritesListView: View {
                                         Image(systemName: "shuffle")
                                             .font(AG.text(.subheadline, .bold))
                                             .foregroundStyle(AG.ink)
-                                            .frame(width: 32, height: 32)
+                                            .frame(width: AG.tapTarget, height: AG.tapTarget)
                                             .background(Circle().fill(AG.ink.opacity(0.12)))
                                     }
                                     .buttonStyle(GlassPressStyle())
+                                    .accessibilityLabel("Перемешать избранное")
                                 }
                                 .padding(.top, 4)
                             }
@@ -94,7 +96,7 @@ struct FavoritesListView: View {
                                             VStack(alignment: .leading, spacing: 3) {
                                                 Text(track.title)
                                                     .font(AG.text(.subheadline, .semibold))
-                                                    .foregroundStyle(player.displayTrack?.id == track.id ? AG.heart : .white)
+                                                    .foregroundStyle(player.displayTrack?.id == track.id ? AG.heart : AG.ink)
                                                     .lineLimit(1)
                                                 Text(track.artist)
                                                     .font(AG.text(.footnote))

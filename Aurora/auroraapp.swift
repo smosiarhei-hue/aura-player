@@ -131,7 +131,9 @@ struct NativeMiniPlayer: View {
                                 .lineLimit(1).minimumScaleFactor(0.85)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(track.map { "Открыть плеер: \($0.title)" } ?? "Открыть плеер")
                 Button(action: togglePlayback) {
                     Group {
                         if isLoading { ProgressView().tint(AG.ink) }

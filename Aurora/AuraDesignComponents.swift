@@ -105,6 +105,7 @@ struct AuraEmptyState: View {
                 .font(AG.display(.title3, .bold))
                 .foregroundStyle(AG.ink)
                 .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
 
             Text(message)
                 .font(AG.text(.body))
@@ -124,7 +125,6 @@ struct AuraEmptyState: View {
         .frame(maxWidth: 360)
         .padding(24)
         .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -263,7 +263,7 @@ struct AuraTrackRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(CardPressStyle(haptic: false))
-        .accessibilityLabel(isPlaying ? "(track.title), играет" : "(track.title), (track.artist)")
+        .accessibilityLabel(isPlaying ? "\(track.title), играет" : "\(track.title), \(track.artist)")
     }
 }
 
@@ -305,7 +305,7 @@ struct AuraCompactTrackCard: View {
             }
             .padding(8)
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-            .background(.white.opacity(isActive ? 0.12 : 0.055), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(AG.ink.opacity(isActive ? 0.12 : 0.055), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
                 if isActive {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -314,7 +314,7 @@ struct AuraCompactTrackCard: View {
             }
         }
         .buttonStyle(CardPressStyle(haptic: false))
-        .accessibilityLabel(isActive ? "(item.title), играет" : "(item.title), (item.artistName)")
+        .accessibilityLabel(isActive ? "\(item.title), играет" : "\(item.title), \(item.artistName)")
     }
 }
 
@@ -373,9 +373,9 @@ struct AuraCatalogTrackRow: View {
                     .frame(width: AG.tapTarget, height: AG.tapTarget)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("Действия для (item.title)")
+            .accessibilityLabel("Действия для \(item.title)")
         }
         .padding(.vertical, 6)
-        .background(isActive ? .white.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(isActive ? AG.ink.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }

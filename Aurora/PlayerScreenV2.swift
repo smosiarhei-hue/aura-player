@@ -309,6 +309,7 @@ struct PlayerScreenV2: View {
                             .foregroundStyle(.white.opacity(0.80))
                             .padding(14)
                     }
+                    .accessibilityLabel("Открыть текст песни")
                 }
                 Spacer()
             }
@@ -365,7 +366,9 @@ struct PlayerScreenV2: View {
                 Image(systemName: "speaker.fill").foregroundStyle(AG.inkMuted)
                 NativeVolumeSlider().frame(height: 32)
                 Image(systemName: "speaker.wave.3.fill").foregroundStyle(AG.inkMuted)
-            }.padding(.horizontal, 4)
+            }
+            .padding(.horizontal, 4)
+            .accessibilityElement(children: .contain)
             HStack {
                 GlassIconButton(systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble", tint: showLyricsMode ? AG.amber : AG.inkMuted, accessibilityLabel: "Текст песни") { withAnimation(AG.spring) { showLyricsMode.toggle() } }
                 Spacer()
@@ -394,7 +397,10 @@ struct PlayerScreenV2: View {
             } label: {
                 Image(systemName: favorite ? "heart.fill" : "heart").foregroundStyle(favorite ? AG.heart : AG.inkMuted)
                     .frame(width: tapSide, height: tapSide)
-            }.glassCircle().disabled(current == nil)
+            }
+            .glassCircle()
+            .disabled(current == nil)
+            .accessibilityLabel(favorite ? "Убрать из избранного" : "Добавить в избранное")
         }
     }
     @ViewBuilder private var centerStatusLabel: some View {

@@ -51,17 +51,21 @@ private struct SyncedLyrics: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 28) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
-                        LyricsLineView(
-                            line: line,
-                            isActive: idx == activeIndex,
-                            currentTime: currentTime,
-                            fontSize: max(settings.lyricsFontSize, 28)
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
+                        Button {
                             Haptics.tap(.medium)
                             player.seek(to: max(0, line.startTime - 0.05))
+                        } label: {
+                            LyricsLineView(
+                                line: line,
+                                isActive: idx == activeIndex,
+                                currentTime: currentTime,
+                                fontSize: max(settings.lyricsFontSize, 28)
+                            )
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(line.text)
+                        .accessibilityHint("Перемотать к этой строке")
                         .id(idx)
                     }
                 }

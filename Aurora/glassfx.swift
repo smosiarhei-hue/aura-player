@@ -43,6 +43,7 @@ struct LiveWaveEqualizer: View {
     var barCount: Int = 3
 
     @State private var wavePhases: [CGFloat] = [0.4, 0.9, 0.6]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 2.5) {
@@ -58,7 +59,7 @@ struct LiveWaveEqualizer: View {
     }
 
     private func animateIfNeeded() {
-        guard isPlaying else { return }
+        guard isPlaying, !reduceMotion else { return }
         withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
             wavePhases = [0.95, 0.35, 0.8]
         }
@@ -69,13 +70,14 @@ struct LiveWaveEqualizer: View {
 struct RiseIn: ViewModifier {
     let delay: Double
     @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
             .opacity(shown ? 1 : 0)
             .offset(y: shown ? 0 : 18)
             .onAppear {
-                withAnimation(AG.spring.delay(delay)) {
+                withAnimation(reduceMotion ? nil : AG.spring.delay(delay)) {
                     shown = true
                 }
             }
