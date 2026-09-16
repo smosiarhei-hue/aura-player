@@ -245,19 +245,49 @@ final class MoodRadioEngine {
     }
 
     func start(seed: Track, relatedTracks: [Track]) {
+        start(seed: seed)
+        appendRelatedTracks(relatedTracks)
+    }
+
+    func start(seed: Track) {
         activeMood = activeMood ?? .dreamy
         sessionVector = extractVector(for: seed)
         queue = [seed]
-        var seen = Set([PlayerCore.yandexTrackID(from: seed)])
-        let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: relatedTracks)
-        queue.append(contentsOf: ranked.filter {
-            let key = PlayerCore.yandexTrackID(from: $0)
-            return !key.isEmpty ? seen.insert(key).inserted : seen.insert($0.id.uuidString).inserted
-        })
         recentPlayedTracks.removeAll()
         playedArtistHistory.removeAll()
-        PlaybackCommandRouter.shared.play(seed, queue: queue)
+        let active = AutoMixV2Runtime.shared.currentTrack
+            ?? NeuroMixRuntime.shared.currentTrack
+            ?? PlayerCore.shared.currentTrack
+        let ownerIsPlaying: Bool = switch PlaybackCommandRouter.shared.owner {
+        case .autoMixV2: AutoMixV2Runtime.shared.isPlaying
+        case .neuroMix: NeuroMixRuntime.shared.isPlaying
+        case .legacy: PlayerCore.shared.isPlaying
+        }
+        if active?.id != seed.id {
+            PlaybackCommandRouter.shared.play(seed, queue: queue)
+        } else if !ownerIsPlaying {
+            PlaybackCommandRouter.shared.play()
+        }
         rememberPlayed(seed)
+    }
+
+    func appendRelatedTracks(_ relatedTracks: [Track]) {
+        guard !relatedTracks.isEmpty else { return }
+        var seen = Set(queue.map { PlayerCore.yandexTrackID(from: $0) })
+        let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: relatedTracks)
+        let fresh = ranked.filter {
+            let key = PlayerCore.yandexTrackID(from: $0)
+            return !key.isEmpty ? seen.insert(key).inserted : seen.insert($0.id.uuidString).inserted
+        }
+        guard !fresh.isEmpty else { return }
+        queue.append(contentsOf: fresh)
+        if PlaybackCommandRouter.shared.owner == .autoMixV2 {
+            AutoMixV2Runtime.shared.appendQueue(fresh)
+        } else if PlaybackCommandRouter.shared.owner == .neuroMix {
+            NeuroMixRuntime.shared.appendQueue(fresh)
+        } else {
+            PlayerCore.shared.appendToQueue(fresh)
+        }
     }
 
     // MARK: - API: Сигнал обратной связи (POST /mood/feedback)
