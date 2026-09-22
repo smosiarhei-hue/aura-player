@@ -61,7 +61,7 @@ def configuration(env):
                "Содержит последние изменения основной ветки.\n"
                "Для установки требуется подпись.\n"
                f"Коммит main: {sha[:7]}\n"
-               f"Сборка: {{https://github.com/{repository}}}/actions/runs/{run}")
+               f"Сборка: https://github.com/{repository}/actions/runs/{run}")
     return token, chat, caption
 
 
