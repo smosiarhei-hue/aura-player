@@ -6,8 +6,6 @@ import MixModels
 import Observation
 import TrackSource
 
-/// Presents whichever engine actually owns the audible track. This prevents a
-/// legacy/local track from playing behind an empty V2 player UI.
 @Observable
 @MainActor
 final class ActivePlayerPresentation {
@@ -29,24 +27,38 @@ final class ActivePlayerPresentation {
     private var nextNetworkDownloading = false
 
     init(legacy: PlayerCore = .shared, runtime: AutoMixV2Runtime = .shared,
-         selection: AutoMixEngineSelectionStore = .shared, router: PlaybackCommandRouter = .shared) {
-        self.legacy = legacy; self.runtime = runtime; self.neuroRuntime = .shared
-        self.selection = selection; self.router = router
+         selection: AutoMixEngineSelectionStore = .shared,
+         router: PlaybackCommandRouter = .shared) {
+        self.legacy = legacy
+        self.runtime = runtime
+        self.neuroRuntime = .shared
+        self.selection = selection
+        self.router = router
     }
-    private var v2OwnsPlayback: Bool { router.owner == .autoMixV2 && runtime.currentTrack != nil }
-    private var neuroOwnsPlayback: Bool { router.owner == .neuroMix && neuroRuntime.currentTrack != nil }
+
+    private var v2OwnsPlayback: Bool {
+        router.owner == .autoMixV2 && runtime.currentTrack != nil
+    }
+    private var neuroOwnsPlayback: Bool {
+        router.owner == .neuroMix && neuroRuntime.currentTrack != nil
+    }
     var isV2Enabled: Bool { v2OwnsPlayback || neuroOwnsPlayback }
     var currentTrack: Track? {
-        neuroOwnsPlayback ? neuroRuntime.currentTrack : (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
+        neuroOwnsPlayback ? neuroRuntime.currentTrack :
+            (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
     }
-    var incomingTrack: Track? { v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack }
-    var transitionProgress: Double { v2OwnsPlayback ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress }
-    var displayTrack: Track? {
-        if isTransitionActive, let incoming = incomingTrack {
-            return incoming
-        }
-        return neuroOwnsPlayback ? neuroRuntime.currentTrack : (v2OwnsPlayback ? runtime.currentTrack : legacy.displayTrack)
+    var incomingTrack: Track? {
+        v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack
     }
+    var transitionProgress: Double {
+        v2OwnsPlayback ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress
+    }
+
+    // Artwork, title, seek and transport controls must always address the deck
+    // that is currently audible. The incoming track is visualized separately by
+    // the transition overlay and is promoted only after the handoff succeeds.
+    var displayTrack: Track? { currentTrack }
+
     var isPlaying: Bool {
         neuroOwnsPlayback ? neuroRuntime.isPlaying :
             (v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying)
@@ -54,39 +66,49 @@ final class ActivePlayerPresentation {
     var isLoading: Bool {
         router.isBusy || (v2OwnsPlayback && runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing)
     }
-    var isTransitionActive: Bool { v2OwnsPlayback ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive }
+    var isTransitionActive: Bool {
+        v2OwnsPlayback ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive
+    }
     var progress: Double {
-        neuroOwnsPlayback ? timelinePosition :
-            (v2OwnsPlayback ? (timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0) : legacy.progress)
+        if neuroOwnsPlayback {
+            return timelineTrackID == neuroRuntime.currentTrack?.id ? timelinePosition : 0
+        }
+        if v2OwnsPlayback {
+            return timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0
+        }
+        return legacy.progress
     }
     var duration: Double {
         guard v2OwnsPlayback || neuroOwnsPlayback else { return legacy.duration }
-        let value = neuroOwnsPlayback ? (neuroRuntime.currentTrack?.duration ?? 0) :
-            (timelineDuration > 0 ? timelineDuration : (runtime.currentTrack?.duration ?? 0))
+        let value = neuroOwnsPlayback
+            ? (timelineTrackID == neuroRuntime.currentTrack?.id ? timelineDuration : neuroRuntime.currentTrack?.duration ?? 0)
+            : (timelineTrackID == runtime.currentTrack?.id && timelineDuration > 0
+               ? timelineDuration : runtime.currentTrack?.duration ?? 0)
         return value.isFinite ? max(0, value) : 0
     }
     var downloadProgress: Double? {
-        if neuroOwnsPlayback {
-            return 1.0
-        } else if v2OwnsPlayback {
-            return networkFraction
-        } else if legacy.currentTrack?.isStream == true {
+        if neuroOwnsPlayback { return 1 }
+        if v2OwnsPlayback { return networkFraction }
+        if legacy.currentTrack?.isStream == true {
             return legacy.streamBufferFraction > 0 ? legacy.streamBufferFraction : nil
-        } else {
-            return 1.0 // Local file is 100% loaded
         }
+        return 1
     }
-    var isDownloading: Bool { v2OwnsPlayback ? networkDownloading : (legacy.streamBufferFraction < 0.99 && legacy.currentTrack?.isStream == true) }
+    var isDownloading: Bool {
+        v2OwnsPlayback ? networkDownloading :
+            (legacy.streamBufferFraction < 0.99 && legacy.currentTrack?.isStream == true)
+    }
     var nextDownloadProgress: Double? { v2OwnsPlayback ? nextNetworkFraction : nil }
     var isNextDownloading: Bool { v2OwnsPlayback && nextNetworkDownloading }
     var queue: [Track] {
         get {
-            neuroOwnsPlayback ? neuroRuntime.playbackQueue : (v2OwnsPlayback ? runtime.playbackQueue : legacy.queue)
+            neuroOwnsPlayback ? neuroRuntime.playbackQueue :
+                (v2OwnsPlayback ? runtime.playbackQueue : legacy.queue)
         }
         set {
             if neuroOwnsPlayback { neuroRuntime.replaceQueue(newValue) }
             else if v2OwnsPlayback { runtime.replaceQueue(newValue) }
-            else if !neuroOwnsPlayback { legacy.queue = newValue }
+            else { legacy.queue = newValue }
         }
     }
     var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
@@ -108,81 +130,95 @@ final class ActivePlayerPresentation {
         set { legacy.eqGains = newValue }
     }
 
-    func togglePlay() {
-        router.toggle()
-    }
-    func pause() {
-        router.pause()
-    }
-    func resume() {
-        router.play()
-    }
-    func previous() {
-        router.previous()
-    }
-    func next() {
-        router.next()
-    }
-    func seek(to seconds: Double) {
-        router.seek(to: seconds)
-    }
+    func togglePlay() { router.toggle() }
+    func pause() { router.pause() }
+    func resume() { router.play() }
+    func previous() { router.previous() }
+    func next() { router.next() }
+    func seek(to seconds: Double) { router.seek(to: seconds) }
     func play(_ track: Track) { router.play(track, queue: queue) }
     func removeFromQueue(_ track: Track) {
-        if v2OwnsPlayback { runtime.replaceQueue(runtime.playbackQueue.filter { $0.id != track.id }) }
-        else { legacy.removeFromQueue(track) }
+        if v2OwnsPlayback {
+            runtime.replaceQueue(runtime.playbackQueue.filter { $0.id != track.id })
+        } else {
+            legacy.removeFromQueue(track)
+        }
     }
-    func stopAndClear() {
-        router.stopAndClear()
-    }
+    func stopAndClear() { router.stopAndClear() }
 
     func observeTimeline() async {
         while !Task.isCancelled {
             if neuroOwnsPlayback {
                 let track = neuroRuntime.currentTrack
                 let trackID = track?.id
-                if let timeline = await neuroRuntime.playbackTimeline(), !Task.isCancelled,
-                   neuroOwnsPlayback, neuroRuntime.currentTrack?.id == trackID {
-                    timelineTrackID = trackID
-                    previousTimelinePosition = timelinePosition
-                    timelinePosition = timeline.position
-                    timelineAdvancing = timeline.position > previousTimelinePosition + 0.005
-                    timelineDuration = timeline.duration
-                    timelineTransitioning = timeline.isTransitioning
-                    timelineTransitionProgress = timeline.transitionProgress
+                if timelineTrackID != trackID { resetTimeline(for: trackID) }
+                if let timeline = await neuroRuntime.playbackTimeline(),
+                   !Task.isCancelled, neuroOwnsPlayback,
+                   neuroRuntime.currentTrack?.id == trackID {
+                    applyTimeline(position: timeline.position, duration: timeline.duration,
+                                  transitioning: timeline.isTransitioning,
+                                  transitionProgress: timeline.transitionProgress)
                 }
-                networkFraction = nil
-                networkDownloading = false
-                nextNetworkFraction = nil
-                nextNetworkDownloading = false
+                clearNetworkProgress()
             } else if v2OwnsPlayback {
-                let track = runtime.currentTrack; let trackID = track?.id
-                if let timeline = await runtime.playbackTimeline(), !Task.isCancelled,
-                   v2OwnsPlayback, runtime.currentTrack?.id == trackID {
-                    timelineTrackID = trackID
-                    previousTimelinePosition = timelinePosition
-                    timelinePosition = timeline.position
-                    timelineAdvancing = timeline.position > previousTimelinePosition + 0.005
-                    timelineDuration = timeline.duration
-                    timelineTransitioning = timeline.isTransitioning
-                    timelineTransitionProgress = timeline.transitionProgress
+                let track = runtime.currentTrack
+                let trackID = track?.id
+                if timelineTrackID != trackID { resetTimeline(for: trackID) }
+                if let timeline = await runtime.playbackTimeline(),
+                   !Task.isCancelled, v2OwnsPlayback,
+                   runtime.currentTrack?.id == trackID {
+                    applyTimeline(position: timeline.position, duration: timeline.duration,
+                                  transitioning: timeline.isTransitioning,
+                                  transitionProgress: timeline.transitionProgress)
                 }
                 let currentState = await downloadState(for: track)
-                networkFraction = currentState?.fraction; networkDownloading = currentState?.isDownloading ?? false
+                networkFraction = currentState?.fraction
+                networkDownloading = currentState?.isDownloading ?? false
                 let list = runtime.playbackQueue
                 let next = track.flatMap { current in
-                    list.firstIndex(where: { $0.id == current.id }).flatMap { $0 + 1 < list.count ? list[$0 + 1] : nil }
+                    list.firstIndex(where: { $0.id == current.id }).flatMap {
+                        $0 + 1 < list.count ? list[$0 + 1] : nil
+                    }
                 }
                 let nextState = await downloadState(for: next)
-                nextNetworkFraction = nextState?.fraction; nextNetworkDownloading = nextState?.isDownloading ?? false
+                nextNetworkFraction = nextState?.fraction
+                nextNetworkDownloading = nextState?.isDownloading ?? false
             } else {
-                timelineTrackID = nil; timelinePosition = 0; timelineDuration = 0
-                previousTimelinePosition = 0; timelineAdvancing = false; timelineTransitioning = false
-                timelineTransitionProgress = 0.0
-                networkFraction = nil; networkDownloading = false; nextNetworkFraction = nil; nextNetworkDownloading = false
+                resetTimeline(for: nil)
+                clearNetworkProgress()
             }
-            do { try await ContinuousClock().sleep(for: .milliseconds(200)) } catch { return }
+            do { try await ContinuousClock().sleep(for: .milliseconds(200)) }
+            catch { return }
         }
     }
+
+    private func resetTimeline(for trackID: UUID?) {
+        timelineTrackID = trackID
+        timelinePosition = 0
+        timelineDuration = 0
+        previousTimelinePosition = 0
+        timelineAdvancing = false
+        timelineTransitioning = false
+        timelineTransitionProgress = 0
+    }
+
+    private func applyTimeline(position: Double, duration: Double,
+                               transitioning: Bool, transitionProgress: Double) {
+        previousTimelinePosition = timelinePosition
+        timelinePosition = max(0, position)
+        timelineAdvancing = timelinePosition > previousTimelinePosition + 0.005
+        timelineDuration = duration.isFinite ? max(0, duration) : 0
+        timelineTransitioning = transitioning
+        timelineTransitionProgress = min(1, max(0, transitionProgress))
+    }
+
+    private func clearNetworkProgress() {
+        networkFraction = nil
+        networkDownloading = false
+        nextNetworkFraction = nil
+        nextNetworkDownloading = false
+    }
+
     private func downloadState(for track: Track?) async -> TrackDownloadProgress? {
         guard let track, track.isStream,
               let raw = YandexMusicService.ymId(fromFileName: track.fileName) else { return nil }
