@@ -73,7 +73,7 @@ def multipart(chat, caption, data):
                        f'name="{name}"\r\n\r\n{value}\r\n').encode("utf-8"))
     chunks.extend([
         (f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; "
-         'filename="Sonivo-current-main.ipa"\r\nContent-Type: application/octet-stream\r\n\r\n').encode(),
+         'filename="Sonivo-unsigned.ipa"\r\nContent-Type: application/octet-stream\r\n\r\n').encode(),
         data,
         f"\r\n--{boundary}--\r\n".encode(),
     ])
@@ -145,7 +145,7 @@ def record_status(code, env):
         with open(env["GITHUB_ENV"], "a", encoding="utf-8") as output:
             output.write(f"TELEGRAM_STATUS={code}\nTELEGRAM_RESPONSE={message}\n")
     if env.get("GITHUB_STEP_SUMMARY"):
-        with open(env["GITHUB_STEP_SUMMARY", "a", encoding="utf-8") as output:
+        with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
             output.write(f"## Telegram IPA delivery\n\n**{code}** — {message}\n")
 
 
