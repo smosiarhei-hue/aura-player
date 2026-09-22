@@ -1,0 +1,244 @@
+name: Apply transition stability fix
+
+on:
+  push:
+    branches: [ 'fix/transition-handoff-stability' ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/transition-handoff-stability
+          fetch-depth: 0
+      - name: Patch coordinator and regression test
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('Aurora/Stage3PlaybackCoordinator.swift')
+          text = path.read_text()
+          replacements = []
+
+          replacements.append(('''        if transition != nil, let incoming = transitioningItem {
+              await cancelTransitionAndWait()
+              await engine.stop(otherDeck)
+              await engine.setGain(1, for: incoming.deck)
+              await engine.setRate(1, for: incoming.deck)
+              await engine.resetEffects(incoming.deck)
+              activeDeck = incoming.deck
+              active = incoming
+              index = incoming.index
+              transitioningItem = nil
+              phase = wantsPlayback ? .playing(incoming.meta) : .paused(incoming.meta)
+              setReadiness(.waitingForDeckB, "Трек переключён")
+              publish()
+              startPrefetch()
+              return
+          }
+          ''', '''        if transition != nil, let incoming = transitioningItem {
+              let outgoing = incoming.deck == activeDeck ? otherDeck : activeDeck
+              await cancelTransitionAndWait()
+              await engine.setGain(1, for: incoming.deck)
+              await engine.setRate(1, for: incoming.deck)
+              await engine.resetEffects(incoming.deck)
+              if wantsPlayback {
+                  try await engine.skip(from: outgoing, to: incoming.deck)
+              } else {
+                  await engine.stop(outgoing)
+                  await engine.pause(incoming.deck)
+              }
+              activeDeck = incoming.deck
+              active = incoming
+              index = incoming.index
+              prepared = nil
+              planSignature = ""
+              phase = wantsPlayback ? .playing(incoming.meta) : .paused(incoming.meta)
+              setReadiness(.waitingForDeckB, "Трек переключён")
+              publish()
+              startPrefetch()
+              return
+          }
+          '''))
+
+          replacements.append(('''        // 3. Deck B not yet prepared: update UI immediately to avoid lag, then load
+          index = nextIndex
+          phase = .loading(ids[nextIndex])
+          publish()
+
+          prefetch?.cancel()
+          prefetch = nil
+          try await load(nextIndex)
+          ''', '''        // 3. Keep the active deck alive while the existing prefetch completes.
+          phase = .loading(ids[nextIndex])
+          publish()
+          if let pending = prefetch {
+              await pending.value
+              if let item = prepared, item.index == nextIndex {
+                  try await engine.prepare(item.deck, fileURL: item.url, startTimeSeconds: 0)
+                  await engine.setGain(1, for: item.deck)
+                  await engine.setRate(1, for: item.deck)
+                  await engine.resetEffects(item.deck)
+                  try await promote(item, duration: nil, plan: nil)
+                  startPrefetch()
+                  return
+              }
+          }
+          try await load(nextIndex)
+          '''))
+
+          replacements.append(('''    private func load(_ newIndex: Int) async throws {
+          prefetch?.cancel(); prefetch = nil
+          await engine.stopEngine(); activeDeck = .a; prepared = nil; planSignature = ""
+          index = newIndex; phase = .loading(ids[newIndex]); setReadiness(.waitingForDeckB, "Загрузка следующей композиции")
+          let item = try await fetch(newIndex, deck: activeDeck); active = item
+          try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: 0)
+          if wantsPlayback { try await engine.play(activeDeck) }
+          phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+          publish(); startPrefetch()
+      }
+          ''', '''    private func load(_ newIndex: Int) async throws {
+          prefetch?.cancel(); prefetch = nil
+          phase = .loading(ids[newIndex])
+          setReadiness(.waitingForDeckB, "Загрузка следующей композиции")
+          publish()
+          let targetDeck: Deck = .a
+          let item = try await fetch(newIndex, deck: targetDeck)
+          await engine.stopEngine()
+          activeDeck = targetDeck; prepared = nil; planSignature = ""
+          index = newIndex; active = item
+          try await engine.prepare(targetDeck, fileURL: item.url, startTimeSeconds: 0)
+          await engine.setGain(1, for: targetDeck)
+          await engine.setRate(1, for: targetDeck)
+          if wantsPlayback { try await engine.play(targetDeck) }
+          phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+          publish(); startPrefetch()
+      }
+          '''))
+
+          replacements.append(('''    func resume() async throws {
+          guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
+          wantsPlayback = true
+          try await engine.resume(activeDeck)
+          phase = .playing(item.meta)
+          publish()
+          startMonitor()
+      }
+          ''', '''    func resume() async throws {
+          guard let item = active else { throw PlaybackCoordinatorError.noPreparedTrack }
+          wantsPlayback = true
+          let state = await engine.snapshot()
+          let deck = activeDeck == .a ? state.deckA : state.deckB
+          if !deck.isPrepared {
+              try await engine.prepare(activeDeck, fileURL: item.url, startTimeSeconds: max(0, deck.positionSeconds))
+              await engine.setGain(1, for: activeDeck)
+              await engine.setRate(1, for: activeDeck)
+              await engine.resetEffects(activeDeck)
+          }
+          try await engine.resume(activeDeck)
+          phase = .playing(item.meta)
+          publish()
+          startMonitor()
+      }
+          '''))
+
+          replacements.append(('''    private func promote(_ item: Item, duration: Double?, plan: MixModels.TransitionPlan?) async throws {
+          let outgoing = activeDeck
+          activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
+          if let plan {
+              await engine.setRate(plan.rateA, for: outgoing)
+              await engine.setRate(plan.rateB, for: item.deck)
+          }
+          if let duration {
+              if let plan, plan.type != .crossfade {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration, alignedToCueSeconds: plan.aOutStartSec)
+              } else {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration)
+              }
+          } else if wantsPlayback {
+              try await engine.skip(from: outgoing, to: item.deck)
+          }
+          if let plan, plan.rateB != 1 {
+              let tempoB = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
+              let rampDuration = BeatGridSynchronization.duration(bars: 4, bpm: tempoB)
+              await engine.rampRate(item.deck, from: plan.rateB, to: 1.0, duration: rampDuration > 0 ? rampDuration : 3.0)
+          }
+          if !wantsPlayback { await engine.pause(activeDeck) }
+          phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+          setReadiness(.waitingForDeckB, "Готовится следующий трек")
+      }
+          ''', '''    private func promote(_ item: Item, duration: Double?, plan: MixModels.TransitionPlan?) async throws {
+          let outgoing = activeDeck
+          if let plan {
+              await engine.setRate(plan.rateA, for: outgoing)
+              await engine.setRate(plan.rateB, for: item.deck)
+          }
+          if let duration {
+              if let plan, plan.type != .crossfade {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration, alignedToCueSeconds: plan.aOutStartSec)
+              } else {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration)
+              }
+          } else if wantsPlayback {
+              try await engine.skip(from: outgoing, to: item.deck)
+          }
+          activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
+          if let plan, plan.rateB != 1 {
+              let tempoB = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
+              let rampDuration = BeatGridSynchronization.duration(bars: 4, bpm: tempoB)
+              await engine.rampRate(item.deck, from: plan.rateB, to: 1.0, duration: rampDuration > 0 ? rampDuration : 3.0)
+          }
+          if !wantsPlayback { await engine.pause(item.deck) }
+          phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+          setReadiness(.waitingForDeckB, "Готовится следующий трек")
+      }
+          '''))
+
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit('Coordinator patch context mismatch')
+              text = text.replace(old, new)
+          path.write_text(text)
+
+          tests = Path('Tests/UnitTests/PlaybackCoordinatorTests.swift')
+          body = tests.read_text()
+          marker = '''    @Test("Queue replacement discards the old prepared deck")
+          '''
+          addition = '''    @Test("Failed next download keeps current track playable")
+          func failedNextKeepsCurrentTrack() async throws {
+              let source = QueueTestSource(errors: ["b": .trackUnavailable])
+              let engine = QueueTestEngine()
+              let coordinator = makeCoordinator(engine, source: source)
+              try await coordinator.play(queue: [a, b], startIndex: 0)
+              try await eventually { coordinator.snapshot().lastQueueError != nil }
+              do {
+                  try await coordinator.next()
+                  Issue.record("Expected the next track load to fail")
+              } catch {}
+              #expect(coordinator.snapshot().currentIndex == 0)
+              #expect((await coordinator.engineSnapshot()).deckA.isPlaying)
+              await coordinator.pause()
+              try await coordinator.resume()
+              #expect((await coordinator.engineSnapshot()).deckA.isPlaying)
+              await coordinator.stop()
+          }
+          @Test("Queue replacement discards the old prepared deck")
+          '''
+          if body.count(marker) != 1:
+              raise SystemExit('Test patch context mismatch')
+          tests.write_text(body.replace(marker, addition))
+          Path('.github/workflows/apply-transition-stability-fix.yml').unlink()
+          PY
+      - name: Commit patched source
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Aurora/Stage3PlaybackCoordinator.swift Tests/UnitTests/PlaybackCoordinatorTests.swift .github/workflows/apply-transition-stability-fix.yml
+          git commit -m "Stabilize next-track handoff and recovery"
+          git push origin HEAD:fix/transition-handoff-stability
