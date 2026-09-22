@@ -1,1 +1,1 @@
-Execute the enabled transition stability patch now.
+Trigger the pull-request stability patch and validation.
