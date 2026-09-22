@@ -1,0 +1,127 @@
+name: Transition stability patcher
+
+on:
+  push:
+    branches: [ 'fix/transition-handoff-stability' ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/transition-handoff-stability
+          fetch-depth: 0
+      - name: Patch transition handoff
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Aurora/Stage3PlaybackCoordinator.swift')
+          s = p.read_text()
+          old = '''        if transition != nil, let incoming = transitioningItem {
+              await cancelTransitionAndWait()
+              await engine.stop(otherDeck)
+              await engine.setGain(1, for: incoming.deck)
+              await engine.setRate(1, for: incoming.deck)
+              await engine.resetEffects(incoming.deck)
+              activeDeck = incoming.deck
+              active = incoming
+              index = incoming.index
+              transitioningItem = nil
+              phase = wantsPlayback ? .playing(incoming.meta) : .paused(incoming.meta)
+              setReadiness(.waitingForDeckB, "Трек переключён")
+              publish()
+              startPrefetch()
+              return
+          }
+          '''
+          new = '''        if transition != nil, let incoming = transitioningItem {
+              let outgoing = incoming.deck == activeDeck ? otherDeck : activeDeck
+              await cancelTransitionAndWait()
+              await engine.setGain(1, for: incoming.deck)
+              await engine.setRate(1, for: incoming.deck)
+              await engine.resetEffects(incoming.deck)
+              if wantsPlayback {
+                  try await engine.skip(from: outgoing, to: incoming.deck)
+              } else {
+                  await engine.stop(outgoing)
+                  await engine.pause(incoming.deck)
+              }
+              activeDeck = incoming.deck
+              active = incoming
+              index = incoming.index
+              prepared = nil
+              planSignature = ""
+              phase = wantsPlayback ? .playing(incoming.meta) : .paused(incoming.meta)
+              setReadiness(.waitingForDeckB, "Трек переключён")
+              publish()
+              startPrefetch()
+              return
+          }
+          '''
+          if s.count(old) != 1: raise SystemExit('next transition context mismatch')
+          s = s.replace(old, new)
+          old = '''    private func promote(_ item: Item, duration: Double?, plan: MixModels.TransitionPlan?) async throws {
+          let outgoing = activeDeck
+          activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
+          if let plan {
+              await engine.setRate(plan.rateA, for: outgoing)
+              await engine.setRate(plan.rateB, for: item.deck)
+          }
+          if let duration {
+              if let plan, plan.type != .crossfade {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration, alignedToCueSeconds: plan.aOutStartSec)
+              } else {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration)
+              }
+          } else if wantsPlayback {
+              try await engine.skip(from: outgoing, to: item.deck)
+          }
+          if let plan, plan.rateB != 1 {
+              let tempoB = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
+              let rampDuration = BeatGridSynchronization.duration(bars: 4, bpm: tempoB)
+              await engine.rampRate(item.deck, from: plan.rateB, to: 1.0, duration: rampDuration > 0 ? rampDuration : 3.0)
+          }
+          if !wantsPlayback { await engine.pause(activeDeck) }
+          phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+          setReadiness(.waitingForDeckB, "Готовится следующий трек")
+      }
+          '''
+          new = '''    private func promote(_ item: Item, duration: Double?, plan: MixModels.TransitionPlan?) async throws {
+          let outgoing = activeDeck
+          if let plan {
+              await engine.setRate(plan.rateA, for: outgoing)
+              await engine.setRate(plan.rateB, for: item.deck)
+          }
+          if let duration {
+              if let plan, plan.type != .crossfade {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration, alignedToCueSeconds: plan.aOutStartSec)
+              } else {
+                  try await engine.crossfade(from: outgoing, to: item.deck, durationSeconds: duration)
+              }
+          } else if wantsPlayback {
+              try await engine.skip(from: outgoing, to: item.deck)
+          }
+          activeDeck = item.deck; active = item; index = item.index; prepared = nil; planSignature = ""
+          if let plan, plan.rateB != 1 {
+              let tempoB = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
+              let rampDuration = BeatGridSynchronization.duration(bars: 4, bpm: tempoB)
+              await engine.rampRate(item.deck, from: plan.rateB, to: 1.0, duration: rampDuration > 0 ? rampDuration : 3.0)
+          }
+          if !wantsPlayback { await engine.pause(item.deck) }
+          phase = wantsPlayback ? .playing(item.meta) : .paused(item.meta)
+          setReadiness(.waitingForDeckB, "Готовится следующий трек")
+      }
+          '''
+          if s.count(old) != 1: raise SystemExit('promote context mismatch')
+          p.write_text(s.replace(old, new))
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Aurora/Stage3PlaybackCoordinator.swift
+          git commit -m "Stabilize transition deck handoff"
+          git push origin HEAD:fix/transition-handoff-stability
