@@ -1,1 +1,1 @@
-Run the transition stability patch after enabling its workflow.
+Execute the enabled transition stability patch now.
