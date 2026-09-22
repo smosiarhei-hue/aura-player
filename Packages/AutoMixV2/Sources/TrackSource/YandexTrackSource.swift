@@ -23,7 +23,16 @@ public struct YandexTrackSource: TrackSource, Sendable {
         options.min { let l = priority($0), r = priority($1); return l != r ? l < r : $0.bitrateKbps > $1.bitrateKbps }
     }
     private static func priority(_ option: YandexDownloadOption) -> Int {
-        switch (option.codec, option.bitrateKbps) { case (.flac, _): 0; case (.mp3, 320...): 1; case (.aac, 256...): 2; case (.aac, 192...): 3; case (.mp3, 192...): 4; default: 5 }
+        // A complete file is required before AVAudioFile can prepare a deck.
+        // 320 kbps MP3 starts much faster than FLAC while retaining high quality.
+        switch (option.codec, option.bitrateKbps) {
+        case (.mp3, 320...): 0
+        case (.flac, _): 1
+        case (.aac, 256...): 2
+        case (.aac, 192...): 3
+        case (.mp3, 192...): 4
+        default: 5
+        }
     }
     private static func download(_ option: YandexDownloadOption, id: TrackID, retry: Bool,
                                  client: any YandexMusicDownloadClient, downloader: any HTTPDownloadClient,

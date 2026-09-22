@@ -27,11 +27,7 @@ final class AutoMixV2NowPlayingCenter {
     func setApplicationSceneActive(_ active: Bool) {
         guard applicationIsActive != active else { return }
         applicationIsActive = active
-        if active {
-            suppressSystemSurfacePreservingArtwork()
-        } else {
-            Task { @MainActor [weak self] in await self?.refresh() }
-        }
+        Task { @MainActor [weak self] in await self?.refresh() }
     }
 
     func install() {
@@ -41,7 +37,7 @@ final class AutoMixV2NowPlayingCenter {
         updateTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                do { try await ContinuousClock().sleep(for: .seconds(1)) } catch { return }
+                do { try await ContinuousClock().sleep(for: .milliseconds(500)) } catch { return }
             }
         }
     }
@@ -61,7 +57,10 @@ final class AutoMixV2NowPlayingCenter {
 
         loadArtwork(for: track)
 
-        if applicationIsActive {
+        // Hide the foreground system surface only while audio is actually
+        // playing. A paused item must remain published so AirPods can target
+        // Sonivo and resume the same deck without losing track or position.
+        if applicationIsActive && runtime.isPlaying {
             suppressSystemSurfacePreservingArtwork()
             return
         }

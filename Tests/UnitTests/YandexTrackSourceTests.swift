@@ -7,9 +7,10 @@ import TrackSource
 
 @Suite("Yandex cached track source")
 struct YandexTrackSourceTests {
-    @Test("Uses the required MP3 and AAC quality priority")
+    @Test("Prefers 320 kbps MP3 over a larger FLAC startup download")
     func selectsPreferredQuality() throws {
         let options = [
+            option(codec: .flac, bitrate: 1_200),
             option(codec: .aac, bitrate: 320),
             option(codec: .mp3, bitrate: 192),
             option(codec: .aac, bitrate: 256),
@@ -168,10 +169,15 @@ private func option(
 ) -> YandexDownloadOption {
     let url = URL(string: "https://example.com/\(suffix)")
         ?? URL(fileURLWithPath: "/invalid-download-option")
+    let fileExtension = switch codec {
+    case .flac: "flac"
+    case .mp3: "mp3"
+    case .aac: "m4a"
+    }
     return YandexDownloadOption(
         url: url,
         codec: codec,
         bitrateKbps: bitrate,
-        fileExtension: codec == .mp3 ? "mp3" : "m4a"
+        fileExtension: fileExtension
     )
 }
