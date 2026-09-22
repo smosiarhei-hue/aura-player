@@ -37,7 +37,8 @@ final class AutoMixV2NowPlayingCenter {
         updateTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                do { try await ContinuousClock().sleep(for: .milliseconds(500)) } catch { return }
+                do { try await ContinuousClock().sleep(for: .milliseconds(500)) }
+                catch { return }
             }
         }
     }
@@ -57,17 +58,18 @@ final class AutoMixV2NowPlayingCenter {
 
         loadArtwork(for: track)
 
-        // Hide the foreground system surface only while audio is actually
-        // playing. A paused item must remain published so AirPods can target
-        // Sonivo and resume the same deck without losing track or position.
+        // Inside the active app the native player is authoritative. As soon as
+        // the app backgrounds, publish the exact audible track and its position.
         if applicationIsActive && runtime.isPlaying {
             suppressSystemSurfacePreservingArtwork()
             return
         }
 
         let timeline = await runtime.playbackTimeline()
+        guard runtime.currentTrack?.id == track.id else { return }
         let duration = max(0, timeline?.duration ?? track.duration)
-        let elapsed = min(max(0, timeline?.position ?? 0), duration > 0 ? duration : .greatestFiniteMagnitude)
+        let elapsed = min(max(0, timeline?.position ?? 0),
+                          duration > 0 ? duration : .greatestFiniteMagnitude)
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.title,
             MPMediaItemPropertyArtist: track.artist,
@@ -75,14 +77,20 @@ final class AutoMixV2NowPlayingCenter {
             MPNowPlayingInfoPropertyPlaybackRate: runtime.isPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
-            MPNowPlayingInfoPropertyIsLiveStream: false
+            MPNowPlayingInfoPropertyIsLiveStream: false,
+            MPNowPlayingInfoPropertyExternalContentIdentifier: "sonivo://track/\(track.id.uuidString)"
         ]
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
             info[MPNowPlayingInfoPropertyPlaybackProgress] = elapsed / duration
         }
+        if let currentIndex = runtime.playbackQueue.firstIndex(where: { $0.id == track.id }) {
+            info[MPNowPlayingInfoPropertyPlaybackQueueIndex] = currentIndex
+            info[MPNowPlayingInfoPropertyPlaybackQueueCount] = runtime.playbackQueue.count
+        }
         if !track.album.isEmpty { info[MPMediaItemPropertyAlbumTitle] = track.album }
         if artworkTrackID == track.id, let artwork { info[MPMediaItemPropertyArtwork] = artwork }
+
         let center = MPNowPlayingInfoCenter.default()
         center.nowPlayingInfo = info
         center.playbackState = runtime.isPlaying ? .playing : .paused
@@ -91,7 +99,9 @@ final class AutoMixV2NowPlayingCenter {
 
     private func loadArtwork(for track: Track) {
         guard artworkTrackID != track.id else { return }
-        artworkTask?.cancel(); artworkTrackID = track.id; artwork = nil
+        artworkTask?.cancel()
+        artworkTrackID = track.id
+        artwork = nil
         guard let raw = track.coverURL, let url = URL(string: raw) else { return }
         if let image = imageCache[raw] {
             artwork = NowPlayingArtworkProvider(image: image).makeArtwork()
@@ -103,9 +113,12 @@ final class AutoMixV2NowPlayingCenter {
                   let (data, response) = try? await URLSession.shared.data(from: url),
                   let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode),
-                  let image = UIImage(data: data), artworkTrackID == id else { return }
-            imageCache[raw] = image
-            artwork = NowPlayingArtworkProvider(image: image).makeArtwork()
+                  let image = UIImage(data: data),
+                  self.artworkTrackID == id,
+                  AutoMixV2Runtime.shared.currentTrack?.id == id else { return }
+            self.imageCache[raw] = image
+            self.artwork = NowPlayingArtworkProvider(image: image).makeArtwork()
+            await self.refresh()
         }
     }
 
@@ -121,6 +134,9 @@ final class AutoMixV2NowPlayingCenter {
     private func clearOnlyIfOwned() {
         guard ownsNowPlaying else { return }
         suppressSystemSurfacePreservingArtwork()
-        artworkTask?.cancel(); artworkTask = nil; artworkTrackID = nil; artwork = nil
+        artworkTask?.cancel()
+        artworkTask = nil
+        artworkTrackID = nil
+        artwork = nil
     }
 }
