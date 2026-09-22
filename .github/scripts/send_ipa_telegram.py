@@ -57,11 +57,12 @@ def configuration(env):
             and re.fullmatch(r"[0-9a-fA-F]{40}", sha)
             and re.fullmatch(r"[0-9]+", run)):
         raise DeliveryError("invalid_context")
+    build_url = "https://github.com/" + repository + "/actions/runs/" + run
     caption = ("Sonivo — АКТУАЛЬНАЯ MAIN IPA без подписи.\n"
                "Содержит последние изменения основной ветки.\n"
                "Для установки требуется подпись.\n"
                f"Коммит main: {sha[:7]}\n"
-               f"Сборка: https://github.com/{repository}/actions/runs/{run}")
+               "Сборка: " + build_url)
     return token, chat, caption
 
 
