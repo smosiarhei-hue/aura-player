@@ -1,1 +1,1 @@
-Trigger the one-time transition stability patch workflow.
+Run the transition stability patch after enabling its workflow.
