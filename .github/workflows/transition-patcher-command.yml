@@ -1,0 +1,28 @@
+name: Transition patch command
+
+on:
+  issue_comment:
+    types: [ created ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.issue.pull_request && github.event.issue.number == 13 && github.event.comment.body == '/apply-transition-patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/transition-handoff-stability
+          fetch-depth: 0
+      - name: Execute branch patch
+        run: |
+          awk '
+            /      - name: Patch transition handoff/ { found=1; next }
+            found && /        run: \|/ { body=1; next }
+            body && /^          / { print substr($0, 11); next }
+            body { exit }
+          ' .github/workflows/transition-stability-patcher.yml > /tmp/transition-patch.sh
+          test -s /tmp/transition-patch.sh
+          bash /tmp/transition-patch.sh
