@@ -37,7 +37,7 @@ final class AutoMixV2NowPlayingCenter {
         updateTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                do { try await ContinuousClock().sleep(for: .seconds(1)) } catch { return }
+                do { try await ContinuousClock().sleep(for: .milliseconds(500)) } catch { return }
             }
         }
     }
