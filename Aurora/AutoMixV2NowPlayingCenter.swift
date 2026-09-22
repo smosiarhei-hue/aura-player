@@ -37,11 +37,7 @@ final class AutoMixV2NowPlayingCenter {
 
     func setFullPlayerVisible(_ visible: Bool) {
         fullPlayerVisible = visible
-        if UIApplication.shared.applicationState == .active {
-            suppressSystemSurfacePreservingArtwork()
-        } else {
-            Task { @MainActor [weak self] in await self?.refresh() }
-        }
+        Task { @MainActor [weak self] in await self?.refresh() }
     }
 
     private func refresh() async {
@@ -55,7 +51,11 @@ final class AutoMixV2NowPlayingCenter {
         // Preload and retain artwork while the app is visible so lock-screen and
         // Dynamic Island metadata appear immediately after the app backgrounds.
         loadArtwork(for: track)
-        if UIApplication.shared.applicationState == .active {
+
+        // While foreground playback is active, hide Sonivo's system surface as
+        // requested. Once playback is paused, publish a paused session instead
+        // of clearing it: AirPods then keep Sonivo as the resumable media target.
+        if UIApplication.shared.applicationState == .active && runtime.isPlaying {
             suppressSystemSurfacePreservingArtwork()
             return
         }
