@@ -48,19 +48,25 @@ struct PlayerScreenV2: View {
 
     var body: some View {
         GeometryReader { geo in
-            let side = min(geo.size.width - 64, geo.size.height * 0.40, 360)
+            let artworkHeight = min(geo.size.height * 0.40, 360)
+            let artworkWidth = geo.size.width - 32
             ZStack {
                 background.frame(width: geo.size.width, height: geo.size.height).clipped().ignoresSafeArea()
                 VStack(spacing: 0) {
-                    topHeader.padding(.top, max(geo.safeAreaInsets.top, 48)).padding(.horizontal, 24)
-                    Spacer(minLength: 8)
-                    artworkStage(side: side).frame(maxWidth: .infinity)
-                    Spacer(minLength: 8)
+                    topHeader
+                        .padding(.top, max(geo.safeAreaInsets.top, 48))
+                        .padding(.horizontal, 20)
+                    Spacer(minLength: 4)
+                    artworkStage(width: artworkWidth, height: artworkHeight)
+                        .frame(maxWidth: .infinity)
+                    Spacer(minLength: 6)
                     if let waveMessage {
                         Text(waveMessage).font(AG.text(.caption, .semibold)).foregroundStyle(AG.ink)
                             .padding(.horizontal, 14).padding(.vertical, 7).glassCapsule().padding(.bottom, 4)
                     }
-                    lowerDeck.padding(.horizontal, 24).padding(.bottom, 12)
+                    lowerDeck
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 12))
                 }
             }
         }
@@ -193,9 +199,21 @@ struct PlayerScreenV2: View {
     }
 
     private var topHeader: some View {
-        HStack {
+        HStack(spacing: 12) {
             GlassIconButton(systemImage: "chevron.down", tint: AG.inkMuted, weight: .bold,
                             accessibilityLabel: "Свернуть плеер", action: close)
+            Spacer()
+            VStack(spacing: 2) {
+                Text("СЕЙЧАС ИГРАЕТ")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(1.0)
+                    .foregroundStyle(AG.inkFaint)
+                Text(track?.title ?? "Sonivo")
+                    .font(AG.text(.caption, .bold))
+                    .foregroundStyle(AG.ink)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
             Spacer()
             Menu {
                 Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: { Label("Текст песни", systemImage: "quote.bubble") }
@@ -219,39 +237,60 @@ struct PlayerScreenV2: View {
         }.frame(minHeight: tapSide)
     }
 
-    private func artworkStage(side: CGFloat) -> some View {
+    private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
         ZStack {
             if isFullScreenVideoShot {
                 // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
                 Color.clear
-                    .frame(width: side, height: side)
+                    .frame(width: width, height: height)
             } else {
                 artwork
-                    .frame(width: side, height: side)
+                    .frame(width: width, height: height)
                     .scaledToFill()
                     .clipped()
             }
             if !isFullScreenVideoShot && !showLyricsMode {
-                AutoMixTransitionOverlay(player: player, side: side)
+                AutoMixTransitionOverlay(player: player, side: min(width, height))
             }
-            if showLyricsMode { lyricsOverlay(side: side) }
+            if showLyricsMode { lyricsOverlay(width: width, height: height) }
         }
-        .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .mask {
+            LinearGradient(
+                stops: [
+                    .init(color: .black, location: 0.0),
+                    .init(color: .black, location: 0.60),
+                    .init(color: .black.opacity(0.70), location: 0.78),
+                    .init(color: .black.opacity(0.20), location: 0.92),
+                    .init(color: .clear, location: 1.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
                 .strokeBorder(
-                    .white.opacity(isFullScreenVideoShot ? 0.0 : (player.isTransitionActive ? 0.32 : 0.14)),
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(isFullScreenVideoShot ? 0.0 : (player.isTransitionActive ? 0.35 : 0.16)), location: 0.0),
+                            .init(color: .white.opacity(isFullScreenVideoShot ? 0.0 : 0.04), location: 0.5),
+                            .init(color: .clear, location: 0.85)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
                     lineWidth: 1
                 )
         )
-        .shadow(color: .white.opacity(isFullScreenVideoShot ? 0 : (player.isTransitionActive ? 0.22 : 0)), radius: 22)
         .shadow(
-            color: (artworkPaletteColors.first ?? .black).opacity(isFullScreenVideoShot ? 0 : (player.isPlaying ? 0.40 : 0.15)),
-            radius: player.isPlaying ? 24 : 8,
-            y: player.isPlaying ? 12 : 4
+            color: (artworkPaletteColors.first ?? .black).opacity(isFullScreenVideoShot ? 0 : (player.isPlaying ? 0.45 : 0.20)),
+            radius: player.isPlaying ? 28 : 12,
+            y: player.isPlaying ? 14 : 6
         )
-        .scaleEffect(player.isPlaying ? 1 : 0.88).offset(x: coverDragX)
+        .scaleEffect(player.isPlaying ? 1.0 : 0.94)
+        .offset(x: coverDragX)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 15)
             .onChanged { value in
@@ -266,11 +305,11 @@ struct PlayerScreenV2: View {
                 if value.translation.width < -threshold, !isCoverSwitching {
                     Haptics.tap(.light)
                     withAnimation(.easeOut(duration: 0.16)) {
-                        coverDragX = -side * 1.15
+                        coverDragX = -width * 1.15
                     }
                     nextTrack()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                        coverDragX = side * 0.85
+                        coverDragX = width * 0.85
                         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                             coverDragX = 0
                         }
@@ -278,11 +317,11 @@ struct PlayerScreenV2: View {
                 } else if value.translation.width > threshold, !isCoverSwitching {
                     Haptics.tap(.light)
                     withAnimation(.easeOut(duration: 0.16)) {
-                        coverDragX = side * 1.15
+                        coverDragX = width * 1.15
                     }
                     previousTrack()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                        coverDragX = -side * 0.85
+                        coverDragX = -width * 0.85
                         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                             coverDragX = 0
                         }
@@ -295,7 +334,7 @@ struct PlayerScreenV2: View {
         .animation(AG.slowSpring, value: player.isPlaying)
     }
 
-    private func lyricsOverlay(side: CGFloat) -> some View {
+    private func lyricsOverlay(width: CGFloat, height: CGFloat) -> some View {
         ZStack {
             if !isFullScreenVideoShot {
                 Color.black.opacity(0.60)
@@ -326,7 +365,7 @@ struct PlayerScreenV2: View {
                     }
                 }
             }
-        }.frame(width: side, height: side)
+        }.frame(width: width, height: height)
     }
     private var currentLyricsPair: (current: String, next: String?) {
         guard let lines = lyrics?.lines, !lines.isEmpty else { return ("Слова песни", nil) }
@@ -358,14 +397,18 @@ struct PlayerScreenV2: View {
     }
 
     private var lowerDeck: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             metadataRow
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
             HStack(spacing: 12) {
-                Image(systemName: "speaker.fill").foregroundStyle(AG.inkMuted)
+                Image(systemName: "speaker.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AG.inkMuted)
                 NativeVolumeSlider().frame(height: 32)
-                Image(systemName: "speaker.wave.3.fill").foregroundStyle(AG.inkMuted)
+                Image(systemName: "speaker.wave.3.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AG.inkMuted)
             }
             .padding(.horizontal, 4)
             .accessibilityElement(children: .contain)
@@ -377,7 +420,29 @@ struct PlayerScreenV2: View {
                 AirPlayButtonView().frame(width: tapSide, height: tapSide).glassCircle()
                 Spacer()
                 GlassIconButton(systemImage: "list.bullet", tint: AG.inkMuted, accessibilityLabel: "Очередь") { openModal(.queue) }
-            }.padding(.horizontal, 24)
+            }.padding(.horizontal, 16)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .background {
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .white.opacity(0.24), location: 0.0),
+                                    .init(color: .white.opacity(0.08), location: 0.4),
+                                    .init(color: .white.opacity(0.02), location: 1.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: .black.opacity(0.48), radius: 24, x: 0, y: 8)
         }
     }
     private var metadataRow: some View {
@@ -457,10 +522,46 @@ struct PlayerScreenV2: View {
     }
     private var transportControls: some View {
         HStack(spacing: 0) {
-            Button(action: previousTrack) { Image(systemName: "backward.fill").font(.system(.largeTitle, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52) }
-            Button(action: togglePlayback) { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 40, weight: .black)).frame(maxWidth: .infinity, minHeight: 56) }.disabled(player.isLoading)
-            Button(action: nextTrack) { Image(systemName: "forward.fill").font(.system(.largeTitle, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52) }
-        }.foregroundStyle(AG.ink).buttonStyle(TactileButtonStyle(scale: 0.86))
+            Button(action: previousTrack) {
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(maxWidth: .infinity, minHeight: 56)
+            }
+            Button(action: togglePlayback) {
+                ZStack {
+                    Circle()
+                        .fill(.white.opacity(0.12))
+                        .frame(width: 66, height: 66)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(
+                                    LinearGradient(
+                                        colors: [.white.opacity(0.35), .white.opacity(0.08)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1.2
+                                )
+                        )
+                        .shadow(
+                            color: (artworkPaletteColors.first ?? .white).opacity(player.isPlaying ? 0.35 : 0.0),
+                            radius: 12
+                        )
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 28, weight: .black))
+                        .offset(x: player.isPlaying ? 0 : 2)
+                }
+                .frame(maxWidth: .infinity, minHeight: 66)
+            }
+            .disabled(player.isLoading)
+            Button(action: nextTrack) {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(maxWidth: .infinity, minHeight: 56)
+            }
+        }
+        .foregroundStyle(AG.ink)
+        .buttonStyle(TactileButtonStyle(scale: 0.88))
     }
 
     private var artistSelectionSheet: some View {
