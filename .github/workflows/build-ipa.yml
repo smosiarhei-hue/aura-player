@@ -76,14 +76,15 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+          CLEAN_PASS=$(echo -n "$P12_PASSWORD" | tr -d '\r\n')
           CERT_FILE="$RUNNER_TEMP/cert.p12"
-          echo "$P12_BASE64" | base64 --decode > "$CERT_FILE"
-          security import "$CERT_FILE" -k "$KEYCHAIN_PATH" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          echo -n "$P12_BASE64" | tr -d '\r\n' | base64 --decode > "$CERT_FILE"
+          security import "$CERT_FILE" -k "$KEYCHAIN_PATH" -P "$CLEAN_PASS" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
           PROV_FILE="$RUNNER_TEMP/profile.mobileprovision"
-          echo "$PROV_BASE64" | base64 --decode > "$PROV_FILE"
+          echo -n "$PROV_BASE64" | tr -d '\r\n' | base64 --decode > "$PROV_FILE"
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
 
           PLIST_CONTENT=$(security cms -D -i "$PROV_FILE")
@@ -146,7 +147,7 @@ jobs:
           fi
 
       - name: Upload build log
-        if: always()
+        if: always() && hashFiles('build.log') != ''
         uses: actions/upload-artifact@v4
         with:
           name: build-log
@@ -154,7 +155,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Expose compiler errors
-        if: failure()
+        if: failure() && hashFiles('build.log') != ''
         shell: bash
         run: |
           ERRORS=$(grep -E "(^|[[:space:]])[^[:space:]]+\.swift:[0-9]+:[0-9]+: error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n')
