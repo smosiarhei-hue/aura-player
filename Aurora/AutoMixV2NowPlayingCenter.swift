@@ -14,6 +14,15 @@ private final class NowPlayingArtworkProvider: @unchecked Sendable {
 @MainActor
 final class AutoMixV2NowPlayingCenter {
     static let shared = AutoMixV2NowPlayingCenter()
+
+    private struct Snapshot {
+        let track: Track
+        let queue: [Track]
+        let position: Double
+        let duration: Double
+        let isPlaying: Bool
+    }
+
     private var updateTask: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
     private var artworkTrackID: UUID?
@@ -27,6 +36,7 @@ final class AutoMixV2NowPlayingCenter {
     func setApplicationSceneActive(_ active: Bool) {
         guard applicationIsActive != active else { return }
         applicationIsActive = active
+        if !active { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         Task { @MainActor [weak self] in await self?.refresh() }
     }
 
@@ -34,10 +44,11 @@ final class AutoMixV2NowPlayingCenter {
         guard updateTask == nil else { return }
         AutoMixV2AnalysisRuntime.shared.install()
         PlaybackSessionPersistence.shared.install()
+        NativePlaybackContinuityCoordinator.shared.install()
         updateTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                do { try await ContinuousClock().sleep(for: .milliseconds(500)) }
+                do { try await ContinuousClock().sleep(for: .milliseconds(350)) }
                 catch { return }
             }
         }
@@ -48,33 +59,52 @@ final class AutoMixV2NowPlayingCenter {
         Task { @MainActor [weak self] in await self?.refresh() }
     }
 
+    private func selectedSnapshot() async -> Snapshot? {
+        switch PlaybackCommandRouter.shared.owner {
+        case .legacy:
+            return nil // PlayerCore owns the native surface for legacy playback.
+        case .autoMixV2:
+            let runtime = AutoMixV2Runtime.shared
+            guard let track = runtime.currentTrack else { return nil }
+            let timeline = await runtime.playbackTimeline()
+            return Snapshot(track: track,
+                            queue: runtime.playbackQueue,
+                            position: timeline?.position ?? 0,
+                            duration: timeline?.duration ?? track.duration,
+                            isPlaying: runtime.isPlaying)
+        case .neuroMix:
+            let runtime = NeuroMixRuntime.shared
+            guard let track = runtime.currentTrack else { return nil }
+            let timeline = await runtime.playbackTimeline()
+            return Snapshot(track: track,
+                            queue: runtime.playbackQueue,
+                            position: timeline?.position ?? 0,
+                            duration: timeline?.duration ?? track.duration,
+                            isPlaying: runtime.isPlaying)
+        }
+    }
+
     private func refresh() async {
-        let runtime = AutoMixV2Runtime.shared
-        guard PlaybackCommandRouter.shared.owner == .autoMixV2,
-              let track = runtime.currentTrack else {
+        guard let snapshot = await selectedSnapshot() else {
             clearOnlyIfOwned()
             return
         }
-
+        let track = snapshot.track
         loadArtwork(for: track)
 
-        // Inside the active app the native player is authoritative. As soon as
-        // the app backgrounds, publish the exact audible track and its position.
-        if applicationIsActive && runtime.isPlaying {
-            suppressSystemSurfacePreservingArtwork()
+        if applicationIsActive && snapshot.isPlaying {
+            suppressSystemSurface()
             return
         }
 
-        let timeline = await runtime.playbackTimeline()
-        guard runtime.currentTrack?.id == track.id else { return }
-        let duration = max(0, timeline?.duration ?? track.duration)
-        let elapsed = min(max(0, timeline?.position ?? 0),
+        let duration = max(0, snapshot.duration)
+        let elapsed = min(max(0, snapshot.position),
                           duration > 0 ? duration : .greatestFiniteMagnitude)
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.title,
             MPMediaItemPropertyArtist: track.artist,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
-            MPNowPlayingInfoPropertyPlaybackRate: runtime.isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: snapshot.isPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
             MPNowPlayingInfoPropertyIsLiveStream: false,
@@ -84,16 +114,16 @@ final class AutoMixV2NowPlayingCenter {
             info[MPMediaItemPropertyPlaybackDuration] = duration
             info[MPNowPlayingInfoPropertyPlaybackProgress] = elapsed / duration
         }
-        if let currentIndex = runtime.playbackQueue.firstIndex(where: { $0.id == track.id }) {
+        if let currentIndex = snapshot.queue.firstIndex(where: { $0.id == track.id }) {
             info[MPNowPlayingInfoPropertyPlaybackQueueIndex] = currentIndex
-            info[MPNowPlayingInfoPropertyPlaybackQueueCount] = runtime.playbackQueue.count
+            info[MPNowPlayingInfoPropertyPlaybackQueueCount] = snapshot.queue.count
         }
         if !track.album.isEmpty { info[MPMediaItemPropertyAlbumTitle] = track.album }
         if artworkTrackID == track.id, let artwork { info[MPMediaItemPropertyArtwork] = artwork }
 
         let center = MPNowPlayingInfoCenter.default()
         center.nowPlayingInfo = info
-        center.playbackState = runtime.isPlaying ? .playing : .paused
+        center.playbackState = snapshot.isPlaying ? .playing : .paused
         ownsNowPlaying = true
     }
 
@@ -114,15 +144,14 @@ final class AutoMixV2NowPlayingCenter {
                   let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode),
                   let image = UIImage(data: data),
-                  self.artworkTrackID == id,
-                  AutoMixV2Runtime.shared.currentTrack?.id == id else { return }
+                  self.artworkTrackID == id else { return }
             self.imageCache[raw] = image
             self.artwork = NowPlayingArtworkProvider(image: image).makeArtwork()
             await self.refresh()
         }
     }
 
-    private func suppressSystemSurfacePreservingArtwork() {
+    private func suppressSystemSurface() {
         let center = MPNowPlayingInfoCenter.default()
         if center.nowPlayingInfo != nil || center.playbackState != .stopped {
             center.nowPlayingInfo = nil
@@ -133,7 +162,7 @@ final class AutoMixV2NowPlayingCenter {
 
     private func clearOnlyIfOwned() {
         guard ownsNowPlaying else { return }
-        suppressSystemSurfacePreservingArtwork()
+        suppressSystemSurface()
         artworkTask?.cancel()
         artworkTask = nil
         artworkTrackID = nil

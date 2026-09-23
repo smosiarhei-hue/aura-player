@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// A stationary EDR/HDR flash around the committed artwork. The pulse is fed
-/// only by sub-bass energy and kick transients from the main audio mixer.
+/// Stationary artwork-colour EDR bloom driven only by kick and 30...120 Hz bass.
 struct MusicReactiveLiquidBorder: View {
     let player: ActivePlayerPresentation
     let cornerRadius: CGFloat
@@ -13,39 +12,44 @@ struct MusicReactiveLiquidBorder: View {
     var body: some View {
         let bass = player.isPlaying ? CGFloat(spectrum.bass) : 0
         let kick = player.isPlaying && !reduceMotion ? CGFloat(spectrum.kick) : 0
-        let pulse = min(1, max(kick, bass * 0.42))
-        let accent = palette.first ?? .cyan
-
-        // Apple renders this offscreen group in the extended-linear working
-        // color space. exposureAdjust/headroom preserve EDR values above SDR
-        // white on supported displays; plusLighter layers provide the bloom.
-        let hdrWhite = Color.white.exposureAdjust(2.15).headroom(4.0)
-        let hdrAccent = accent.exposureAdjust(1.35).headroom(2.5)
+        let pulse = min(1, max(kick, bass * 0.62))
+        let primary = palette.first ?? .cyan
+        let secondary = palette.dropFirst().first ?? primary
+        let tertiary = palette.dropFirst(2).first ?? secondary
+        let hdrPrimary = primary.exposureAdjust(2.35).headroom(5.0)
+        let hdrSecondary = secondary.exposureAdjust(1.95).headroom(4.0)
+        let hdrTertiary = tertiary.exposureAdjust(1.55).headroom(3.2)
 
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(.white.opacity(player.isPlaying ? 0.18 : 0.08), lineWidth: 0.8)
+                .strokeBorder(primary.opacity(player.isPlaying ? 0.22 : 0.08), lineWidth: 0.8)
 
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(hdrAccent.opacity(0.16 + Double(pulse) * 0.42),
-                              lineWidth: 2.0 + pulse * 4.5)
-                .blur(radius: 13 + pulse * 24)
+                .strokeBorder(hdrTertiary.opacity(0.10 + Double(pulse) * 0.50),
+                              lineWidth: 4 + pulse * 8)
+                .blur(radius: 24 + pulse * 34)
 
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(hdrWhite.opacity(0.20 + Double(pulse) * 0.78),
-                              lineWidth: 1.0 + pulse * 2.7)
-                .blur(radius: 4 + pulse * 9)
+                .strokeBorder(hdrSecondary.opacity(0.15 + Double(pulse) * 0.68),
+                              lineWidth: 2.5 + pulse * 6)
+                .blur(radius: 12 + pulse * 22)
 
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(hdrWhite.opacity(0.34 + Double(pulse) * 0.66),
-                              lineWidth: 0.8 + pulse * 1.6)
+                .strokeBorder(hdrPrimary.opacity(0.28 + Double(pulse) * 0.72),
+                              lineWidth: 1.2 + pulse * 3.8)
+                .blur(radius: 3 + pulse * 9)
+
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(hdrPrimary.opacity(0.42 + Double(pulse) * 0.58),
+                              lineWidth: 0.9 + pulse * 2.1)
         }
         .padding(2)
-        .scaleEffect(1 + pulse * 0.012)
-        .shadow(color: hdrAccent.opacity(Double(pulse) * 0.72), radius: 8 + pulse * 25)
+        .scaleEffect(1 + pulse * 0.018)
+        .shadow(color: hdrPrimary.opacity(Double(pulse) * 0.86), radius: 10 + pulse * 34)
         .compositingGroup()
         .blendMode(.plusLighter)
         .drawingGroup(opaque: false, colorMode: .extendedLinear)
+        .animation(.linear(duration: 0.045), value: pulse)
         .id(player.displayTrack?.id)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
