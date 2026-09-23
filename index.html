@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sonivo — Установка для iPhone</title>
+  <style>
+    :root {
+      --bg: #090a0f;
+      --card-bg: rgba(255, 255, 255, 0.05);
+      --card-border: rgba(255, 255, 255, 0.12);
+      --accent: #0A84FF;
+      --accent-glow: rgba(10, 132, 255, 0.4);
+      --text: #F5F5F7;
+      --text-secondary: #86868B;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    body {
+      background: radial-gradient(circle at 50% 0%, #1c1e2e 0%, var(--bg) 75%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .container {
+      max-width: 440px;
+      width: 100%;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(40px);
+      -webkit-backdrop-filter: blur(40px);
+      border-radius: 32px;
+      padding: 36px 24px;
+      text-align: center;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    }
+    .app-icon {
+      width: 108px;
+      height: 108px;
+      border-radius: 24px;
+      margin: 0 auto 20px;
+      background: linear-gradient(135deg, #FF2D55 0%, #AF52DE 50%, #0A84FF 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 12px 32px rgba(175, 82, 222, 0.35);
+      position: relative;
+      overflow: hidden;
+    }
+    .app-icon svg {
+      width: 56px;
+      height: 56px;
+      fill: #ffffff;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(10, 132, 255, 0.15);
+      border: 1px solid rgba(10, 132, 255, 0.3);
+      color: #64D2FF;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 99px;
+      margin-bottom: 24px;
+    }
+    .badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #30D158;
+      box-shadow: 0 0 10px #30D158;
+    }
+    .info-list {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 28px;
+      text-align: left;
+      font-size: 14px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .info-row:last-child {
+      border-bottom: none;
+    }
+    .info-label {
+      color: var(--text-secondary);
+    }
+    .info-val {
+      font-weight: 600;
+      color: #F5F5F7;
+    }
+    .btn-install {
+      display: block;
+      width: 100%;
+      background: linear-gradient(180deg, #0A84FF 0%, #0066CC 100%);
+      color: #ffffff;
+      text-decoration: none;
+      font-size: 17px;
+      font-weight: 600;
+      padding: 16px 20px;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px var(--accent-glow);
+      transition: all 0.2s ease;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-install:active {
+      transform: scale(0.98);
+      filter: brightness(0.9);
+    }
+    .tip {
+      margin-top: 20px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .fallback-link {
+      margin-top: 14px;
+      display: inline-block;
+      font-size: 13px;
+      color: #64D2FF;
+      text-decoration: none;
+    }
+    .fallback-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="app-icon">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+      </svg>
+    </div>
+    <h1>Sonivo</h1>
+    <div class="badge">
+      <span class="dot"></span>
+      Подписано сертификатом разработчика
+    </div>
+
+    <div class="info-list">
+      <div class="info-row">
+        <span class="info-label">Сертификат</span>
+        <span class="info-val">iPhone Distribution (до 05.12.2026)</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Устройство</span>
+        <span class="info-val">Личный iPhone (UDID привязан)</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Обновление</span>
+        <span class="info-val">Автоматическое (Over-The-Air)</span>
+      </div>
+    </div>
+
+    <a id="installBtn" href="itms-services://?action=download-manifest&url=https://smosiarhei-hue.github.io/aura-player/manifest.plist" class="btn-install">
+      📲 Установить обновление на iPhone
+    </a>
+
+    <p class="tip">
+      После нажатия Safari покажет системное окно iOS:<br>
+      <b>«smosiarhei-hue.github.io собирается установить "Sonivo"»</b>.<br>
+      Нажмите <b>«Установить»</b> — и приложение установится или обновится прямо на домашнем экране.
+    </p>
+
+    <a href="Sonivo.ipa" class="fallback-link">Скачать прямой файл .ipa</a>
+  </div>
+</body>
+</html>
