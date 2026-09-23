@@ -166,22 +166,22 @@ struct PlayerScreenV2: View {
                 }
 
                 // Элегантная кинематографичная виньетка:
-                // Верх — легкое затемнение под хедер; центр — кристально чистое видео; низ — глубокое затемнение под контролы
+                // Верх — легкое затемнение под хедер; центр — кристально чистое видео; низ — мягкое затемнение под контролы
                 LinearGradient(stops: [
-                    .init(color: .black.opacity(0.48), location: 0.0),
-                    .init(color: .black.opacity(0.12), location: 0.18),
+                    .init(color: .black.opacity(0.40), location: 0.0),
+                    .init(color: .black.opacity(0.10), location: 0.18),
                     .init(color: .clear, location: 0.32),
-                    .init(color: .clear, location: 0.52),
-                    .init(color: .black.opacity(0.35), location: 0.68),
-                    .init(color: .black.opacity(0.80), location: 0.86),
-                    .init(color: .black.opacity(0.96), location: 1.0)
+                    .init(color: .clear, location: 0.55),
+                    .init(color: .black.opacity(0.22), location: 0.72),
+                    .init(color: .black.opacity(0.50), location: 0.88),
+                    .init(color: .black.opacity(0.68), location: 1.0)
                 ], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
             } else if reduceMotion || scenePhase != .active {
                 gradientBackground
-                LinearGradient(stops: [.init(color: .black.opacity(0.18), location: 0),
-                                       .init(color: .black.opacity(0.68), location: 0.78),
-                                       .init(color: .black.opacity(0.94), location: 1)],
+                LinearGradient(stops: [.init(color: .black.opacity(0.15), location: 0),
+                                       .init(color: .black.opacity(0.45), location: 0.70),
+                                       .init(color: .black.opacity(0.75), location: 1)],
                                startPoint: .top, endPoint: .bottom)
             } else {
                 if let currentArtworkImage {
@@ -189,18 +189,18 @@ struct PlayerScreenV2: View {
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .blur(radius: 64)
+                        .blur(radius: 56)
                         .scaleEffect(1.2)
-                        .opacity(0.40)
+                        .opacity(0.60)
                         .clipped()
                         .drawingGroup()
                 } else {
                     gradientBackground
                 }
                 AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.50)
-                LinearGradient(stops: [.init(color: .black.opacity(0.18), location: 0),
-                                       .init(color: .black.opacity(0.68), location: 0.78),
-                                       .init(color: .black.opacity(0.94), location: 1)],
+                LinearGradient(stops: [.init(color: .black.opacity(0.12), location: 0),
+                                       .init(color: .black.opacity(0.40), location: 0.65),
+                                       .init(color: .black.opacity(0.70), location: 1)],
                                startPoint: .top, endPoint: .bottom)
             }
         }.allowsHitTesting(false)
@@ -421,33 +421,18 @@ struct PlayerScreenV2: View {
         .frame(maxWidth: .infinity)
         .background {
             Rectangle()
-                .fill(.ultraThinMaterial)
+                .fill(.ultraThinMaterial.opacity(0.40))
                 .mask {
                     LinearGradient(
                         stops: [
                             .init(color: .clear, location: 0.0),
-                            .init(color: .black.opacity(0.35), location: 0.08),
-                            .init(color: .black.opacity(0.85), location: 0.22),
-                            .init(color: .black, location: 0.40),
+                            .init(color: .black.opacity(0.30), location: 0.20),
+                            .init(color: .black, location: 0.60),
                             .init(color: .black, location: 1.0)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
-                }
-                .overlay(alignment: .top) {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.0), location: 0.0),
-                            .init(color: .white.opacity(0.18), location: 0.5),
-                            .init(color: .white.opacity(0.0), location: 1.0)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(height: 1)
-                    .padding(.horizontal, 24)
-                    .opacity(0.65)
                 }
                 .ignoresSafeArea(edges: .bottom)
         }
@@ -535,31 +520,14 @@ struct PlayerScreenV2: View {
                     .frame(maxWidth: .infinity, minHeight: 56)
             }
             Button(action: togglePlayback) {
-                ZStack {
-                    Circle()
-                        .fill(.white.opacity(0.12))
-                        .frame(width: 66, height: 66)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(
-                                    LinearGradient(
-                                        colors: [.white.opacity(0.35), .white.opacity(0.08)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 1.2
-                                )
-                        )
-                        .shadow(
-                            color: (artworkPaletteColors.first ?? .white).opacity(player.isPlaying ? 0.35 : 0.0),
-                            radius: 12
-                        )
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 28, weight: .black))
-                        .offset(x: player.isPlaying ? 0 : 2)
-                }
-                .frame(maxWidth: .infinity, minHeight: 66)
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 32, weight: .black))
+                    .foregroundStyle(AG.ink)
+                    .frame(width: 66, height: 66)
+                    .contentShape(Circle())
             }
+            .glassCircle()
+            .frame(maxWidth: .infinity)
             .disabled(player.isLoading)
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
