@@ -114,7 +114,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
                     values[band] /= Float(counts[band])
                     displayValues[band] = max(values[band], displayValues[band] * 0.80)
                 }
-                MusicHapticsManager.shared.processRawBands(values)
+                MusicHapticsManager.core.processRawBands(values)
             }
         }
         let now = Date()

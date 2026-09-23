@@ -3,12 +3,8 @@ import CoreHaptics
 import AVFoundation
 import UIKit
 
-/// Apple Music-grade hardware haptics engine (Taptic Engine) driven by real-time audio beats, bass, and percussion.
-/// Delivers separate, discernible tactile channels for Kick, Bass/808, and Hi-Hat/Treble,
-/// synchronized with acoustic output latency for deaf and hard-of-hearing music perception (iOS 18+).
-final class MusicHapticsManager: @unchecked Sendable {
-    static let shared = MusicHapticsManager()
-
+/// Low-level nonisolated core engine for real-time audio haptic processing on audio threads.
+nonisolated final class MusicHapticsCore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.aura.musichaptics", qos: .userInteractive)
     private let stateLock = NSLock()
     private var engine: CHHapticEngine?
@@ -31,7 +27,7 @@ final class MusicHapticsManager: @unchecked Sendable {
     private var lastLatencyCheckTime: TimeInterval = 0
     private var cachedOutputDelay: TimeInterval = 0.025
 
-    private init() {
+    init() {
         queue.async { [weak self] in
             self?.prepareEngine()
         }
@@ -90,7 +86,7 @@ final class MusicHapticsManager: @unchecked Sendable {
     /// Analyzes an un-smoothed 32-band spectrum snapshot from the audio tap on EVERY buffer.
     /// Runs synchronously on the audio thread with minimal CPU cycles (pure arithmetic),
     /// and dispatches haptic triggers to the interactive queue.
-    nonisolated func processRawBands(_ values: [Float]) {
+    func processRawBands(_ values: [Float]) {
         guard values.count >= 32 else { return }
         guard UserDefaults.standard.bool(forKey: "settings.musicHaptics") else { return }
 
@@ -293,5 +289,28 @@ final class MusicHapticsManager: @unchecked Sendable {
             self?.engine?.stop()
             self?.isEngineRunning = false
         }
+    }
+}
+
+/// Apple Music-grade hardware haptics engine (Taptic Engine) driven by real-time audio beats, bass, and percussion.
+/// Delivers separate, discernible tactile channels for Kick, Bass/808, and Hi-Hat/Treble,
+/// synchronized with acoustic output latency for deaf and hard-of-hearing music perception (iOS 18+).
+@MainActor
+final class MusicHapticsManager {
+    static let shared = MusicHapticsManager()
+    nonisolated static let core = MusicHapticsCore()
+
+    private init() {}
+
+    func playPreview(intensity: MusicHapticsIntensity) {
+        Self.core.playPreview(intensity: intensity)
+    }
+
+    func stop() {
+        Self.core.stop()
+    }
+
+    func reset() {
+        Self.core.reset()
     }
 }
