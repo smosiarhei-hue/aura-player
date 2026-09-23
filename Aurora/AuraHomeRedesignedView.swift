@@ -28,8 +28,21 @@ struct AuraHomeRedesignedView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                MyWaveBackgroundVideoView(isPlaying: player.isPlaying)
-                    .ignoresSafeArea()
+                Color.black.ignoresSafeArea()
+
+                // Soft ambient blurred backdrop that adds depth and glow behind the whole screen
+                RadialGradient(
+                    colors: [
+                        Color.cyan.opacity(0.18),
+                        Color.purple.opacity(0.10),
+                        Color.black
+                    ],
+                    center: .top,
+                    startRadius: 40,
+                    endRadius: 550
+                )
+                .blur(radius: 60)
+                .ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 24) {
@@ -93,50 +106,73 @@ struct AuraHomeRedesignedView: View {
     }
 
     private var waveHero: some View {
-        VStack(spacing: 16) {
-            Spacer(minLength: 160)
-
-            Button(action: toggleWave) {
-                HStack(spacing: 14) {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 32, weight: .black))
-                    Text("Моя волна")
-                        .font(.system(size: 42, weight: .heavy, design: .rounded))
+        ZStack(alignment: .bottom) {
+            // Live Video Animation as the Hero Stage Background (scrolls naturally with the widget)
+            MyWaveBackgroundVideoView(isPlaying: player.isPlaying)
+                .frame(height: 520)
+                .clipped()
+                .overlay {
+                    // Soft gradient dissolve into pure OLED black
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black.opacity(0.40), location: 0.0),
+                            .init(color: .clear, location: 0.18),
+                            .init(color: .clear, location: 0.58),
+                            .init(color: .black.opacity(0.55), location: 0.82),
+                            .init(color: .black, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 }
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.65), radius: 18, y: 5)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(player.isPlaying ? "Пауза" : "Запустить Мою волну")
 
-            Button { showWaveSettings = true } label: {
-                Label("Настроить", systemImage: "slider.horizontal.3")
-                    .font(AG.text(.body, .semibold)).foregroundStyle(.white)
-                    .padding(.horizontal, 20).frame(height: 48)
-                    .glassCapsule(interactive: true)
-            }
-            .buttonStyle(.plain)
+            VStack(spacing: 16) {
+                Spacer()
 
-            if let track = player.displayTrack {
-                Button { showPlayer = true } label: {
-                    HStack(spacing: 11) {
-                        SmallArtwork(track: track, size: 42)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(track.title).font(AG.text(.subheadline, .bold)).lineLimit(1)
-                            Text(track.artist).font(AG.text(.caption)).foregroundStyle(.white.opacity(0.66)).lineLimit(1)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.up").font(.caption.bold())
+                Button(action: toggleWave) {
+                    HStack(spacing: 14) {
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 32, weight: .black))
+                        Text("Моя волна")
+                            .font(.system(size: 42, weight: .heavy, design: .rounded))
                     }
-                    .foregroundStyle(.white).padding(10)
-                    .background(.ultraThinMaterial.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.70), radius: 20, y: 6)
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
+                .accessibilityLabel(player.isPlaying ? "Пауза" : "Запустить Мою волну")
+
+                Button { showWaveSettings = true } label: {
+                    Label("Настроить", systemImage: "slider.horizontal.3")
+                        .font(AG.text(.body, .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 20).frame(height: 48)
+                        .glassCapsule(interactive: true)
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, 18)
+
+                if let track = player.displayTrack {
+                    Button { showPlayer = true } label: {
+                        HStack(spacing: 11) {
+                            SmallArtwork(track: track, size: 42)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(track.title).font(AG.text(.subheadline, .bold)).lineLimit(1)
+                                Text(track.artist).font(AG.text(.caption)).foregroundStyle(.white.opacity(0.66)).lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.up").font(.caption.bold())
+                        }
+                        .foregroundStyle(.white).padding(10)
+                        .background(.ultraThinMaterial.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 18)
+                }
+
+                Spacer().frame(height: 18)
             }
         }
-        .frame(minHeight: 440)
-        .padding(.horizontal, 14)
+        .frame(height: 520)
+        .frame(maxWidth: .infinity)
     }
 
     private var quickDestinations: some View {

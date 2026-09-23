@@ -348,7 +348,15 @@ struct PlayerScreenV2: View {
             }
             VStack(spacing: 14) {
                 if lyricsLoading { ProgressView().tint(.white); Text("Загрузка текста…").foregroundStyle(AG.inkMuted) }
-                else {
+                else if let lines = lyrics?.lines, !lines.isEmpty {
+                    let phrases = LyricPhrase.from(lines: lines)
+                    KineticLyricsView(
+                        phrases: phrases,
+                        currentTime: Binding(get: { player.progress }, set: { _ in }),
+                        isPlaying: player.isPlaying
+                    )
+                    .frame(maxWidth: width - 36, maxHeight: height - 90)
+                } else {
                     let pair = currentLyricsPair
                     Text(pair.current).font(AG.display(.largeTitle, .heavy)).foregroundStyle(AG.ink)
                         .multilineTextAlignment(.center).lineLimit(4).minimumScaleFactor(0.7).padding(.horizontal, 20)
