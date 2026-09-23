@@ -329,45 +329,90 @@ struct PlayerScreenV2: View {
     }
 
     private func lyricsOverlay(width: CGFloat, height: CGFloat) -> some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
+            // Atmospheric soft gradient backdrop (allows HDR radiant text to shine brightly)
             if !isFullScreenVideoShot {
-                Color.black.opacity(0.60)
+                LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0.35), location: 0.0),
+                        .init(color: .black.opacity(0.55), location: 0.65),
+                        .init(color: .black.opacity(0.72), location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             }
+
+            // Central Lyrics Display Stage
             VStack {
-                HStack {
-                    Spacer()
-                    Button { openModal(.lyrics) } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.80))
-                            .padding(14)
-                    }
-                    .accessibilityLabel("Открыть текст песни")
-                }
                 Spacer()
-            }
-            VStack(spacing: 14) {
-                if lyricsLoading { ProgressView().tint(.white); Text("Загрузка текста…").foregroundStyle(AG.inkMuted) }
-                else if let lines = lyrics?.lines, !lines.isEmpty {
+
+                if lyricsLoading {
+                    ProgressView().tint(.white)
+                    Text("Загрузка текста…").foregroundStyle(AG.inkMuted)
+                } else if let lines = lyrics?.lines, !lines.isEmpty {
                     let phrases = LyricPhrase.from(lines: lines)
                     KineticLyricsView(
                         phrases: phrases,
                         currentTime: Binding(get: { player.progress }, set: { _ in }),
                         isPlaying: player.isPlaying
                     )
-                    .frame(maxWidth: width - 36, maxHeight: height - 90)
+                    .frame(maxWidth: width - 28)
                 } else {
                     let pair = currentLyricsPair
-                    Text(pair.current).font(AG.display(.largeTitle, .heavy)).foregroundStyle(AG.ink)
-                        .multilineTextAlignment(.center).lineLimit(4).minimumScaleFactor(0.7).padding(.horizontal, 20)
-                        .shadow(color: .black.opacity(0.7), radius: 8, y: 2)
-                    if let next = pair.next {
-                        Text(next).font(AG.text(.body, .semibold)).foregroundStyle(AG.inkFaint).lineLimit(2)
-                            .shadow(color: .black.opacity(0.7), radius: 6, y: 1)
+                    VStack(spacing: 12) {
+                        Text(pair.current)
+                            .font(.system(size: 32, weight: .heavy, design: .default))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(nil)
+                            .minimumScaleFactor(0.75)
+                            .padding(.horizontal, 20)
+                            .shadow(color: .black.opacity(0.75), radius: 8, y: 2)
+                        if let next = pair.next {
+                            Text(next)
+                                .font(AG.text(.subheadline, .medium))
+                                .foregroundStyle(.white.opacity(0.65))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(nil)
+                                .minimumScaleFactor(0.8)
+                                .padding(.horizontal, 24)
+                        }
                     }
                 }
+
+                Spacer()
             }
-        }.frame(width: width, height: height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Ergonomic, thumb-friendly Fullscreen Expand Button at Bottom-Trailing
+            HStack {
+                Spacer()
+                Button {
+                    openModal(.lyrics)
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("На весь экран")
+                            .font(AG.text(.caption, .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .frame(height: 38)
+                    .background(.ultraThinMaterial.opacity(0.85), in: Capsule())
+                    .overlay(
+                        Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.8)
+                    )
+                    .shadow(color: .black.opacity(0.55), radius: 8, y: 3)
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
+                .accessibilityLabel("Развернуть текст на весь экран")
+                .padding(.bottom, 14)
+                .padding(.trailing, 16)
+            }
+        }
+        .frame(width: width, height: height)
     }
     private var currentLyricsPair: (current: String, next: String?) {
         guard let lines = lyrics?.lines, !lines.isEmpty else { return ("Слова песни", nil) }

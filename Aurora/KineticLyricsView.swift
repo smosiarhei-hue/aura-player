@@ -39,29 +39,26 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
     let words: [LyricWord]
     let isOutlined: Bool
     let glowIntensity: Double
-    let rotationDegrees: Double
 
     init(
         id: UUID = UUID(),
         timeRange: ClosedRange<TimeInterval>,
         words: [LyricWord],
         isOutlined: Bool = false,
-        glowIntensity: Double = 1.0,
-        rotationDegrees: Double = 0.0
+        glowIntensity: Double = 1.0
     ) {
         self.id = id
         self.timeRange = timeRange
         self.words = words
         self.isOutlined = isOutlined
         self.glowIntensity = glowIntensity
-        self.rotationDegrees = rotationDegrees
     }
 
     var text: String {
         words.map(\.text).joined(separator: " ")
     }
 
-    /// Converts standard lyrics lines into kinetic phrases with alternating accent styles.
+    /// Converts standard lyrics lines into kinetic phrases with adaptive accent styling.
     static func from(lines: [LyricsLine]) -> [LyricPhrase] {
         var phrases: [LyricPhrase] = []
         for (index, line) in lines.enumerated() {
@@ -81,29 +78,27 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
                 let wordDur = duration / Double(max(1, tokens.count))
                 words = tokens.enumerated().map { i, token in
                     let wStart = line.startTime + Double(i) * wordDur
-                    let isImp = token.count >= 6 || (i == 0 && index % 3 == 0)
+                    let isImp = token.count >= 6 || (i == tokens.count - 1 && token.count >= 4)
                     return LyricWord(text: token, startTime: wStart, duration: wordDur, isImpact: isImp)
                 }
             }
 
-            // Alternate outline accents and subtle rotation angle
-            let isOutlined = (index % 4 == 2)
-            let rotation = (index % 2 == 0 ? 1.0 : -1.0) * (Double(index % 3) * 2.2 + 1.0)
-            let glow = isOutlined ? 0.6 : 1.25
+            // Alternating outline accent style on selected punchlines
+            let isOutlined = (index % 5 == 3)
+            let glow = isOutlined ? 0.75 : 1.35
 
             phrases.append(LyricPhrase(
                 timeRange: line.startTime...end,
                 words: words,
                 isOutlined: isOutlined,
-                glowIntensity: glow,
-                rotationDegrees: rotation
+                glowIntensity: glow
             ))
         }
         return phrases
     }
 }
 
-// MARK: - 2. High-Performance Kinetic Typography Component (120 FPS ProMotion)
+// MARK: - 2. High-Performance Kinetic Typography Component (Calm Motion, True EDR/HDR)
 
 struct KineticLyricsView: View {
     let phrases: [LyricPhrase]
@@ -112,6 +107,7 @@ struct KineticLyricsView: View {
     var onPhraseChange: ((LyricPhrase) -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var spectrum = SpectrumAnalyzer.shared
 
     init(
         phrases: [LyricPhrase],
@@ -126,36 +122,42 @@ struct KineticLyricsView: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: !isPlaying)) { _ in
+        // High-precision timeline for smooth time synchronization
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { _ in
             let current = findCurrentPhrase(at: currentTime)
+
+            // Organic, calm breathing pulse under the beat (max 2.5% scale)
+            let kick = isPlaying && !reduceMotion ? Double(spectrum.kick) : 0
+            let bass = isPlaying && !reduceMotion ? Double(spectrum.bass) : 0
+            let beatEnergy = min(1.0, max(kick, bass * 0.72))
+            let beatScale: CGFloat = 1.0 + CGFloat(beatEnergy) * 0.024
+            let beatGlow: Double = 1.0 + beatEnergy * 0.45
 
             ZStack {
                 if let phrase = current {
                     KineticPhraseStage(
                         phrase: phrase,
                         currentTime: currentTime,
-                        reduceMotion: reduceMotion
+                        beatGlow: beatGlow
                     )
                     .id(phrase.id)
                     .transition(
                         .asymmetric(
-                            insertion: .modifier(
-                                active: PhraseTransitionModifier(progress: 0, rotation: phrase.rotationDegrees),
-                                identity: PhraseTransitionModifier(progress: 1, rotation: phrase.rotationDegrees)
-                            ),
-                            removal: .opacity.combined(with: .scale(scale: 0.94))
+                            insertion: .opacity.combined(with: .offset(y: 8)),
+                            removal: .opacity
                         )
                     )
                 } else {
                     Text("SONIVO")
-                        .font(.system(.title3, design: .rounded).weight(.bold))
+                        .font(.system(size: 26, weight: .heavy, design: .default))
                         .tracking(4.0)
-                        .foregroundStyle(.white.opacity(0.35))
+                        .foregroundStyle(Color.white.opacity(0.35))
                         .transition(.opacity)
                 }
             }
-            .animation(.spring(response: 0.32, dampingFraction: 0.68), value: current?.id)
-            .allowedDynamicRange(.high)
+            .scaleEffect(beatScale)
+            .animation(.linear(duration: 0.045), value: beatScale)
+            .animation(.easeInOut(duration: 0.35), value: current?.id)
             .onChange(of: current?.id) { _, _ in
                 if let current {
                     onPhraseChange?(current)
@@ -188,117 +190,197 @@ struct KineticLyricsView: View {
     }
 }
 
-// MARK: - 3. Phrase Stage with Spring Impact, Outline & EDR Neon Glow
+// MARK: - 3. Adaptive Two-Layer Phrase Stage with Apple EDR / HDR Lighting
 
 private struct KineticPhraseStage: View {
     let phrase: LyricPhrase
     let currentTime: TimeInterval
-    let reduceMotion: Bool
+    let beatGlow: Double
 
-    @State private var phase: ImpactPhase = .initial
+    // Apple EDR Colors: exposureAdjust + headroom exceeding SDR 1.0 onto OLED panel
+    private var hdrCoreWhite: Color {
+        Color.white.exposureAdjust(2.2).headroom(4.5)
+    }
 
-    private enum ImpactPhase: CaseIterable {
-        case initial
-        case impact
-        case settle
+    private var hdrBloomWhite: Color {
+        Color.white.exposureAdjust(1.85).headroom(3.5)
+    }
 
-        var scale: CGFloat {
-            switch self {
-            case .initial: return 0.85
-            case .impact: return 1.15
-            case .settle: return 1.0
-            }
-        }
+    private var hdrCyanAura: Color {
+        Color.cyan.exposureAdjust(1.65).headroom(2.8)
     }
 
     var body: some View {
         VStack(spacing: 8) {
             if phrase.isOutlined {
                 // Vector Stroked Outline Mode via Canvas
-                let font = UIFont.systemFont(ofSize: 38, weight: .heavy)
-                let vectorPath = textToPath(phrase.text.uppercased(), font: font)
-
-                Canvas { context, size in
-                    let pathBounds = vectorPath.boundingRect
-                    guard !pathBounds.isEmpty else { return }
-
-                    let scale = min(1.0, (size.width - 32) / max(1.0, pathBounds.width))
-                    let origin = CGPoint(
-                        x: (size.width - pathBounds.width * scale) / 2,
-                        y: (size.height - pathBounds.height * scale) / 2
-                    )
-
-                    let transform = CGAffineTransform(translationX: origin.x, y: origin.y)
-                        .scaledBy(x: scale, y: scale)
-                    let centeredPath = vectorPath.applying(transform)
-
-                    // Draw outer bloom stroke
-                    context.stroke(
-                        centeredPath,
-                        with: .color(.cyan.opacity(0.85)),
-                        style: StrokeStyle(lineWidth: 6, lineJoin: .round)
-                    )
-
-                    // Draw razor-sharp core stroke
-                    context.stroke(
-                        centeredPath,
-                        with: .color(.white),
-                        style: StrokeStyle(lineWidth: 2.2, lineJoin: .round)
-                    )
-                }
-                .frame(maxWidth: .infinity, minHeight: 90)
-                .shadow(color: .white.opacity(0.9), radius: 10)
-                .shadow(color: .cyan.opacity(0.6), radius: 24)
+                vectorOutlinedStage
             } else {
-                // Pure Solid White with Compound HDR Neon Glow
-                wordFlow(phrase: phrase)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-                    .shadow(color: .white.opacity(0.95), radius: 6, x: 0, y: 0)
-                    .shadow(color: .cyan.opacity(0.70 * phrase.glowIntensity), radius: 18, x: 0, y: 0)
-                    .shadow(color: .purple.opacity(0.45 * phrase.glowIntensity), radius: 38, x: 0, y: 0)
+                // Solid High-Dynamic-Range Two-Layer Typography
+                solidTwoLayerStage
             }
         }
-        .rotationEffect(.degrees(reduceMotion ? 0 : phrase.rotationDegrees))
-        .phaseAnimator(ImpactPhase.allCases, trigger: phrase.id) { content, currentPhase in
-            content
-                .scaleEffect(reduceMotion ? 1.0 : currentPhase.scale)
-        } animation: { currentPhase in
-            switch currentPhase {
-            case .initial: return .easeOut(duration: 0.04)
-            case .impact: return .spring(response: 0.18, dampingFraction: 0.55)
-            case .settle: return .spring(response: 0.28, dampingFraction: 0.72)
-            }
-        }
+        .frame(maxWidth: .infinity)
         .compositingGroup()
+        .drawingGroup(opaque: false, colorMode: .extendedLinear)
         .allowedDynamicRange(.high)
     }
 
+    // MARK: - Solid Two-Layer Kinetic Layout
+
     @ViewBuilder
-    private func wordFlow(phrase: LyricPhrase) -> some View {
-        let activeWord = phrase.words.first { $0.startTime <= currentTime && currentTime <= $0.endTime }
+    private var solidTwoLayerStage: some View {
+        let split = partitionWords(phrase.words)
 
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 10) {
-                ForEach(phrase.words) { word in
-                    let isCurrent = (word.id == activeWord?.id)
-                    let wordPast = currentTime > word.endTime
-
-                    Text(word.text.uppercased())
-                        .font(.system(size: 38, weight: .heavy, design: .default))
-                        .foregroundStyle(isCurrent ? .white : (wordPast ? .white.opacity(0.88) : .white.opacity(0.38)))
-                        .scaleEffect(isCurrent && word.isImpact ? 1.12 : (isCurrent ? 1.05 : 1.0))
-                        .brightness(isCurrent ? 0.25 : 0.0)
-                        .animation(.spring(response: 0.20, dampingFraction: 0.65), value: isCurrent)
+        VStack(spacing: 6) {
+            // Layer 1: Context words (slightly smaller, punchy headline)
+            if !split.context.isEmpty {
+                HStack(alignment: .center, spacing: 9) {
+                    ForEach(split.context) { word in
+                        wordView(word: word, fontSize: 21, weight: .bold)
+                    }
                 }
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+                .minimumScaleFactor(0.75)
             }
 
-            // Compact fallback for longer lyric phrases
-            Text(phrase.text.uppercased())
-                .font(.system(size: 32, weight: .heavy, design: .default))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
+            // Layer 2: Hero words (large, heavy, bold display grotesk)
+            HStack(alignment: .center, spacing: 11) {
+                ForEach(split.hero) { word in
+                    wordView(word: word, fontSize: split.context.isEmpty ? 38 : 36, weight: .heavy)
+                }
+            }
+            .multilineTextAlignment(.center)
+            .lineLimit(nil)
+            .minimumScaleFactor(0.70)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func wordView(word: LyricWord, fontSize: CGFloat, weight: Font.Weight) -> some View {
+        let isCurrent = (word.startTime <= currentTime && currentTime <= word.endTime)
+        let isPast = currentTime > word.endTime
+
+        // Triple-pass EDR additive glow for the active singing word
+        ZStack {
+            // Ambient Aura Pass
+            Text(word.text.uppercased())
+                .font(.system(size: fontSize, weight: weight, design: .default))
+                .foregroundStyle(hdrCyanAura.opacity(isCurrent ? (0.65 * beatGlow * phrase.glowIntensity) : 0.0))
+                .blur(radius: isCurrent ? 20 : 0)
+                .blendMode(.plusLighter)
+
+            // Razor Bloom Pass
+            Text(word.text.uppercased())
+                .font(.system(size: fontSize, weight: weight, design: .default))
+                .foregroundStyle(hdrBloomWhite.opacity(isCurrent ? (0.85 * beatGlow) : 0.0))
+                .blur(radius: isCurrent ? 6 : 0)
+                .blendMode(.plusLighter)
+
+            // Sharp Solid Core Pass
+            Text(word.text.uppercased())
+                .font(.system(size: fontSize, weight: weight, design: .default))
+                .foregroundStyle(
+                    isCurrent
+                        ? hdrCoreWhite
+                        : (isPast ? Color.white.opacity(0.92) : Color.white.opacity(0.60))
+                )
+        }
+        .brightness(isCurrent ? 0.15 : 0.0)
+        .animation(.easeInOut(duration: 0.22), value: isCurrent)
+    }
+
+    /// Partitions words into context intro and hero punchline
+    private func partitionWords(_ words: [LyricWord]) -> (context: [LyricWord], hero: [LyricWord]) {
+        guard words.count > 2 else {
+            return ([], words)
+        }
+
+        // Check if there is an explicit impact/climax word
+        if let impactIdx = words.firstIndex(where: { $0.isImpact }), impactIdx > 0 {
+            return (Array(words.prefix(impactIdx)), Array(words.suffix(from: impactIdx)))
+        }
+
+        // Split roughly into 2 balanced layers
+        let splitPoint = max(1, words.count / 2)
+        return (Array(words.prefix(splitPoint)), Array(words.suffix(from: splitPoint)))
+    }
+
+    // MARK: - Vector Outline Stage via CoreText & Canvas
+
+    @ViewBuilder
+    private var vectorOutlinedStage: some View {
+        let split = partitionWords(phrase.words)
+
+        VStack(spacing: 6) {
+            if !split.context.isEmpty {
+                let contextText = split.context.map(\.text).joined(separator: " ").uppercased()
+                CanvasOutlineText(
+                    text: contextText,
+                    fontSize: 22,
+                    strokeColor: hdrCyanAura,
+                    coreColor: hdrCoreWhite,
+                    lineWidth: 1.8
+                )
+                .frame(height: 34)
+            }
+
+            let heroText = split.hero.map(\.text).joined(separator: " ").uppercased()
+            CanvasOutlineText(
+                text: heroText,
+                fontSize: split.context.isEmpty ? 38 : 36,
+                strokeColor: hdrCyanAura,
+                coreColor: hdrCoreWhite,
+                lineWidth: 2.2
+            )
+            .frame(height: 52)
+        }
+        .padding(.horizontal, 16)
+        .shadow(color: hdrCyanAura.opacity(0.60 * beatGlow), radius: 18)
+    }
+}
+
+// MARK: - 4. CoreText Vector Stroked Canvas Renderer
+
+private struct CanvasOutlineText: View {
+    let text: String
+    let fontSize: CGFloat
+    let strokeColor: Color
+    let coreColor: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let font = UIFont.systemFont(ofSize: fontSize, weight: .heavy)
+            let vectorPath = textToPath(text, font: font)
+            let pathBounds = vectorPath.boundingRect
+            guard !pathBounds.isEmpty else { return }
+
+            let scale = min(1.0, (size.width - 24) / max(1.0, pathBounds.width))
+            let origin = CGPoint(
+                x: (size.width - pathBounds.width * scale) / 2,
+                y: (size.height - pathBounds.height * scale) / 2
+            )
+
+            let transform = CGAffineTransform(translationX: origin.x, y: origin.y)
+                .scaledBy(x: scale, y: scale)
+            let centeredPath = vectorPath.applying(transform)
+
+            // Outer Bloom Stroke
+            context.stroke(
+                centeredPath,
+                with: .color(strokeColor.opacity(0.85)),
+                style: StrokeStyle(lineWidth: lineWidth * 2.5, lineJoin: .round)
+            )
+
+            // Core Sharp Stroke
+            context.stroke(
+                centeredPath,
+                with: .color(coreColor),
+                style: StrokeStyle(lineWidth: lineWidth, lineJoin: .round)
+            )
         }
     }
 
@@ -339,20 +421,6 @@ private struct KineticPhraseStage: View {
     }
 }
 
-// MARK: - 4. Dynamic Transition Modifier (±Angle, Vertical Shift, Opacity)
-
-private struct PhraseTransitionModifier: ViewModifier {
-    let progress: Double
-    let rotation: Double
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(progress)
-            .offset(y: (1.0 - progress) * -16.0)
-            .rotationEffect(.degrees((1.0 - progress) * rotation))
-    }
-}
-
 // MARK: - 5. Standalone Interactive Simulator & Preview
 
 struct KineticLyricsDemoSimulatorView: View {
@@ -364,37 +432,34 @@ struct KineticLyricsDemoSimulatorView: View {
         LyricPhrase(
             timeRange: 0.0...3.5,
             words: [
-                LyricWord(text: "FEEL", startTime: 0.0, duration: 0.7, isImpact: true),
+                LyricWord(text: "FEEL", startTime: 0.0, duration: 0.7, isImpact: false),
                 LyricWord(text: "THE", startTime: 0.7, duration: 0.4),
                 LyricWord(text: "BASSLINE", startTime: 1.1, duration: 1.2, isImpact: true),
                 LyricWord(text: "DROP", startTime: 2.3, duration: 1.0, isImpact: true)
             ],
             isOutlined: false,
-            glowIntensity: 1.4,
-            rotationDegrees: -3.5
+            glowIntensity: 1.4
         ),
         LyricPhrase(
             timeRange: 3.5...7.0,
             words: [
-                LyricWord(text: "GLOWING", startTime: 3.5, duration: 0.9, isImpact: true),
+                LyricWord(text: "GLOWING", startTime: 3.5, duration: 0.9, isImpact: false),
                 LyricWord(text: "IN", startTime: 4.4, duration: 0.4),
                 LyricWord(text: "THE", startTime: 4.8, duration: 0.4),
                 LyricWord(text: "DARK", startTime: 5.2, duration: 1.5, isImpact: true)
             ],
             isOutlined: true,
-            glowIntensity: 0.8,
-            rotationDegrees: 4.0
+            glowIntensity: 0.8
         ),
         LyricPhrase(
             timeRange: 7.0...11.0,
             words: [
-                LyricWord(text: "PURE", startTime: 7.0, duration: 0.8, isImpact: true),
+                LyricWord(text: "PURE", startTime: 7.0, duration: 0.8, isImpact: false),
                 LyricWord(text: "NEON", startTime: 7.8, duration: 0.9, isImpact: true),
                 LyricWord(text: "ENERGY", startTime: 8.7, duration: 2.0, isImpact: true)
             ],
             isOutlined: false,
-            glowIntensity: 1.6,
-            rotationDegrees: -2.0
+            glowIntensity: 1.6
         )
     ]
 
