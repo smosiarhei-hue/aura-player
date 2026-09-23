@@ -58,15 +58,26 @@ def configuration(env):
             and re.fullmatch(r"[0-9]+", run)):
         raise DeliveryError("invalid_context")
     build_url = "https://github.com/" + repository + "/actions/runs/" + run
-    caption = ("Sonivo — АКТУАЛЬНАЯ MAIN IPA без подписи.\n"
-               "Содержит последние изменения основной ветки.\n"
-               "Для установки требуется подпись.\n"
-               f"Коммит main: {sha[:7]}\n"
-               "Сборка: " + build_url)
+    is_signed = env.get("IPA_IS_SIGNED", "").lower() == "true"
+    version = env.get("MARKETING_VERSION", "1.1.0")
+    build_num = env.get("BUILD_NUMBER", "")
+    if is_signed:
+        caption = (f"🚀 Sonivo — ПОДПИСАННАЯ СБОРКА для твоего iPhone!\n"
+                   f"Версия: {version} (сборка #{build_num})\n"
+                   f"Коммит: {sha[:7]}\n"
+                   f"Сертификат разработчика: активен до 05.12.2026\n"
+                   f"✅ Установка готова (без переподписаний!)\n"
+                   f"Сборка: {build_url}")
+    else:
+        caption = ("Sonivo — АКТУАЛЬНАЯ MAIN IPA без подписи.\n"
+                   "Содержит последние изменения основной ветки.\n"
+                   "Для установки требуется подпись.\n"
+                   f"Коммит main: {sha[:7]}\n"
+                   "Сборка: " + build_url)
     return token, chat, caption
 
 
-def multipart(chat, caption, data):
+def multipart(chat, caption, data, filename="Sonivo.ipa"):
     boundary = "Sonivo" + secrets.token_hex(24)
     chunks = []
     for name, value in (("chat_id", chat), ("caption", caption)):
@@ -74,7 +85,7 @@ def multipart(chat, caption, data):
                        f'name="{name}"\r\n\r\n{value}\r\n').encode("utf-8"))
     chunks.extend([
         (f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; "
-         'filename="Sonivo-unsigned.ipa"\r\nContent-Type: application/octet-stream\r\n\r\n').encode(),
+         f'filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode(),
         data,
         f"\r\n--{boundary}--\r\n".encode(),
     ])
@@ -130,7 +141,7 @@ def deliver(env, path, transport=post_document):
         raise DeliveryError("missing_ipa")
     if path.stat().st_size > MAX_FILE_BYTES:
         raise DeliveryError("ipa_too_large")
-    body, content_type = multipart(chat, caption, path.read_bytes())
+    body, content_type = multipart(chat, caption, path.read_bytes(), filename=path.name)
     try:
         status, raw = transport(token, body, content_type)
     except Exception:
@@ -152,7 +163,13 @@ def record_status(code, env):
 
 def main(env=None, path=None, transport=post_document):
     env = os.environ if env is None else env
-    path = Path("Sonivo-unsigned.ipa") if path is None else path
+    if path is None:
+        if Path("Sonivo.ipa").is_file():
+            path = Path("Sonivo.ipa")
+        elif Path("Sonivo-unsigned.ipa").is_file():
+            path = Path("Sonivo-unsigned.ipa")
+        else:
+            path = Path("Sonivo.ipa")
     try:
         deliver(env, path, transport)
         code = "success"
