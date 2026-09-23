@@ -30,8 +30,8 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Test IPA delivery safety
-        run: python3 -m unittest discover -s .github/scripts -p 'test_send_ipa_telegram.py' -v
+      - name: Test scripts and IPA delivery safety
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
       - name: Compute version
         run: |
@@ -98,6 +98,13 @@ jobs:
 
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          # Discover the exact signing identity imported
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -n 1 | awk -F '"' '{print $2}')
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            SIGNING_IDENTITY="iPhone Distribution"
+          fi
 
           PROV_FILE="$RUNNER_TEMP/profile.mobileprovision"
           echo -n "$PROV_BASE64" | tr -d '\r\n' | base64 --decode > "$PROV_FILE"
@@ -112,14 +119,17 @@ jobs:
           cp "$PROV_FILE" ~/Library/MobileDevice/Provisioning\ Profiles/${UUID}.mobileprovision
 
           echo "Configured Profile: UUID=$UUID, Team=$TEAM_ID, Bundle=$BUNDLE_ID"
+          echo "Discovered Signing Identity: $SIGNING_IDENTITY"
           echo "PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
           echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
           echo "BUNDLE_ID=$BUNDLE_ID" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "PROV_FILE=$PROV_FILE" >> "$GITHUB_ENV"
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
-          # Patch project.yml to match profile Bundle ID and Team ID
-          sed -i '' -E "s/PRODUCT_BUNDLE_IDENTIFIER: .*/PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}/" project.yml
-          sed -i '' -E "s/DEVELOPMENT_TEAM: .*/DEVELOPMENT_TEAM: \"${TEAM_ID}\"/" project.yml
+          # Patch project.yml to match profile Bundle ID, Team ID and enable code signing
+          python3 .github/scripts/patch_project_signing.py "$BUNDLE_ID" "$TEAM_ID" "$SIGNING_IDENTITY" "$UUID" project.yml
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -144,7 +154,7 @@ jobs:
               CODE_SIGN_STYLE=Manual \
               DEVELOPMENT_TEAM="${TEAM_ID}" \
               PROVISIONING_PROFILE_SPECIFIER="${PROFILE_UUID}" \
-              CODE_SIGN_IDENTITY="iPhone Distribution" \
+              CODE_SIGN_IDENTITY="${SIGNING_IDENTITY}" \
               OTHER_CODE_SIGN_FLAGS="--keychain ${KEYCHAIN_PATH}" \
               build 2>&1 | tee build.log
           else
@@ -183,16 +193,52 @@ jobs:
         run: |
           APP=$(find derived/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
           test -n "$APP"
-          mkdir -p Payload
-          cp -R "$APP" Payload/
+          echo "Found app: $APP"
+
           if [ "$HAS_SIGNING" = "true" ]; then
-            echo "Verifying code signature:"
-            codesign -dvvv "$APP" || true
+            echo "==> Embedding provisioning profile into app bundle..."
+            cp "$PROV_FILE" "$APP/embedded.mobileprovision"
+
+            echo "==> Extracting entitlements from provisioning profile..."
+            security cms -D -i "$PROV_FILE" > "$RUNNER_TEMP/profile.plist"
+            /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$RUNNER_TEMP/profile.plist" > "$RUNNER_TEMP/entitlements.plist"
+
+            echo "Extracted entitlements:"
+            cat "$RUNNER_TEMP/entitlements.plist"
+
+            echo "==> Unlocking keychain before codesigning..."
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+            echo "==> Signing any embedded frameworks or dylibs..."
+            if [ -d "$APP/Frameworks" ]; then
+              find "$APP/Frameworks" -mindepth 1 -maxdepth 2 \( -name "*.dylib" -o -name "*.framework" \) | while read -r item; do
+                echo "Signing: $item"
+                codesign --force --sign "$SIGNING_IDENTITY" --keychain "$KEYCHAIN_PATH" --timestamp=none "$item" || true
+              done
+            fi
+
+            echo "==> Signing app bundle with entitlements..."
+            codesign --force --sign "$SIGNING_IDENTITY" \
+              --keychain "$KEYCHAIN_PATH" \
+              --entitlements "$RUNNER_TEMP/entitlements.plist" \
+              --timestamp=none \
+              --generate-entitlement-der \
+              "$APP"
+
+            echo "==> Verifying signature:"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -dvvv "$APP"
+
+            mkdir -p Payload
+            cp -R "$APP" Payload/
             zip -qry Sonivo.ipa Payload
             cp Sonivo.ipa Sonivo-unsigned.ipa
             echo "IPA_IS_SIGNED=true" >> "$GITHUB_ENV"
+            echo "SUCCESS: Signed IPA packaged."
             ls -lh Sonivo.ipa
           else
+            mkdir -p Payload
+            cp -R "$APP" Payload/
             zip -qry Sonivo-unsigned.ipa Payload
             cp Sonivo-unsigned.ipa Sonivo.ipa
             echo "IPA_IS_SIGNED=false" >> "$GITHUB_ENV"
@@ -211,7 +257,7 @@ jobs:
       - name: Send current main IPA to configured Telegram chat
         if: >-
           github.repository == 'smosiarhei-hue/aura-player' &&
-          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/feature/modern-my-wave-home' || github.event_name == 'workflow_dispatch')
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.head_ref == 'feature/modern-my-wave-home' || github.ref == 'refs/heads/feature/modern-my-wave-home' || github.event_name == 'workflow_dispatch')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
