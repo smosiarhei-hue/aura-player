@@ -1,6 +1,12 @@
 import Foundation
 
 private struct TrackWaveCandidate {
+    let track: Track
+    let key: String
+    var score: Double
+}
+
+private struct ArtistWaveCandidate {
     let item: YandexMusicService.YMTrackItem
     var score: Double
 }
@@ -31,15 +37,12 @@ extension YandexMusicService {
         let normalizedSeedArtists = Set(
             seed.artist
                 .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).lowercased() }
         )
 
-        func add(_ item: YMTrackItem, baseScore: Double, rank: Int = 0) {
-            guard item.available != false else { return }
-            if let seedID, item.id == seedID { return }
-            if isRecentlyPlayed(ymTrackId: item.id) { return }
-
-            let candidateTrack = convertToTrack(item)
+        func addTrack(_ candidateTrack: Track, key: String, baseScore: Double, rank: Int = 0) {
+            if let seedID, key == seedID { return }
+            if isRecentlyPlayed(ymTrackId: key) { return }
             if UserTasteEngine.shared.isDisliked(track: candidateTrack) { return }
 
             // Анализируем реальный вайб кандидата
@@ -54,22 +57,29 @@ extension YandexMusicService {
 
             // Никаких бонусов тому же артисту или альбому (убираем монополию)!
             // Небольшая поправка на длительность (близость по форме композиции)
-            if seed.duration > 0, item.duration > 0 {
-                let ratio = abs(seed.duration - item.duration) / max(seed.duration, item.duration)
+            if seed.duration > 0, candidateTrack.duration > 0 {
+                let ratio = abs(seed.duration - candidateTrack.duration) / max(seed.duration, candidateTrack.duration)
                 score += max(0, 6 * (1 - ratio))
             }
 
             // Рандомизация порядка внутри близких по вайбу треков
             score += Double.random(in: 0...3.5)
 
-            if let existing = candidates[item.id] {
-                candidates[item.id] = TrackWaveCandidate(
-                    item: item,
+            if let existing = candidates[key] {
+                candidates[key] = TrackWaveCandidate(
+                    track: candidateTrack,
+                    key: key,
                     score: max(existing.score, score) + 3
                 )
             } else {
-                candidates[item.id] = TrackWaveCandidate(item: item, score: score)
+                candidates[key] = TrackWaveCandidate(track: candidateTrack, key: key, score: score)
             }
+        }
+
+        func add(_ item: YMTrackItem, baseScore: Double, rank: Int = 0) {
+            guard item.available != false else { return }
+            let track = convertToTrack(item)
+            addTrack(track, key: item.id, baseScore: baseScore, rank: rank)
         }
 
         // 1. Нативное радио трека — алгоритмические рекомендации Яндекса для этого трека
@@ -132,23 +142,14 @@ extension YandexMusicService {
         // 5. Локальная библиотека и избранное с подходящим вайбом (similarity >= 0.70)
         let matchingFavorites = LibraryStore.shared.favorites.filter { fav in
             let vec = MoodRadioEngine.shared.extractVector(for: fav)
+            let favKey = PlayerCore.yandexTrackID(from: fav)
             return vec.cosineSimilarity(to: seedVector) >= 0.70 &&
-                   !isRecentlyPlayed(ymTrackId: PlayerCore.yandexTrackID(from: fav)) &&
+                   !isRecentlyPlayed(ymTrackId: favKey) &&
                    !UserTasteEngine.shared.isDisliked(track: fav)
         }
         for (index, fav) in matchingFavorites.shuffled().prefix(10).enumerated() {
-            if let ymId = Self.ymId(fromFileName: fav.fileName) ?? fav.streamUrlString?.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "") {
-                let fakeItem = YMTrackItem(
-                    id: ymId,
-                    title: fav.title,
-                    available: true,
-                    artists: [YMTrackItem.YMArtist(id: nil, name: fav.artist)],
-                    albums: nil,
-                    durationMs: Int(fav.duration * 1000),
-                    ogImage: fav.artworkUrl?.absoluteString
-                )
-                add(fakeItem, baseScore: 92, rank: index)
-            }
+            let key = PlayerCore.yandexTrackID(from: fav).isEmpty ? fav.id.uuidString : PlayerCore.yandexTrackID(from: fav)
+            addTrack(fav, key: key, baseScore: 92, rank: index)
         }
 
         // 6. Gemini semantic rerank (если настроен)
@@ -156,11 +157,11 @@ extension YandexMusicService {
         if AIRankerService.shared.isConfigured {
             let aiCandidates = Array(candidates.values.prefix(60)).map {
                 AIRankerService.Candidate(
-                    id: $0.item.id,
-                    title: $0.item.title,
-                    artist: $0.item.artistName,
-                    album: $0.item.albumName,
-                    duration: $0.item.duration
+                    id: $0.key,
+                    title: $0.track.title,
+                    artist: $0.track.artist,
+                    album: $0.track.album,
+                    duration: $0.track.duration
                 )
             }
             if let ranking = await AIRankerService.shared.rank(
@@ -183,11 +184,11 @@ extension YandexMusicService {
         if aiPositions.isEmpty {
             sorted = candidates.values.sorted { left, right in
                 if left.score != right.score { return left.score > right.score }
-                return left.item.id < right.item.id
+                return left.key < right.key
             }
         } else {
             sorted = candidates.values.sorted { left, right in
-                switch (aiPositions[left.item.id], aiPositions[right.item.id]) {
+                switch (aiPositions[left.key], aiPositions[right.key]) {
                 case let (leftPosition?, rightPosition?):
                     return leftPosition < rightPosition
                 case (.some, nil):
@@ -196,7 +197,7 @@ extension YandexMusicService {
                     return false
                 default:
                     if left.score != right.score { return left.score > right.score }
-                    return left.item.id < right.item.id
+                    return left.key < right.key
                 }
             }
         }
@@ -209,9 +210,8 @@ extension YandexMusicService {
         var seedArtistIncluded = false
 
         for candidate in sorted {
-            let primaryArtist = candidate.item.artists?.first?.name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "unknown"
-            let candidateArtistNames = Set((candidate.item.artists ?? []).compactMap { $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-            let isSeedArtist = !normalizedSeedArtists.isDisjoint(with: candidateArtistNames)
+            let primaryArtist = candidate.track.artist.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).lowercased()
+            let isSeedArtist = normalizedSeedArtists.contains(primaryArtist)
 
             if isSeedArtist {
                 if seedArtistIncluded { continue }
@@ -221,7 +221,7 @@ extension YandexMusicService {
                 artistCounts[primaryArtist, default: 0] += 1
             }
 
-            result.append(convertToTrack(candidate.item))
+            result.append(candidate.track)
             if result.count >= target { break }
         }
 
@@ -234,7 +234,7 @@ extension YandexMusicService {
     /// из похожих исполнителей с тем же вайбом, жанром и настроением без монотонных повторов.
     func buildArtistWave(artistId: String, target: Int = 45) async -> [Track] {
         beginStationSession("artist:\(artistId)")
-        var candidates: [TrackWaveCandidate] = []
+        var candidates: [ArtistWaveCandidate] = []
         var seen = Set<String>()
         var artistCounts: [String: Int] = [:]
 
@@ -243,19 +243,19 @@ extension YandexMusicService {
         for (idx, item) in rotor.enumerated() {
             guard !seen.contains(item.id), !isRecentlyPlayed(ymTrackId: item.id) else { continue }
             seen.insert(item.id)
-            candidates.append(TrackWaveCandidate(item: item, score: 120.0 - Double(idx) * 0.5))
+            candidates.append(ArtistWaveCandidate(item: item, score: 120.0 - Double(idx) * 0.5))
         }
 
         // 2. Каталог артиста и похожие музыканты
         var targetArtistName: String?
         if let profile = try? await getArtistFixed(artistId: artistId) {
-            targetArtistName = profile.artist.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            targetArtistName = profile.name.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).lowercased()
 
             // Добавляем 2 визитные карточки артиста в начало
             for (idx, item) in profile.popularTracks.prefix(2).enumerated() {
                 if !seen.contains(item.id) {
                     seen.insert(item.id)
-                    candidates.append(TrackWaveCandidate(item: item, score: 130.0 - Double(idx) * 2.0))
+                    candidates.append(ArtistWaveCandidate(item: item, score: 130.0 - Double(idx) * 2.0))
                 }
             }
 
@@ -265,7 +265,7 @@ extension YandexMusicService {
                 for (idx, item) in tracks.prefix(3).enumerated() {
                     guard !seen.contains(item.id), !isRecentlyPlayed(ymTrackId: item.id) else { continue }
                     seen.insert(item.id)
-                    candidates.append(TrackWaveCandidate(item: item, score: 110.0 - Double(idx) * 1.5))
+                    candidates.append(ArtistWaveCandidate(item: item, score: 110.0 - Double(idx) * 1.5))
                 }
             }
         }
@@ -274,7 +274,7 @@ extension YandexMusicService {
         candidates.sort { $0.score > $1.score }
         var result: [Track] = []
         for c in candidates {
-            let primary = c.item.artists?.first?.name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "unknown"
+            let primary = c.item.artists?.first?.name?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).lowercased() ?? "unknown"
             let maxAllowed = (primary == targetArtistName) ? 2 : 1
             if artistCounts[primary, default: 0] < maxAllowed {
                 artistCounts[primary, default: 0] += 1
