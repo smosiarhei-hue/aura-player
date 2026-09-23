@@ -78,6 +78,15 @@ jobs:
           path: build.log
           if-no-files-found: warn
 
+      - name: Expose compiler errors
+        if: failure()
+        shell: bash
+        run: |
+          ERRORS=$(grep -E "(^|[[:space:]])[^[:space:]]+\.swift:[0-9]+:[0-9]+: error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n')
+          if [ -z "$ERRORS" ]; then ERRORS=$(grep -E "error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n'); fi
+          echo "::error title=Swift compiler errors::$ERRORS"
+          exit 1
+
       - name: Package unsigned IPA
         run: |
           APP=$(find derived/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)

@@ -1,11 +1,12 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Fluid Aura Wave (Organic SDF Morphing & Chromatic Dispersion Visualizer)
-// Музыкально-чувствительная волна с HDR Glow бликами, каустикой и хроматической дисперсией
-
+/// Non-rotating fluid field inspired by the My Wave reference.
+/// Slow organic drift is combined with kick and 30...120 Hz bass energy.
 struct FluidWaveView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("visuals.hdr.enabled") private var hdrEnabled = true
+    @AppStorage("visuals.waveBeat.enabled") private var beatEnabled = true
     @State private var analyzer = SpectrumAnalyzer.shared
 
     let colors: [Color]
@@ -15,109 +16,122 @@ struct FluidWaveView: View {
     var isBackgroundMode: Bool
     var isPlaying: Bool
 
-    @State private var touchScale: CGFloat = 1.0
-
-    init(
-        colors: [Color] = [.pink, .orange, .yellow],
-        bass: Float? = nil,
-        mid: Float? = nil,
-        high: Float? = nil,
-        isBackgroundMode: Bool = false,
-        isPlaying: Bool = true
-    ) {
+    init(colors: [Color] = [.pink, .purple, .orange], bass: Float? = nil,
+         mid: Float? = nil, high: Float? = nil,
+         isBackgroundMode: Bool = false, isPlaying: Bool = true) {
         self.colors = colors
-        self.bassIntensity = bass
-        self.midIntensity = mid
-        self.highIntensity = high
+        bassIntensity = bass
+        midIntensity = mid
+        highIntensity = high
         self.isBackgroundMode = isBackgroundMode
         self.isPlaying = isPlaying
     }
 
-    private var effectiveBass: Float {
-        bassIntensity ?? max(analyzer.bass, analyzer.streamLevel * 0.95)
+    private var interval: TimeInterval {
+        1 / Double(max(UIScreen.main.maximumFramesPerSecond, 60))
     }
 
-    private var effectiveMids: Float {
-        midIntensity ?? max(analyzer.mids, analyzer.streamLevel * 0.70)
-    }
-
-    private var effectiveHighs: Float {
-        highIntensity ?? max(analyzer.highs, analyzer.streamLevel * 0.50)
-    }
-
-    private var displayAnimationInterval: TimeInterval {
-        let maximumFramesPerSecond = max(UIScreen.main.maximumFramesPerSecond, 60)
-        return 1.0 / Double(maximumFramesPerSecond)
-    }
-
-    public var body: some View {
-        TimelineView(.animation(minimumInterval: displayAnimationInterval, paused: reduceMotion || !isPlaying)) { timeline in
-            let elapsedTime = Float(timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1000))
-
+    var body: some View {
+        TimelineView(.animation(minimumInterval: interval,
+                                paused: reduceMotion || !isPlaying)) { timeline in
             GeometryReader { proxy in
-                let c1 = colors.indices.contains(0) ? colors[0] : AG.flame
-                let c2 = colors.indices.contains(1) ? colors[1] : AG.ember
-                let c3 = colors.indices.contains(2) ? colors[2] : AG.amber
-
-                let bass = isPlaying ? effectiveBass : 0
-                let mids = isPlaying ? effectiveMids : 0
-                let highs = isPlaying ? effectiveHighs : 0
-                let bassPulse = 1.0 + CGFloat(bass) * 0.14
-
-                if reduceMotion {
-                    // Fallback for accessibility reduce motion
-                    ZStack {
-                        RadialGradient(
-                            colors: [c1.opacity(0.85), c2.opacity(0.40), Color.clear],
-                            center: .center,
-                            startRadius: 20,
-                            endRadius: min(proxy.size.width, proxy.size.height) * 0.45
-                        )
-                    }
-                } else {
-                    Canvas { context, size in
-                        let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                        let baseRadius = min(size.width, size.height) * 0.24
-                        let pulse = 1 + CGFloat(bass) * 0.16
-                        let drift = CGFloat(sin(elapsedTime * 0.8)) * size.width * 0.06
-                        let layers: [(Color, CGFloat, CGFloat)] = [
-                            (c1, 1.55, drift),
-                            (c2, 1.20, -drift * 0.7),
-                            (c3, 0.88, drift * 0.45)
-                        ]
-
-                        for (index, layer) in layers.enumerated() {
-                            let phase = elapsedTime * (0.45 + Float(index) * 0.12)
-                            let offset = CGPoint(
-                                x: layer.2 + CGFloat(cos(phase)) * size.width * 0.08,
-                                y: CGFloat(sin(phase * 1.17)) * size.height * 0.08
-                            )
-                            let radius = baseRadius * layer.1 * pulse
-                            let rect = CGRect(
-                                x: center.x + offset.x - radius,
-                                y: center.y + offset.y - radius,
-                                width: radius * 2,
-                                height: radius * 2
-                            )
-                            context.fill(
-                                Path(ellipseIn: rect),
-                                with: .radialGradient(
-                                    Gradient(colors: [layer.0.opacity(0.92), layer.0.opacity(0)]),
-                                    center: CGPoint(x: rect.midX, y: rect.midY),
-                                    startRadius: 0,
-                                    endRadius: radius
-                                )
-                            )
-                        }
-                    }
-                    .blur(radius: isBackgroundMode ? 24 : 14)
-                    .opacity(0.82 + Double(highs) * 0.12)
-                    .blendMode(.plusLighter)
-                    .scaleEffect(bassPulse * touchScale)
-                    .animation(AG.fastSpring, value: bass)
-                }
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                let kick = isPlaying && beatEnabled ? Double(analyzer.kick) : 0
+                let bass = isPlaying && beatEnabled
+                    ? Double(bassIntensity ?? analyzer.bass) : 0
+                let energy = min(1, max(kick, bass * 0.72))
+                fluidLayer(size: proxy.size, time: time, energy: energy)
             }
         }
+        .drawingGroup(opaque: false, colorMode: .extendedLinear)
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func fluidLayer(size: CGSize, time: TimeInterval,
+                            energy: Double) -> some View {
+        let unit = min(size.width, size.height)
+        let pulse = 1 + CGFloat(energy) * 0.095
+        return ZStack {
+            ForEach(0..<5, id: \.self) { index in
+                let point = blobPoint(index: index, time: time, size: size)
+                let diameter = unit * blobScale(index) * pulse
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [palette[index].opacity(0.98),
+                                 palette[index].opacity(0.58), .clear],
+                        center: .center, startRadius: 0, endRadius: diameter * 0.52))
+                    .frame(width: diameter, height: diameter * 0.82)
+                    .position(point)
+            }
+
+            if hdrEnabled {
+                ForEach(0..<4, id: \.self) { index in
+                    let point = highlightPoint(index: index, time: time, size: size)
+                    let diameter = unit * (0.22 + CGFloat(index) * 0.012) *
+                        (1 + CGFloat(energy) * 0.22)
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [
+                                palette[index]
+                                    .exposureAdjust(1.2 + energy * 1.35)
+                                    .headroom(2.2 + energy * 2.8)
+                                    .opacity(0.25 + energy * 0.62),
+                                palette[index].opacity(0.08 + energy * 0.22),
+                                .clear
+                            ], center: .center, startRadius: 0,
+                            endRadius: diameter * 0.52))
+                        .frame(width: diameter, height: diameter)
+                        .position(point)
+                        .blendMode(.plusLighter)
+                }
+                .blur(radius: 7 + CGFloat(energy) * 10)
+            }
+        }
+        .blur(radius: isBackgroundMode ? 30 : 16)
+        .scaleEffect(pulse)
+        .opacity(0.97)
+        .animation(.linear(duration: 0.045), value: energy)
+    }
+
+    private func blobPoint(index: Int, time: TimeInterval,
+                           size: CGSize) -> CGPoint {
+        let anchors: [(CGFloat, CGFloat)] = [
+            (0.30, 0.34), (0.68, 0.36), (0.36, 0.65),
+            (0.72, 0.66), (0.51, 0.76)
+        ]
+        let anchor = anchors[index]
+        let speed = 0.20 + Double(index) * 0.035
+        return CGPoint(
+            x: size.width * anchor.0 + sin(time * speed + Double(index)) * size.width * 0.075,
+            y: size.height * anchor.1 + cos(time * speed * 0.84 + Double(index)) * size.height * 0.065
+        )
+    }
+
+    private func highlightPoint(index: Int, time: TimeInterval,
+                                size: CGSize) -> CGPoint {
+        let anchors: [(CGFloat, CGFloat)] = [
+            (0.40, 0.40), (0.61, 0.47), (0.47, 0.62), (0.69, 0.64)
+        ]
+        let anchor = anchors[index]
+        return CGPoint(
+            x: size.width * anchor.0 + sin(time * (0.29 + Double(index) * 0.03)) * size.width * 0.045,
+            y: size.height * anchor.1 + cos(time * (0.25 + Double(index) * 0.025)) * size.height * 0.038
+        )
+    }
+
+    private func blobScale(_ index: Int) -> CGFloat {
+        [0.92, 0.84, 0.96, 0.78, 0.70][index]
+    }
+
+    private var palette: [Color] {
+        let fallback: [Color] = [
+            Color(red: 1.0, green: 0.04, blue: 0.72),
+            Color(red: 0.55, green: 0.12, blue: 1.0),
+            Color(red: 1.0, green: 0.12, blue: 0.10),
+            Color(red: 1.0, green: 0.57, blue: 0.04),
+            Color(red: 0.15, green: 0.78, blue: 1.0)
+        ]
+        return Array((colors + fallback).prefix(5))
     }
 }
