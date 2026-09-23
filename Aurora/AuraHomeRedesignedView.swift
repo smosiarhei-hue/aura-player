@@ -11,6 +11,7 @@ struct AuraHomeRedesignedView: View {
     @State private var showSettings = false
     @State private var showWaveSettings = false
     @State private var showPlayer = false
+    @State private var waveStore = WaveSettingsStore.shared
 
     private var moodStation: YandexMusicService.StationOption { ym.waveMoodStation }
     private var waveColors: [Color] {
@@ -112,24 +113,24 @@ struct AuraHomeRedesignedView: View {
                 isPlaying: player.isPlaying,
                 tintColors: player.displayTrack?.palette
             )
-                .frame(height: 520)
-                .clipped()
-                .overlay {
-                    // Soft gradient dissolve into pure OLED black
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black.opacity(0.40), location: 0.0),
-                            .init(color: .clear, location: 0.18),
-                            .init(color: .clear, location: 0.58),
-                            .init(color: .black.opacity(0.55), location: 0.82),
-                            .init(color: .black, location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
+            .frame(height: 560)
+            .clipped()
+            .overlay {
+                // Soft gradient dissolve into pure OLED black
+                LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0.40), location: 0.0),
+                        .init(color: .clear, location: 0.16),
+                        .init(color: .clear, location: 0.50),
+                        .init(color: .black.opacity(0.60), location: 0.80),
+                        .init(color: .black, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
 
-            VStack(spacing: 16) {
+            VStack(spacing: 12) {
                 Spacer()
 
                 Button(action: toggleWave) {
@@ -137,7 +138,7 @@ struct AuraHomeRedesignedView: View {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 32, weight: .black))
                         Text("Моя волна")
-                            .font(.system(size: 42, weight: .heavy, design: .rounded))
+                            .font(.system(size: 40, weight: .heavy, design: .rounded))
                     }
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.70), radius: 20, y: 6)
@@ -145,13 +146,94 @@ struct AuraHomeRedesignedView: View {
                 .buttonStyle(TactileButtonStyle(scale: 0.94))
                 .accessibilityLabel(player.isPlaying ? "Пауза" : "Запустить Мою волну")
 
-                Button { showWaveSettings = true } label: {
-                    Label("Настроить", systemImage: "slider.horizontal.3")
-                        .font(AG.text(.body, .semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 20).frame(height: 48)
-                        .glassCapsule(interactive: true)
+                // 1. Характер музыки прямо на главном экране
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(WaveDiversity.allCases) { item in
+                            let isSelected = waveStore.diversity == item
+                            Button {
+                                Haptics.tap(.light)
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    waveStore.diversity = item
+                                }
+                                if player.isPlaying {
+                                    Task { _ = await waveStore.reseedActiveWaveQueue() }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: item.icon)
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text(item.title)
+                                        .font(AG.text(.footnote, .semibold))
+                                }
+                                .foregroundStyle(isSelected ? Color.black : Color.white)
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 7)
+                                .background(
+                                    isSelected ? Color.white : Color.white.opacity(0.12),
+                                    in: Capsule()
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(isSelected ? Color.white : Color.white.opacity(0.18), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 20)
                 }
-                .buttonStyle(.plain)
+
+                // 2. Язык звучания + Кнопка всех настроек
+                HStack(spacing: 8) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 7) {
+                            ForEach(WaveLanguage.allCases) { item in
+                                let isSelected = waveStore.language == item
+                                Button {
+                                    Haptics.tap(.light)
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                        waveStore.language = item
+                                    }
+                                    if player.isPlaying {
+                                        Task { _ = await waveStore.reseedActiveWaveQueue() }
+                                    }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: item.icon)
+                                            .font(.system(size: 11, weight: .bold))
+                                        Text(item.title)
+                                            .font(AG.text(.caption, .semibold))
+                                    }
+                                    .foregroundStyle(isSelected ? Color.black : Color.white.opacity(0.85))
+                                    .padding(.horizontal, 11)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        isSelected ? Color.white : Color.white.opacity(0.08),
+                                        in: Capsule()
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .strokeBorder(isSelected ? Color.white : Color.white.opacity(0.14), lineWidth: 1)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.leading, 20)
+                    }
+
+                    Button { showWaveSettings = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .glassCircle()
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 20)
+                    .accessibilityLabel("Все настройки волны")
+                }
 
                 if let track = player.displayTrack {
                     Button { showPlayer = true } label: {
@@ -171,10 +253,10 @@ struct AuraHomeRedesignedView: View {
                     .padding(.horizontal, 18)
                 }
 
-                Spacer().frame(height: 18)
+                Spacer().frame(height: 16)
             }
         }
-        .frame(height: 520)
+        .frame(height: 560)
         .frame(maxWidth: .infinity)
     }
 

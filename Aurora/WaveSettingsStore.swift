@@ -167,23 +167,51 @@ final class WaveSettingsStore: @unchecked Sendable {
     /// не прерывая текущий играющий трек.
     @MainActor
     func reseedActiveWaveQueue() async -> Bool {
-        guard let current = PlayerCore.shared.currentTrack else { return false }
         let service = YandexMusicService.shared
-        let stationId = service.waveMoodStationId
+        let stationId = service.activeStationId ?? service.waveMoodStationId
 
         var tracks = await service.buildWaveQueue(stationId: stationId, target: 45)
         if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
-        guard !tracks.isEmpty else { return false }
+        if tracks.isEmpty { tracks = service.chartCache }
 
-        let filtered = tracks
-            .map { service.convertToTrack($0) }
-            .filter { !UserTasteEngine.shared.isDisliked(track: $0) && $0.id != current.id }
+        let presentation = ActivePlayerPresentation.shared
+        let current = presentation.currentTrack
 
-        let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: filtered)
-        guard !ranked.isEmpty else { return false }
+        let pool = tracks.map { service.convertToTrack($0) }
+        guard !pool.isEmpty else {
+            // Если сеть недоступна, пересортируем текущую очередь плеера
+            let fallbackPool = presentation.queue.count > 1 ? presentation.queue : LibraryStore.shared.favorites
+            guard !fallbackPool.isEmpty else { return false }
+            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: fallbackPool)
+            if let current {
+                presentation.queue = [current] + ranked.filter { $0.id != current.id }
+            } else if let first = ranked.first {
+                presentation.play(first)
+            }
+            return true
+        }
 
-        // Сохраняем текущий трек во главе очереди, а всё следующее плавно заменяем на новые треки
-        PlayerCore.shared.queue = [current] + ranked
-        return true
+        if let current {
+            let filtered = pool.filter {
+                !UserTasteEngine.shared.isDisliked(track: $0) && $0.id != current.id
+            }
+
+            var ranked = UserTasteEngine.shared.filterAndRankWave(tracks: filtered)
+            if ranked.isEmpty {
+                ranked = filtered
+            }
+            guard !ranked.isEmpty else { return false }
+
+            // Обновляем очередь через ActivePlayerPresentation (AutoMix V2, NeuroMix или PlayerCore)
+            presentation.queue = [current] + ranked
+            return true
+        } else {
+            let available = pool.filter { !UserTasteEngine.shared.isDisliked(track: $0) }
+            var ranked = UserTasteEngine.shared.filterAndRankWave(tracks: available)
+            if ranked.isEmpty { ranked = available }
+            guard let first = ranked.first else { return false }
+            presentation.play(first)
+            return true
+        }
     }
 }

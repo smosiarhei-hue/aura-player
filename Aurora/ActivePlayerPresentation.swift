@@ -9,6 +9,8 @@ import TrackSource
 @Observable
 @MainActor
 final class ActivePlayerPresentation {
+    static let shared = ActivePlayerPresentation()
+
     private let legacy: PlayerCore
     private let runtime: AutoMixV2Runtime
     private let neuroRuntime: NeuroMixRuntime
@@ -44,8 +46,9 @@ final class ActivePlayerPresentation {
     }
     var isV2Enabled: Bool { v2OwnsPlayback || neuroOwnsPlayback }
     var currentTrack: Track? {
-        neuroOwnsPlayback ? neuroRuntime.currentTrack :
-            (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
+        if neuroOwnsPlayback { return neuroRuntime.currentTrack }
+        if v2OwnsPlayback { return runtime.currentTrack }
+        return legacy.currentTrack ?? runtime.currentTrack ?? neuroRuntime.currentTrack
     }
     var incomingTrack: Track? {
         v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack
@@ -102,13 +105,18 @@ final class ActivePlayerPresentation {
     var isNextDownloading: Bool { v2OwnsPlayback && nextNetworkDownloading }
     var queue: [Track] {
         get {
-            neuroOwnsPlayback ? neuroRuntime.playbackQueue :
-                (v2OwnsPlayback ? runtime.playbackQueue : legacy.queue)
+            if router.owner == .neuroMix || neuroOwnsPlayback { return neuroRuntime.playbackQueue }
+            if router.owner == .autoMixV2 || v2OwnsPlayback { return runtime.playbackQueue }
+            return legacy.queue
         }
         set {
-            if neuroOwnsPlayback { neuroRuntime.replaceQueue(newValue) }
-            else if v2OwnsPlayback { runtime.replaceQueue(newValue) }
-            else { legacy.queue = newValue }
+            if router.owner == .neuroMix || neuroOwnsPlayback {
+                neuroRuntime.replaceQueue(newValue)
+            } else if router.owner == .autoMixV2 || v2OwnsPlayback {
+                runtime.replaceQueue(newValue)
+            } else {
+                legacy.queue = newValue
+            }
         }
     }
     var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
