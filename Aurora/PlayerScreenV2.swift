@@ -48,28 +48,42 @@ struct PlayerScreenV2: View {
 
     var body: some View {
         GeometryReader { geo in
-            let artworkHeight = min(geo.size.height * 0.40, 360)
-            let artworkWidth = geo.size.width - 32
-            ZStack {
-                background.frame(width: geo.size.width, height: geo.size.height).clipped().ignoresSafeArea()
+            let totalHeight = geo.size.height
+            let totalWidth = geo.size.width
+            let artworkHeight = totalHeight * 0.52
+
+            ZStack(alignment: .top) {
+                background
+                    .frame(width: totalWidth, height: totalHeight)
+                    .clipped()
+
+                artworkStage(width: totalWidth, height: artworkHeight)
+                    .frame(width: totalWidth, height: artworkHeight, alignment: .top)
+                    .clipped()
+
                 VStack(spacing: 0) {
                     topHeader
-                        .padding(.top, max(geo.safeAreaInsets.top, 48))
+                        .padding(.top, max(geo.safeAreaInsets.top, 50))
                         .padding(.horizontal, 20)
-                    Spacer(minLength: 4)
-                    artworkStage(width: artworkWidth, height: artworkHeight)
-                        .frame(maxWidth: .infinity)
-                    Spacer(minLength: 6)
+
+                    Spacer(minLength: 0)
+
                     if let waveMessage {
-                        Text(waveMessage).font(AG.text(.caption, .semibold)).foregroundStyle(AG.ink)
-                            .padding(.horizontal, 14).padding(.vertical, 7).glassCapsule().padding(.bottom, 4)
+                        Text(waveMessage)
+                            .font(AG.text(.caption, .semibold))
+                            .foregroundStyle(AG.ink)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .glassCapsule()
+                            .padding(.bottom, 6)
                     }
-                    lowerDeck
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 12))
+
+                    lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
                 }
             }
+            .frame(width: totalWidth, height: totalHeight, alignment: .top)
         }
+        .ignoresSafeArea()
         .background(AG.bg.ignoresSafeArea())
         .simultaneousGesture(DragGesture().onEnded { value in
             if value.translation.height > 80 && value.predictedEndTranslation.height > 120 { close() }
@@ -250,46 +264,25 @@ struct PlayerScreenV2: View {
                     .clipped()
             }
             if !isFullScreenVideoShot && !showLyricsMode {
-                AutoMixTransitionOverlay(player: player, side: min(width, height))
+                AutoMixTransitionOverlay(player: player, width: width, height: height)
             }
             if showLyricsMode { lyricsOverlay(width: width, height: height) }
         }
         .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
         .mask {
             LinearGradient(
                 stops: [
                     .init(color: .black, location: 0.0),
-                    .init(color: .black, location: 0.60),
-                    .init(color: .black.opacity(0.70), location: 0.78),
-                    .init(color: .black.opacity(0.20), location: 0.92),
+                    .init(color: .black, location: 0.45),
+                    .init(color: .black.opacity(0.70), location: 0.65),
+                    .init(color: .black.opacity(0.18), location: 0.85),
                     .init(color: .clear, location: 1.0)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(isFullScreenVideoShot ? 0.0 : (player.isTransitionActive ? 0.35 : 0.16)), location: 0.0),
-                            .init(color: .white.opacity(isFullScreenVideoShot ? 0.0 : 0.04), location: 0.5),
-                            .init(color: .clear, location: 0.85)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(
-            color: (artworkPaletteColors.first ?? .black).opacity(isFullScreenVideoShot ? 0 : (player.isPlaying ? 0.45 : 0.20)),
-            radius: player.isPlaying ? 28 : 12,
-            y: player.isPlaying ? 14 : 6
-        )
-        .scaleEffect(player.isPlaying ? 1.0 : 0.94)
+        .scaleEffect(player.isPlaying ? 1.0 : 0.96)
         .offset(x: coverDragX)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 15)
@@ -396,7 +389,7 @@ struct PlayerScreenV2: View {
         ZStack { LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing); Image(systemName: "music.note").font(.system(size: 70, weight: .semibold)).foregroundStyle(.white.opacity(0.85)) }
     }
 
-    private var lowerDeck: some View {
+    private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
         VStack(spacing: 12) {
             metadataRow
             PlayerTimelineSection(player: player) { centerStatusLabel }
@@ -422,27 +415,41 @@ struct PlayerScreenV2: View {
                 GlassIconButton(systemImage: "list.bullet", tint: AG.inkMuted, accessibilityLabel: "Очередь") { openModal(.queue) }
             }.padding(.horizontal, 16)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, max(safeAreaBottom, 20))
+        .frame(maxWidth: .infinity)
         .background {
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
+            Rectangle()
                 .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 32, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .white.opacity(0.24), location: 0.0),
-                                    .init(color: .white.opacity(0.08), location: 0.4),
-                                    .init(color: .white.opacity(0.02), location: 1.0)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(color: .black.opacity(0.48), radius: 24, x: 0, y: 8)
+                .mask {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black.opacity(0.35), location: 0.08),
+                            .init(color: .black.opacity(0.85), location: 0.22),
+                            .init(color: .black, location: 0.40),
+                            .init(color: .black, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+                .overlay(alignment: .top) {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0.0), location: 0.0),
+                            .init(color: .white.opacity(0.18), location: 0.5),
+                            .init(color: .white.opacity(0.0), location: 1.0)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(height: 1)
+                    .padding(.horizontal, 24)
+                    .opacity(0.65)
+                }
+                .ignoresSafeArea(edges: .bottom)
         }
     }
     private var metadataRow: some View {

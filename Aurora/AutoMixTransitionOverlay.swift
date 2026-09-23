@@ -3,22 +3,27 @@ import UIKit
 
 // MARK: - AutoMix visual hand-off
 //
-// The incoming cover follows the physical audio hand-off. A separate thin
-// Liquid Glass contour remains attached to the committed/audible track and is
-// driven by the main mixer's live spectrum.
+// The incoming cover follows the physical audio hand-off smoothly during AutoMix cross-fading.
 
 struct AutoMixTransitionOverlay: View {
     let player: ActivePlayerPresentation
-    let side: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+
+    init(player: ActivePlayerPresentation, width: CGFloat, height: CGFloat) {
+        self.player = player
+        self.width = width
+        self.height = height
+    }
+
+    init(player: ActivePlayerPresentation, side: CGFloat) {
+        self.init(player: player, width: side, height: side)
+    }
 
     @State private var incomingImage: UIImage?
     @State private var incomingImageTrackId: UUID?
 
     private var incomingTrack: Track? { player.incomingTrack }
-    private var borderPalette: [Color] {
-        let colors = player.displayTrack?.palette ?? []
-        return colors.isEmpty ? [.cyan, .blue] : colors
-    }
 
     var body: some View {
         ZStack {
@@ -27,21 +32,14 @@ struct AutoMixTransitionOverlay: View {
                 Image(uiImage: incomingImage)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: side, height: side)
-                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .frame(width: width, height: height)
+                    .clipped()
                     .opacity(progress)
                     .scaleEffect(0.98 + 0.02 * progress)
                     .transition(.opacity)
             }
-
-            MusicReactiveLiquidBorder(
-                player: player,
-                cornerRadius: 24,
-                palette: borderPalette
-            )
-            .frame(width: side, height: side)
         }
-        .frame(width: side, height: side)
+        .frame(width: width, height: height)
         .allowsHitTesting(false)
         .task(id: incomingTrack?.id) {
             await loadIncomingImage()
