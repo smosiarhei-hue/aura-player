@@ -5,6 +5,8 @@ build/
 xcuserdata/
 *.ipa
 *.zip
+__pycache__/
+*.pyc
 .openclaw/
 
 scripts/__pycache__/

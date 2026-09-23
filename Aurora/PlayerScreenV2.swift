@@ -50,7 +50,7 @@ struct PlayerScreenV2: View {
         GeometryReader { geo in
             let totalHeight = geo.size.height
             let totalWidth = geo.size.width
-            let artworkHeight = totalHeight * 0.52
+            let artworkHeight = totalHeight * 0.60
 
             ZStack(alignment: .top) {
                 background
@@ -273,9 +273,10 @@ struct PlayerScreenV2: View {
             LinearGradient(
                 stops: [
                     .init(color: .black, location: 0.0),
-                    .init(color: .black, location: 0.45),
-                    .init(color: .black.opacity(0.70), location: 0.65),
-                    .init(color: .black.opacity(0.18), location: 0.85),
+                    .init(color: .black, location: 0.80),
+                    .init(color: .black.opacity(0.85), location: 0.88),
+                    .init(color: .black.opacity(0.50), location: 0.94),
+                    .init(color: .black.opacity(0.18), location: 0.98),
                     .init(color: .clear, location: 1.0)
                 ],
                 startPoint: .top,
@@ -421,13 +422,14 @@ struct PlayerScreenV2: View {
         .frame(maxWidth: .infinity)
         .background {
             Rectangle()
-                .fill(.ultraThinMaterial.opacity(0.40))
+                .fill(.ultraThinMaterial.opacity(0.22))
                 .mask {
                     LinearGradient(
                         stops: [
                             .init(color: .clear, location: 0.0),
-                            .init(color: .black.opacity(0.30), location: 0.20),
-                            .init(color: .black, location: 0.60),
+                            .init(color: .clear, location: 0.12),
+                            .init(color: .black.opacity(0.35), location: 0.35),
+                            .init(color: .black.opacity(0.75), location: 0.70),
                             .init(color: .black, location: 1.0)
                         ],
                         startPoint: .top,
