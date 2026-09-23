@@ -1,17 +1,19 @@
 import SwiftUI
 import AVFoundation
+import CoreText
+import UIKit
 
 // MARK: - 1. Data Models (Swift 6 Concurrency)
 
 /// Single word in kinetic typography with timing and emphasis metadata.
-public struct LyricWord: Identifiable, Sendable, Equatable {
-    public let id: UUID
-    public let text: String
-    public let startTime: TimeInterval
-    public let duration: TimeInterval
-    public let isImpact: Bool
+struct LyricWord: Identifiable, Sendable, Equatable {
+    let id: UUID
+    let text: String
+    let startTime: TimeInterval
+    let duration: TimeInterval
+    let isImpact: Bool
 
-    public init(
+    init(
         id: UUID = UUID(),
         text: String,
         startTime: TimeInterval,
@@ -25,21 +27,21 @@ public struct LyricWord: Identifiable, Sendable, Equatable {
         self.isImpact = isImpact
     }
 
-    public var endTime: TimeInterval {
+    var endTime: TimeInterval {
         startTime + duration
     }
 }
 
 /// Phrase unit containing timed words and visual style flags (outline, HDR glow).
-public struct LyricPhrase: Identifiable, Sendable, Equatable {
-    public let id: UUID
-    public let timeRange: ClosedRange<TimeInterval>
-    public let words: [LyricWord]
-    public let isOutlined: Bool
-    public let glowIntensity: Double
-    public let rotationDegrees: Double
+struct LyricPhrase: Identifiable, Sendable, Equatable {
+    let id: UUID
+    let timeRange: ClosedRange<TimeInterval>
+    let words: [LyricWord]
+    let isOutlined: Bool
+    let glowIntensity: Double
+    let rotationDegrees: Double
 
-    public init(
+    init(
         id: UUID = UUID(),
         timeRange: ClosedRange<TimeInterval>,
         words: [LyricWord],
@@ -55,12 +57,12 @@ public struct LyricPhrase: Identifiable, Sendable, Equatable {
         self.rotationDegrees = rotationDegrees
     }
 
-    public var text: String {
+    var text: String {
         words.map(\.text).joined(separator: " ")
     }
 
     /// Converts standard lyrics lines into kinetic phrases with alternating accent styles.
-    public static func from(lines: [LyricsLine]) -> [LyricPhrase] {
+    static func from(lines: [LyricsLine]) -> [LyricPhrase] {
         var phrases: [LyricPhrase] = []
         for (index, line) in lines.enumerated() {
             let nextStart = (index + 1 < lines.count) ? lines[index + 1].startTime : (line.startTime + 4.0)
@@ -103,17 +105,15 @@ public struct LyricPhrase: Identifiable, Sendable, Equatable {
 
 // MARK: - 2. High-Performance Kinetic Typography Component (120 FPS ProMotion)
 
-public struct KineticLyricsView: View {
-    public let phrases: [LyricPhrase]
-    @Binding public var currentTime: TimeInterval
-    public var isPlaying: Bool = true
-    public var onPhraseChange: ((LyricPhrase) -> Void)? = nil
+struct KineticLyricsView: View {
+    let phrases: [LyricPhrase]
+    @Binding var currentTime: TimeInterval
+    var isPlaying: Bool = true
+    var onPhraseChange: ((LyricPhrase) -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var activePhraseIndex: Int?
-    @State private var lastSeekTime: TimeInterval = 0
 
-    public init(
+    init(
         phrases: [LyricPhrase],
         currentTime: Binding<TimeInterval>,
         isPlaying: Bool = true,
@@ -125,7 +125,7 @@ public struct KineticLyricsView: View {
         self.onPhraseChange = onPhraseChange
     }
 
-    public var body: some View {
+    var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: !isPlaying)) { _ in
             let current = findCurrentPhrase(at: currentTime)
 
@@ -156,52 +156,32 @@ public struct KineticLyricsView: View {
             }
             .animation(.spring(response: 0.32, dampingFraction: 0.68), value: current?.id)
             .allowedDynamicRange(.high)
+            .onChange(of: current?.id) { _, _ in
+                if let current {
+                    onPhraseChange?(current)
+                }
+            }
         }
     }
 
-    /// Fast search to pinpoint phrase even during rapid scrubbing
+    /// Fast binary search to pinpoint phrase even during rapid scrubbing
     private func findCurrentPhrase(at time: TimeInterval) -> LyricPhrase? {
         guard !phrases.isEmpty else { return nil }
 
-        // Check if current cached phrase is still valid
-        if let idx = activePhraseIndex, phrases.indices.contains(idx) {
-            let p = phrases[idx]
-            if p.timeRange.contains(time) { return p }
-            if idx + 1 < phrases.count, phrases[idx + 1].timeRange.contains(time) {
-                Task { @MainActor in
-                    activePhraseIndex = idx + 1
-                    onPhraseChange?(phrases[idx + 1])
-                }
-                return phrases[idx + 1]
-            }
-        }
-
-        // Binary search for seek / jump
         var low = 0
         var high = phrases.count - 1
         var candidate: LyricPhrase? = nil
-        var candidateIdx: Int? = nil
 
         while low <= high {
             let mid = (low + high) / 2
             let p = phrases[mid]
             if p.timeRange.contains(time) {
-                candidate = p
-                candidateIdx = mid
-                break
+                return p
             } else if p.timeRange.lowerBound > time {
                 high = mid - 1
             } else {
                 candidate = p
-                candidateIdx = mid
                 low = mid + 1
-            }
-        }
-
-        if let candidateIdx, candidateIdx != activePhraseIndex {
-            Task { @MainActor in
-                activePhraseIndex = candidateIdx
-                if let c = candidate { onPhraseChange?(c) }
             }
         }
         return candidate
@@ -234,28 +214,34 @@ private struct KineticPhraseStage: View {
     var body: some View {
         VStack(spacing: 8) {
             if phrase.isOutlined {
-                // Vector Stroked Outline Mode
+                // Vector Stroked Outline Mode via Canvas
+                let font = UIFont.systemFont(ofSize: 38, weight: .heavy)
+                let vectorPath = textToPath(phrase.text.uppercased(), font: font)
+
                 Canvas { context, size in
-                    let text = Text(phrase.text.uppercased())
-                        .font(.system(size: 38, weight: .heavy, design: .default))
-                    let resolved = context.resolve(text)
+                    let pathBounds = vectorPath.boundingRect
+                    guard !pathBounds.isEmpty else { return }
+
+                    let scale = min(1.0, (size.width - 32) / max(1.0, pathBounds.width))
                     let origin = CGPoint(
-                        x: (size.width - resolved.measure(in: size).width) / 2,
-                        y: (size.height - resolved.measure(in: size).height) / 2
+                        x: (size.width - pathBounds.width * scale) / 2,
+                        y: (size.height - pathBounds.height * scale) / 2
                     )
+
+                    let transform = CGAffineTransform(translationX: origin.x, y: origin.y)
+                        .scaledBy(x: scale, y: scale)
+                    let centeredPath = vectorPath.applying(transform)
 
                     // Draw outer bloom stroke
                     context.stroke(
-                        resolved,
-                        at: origin,
+                        centeredPath,
                         with: .color(.cyan.opacity(0.85)),
                         style: StrokeStyle(lineWidth: 6, lineJoin: .round)
                     )
 
                     // Draw razor-sharp core stroke
                     context.stroke(
-                        resolved,
-                        at: origin,
+                        centeredPath,
                         with: .color(.white),
                         style: StrokeStyle(lineWidth: 2.2, lineJoin: .round)
                     )
@@ -292,19 +278,64 @@ private struct KineticPhraseStage: View {
     private func wordFlow(phrase: LyricPhrase) -> some View {
         let activeWord = phrase.words.first { $0.startTime <= currentTime && currentTime <= $0.endTime }
 
-        HStack(alignment: .center, spacing: 10) {
-            ForEach(phrase.words) { word in
-                let isCurrent = (word.id == activeWord?.id)
-                let wordPast = currentTime > word.endTime
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 10) {
+                ForEach(phrase.words) { word in
+                    let isCurrent = (word.id == activeWord?.id)
+                    let wordPast = currentTime > word.endTime
 
-                Text(word.text.uppercased())
-                    .font(.system(size: 38, weight: .heavy, design: .default))
-                    .foregroundStyle(isCurrent ? .white : (wordPast ? .white.opacity(0.88) : .white.opacity(0.38)))
-                    .scaleEffect(isCurrent && word.isImpact ? 1.12 : (isCurrent ? 1.05 : 1.0))
-                    .brightness(isCurrent ? 0.25 : 0.0)
-                    .animation(.spring(response: 0.20, dampingFraction: 0.65), value: isCurrent)
+                    Text(word.text.uppercased())
+                        .font(.system(size: 38, weight: .heavy, design: .default))
+                        .foregroundStyle(isCurrent ? .white : (wordPast ? .white.opacity(0.88) : .white.opacity(0.38)))
+                        .scaleEffect(isCurrent && word.isImpact ? 1.12 : (isCurrent ? 1.05 : 1.0))
+                        .brightness(isCurrent ? 0.25 : 0.0)
+                        .animation(.spring(response: 0.20, dampingFraction: 0.65), value: isCurrent)
+                }
+            }
+
+            // Compact fallback for longer lyric phrases
+            Text(phrase.text.uppercased())
+                .font(.system(size: 32, weight: .heavy, design: .default))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+        }
+    }
+
+    @MainActor
+    private func textToPath(_ string: String, font: UIFont) -> Path {
+        guard !string.isEmpty else { return Path() }
+        let ctFont = font as CTFont
+        let attrString = NSAttributedString(string: string, attributes: [.font: font])
+        let line = CTLineCreateWithAttributedString(attrString)
+        guard let runs = CTLineGetGlyphRuns(line) as? [CTRun] else { return Path() }
+
+        let letters = CGMutablePath()
+        for run in runs {
+            let count = CTRunGetGlyphCount(run)
+            var glyphs = [CGGlyph](repeating: 0, count: count)
+            var positions = [CGPoint](repeating: .zero, count: count)
+            CTRunGetGlyphs(run, CFRangeMake(0, count), &glyphs)
+            CTRunGetPositions(run, CFRangeMake(0, count), &positions)
+
+            for i in 0..<count {
+                if let glyphPath = CTFontCreatePathForGlyph(ctFont, glyphs[i], nil) {
+                    var translation = CGAffineTransform(translationX: positions[i].x, y: positions[i].y)
+                    letters.addPath(glyphPath, transform: translation)
+                }
             }
         }
+
+        let bounds = letters.boundingBoxOfPath
+        guard !bounds.isEmpty, !bounds.isNull else { return Path() }
+
+        var transform = CGAffineTransform(scaleX: 1.0, y: -1.0)
+            .translatedBy(x: -bounds.origin.x, y: -bounds.origin.y - bounds.height)
+
+        guard let flipped = letters.copy(using: &transform) else {
+            return Path(letters)
+        }
+        return Path(flipped)
     }
 }
 
@@ -324,7 +355,7 @@ private struct PhraseTransitionModifier: ViewModifier {
 
 // MARK: - 5. Standalone Interactive Simulator & Preview
 
-public struct KineticLyricsDemoSimulatorView: View {
+struct KineticLyricsDemoSimulatorView: View {
     @State private var time: TimeInterval = 0
     @State private var isPlaying: Bool = true
     @State private var timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
@@ -367,9 +398,7 @@ public struct KineticLyricsDemoSimulatorView: View {
         )
     ]
 
-    public init() {}
-
-    public var body: some View {
+    var body: some View {
         VStack(spacing: 24) {
             Spacer()
 
