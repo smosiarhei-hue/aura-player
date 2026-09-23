@@ -3,9 +3,9 @@ import UIKit
 
 // MARK: - AutoMix visual hand-off
 //
-// Clean, standard Apple Music cover crossfade:
-// The incoming track's artwork smoothly dissolves in over the outgoing cover,
-// synced 1:1 with audio DSP transition progress without artificial white flashing or blinding bloom.
+// The incoming cover follows the physical audio hand-off. A separate thin
+// Liquid Glass contour remains attached to the committed/audible track and is
+// driven by the main mixer's live spectrum.
 
 struct AutoMixTransitionOverlay: View {
     let player: ActivePlayerPresentation
@@ -15,6 +15,10 @@ struct AutoMixTransitionOverlay: View {
     @State private var incomingImageTrackId: UUID?
 
     private var incomingTrack: Track? { player.incomingTrack }
+    private var borderPalette: [Color] {
+        let colors = player.displayTrack?.palette ?? []
+        return colors.isEmpty ? [.cyan, .blue] : colors
+    }
 
     var body: some View {
         ZStack {
@@ -29,6 +33,13 @@ struct AutoMixTransitionOverlay: View {
                     .scaleEffect(0.98 + 0.02 * progress)
                     .transition(.opacity)
             }
+
+            MusicReactiveLiquidBorder(
+                player: player,
+                cornerRadius: 24,
+                palette: borderPalette
+            )
+            .frame(width: side, height: side)
         }
         .frame(width: side, height: side)
         .allowsHitTesting(false)
@@ -61,7 +72,6 @@ struct AutoMixTransitionOverlay: View {
         }
 
         let decoded = await rawImage.byPreparingForDisplay()
-
         guard player.incomingTrack?.id == incomingTrack.id else { return }
         incomingImageTrackId = incomingTrack.id
         incomingImage = decoded ?? rawImage
