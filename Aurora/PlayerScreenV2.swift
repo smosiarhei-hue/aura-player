@@ -690,7 +690,7 @@ struct PlayerScreenV2: View {
             }
         }
         let diversity = WaveSettingsStore.shared.diversity
-        if diversity != .defaultDiversity {
+        if diversity != .defaultMode {
             return diversity.title
         }
         return "Моя волна"

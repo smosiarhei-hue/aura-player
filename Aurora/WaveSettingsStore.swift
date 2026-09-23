@@ -10,6 +10,8 @@ enum WaveDiversity: String, CaseIterable, Identifiable, Sendable {
     case discover = "discover"
     case popular = "popular"
 
+    static let defaultDiversity: WaveDiversity = .defaultMode
+
     var id: String { rawValue }
 
     var title: String {
