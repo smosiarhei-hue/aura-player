@@ -61,12 +61,16 @@ def configuration(env):
     is_signed = env.get("IPA_IS_SIGNED", "").lower() == "true"
     version = env.get("MARKETING_VERSION", "1.1.0")
     build_num = env.get("BUILD_NUMBER", "")
+    owner = repository.split("/")[0] if "/" in repository else ""
+    repo_name = repository.split("/")[1] if "/" in repository else ""
+    ota_url = f"https://{owner}.github.io/{repo_name}/"
     if is_signed:
-        caption = (f"🚀 Sonivo — ПОДПИСАННАЯ СБОРКА для твоего iPhone!\n"
+        caption = (f"🚀 Sonivo — ГОТОВА К УСТАНОВКЕ!\n"
                    f"Версия: {version} (сборка #{build_num})\n"
-                   f"Коммит: {sha[:7]}\n"
-                   f"Сертификат разработчика: активен до 05.12.2026\n"
-                   f"✅ Установка готова (без переподписаний!)\n"
+                   f"Сертификат разработчика: активен до 05.12.2026\n\n"
+                   f"📲 Установка в 1 тап (как TestFlight):\n"
+                   f"{ota_url}\n\n"
+                   f"👉 Открой ссылку в Safari на iPhone и нажми «Установить».\n"
                    f"Сборка: {build_url}")
     else:
         caption = ("Sonivo — АКТУАЛЬНАЯ MAIN IPA без подписи.\n"

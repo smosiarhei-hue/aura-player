@@ -254,6 +254,59 @@ jobs:
             Sonivo-unsigned.ipa
           if-no-files-found: error
 
+      - name: Deploy OTA to GitHub Pages
+        if: env.HAS_SIGNING == 'true'
+        env:
+          GH_PAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          PAGES_DIR="$RUNNER_TEMP/pages"
+          mkdir -p "$PAGES_DIR"
+          git clone --depth 1 --branch gh-pages "https://x-access-token:${GH_PAGES_TOKEN}@github.com/${{ github.repository }}.git" "$PAGES_DIR"
+
+          cp Sonivo.ipa "$PAGES_DIR/Sonivo.ipa"
+
+          cat <<EOF > "$PAGES_DIR/manifest.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>assets</key>
+            <array>
+                <dict>
+                    <key>kind</key>
+                    <string>software-package</string>
+                    <key>url</key>
+                    <string>https://${{ github.repository_owner }}.github.io/aura-player/Sonivo.ipa</string>
+                </dict>
+            </array>
+            <key>metadata</key>
+            <dict>
+                <key>bundle-identifier</key>
+                <string>${BUNDLE_ID}</string>
+                <key>bundle-version</key>
+                <string>${MARKETING_VERSION}</string>
+                <key>kind</key>
+                <string>software</string>
+                <key>title</key>
+                <string>Sonivo</string>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>
+EOF
+
+          cd "$PAGES_DIR"
+          git add Sonivo.ipa manifest.plist
+          git commit -m "Deploy OTA Sonivo v${MARKETING_VERSION} (build ${BUILD_NUMBER}) [skip ci]" || true
+          git push origin gh-pages
+
       - name: Send current main IPA to configured Telegram chat
         if: >-
           github.repository == 'smosiarhei-hue/aura-player' &&
