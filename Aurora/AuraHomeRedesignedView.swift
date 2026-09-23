@@ -27,8 +27,10 @@ struct AuraHomeRedesignedView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
+            ZStack(alignment: .top) {
+                MyWaveBackgroundVideoView(isPlaying: player.isPlaying)
+                    .ignoresSafeArea()
+
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 24) {
                         header
@@ -91,66 +93,49 @@ struct AuraHomeRedesignedView: View {
     }
 
     private var waveHero: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 38, style: .continuous)
-                .fill(Color.white.opacity(0.025))
-            FluidWaveView(colors: waveColors, isBackgroundMode: false,
-                          isPlaying: player.isPlaying)
-                .scaleEffect(1.18)
-                .padding(.horizontal, -24)
+        VStack(spacing: 16) {
+            Spacer(minLength: 160)
 
-            LinearGradient(colors: [.clear, .black.opacity(0.06), .black.opacity(0.52)],
-                           startPoint: .top, endPoint: .bottom)
-                .clipShape(RoundedRectangle(cornerRadius: 38, style: .continuous))
-
-            VStack(spacing: 16) {
-                Spacer()
-                Button(action: toggleWave) {
-                    HStack(spacing: 14) {
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 30, weight: .black))
-                        Text("Моя волна")
-                            .font(.system(size: 42, weight: .heavy, design: .rounded))
-                    }
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.42), radius: 16, y: 5)
+            Button(action: toggleWave) {
+                HStack(spacing: 14) {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 32, weight: .black))
+                    Text("Моя волна")
+                        .font(.system(size: 42, weight: .heavy, design: .rounded))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(player.isPlaying ? "Пауза" : "Запустить Мою волну")
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.65), radius: 18, y: 5)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(player.isPlaying ? "Пауза" : "Запустить Мою волну")
 
-                Button { showWaveSettings = true } label: {
-                    Label("Настроить", systemImage: "slider.horizontal.3")
-                        .font(AG.text(.body, .semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 20).frame(height: 50)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
+            Button { showWaveSettings = true } label: {
+                Label("Настроить", systemImage: "slider.horizontal.3")
+                    .font(AG.text(.body, .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 20).frame(height: 48)
+                    .glassCapsule(interactive: true)
+            }
+            .buttonStyle(.plain)
 
-                if let track = player.displayTrack {
-                    Button { showPlayer = true } label: {
-                        HStack(spacing: 11) {
-                            SmallArtwork(track: track, size: 42)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(track.title).font(AG.text(.subheadline, .bold)).lineLimit(1)
-                                Text(track.artist).font(AG.text(.caption)).foregroundStyle(.white.opacity(0.66)).lineLimit(1)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.up").font(.caption.bold())
+            if let track = player.displayTrack {
+                Button { showPlayer = true } label: {
+                    HStack(spacing: 11) {
+                        SmallArtwork(track: track, size: 42)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(track.title).font(AG.text(.subheadline, .bold)).lineLimit(1)
+                            Text(track.artist).font(AG.text(.caption)).foregroundStyle(.white.opacity(0.66)).lineLimit(1)
                         }
-                        .foregroundStyle(.white).padding(10)
-                        .background(.black.opacity(0.32), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        Spacer()
+                        Image(systemName: "chevron.up").font(.caption.bold())
                     }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 18)
+                    .foregroundStyle(.white).padding(10)
+                    .background(.ultraThinMaterial.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                Spacer().frame(height: 18)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 18)
             }
         }
-        .frame(height: 470)
-        .clipShape(RoundedRectangle(cornerRadius: 38, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 38, style: .continuous)
-            .strokeBorder(.white.opacity(0.09), lineWidth: 1))
+        .frame(minHeight: 440)
         .padding(.horizontal, 14)
     }
 
@@ -270,8 +255,8 @@ struct WaveVisualSettingsSheet: View {
                     Text("HDR-блики повышают яркость только цветных светлых областей. Реакция использует низкие частоты примерно 30–120 Гц, а не вокал.")
                 }
                 Section("Предпросмотр") {
-                    FluidWaveView(isBackgroundMode: false, isPlaying: true)
-                        .frame(height: 220).background(.black)
+                    MyWaveBackgroundVideoView(isPlaying: true)
+                        .frame(height: 220)
                         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
                 }
             }
