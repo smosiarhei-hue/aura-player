@@ -768,7 +768,12 @@ final class PlayerCore {
             refillQueueIfNeeded()
         } else if let cur = currentTrack, repeatMode != .one {
             Task { @MainActor in
-                let wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
+                let wave: [Track]
+                if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                    wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
+                } else {
+                    wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
+                }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id }
                 if let first = fresh.first {
@@ -1830,7 +1835,12 @@ final class PlayerCore {
             refillQueueIfNeeded()
         } else if let current = currentTrack, repeatMode != .one {
             Task { @MainActor in
-                let wave = await YandexMusicService.shared.buildTrackWave(from: current, target: 20)
+                let wave: [Track]
+                if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                    wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
+                } else {
+                    wave = await YandexMusicService.shared.buildTrackWave(from: current, target: 20)
+                }
                 guard self.currentTrack?.id == current.id else { return }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id }
@@ -1870,7 +1880,9 @@ final class PlayerCore {
             guard let self, self.currentTrack != nil else { return }
             let ym = YandexMusicService.shared
             let rawTracks: [Track]
-            if let station = ym.activeStationId {
+            if MoodRadioEngine.shared.isTrackWaveActive || ym.activeStationId?.hasPrefix("track:") == true {
+                rawTracks = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 25)
+            } else if let station = ym.activeStationId {
                 let rotorTracks = await ym.buildWaveQueue(stationId: station, target: 25)
                 rawTracks = rotorTracks.map { ym.convertToTrack($0) }
             } else if let mood = MoodRadioEngine.shared.activeMood {
@@ -1934,6 +1946,19 @@ final class PlayerCore {
 
     func appendToQueue(_ tracks: [Track]) {
         queue.append(contentsOf: tracks)
+    }
+
+    func replaceUpcomingQueue(with tracks: [Track]) {
+        if let current = currentTrack {
+            var newQ = [current]
+            var seen = Set([current.id])
+            for t in tracks where seen.insert(t.id).inserted {
+                newQ.append(t)
+            }
+            queue = newQ
+        } else {
+            queue = tracks
+        }
     }
 
     private func peekNext(auto: Bool) -> Track? {

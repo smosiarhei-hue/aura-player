@@ -119,6 +119,22 @@ final class ActivePlayerPresentation {
             }
         }
     }
+
+    /// Заменяет предстоящие треки в очереди активного движка без прерывания текущего звучания
+    func replaceUpcomingQueue(with tracks: [Track]) {
+        let current = currentTrack
+        var newQ: [Track] = []
+        if let current {
+            newQ.append(current)
+            var seen = Set([current.id])
+            for t in tracks where seen.insert(t.id).inserted {
+                newQ.append(t)
+            }
+        } else {
+            newQ = tracks
+        }
+        self.queue = newQ
+    }
     var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
     var currentBitrate: Int? { v2OwnsPlayback ? runtime.currentBitrate : legacy.currentBitrate }
     var audioQuality: AudioQuality { legacy.audioQuality }

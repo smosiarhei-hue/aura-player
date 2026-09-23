@@ -635,6 +635,46 @@ final class YandexMusicService {
         Self.rotorStations.first { $0.stationId == waveMoodStationId } ?? Self.rotorStations[0]
     }
 
+    /// Подбор подходящих станций Яндекс Музыки по 6-мерному вектору звука (вайбу)
+    func vibeStations(for vector: TrackVector) -> [String] {
+        var stations: [String] = []
+
+        // 1. По энергии и танцевальности
+        if vector.energy > 0.70 && vector.danceability > 0.60 {
+            stations.append("activity:party")
+            stations.append("genre:electronics")
+            stations.append("activity:workout")
+        } else if vector.energy > 0.65 {
+            stations.append("genre:rock")
+            stations.append("activity:workout")
+        }
+
+        // 2. По темпу и динамике
+        if vector.tempo > 0.65 && vector.energy > 0.50 {
+            stations.append("genre:pop")
+            stations.append("genre:rap")
+            stations.append("activity:driving")
+        }
+
+        // 3. По спокойствию и акустичности
+        if vector.energy < 0.45 && vector.acousticness > 0.40 {
+            stations.append("mood:calm")
+            stations.append("mood:dreamy")
+        }
+
+        // 4. По меланхолии / минору (низкий valence)
+        if vector.valence < 0.35 && vector.energy < 0.55 {
+            stations.append("mood:dreamy")
+            stations.append("mood:calm")
+        }
+
+        if stations.isEmpty {
+            stations = ["user:onyourwave", "genre:pop", "activity:driving"]
+        }
+
+        return stations
+    }
+
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
         beginStationSession(stationId)
         let queueSeed = recentYmIDs.suffix(40).joined(separator: ",")

@@ -22,64 +22,66 @@ extension YandexMusicService {
             beginStationSession("track:\(seed.title)")
         }
 
+        // 1. Извлекаем 6D аудио-вектор вайба для seed-трека (BPM, энергия, валентность, акустичность, грув)
+        let seedVector = MoodRadioEngine.shared.extractVector(for: seed)
+
         var candidates: [String: TrackWaveCandidate] = [:]
         var seedItem: YMTrackItem?
+
+        let normalizedSeedArtists = Set(
+            seed.artist
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        )
 
         func add(_ item: YMTrackItem, baseScore: Double, rank: Int = 0) {
             guard item.available != false else { return }
             if let seedID, item.id == seedID { return }
             if isRecentlyPlayed(ymTrackId: item.id) { return }
-            if UserTasteEngine.shared.isDisliked(track: convertToTrack(item)) { return }
 
-            var score = baseScore - Double(rank) * 0.65
-            let normalizedSeedArtists = Set(
-                seed.artist
-                    .split(separator: ",")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            )
-            let candidateArtists = Set(
-                (item.artists ?? [])
-                    .compactMap { $0.name?.lowercased() }
-            )
-            if !normalizedSeedArtists.isDisjoint(with: candidateArtists) {
-                score += 4
-            }
+            let candidateTrack = convertToTrack(item)
+            if UserTasteEngine.shared.isDisliked(track: candidateTrack) { return }
 
-            let seedAlbum = seed.album.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !seedAlbum.isEmpty,
-               item.albums?.contains(where: { ($0.title ?? "").lowercased() == seedAlbum }) == true {
-                score += 8
-            }
+            // Анализируем реальный вайб кандидата
+            let candidateVector = MoodRadioEngine.shared.extractVector(for: candidateTrack)
+            let vibeSim = seedVector.cosineSimilarity(to: candidateVector) // [-1.0 ... 1.0]
 
+            // Отсекаем треки с совершенно несовместимым вайбом
+            guard vibeSim >= 0.45 else { return }
+
+            // Базовый счет основан на близости вайба (0..100) плюс источник и позиция
+            var score = (vibeSim * 100.0) + baseScore - Double(rank) * 0.45
+
+            // Никаких бонусов тому же артисту или альбому (убираем монополию)!
+            // Небольшая поправка на длительность (близость по форме композиции)
             if seed.duration > 0, item.duration > 0 {
                 let ratio = abs(seed.duration - item.duration) / max(seed.duration, item.duration)
-                score += max(0, 10 * (1 - ratio))
+                score += max(0, 6 * (1 - ratio))
             }
 
-            // Per-session jitter keeps consecutive waves from ranking identical
-            // candidates in the identical order.
-            score += Double.random(in: 0...3)
+            // Рандомизация порядка внутри близких по вайбу треков
+            score += Double.random(in: 0...3.5)
 
             if let existing = candidates[item.id] {
                 candidates[item.id] = TrackWaveCandidate(
                     item: item,
-                    score: max(existing.score, score) + 5
+                    score: max(existing.score, score) + 3
                 )
             } else {
                 candidates[item.id] = TrackWaveCandidate(item: item, score: score)
             }
         }
 
-        // 1. Native track radio is the strongest source of related candidates.
+        // 1. Нативное радио трека — алгоритмические рекомендации Яндекса для этого трека
         if let seedID {
             let radio = (try? await getStationTracks(stationId: "track:\(seedID)")) ?? []
             for (index, item) in radio.enumerated() {
-                add(item, baseScore: 120, rank: index)
+                add(item, baseScore: 110, rank: index)
             }
             seedItem = radio.first { $0.id == seedID }
         }
 
-        // 2. Resolve exact catalog entity for artist and album affinity.
+        // 2. Точный поиск сущности для расширения поиска
         if seedItem == nil {
             let query = "\(seed.artist) \(seed.title)"
             let search = await searchAllFixed(query: query)
@@ -90,53 +92,66 @@ extension YandexMusicService {
                 let title = seed.title.lowercased()
                 seedItem = search.tracks.first { $0.title.lowercased() == title }
             }
-            for (index, item) in search.tracks.prefix(12).enumerated() {
-                add(item, baseScore: 58, rank: index)
-            }
         }
 
-        // 3. Радио волна по артисту из Яндекса и похожие исполнители с тем же вайбом
+        // 3. Широкий сбор похожих артистов (перемешиваем из топ-15+, чтобы не было одних и тех же 6)
         let artistIDs = (seedItem?.artists ?? []).compactMap { $0.id }.map(String.init)
         for artistID in artistIDs.prefix(2) {
-            // Нативная станция Яндекса artist:<id> подбирает идеальный вайб и похожих артистов
+            // Станция артиста подбирает похожих исполнителей
             let artistRadio = (try? await getStationTracks(stationId: "artist:\(artistID)")) ?? []
-            for (index, item) in artistRadio.prefix(20).enumerated() {
-                add(item, baseScore: 105, rank: index)
+            for (index, item) in artistRadio.prefix(25).enumerated() {
+                add(item, baseScore: 100, rank: index)
             }
 
             if let profile = try? await getArtistFixed(artistId: artistID) {
-                // Добавляем только 2 главных трека самого артиста, чтобы не забивать эфир одним певцом
-                for (index, item) in profile.popularTracks.prefix(2).enumerated() {
-                    add(item, baseScore: 85, rank: index)
-                }
-
-                // И треки похожих исполнителей с тем же настроением
-                for similar in profile.similarArtists.prefix(6) {
+                // Берем перемешанных похожих артистов с разными страницами пагинации
+                let similarPool = profile.similarArtists.shuffled().prefix(10)
+                for similar in similarPool {
+                    let page = Int.random(in: 0...1)
                     let tracks = (try? await getArtistTracks(
                         artistId: similar.id,
-                        page: 0,
-                        pageSize: 8
+                        page: page,
+                        pageSize: 6
                     )) ?? []
                     for (index, item) in tracks.enumerated() {
-                        add(item, baseScore: 98, rank: index)
+                        add(item, baseScore: 95, rank: index)
                     }
                 }
             }
         }
 
-        // 4. Personal wave fills sparse catalog responses without recent repeats.
-        if candidates.count < target {
-            let personal = await buildWaveQueue(
-                stationId: waveMoodStationId,
-                target: max(20, target - candidates.count)
-            )
-            for (index, item) in personal.enumerated() {
-                add(item, baseScore: 42, rank: index)
+        // 4. Комплементарные станции Яндекса, точно соответствующие аудио-вектору (вайбу)
+        let matchingStations = vibeStations(for: seedVector)
+        for station in matchingStations.prefix(2) {
+            let stationTracks = (try? await getStationTracks(stationId: station)) ?? []
+            for (index, item) in stationTracks.shuffled().prefix(15).enumerated() {
+                add(item, baseScore: 90, rank: index)
             }
         }
 
-        // 5. Gemini semantic rerank (optional). The worker can only reorder
-        // existing candidate IDs, so the queue always contains real tracks.
+        // 5. Локальная библиотека и избранное с подходящим вайбом (similarity >= 0.70)
+        let matchingFavorites = LibraryStore.shared.favorites.filter { fav in
+            let vec = MoodRadioEngine.shared.extractVector(for: fav)
+            return vec.cosineSimilarity(to: seedVector) >= 0.70 &&
+                   !isRecentlyPlayed(ymTrackId: PlayerCore.yandexTrackID(from: fav)) &&
+                   !UserTasteEngine.shared.isDisliked(track: fav)
+        }
+        for (index, fav) in matchingFavorites.shuffled().prefix(10).enumerated() {
+            if let ymId = Self.ymId(fromFileName: fav.fileName) ?? fav.streamUrlString?.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "") {
+                let fakeItem = YMTrackItem(
+                    id: ymId,
+                    title: fav.title,
+                    available: true,
+                    artists: [YMTrackItem.YMArtist(id: nil, name: fav.artist)],
+                    albums: nil,
+                    durationMs: Int(fav.duration * 1000),
+                    ogImage: fav.artworkUrl?.absoluteString
+                )
+                add(fakeItem, baseScore: 92, rank: index)
+            }
+        }
+
+        // 6. Gemini semantic rerank (если настроен)
         var aiPositions: [String: Int] = [:]
         if AIRankerService.shared.isConfigured {
             let aiCandidates = Array(candidates.values.prefix(60)).map {
@@ -155,7 +170,7 @@ extension YandexMusicService {
                     album: seed.album,
                     duration: seed.duration
                 ),
-                intent: "Продолжить песню: \(seed.artist) — \(seed.title)",
+                intent: "Продолжить волну по вайбу: \(seed.artist) — \(seed.title)",
                 candidates: aiCandidates
             ), !ranking.ordered_ids.isEmpty {
                 for (position, id) in ranking.ordered_ids.enumerated() {
@@ -186,17 +201,32 @@ extension YandexMusicService {
             }
         }
 
+        // 7. СТРОГИЙ АНТИ-ПОВТОР АРТИСТОВ:
+        // Максимум 1 трек от одного артиста во всей волне!
+        // Исходного исполнителя seed включаем максимум 1 раз.
         var artistCounts: [String: Int] = [:]
         var result: [Track] = []
+        var seedArtistIncluded = false
+
         for candidate in sorted {
-            let primaryArtist = candidate.item.artists?.first?.name?.lowercased() ?? "unknown"
-            guard artistCounts[primaryArtist, default: 0] < 3 else { continue }
-            artistCounts[primaryArtist, default: 0] += 1
+            let primaryArtist = candidate.item.artists?.first?.name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "unknown"
+            let candidateArtistNames = Set((candidate.item.artists ?? []).compactMap { $0.name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+            let isSeedArtist = !normalizedSeedArtists.isDisjoint(with: candidateArtistNames)
+
+            if isSeedArtist {
+                if seedArtistIncluded { continue }
+                seedArtistIncluded = true
+            } else {
+                guard artistCounts[primaryArtist, default: 0] < 1 else { continue }
+                artistCounts[primaryArtist, default: 0] += 1
+            }
+
             result.append(convertToTrack(candidate.item))
             if result.count >= target { break }
         }
 
-        return result
+        // Применяем пользовательские вкусовые предпочтения (лайки/язык)
+        return UserTasteEngine.shared.filterAndRankWave(tracks: result)
     }
 
     /// Персональная волна по артисту в духе Яндекс Музыки:
@@ -217,7 +247,10 @@ extension YandexMusicService {
         }
 
         // 2. Каталог артиста и похожие музыканты
+        var targetArtistName: String?
         if let profile = try? await getArtistFixed(artistId: artistId) {
+            targetArtistName = profile.artist.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
             // Добавляем 2 визитные карточки артиста в начало
             for (idx, item) in profile.popularTracks.prefix(2).enumerated() {
                 if !seen.contains(item.id) {
@@ -227,7 +260,7 @@ extension YandexMusicService {
             }
 
             // Похожие артисты
-            for similar in profile.similarArtists.prefix(7) {
+            for similar in profile.similarArtists.shuffled().prefix(10) {
                 let tracks = (try? await getArtistTracks(artistId: similar.id, page: 0, pageSize: 6)) ?? []
                 for (idx, item) in tracks.prefix(3).enumerated() {
                     guard !seen.contains(item.id), !isRecentlyPlayed(ymTrackId: item.id) else { continue }
@@ -237,12 +270,13 @@ extension YandexMusicService {
             }
         }
 
-        // Сортируем с ограничением повторов одного артиста (максимум 2 трека)
+        // Сортируем: для главного артиста разрешено до 2 треков, для похожих артистов строго по 1 треку
         candidates.sort { $0.score > $1.score }
         var result: [Track] = []
         for c in candidates {
-            let primary = c.item.artists?.first?.name?.lowercased() ?? "unknown"
-            if artistCounts[primary, default: 0] < 2 {
+            let primary = c.item.artists?.first?.name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "unknown"
+            let maxAllowed = (primary == targetArtistName) ? 2 : 1
+            if artistCounts[primary, default: 0] < maxAllowed {
                 artistCounts[primary, default: 0] += 1
                 result.append(convertToTrack(c.item))
                 if result.count >= target { break }

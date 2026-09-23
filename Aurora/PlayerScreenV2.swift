@@ -805,13 +805,13 @@ struct PlayerScreenV2: View {
     private func startTrackWave() {
         guard let current = track else { return }; waveLoading = true
         waveActive = true
-        MoodRadioEngine.shared.start(seed: current)
         Task {
             let tracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45)
             await MainActor.run {
                 waveLoading = false
-                MoodRadioEngine.shared.appendRelatedTracks(tracks.filter { $0.id != current.id })
-                waveMessage = "🌊 Моя волна запущена"
+                let waveTracks = tracks.filter { $0.id != current.id }
+                MoodRadioEngine.shared.startTrackWave(seed: current, initialTracks: waveTracks)
+                waveMessage = "🌊 Моя волна по треку запущена"
             }
             try? await Task.sleep(for: .seconds(2.5))
             await MainActor.run { waveMessage = nil }

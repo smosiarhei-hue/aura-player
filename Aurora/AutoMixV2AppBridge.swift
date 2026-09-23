@@ -163,6 +163,19 @@ final class NeuroMixRuntime {
         queue = newQueue
     }
 
+    func replaceUpcomingQueue(with tracks: [Track]) {
+        if let current = currentTrack {
+            var newQ = [current]
+            var seen = Set([current.id])
+            for t in tracks where seen.insert(t.id).inserted {
+                newQ.append(t)
+            }
+            queue = newQ
+        } else {
+            queue = tracks
+        }
+    }
+
     func appendQueue(_ tracks: [Track]) {
         guard !tracks.isEmpty else { return }
         let existing = Set(queue.map(\.id))
@@ -681,11 +694,16 @@ final class AutoMixV2Runtime {
             defer { self?.isRefillingWave = false }
             guard let self else { return }
             let ym = YandexMusicService.shared
-            let stationId = ym.activeStationId ?? ym.waveMoodStation.stationId
-            let rawTracks = (await ym.buildWaveQueue(
-                stationId: stationId,
-                target: 30
-            )).map { $0.toTrack() }
+            let rawTracks: [Track]
+            if MoodRadioEngine.shared.isTrackWaveActive || ym.activeStationId?.hasPrefix("track:") == true {
+                rawTracks = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 30)
+            } else {
+                let stationId = ym.activeStationId ?? ym.waveMoodStation.stationId
+                rawTracks = (await ym.buildWaveQueue(
+                    stationId: stationId,
+                    target: 30
+                )).map { $0.toTrack() }
+            }
             let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
             let fresh = ranked.filter {

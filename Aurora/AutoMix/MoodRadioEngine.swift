@@ -159,6 +159,12 @@ final class MoodRadioEngine {
     private(set) var playedTrackIDs: Set<UUID> = []
     private(set) var playedArtistHistory: [String] = []
 
+    // Состояние сессии «Моей волны по треку»
+    private(set) var isTrackWaveActive: Bool = false
+    private(set) var trackWaveSeed: Track? = nil
+    private(set) var trackWaveVector: TrackVector = MoodPreset.dreamy.baseVector
+    private(set) var sessionPlayedKeys: Set<String> = []
+
     // Веса адаптации Re-seeding (ТЗ 3.5: alpha, beta, gamma)
     private let alpha: Double = 0.50  // Вес базового пресета настроения
     private let beta: Double = 0.30   // Вес скользящего среднего сыгранных треков
@@ -188,11 +194,14 @@ final class MoodRadioEngine {
     // MARK: - API: Старт радио по настроению (POST /mood/start)
 
     func start(mood: MoodPreset) {
+        isTrackWaveActive = false
+        trackWaveSeed = nil
         activeMood = mood
         sessionVector = mood.baseVector
         queue.removeAll()
         recentPlayedTracks.removeAll()
         playedArtistHistory.removeAll()
+        sessionPlayedKeys.removeAll()
 
         // 1. Быстрый сбор свежих треков без повторов
         let initialPool = getCandidatePool(for: mood)
@@ -245,16 +254,138 @@ final class MoodRadioEngine {
     }
 
     func start(seed: Track, relatedTracks: [Track]) {
-        start(seed: seed)
-        appendRelatedTracks(relatedTracks)
+        startTrackWave(seed: seed, initialTracks: relatedTracks)
     }
 
     func start(seed: Track) {
-        activeMood = activeMood ?? .dreamy
-        sessionVector = extractVector(for: seed)
-        queue = [seed]
-        recentPlayedTracks.removeAll()
-        playedArtistHistory.removeAll()
+        startTrackWave(seed: seed, initialTracks: [])
+    }
+
+    /// Старт «Моей волны по треку»: инициализирует аудио-вектор вайба,
+    /// запоминает историю сыгранных артистов и треков, и мгновенно
+    /// переключает предстоящую очередь в плеере на сгенерированную волну.
+    func startTrackWave(seed: Track, initialTracks: [Track]) {
+        isTrackWaveActive = true
+        activeMood = nil
+        trackWaveSeed = seed
+        trackWaveVector = extractVector(for: seed)
+        sessionVector = trackWaveVector
+        recentPlayedTracks = [seed]
+
+        let seedKey = PlayerCore.yandexTrackID(from: seed).isEmpty ? seed.id.uuidString : PlayerCore.yandexTrackID(from: seed)
+        sessionPlayedKeys = [seedKey]
+        playedArtistHistory = [seed.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()]
+
+        for t in initialTracks {
+            let key = PlayerCore.yandexTrackID(from: t).isEmpty ? t.id.uuidString : PlayerCore.yandexTrackID(from: t)
+            sessionPlayedKeys.insert(key)
+            playedArtistHistory.append(t.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
+
+        queue = initialTracks
+        ActivePlayerPresentation.shared.replaceUpcomingQueue(with: initialTracks)
+    }
+
+    /// Бесконечный марковский автодобор треков под вайб текущей волны:
+    /// анализирует аудио-вектор (BPM, энергию, акустику, валентность),
+    /// плавно адаптирует вектор на 70% от корня + 30% от последних треков,
+    /// исключает любые повторы треков и артистов (минимум 12 треков между артистами)
+    /// и возвращает гарантированно свежую порцию музыки.
+    func refillTrackWaveQueue(target: Int = 25) async -> [Track] {
+        guard !isGenerating else { return [] }
+        isGenerating = true
+        defer { isGenerating = false }
+
+        guard let rootSeed = trackWaveSeed ?? queue.last ?? PlayerCore.shared.currentTrack else { return [] }
+
+        // 1. Адаптивный сдвиг вектора вайба:
+        // 70% якорь на исходный вайб трека + 30% на вектор последнего сыгранного трека
+        let rollingVector: TrackVector
+        if let lastTrack = recentPlayedTracks.last {
+            let lastVec = extractVector(for: lastTrack)
+            rollingVector = TrackVector.blend(trackWaveVector, weight1: 0.70, lastVec, weight2: 0.30)
+        } else {
+            rollingVector = trackWaveVector
+        }
+
+        let ym = YandexMusicService.shared
+        var candidateItems: [YandexMusicService.YMTrackItem] = []
+
+        // 2. Получаем кандидатов из подходящих станций под текущий вайб
+        let stations = ym.vibeStations(for: rollingVector)
+        for st in stations.prefix(2) {
+            let stTracks = (try? await ym.getStationTracks(stationId: st)) ?? []
+            candidateItems.append(contentsOf: stTracks.shuffled().prefix(15))
+        }
+
+        // 3. Кандидаты из нативного радио последнего трека очереди
+        let rollingSeedTrack = queue.last ?? rootSeed
+        let rollingSeedID = YandexMusicService.ymId(fromFileName: rollingSeedTrack.fileName)
+            ?? rollingSeedTrack.streamUrlString?.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+        if let rollingSeedID {
+            let trackRadio = (try? await ym.getStationTracks(stationId: "track:\(rollingSeedID)")) ?? []
+            candidateItems.append(contentsOf: trackRadio.prefix(15))
+        }
+
+        // 4. Похожие артисты последних треков с перемешиванием
+        let artistQuery = rollingSeedTrack.artist
+        if let search = await ym.searchAllFixed(query: artistQuery).artists.first {
+            if let profile = try? await ym.getArtistFixed(artistId: String(search.id)) {
+                for sim in profile.similarArtists.shuffled().prefix(6) {
+                    let tracks = (try? await ym.getArtistTracks(artistId: sim.id, page: Int.random(in: 0...1), pageSize: 6)) ?? []
+                    candidateItems.append(contentsOf: tracks)
+                }
+            }
+        }
+
+        // 5. Векторная фильтрация и строгий анти-повтор артистов
+        var scored: [(track: Track, sim: Double)] = []
+        var seenBatchKeys = Set<String>()
+        let recentArtists = Set(playedArtistHistory.suffix(12))
+
+        for item in candidateItems {
+            guard item.available != false else { continue }
+            if seenBatchKeys.contains(item.id) || sessionPlayedKeys.contains(item.id) { continue }
+            if ym.isRecentlyPlayed(ymTrackId: item.id) { continue }
+
+            let track = ym.convertToTrack(item)
+            if UserTasteEngine.shared.isDisliked(track: track) { continue }
+
+            let artistNorm = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if recentArtists.contains(artistNorm) { continue }
+
+            let vec = extractVector(for: track)
+            let sim = vec.cosineSimilarity(to: rollingVector)
+            guard sim >= 0.50 else { continue }
+
+            seenBatchKeys.insert(item.id)
+            scored.append((track, sim))
+        }
+
+        // Сортируем по максимальному сходству вайба
+        scored.sort { $0.sim > $1.sim }
+
+        var result: [Track] = []
+        var batchArtists = Set<String>()
+
+        for entry in scored {
+            let artist = entry.track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if batchArtists.contains(artist) { continue }
+            batchArtists.insert(artist)
+
+            let key = PlayerCore.yandexTrackID(from: entry.track).isEmpty
+                ? entry.track.id.uuidString
+                : PlayerCore.yandexTrackID(from: entry.track)
+            sessionPlayedKeys.insert(key)
+            playedArtistHistory.append(artist)
+
+            result.append(entry.track)
+            if result.count >= target { break }
+        }
+
+        let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: result)
+        queue.append(contentsOf: ranked)
+        return ranked
     }
 
     func appendRelatedTracks(_ relatedTracks: [Track]) {

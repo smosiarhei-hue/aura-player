@@ -158,7 +158,7 @@ final class UserTasteEngine: @unchecked Sendable {
             return false
         }
 
-        // Spread artists: max 2 in a row from the same performer.
+        // Spread artists: no back-to-back songs from the same performer.
         var result: [Track] = []
         var taken = Set<UUID>()
         var streakArtist: String?
@@ -173,7 +173,7 @@ final class UserTasteEngine: @unchecked Sendable {
                 continue
             }
             let artist = entry.track.artist
-            if artist == streakArtist, streakCount >= 2 {
+            if artist == streakArtist, streakCount >= 1 {
                 // Find the next candidate from a different artist.
                 if let alternative = sorted.firstIndex(where: { !taken.contains($0.track.id) && $0.track.artist != artist }) {
                     let pick = sorted[alternative]
