@@ -384,6 +384,7 @@ struct PlayerScreenV2: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.bottom, 54)
 
             // Ergonomic, thumb-friendly Fullscreen Expand Button at Bottom-Trailing
             HStack {
