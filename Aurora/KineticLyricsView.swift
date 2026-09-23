@@ -34,27 +34,29 @@ struct LyricWord: Identifiable, Sendable, Equatable {
 /// Phrase unit containing timed words and visual style flags (HDR glow).
 struct LyricPhrase: Identifiable, Sendable, Equatable {
     let id: String
+    let text: String
     let timeRange: ClosedRange<TimeInterval>
     let words: [LyricWord]
+    let hasWordTimings: Bool
     let isOutlined: Bool
     let glowIntensity: Double
 
     init(
         id: String,
+        text: String,
         timeRange: ClosedRange<TimeInterval>,
         words: [LyricWord],
+        hasWordTimings: Bool,
         isOutlined: Bool = false,
         glowIntensity: Double = 1.0
     ) {
         self.id = id
+        self.text = text
         self.timeRange = timeRange
         self.words = words
+        self.hasWordTimings = hasWordTimings
         self.isOutlined = isOutlined
         self.glowIntensity = glowIntensity
-    }
-
-    var text: String {
-        words.map(\.text).joined(separator: " ")
     }
 
     /// Converts standard lyrics lines into natural kinetic phrases with deterministic stable IDs.
@@ -67,9 +69,11 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
             let end = line.startTime + duration
 
             let words: [LyricWord]
+            let hasWordTimings: Bool
             if let lineWords = line.words, !lineWords.isEmpty {
+                hasWordTimings = true
                 words = lineWords.enumerated().map { wordIdx, w in
-                    let wDur = max(0.12, w.endTime - w.startTime)
+                    let wDur = max(0.10, w.endTime - w.startTime)
                     let isImp = w.text.count > 5 || w.text.contains("!")
                     return LyricWord(
                         id: "\(phraseId)_w\(wordIdx)",
@@ -80,25 +84,17 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
                     )
                 }
             } else {
-                let tokens = line.text.split(separator: " ").map(String.init)
-                let wordDur = duration / Double(max(1, tokens.count))
-                words = tokens.enumerated().map { i, token in
-                    let wStart = line.startTime + Double(i) * wordDur
-                    let isImp = token.count >= 6 || (i == tokens.count - 1 && token.count >= 4)
-                    return LyricWord(
-                        id: "\(phraseId)_w\(i)",
-                        text: token,
-                        startTime: wStart,
-                        duration: wordDur,
-                        isImpact: isImp
-                    )
-                }
+                // If there are no real word timings, do not create fake word slices!
+                hasWordTimings = false
+                words = []
             }
 
             phrases.append(LyricPhrase(
                 id: phraseId,
+                text: line.text,
                 timeRange: line.startTime...end,
                 words: words,
+                hasWordTimings: hasWordTimings,
                 isOutlined: false,
                 glowIntensity: 1.35
             ))
@@ -107,14 +103,15 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
     }
 }
 
-// MARK: - 2. Native SwiftUI Centered Flow Layout (Zero Font Shifting)
+// MARK: - 2. Multiline Word Flow Layout (Wraps words naturally with alignment)
 
 struct LyricsFlowLayout: Layout {
     var spacing: CGFloat = 8
-    var lineSpacing: CGFloat = 10
+    var lineSpacing: CGFloat = 8
+    var alignment: HorizontalAlignment = .center
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? 320
+        let maxWidth = proposal.width ?? .infinity
         var currentX: CGFloat = 0
         var currentY: CGFloat = 0
         var lineHeight: CGFloat = 0
@@ -131,7 +128,7 @@ struct LyricsFlowLayout: Layout {
             currentX += size.width + spacing
             maxLineWidth = max(maxLineWidth, currentX)
         }
-        return CGSize(width: maxWidth, height: currentY + lineHeight)
+        return CGSize(width: min(maxWidth, maxLineWidth), height: currentY + lineHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -165,7 +162,12 @@ struct LyricsFlowLayout: Layout {
         var y = bounds.minY
         for (lineIndex, line) in lines.enumerated() {
             let totalLineWidth = lineWidths[lineIndex]
-            let startX = bounds.minX + max(0, (bounds.width - totalLineWidth) / 2) // Centered
+            let startX: CGFloat
+            if alignment == .center {
+                startX = bounds.minX + max(0, (bounds.width - totalLineWidth) / 2)
+            } else {
+                startX = bounds.minX
+            }
             var x = startX
             for item in line {
                 subviews[item.index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
@@ -176,7 +178,7 @@ struct LyricsFlowLayout: Layout {
     }
 }
 
-// MARK: - 3. 120 Hz Smooth Syllable Karaoke Highlight Word View
+// MARK: - 3. 120 Hz Smooth Syllable Karaoke Highlight Word View (ZERO SQUARES)
 
 struct KineticWordView: View {
     let word: LyricWord
@@ -187,29 +189,38 @@ struct KineticWordView: View {
         if currentTime <= word.startTime { return 0 }
         if currentTime >= word.endTime { return 1 }
         let dur = max(0.06, word.endTime - word.startTime)
-        return min(1, max(0, CGFloat((currentTime - word.startTime) / dur)))
+        return min(1.0, max(0.0, CGFloat((currentTime - word.startTime) / dur)))
     }
 
     var body: some View {
         ZStack(alignment: .leading) {
-            // Un-sung base text (Dimmed, rock-solid font weight)
+            // Un-sung base text (Dimmed, rock-solid font weight, zero jitter)
             Text(word.text.uppercased())
                 .font(.system(size: fontSize, weight: .heavy, design: .default))
                 .foregroundStyle(Color.white.opacity(0.35))
 
-            // Sung glowing text revealed smoothly at 120 Hz across characters
-            Text(word.text.uppercased())
-                .font(.system(size: fontSize, weight: .heavy, design: .default))
-                .foregroundStyle(Color.white)
-                .shadow(color: Color.black.opacity(0.85), radius: 6, y: 2)
-                .shadow(color: Color.white.opacity(progress > 0 && progress < 1 ? 0.95 : 0.40), radius: 8)
-                .shadow(color: Color.cyan.opacity(progress > 0 && progress < 1 ? 0.60 : 0.0), radius: 14)
-                .mask(alignment: .leading) {
-                    GeometryReader { geo in
-                        Rectangle()
-                            .frame(width: geo.size.width * progress)
-                    }
-                }
+            // Sung glowing text revealed with soft feathered gradient — NO hard rectangles or squares!
+            if progress > 0 {
+                Text(word.text.uppercased())
+                    .font(.system(size: fontSize, weight: .heavy, design: .default))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: Color.black.opacity(0.85), radius: 6, y: 2)
+                    .shadow(color: Color.white.opacity(progress < 1 ? 0.95 : 0.40), radius: 8)
+                    .shadow(color: Color.cyan.opacity(progress < 1 ? 0.45 : 0.0), radius: 14)
+                    .mask(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .white, location: 0.0),
+                                .init(color: .white, location: max(0.0, progress - 0.15)),
+                                .init(color: .white.opacity(0.60), location: progress),
+                                .init(color: .clear, location: min(1.0, progress + 0.15)),
+                                .init(color: .clear, location: 1.0)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            }
         }
     }
 }
@@ -276,7 +287,7 @@ struct KineticLyricsView: View {
     }
 }
 
-// MARK: - 5. Phrase Stage (Centered, 120 Hz Progressive Word Glow)
+// MARK: - 5. Phrase Stage (Soft Blurred Feathered 120 Hz HDR Glow — ZERO Squares!)
 
 private struct KineticPhraseStage: View {
     let phrase: LyricPhrase
@@ -285,16 +296,31 @@ private struct KineticPhraseStage: View {
     private var baseFontSize: CGFloat { 32 }
 
     var body: some View {
-        LyricsFlowLayout(spacing: 8, lineSpacing: 10) {
-            ForEach(phrase.words) { word in
-                KineticWordView(
-                    word: word,
-                    currentTime: currentTime,
-                    fontSize: baseFontSize
-                )
+        if phrase.hasWordTimings && !phrase.words.isEmpty {
+            // Timed word-by-word karaoke with flow wrapping & soft feathered glow (NO squares)
+            LyricsFlowLayout(spacing: 8, lineSpacing: 10, alignment: .center) {
+                ForEach(phrase.words) { word in
+                    KineticWordView(
+                        word: word,
+                        currentTime: currentTime,
+                        fontSize: baseFontSize
+                    )
+                }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+        } else {
+            // Track has NO word timings — Show 100% of the FULL line, NEVER partially cropped or cut off!
+            Text(phrase.text.uppercased())
+                .font(.system(size: baseFontSize, weight: .heavy, design: .default))
+                .foregroundStyle(Color.white)
+                .multilineTextAlignment(.center)
+                .lineSpacing(8)
+                .shadow(color: Color.black.opacity(0.85), radius: 6, y: 2)
+                .shadow(color: Color.white.opacity(0.95), radius: 8)
+                .shadow(color: Color.white.opacity(0.50), radius: 18)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
     }
 }

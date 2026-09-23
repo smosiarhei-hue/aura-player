@@ -25,6 +25,22 @@ struct LyricsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let img = player.displayTrack.flatMap({ LibraryStore.cachedArtworkImage(for: $0) }) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 50)
+                        .scaleEffect(1.2)
+                        .opacity(0.40)
+                        .clipped()
+                        .ignoresSafeArea()
+                }
+                Color.black.opacity(0.45).ignoresSafeArea()
+            }
+        }
         .task { await player.observeTimeline() }
     }
 }
@@ -100,7 +116,7 @@ private struct SyncedLyrics: View {
     }
 }
 
-// MARK: - Single Line (120 Hz Smooth Syllable Karaoke Highlight)
+// MARK: - Single Line (120 Hz Smooth Syllable Karaoke Highlight — ZERO Squares)
 
 private struct LyricsLineView: View {
     let line: LyricsLine
@@ -109,44 +125,47 @@ private struct LyricsLineView: View {
     let fontSize: Double
 
     private var words: [LyricWord] {
-        if let w = line.words, !w.isEmpty {
-            return w.enumerated().map { i, item in
-                LyricWord(
-                    id: "\(line.id)_w\(i)",
-                    text: item.text,
-                    startTime: item.startTime,
-                    duration: max(0.10, item.endTime - item.startTime)
-                )
-            }
-        } else {
-            let tokens = line.text.split(separator: " ").map(String.init)
-            let duration = max(1.2, (line.endTime ?? (line.startTime + 4.0)) - line.startTime)
-            let wordDur = duration / Double(max(1, tokens.count))
-            return tokens.enumerated().map { i, token in
-                LyricWord(
-                    id: "\(line.id)_w\(i)",
-                    text: token,
-                    startTime: line.startTime + Double(i) * wordDur,
-                    duration: wordDur
-                )
-            }
+        guard let w = line.words, !w.isEmpty else { return [] }
+        return w.enumerated().map { i, item in
+            LyricWord(
+                id: "\(line.id)_w\(i)",
+                text: item.text,
+                startTime: item.startTime,
+                duration: max(0.10, item.endTime - item.startTime)
+            )
         }
     }
 
     var body: some View {
         if isActive {
-            LyricsFlowLayout(spacing: 8, lineSpacing: 8) {
-                ForEach(words) { word in
-                    KineticWordView(
-                        word: word,
-                        currentTime: currentTime,
-                        fontSize: fontSize
-                    )
+            if !words.isEmpty {
+                // Word-by-word synced line with soft feathered 120 FPS glow
+                LyricsFlowLayout(spacing: 8, lineSpacing: 8, alignment: .leading) {
+                    ForEach(words) { word in
+                        KineticWordView(
+                            word: word,
+                            currentTime: currentTime,
+                            fontSize: fontSize
+                        )
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .scaleEffect(1.02, anchor: .leading)
+                .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
+            } else {
+                // If there are NO word-by-word timings, display the FULL line in bright glowing white!
+                Text(line.text)
+                    .font(.system(size: fontSize, weight: .heavy, design: .default))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: Color.black.opacity(0.85), radius: 6, y: 2)
+                    .shadow(color: Color.white.opacity(0.90), radius: 8)
+                    .shadow(color: Color.white.opacity(0.50), radius: 16)
+                    .multilineTextAlignment(.leading)
+                    .lineSpacing(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .scaleEffect(1.02, anchor: .leading)
+                    .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .scaleEffect(1.02, anchor: .leading)
-            .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
         } else {
             Text(line.text)
                 .font(.system(size: fontSize * 0.84, weight: .semibold, design: .default))

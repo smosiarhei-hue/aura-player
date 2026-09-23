@@ -32,6 +32,8 @@ struct PlayerScreenV2: View {
     @State private var artworkTrackId: UUID?
     @State private var currentArtworkImage: UIImage?
     @State private var cachedPhrases: [LyricPhrase] = []
+    @State private var areSecondaryControlsHidden = false
+    @State private var controlsAutoHideTask: Task<Void, Never>? = nil
     private let tapSide: CGFloat = AG.tapTarget
 
     enum ActivePlayerModal: String, Identifiable {
@@ -51,7 +53,7 @@ struct PlayerScreenV2: View {
         GeometryReader { geo in
             let totalHeight = geo.size.height
             let totalWidth = geo.size.width
-            let artworkHeight = isFullScreenVideoShot || showLyricsMode ? totalHeight * 0.58 : totalWidth
+            let artworkHeight = isFullScreenVideoShot || showLyricsMode ? totalHeight * 0.58 : totalHeight * 0.60
 
             ZStack(alignment: .top) {
                 background
@@ -119,6 +121,7 @@ struct PlayerScreenV2: View {
         .onChange(of: player.isPlaying) { _, playing in
             if playing {
                 videoLooperPlayer?.play()
+                scheduleSecondaryControlsAutoHide()
             } else {
                 videoLooperPlayer?.pause()
             }
@@ -127,8 +130,15 @@ struct PlayerScreenV2: View {
             videoShotURL = nil
             videoShotTrackID = nil
             teardownVideoLooper()
+            scheduleSecondaryControlsAutoHide()
         }
-        .onDisappear { teardownVideoLooper() }
+        .onAppear {
+            scheduleSecondaryControlsAutoHide()
+        }
+        .onDisappear {
+            teardownVideoLooper()
+            controlsAutoHideTask?.cancel()
+        }
     }
 
     private var isFullScreenVideoShot: Bool {
@@ -185,23 +195,24 @@ struct PlayerScreenV2: View {
                                        .init(color: .black.opacity(0.75), location: 1)],
                                startPoint: .top, endPoint: .bottom)
             } else {
-                if let currentArtworkImage {
-                    Image(uiImage: currentArtworkImage)
+                let bgImg = currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
+                if let bgImg {
+                    Image(uiImage: bgImg)
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .blur(radius: 14)
-                        .scaleEffect(1.06)
-                        .opacity(0.38)
+                        .blur(radius: 40)
+                        .scaleEffect(1.15)
+                        .opacity(0.55)
                         .clipped()
                         .drawingGroup()
                 } else {
                     gradientBackground
                 }
-                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.30)
-                LinearGradient(stops: [.init(color: .black.opacity(0.05), location: 0),
-                                       .init(color: .black.opacity(0.28), location: 0.50),
-                                       .init(color: .black.opacity(0.85), location: 1.0)],
+                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.35)
+                LinearGradient(stops: [.init(color: .black.opacity(0.08), location: 0),
+                                       .init(color: .black.opacity(0.30), location: 0.50),
+                                       .init(color: .black.opacity(0.80), location: 1.0)],
                                startPoint: .top, endPoint: .bottom)
             }
         }.allowsHitTesting(false)
@@ -260,15 +271,29 @@ struct PlayerScreenV2: View {
                     .frame(width: width, height: height)
             } else {
                 artwork
-                    .frame(width: width, height: width)
+                    .frame(width: width, height: height)
+                    .scaledToFill()
                     .clipped()
             }
             if !isFullScreenVideoShot && !showLyricsMode {
-                AutoMixTransitionOverlay(player: player, width: width, height: width)
+                AutoMixTransitionOverlay(player: player, width: width, height: height)
             }
             if showLyricsMode { lyricsOverlay(width: width, height: height) }
         }
-        .frame(width: width, height: isFullScreenVideoShot || showLyricsMode ? height : width)
+        .frame(width: width, height: height)
+        .mask {
+            LinearGradient(
+                stops: [
+                    .init(color: .black, location: 0.0),
+                    .init(color: .black, location: 0.65),
+                    .init(color: .black.opacity(0.85), location: 0.78),
+                    .init(color: .black.opacity(0.40), location: 0.90),
+                    .init(color: .clear, location: 1.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
         .scaleEffect(player.isPlaying ? 1.0 : 0.96)
         .offset(x: coverDragX)
         .contentShape(Rectangle())
@@ -421,11 +446,11 @@ struct PlayerScreenV2: View {
         if let current {
             Image(uiImage: current)
                 .resizable()
-                .scaledToFit()
+                .scaledToFill()
                 .id(track?.id)
         } else if let raw = track?.coverURL, let url = URL(string: raw) {
             AsyncImage(url: url) { phase in
-                if let image = phase.image { image.resizable().scaledToFit() } else { fallbackArtwork }
+                if let image = phase.image { image.resizable().scaledToFill() } else { fallbackArtwork }
             }
             .id(track?.id)
         } else {
@@ -489,51 +514,106 @@ struct PlayerScreenV2: View {
     private var metadataRow: some View {
         let current = track
         let favorite = current.map(library.isTrackFavorite) ?? false
-        return HStack(spacing: 14) {
+        return HStack(spacing: 12) {
             Button(action: openArtist) {
                 VStack(alignment: .leading, spacing: 2) {
                     MarqueeText(text: current?.title ?? "Не играет", font: AG.rounded(.title2, .bold), color: AG.ink, height: 28)
                     MarqueeText(text: current?.artist ?? "", font: AG.rounded(.body, .medium), color: AG.inkMuted, height: 22)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.plain).disabled(current == nil || resolvingArtist)
-            if videoShotURL != nil { GlassIconButton(systemImage: isVideoShotEnabled ? "video.fill" : "video.slash.fill", tint: isVideoShotEnabled ? AG.positive : AG.inkMuted, accessibilityLabel: "Видео-шот", action: toggleVideoShot) }
-            if current?.isStream == true { GlassIconButton(systemImage: "dot.radiowaves.left.and.right", tint: waveActive ? AG.amber : AG.inkMuted, accessibilityLabel: "Моя волна", action: startTrackWave).disabled(waveLoading) }
-            Button {
-                guard let current else { return }; library.toggleFavorite(current)
-            } label: {
-                Image(systemName: favorite ? "heart.fill" : "heart").foregroundStyle(favorite ? AG.heart : AG.inkMuted)
-                    .frame(width: tapSide, height: tapSide)
-            }
-            .glassCircle()
-            .disabled(current == nil)
-            .accessibilityLabel(favorite ? "Убрать из избранного" : "Добавить в избранное")
-            if let current {
-                let disliked = UserTasteEngine.shared.isDisliked(track: current)
-                Menu {
-                    if disliked {
-                        Button {
-                            UserTasteEngine.shared.removeDislike(track: current)
-                            waveMessage = "Трек снова может появиться в волне"
-                        } label: {
-                            Label("Отменить дизлайк", systemImage: "arrow.uturn.backward")
-                        }
-                    } else {
-                        Button(role: .destructive) {
-                            UserTasteEngine.shared.recordDislike(track: current)
-                            MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
-                            waveMessage = "Трек исключён из Моей волны"
-                            player.next()
-                        } label: {
-                            Label("Не рекомендовать", systemImage: "hand.thumbsdown")
-                        }
-                    }
+
+            if areSecondaryControlsHidden {
+                Button {
+                    scheduleSecondaryControlsAutoHide()
                 } label: {
-                    Image(systemName: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                        .foregroundStyle(disliked ? AG.heart : AG.inkMuted)
-                        .frame(width: tapSide, height: tapSide)
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Раскрыть")
+                            .font(AG.text(.caption2, .bold))
+                    }
+                    .foregroundStyle(AG.inkMuted)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .glassCapsule()
                 }
-                .glassCircle()
-                .accessibilityLabel(disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек")
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+                .accessibilityLabel("Раскрыть кнопки управления")
+            } else {
+                HStack(spacing: 10) {
+                    if videoShotURL != nil {
+                        GlassIconButton(
+                            systemImage: isVideoShotEnabled ? "video.fill" : "video.slash.fill",
+                            tint: isVideoShotEnabled ? AG.positive : AG.inkMuted,
+                            accessibilityLabel: "Видео-шот",
+                            action: toggleVideoShot
+                        )
+                    }
+                    if current?.isStream == true {
+                        GlassIconButton(
+                            systemImage: "dot.radiowaves.left.and.right",
+                            tint: waveActive ? AG.amber : AG.inkMuted,
+                            accessibilityLabel: "Моя волна",
+                            action: startTrackWave
+                        )
+                        .disabled(waveLoading)
+                    }
+                    Button {
+                        guard let current else { return }; library.toggleFavorite(current)
+                    } label: {
+                        Image(systemName: favorite ? "heart.fill" : "heart")
+                            .foregroundStyle(favorite ? AG.heart : AG.inkMuted)
+                            .frame(width: tapSide, height: tapSide)
+                    }
+                    .glassCircle()
+                    .disabled(current == nil)
+                    .accessibilityLabel(favorite ? "Убрать из избранного" : "Добавить в избранное")
+
+                    if let current {
+                        let disliked = UserTasteEngine.shared.isDisliked(track: current)
+                        Menu {
+                            if disliked {
+                                Button {
+                                    UserTasteEngine.shared.removeDislike(track: current)
+                                    waveMessage = "Трек снова может появиться в волне"
+                                } label: {
+                                    Label("Отменить дизлайк", systemImage: "arrow.uturn.backward")
+                                }
+                            } else {
+                                Button(role: .destructive) {
+                                    UserTasteEngine.shared.recordDislike(track: current)
+                                    MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
+                                    waveMessage = "Трек исключён из Моей волны"
+                                    player.next()
+                                } label: {
+                                    Label("Не рекомендовать", systemImage: "hand.thumbsdown")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                                .foregroundStyle(disliked ? AG.heart : AG.inkMuted)
+                                .frame(width: tapSide, height: tapSide)
+                        }
+                        .glassCircle()
+                        .accessibilityLabel(disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек")
+                    }
+                }
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: areSecondaryControlsHidden)
+    }
+
+    private func scheduleSecondaryControlsAutoHide() {
+        controlsAutoHideTask?.cancel()
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+            areSecondaryControlsHidden = false
+        }
+        controlsAutoHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                areSecondaryControlsHidden = true
             }
         }
     }
