@@ -30,6 +30,7 @@ final class SpectrumAnalyzer {
             analyzer.mids = snapshot.mids
             analyzer.highs = snapshot.highs
             analyzer.level = snapshot.level
+            MusicHapticsManager.shared.process(kick: snapshot.kick, bass: snapshot.bass)
         }
     }
 

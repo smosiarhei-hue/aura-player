@@ -143,7 +143,15 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Тактильный отклик") {
+                Section {
+                    Toggle("Тактильные сигналы музыки", isOn: $settings.musicHapticsEnabled).tint(settings.accentColor)
+                } header: {
+                    Text("Универсальный доступ")
+                } footer: {
+                    Text("Taptic Engine отбивает ритм, удары бочки и бас в такт музыке, в точности как в Apple Music (iOS 18+).")
+                }
+
+                Section("Тактильный отклик интерфейса") {
                     Toggle("Вибрация при управлении", isOn: $settings.hapticsEnabled).tint(settings.accentColor)
                     Toggle("Вибрация при перемотке", isOn: $settings.scrubHapticsEnabled).tint(settings.accentColor)
                 }

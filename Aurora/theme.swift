@@ -122,6 +122,7 @@ final class SettingsStore {
 
     var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
     var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
+    var musicHapticsEnabled: Bool { didSet { defaults.set(musicHapticsEnabled, forKey: "settings.musicHaptics") } }
 
     // Karaoke lyrics
     var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
@@ -133,6 +134,7 @@ final class SettingsStore {
     private init() {
         hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
+        musicHapticsEnabled = defaults.object(forKey: "settings.musicHaptics") as? Bool ?? true
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
     }

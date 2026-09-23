@@ -126,12 +126,7 @@ struct KineticLyricsView: View {
                         currentTime: currentTime
                     )
                     .id(phrase.id)
-                    .transition(
-                        .asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: 6)),
-                            removal: .opacity
-                        )
-                    )
+                    .transition(.opacity)
                 } else {
                     Text("SONIVO")
                         .font(.system(size: 26, weight: .heavy, design: .default))
@@ -192,15 +187,7 @@ private struct KineticPhraseStage: View {
         Color.cyan.exposureAdjust(1.65).headroom(2.8)
     }
 
-    private var baseFontSize: CGFloat {
-        if phrase.words.count <= 2 {
-            return 36
-        } else if phrase.words.count <= 5 {
-            return 32
-        } else {
-            return 28
-        }
-    }
+    private var baseFontSize: CGFloat { 32 }
 
     var body: some View {
         ZStack {
@@ -248,9 +235,10 @@ private struct KineticPhraseStage: View {
                     : (isPast ? Color.white.opacity(0.95) : Color.white.opacity(0.50))
             }
 
+            // Invariant font weight .heavy ensures zero glyph reflow or jitter during singing
             let wordFont: Font = .system(
                 size: baseFontSize,
-                weight: isCurrent ? .black : .heavy,
+                weight: .heavy,
                 design: .default
             )
 

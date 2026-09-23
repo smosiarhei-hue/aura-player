@@ -354,7 +354,7 @@ struct PlayerScreenV2: View {
                     let phrases = LyricPhrase.from(lines: lines)
                     KineticLyricsView(
                         phrases: phrases,
-                        currentTime: Binding(get: { player.progress }, set: { _ in }),
+                        currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16) }, set: { _ in }),
                         isPlaying: player.isPlaying
                     )
                     .frame(maxWidth: width - 28)
@@ -417,8 +417,8 @@ struct PlayerScreenV2: View {
     }
     private var currentLyricsPair: (current: String, next: String?) {
         guard let lines = lyrics?.lines, !lines.isEmpty else { return ("Слова песни", nil) }
-        var index = 0
-        for (i, line) in lines.enumerated() { if line.startTime <= max(0, player.progress - 0.12) { index = i } else { break } }
+        let targetTime = max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16)
+        for (i, line) in lines.enumerated() { if line.startTime <= targetTime { index = i } else { break } }
         return (lines[index].text, index + 1 < lines.count ? lines[index + 1].text : nil)
     }
 
