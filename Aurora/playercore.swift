@@ -712,6 +712,7 @@ final class PlayerCore {
             transitionPausedAt = Date()
         }
         isPlaying = false
+        MusicHapticsManager.shared.stop()
         updateNowPlayingInfo()
         savePlaybackState()
     }

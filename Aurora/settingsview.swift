@@ -144,11 +144,38 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Тактильные сигналы музыки", isOn: $settings.musicHapticsEnabled).tint(settings.accentColor)
+                    Toggle("Тактильные сигналы музыки", isOn: $settings.musicHapticsEnabled)
+                        .tint(settings.accentColor)
+
+                    if settings.musicHapticsEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Сила вибрации")
+                                Spacer()
+                                Text(settings.musicHapticsIntensity.title)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Picker("Сила вибрации", selection: $settings.musicHapticsIntensity) {
+                                ForEach(MusicHapticsIntensity.allCases) { item in
+                                    Text(item.title).tag(item)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: settings.musicHapticsIntensity) { _, newIntensity in
+                                MusicHapticsManager.shared.playPreview(intensity: newIntensity)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
                 } header: {
                     Text("Универсальный доступ")
                 } footer: {
-                    Text("Taptic Engine отбивает ритм, удары бочки и бас в такт музыке, в точности как в Apple Music (iOS 18+).")
+                    Text("Тактильные сигналы музыки в стиле Apple Music (iOS 18+). Taptic Engine передает ритм через раздельные тактильные ощущения: глубокий удар бочки (кик), четкие тарелочки (хай-хэт) и мягкий резонанс баса (808). Специально для тактильного восприятия музыки и людей с нарушениями слуха.")
+                }
+                .onChange(of: settings.musicHapticsEnabled) { _, isEnabled in
+                    if isEnabled {
+                        MusicHapticsManager.shared.playPreview(intensity: settings.musicHapticsIntensity)
+                    }
                 }
 
                 Section("Тактильный отклик интерфейса") {

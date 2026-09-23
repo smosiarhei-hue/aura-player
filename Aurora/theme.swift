@@ -114,6 +114,30 @@ enum AG {
 
 // MARK: - Settings
 
+enum MusicHapticsIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
+    case soft = "soft"
+    case medium = "medium"
+    case strong = "strong"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .soft: return "Слабая"
+        case .medium: return "Средняя"
+        case .strong: return "Сильная"
+        }
+    }
+
+    var scaleFactor: Float {
+        switch self {
+        case .soft: return 0.45
+        case .medium: return 0.75
+        case .strong: return 1.00
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class SettingsStore {
@@ -123,6 +147,9 @@ final class SettingsStore {
     var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
     var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
     var musicHapticsEnabled: Bool { didSet { defaults.set(musicHapticsEnabled, forKey: "settings.musicHaptics") } }
+    var musicHapticsIntensity: MusicHapticsIntensity {
+        didSet { defaults.set(musicHapticsIntensity.rawValue, forKey: "settings.musicHapticsIntensity") }
+    }
 
     // Karaoke lyrics
     var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
@@ -135,6 +162,9 @@ final class SettingsStore {
         hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
         musicHapticsEnabled = defaults.object(forKey: "settings.musicHaptics") as? Bool ?? true
+        musicHapticsIntensity = MusicHapticsIntensity(
+            rawValue: defaults.string(forKey: "settings.musicHapticsIntensity") ?? ""
+        ) ?? .strong
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
     }
