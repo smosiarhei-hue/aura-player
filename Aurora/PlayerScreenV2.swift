@@ -31,6 +31,7 @@ struct PlayerScreenV2: View {
     @State private var paletteTrackId: UUID?
     @State private var artworkTrackId: UUID?
     @State private var currentArtworkImage: UIImage?
+    @State private var cachedPhrases: [LyricPhrase] = []
     private let tapSide: CGFloat = AG.tapTarget
 
     enum ActivePlayerModal: String, Identifiable {
@@ -50,7 +51,7 @@ struct PlayerScreenV2: View {
         GeometryReader { geo in
             let totalHeight = geo.size.height
             let totalWidth = geo.size.width
-            let artworkHeight = totalHeight * 0.60
+            let artworkHeight = isFullScreenVideoShot || showLyricsMode ? totalHeight * 0.58 : totalWidth
 
             ZStack(alignment: .top) {
                 background
@@ -189,18 +190,18 @@ struct PlayerScreenV2: View {
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .blur(radius: 56)
-                        .scaleEffect(1.2)
-                        .opacity(0.60)
+                        .blur(radius: 14)
+                        .scaleEffect(1.06)
+                        .opacity(0.38)
                         .clipped()
                         .drawingGroup()
                 } else {
                     gradientBackground
                 }
-                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.50)
-                LinearGradient(stops: [.init(color: .black.opacity(0.12), location: 0),
-                                       .init(color: .black.opacity(0.40), location: 0.65),
-                                       .init(color: .black.opacity(0.70), location: 1)],
+                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.30)
+                LinearGradient(stops: [.init(color: .black.opacity(0.05), location: 0),
+                                       .init(color: .black.opacity(0.28), location: 0.50),
+                                       .init(color: .black.opacity(0.85), location: 1.0)],
                                startPoint: .top, endPoint: .bottom)
             }
         }.allowsHitTesting(false)
@@ -259,30 +260,15 @@ struct PlayerScreenV2: View {
                     .frame(width: width, height: height)
             } else {
                 artwork
-                    .frame(width: width, height: height)
-                    .scaledToFill()
+                    .frame(width: width, height: width)
                     .clipped()
             }
             if !isFullScreenVideoShot && !showLyricsMode {
-                AutoMixTransitionOverlay(player: player, width: width, height: height)
+                AutoMixTransitionOverlay(player: player, width: width, height: width)
             }
             if showLyricsMode { lyricsOverlay(width: width, height: height) }
         }
-        .frame(width: width, height: height)
-        .mask {
-            LinearGradient(
-                stops: [
-                    .init(color: .black, location: 0.0),
-                    .init(color: .black, location: 0.80),
-                    .init(color: .black.opacity(0.85), location: 0.88),
-                    .init(color: .black.opacity(0.50), location: 0.94),
-                    .init(color: .black.opacity(0.18), location: 0.98),
-                    .init(color: .clear, location: 1.0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
+        .frame(width: width, height: isFullScreenVideoShot || showLyricsMode ? height : width)
         .scaleEffect(player.isPlaying ? 1.0 : 0.96)
         .offset(x: coverDragX)
         .contentShape(Rectangle())
@@ -350,10 +336,16 @@ struct PlayerScreenV2: View {
                 if lyricsLoading {
                     ProgressView().tint(.white)
                     Text("Загрузка текста…").foregroundStyle(AG.inkMuted)
-                } else if let lines = lyrics?.lines, !lines.isEmpty {
-                    let phrases = LyricPhrase.from(lines: lines)
+                } else if !cachedPhrases.isEmpty {
                     KineticLyricsView(
-                        phrases: phrases,
+                        phrases: cachedPhrases,
+                        currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16) }, set: { _ in }),
+                        isPlaying: player.isPlaying
+                    )
+                    .frame(maxWidth: width - 28)
+                } else if let lines = lyrics?.lines, !lines.isEmpty {
+                    KineticLyricsView(
+                        phrases: LyricPhrase.from(lines: lines),
                         currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16) }, set: { _ in }),
                         isPlaying: player.isPlaying
                     )
@@ -429,11 +421,11 @@ struct PlayerScreenV2: View {
         if let current {
             Image(uiImage: current)
                 .resizable()
-                .scaledToFill()
+                .scaledToFit()
                 .id(track?.id)
         } else if let raw = track?.coverURL, let url = URL(string: raw) {
             AsyncImage(url: url) { phase in
-                if let image = phase.image { image.resizable().scaledToFill() } else { fallbackArtwork }
+                if let image = phase.image { image.resizable().scaledToFit() } else { fallbackArtwork }
             }
             .id(track?.id)
         } else {
@@ -645,9 +637,17 @@ struct PlayerScreenV2: View {
     }
 
     private func loadLyrics() async {
-        lyrics = nil; guard let requested = track else { lyricsLoading = false; return }
-        lyricsLoading = true; let result = try? await LyricsService.shared.fetchLyrics(for: requested)
-        guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }; lyrics = result; lyricsLoading = false
+        lyrics = nil
+        cachedPhrases = []
+        guard let requested = track else { lyricsLoading = false; return }
+        lyricsLoading = true
+        let result = try? await LyricsService.shared.fetchLyrics(for: requested)
+        guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }
+        lyrics = result
+        if let lines = result?.lines, !lines.isEmpty {
+            cachedPhrases = LyricPhrase.from(lines: lines)
+        }
+        lyricsLoading = false
     }
     private func loadVideoShot() async {
         videoShotURL = nil

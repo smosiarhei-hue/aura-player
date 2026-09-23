@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Synchronized Karaoke Lyrics View (Apple Music Style, 120 FPS, Progressive Vocal Glow)
+// MARK: - Synchronized Karaoke Lyrics View (Apple Music Style, 120 FPS ProMotion, Syllable Sweep)
 
 struct LyricsView: View {
     let lyrics: Lyrics?
@@ -9,34 +9,36 @@ struct LyricsView: View {
     @State private var settings = SettingsStore.shared
 
     var body: some View {
-        Group {
-            if isLoading {
-                AuraLoadingState(title: "Загрузка текста…")
-            } else if let lyrics, !lyrics.lines.isEmpty {
-                if lyrics.isSynchronized {
-                    SyncedLyrics(lyrics: lyrics)
+        TimelineView(.animation(paused: !player.isPlaying)) { _ in
+            Group {
+                if isLoading {
+                    AuraLoadingState(title: "Загрузка текста…")
+                } else if let lyrics, !lyrics.lines.isEmpty {
+                    if lyrics.isSynchronized {
+                        SyncedLyrics(lyrics: lyrics)
+                    } else {
+                        StaticLyricsList(lyrics: lyrics)
+                    }
                 } else {
-                    StaticLyricsList(lyrics: lyrics)
+                    EmptyLyricsState()
                 }
-            } else {
-                EmptyLyricsState()
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task { await player.observeTimeline() }
     }
 }
 
-// MARK: - Synchronized Scrolling Lyrics (120 FPS, Auto-centered, Edge Fade Mask)
+// MARK: - Synchronized Scrolling Lyrics (120 FPS, Auto-centered, Smooth Spring Scrolling)
 
 private struct SyncedLyrics: View {
     let lyrics: Lyrics
     @State private var player = ActivePlayerPresentation()
     @State private var settings = SettingsStore.shared
 
-    // Built-in acoustic lead compensation (-0.12s) + user offset for vocal precision
+    // Sub-millisecond acoustic lead compensation (+0.16s) matching player engine
     private var currentTime: Double {
-        max(0, player.progress + settings.lyricsOffset - 0.12)
+        max(0, player.progress + settings.lyricsOffset + 0.16)
     }
 
     private var activeIndex: Int? {
@@ -49,7 +51,7 @@ private struct SyncedLyrics: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 28) {
+                LazyVStack(spacing: 32) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                         Button {
                             Haptics.tap(.medium)
@@ -88,7 +90,7 @@ private struct SyncedLyrics: View {
             )
             .onChange(of: activeIndex) { _, newIndex in
                 guard let newIndex else { return }
-                withAnimation(.spring(response: 0.44, dampingFraction: 0.82)) {
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
@@ -98,7 +100,7 @@ private struct SyncedLyrics: View {
     }
 }
 
-// MARK: - Single Line (Apple Music Sing: progressive vocal karaoke highlight)
+// MARK: - Single Line (120 Hz Smooth Syllable Karaoke Highlight)
 
 private struct LyricsLineView: View {
     let line: LyricsLine
@@ -106,22 +108,55 @@ private struct LyricsLineView: View {
     let currentTime: Double
     let fontSize: Double
 
-    private var lineFont: Font {
-        .system(size: isActive ? fontSize : fontSize * 0.88,
-                weight: isActive ? .heavy : .medium,
-                design: .default)
+    private var words: [LyricWord] {
+        if let w = line.words, !w.isEmpty {
+            return w.enumerated().map { i, item in
+                LyricWord(
+                    id: "\(line.id)_w\(i)",
+                    text: item.text,
+                    startTime: item.startTime,
+                    duration: max(0.10, item.endTime - item.startTime)
+                )
+            }
+        } else {
+            let tokens = line.text.split(separator: " ").map(String.init)
+            let duration = max(1.2, (line.endTime ?? (line.startTime + 4.0)) - line.startTime)
+            let wordDur = duration / Double(max(1, tokens.count))
+            return tokens.enumerated().map { i, token in
+                LyricWord(
+                    id: "\(line.id)_w\(i)",
+                    text: token,
+                    startTime: line.startTime + Double(i) * wordDur,
+                    duration: wordDur
+                )
+            }
+        }
     }
 
     var body: some View {
-        Text(line.text)
-            .font(lineFont)
-            .foregroundStyle(isActive ? AG.ink : AG.inkFaint)
-            .multilineTextAlignment(.leading)
-            .lineSpacing(8)
+        if isActive {
+            LyricsFlowLayout(spacing: 8, lineSpacing: 8) {
+                ForEach(words) { word in
+                    KineticWordView(
+                        word: word,
+                        currentTime: currentTime,
+                        fontSize: fontSize
+                    )
+                }
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .scaleEffect(isActive ? 1.0 : 0.96, anchor: .leading)
-            .shadow(color: isActive ? AG.ink.opacity(0.35) : .clear, radius: isActive ? 12 : 0)
-            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isActive)
+            .scaleEffect(1.02, anchor: .leading)
+            .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
+        } else {
+            Text(line.text)
+                .font(.system(size: fontSize * 0.84, weight: .semibold, design: .default))
+                .foregroundStyle(Color.white.opacity(0.38))
+                .multilineTextAlignment(.leading)
+                .lineSpacing(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .scaleEffect(0.96, anchor: .leading)
+                .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
+        }
     }
 }
 
@@ -182,7 +217,7 @@ private struct EmptyLyricsState: View {
             } else {
                 Text("Для этого трека пока нет синхронизированного караоке.")
                     .font(AG.text(.footnote))
-                        .foregroundStyle(AG.inkMuted)
+                    .foregroundStyle(AG.inkMuted)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
