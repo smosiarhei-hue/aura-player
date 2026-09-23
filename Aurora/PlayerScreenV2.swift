@@ -37,7 +37,7 @@ struct PlayerScreenV2: View {
     private let tapSide: CGFloat = AG.tapTarget
 
     enum ActivePlayerModal: String, Identifiable {
-        case queue, equalizer, sleepTimer, settings, quality, artistSelection, lyrics
+        case queue, equalizer, sleepTimer, settings, quality, artistSelection, lyrics, waveSettings
         var id: String { rawValue }
     }
 
@@ -104,6 +104,8 @@ struct PlayerScreenV2: View {
                     LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
                         .navigationTitle("Текст песни").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
+                case .waveSettings:
+                    WaveSettingsSheet()
                 }
             }
         }
@@ -243,6 +245,7 @@ struct PlayerScreenV2: View {
             Spacer()
             Menu {
                 Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: { Label("Текст песни", systemImage: "quote.bubble") }
+                Button { openModal(.waveSettings) } label: { Label("Настройки Моей волны", systemImage: "slider.horizontal.3") }
                 Button { openModal(.queue) } label: { Label("Очередь", systemImage: "list.bullet") }
                 Button { openModal(.equalizer) } label: { Label("Эквалайзер", systemImage: "slider.vertical.3") }
                 Button { openModal(.sleepTimer) } label: { Label("Таймер сна", systemImage: "timer") }
@@ -557,6 +560,18 @@ struct PlayerScreenV2: View {
                             action: startTrackWave
                         )
                         .disabled(waveLoading)
+                        .contextMenu {
+                            Button {
+                                openModal(.waveSettings)
+                            } label: {
+                                Label("Настроить Мою волну", systemImage: "slider.horizontal.3")
+                            }
+                            Button {
+                                startTrackWave()
+                            } label: {
+                                Label("Запустить волну по треку", systemImage: "waveform.badge.sparkles")
+                            }
+                        }
                     }
                     Button {
                         guard let current else { return }; library.toggleFavorite(current)
@@ -620,9 +635,65 @@ struct PlayerScreenV2: View {
     @ViewBuilder private var centerStatusLabel: some View {
         if player.isTransitionActive {
             AutoMixBadge().transition(.opacity)
+        } else if isWaveSessionActive {
+            HStack(spacing: 6) {
+                waveStatusBadge
+                qualityBadgeButton
+            }
+            .transition(.opacity)
         } else {
             qualityBadgeButton.transition(.opacity)
         }
+    }
+
+    private var isWaveSessionActive: Bool {
+        if waveActive { return true }
+        if YandexMusicService.shared.activeStationId != nil { return true }
+        if MoodRadioEngine.shared.activeMood != nil { return true }
+        if let current = track, current.isStream { return true }
+        return false
+    }
+
+    private var waveStatusBadge: some View {
+        Button {
+            openModal(.waveSettings)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 10, weight: .bold))
+                Text(waveStatusTitle)
+                    .font(AG.text(.caption2, .semibold))
+            }
+            .foregroundStyle(Color(hex: "#00F0FF") ?? .cyan)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background((Color(hex: "#00F0FF") ?? .cyan).opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder((Color(hex: "#00F0FF") ?? .cyan).opacity(0.35), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var waveStatusTitle: String {
+        let ym = YandexMusicService.shared
+        if let station = ym.activeStationId {
+            if station.hasPrefix("track:") { return "По треку" }
+            if station.hasPrefix("artist:") { return "По артисту" }
+        }
+        if let mood = MoodRadioEngine.shared.activeMood {
+            switch mood {
+            case .dreamy: return "Помечтать"
+            case .recap: return "Распаковать"
+            case .energy: return "Заряд"
+            case .calm: return "Спокойствие"
+            case .sad: return "Погрустить"
+            case .workout: return "Драйв"
+            }
+        }
+        let diversity = WaveSettingsStore.shared.diversity
+        if diversity != .defaultDiversity {
+            return diversity.title
+        }
+        return "Моя волна"
     }
     private var qualityBadgeButton: some View {
         Button { openModal(.quality) } label: {

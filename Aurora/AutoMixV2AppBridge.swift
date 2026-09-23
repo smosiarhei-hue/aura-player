@@ -674,18 +674,21 @@ final class AutoMixV2Runtime {
 
         let currentIndex = queue.firstIndex(where: { $0.id == current.id }) ?? 0
         let remainingAhead = queue.count - 1 - currentIndex
-        guard remainingAhead <= 2 else { return }
+        guard remainingAhead <= 5 else { return }
 
         isRefillingWave = true
         Task { [weak self] in
             defer { self?.isRefillingWave = false }
             guard let self else { return }
-            let freshTracks = (await YandexMusicService.shared.buildWaveQueue(
-                stationId: YandexMusicService.shared.waveMoodStation.stationId,
+            let ym = YandexMusicService.shared
+            let stationId = ym.activeStationId ?? ym.waveMoodStation.stationId
+            let rawTracks = (await ym.buildWaveQueue(
+                stationId: stationId,
                 target: 30
             )).map { $0.toTrack() }
+            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
-            let fresh = freshTracks.filter {
+            let fresh = ranked.filter {
                 !existing.contains($0.id) && $0.id != current.id &&
                 !UserTasteEngine.shared.isDisliked(track: $0)
             }

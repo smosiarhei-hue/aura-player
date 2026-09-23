@@ -1861,16 +1861,27 @@ final class PlayerCore {
         let q = effectiveQueue()
         guard let currentIndex = q.firstIndex(where: { $0.id == current.id }) else { return }
         let remainingAhead = q.count - 1 - currentIndex
-        guard remainingAhead <= 2 else { return }
+        guard remainingAhead <= 5 else { return }
 
         isRefillingWave = true
         let seed = q.last ?? current
         Task { @MainActor [weak self] in
             defer { self?.isRefillingWave = false }
             guard let self, self.currentTrack != nil else { return }
-            let freshTracks = await YandexMusicService.shared.buildTrackWave(from: seed, target: 20)
+            let ym = YandexMusicService.shared
+            let rawTracks: [Track]
+            if let station = ym.activeStationId {
+                let rotorTracks = await ym.buildWaveQueue(stationId: station, target: 25)
+                rawTracks = rotorTracks.map { ym.convertToTrack($0) }
+            } else if let mood = MoodRadioEngine.shared.activeMood {
+                let rotorTracks = await ym.buildWaveQueue(stationId: ym.waveMoodStationId, target: 25)
+                rawTracks = rotorTracks.map { ym.convertToTrack($0) }
+            } else {
+                rawTracks = await ym.buildTrackWave(from: seed, target: 20)
+            }
+            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
-            let fresh = freshTracks.filter { !existing.contains($0.id) && $0.id != current.id }
+            let fresh = ranked.filter { !existing.contains($0.id) && $0.id != current.id && !UserTasteEngine.shared.isDisliked(track: $0) }
             guard !fresh.isEmpty else { return }
             SonivoDiagnostics.log("[Wave] Infinite queue refill: +\(fresh.count) tracks", tag: "WAVE")
             self.queue.append(contentsOf: fresh)

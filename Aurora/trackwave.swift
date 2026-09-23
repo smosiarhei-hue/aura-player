@@ -16,6 +16,12 @@ extension YandexMusicService {
         let seedID = Self.ymId(fromFileName: seed.fileName)
             ?? seed.streamUrlString?.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
 
+        if let seedID {
+            beginStationSession("track:\(seedID)")
+        } else {
+            beginStationSession("track:\(seed.title)")
+        }
+
         var candidates: [String: TrackWaveCandidate] = [:]
         var seedItem: YMTrackItem?
 

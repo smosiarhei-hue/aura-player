@@ -59,7 +59,7 @@ struct AuraHomeRedesignedView: View {
             }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showWaveSettings) { WaveVisualSettingsSheet() }
+            .sheet(isPresented: $showWaveSettings) { WaveSettingsSheet() }
             .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
             .task { await load() }
@@ -108,7 +108,10 @@ struct AuraHomeRedesignedView: View {
     private var waveHero: some View {
         ZStack(alignment: .bottom) {
             // Live Video Animation as the Hero Stage Background (scrolls naturally with the widget)
-            MyWaveBackgroundVideoView(isPlaying: player.isPlaying)
+            MyWaveBackgroundVideoView(
+                isPlaying: player.isPlaying,
+                tintColors: player.displayTrack?.palette
+            )
                 .frame(height: 520)
                 .clipped()
                 .overlay {
@@ -271,33 +274,5 @@ struct AuraHomeRedesignedView: View {
         catch { chart = []; loadError = "Не удалось обновить чарт. Проверь подключение к Яндекс Музыке." }
         newTracks = await ym.getNewTracks(limit: 100)
         isLoading = false
-    }
-}
-
-struct WaveVisualSettingsSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage("visuals.hdr.enabled") private var hdrEnabled = true
-    @AppStorage("visuals.waveBeat.enabled") private var beatEnabled = true
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Toggle("HDR-блики", isOn: $hdrEnabled)
-                    Toggle("Реакция на бас и kick", isOn: $beatEnabled)
-                } header: {
-                    Text("Визуализация")
-                } footer: {
-                    Text("HDR-блики повышают яркость только цветных светлых областей. Реакция использует низкие частоты примерно 30–120 Гц, а не вокал.")
-                }
-                Section("Предпросмотр") {
-                    MyWaveBackgroundVideoView(isPlaying: true)
-                        .frame(height: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                }
-            }
-            .navigationTitle("Моя волна")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }
-        }
     }
 }

@@ -764,6 +764,19 @@ final class YandexMusicService {
         guard var comps = URLComponents(string: Self.apiBase + "/rotor/station/" + stationId + "/tracks") else { return [] }
         var items = [URLQueryItem(name: "settings2", value: "true")]
         if let queueSeed { items.append(URLQueryItem(name: "queue", value: queueSeed)) }
+
+        // Передаем активные фильтры характера, языка и настроения волны
+        let settings = WaveSettingsStore.shared
+        if settings.diversity != .defaultMode {
+            items.append(URLQueryItem(name: "diversity", value: settings.diversity.rotorValue))
+        }
+        if settings.language != .any {
+            items.append(URLQueryItem(name: "language", value: settings.language.rotorValue))
+        }
+        if settings.moodEnergy != .all {
+            items.append(URLQueryItem(name: "moodEnergy", value: settings.moodEnergy.rotorValue))
+        }
+
         comps.queryItems = items
         guard let url = comps.url else { return [] }
         guard let pair = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return [] }
@@ -786,7 +799,13 @@ final class YandexMusicService {
     }
 
     /// Обратная связь ротору — так «Моя волна» учится на прослушиваниях.
-    func sendRotorFeedback(stationId: String, type: String, trackId: String? = nil, totalPlayedSeconds: Double? = nil) async {
+    func sendRotorFeedback(
+        stationId: String,
+        type: String,
+        trackId: String? = nil,
+        totalPlayedSeconds: Double? = nil,
+        extraSettings: [String: String]? = nil
+    ) async {
         guard var comps = URLComponents(string: Self.apiBase + "/rotor/station/" + stationId + "/feedback") else { return }
         if let batch = lastBatchId {
             comps.queryItems = [URLQueryItem(name: "batch-id", value: batch)]
@@ -800,10 +819,29 @@ final class YandexMusicService {
         var body: [String: Any] = ["type": type, "timestamp": Date().timeIntervalSince1970]
         if let trackId { body["trackId"] = trackId }
         if let totalPlayedSeconds { body["totalPlayedSeconds"] = totalPlayedSeconds }
+        if let extraSettings { body["settings"] = extraSettings }
         if type == "radioStarted" { body["from"] = "sonivo-ios" }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         _ = try? await URLSession.shared.data(for: req)
+    }
+
+    /// Отправляет на сервер Яндекса изменение настроек «Моей волны» (характер, язык, настроение)
+    func sendWaveSettingsChange() {
+        guard let station = activeStationId else { return }
+        let s = WaveSettingsStore.shared
+        let settingsDict: [String: String] = [
+            "diversity": s.diversity.rotorValue,
+            "language": s.language.rotorValue,
+            "moodEnergy": s.moodEnergy.rotorValue
+        ]
+        Task {
+            await sendRotorFeedback(
+                stationId: station,
+                type: "settingsChange",
+                extraSettings: settingsDict
+            )
+        }
     }
 
     func beginStationSession(_ stationId: String) {

@@ -6,6 +6,7 @@ import AVFoundation
 struct MyWaveBackgroundVideoView: View {
     let isPlaying: Bool
     var topOffset: CGFloat = 0
+    var tintColors: [Color]? = nil
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -15,6 +16,20 @@ struct MyWaveBackgroundVideoView: View {
     @State private var looper: AVPlayerLooper?
 
     private var interval: TimeInterval { 1.0 / 60.0 }
+
+    private var primaryTint: Color {
+        if let colors = tintColors, let first = colors.first {
+            return first
+        }
+        return Color.cyan
+    }
+
+    private var secondaryTint: Color {
+        if let colors = tintColors, colors.count > 1 {
+            return colors[1]
+        }
+        return Color.purple
+    }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: interval, paused: reduceMotion || scenePhase != .active)) { timeline in
@@ -49,10 +64,10 @@ struct MyWaveBackgroundVideoView: View {
                         Color.white.exposureAdjust(2.2 + energy * 1.8)
                             .headroom(3.5 + energy * 3.0)
                             .opacity(glowAlpha),
-                        Color.cyan.exposureAdjust(1.8 + energy * 1.4)
+                        primaryTint.exposureAdjust(1.8 + energy * 1.4)
                             .headroom(2.5 + energy * 2.0)
                             .opacity(glowAlpha * 0.65),
-                        Color.purple.opacity(glowAlpha * 0.25),
+                        secondaryTint.opacity(glowAlpha * 0.25),
                         Color.clear
                     ],
                     center: .center,
