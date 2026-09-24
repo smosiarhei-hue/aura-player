@@ -68,6 +68,7 @@ export default function App() {
           onPrev={() => void actions.prev()}
           onSeek={actions.seek}
           onMixNow={actions.mixNow}
+          onJumpToMix={() => actions.jumpToMix(8)}
         />
 
         <UpNext
@@ -91,6 +92,7 @@ export default function App() {
           onAddFiles={actions.addFiles}
           onLoadDemo={actions.loadDemo}
           onSetNext={actions.setNext}
+          onReanalyzeAll={actions.reanalyzeAll}
         />
 
         <footer className="px-2 pt-2 text-center text-[10px] leading-relaxed text-white/30">

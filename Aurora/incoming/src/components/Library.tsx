@@ -13,11 +13,12 @@ interface Props {
   onAddFiles: (files: FileList) => void;
   onLoadDemo: () => void;
   onSetNext: (t: Track) => void;
+  onReanalyzeAll?: () => void;
 }
 
 export default memo(Library);
 
-function Library({ tracks, currentId, nextId, demoProgress, onPlay, onRemove, onAddFiles, onLoadDemo, onSetNext }: Props) {
+function Library({ tracks, currentId, nextId, demoProgress, onPlay, onRemove, onAddFiles, onLoadDemo, onSetNext, onReanalyzeAll }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const hasDemo = tracks.some((t) => t.source === "demo");
 
@@ -28,6 +29,15 @@ function Library({ tracks, currentId, nextId, demoProgress, onPlay, onRemove, on
           Библиотека <span className="ml-1 text-white/40">{tracks.length}</span>
         </h3>
         <div className="flex gap-2">
+          {tracks.length > 0 && onReanalyzeAll && (
+            <button
+              onClick={onReanalyzeAll}
+              title="Пересчитать точный BPM и тональность"
+              className="rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-medium text-white/80 transition hover:bg-white/15 active:scale-95"
+            >
+              ↺ Анализ
+            </button>
+          )}
           {!hasDemo && (
             <button
               onClick={onLoadDemo}

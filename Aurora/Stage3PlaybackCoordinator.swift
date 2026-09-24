@@ -404,6 +404,9 @@ final class PlaybackCoordinator {
                                          startTimeSeconds: plan.bInStartSec)
                 await engine.setGain(0, for: next.deck)
                 await engine.setRate(plan.rateB, for: next.deck)
+                if plan.pitchShiftCentsB != 0 {
+                    await engine.setPitch(plan.pitchShiftCentsB, for: next.deck)
+                }
                 planSignature = signature
             } catch {
                 lastError = String(describing: error)
@@ -419,8 +422,9 @@ final class PlaybackCoordinator {
     private func beginFallback(_ item: Item, duration: Double) {
         let duration = max(0.75, duration)
         let plan = MixModels.TransitionPlan(
-            type: .crossfade, aOutStartSec: 0, bInStartSec: 0,
+            type: .crossfade, archetype: .energyWash, aOutStartSec: 0, bInStartSec: 0,
             bars: duration, tempoTargetBPM: 0, rateA: 1, rateB: 1,
+            pitchShiftCentsB: 0,
             gainOffsetBdB: 0, loopBarsA: 0, fx: [], reason: "DJ Filter Fallback")
         launchTransition(item, plan: plan, duration: duration,
                          readiness: .fallback,
@@ -447,11 +451,13 @@ final class PlaybackCoordinator {
         transition = Task { @MainActor [weak self] in
             guard let self else { return }
             let outgoing = self.activeDeck
+            let incoming = item.deck
             let start = CACurrentMediaTime()
-            self.effects = Task { @MainActor [weak self] in
-                await self?.executeEffects(plan, outgoing: outgoing,
-                                           incoming: item.deck, duration: duration,
-                                           startHostTime: start)
+            let audio = self.engine
+            self.effects = Task.detached(priority: .userInteractive) {
+                await Self.executeEffectsDetached(plan: plan, engine: audio,
+                                                  outgoing: outgoing, incoming: incoming,
+                                                  duration: duration, startHostTime: start)
             }
             do {
                 try await self.promote(item, duration: duration, plan: plan)
@@ -482,10 +488,8 @@ final class PlaybackCoordinator {
         transitioningItem = nil
         transitionStartHostTime = nil
         transitionDuration = nil
-        Task { @MainActor in
-            await engine.resetEffects(outgoing)
-            await engine.resetEffects(incoming)
-        }
+        // Outgoing delay spillover is actively ringing out and will self-neutralize
+        // in DualDeckAudioEngine.startDelaySpillover. We do NOT immediately neutralize here.
     }
 
     private func finishCancelledTransition(outgoing: Deck, incoming: Deck) {
@@ -500,9 +504,14 @@ final class PlaybackCoordinator {
         }
     }
 
-    private func executeEffects(_ plan: MixModels.TransitionPlan, outgoing: Deck,
-                                incoming: Deck, duration: Double,
-                                startHostTime: Double) async {
+    private nonisolated static func executeEffectsDetached(
+        plan: MixModels.TransitionPlan,
+        engine: DualDeckAudioEngine,
+        outgoing: Deck,
+        incoming: Deck,
+        duration: Double,
+        startHostTime: Double
+    ) async {
         guard duration.isFinite, duration > 0 else { return }
         while !Task.isCancelled {
             let now = CACurrentMediaTime()
@@ -512,7 +521,7 @@ final class PlaybackCoordinator {
                 continue
             }
             let elapsed = max(0, now - startHostTime)
-            if plan.type == .crossfade {
+            if plan.fx.isEmpty {
                 let p = min(1, elapsed / duration)
                 await engine.applyEffect(.highPass, value: Float(20 * pow(225, p)),
                                          param: nil, bpm: 0, to: outgoing)
@@ -532,7 +541,7 @@ final class PlaybackCoordinator {
                 if p >= 1 { return }
             } else {
                 let bar = EffectAutomation.bar(atSeconds: elapsed, bpm: plan.tempoTargetBPM)
-                for event in plan.fx where event.kind != .volume {
+                for event in plan.fx {
                     if let value = EffectAutomation.value(for: event, atBar: bar) {
                         await engine.applyEffect(event.kind, value: value, param: event.param,
                                                  bpm: plan.tempoTargetBPM,
@@ -552,6 +561,9 @@ final class PlaybackCoordinator {
         if let plan {
             await engine.setRate(plan.rateA, for: outgoing)
             await engine.setRate(plan.rateB, for: item.deck)
+            if plan.pitchShiftCentsB != 0 {
+                await engine.setPitch(plan.pitchShiftCentsB, for: item.deck)
+            }
         }
         if let duration {
             if let plan, plan.type != .crossfade {
@@ -567,11 +579,21 @@ final class PlaybackCoordinator {
         }
 
         commitHandoff(to: item)
-        if let plan, plan.rateB != 1 {
-            let tempo = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
-            let seconds = BeatGridSynchronization.duration(bars: 4, bpm: tempo)
-            await engine.rampRate(item.deck, from: plan.rateB, to: 1,
-                                  duration: seconds > 0 ? seconds : 3)
+        if let plan {
+            if plan.rateB != 1 {
+                let tempo = plan.tempoTargetBPM > 0 ? plan.tempoTargetBPM / plan.rateB : 120
+                let seconds = BeatGridSynchronization.duration(bars: 4, bpm: tempo)
+                await engine.rampRate(item.deck, from: plan.rateB, to: 1,
+                                      duration: seconds > 0 ? seconds : 3)
+            }
+            if plan.pitchShiftCentsB != 0 {
+                let deck = item.deck
+                let cents = plan.pitchShiftCentsB
+                let audio = engine
+                Task.detached(priority: .userInitiated) {
+                    await audio.rampPitch(deck, from: cents, to: 0, duration: 8.0)
+                }
+            }
         }
         if !wantsPlayback { await engine.pause(item.deck) }
         setReadiness(.waitingForDeckB, "Готовится следующий трек")

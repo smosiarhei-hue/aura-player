@@ -98,7 +98,7 @@ private enum TrackAnalysisComputer {
         let energy = EnergyMeter.curve(loudness, sampleRate: analysisSampleRate)
         let hasFade = EnergyMeter.hasFadeOut(loudness, sampleRate: analysisSampleRate)
         let endsSilent = EnergyMeter.endsInSilence(loudness, sampleRate: analysisSampleRate)
-        let segments = CueDetector.segments(energy: energy, duration: duration, endsSilent: endsSilent)
+        let segments = CueDetector.segments(energy: energy, duration: duration, downbeats: downbeats, endsSilent: endsSilent)
         let cues = CueDetector.cues(duration: duration, energy: energy,
                                     downbeats: downbeats, phrases: phraseStarts,
                                     hasFadeOut: hasFade)
@@ -237,10 +237,12 @@ private enum TempoDetector {
 
     static func downbeatPhase(samples: [Float], sampleRate: Double, beats: [Double]) -> Int {
         guard beats.count >= 4 else { return 0 }
+        // Выделяем низкочастотную составляющую (бочка/саб-бас до 160 Гц) для точного детектирования первого бита (Downbeat)
+        let low = Biquad.lowPass(frequency: 160, sampleRate: sampleRate).process(samples)
         var scores = Array(repeating: Float(0), count: 4)
         for (index, time) in beats.enumerated() {
-            let sample = min(samples.count - 1, max(0, Int(time * sampleRate)))
-            scores[index % 4] += abs(samples[sample])
+            let sample = min(low.count - 1, max(0, Int(time * sampleRate)))
+            scores[index % 4] += abs(low[sample])
         }
         return scores.indices.max(by: { scores[$0] < scores[$1] }) ?? 0
     }
@@ -295,6 +297,13 @@ private struct Biquad {
             x2 = x1; x1 = x; y2 = y1; y1 = y
         }
         return output
+    }
+
+    static func lowPass(frequency: Double, sampleRate: Double) -> Biquad {
+        let q = 0.70710678, w = 2 * Double.pi * frequency / sampleRate
+        let c = cos(w), alpha = sin(w) / (2 * q), a0 = 1 + alpha
+        return Biquad(b0: (1 - c) / 2 / a0, b1: (1 - c) / a0,
+                      b2: (1 - c) / 2 / a0, a1: -2 * c / a0, a2: (1 - alpha) / a0)
     }
 
     static func highPass(frequency: Double, sampleRate: Double) -> Biquad {
@@ -356,30 +365,87 @@ private enum EnergyMeter {
 }
 
 private enum CueDetector {
-    static func segments(energy: [Float], duration: Double, endsSilent: Bool) -> [Segment] {
+    static func detectStructuralEvents(energy: [Float], duration: Double, downbeats: [Double]) -> (drops: [Double], breakdowns: [Double]) {
+        guard energy.count >= 4 else { return ([], []) }
+        var drops: [Double] = []
+        var breakdowns: [Double] = []
+        let window = 2
+        for i in window..<(energy.count - window) {
+            let prevAvg = (energy[(i - window)..<i].reduce(0, +)) / Float(window)
+            let nextAvg = (energy[i..<(i + window)].reduce(0, +)) / Float(window)
+            let delta = nextAvg - prevAvg
+            let sec = Double(i)
+            // Drop: steep positive energy jump into high energy
+            if delta > 0.18 && nextAvg > 0.40 {
+                let snapped = nearest(sec, in: downbeats) ?? sec
+                if !drops.contains(where: { abs($0 - snapped) < 8.0 }) {
+                    drops.append(snapped)
+                }
+            }
+            // Breakdown: steep negative energy drop into lower energy
+            if delta < -0.20 && nextAvg < 0.55 {
+                let snapped = nearest(sec, in: downbeats) ?? sec
+                if !breakdowns.contains(where: { abs($0 - snapped) < 8.0 }) {
+                    breakdowns.append(snapped)
+                }
+            }
+        }
+        return (drops, breakdowns)
+    }
+
+    static func segments(energy: [Float], duration: Double, downbeats: [Double], endsSilent: Bool) -> [Segment] {
         guard !energy.isEmpty else { return [Segment(startSec: 0, endSec: duration, type: .unknown)] }
-        let first = energy.firstIndex(where: { $0 >= 0.3 }) ?? 0
-        let last = energy.lastIndex(where: { $0 >= 0.3 }) ?? max(0, energy.count - 1)
+        let (drops, breakdowns) = detectStructuralEvents(energy: energy, duration: duration, downbeats: downbeats)
         var result: [Segment] = []
+        let first = energy.firstIndex(where: { $0 >= 0.3 }) ?? 0
         if first > 0 { result.append(Segment(startSec: 0, endSec: Double(first), type: .intro)) }
-        if last > first { result.append(Segment(startSec: Double(first), endSec: Double(last + 1), type: .unknown)) }
+        for dropSec in drops {
+            result.append(Segment(startSec: dropSec, endSec: min(duration, dropSec + 16.0), type: .drop))
+        }
+        for brkSec in breakdowns {
+            result.append(Segment(startSec: brkSec, endSec: min(duration, brkSec + 16.0), type: .breakdown))
+        }
+        let last = energy.lastIndex(where: { $0 >= 0.3 }) ?? max(0, energy.count - 1)
         if last + 1 < Int(duration) || endsSilent {
             result.append(Segment(startSec: Double(last + 1), endSec: duration, type: .outro))
         }
+        result.sort { $0.startSec < $1.startSec }
         return result.isEmpty ? [Segment(startSec: 0, endSec: duration, type: .unknown)] : result
     }
 
     static func cues(duration: Double, energy: [Float], downbeats: [Double],
                      phrases: [Double], hasFadeOut: Bool) -> (mixIn: Double, mixOut: Double) {
-        let firstEnergy = energy.firstIndex(where: { $0 >= 0.3 }).map(Double.init) ?? 0
-        let candidateIn = min(30, firstEnergy)
-        let mixIn = nearest(candidateIn, in: downbeats) ?? candidateIn
+        let (drops, breakdowns) = detectStructuralEvents(energy: energy, duration: duration, downbeats: downbeats)
+
+        // 1. Mix In:
+        // If track has an early drop at 12s-45s, mix-in with a 16s buildup lead so the drop hits on the handoff
+        var mixIn: Double = 0
+        if let earlyDrop = drops.first(where: { $0 >= 12.0 && $0 <= 45.0 }) {
+            let targetIn = max(0, earlyDrop - 16.0)
+            mixIn = nearest(targetIn, in: downbeats) ?? targetIn
+        } else {
+            let firstEnergy = energy.firstIndex(where: { $0 >= 0.3 }).map(Double.init) ?? 0
+            let candidateIn = min(30, firstEnergy)
+            mixIn = nearest(candidateIn, in: downbeats) ?? candidateIn
+        }
+
+        // 2. Mix Out:
+        // Look for breakdown or late phrase boundary in the final 25-60s instead of fading in silence
         let lower = max(0, duration - 60), upper = max(lower, duration - 4)
-        let energeticEnd = energy.lastIndex(where: { $0 >= 0.3 }).map { Double($0) } ?? upper
-        var candidateOut = hasFadeOut ? max(lower, duration - 10) : min(upper, energeticEnd)
-        if let phrase = phrases.last(where: { $0 <= candidateOut }) { candidateOut = phrase }
-        else if let beat = downbeats.last(where: { $0 <= candidateOut }) { candidateOut = beat }
-        return (mixIn, min(upper, max(lower, candidateOut)))
+        var candidateOut = upper
+        if let lateBreakdown = breakdowns.last(where: { $0 >= lower && $0 <= upper }) {
+            candidateOut = lateBreakdown
+        } else if let latePhrase = phrases.last(where: { $0 >= lower && $0 <= upper }) {
+            candidateOut = latePhrase
+        } else if hasFadeOut {
+            candidateOut = max(lower, duration - 16)
+        } else {
+            let energeticEnd = energy.lastIndex(where: { $0 >= 0.3 }).map { Double($0) } ?? upper
+            candidateOut = min(upper, energeticEnd)
+        }
+
+        let finalOut = nearest(candidateOut, in: downbeats) ?? candidateOut
+        return (mixIn, min(upper, max(lower, finalOut)))
     }
 
     static func nearest(_ value: Double, in values: [Double]) -> Double? {

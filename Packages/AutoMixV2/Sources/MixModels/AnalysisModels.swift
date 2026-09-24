@@ -39,7 +39,7 @@ public struct Confidence: Sendable, Codable, Equatable {
 }
 
 public struct TrackProfile: Sendable, Codable, Equatable {
-    public static let currentVersion = 2
+    public static let currentVersion = 3
 
     public let profileVersion: Int
     public let trackID: TrackID
@@ -110,5 +110,13 @@ public struct TrackProfile: Sendable, Codable, Equatable {
         self.mixOutSec = mixOutSec
         self.mixable = mixable
         self.confidence = confidence
+    }
+
+    public var dropsSec: [Double] {
+        segments.filter { $0.type == .drop }.map(\.startSec)
+    }
+
+    public var breakdownsSec: [Double] {
+        segments.filter { $0.type == .breakdown }.map(\.startSec)
     }
 }

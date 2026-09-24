@@ -13,6 +13,7 @@ interface Props {
   onPrev: () => void;
   onSeek: (t: number) => void;
   onMixNow: () => void;
+  onJumpToMix: () => void;
 }
 
 const fmt = (s: number) => {
@@ -22,7 +23,7 @@ const fmt = (s: number) => {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 };
 
-export default function NowPlaying({ track, next, snap, onToggle, onNext, onPrev, onSeek, onMixNow }: Props) {
+export default function NowPlaying({ track, next, snap, onToggle, onNext, onPrev, onSeek, onMixNow, onJumpToMix }: Props) {
   const barRef = useRef<HTMLDivElement>(null);
   const a = track?.analysis ?? null;
   const pos = snap?.position ?? 0;
@@ -59,7 +60,15 @@ export default function NowPlaying({ track, next, snap, onToggle, onNext, onPrev
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-widest text-white/40">
             <span className={cn("inline-block h-1.5 w-1.5 rounded-full", snap?.playing ? "bg-emerald-400 animate-pulse" : "bg-white/30")} />
-            {inTransition ? "AutoMix · переход" : snap?.playing ? "Играет" : "Пауза"}
+            {inTransition ? (
+              <span className="text-fuchsia-300 font-semibold tracking-normal lowercase first-letter:uppercase">
+                AutoMix · {tr?.description || "переход"} [такт {tr?.currentBar ?? 1}/{tr?.plannedBars ?? 8}]
+              </span>
+            ) : snap?.playing ? (
+              "Играет"
+            ) : (
+              "Пауза"
+            )}
             <span className="ml-auto rounded-md bg-white/10 px-1.5 py-0.5 font-semibold text-white/70">Дека {snap?.activeDeck ?? "A"}</span>
           </div>
           <h2 className="mt-1 truncate text-xl font-semibold tracking-tight text-white">{track?.title ?? "Выберите трек"}</h2>
@@ -97,8 +106,14 @@ export default function NowPlaying({ track, next, snap, onToggle, onNext, onPrev
         </div>
         {a && dur > 0 && (
           <>
-            <Marker at={(a.mixIn / dur) * 100} label="in" />
-            <Marker at={(a.mixOut / dur) * 100} label="mix" warn />
+            {a.drops?.map((d, idx) => (
+              <Marker key={`drop-${idx}`} at={(d / dur) * 100} label="💥 DROP" variant="drop" />
+            ))}
+            {a.breakdowns?.map((b, idx) => (
+              <Marker key={`brk-${idx}`} at={(b / dur) * 100} label="📉 BREAK" variant="break" />
+            ))}
+            <Marker at={(a.mixIn / dur) * 100} label="IN" />
+            <Marker at={(a.mixOut / dur) * 100} label="⚡ MIX OUT" variant="warn" />
           </>
         )}
         <div className="absolute top-0 bottom-0 w-px bg-white shadow-[0_0_8px_rgba(255,255,255,.8)]" style={{ left: `${pct}%` }} />
@@ -125,13 +140,33 @@ export default function NowPlaying({ track, next, snap, onToggle, onNext, onPrev
           <svg viewBox="0 0 24 24" className="h-6 w-6 fill-current"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" /></svg>
         </button>
       </div>
-      <button
-        onClick={onMixNow}
-        disabled={!next || inTransition || !snap?.playing}
-        className="mt-3 w-full rounded-xl bg-gradient-to-r from-fuchsia-500/80 to-indigo-500/80 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition active:scale-[0.98] disabled:opacity-30"
-      >
-        {inTransition ? `Переход ${Math.round((tr?.progress ?? 0) * 100)}%` : "Свести сейчас →"}
-      </button>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          onClick={onJumpToMix}
+          disabled={!track?.analysis || inTransition}
+          className="rounded-xl bg-white/10 hover:bg-white/15 py-2.5 text-xs font-semibold text-white/90 transition active:scale-[0.98] disabled:opacity-30 border border-white/10 flex items-center justify-center gap-1.5"
+          title="Перемотать трек на 8 секунд до точки сведения"
+        >
+          <span>⚡</span>
+          <span>К миксу (-8с)</span>
+        </button>
+        <button
+          onClick={onMixNow}
+          disabled={!next || inTransition || !snap?.playing}
+          className="rounded-xl bg-gradient-to-r from-fuchsia-500/80 to-indigo-500/80 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-900/40 transition active:scale-[0.98] disabled:opacity-30 flex items-center justify-center flex-col"
+        >
+          {inTransition ? (
+            <>
+              <span className="font-bold text-[11px]">
+                Такт {tr?.currentBar ?? 1}/{tr?.plannedBars ?? 8} · доля {tr?.currentBeat ?? 1}/4
+              </span>
+              <span className="text-[10px] text-white/70">{Math.round((tr?.progress ?? 0) * 100)}%</span>
+            </>
+          ) : (
+            <span>Свести сейчас →</span>
+          )}
+        </button>
+      </div>
     </section>
   );
 }
@@ -145,11 +180,25 @@ function Chip({ label, value, sub, accent }: { label: string; value: string; sub
   );
 }
 
-function Marker({ at, label, warn }: { at: number; label: string; warn?: boolean }) {
+function Marker({ at, label, variant = "default" }: { at: number; label: string; variant?: "default" | "warn" | "drop" | "break" }) {
+  const color =
+    variant === "drop" ? "text-fuchsia-300 bg-fuchsia-950/80 border border-fuchsia-500/40" :
+    variant === "break" ? "text-cyan-300 bg-cyan-950/80 border border-cyan-500/40" :
+    variant === "warn" ? "text-amber-300 bg-amber-950/80 border border-amber-500/40" :
+    "text-emerald-300 bg-emerald-950/80 border border-emerald-500/40";
+
+  const lineColor =
+    variant === "drop" ? "bg-fuchsia-400 shadow-[0_0_8px_rgba(232,121,249,0.9)]" :
+    variant === "break" ? "bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.7)]" :
+    variant === "warn" ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)]" :
+    "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]";
+
   return (
-    <div className="absolute top-0 bottom-0" style={{ left: `${at}%` }}>
-      <div className={cn("h-full w-px", warn ? "bg-amber-400/80" : "bg-emerald-400/80")} />
-      <span className={cn("absolute top-0.5 left-1 text-[9px] font-semibold uppercase", warn ? "text-amber-300" : "text-emerald-300")}>{label}</span>
+    <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${at}%` }}>
+      <div className={cn("h-full w-px", lineColor)} />
+      <span className={cn("absolute top-0.5 left-1 text-[8px] font-bold uppercase tracking-wider px-1 py-0.5 rounded shadow-sm whitespace-nowrap", color)}>
+        {label}
+      </span>
     </div>
   );
 }
