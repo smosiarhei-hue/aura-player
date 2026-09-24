@@ -62,7 +62,21 @@ struct PlayerScreenV2: View {
 
                 artworkStage(width: totalWidth, height: artworkHeight)
                     .frame(width: totalWidth, height: artworkHeight, alignment: .top)
+                    .padding(.top, 18)
                     .clipped()
+
+                // Soft blurred top gradient fade under Dynamic Island
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.80),
+                        Color.black.opacity(0.35),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: max(geo.safeAreaInsets.top, 50) + 16)
+                .ignoresSafeArea(edges: .top)
 
                 VStack(spacing: 0) {
                     topHeader
@@ -519,22 +533,27 @@ struct PlayerScreenV2: View {
         .padding(.bottom, max(safeAreaBottom, 20))
         .frame(maxWidth: .infinity)
         .background {
-            Rectangle()
-                .fill(.ultraThinMaterial.opacity(0.22))
-                .mask {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0.0),
-                            .init(color: .clear, location: 0.12),
-                            .init(color: .black.opacity(0.35), location: 0.35),
-                            .init(color: .black.opacity(0.75), location: 0.70),
-                            .init(color: .black, location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial.opacity(0.16))
+                if let tint = palette.first {
+                    tint.opacity(0.12)
                 }
-                .ignoresSafeArea(edges: .bottom)
+            }
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .clear, location: 0.14),
+                        .init(color: .black.opacity(0.30), location: 0.38),
+                        .init(color: .black.opacity(0.68), location: 0.70),
+                        .init(color: .black, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .ignoresSafeArea(edges: .bottom)
         }
     }
     private var metadataRow: some View {

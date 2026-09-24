@@ -12,16 +12,9 @@ extension TransitionPlanner {
             ?? (source.bpm.flatMap { normalizedBPM($0) }.map { 240.0 / $0 })
             ?? 2.0
 
-        // Always target 8 to 16 bars (32 to 64 beats) for an authentic DJ blend
-        let maxBars = max(4.0, floor((sourceDur * 0.25) / bar))
-        let targetBars: Double
-        if maxBars >= 16.0 {
-            targetBars = 16.0
-        } else if maxBars >= 8.0 {
-            targetBars = 8.0
-        } else {
-            targetBars = max(4.0, maxBars)
-        }
+        // Target 2 to 4 bars (8 to 16 beats) for an authentic, crisp outro DJ blend (~5.5 - 7.5s)
+        let maxBars = max(2.0, floor((sourceDur * 0.08) / bar))
+        let targetBars = min(4.0, max(2.0, maxBars))
         return targetBars * bar
     }
 
@@ -30,8 +23,8 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         duration: Double
     ) -> Double {
-        // Strictly anchor to the outro (at least 75% of track duration)
-        let minOutroCue = max(0, source.duration * 0.75)
+        // Strictly anchor to the outro (at least 90% of track duration or last 7-9 seconds)
+        let minOutroCue = max(0, max(source.duration * 0.90, source.duration - 8.5))
         var candidate = max(minOutroCue, source.duration - duration)
 
         if strategy == .SILENCE_TRIM, let silence = source.trailingSilence {
@@ -41,15 +34,15 @@ extension TransitionPlanner {
         } else if source.outroStart >= minOutroCue {
             candidate = source.outroStart
         } else if let boundary = source.sections.last(where: {
-            $0.end >= minOutroCue && $0.end <= source.duration - 4
+            $0.end >= minOutroCue && $0.end <= source.duration - 3.5
         })?.end {
             candidate = boundary
         }
 
-        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 3.5) {
+        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 2.0) {
             candidate = downbeat
         }
-        let latestStart = max(minOutroCue, source.duration - 4.0)
+        let latestStart = max(minOutroCue, source.duration - 3.5)
         return min(latestStart, max(minOutroCue, candidate))
     }
 

@@ -29,12 +29,14 @@ final class LyricsService {
             return cached
         }
 
-        // Fetch both sources concurrently for optimal speed and reliability
+        // Fetch sources concurrently for optimal speed, reliability, and coverage
         async let yandexTask = fetchYandexLyrics(for: track)
         async let lrcTask = fetchLRCLib(for: track)
+        async let geniusTask = fetchGeniusLyrics(for: track)
 
         let yandexLyrics = await yandexTask
         let lrcLyrics = await lrcTask
+        let geniusLyrics = await geniusTask
 
         // 1. If Yandex has synchronized lyrics, prioritize it
         if let yandexLyrics, yandexLyrics.isSynchronized {
@@ -54,13 +56,19 @@ final class LyricsService {
             return yandexLyrics
         }
 
-        // 4. LRCLIB plain lyrics
+        // 4. Genius full text lyrics (instant 100% day-one coverage for new releases)
+        if let geniusLyrics, !geniusLyrics.lines.isEmpty {
+            cache[key] = geniusLyrics
+            return geniusLyrics
+        }
+
+        // 5. LRCLIB plain lyrics
         if let lrcLyrics, !lrcLyrics.lines.isEmpty {
             cache[key] = lrcLyrics
             return lrcLyrics
         }
 
-        // 5. Embedded ID3 static lyrics
+        // 6. Embedded ID3 static lyrics
         if let staticText = track.lyricsText, !staticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let lyrics = staticLyrics(from: staticText, track: track)
             cache[key] = lyrics
@@ -194,6 +202,112 @@ final class LyricsService {
         }
 
         return nil
+    }
+
+    private func fetchGeniusLyrics(for track: Track) async -> Lyrics? {
+        let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+
+        let query = (artist.isEmpty || artist == "Неизвестный исполнитель")
+            ? title
+            : "\(artist) \(title)"
+
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let searchURL = URL(string: "https://genius.com/api/search/multi?q=\(encoded)") else {
+            return nil
+        }
+
+        var searchReq = URLRequest(url: searchURL)
+        searchReq.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        searchReq.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        guard let (searchData, searchResp) = try? await URLSession.shared.data(for: searchReq),
+              (searchResp as? HTTPURLResponse)?.statusCode == 200 else {
+            return nil
+        }
+
+        struct GeniusSearchResponse: Decodable {
+            struct Response: Decodable {
+                struct Section: Decodable {
+                    let type: String?
+                    struct Hit: Decodable {
+                        struct Result: Decodable {
+                            let path: String?
+                            let title: String?
+                        }
+                        let result: Result?
+                    }
+                    let hits: [Hit]?
+                }
+                let sections: [Section]?
+            }
+            let response: Response?
+        }
+
+        guard let decoded = try? JSONDecoder().decode(GeniusSearchResponse.self, from: searchData),
+              let sections = decoded.response?.sections else {
+            return nil
+        }
+
+        var songPath: String?
+        for section in sections where section.type == "song" || section.type == "top_hit" {
+            if let firstHit = section.hits?.first?.result, let path = firstHit.path, !path.isEmpty {
+                songPath = path
+                break
+            }
+        }
+
+        guard let path = songPath, let pageURL = URL(string: "https://genius.com\(path)") else {
+            return nil
+        }
+
+        var pageReq = URLRequest(url: pageURL)
+        pageReq.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+
+        guard let (pageData, pageResp) = try? await URLSession.shared.data(for: pageReq),
+              (pageResp as? HTTPURLResponse)?.statusCode == 200,
+              let html = String(data: pageData, encoding: .utf8) else {
+            return nil
+        }
+
+        let extracted = parseGeniusHTML(html)
+        guard !extracted.isEmpty else { return nil }
+
+        return staticLyrics(from: extracted, track: track)
+    }
+
+    private func parseGeniusHTML(_ html: String) -> String {
+        let pattern = #"<div[^>]*data-lyrics-container="true"[^>]*>(.*?)</div>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            return ""
+        }
+        let nsHTML = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsHTML.length))
+        guard !matches.isEmpty else { return "" }
+
+        var collectedParts: [String] = []
+        for match in matches {
+            if match.numberOfRanges > 1 {
+                let range = match.range(at: 1)
+                let part = nsHTML.substring(with: range)
+                collectedParts.append(part)
+            }
+        }
+
+        var raw = collectedParts.joined(separator: "\n")
+        raw = raw.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
+        raw = raw.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+        raw = raw.replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&#x27;", with: "'")
+
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func staticLyrics(from text: String, track: Track) -> Lyrics {

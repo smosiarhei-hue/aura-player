@@ -1156,7 +1156,7 @@ final class PlayerCore {
         }
 
         guard let plan = activeTransitionPlan else { return }
-        let effectiveCueTime = max(plan.cueTime, totalDur - 35.0)
+        let effectiveCueTime = max(plan.cueTime, totalDur - 8.0)
         guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
 
         if effectiveCueTime > currentPos + 1.0 { return }
@@ -1164,7 +1164,7 @@ final class PlayerCore {
         transitionScheduled = true
         isTransitioning = true
         incomingLaneReady = false
-        transitionDuration = plan.leadTime
+        transitionDuration = min(plan.leadTime, 6.5)
         incomingTrack = nextTrack
         metadataSwapped = false
         metadataTrack = nil
@@ -1473,42 +1473,34 @@ final class PlayerCore {
         var streamTargetVol = targetLevel
 
         // MARK: - Streaming AutoMix DSP Shaping (Downbeat Bass Swap & Vocal Pocket Ducking)
-        // For streaming playback (AVPlayer), EQ nodes cannot be attached directly, so the two hallmark
-        // DJ effects (Downbeat Bass Swap and Vocal Pocket Ducking) are rendered via precision dynamic gain shaping.
+        // For streaming playback (AVPlayer), the two hallmark DJ effects
+        // (Downbeat Bass Swap and Vocal Pocket Ducking) are rendered via precision dynamic gain & spectral contours.
         if isUsingStreamPlayer || incomingIsStream {
-            if strategy == .BASS_SWAP || strategy == .DROP_SWITCH || strategy == .BEAT_MATCH || strategy == .BEAT_MATCH_EQ || strategy == .ENERGY_BLEND {
-                if p < 0.50 {
-                    // Phase 1 (p < 0.50): Pre-swap vocal pocket ducking & bass avoidance
-                    // Outgoing track retains dominant energy (full presence & kick).
-                    // Incoming is ducked to max 0.42 so vocals and bass never collide.
+            if strategy == .BUILDUP_TO_DROP {
+                if p < 0.60 {
                     streamSourceVol = 1.0
-                    let inRamp = Float(p / 0.50)
-                    streamTargetVol = min(0.42, inRamp * 0.42)
+                    let inRamp = Float(p / 0.60)
+                    streamTargetVol = min(0.25, inRamp * 0.25)
                 } else {
-                    // Phase 2 (p >= 0.50): Downbeat Bass Swap & vocal takeover!
-                    // Outgoing bass and level cut instantly to 0.14 on the drop, decaying to zero.
-                    // Incoming punches to 1.0 with full kick, bass, and upfront vocal.
-                    let decayP = Float((p - 0.50) / 0.50)
-                    streamSourceVol = max(0.0, 0.14 * (1.0 - pow(decayP, 0.70)))
-                    streamTargetVol = 1.0
-                }
-            } else if strategy == .BUILDUP_TO_DROP {
-                if p < 0.65 {
-                    streamSourceVol = 1.0
-                    let inRamp = Float(p / 0.65)
-                    streamTargetVol = min(0.40, inRamp * 0.40)
-                } else {
-                    let decayP = Float((p - 0.65) / 0.35)
-                    streamSourceVol = max(0.0, 0.12 * (1.0 - decayP))
+                    let decayP = Float((p - 0.60) / 0.40)
+                    streamSourceVol = max(0.0, 0.08 * (1.0 - decayP))
                     streamTargetVol = 1.0
                 }
             } else {
+                // Primary DJ Downbeat Bass-Swap & Vocal Pocket Ducking
                 if p < 0.50 {
+                    // Phase 1 (p < 0.50): Vocal Pocket Ducking
+                    // Outgoing track retains full dominant power and vocal presence.
+                    // Incoming is ducked to max 0.28 so vocals and bass never clash.
                     streamSourceVol = 1.0
-                    streamTargetVol = min(0.45, Float(p / 0.50) * 0.45)
+                    let inRamp = Float(p / 0.50)
+                    streamTargetVol = min(0.28, inRamp * 0.28)
                 } else {
+                    // Phase 2 (p >= 0.50): Downbeat Bass-Swap Takeover!
+                    // Outgoing bass and level instantly cut on the drop to 0.08 with rapid decay.
+                    // Incoming hits full 1.0 power on the downbeat with full presence!
                     let decayP = Float((p - 0.50) / 0.50)
-                    streamSourceVol = max(0.0, 0.15 * (1.0 - decayP))
+                    streamSourceVol = max(0.0, 0.08 * (1.0 - pow(decayP, 0.60)))
                     streamTargetVol = 1.0
                 }
             }
