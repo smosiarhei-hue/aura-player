@@ -88,7 +88,7 @@ enum AG {
     // follow the user's accessibility setting. Weight and design are the
     // only knobs views may turn.
     static func display(_ style: Font.TextStyle = .title2, _ weight: Font.Weight = .bold) -> Font {
-        .system(style, design: .rounded, weight: weight)
+        .system(style, design: .default, weight: weight)
     }
 
     static func text(_ style: Font.TextStyle = .body, _ weight: Font.Weight = .regular) -> Font {
@@ -96,7 +96,7 @@ enum AG {
     }
 
     static func rounded(_ style: Font.TextStyle = .body, _ weight: Font.Weight = .medium) -> Font {
-        .system(style, design: .rounded, weight: weight)
+        .system(style, design: .default, weight: weight)
     }
 
     static func serifAccent(_ style: Font.TextStyle = .title2) -> Font {

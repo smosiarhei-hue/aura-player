@@ -250,7 +250,7 @@ struct PlayerScreenV2: View {
             Spacer()
             VStack(spacing: 2) {
                 Text("СЕЙЧАС ИГРАЕТ")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .font(.system(size: 10, weight: .bold, design: .default))
                     .tracking(1.0)
                     .foregroundStyle(AG.inkFaint)
                 Text(track?.title ?? "Sonivo")
@@ -384,7 +384,7 @@ struct PlayerScreenV2: View {
                         VStack(alignment: .leading, spacing: 14) {
                             ForEach(lyrics.lines) { line in
                                 Text(line.text)
-                                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                                    .font(.system(size: 20, weight: .semibold, design: .default))
                                     .foregroundStyle(.white.opacity(0.92))
                                     .multilineTextAlignment(.leading)
                                     .lineSpacing(4)
@@ -414,7 +414,7 @@ struct PlayerScreenV2: View {
                             .font(.system(size: 34, weight: .light))
                             .foregroundStyle(.white.opacity(0.35))
                         Text(pair.current.isEmpty || pair.current == "Слова песни" ? "Текст песни отсутствует" : pair.current)
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .font(.system(size: 22, weight: .bold, design: .default))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
@@ -445,7 +445,7 @@ struct PlayerScreenV2: View {
                         Image(systemName: "music.note")
                             .font(.system(size: 10, weight: .semibold))
                         Text("Источник: \(lyrics.sourceName)")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                     }
                     .foregroundStyle(.white.opacity(0.60))
                     .padding(.horizontal, 11)
@@ -780,11 +780,36 @@ struct PlayerScreenV2: View {
         cachedPhrases = []
         guard let requested = track else { lyricsLoading = false; return }
         lyricsLoading = true
-        let result = try? await LyricsService.shared.fetchLyrics(for: requested)
+        var result = try? await LyricsService.shared.fetchLyrics(for: requested)
+        guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }
+
+        // If no online lyrics found, attempt on-device Apple Neural Engine offline vocal transcription
+        if result == nil || result?.lines.isEmpty == true {
+            if let aiLyrics = await OnDeviceVocalAligner.shared.transcribe(track: requested) {
+                result = aiLyrics
+            }
+        }
+
         guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }
         lyrics = result
-        if let result, result.isSynchronized, !result.lines.isEmpty {
-            cachedPhrases = LyricPhrase.from(lines: result.lines)
+
+        if let result {
+            if result.isSynchronized, !result.lines.isEmpty {
+                cachedPhrases = LyricPhrase.from(lines: result.lines)
+            } else if !result.lines.isEmpty {
+                // Background On-Device AI Alignment (Apple Neural Engine) for unsynchronized lyrics
+                Task.detached(priority: .userInitiated) {
+                    if let aligned = await OnDeviceVocalAligner.shared.align(lyrics: result, track: requested) {
+                        await MainActor.run {
+                            guard self.player.currentTrack?.id == requested.id else { return }
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                                self.lyrics = aligned
+                                self.cachedPhrases = LyricPhrase.from(lines: aligned.lines)
+                            }
+                        }
+                    }
+                }
+            }
         }
         lyricsLoading = false
     }

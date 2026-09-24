@@ -92,7 +92,7 @@ private struct SyncedLyrics: View {
                             Image(systemName: "music.note")
                                 .font(.system(size: 11, weight: .semibold))
                             Text("Источник: \(lyrics.sourceName)")
-                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .font(.system(size: 13, weight: .medium, design: .default))
                         }
                         .foregroundStyle(.white.opacity(0.55))
                         .padding(.horizontal, 14)
@@ -169,7 +169,7 @@ private struct LyricsLineView: View {
                 .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
             } else {
                 Text(line.text)
-                    .font(.system(size: fontSize, weight: .bold, design: .rounded))
+                    .font(.system(size: fontSize, weight: .bold, design: .default))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.35), radius: 2, y: 1.5)
                     .multilineTextAlignment(.leading)
@@ -180,7 +180,7 @@ private struct LyricsLineView: View {
             }
         } else {
             Text(line.text)
-                .font(.system(size: fontSize * 0.84, weight: .semibold, design: .rounded))
+                .font(.system(size: fontSize * 0.84, weight: .semibold, design: .default))
                 .foregroundStyle(Color.white.opacity(0.35))
                 .multilineTextAlignment(.leading)
                 .lineSpacing(6)
@@ -222,7 +222,7 @@ private struct StaticLyricsList: View {
                         Image(systemName: "music.note")
                             .font(.system(size: 11, weight: .semibold))
                         Text("Источник: \(lyrics.sourceName)")
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .font(.system(size: 13, weight: .medium, design: .default))
                     }
                     .foregroundStyle(.white.opacity(0.55))
                     .padding(.horizontal, 14)

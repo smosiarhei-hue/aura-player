@@ -72,6 +72,7 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
         ITSAppUsesNonExemptEncryption: false
+        NSSpeechRecognitionUsageDescription: "Sonivo использует Apple Neural Engine для автономной синхронизации текста песен в режиме караоке."
         CFBundleURLTypes:
           - CFBundleURLName: com.smoze.sonivo
             CFBundleURLSchemes:

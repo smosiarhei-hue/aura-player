@@ -103,7 +103,7 @@ struct MyWaveHeroView: View {
 
             // Centered "Моя волна" title
             Text("Моя волна")
-                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .font(.system(size: 20, weight: .heavy, design: .default))
                 .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
                 .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
 
@@ -129,7 +129,7 @@ struct MyWaveHeroView: View {
     private var artistTitleSection: some View {
         VStack(spacing: 4) {
             Text(activeTrack?.artist ?? "Яндекс Музыка")
-                .font(.system(size: 28, weight: .black, design: .rounded))
+                .font(.system(size: 28, weight: .black, design: .default))
                 .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
@@ -283,7 +283,7 @@ struct MyWaveHeroView: View {
             } label: {
                 HStack(spacing: 8) {
                     Text(activeTrack?.title ?? "Включить волну")
-                        .font(.system(size: 16, weight: .heavy, design: .rounded))
+                        .font(.system(size: 16, weight: .heavy, design: .default))
                         .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
                         .lineLimit(1)
                         .truncationMode(.tail)

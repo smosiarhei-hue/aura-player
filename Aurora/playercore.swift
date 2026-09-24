@@ -233,7 +233,7 @@ final class PlayerCore {
             p.automaticallyWaitsToMinimizeStalling = false
             p.volume = volume * Self.streamHeadroomCeiling
 
-            let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
+            let interval = CMTime(seconds: 1.0 / 120.0, preferredTimescale: 2400)
             p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 Task { @MainActor [weak self] in
                     guard let self, self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
@@ -2034,7 +2034,7 @@ final class PlayerCore {
 
     private func startTimer() {
         progressTimer?.invalidate()
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickProgress() }
         }
         RunLoop.main.add(timer, forMode: .common)

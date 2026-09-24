@@ -81,7 +81,7 @@ struct WaveSettingsSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("ПОТОК В РЕАЛЬНОМ ВРЕМЕНИ")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.system(size: 10, weight: .bold, design: .default))
                         .tracking(1.4)
                         .foregroundStyle(.white.opacity(0.70))
                     Text("\(settings.diversity.title) • \(settings.language.title)")
