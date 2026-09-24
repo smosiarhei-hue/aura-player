@@ -32,13 +32,13 @@ struct LyricsView: View {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
-                        .blur(radius: 50)
-                        .scaleEffect(1.2)
-                        .opacity(0.40)
+                        .blur(radius: 16)
+                        .scaleEffect(1.1)
+                        .opacity(0.30)
                         .clipped()
                         .ignoresSafeArea()
                 }
-                Color.black.opacity(0.45).ignoresSafeArea()
+                Color.black.opacity(0.55).ignoresSafeArea()
             }
         }
         .preferredColorScheme(.dark)
@@ -87,6 +87,20 @@ private struct SyncedLyrics: View {
                         .accessibilityHint("Перемотать к этой строке")
                         .id(idx)
                     }
+                    if !lyrics.sourceName.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Источник: \(lyrics.sourceName)")
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                        }
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(.ultraThinMaterial.opacity(0.40), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+                        .padding(.top, 20)
+                    }
                 }
                 .padding(.horizontal, 28)
                 .padding(.top, 180)
@@ -126,13 +140,13 @@ private struct LyricsLineView: View {
     let fontSize: Double
 
     private var words: [LyricWord] {
-        guard let w = line.words, !w.isEmpty else { return [] }
-        return w.enumerated().map { i, item in
+        let eff = line.effectiveWords()
+        return eff.enumerated().map { i, item in
             LyricWord(
                 id: "\(line.id)_w\(i)",
                 text: item.text,
                 startTime: item.startTime,
-                duration: max(0.10, item.endTime - item.startTime)
+                duration: max(0.08, item.endTime - item.startTime)
             )
         }
     }
@@ -140,7 +154,7 @@ private struct LyricsLineView: View {
     var body: some View {
         if isActive {
             if !words.isEmpty {
-                // Word-by-word synced line with soft feathered 120 FPS glow
+                // Word-by-word synced line with crisp dynamic vocal sweep (ZERO glow)
                 LyricsFlowLayout(spacing: 8, lineSpacing: 8, alignment: .leading) {
                     ForEach(words) { word in
                         KineticWordView(
@@ -154,13 +168,10 @@ private struct LyricsLineView: View {
                 .scaleEffect(1.02, anchor: .leading)
                 .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
             } else {
-                // If there are NO word-by-word timings, display the FULL line in bright glowing white!
                 Text(line.text)
-                    .font(.system(size: fontSize, weight: .heavy, design: .default))
+                    .font(.system(size: fontSize, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.white)
-                    .shadow(color: Color.black.opacity(0.85), radius: 6, y: 2)
-                    .shadow(color: Color.white.opacity(0.90), radius: 8)
-                    .shadow(color: Color.white.opacity(0.50), radius: 16)
+                    .shadow(color: Color.black.opacity(0.35), radius: 2, y: 1.5)
                     .multilineTextAlignment(.leading)
                     .lineSpacing(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -169,8 +180,8 @@ private struct LyricsLineView: View {
             }
         } else {
             Text(line.text)
-                .font(.system(size: fontSize * 0.84, weight: .semibold, design: .default))
-                .foregroundStyle(Color.white.opacity(0.38))
+                .font(.system(size: fontSize * 0.84, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.35))
                 .multilineTextAlignment(.leading)
                 .lineSpacing(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -205,6 +216,20 @@ private struct StaticLyricsList: View {
                         .font(.system(size: settings.lyricsFontSize * 0.82, weight: .medium))
                         .foregroundStyle(Color.white.opacity(0.92))
                         .lineSpacing(6)
+                }
+                if !lyrics.sourceName.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Источник: \(lyrics.sourceName)")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                    }
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial.opacity(0.40), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+                    .padding(.top, 24)
                 }
             }
             .padding(28)

@@ -53,17 +53,20 @@ struct PlayerScreenV2: View {
         GeometryReader { geo in
             let totalHeight = geo.size.height
             let totalWidth = geo.size.width
-            let artworkHeight = isFullScreenVideoShot || showLyricsMode ? totalHeight * 0.58 : totalHeight * 0.60
+            let topInset = max(geo.safeAreaInsets.top, 50)
+            let artworkTopOffset = topInset + 44
+            let artworkStageHeight = isFullScreenVideoShot || showLyricsMode
+                ? (totalHeight * 0.55)
+                : min(totalWidth - 40, totalHeight * 0.44)
 
             ZStack(alignment: .top) {
                 background
                     .frame(width: totalWidth, height: totalHeight)
                     .clipped()
 
-                artworkStage(width: totalWidth, height: artworkHeight)
-                    .frame(width: totalWidth, height: artworkHeight, alignment: .top)
-                    .padding(.top, 18)
-                    .clipped()
+                artworkStage(width: totalWidth, height: artworkStageHeight)
+                    .frame(width: totalWidth, height: artworkStageHeight, alignment: .center)
+                    .padding(.top, artworkTopOffset)
 
                 // Soft blurred top gradient fade under Dynamic Island
                 LinearGradient(
@@ -167,8 +170,9 @@ struct PlayerScreenV2: View {
                     VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .scaledToFill()
-                        .blur(radius: 40)
-                        .scaleEffect(1.15)
+                        .blur(radius: 12)
+                        .scaleEffect(1.08)
+                        .opacity(0.35)
                         .clipped()
                         .ignoresSafeArea()
                 } else if let img = (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? track.flatMap({ LibraryStore.cachedArtworkImage(for: $0) }) {
@@ -176,8 +180,9 @@ struct PlayerScreenV2: View {
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .blur(radius: 50)
-                        .scaleEffect(1.2)
+                        .blur(radius: 14)
+                        .scaleEffect(1.10)
+                        .opacity(0.30)
                         .clipped()
                         .ignoresSafeArea()
                 }
@@ -205,9 +210,9 @@ struct PlayerScreenV2: View {
             } else if reduceMotion || scenePhase != .active {
                 gradientBackground
                 LinearGradient(stops: [.init(color: .black.opacity(0.15), location: 0),
-                                       .init(color: .black.opacity(0.45), location: 0.70),
-                                       .init(color: .black.opacity(0.75), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
+                                        .init(color: .black.opacity(0.45), location: 0.70),
+                                        .init(color: .black.opacity(0.75), location: 1)],
+                                startPoint: .top, endPoint: .bottom)
             } else {
                 let bgImg = currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
                 if let bgImg {
@@ -215,19 +220,19 @@ struct PlayerScreenV2: View {
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .blur(radius: 40)
-                        .scaleEffect(1.15)
-                        .opacity(0.55)
+                        .blur(radius: 12)
+                        .scaleEffect(1.08)
+                        .opacity(0.28)
                         .clipped()
                         .drawingGroup()
                 } else {
                     gradientBackground
                 }
-                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.35)
-                LinearGradient(stops: [.init(color: .black.opacity(0.08), location: 0),
-                                       .init(color: .black.opacity(0.30), location: 0.50),
-                                       .init(color: .black.opacity(0.80), location: 1.0)],
-                               startPoint: .top, endPoint: .bottom)
+                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.25)
+                LinearGradient(stops: [.init(color: .black.opacity(0.10), location: 0),
+                                        .init(color: .black.opacity(0.35), location: 0.50),
+                                        .init(color: .black.opacity(0.85), location: 1.0)],
+                                startPoint: .top, endPoint: .bottom)
             }
         }.allowsHitTesting(false)
     }
@@ -283,31 +288,21 @@ struct PlayerScreenV2: View {
                 // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
                 Color.clear
                     .frame(width: width, height: height)
-            } else {
+            } else if !showLyricsMode {
                 artwork
-                    .frame(width: width, height: height)
-                    .scaledToFill()
-                    .clipped()
-            }
-            if !isFullScreenVideoShot && !showLyricsMode {
+                    .frame(maxWidth: width - 40, maxHeight: height)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.6)
+                    )
+                    .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
                 AutoMixTransitionOverlay(player: player, width: width, height: height)
             }
+
             if showLyricsMode { lyricsOverlay(width: width, height: height) }
         }
         .frame(width: width, height: height)
-        .mask {
-            LinearGradient(
-                stops: [
-                    .init(color: .black, location: 0.0),
-                    .init(color: .black, location: 0.65),
-                    .init(color: .black.opacity(0.85), location: 0.78),
-                    .init(color: .black.opacity(0.40), location: 0.90),
-                    .init(color: .clear, location: 1.0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
         .scaleEffect(player.isPlaying ? 1.0 : 0.96)
         .offset(x: coverDragX)
         .contentShape(Rectangle())
@@ -425,7 +420,7 @@ struct PlayerScreenV2: View {
                             .lineLimit(nil)
                             .minimumScaleFactor(0.75)
                             .padding(.horizontal, 20)
-                            .shadow(color: .black.opacity(0.75), radius: 8, y: 2)
+                            .shadow(color: .black.opacity(0.35), radius: 2, y: 1.5)
                         if let next = pair.next {
                             Text(next)
                                 .font(AG.text(.subheadline, .medium))
@@ -443,26 +438,45 @@ struct PlayerScreenV2: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.bottom, 54)
 
-            // Ergonomic, thumb-friendly Fullscreen Expand Button at Bottom-Trailing
-            HStack {
+            // Ergonomic Bottom Bar: Source Badge & Fullscreen Expand Button
+            HStack(spacing: 8) {
+                if let lyrics, !lyrics.sourceName.isEmpty {
+                    HStack(spacing: 5) {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Источник: \(lyrics.sourceName)")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    }
+                    .foregroundStyle(.white.opacity(0.60))
+                    .padding(.horizontal, 11)
+                    .frame(height: 34)
+                    .background(.ultraThinMaterial.opacity(0.55), in: Capsule())
+                    .overlay(
+                        Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 0.6)
+                    )
+                    .padding(.bottom, 14)
+                    .padding(.leading, 16)
+                }
+
                 Spacer()
+
                 Button {
                     openModal(.lyrics)
                 } label: {
                     HStack(spacing: 7) {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                         Text("На весь экран")
                             .font(AG.text(.caption, .bold))
                     }
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 38)
-                    .background(.ultraThinMaterial.opacity(0.85), in: Capsule())
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(.ultraThinMaterial.opacity(0.70), in: Capsule())
                     .overlay(
-                        Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.8)
+                        Capsule().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.6)
                     )
-                    .shadow(color: .black.opacity(0.55), radius: 8, y: 3)
+                    .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
                 }
                 .buttonStyle(TactileButtonStyle(scale: 0.94))
                 .accessibilityLabel("Развернуть текст на весь экран")
@@ -486,11 +500,11 @@ struct PlayerScreenV2: View {
         if let current {
             Image(uiImage: current)
                 .resizable()
-                .scaledToFill()
+                .scaledToFit()
                 .id(track?.id)
         } else if let raw = track?.coverURL, let url = URL(string: raw) {
             AsyncImage(url: url) { phase in
-                if let image = phase.image { image.resizable().scaledToFill() } else { fallbackArtwork }
+                if let image = phase.image { image.resizable().scaledToFit() } else { fallbackArtwork }
             }
             .id(track?.id)
         } else {

@@ -68,25 +68,17 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
             let duration = max(1.2, line.endTime.map { $0 - line.startTime } ?? (nextStart - line.startTime))
             let end = line.startTime + duration
 
-            let words: [LyricWord]
-            let hasWordTimings: Bool
-            if let lineWords = line.words, !lineWords.isEmpty {
-                hasWordTimings = true
-                words = lineWords.enumerated().map { wordIdx, w in
-                    let wDur = max(0.10, w.endTime - w.startTime)
-                    let isImp = w.text.count > 5 || w.text.contains("!")
-                    return LyricWord(
-                        id: "\(phraseId)_w\(wordIdx)",
-                        text: w.text,
-                        startTime: w.startTime,
-                        duration: wDur,
-                        isImpact: isImp
-                    )
-                }
-            } else {
-                // If there are no real word timings, do not create fake word slices!
-                hasWordTimings = false
-                words = []
+            let effective = line.effectiveWords()
+            let words: [LyricWord] = effective.enumerated().map { wordIdx, w in
+                let wDur = max(0.08, w.endTime - w.startTime)
+                let isImp = w.text.count > 6 || w.text.contains("!")
+                return LyricWord(
+                    id: "\(phraseId)_w\(wordIdx)",
+                    text: w.text,
+                    startTime: w.startTime,
+                    duration: wDur,
+                    isImpact: isImp
+                )
             }
 
             phrases.append(LyricPhrase(
@@ -94,9 +86,9 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
                 text: line.text,
                 timeRange: line.startTime...end,
                 words: words,
-                hasWordTimings: hasWordTimings,
+                hasWordTimings: true,
                 isOutlined: false,
-                glowIntensity: 1.35
+                glowIntensity: 1.0
             ))
         }
         return phrases
@@ -195,25 +187,23 @@ struct KineticWordView: View {
     var body: some View {
         ZStack(alignment: .leading) {
             // Un-sung base text (Dimmed, rock-solid font weight, zero jitter)
-            Text(word.text.uppercased())
-                .font(.system(size: fontSize, weight: .heavy, design: .default))
+            Text(word.text)
+                .font(.system(size: fontSize, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.white.opacity(0.35))
 
-            // Sung glowing text revealed with soft feathered gradient — NO hard rectangles or squares!
+            // Sung crisp text revealed with soft feathered gradient — ZERO glow/radiant blur!
             if progress > 0 {
-                Text(word.text.uppercased())
-                    .font(.system(size: fontSize, weight: .heavy, design: .default))
+                Text(word.text)
+                    .font(.system(size: fontSize, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.white)
-                    .shadow(color: Color.black.opacity(0.85), radius: 6, y: 2)
-                    .shadow(color: Color.white.opacity(progress < 1 ? 0.95 : 0.40), radius: 8)
-                    .shadow(color: Color.cyan.opacity(progress < 1 ? 0.45 : 0.0), radius: 14)
+                    .shadow(color: Color.black.opacity(0.35), radius: 2, y: 1.5)
                     .mask(
                         LinearGradient(
                             stops: [
                                 .init(color: .white, location: 0.0),
-                                .init(color: .white, location: max(0.0, progress - 0.15)),
+                                .init(color: .white, location: max(0.0, progress - 0.10)),
                                 .init(color: .white.opacity(0.60), location: progress),
-                                .init(color: .clear, location: min(1.0, progress + 0.15)),
+                                .init(color: .clear, location: min(1.0, progress + 0.08)),
                                 .init(color: .clear, location: 1.0)
                             ],
                             startPoint: .leading,
@@ -222,6 +212,8 @@ struct KineticWordView: View {
                     )
             }
         }
+        .scaleEffect(progress > 0 && progress < 1.0 ? 1.04 : 1.0, anchor: .leading)
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: progress > 0 && progress < 1.0)
     }
 }
 
@@ -236,20 +228,21 @@ struct KineticLyricsView: View {
     var body: some View {
         // Native 120 FPS timeline synchronizing directly with iPhone ProMotion display
         TimelineView(.animation(paused: !isPlaying)) { _ in
-            let current = findCurrentPhrase(at: currentTime)
+            let (current, next) = findCurrentAndNextPhrase(at: currentTime)
 
             ZStack {
                 if let phrase = current {
                     KineticPhraseStage(
                         phrase: phrase,
+                        nextPhrase: next,
                         currentTime: currentTime
                     )
                     .id(phrase.id)
                     .transition(.opacity)
                 } else {
                     Text("SONIVO")
-                        .font(.system(size: 26, weight: .heavy, design: .default))
-                        .tracking(4.0)
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .tracking(3.0)
                         .foregroundStyle(Color.white.opacity(0.35))
                         .transition(.opacity)
                 }
@@ -263,64 +256,82 @@ struct KineticLyricsView: View {
         }
     }
 
-    /// Fast binary search to pinpoint phrase even during rapid scrubbing
-    private func findCurrentPhrase(at time: TimeInterval) -> LyricPhrase? {
-        guard !phrases.isEmpty else { return nil }
+    /// Fast search to pinpoint active and next phrase
+    private func findCurrentAndNextPhrase(at time: TimeInterval) -> (current: LyricPhrase?, next: LyricPhrase?) {
+        guard !phrases.isEmpty else { return (nil, nil) }
 
-        var low = 0
-        var high = phrases.count - 1
-        var candidate: LyricPhrase? = nil
-
-        while low <= high {
-            let mid = (low + high) / 2
-            let p = phrases[mid]
+        var activeIndex: Int? = nil
+        for (i, p) in phrases.enumerated() {
             if p.timeRange.contains(time) {
-                return p
+                activeIndex = i
+                break
             } else if p.timeRange.lowerBound > time {
-                high = mid - 1
-            } else {
-                candidate = p
-                low = mid + 1
+                if activeIndex == nil {
+                    activeIndex = max(0, i - 1)
+                }
+                break
             }
         }
-        return candidate
+        if activeIndex == nil && !phrases.isEmpty {
+            if time >= phrases.last!.timeRange.lowerBound {
+                activeIndex = phrases.count - 1
+            }
+        }
+
+        guard let idx = activeIndex, idx < phrases.count else {
+            return (nil, nil)
+        }
+        let cur = phrases[idx]
+        let nxt = (idx + 1 < phrases.count) ? phrases[idx + 1] : nil
+        return (cur, nxt)
     }
 }
 
-// MARK: - 5. Phrase Stage (Soft Blurred Feathered 120 Hz HDR Glow — ZERO Squares!)
+// MARK: - 5. Phrase Stage (Crisp Apple Music Typography — Zero Glow, Vocal Highlight Sweep)
 
 private struct KineticPhraseStage: View {
     let phrase: LyricPhrase
+    let nextPhrase: LyricPhrase?
     let currentTime: TimeInterval
 
-    private var baseFontSize: CGFloat { 32 }
+    private var baseFontSize: CGFloat { 26 }
 
     var body: some View {
-        if phrase.hasWordTimings && !phrase.words.isEmpty {
-            // Timed word-by-word karaoke with flow wrapping & soft feathered glow (NO squares)
-            LyricsFlowLayout(spacing: 8, lineSpacing: 10, alignment: .center) {
-                ForEach(phrase.words) { word in
-                    KineticWordView(
-                        word: word,
-                        currentTime: currentTime,
-                        fontSize: baseFontSize
-                    )
+        VStack(spacing: 16) {
+            // Active phrase with real-time vocal timecode tracking
+            if !phrase.words.isEmpty {
+                LyricsFlowLayout(spacing: 8, lineSpacing: 9, alignment: .center) {
+                    ForEach(phrase.words) { word in
+                        KineticWordView(
+                            word: word,
+                            currentTime: currentTime,
+                            fontSize: baseFontSize
+                        )
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-        } else {
-            // Track has NO word timings — Show 100% of the FULL line, NEVER partially cropped or cut off!
-            Text(phrase.text.uppercased())
-                .font(.system(size: baseFontSize, weight: .heavy, design: .default))
-                .foregroundStyle(Color.white)
-                .multilineTextAlignment(.center)
-                .lineSpacing(8)
-                .shadow(color: Color.black.opacity(0.85), radius: 6, y: 2)
-                .shadow(color: Color.white.opacity(0.95), radius: 8)
-                .shadow(color: Color.white.opacity(0.50), radius: 18)
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
+            } else {
+                Text(phrase.text)
+                    .font(.system(size: baseFontSize, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(6)
+                    .shadow(color: Color.black.opacity(0.35), radius: 2, y: 1.5)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+            }
+
+            // Next phrase preview (clean translucent white, no glow)
+            if let next = nextPhrase, !next.text.isEmpty {
+                Text(next.text)
+                    .font(.system(size: baseFontSize * 0.72, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.35))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.horizontal, 24)
+                    .transition(.opacity)
+            }
         }
     }
 }

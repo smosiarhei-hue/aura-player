@@ -29,20 +29,61 @@ struct Lyrics: Equatable, Sendable {
     let lines: [LyricsLine]
     let isSyllable: Bool
     let offset: TimeInterval
+    let sourceName: String
 
-    static let empty = Lyrics(title: nil, artist: nil, lines: [], isSyllable: false, offset: 0)
+    static let empty = Lyrics(title: nil, artist: nil, lines: [], isSyllable: false, offset: 0, sourceName: "")
 
-    init(title: String? = nil, artist: String? = nil, lines: [LyricsLine], isSyllable: Bool = false, offset: TimeInterval = 0) {
+    init(
+        title: String? = nil,
+        artist: String? = nil,
+        lines: [LyricsLine],
+        isSyllable: Bool = false,
+        offset: TimeInterval = 0,
+        sourceName: String = "Яндекс Музыка"
+    ) {
         self.title = title
         self.artist = artist
         self.lines = lines
         self.isSyllable = isSyllable
         self.offset = offset
+        self.sourceName = sourceName
     }
 
     /// True when lines carry real timestamps (line- or word-sync); false for plain/static text.
     var isSynchronized: Bool {
         lines.count > 1 && lines.contains { $0.startTime > 0 }
+    }
+}
+
+// MARK: - Phonetic Word Timing Synthesizer (Karaoke Vocal Tracking for Line-Level LRC)
+
+extension LyricsLine {
+    /// Returns explicit words if present, or synthesizes natural phonetic timed words
+    /// for line-level synced lyrics so karaoke highlights run dynamically across words.
+    func effectiveWords() -> [LyricsWord] {
+        if let words, !words.isEmpty {
+            return words
+        }
+        let rawWords = text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        guard !rawWords.isEmpty else { return [] }
+        let start = startTime
+        let end = endTime ?? (start + max(2.4, Double(text.count) * 0.12 + 1.0))
+        let totalDuration = max(0.6, end - start)
+        let totalWeight = rawWords.reduce(0.0) { $0 + max(1.0, Double($1.count)) }
+        var currentStart = start
+        var result: [LyricsWord] = []
+        for (i, word) in rawWords.enumerated() {
+            let weight = max(1.0, Double(word.count))
+            let wordDur = totalDuration * (weight / max(1.0, totalWeight))
+            let wordEnd = (i == rawWords.count - 1) ? end : (currentStart + wordDur)
+            result.append(LyricsWord(
+                text: word,
+                startTime: currentStart,
+                endTime: max(wordEnd, currentStart + 0.08)
+            ))
+            currentStart = wordEnd
+        }
+        return result
     }
 }
 
@@ -61,7 +102,7 @@ enum LRCParser {
         options: .caseInsensitive
     )
 
-    static func parse(_ lrc: String) -> Lyrics {
+    static func parse(_ lrc: String, sourceName: String = "Яндекс Музыка") -> Lyrics {
         guard let lineTimeRegex else { return .empty }
 
         // Extract global offset tag if present (in milliseconds)
@@ -137,7 +178,7 @@ enum LRCParser {
         }
 
         let isSyllable = lines.contains { ($0.words?.count ?? 0) > 1 }
-        return Lyrics(title: nil, artist: nil, lines: lines, isSyllable: isSyllable, offset: globalOffsetSeconds)
+        return Lyrics(title: nil, artist: nil, lines: lines, isSyllable: isSyllable, offset: globalOffsetSeconds, sourceName: sourceName)
     }
 
     private static func parseContent(_ content: String, globalOffset: TimeInterval) -> (text: String, words: [LyricsWord]?) {
@@ -151,31 +192,33 @@ enum LRCParser {
 
         var words: [LyricsWord] = []
         var plain = ""
-        var cursor = 0
 
-        for match in matches {
-            let textRange = NSRange(location: cursor, length: match.range.location - cursor)
-            let wordText = ns.substring(with: textRange)
-            if !wordText.isEmpty {
-                plain += wordText
-            }
-
-            let start = max(0, timestamp(from: content, match: match) - globalOffset)
-            words.append(LyricsWord(text: wordText, startTime: start, endTime: start))
-            cursor = match.range.location + match.range.length
+        // Leading text before first timestamp tag
+        let firstTagLocation = matches[0].range.location
+        if firstTagLocation > 0 {
+            plain += ns.substring(with: NSRange(location: 0, length: firstTagLocation))
         }
 
-        let trailing = ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
-        plain += trailing
+        for (i, match) in matches.enumerated() {
+            let textStart = match.range.location + match.range.length
+            let textEnd = (i + 1 < matches.count) ? matches[i + 1].range.location : ns.length
+            let wordText = ns.substring(with: NSRange(location: textStart, length: max(0, textEnd - textStart)))
+            plain += wordText
 
-        let filtered = words.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
-        guard !filtered.isEmpty else {
+            let start = max(0, timestamp(from: content, match: match) - globalOffset)
+            let cleanWord = wordText.trimmingCharacters(in: .whitespaces)
+            if !cleanWord.isEmpty {
+                words.append(LyricsWord(text: wordText, startTime: start, endTime: start))
+            }
+        }
+
+        guard !words.isEmpty else {
             return (plain.trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
 
-        let fixed: [LyricsWord] = filtered.enumerated().map { i, w in
-            let end = (i + 1 < filtered.count) ? filtered[i + 1].startTime : (w.startTime + 2.0)
-            return LyricsWord(text: w.text, startTime: w.startTime, endTime: max(end, w.startTime + 0.1))
+        let fixed: [LyricsWord] = words.enumerated().map { i, w in
+            let end = (i + 1 < words.count) ? words[i + 1].startTime : (w.startTime + 2.0)
+            return LyricsWord(text: w.text, startTime: w.startTime, endTime: max(end, w.startTime + 0.10))
         }
 
         return (plain.trimmingCharacters(in: .whitespacesAndNewlines), fixed)

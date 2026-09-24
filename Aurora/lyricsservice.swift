@@ -123,15 +123,15 @@ final class LyricsService {
 
         // 1. Check for synchronized LRC lyrics
         if let lrcText = lyricsData.lrcLyrics ?? lyricsData.lrc, !lrcText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let parsed = LRCParser.parse(lrcText)
+            let parsed = LRCParser.parse(lrcText, sourceName: "Яндекс Музыка")
             if !parsed.lines.isEmpty {
-                return Lyrics(title: track.title, artist: track.artist, lines: parsed.lines, isSyllable: parsed.isSyllable)
+                return Lyrics(title: track.title, artist: track.artist, lines: parsed.lines, isSyllable: parsed.isSyllable, sourceName: "Яндекс Музыка")
             }
         }
 
         // 2. Check for full text lyrics
         if let rawText = lyricsData.fullLyrics ?? lyricsData.lyrics, !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return staticLyrics(from: rawText, track: track)
+            return staticLyrics(from: rawText, track: track, sourceName: "Яндекс Музыка")
         }
 
         return nil
@@ -188,17 +188,18 @@ final class LyricsService {
         }
 
         if let synced = detail.syncedLyrics, !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let parsed = LRCParser.parse(synced)
+            let parsed = LRCParser.parse(synced, sourceName: "LRCLIB")
             if !parsed.lines.isEmpty {
                 return Lyrics(title: detail.trackName ?? track.title,
                               artist: detail.artistName ?? track.artist,
                               lines: parsed.lines,
-                              isSyllable: parsed.isSyllable)
+                              isSyllable: parsed.isSyllable,
+                              sourceName: "LRCLIB")
             }
         }
 
         if let plain = detail.plainLyrics, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return staticLyrics(from: plain, track: track)
+            return staticLyrics(from: plain, track: track, sourceName: "LRCLIB")
         }
 
         return nil
@@ -274,28 +275,60 @@ final class LyricsService {
         let extracted = parseGeniusHTML(html)
         guard !extracted.isEmpty else { return nil }
 
-        return staticLyrics(from: extracted, track: track)
+        return staticLyrics(from: extracted, track: track, sourceName: "Genius")
     }
 
     private func parseGeniusHTML(_ html: String) -> String {
-        let pattern = #"<div[^>]*data-lyrics-container="true"[^>]*>(.*?)</div>"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
-            return ""
-        }
-        let nsHTML = html as NSString
-        let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsHTML.length))
-        guard !matches.isEmpty else { return "" }
+        let marker = "data-lyrics-container=\"true\""
+        var containers: [String] = []
+        var searchStart = html.startIndex
 
-        var collectedParts: [String] = []
-        for match in matches {
-            if match.numberOfRanges > 1 {
-                let range = match.range(at: 1)
-                let part = nsHTML.substring(with: range)
-                collectedParts.append(part)
+        while let markerRange = html.range(of: marker, range: searchStart..<html.endIndex) {
+            // Find opening tag '>'
+            guard let tagEnd = html.range(of: ">", range: markerRange.upperBound..<html.endIndex) else {
+                break
+            }
+
+            var depth = 1
+            var cursor = tagEnd.upperBound
+            let contentStart = cursor
+
+            while cursor < html.endIndex && depth > 0 {
+                let remaining = cursor..<html.endIndex
+                let nextOpen = html.range(of: "<div", range: remaining)
+                let nextClose = html.range(of: "</div>", range: remaining)
+
+                guard let closeRange = nextClose else { break }
+
+                if let openRange = nextOpen, openRange.lowerBound < closeRange.lowerBound {
+                    depth += 1
+                    cursor = openRange.upperBound
+                } else {
+                    depth -= 1
+                    if depth == 0 {
+                        let containerContent = String(html[contentStart..<closeRange.lowerBound])
+                        containers.append(containerContent)
+                        searchStart = closeRange.upperBound
+                        break
+                    }
+                    cursor = closeRange.upperBound
+                }
+            }
+
+            if depth > 0 {
+                searchStart = tagEnd.upperBound
             }
         }
 
-        var raw = collectedParts.joined(separator: "\n")
+        guard !containers.isEmpty else { return "" }
+
+        var raw = containers.joined(separator: "\n")
+        // Strip data-exclude-from-selection blocks (header titles, ads, comments)
+        raw = raw.replacingOccurrences(
+            of: #"<div[^>]*data-exclude-from-selection="true"[^>]*>.*?</div>"#,
+            with: "",
+            options: .regularExpression
+        )
         raw = raw.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
         raw = raw.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
         raw = raw.replacingOccurrences(of: "&amp;", with: "&")
@@ -310,12 +343,12 @@ final class LyricsService {
         return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func staticLyrics(from text: String, track: Track) -> Lyrics {
+    private func staticLyrics(from text: String, track: Track, sourceName: String = "Встроенный текст") -> Lyrics {
         let lines = text.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .map { LyricsLine(text: $0, startTime: 0, endTime: nil, words: nil) }
-        return Lyrics(title: track.title, artist: track.artist, lines: lines, isSyllable: false)
+        return Lyrics(title: track.title, artist: track.artist, lines: lines, isSyllable: false, sourceName: sourceName)
     }
 
     private func cacheKey(for track: Track) -> String {
