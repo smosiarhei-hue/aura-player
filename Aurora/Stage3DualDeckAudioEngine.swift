@@ -326,7 +326,7 @@ final class DualDeckAudioEngine: @unchecked Sendable {
         let startVol = s.mixer.outputVolume > 0 ? s.mixer.outputVolume : 1.0
         let generation = s.generation
 
-        s.spilloverTask = Task.detached(priority: .userInitiated) { [weak self, weak s] in
+        s.spilloverTask = Task { @MainActor [weak self, weak s] in
             guard let self, let s else { return }
             let t0 = CACurrentMediaTime()
             while !Task.isCancelled {
