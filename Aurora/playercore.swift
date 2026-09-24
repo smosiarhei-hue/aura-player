@@ -1476,7 +1476,7 @@ final class PlayerCore {
         // For streaming playback (AVPlayer), EQ nodes cannot be attached directly, so the two hallmark
         // DJ effects (Downbeat Bass Swap and Vocal Pocket Ducking) are rendered via precision dynamic gain shaping.
         if isUsingStreamPlayer || incomingIsStream {
-            if strategy == .BASS_SWAP || strategy == .DROP_SWITCH || strategy == .SMART_BLEND || strategy == .ENERGY_MATCH {
+            if strategy == .BASS_SWAP || strategy == .DROP_SWITCH || strategy == .BEAT_MATCH || strategy == .BEAT_MATCH_EQ || strategy == .ENERGY_BLEND {
                 if p < 0.50 {
                     // Phase 1 (p < 0.50): Pre-swap vocal pocket ducking & bass avoidance
                     // Outgoing track retains dominant energy (full presence & kick).
