@@ -46,6 +46,8 @@ final class YandexMusicService {
     private static let keyRecentYm = "ym.memory.recent_ym_ids"
     private static let keyArtists = "ym.memory.artists"
     private static let keyPlays = "ym.memory.plays"
+    private static let keyPremiereTracks = "sonivo.premiere.tracks.v2"
+    private static let keyPremiereDate = "sonivo.premiere.cached_date.v2"
     private static let memoryLimit = 600
     private static let noRepeatWindow = 200
 
@@ -54,10 +56,27 @@ final class YandexMusicService {
     private var chartCacheAt: Date?
     private var newAlbumsCache: [YMAlbumItem] = []
     private var newAlbumsCacheAt: Date?
-    private var newTracksCache: [YMTrackItem] = []
-    private var newTracksCacheAt: Date?
+    private(set) var newTracksCache: [YMTrackItem] = []
+    private(set) var newTracksCacheAt: Date?
     private var artistCache: [String: YMArtistItem] = [:]
     private var artistTracksCache: [String: [YMTrackItem]] = [:]
+
+    /// Валидность суточного кэша премьер (до 00:00).
+    var isDailyPremiereCacheValid: Bool {
+        guard let at = newTracksCacheAt, !newTracksCache.isEmpty else { return false }
+        return Calendar.current.isDateInToday(at)
+    }
+
+    private func saveDailyPremiereCache(_ tracks: [YMTrackItem]) {
+        guard !tracks.isEmpty else { return }
+        let now = Date()
+        self.newTracksCache = tracks
+        self.newTracksCacheAt = now
+        if let data = try? JSONEncoder().encode(tracks) {
+            UserDefaults.standard.set(data, forKey: Self.keyPremiereTracks)
+            UserDefaults.standard.set(now, forKey: Self.keyPremiereDate)
+        }
+    }
 
     private init() {
         let defaults = UserDefaults.standard
@@ -75,6 +94,16 @@ final class YandexMusicService {
            let savedProfile = try? JSONDecoder().decode(YMUserProfile.self, from: uData) {
             self.currentUser = savedProfile
         }
+
+        // Восстановление суточного кэша Топ-100 премьер, если он сохранен сегодня (до 00:00)
+        if let pData = defaults.data(forKey: Self.keyPremiereTracks),
+           let savedDate = defaults.object(forKey: Self.keyPremiereDate) as? Date,
+           Calendar.current.isDateInToday(savedDate),
+           let tracks = try? JSONDecoder().decode([YMTrackItem].self, from: pData),
+           !tracks.isEmpty {
+            self.newTracksCache = tracks
+            self.newTracksCacheAt = savedDate
+        }
     }
 
     // MARK: - Models
@@ -88,19 +117,19 @@ final class YandexMusicService {
         let hasPlus: Bool
     }
 
-    struct YMArtist: Codable, Equatable {
+    struct YMArtist: Codable, Equatable, Sendable {
         let id: Int?
         let name: String?
     }
 
-    struct YMAlbum: Codable, Equatable {
+    struct YMAlbum: Codable, Equatable, Sendable {
         let id: Int?
         let title: String?
         let year: Int?
         let coverUri: String?
     }
 
-    struct YMTrackItem: Identifiable, Codable, Equatable {
+    struct YMTrackItem: Identifiable, Codable, Equatable, Sendable {
         let id: String
         let title: String
         let available: Bool?
@@ -492,7 +521,7 @@ final class YandexMusicService {
         }
         guard !ids.isEmpty else { return newAlbumsCache }
 
-        let albums = try await fetchAlbums(ids: Array(ids.prefix(40)))
+        let albums = try await fetchAlbums(ids: Array(ids.prefix(70)))
         let clean = albums.filter { $0.id != 0 }
         if !clean.isEmpty {
             newAlbumsCache = clean
@@ -563,46 +592,114 @@ final class YandexMusicService {
         return resp.result ?? []
     }
 
-    func getAlbumTracks(albumId: Int) async throws -> [YMTrackItem] {
-        guard let url = URL(string: Self.apiBase + "/albums/" + String(albumId) + "/with-tracks") else { throw URLError(.badURL) }
-        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
-
-        struct Response: Decodable {
-            struct Result: Decodable {
-                let volumes: [[YMTrackItem]]?
-            }
-            let result: Result?
+    /// Потокобезопасная загрузка треков альбома
+    static func fetchAlbumTracks(albumId: Int, token: String) async -> [YMTrackItem] {
+        guard let url = URL(string: apiBase + "/albums/" + String(albumId) + "/with-tracks") else { return [] }
+        var req = URLRequest(url: url)
+        if !token.isEmpty {
+            req.setValue("OAuth " + token, forHTTPHeaderField: "Authorization")
         }
-
-        let resp = try JSONDecoder().decode(Response.self, from: data)
-        let volumes = resp.result?.volumes ?? []
-        return Self.playable(volumes.flatMap { $0 })
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            struct Response: Decodable {
+                struct Result: Decodable {
+                    let volumes: [[YMTrackItem]]?
+                }
+                let result: Result?
+            }
+            let resp = try JSONDecoder().decode(Response.self, from: data)
+            let volumes = resp.result?.volumes ?? []
+            return playable(volumes.flatMap { $0 })
+        } catch {
+            return []
+        }
     }
 
-    /// Свежие треки — по одному-двум из каждого нового релиза (обновление каждые 24 часа).
-    func getNewTracks(limit: Int = 24, force: Bool = false) async -> [YMTrackItem] {
-        if !force, !newTracksCache.isEmpty, let at = newTracksCacheAt, Date().timeIntervalSince(at) < 86400 {
-            return newTracksCache
+    func getAlbumTracks(albumId: Int) async throws -> [YMTrackItem] {
+        return await Self.fetchAlbumTracks(albumId: albumId, token: token)
+    }
+
+    /// Свежие треки («Топ-100 премьер») — зафиксированы на день до полуночи 00:00 (при наступлении полуночи обновляются).
+    func getNewTracks(limit: Int = 100, force: Bool = false) async -> [YMTrackItem] {
+        if !force, isDailyPremiereCacheValid {
+            return Array(newTracksCache.prefix(limit))
         }
+
+        // Fallback: проверка UserDefaults
+        if !force,
+           let data = UserDefaults.standard.data(forKey: Self.keyPremiereTracks),
+           let savedDate = UserDefaults.standard.object(forKey: Self.keyPremiereDate) as? Date,
+           Calendar.current.isDateInToday(savedDate),
+           let savedTracks = try? JSONDecoder().decode([YMTrackItem].self, from: data),
+           !savedTracks.isEmpty {
+            self.newTracksCache = savedTracks
+            self.newTracksCacheAt = savedDate
+            return Array(savedTracks.prefix(limit))
+        }
+
         let albums = (try? await getNewAlbums(force: force)) ?? []
+        let albumsToFetch = Array(albums.prefix(70))
+        let currentToken = self.token
+        var albumTracksMap: [Int: [YMTrackItem]] = [:]
+
+        await withTaskGroup(of: (Int, [YMTrackItem]).self) { group in
+            for album in albumsToFetch {
+                group.addTask {
+                    let tracks = await Self.fetchAlbumTracks(albumId: album.id, token: currentToken)
+                    return (album.id, tracks)
+                }
+            }
+            for await (albumId, tracks) in group {
+                albumTracksMap[albumId] = tracks
+            }
+        }
+
         var out: [YMTrackItem] = []
         var seen = Set<String>()
 
-        for album in albums.prefix(12) {
-            if out.count >= limit { break }
-            let tracks = (try? await getAlbumTracks(albumId: album.id)) ?? []
+        // 1. По 1-2 главных трека из каждого свежего релиза
+        for album in albumsToFetch {
+            guard let tracks = albumTracksMap[album.id] else { continue }
             for item in tracks.prefix(2) {
-                if seen.contains(item.id) { continue }
-                seen.insert(item.id)
-                out.append(item)
+                if seen.insert(item.id).inserted {
+                    out.append(item)
+                    if out.count >= limit { break }
+                }
+            }
+            if out.count >= limit { break }
+        }
+
+        // 2. Если треков меньше лимита (100), добираем остальные треки из этих же релизов
+        if out.count < limit {
+            for album in albumsToFetch {
+                guard let tracks = albumTracksMap[album.id] else { continue }
+                for item in tracks.dropFirst(2) {
+                    if seen.insert(item.id).inserted {
+                        out.append(item)
+                        if out.count >= limit { break }
+                    }
+                }
+                if out.count >= limit { break }
+            }
+        }
+
+        // 3. Бэкфилл из чарта/каталога при необходимости
+        if out.count < limit {
+            let chartFallback = (try? await getChart(force: false)) ?? []
+            for item in chartFallback {
+                if seen.insert(item.id).inserted {
+                    out.append(item)
+                    if out.count >= limit { break }
+                }
             }
         }
 
         if !out.isEmpty {
-            newTracksCache = out
-            newTracksCacheAt = Date()
+            let finalTop = Array(out.prefix(limit))
+            saveDailyPremiereCache(finalTop)
+            return finalTop
         }
-        return out
+        return []
     }
 
     // MARK: - Радиостанции / «Моя волна» под настроение

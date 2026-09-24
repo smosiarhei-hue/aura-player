@@ -350,6 +350,7 @@ struct Top100ChartView: View {
 
 struct PremiereTracksView: View {
     let tracks: [YandexMusicService.YMTrackItem]
+    var title: String = "Топ-100 премьер"
 
     private var ranked: [RankedTrack] {
         tracks.enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
@@ -360,7 +361,11 @@ struct PremiereTracksView: View {
             SonivoBackdrop()
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    SonivoHeader(title: "Премьера")
+                    SonivoHeader(
+                        title: title,
+                        accent: tracks.isEmpty ? nil : "\(tracks.count)",
+                        subtitle: "Ежедневный чарт новинок • Обновляется в 00:00"
+                    )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
 
@@ -382,7 +387,7 @@ struct PremiereTracksView: View {
                 .padding(.bottom, 28)
             }
         }
-        .navigationTitle("Премьера")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
     }

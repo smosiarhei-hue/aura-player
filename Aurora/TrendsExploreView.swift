@@ -64,8 +64,6 @@ struct TrendsExploreView: View {
                         moreDiscoveriesTop100Section
 
                         popularArtistsSection
-
-                        premiereSection
                     }
                     .padding(.top, 8)
                     .padding(.bottom, 96)
@@ -81,6 +79,14 @@ struct TrendsExploreView: View {
             .navigationBarHidden(true)
             .task {
                 await load(force: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+                Task { await load(force: true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                if !ym.isDailyPremiereCacheValid {
+                    Task { await load(force: false) }
+                }
             }
         }
     }
@@ -323,13 +329,13 @@ struct TrendsExploreView: View {
         }
     }
 
-    // MARK: - Премьера
+    // MARK: - Премьера (Топ-100)
 
     private var newReleasesSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(AG.ember)
                     .frame(width: 48, height: 48)
                     .glassCircle(interactive: false)
@@ -338,14 +344,14 @@ struct TrendsExploreView: View {
                     Text("Премьера")
                         .font(AG.display(.title2, .bold))
                         .foregroundStyle(AG.ink)
-                    Text("Лучшие новые треки для вас")
+                    Text("Топ-100 премьер • Обновление в 00:00")
                         .font(AG.text(.subheadline))
                         .foregroundStyle(AG.inkMuted)
                 }
 
                 Spacer()
                 NavigationLink {
-                    PremiereTracksView(tracks: premiereTracks)
+                    PremiereTracksView(tracks: premiereTracks, title: "Топ-100 премьер")
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(AG.text(.headline, .bold))
@@ -357,14 +363,40 @@ struct TrendsExploreView: View {
             .padding(.horizontal, 16)
 
             LazyVStack(spacing: 2) {
-                let items = premiereTracks.isEmpty ? Array(chart.prefix(6)) : Array(premiereTracks.prefix(6))
-                ForEach(items) { item in
-                    AuraCatalogTrackRow(item: item, rank: nil) {
-                        SonivoPlay.track(item, in: items)
+                let items = premiereTracks.isEmpty ? Array(chart.prefix(10)) : Array(premiereTracks.prefix(10))
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    AuraCatalogTrackRow(item: item, rank: index + 1) {
+                        SonivoPlay.track(item, in: premiereTracks.isEmpty ? chart : premiereTracks)
                     }
                 }
             }
             .padding(.horizontal, 16)
+
+            if !premiereTracks.isEmpty {
+                NavigationLink {
+                    PremiereTracksView(tracks: premiereTracks, title: "Топ-100 премьер")
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Смотреть все 100 премьер")
+                            .font(AG.text(.subheadline, .bold))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(GlassPressStyle())
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -498,50 +530,6 @@ struct TrendsExploreView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-            }
-        }
-    }
-
-    // MARK: - Премьера > (Лучшие новые треки)
-
-    private var premiereSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                HStack(spacing: 8) {
-                    Text("Премьера")
-                        .font(AG.display(.title2, .heavy))
-                        .foregroundStyle(AG.ink)
-
-                    Image(systemName: "chevron.right")
-                        .font(AG.text(.subheadline, .bold))
-                        .foregroundStyle(AG.inkMuted)
-                }
-                Spacer()
-                NavigationLink {
-                    PremiereTracksView(tracks: premiereTracks)
-                } label: {
-                    Text("Все")
-                        .font(AG.text(.footnote, .semibold))
-                        .foregroundStyle(AG.amber)
-                        .frame(minWidth: AG.tapTarget, minHeight: AG.tapTarget)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-
-            Text("Лучшие новые треки для вас")
-                .font(AG.text(.footnote, .regular))
-                        .foregroundStyle(AG.inkMuted)
-                .padding(.horizontal, 16)
-                .padding(.top, -8)
-
-            LazyVStack(spacing: 2) {
-                let displayTracks = premiereTracks.isEmpty ? Array(chart.prefix(15)) : premiereTracks
-                ForEach(Array(displayTracks.enumerated()), id: \.element.id) { index, item in
-                    ChartRowView(rank: nil, item: item) {
-                        SonivoPlay.track(item, in: displayTracks)
-                    }
-                }
             }
         }
     }

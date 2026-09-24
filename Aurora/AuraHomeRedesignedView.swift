@@ -56,7 +56,7 @@ struct AuraHomeRedesignedView: View {
                     }
                     .padding(.bottom, 120)
                 }
-                .refreshable { await load() }
+                .refreshable { await load(force: true) }
             }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
@@ -64,6 +64,14 @@ struct AuraHomeRedesignedView: View {
             .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
             .task { await load() }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+                Task { await load(force: true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                if !ym.isDailyPremiereCacheValid {
+                    Task { await load() }
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -313,7 +321,25 @@ struct AuraHomeRedesignedView: View {
 
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("Чарт", subtitle: "Главные треки сегодня")
+            NavigationLink {
+                Top100ChartView(title: "Чарт · Топ 100", tracks: chart)
+            } label: {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Чарт").font(AG.display(.title2, .bold)).foregroundStyle(.white)
+                        Text("Главные треки сегодня").font(AG.text(.caption)).foregroundStyle(.white.opacity(0.48))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: AG.tapTarget, height: AG.tapTarget)
+                }
+                .padding(.horizontal, 20)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
             if isLoading && chart.isEmpty { AuraLoadingState(title: "Обновляем чарт…") }
             else if let loadError, chart.isEmpty { AuraErrorState(message: loadError) { Task { await load() } } }
             else {
@@ -327,13 +353,64 @@ struct AuraHomeRedesignedView: View {
     }
 
     private var newTracksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("Премьера", subtitle: "Новая музыка для твоей волны")
-            LazyVStack(spacing: 2) {
-                ForEach(Array(newTracks.prefix(6))) { item in
-                    AuraCatalogTrackRow(item: item, rank: nil) { SonivoPlay.track(item, in: newTracks) }
+        VStack(alignment: .leading, spacing: 14) {
+            NavigationLink {
+                PremiereTracksView(tracks: newTracks, title: "Топ-100 премьер")
+            } label: {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Премьера")
+                            .font(AG.display(.title2, .bold))
+                            .foregroundStyle(.white)
+                        Text("Топ-100 премьер • Обновление в 00:00")
+                            .font(AG.text(.caption))
+                            .foregroundStyle(.white.opacity(0.48))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: AG.tapTarget, height: AG.tapTarget)
                 }
-            }.padding(.horizontal, 12)
+                .padding(.horizontal, 20)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            LazyVStack(spacing: 2) {
+                ForEach(Array(newTracks.prefix(5).enumerated()), id: \.element.id) { index, item in
+                    AuraCatalogTrackRow(item: item, rank: index + 1) {
+                        SonivoPlay.track(item, in: newTracks)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+
+            if !newTracks.isEmpty {
+                NavigationLink {
+                    PremiereTracksView(tracks: newTracks, title: "Топ-100 премьер")
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Смотреть все 100 премьер")
+                            .font(AG.text(.subheadline, .bold))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(GlassPressStyle())
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -350,11 +427,11 @@ struct AuraHomeRedesignedView: View {
         else { SonivoPlay.wave(moodStation) }
     }
 
-    private func load() async {
+    private func load(force: Bool = false) async {
         isLoading = true; loadError = nil
-        do { chart = try await ym.getChart() }
+        do { chart = try await ym.getChart(force: force) }
         catch { chart = []; loadError = "Не удалось обновить чарт. Проверь подключение к Яндекс Музыке." }
-        newTracks = await ym.getNewTracks(limit: 100)
+        newTracks = await ym.getNewTracks(limit: 100, force: force)
         isLoading = false
     }
 }
