@@ -128,14 +128,16 @@ struct MyWaveHeroView: View {
     // MARK: - Artist Title Section
     private var artistTitleSection: some View {
         VStack(spacing: 4) {
-            Text(activeTrack?.artist ?? "Яндекс Музыка")
-                .font(.system(size: 28, weight: .black, design: .default))
-                .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, 24)
-                .shadow(color: .black.opacity(0.45), radius: 8, y: 2)
+            if let artist = activeTrack?.artist, !artist.isEmpty {
+                Text(artist)
+                    .font(.system(size: 28, weight: .black, design: .default))
+                    .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 24)
+                    .shadow(color: .black.opacity(0.45), radius: 8, y: 2)
+            }
         }
     }
 

@@ -55,7 +55,7 @@ struct PlayerScreenV2: View {
             let totalWidth = geo.size.width
             let topInset = max(geo.safeAreaInsets.top, 50)
             let artworkTopOffset = topInset + 44
-            let artworkStageHeight = isFullScreenVideoShot || showLyricsMode
+            let artworkStageHeight = isFullScreenVideoShot
                 ? (totalHeight * 0.55)
                 : min(totalWidth - 40, totalHeight * 0.44)
 
@@ -283,14 +283,15 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        ZStack {
+        let cardSide = min(width - 40, height)
+        return ZStack {
             if isFullScreenVideoShot {
                 // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
                 Color.clear
                     .frame(width: width, height: height)
             } else if !showLyricsMode {
                 artwork
-                    .frame(maxWidth: width - 40, maxHeight: height)
+                    .frame(width: cardSide, height: cardSide)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -298,9 +299,9 @@ struct PlayerScreenV2: View {
                     )
                     .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
                 AutoMixTransitionOverlay(player: player, width: width, height: height)
+            } else {
+                lyricsCoverCard(side: cardSide)
             }
-
-            if showLyricsMode { lyricsOverlay(width: width, height: height) }
         }
         .frame(width: width, height: height)
         .scaleEffect(player.isPlaying ? 1.0 : 0.96)
@@ -348,59 +349,80 @@ struct PlayerScreenV2: View {
         .animation(AG.slowSpring, value: player.isPlaying)
     }
 
-    private func lyricsOverlay(width: CGFloat, height: CGFloat) -> some View {
-        ZStack(alignment: .bottom) {
-            // Atmospheric soft gradient backdrop (allows HDR radiant text to shine brightly)
-            if !isFullScreenVideoShot {
-                LinearGradient(
-                    stops: [
-                        .init(color: .black.opacity(0.35), location: 0.0),
-                        .init(color: .black.opacity(0.55), location: 0.65),
-                        .init(color: .black.opacity(0.72), location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+    private func lyricsCoverCard(side: CGFloat) -> some View {
+        ZStack {
+            // 1. Атмосферная размытая обложка с темным тонированием для максимальной читаемости текста
+            ZStack {
+                artwork
+                    .scaledToFill()
+                    .frame(width: side, height: side)
+                    .blur(radius: 24)
+                    .scaleEffect(1.15)
+                    .opacity(0.35)
+                    .clipped()
+
+                Color.black.opacity(0.68)
             }
 
-            // Central Lyrics Display Stage
-            VStack {
-                Spacer()
-
+            // 2. Сцена отображения текста
+            VStack(spacing: 0) {
                 if lyricsLoading {
+                    Spacer()
                     ProgressView().tint(.white)
                     Text("Загрузка текста…")
                         .font(AG.text(.subheadline, .medium))
                         .foregroundStyle(.white.opacity(0.7))
+                        .padding(.top, 8)
+                    Spacer()
                 } else if let lyrics, lyrics.isSynchronized, !cachedPhrases.isEmpty {
+                    Spacer(minLength: 0)
                     KineticLyricsView(
                         phrases: cachedPhrases,
-                        currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16) }, set: { _ in }),
-                        isPlaying: player.isPlaying
+                        currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset) }, set: { _ in }),
+                        isPlaying: player.isPlaying,
+                        fontSize: 20
                     )
-                    .frame(maxWidth: width - 28)
+                    .frame(maxWidth: side - 24)
+                    Spacer(minLength: 0)
+
+                    // Источник пишется в конце текста
+                    if !lyrics.sourceName.isEmpty {
+                        Text("Источник: \(lyrics.sourceName)")
+                            .font(.system(size: 11, weight: .medium, design: .default))
+                            .foregroundStyle(.white.opacity(0.40))
+                            .padding(.bottom, 10)
+                    }
                 } else if let lyrics, !lyrics.lines.isEmpty {
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 12) {
                             ForEach(lyrics.lines) { line in
                                 Text(line.text)
-                                    .font(.system(size: 20, weight: .semibold, design: .default))
+                                    .font(.system(size: 17, weight: .semibold, design: .default))
                                     .foregroundStyle(.white.opacity(0.92))
                                     .multilineTextAlignment(.leading)
-                                    .lineSpacing(4)
+                                    .lineSpacing(3)
+                            }
+
+                            // Источник пишется в конце текста
+                            if !lyrics.sourceName.isEmpty {
+                                Text("Источник: \(lyrics.sourceName)")
+                                    .font(.system(size: 11, weight: .medium, design: .default))
+                                    .foregroundStyle(.white.opacity(0.40))
+                                    .padding(.top, 10)
                             }
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 20)
+                        .padding(.horizontal, 18)
+                        .padding(.top, 36)
+                        .padding(.bottom, 16)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: width - 28)
+                    .frame(maxWidth: side)
                     .mask(
                         LinearGradient(
                             stops: [
                                 .init(color: .clear, location: 0.0),
                                 .init(color: .black, location: 0.08),
-                                .init(color: .black, location: 0.92),
+                                .init(color: .black, location: 0.90),
                                 .init(color: .clear, location: 1.0)
                             ],
                             startPoint: .top,
@@ -409,17 +431,18 @@ struct PlayerScreenV2: View {
                     )
                 } else {
                     let pair = currentLyricsPair
-                    VStack(spacing: 12) {
+                    Spacer()
+                    VStack(spacing: 10) {
                         Image(systemName: "quote.bubble")
-                            .font(.system(size: 34, weight: .light))
+                            .font(.system(size: 28, weight: .light))
                             .foregroundStyle(.white.opacity(0.35))
                         Text(pair.current.isEmpty || pair.current == "Слова песни" ? "Текст песни отсутствует" : pair.current)
-                            .font(.system(size: 22, weight: .bold, design: .default))
+                            .font(.system(size: 18, weight: .bold, design: .default))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
                             .minimumScaleFactor(0.75)
-                            .padding(.horizontal, 20)
+                            .padding(.horizontal, 16)
                             .shadow(color: .black.opacity(0.35), radius: 2, y: 1.5)
                         if let next = pair.next {
                             Text(next)
@@ -428,67 +451,53 @@ struct PlayerScreenV2: View {
                                 .multilineTextAlignment(.center)
                                 .lineLimit(nil)
                                 .minimumScaleFactor(0.8)
-                                .padding(.horizontal, 24)
+                                .padding(.horizontal, 16)
                         }
                     }
+                    Spacer()
                 }
-
-                Spacer()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.bottom, 54)
+            .frame(width: side, height: side)
 
-            // Ergonomic Bottom Bar: Source Badge & Fullscreen Expand Button
-            HStack(spacing: 8) {
-                if let lyrics, !lyrics.sourceName.isEmpty {
-                    HStack(spacing: 5) {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Источник: \(lyrics.sourceName)")
-                            .font(.system(size: 11, weight: .medium, design: .default))
+            // 3. Верхний правый угол: Кнопка на весь экран прямо в обложке
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        openModal(.lyrics)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 10, weight: .bold))
+                            Text("На весь экран")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(.ultraThinMaterial.opacity(0.85), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.35), radius: 3, y: 1.5)
                     }
-                    .foregroundStyle(.white.opacity(0.60))
-                    .padding(.horizontal, 11)
-                    .frame(height: 34)
-                    .background(.ultraThinMaterial.opacity(0.55), in: Capsule())
-                    .overlay(
-                        Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 0.6)
-                    )
-                    .padding(.bottom, 14)
-                    .padding(.leading, 16)
+                    .buttonStyle(TactileButtonStyle(scale: 0.94))
+                    .accessibilityLabel("Развернуть текст на весь экран")
+                    .padding(10)
                 }
-
                 Spacer()
-
-                Button {
-                    openModal(.lyrics)
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 12, weight: .bold))
-                        Text("На весь экран")
-                            .font(AG.text(.caption, .bold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .background(.ultraThinMaterial.opacity(0.70), in: Capsule())
-                    .overlay(
-                        Capsule().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.6)
-                    )
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-                }
-                .buttonStyle(TactileButtonStyle(scale: 0.94))
-                .accessibilityLabel("Развернуть текст на весь экран")
-                .padding(.bottom, 14)
-                .padding(.trailing, 16)
             }
         }
-        .frame(width: width, height: height)
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.6)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
     }
+
     private var currentLyricsPair: (current: String, next: String?) {
         guard let lines = lyrics?.lines, !lines.isEmpty else { return ("Слова песни", nil) }
-        let targetTime = max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16)
+        let targetTime = max(0, player.progress + SettingsStore.shared.lyricsOffset)
         var lineIndex = 0
         for (i, line) in lines.enumerated() { if line.startTime <= targetTime { lineIndex = i } else { break } }
         return (lines[lineIndex].text, lineIndex + 1 < lines.count ? lines[lineIndex + 1].text : nil)

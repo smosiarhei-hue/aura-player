@@ -261,6 +261,7 @@ struct KineticLyricsView: View {
     let phrases: [LyricPhrase]
     @Binding var currentTime: TimeInterval
     var isPlaying: Bool = true
+    var fontSize: CGFloat = 22
     var onPhraseChange: ((LyricPhrase) -> Void)? = nil
 
     // Hardware ProMotion clock anchor for continuous 120 Hz sub-pixel interpolation
@@ -270,7 +271,7 @@ struct KineticLyricsView: View {
         // Native 120 FPS timeline synchronizing directly with iPhone ProMotion display
         TimelineView(.animation(paused: !isPlaying)) { _ in
             let now = CACurrentMediaTime()
-            let dt = isPlaying ? max(0.0, min(0.20, now - anchorTimestamp)) : 0.0
+            let dt = isPlaying ? max(0.0, min(0.02, now - anchorTimestamp)) : 0.0
             let smoothTime = currentTime + dt
             let (current, next) = findCurrentAndNextPhrase(at: smoothTime)
 
@@ -279,7 +280,8 @@ struct KineticLyricsView: View {
                     KineticPhraseStage(
                         phrase: phrase,
                         nextPhrase: next,
-                        currentTime: smoothTime
+                        currentTime: smoothTime,
+                        baseFontSize: fontSize
                     )
                     .id(phrase.id)
                     .transition(.opacity)
@@ -340,8 +342,7 @@ private struct KineticPhraseStage: View {
     let phrase: LyricPhrase
     let nextPhrase: LyricPhrase?
     let currentTime: TimeInterval
-
-    private var baseFontSize: CGFloat { 26 }
+    var baseFontSize: CGFloat = 22
 
     var body: some View {
         VStack(spacing: 16) {

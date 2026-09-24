@@ -52,81 +52,84 @@ private struct SyncedLyrics: View {
     let lyrics: Lyrics
     @State private var player = ActivePlayerPresentation()
     @State private var settings = SettingsStore.shared
-
-    // Sub-millisecond acoustic lead compensation (+0.16s) matching player engine
-    private var currentTime: Double {
-        max(0, player.progress + settings.lyricsOffset + 0.16)
-    }
-
-    private var activeIndex: Int? {
-        let t = currentTime
-        return lyrics.lines.lastIndex { line in
-            t >= line.startTime && t < (line.endTime ?? (line.startTime + 6.0))
-        } ?? lyrics.lines.firstIndex { $0.startTime > t }.map { max(0, $0 - 1) }
-    }
+    @State private var anchorTimestamp: Double = CACurrentMediaTime()
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 32) {
-                    ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
-                        Button {
-                            Haptics.tap(.medium)
-                            player.seek(to: max(0, line.startTime - 0.05))
-                        } label: {
-                            LyricsLineView(
-                                line: line,
-                                isActive: idx == activeIndex,
-                                currentTime: currentTime,
-                                fontSize: max(settings.lyricsFontSize, 28)
-                            )
-                            .contentShape(Rectangle())
+        TimelineView(.animation(paused: !player.isPlaying)) { _ in
+            let now = CACurrentMediaTime()
+            let dt = player.isPlaying ? max(0.0, min(0.02, now - anchorTimestamp)) : 0.0
+            let currentTime = max(0, player.progress + settings.lyricsOffset + dt)
+
+            let activeIndex: Int? = {
+                lyrics.lines.lastIndex { line in
+                    currentTime >= line.startTime && currentTime < (line.endTime ?? (line.startTime + 5.0))
+                } ?? lyrics.lines.firstIndex { $0.startTime > currentTime }.map { max(0, $0 - 1) }
+            }()
+
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 20) {
+                        ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
+                            Button {
+                                Haptics.tap(.medium)
+                                player.seek(to: max(0, line.startTime - 0.05))
+                            } label: {
+                                LyricsLineView(
+                                    line: line,
+                                    isActive: idx == activeIndex,
+                                    currentTime: currentTime,
+                                    fontSize: 21
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(line.text)
+                            .accessibilityHint("Перемотать к этой строке")
+                            .id(idx)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(line.text)
-                        .accessibilityHint("Перемотать к этой строке")
-                        .id(idx)
-                    }
-                    if !lyrics.sourceName.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "music.note")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Источник: \(lyrics.sourceName)")
-                                .font(.system(size: 13, weight: .medium, design: .default))
+
+                        // Source badge placed directly at the end of the text
+                        if !lyrics.sourceName.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Источник: \(lyrics.sourceName)")
+                                    .font(.system(size: 12, weight: .medium, design: .default))
+                            }
+                            .foregroundStyle(.white.opacity(0.45))
+                            .padding(.top, 24)
+                            .padding(.bottom, 40)
                         }
-                        .foregroundStyle(.white.opacity(0.55))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(.ultraThinMaterial.opacity(0.40), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
-                        .padding(.top, 20)
                     }
+                    .padding(.horizontal, 28)
+                    .padding(.top, 90)
+                    .padding(.bottom, 120)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 28)
-                .padding(.top, 180)
-                .padding(.bottom, 240)
-                .frame(maxWidth: .infinity)
-            }
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .black, location: 0.12),
-                        .init(color: .black, location: 0.84),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black, location: 0.10),
+                            .init(color: .black, location: 0.88),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 )
-            )
-            .onChange(of: activeIndex) { _, newIndex in
-                guard let newIndex else { return }
-                withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
-                    proxy.scrollTo(newIndex, anchor: .center)
+                .onChange(of: activeIndex) { _, newIndex in
+                    guard let newIndex else { return }
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                        proxy.scrollTo(newIndex, anchor: .center)
+                    }
                 }
             }
         }
         .compositingGroup()
+        .onChange(of: player.progress) { _, _ in
+            anchorTimestamp = CACurrentMediaTime()
+        }
         .task { await player.observeTimeline() }
     }
 }
