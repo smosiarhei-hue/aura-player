@@ -350,7 +350,7 @@ struct PlayerScreenV2: View {
                         phrases: cachedPhrases,
                         currentTime: Binding(get: {
                             let latency = AVAudioSession.sharedInstance().outputLatency
-                            return max(0, player.progress - latency + SettingsStore.shared.lyricsOffset)
+                            return max(0, player.progress - latency - 0.25 + SettingsStore.shared.lyricsOffset)
                         }, set: { _ in }),
                         isPlaying: player.isPlaying,
                         fontSize: 28
@@ -701,6 +701,32 @@ struct PlayerScreenV2: View {
             Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: {
                 Label("Текст песни", systemImage: "quote.bubble")
             }
+
+            Menu {
+                Button {
+                    SettingsStore.shared.lyricsOffset -= 0.25
+                    showOffsetMessage()
+                } label: {
+                    Label("Текст спешит (-0.25 с)", systemImage: "minus.circle")
+                }
+                Button {
+                    SettingsStore.shared.lyricsOffset += 0.25
+                    showOffsetMessage()
+                } label: {
+                    Label("Текст отстаёт (+0.25 с)", systemImage: "plus.circle")
+                }
+                Button {
+                    SettingsStore.shared.lyricsOffset = 0.0
+                    showOffsetMessage()
+                } label: {
+                    Label("Сброс на 0.0 с", systemImage: "arrow.uturn.backward")
+                }
+            } label: {
+                let ms = Int(SettingsStore.shared.lyricsOffset * 1000)
+                let sign = ms > 0 ? "+" : ""
+                Label("Синхронизация текста (\(sign)\(ms) мс)", systemImage: "clock.arrow.circlepath")
+            }
+
             Button { openModal(.queue) } label: {
                 Label("Очередь", systemImage: "list.bullet")
             }
@@ -926,6 +952,16 @@ struct PlayerScreenV2: View {
             }
             try? await Task.sleep(for: .seconds(2.5))
             await MainActor.run { waveMessage = nil }
+        }
+    }
+
+    private func showOffsetMessage() {
+        let ms = Int(SettingsStore.shared.lyricsOffset * 1000)
+        let sign = ms > 0 ? "+" : ""
+        waveMessage = "⏱ Калибровка текста: \(sign)\(ms) мс"
+        Task {
+            try? await Task.sleep(for: .seconds(2.0))
+            waveMessage = nil
         }
     }
 }

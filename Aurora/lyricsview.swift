@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 // MARK: - Synchronized Karaoke Lyrics View (Apple Music Style, 120 FPS ProMotion, Syllable Sweep)
 
@@ -59,7 +60,7 @@ private struct SyncedLyrics: View {
             let now = CACurrentMediaTime()
             let dt = player.isPlaying ? max(0.0, min(0.025, now - anchorTimestamp)) : 0.0
             let latency = AVAudioSession.sharedInstance().outputLatency
-            let currentTime = max(0, player.progress - latency + settings.lyricsOffset + dt)
+            let currentTime = max(0, player.progress - latency - 0.25 + settings.lyricsOffset + dt)
 
             let activeIndex: Int? = {
                 if let first = lyrics.lines.first, currentTime < first.startTime {

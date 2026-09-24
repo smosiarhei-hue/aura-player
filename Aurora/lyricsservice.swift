@@ -167,13 +167,44 @@ final class LyricsService {
         let title = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artist.isEmpty, !title.isEmpty else { return nil }
 
+        // 1. Try exact match with duration
+        if let detail = await requestLRCLibGet(artist: artist, title: title, duration: track.duration > 0 ? Int(track.duration) : nil) {
+            if let lyrics = convertLRCLibDetail(detail, track: track) {
+                return lyrics
+            }
+        }
+
+        // 2. Try exact match without duration (in case track length differs slightly between mastering releases)
+        if track.duration > 0,
+           let detail = await requestLRCLibGet(artist: artist, title: title, duration: nil) {
+            if let lyrics = convertLRCLibDetail(detail, track: track) {
+                return lyrics
+            }
+        }
+
+        // 3. Fallback: Search endpoint (deals with subtle title differences like "Song (feat. X)", "Remastered", etc.)
+        let cleanTitle = title
+            .replacingOccurrences(of: #"\s*\(.*?\)"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*\[.*?\]"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let detail = await searchLRCLibFirst(title: cleanTitle.isEmpty ? title : cleanTitle, artist: artist) {
+            if let lyrics = convertLRCLibDetail(detail, track: track) {
+                return lyrics
+            }
+        }
+
+        return nil
+    }
+
+    private func requestLRCLibGet(artist: String, title: String, duration: Int?) async -> TrackDetail? {
         var components = URLComponents(string: "https://lrclib.net/api/get")
         var items = [
             URLQueryItem(name: "artist_name", value: artist),
             URLQueryItem(name: "track_name", value: title)
         ]
-        if track.duration > 0 {
-            items.append(URLQueryItem(name: "duration", value: "\(Int(track.duration))"))
+        if let duration, duration > 0 {
+            items.append(URLQueryItem(name: "duration", value: "\(duration)"))
         }
         components?.queryItems = items
         guard let url = components?.url else { return nil }
@@ -186,22 +217,49 @@ final class LyricsService {
               let detail = try? JSONDecoder().decode(TrackDetail.self, from: data) else {
             return nil
         }
+        return detail
+    }
 
+    private func searchLRCLibFirst(title: String, artist: String) async -> TrackDetail? {
+        var components = URLComponents(string: "https://lrclib.net/api/search")
+        components?.queryItems = [
+            URLQueryItem(name: "track_name", value: title),
+            URLQueryItem(name: "artist_name", value: artist)
+        ]
+        guard let url = components?.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("SonivoPlayer/1.0 (https://github.com/smosiarhei-hue/aura-player)", forHTTPHeaderField: "User-Agent")
+
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let list = try? JSONDecoder().decode([TrackDetail].self, from: data) else {
+            return nil
+        }
+
+        // Prioritize results that have synchronized lyrics
+        if let syncedItem = list.first(where: { ($0.syncedLyrics?.count ?? 0) > 20 }) {
+            return syncedItem
+        }
+        return list.first
+    }
+
+    private func convertLRCLibDetail(_ detail: TrackDetail, track: Track) -> Lyrics? {
         if let synced = detail.syncedLyrics, !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let parsed = LRCParser.parse(synced, sourceName: "LRCLIB")
             if !parsed.lines.isEmpty {
-                return Lyrics(title: detail.trackName ?? track.title,
-                              artist: detail.artistName ?? track.artist,
-                              lines: parsed.lines,
-                              isSyllable: parsed.isSyllable,
-                              sourceName: "LRCLIB")
+                return Lyrics(
+                    title: detail.trackName ?? track.title,
+                    artist: detail.artistName ?? track.artist,
+                    lines: parsed.lines,
+                    isSyllable: parsed.isSyllable,
+                    sourceName: "LRCLIB"
+                )
             }
         }
-
         if let plain = detail.plainLyrics, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return staticLyrics(from: plain, track: track, sourceName: "LRCLIB")
         }
-
         return nil
     }
 
