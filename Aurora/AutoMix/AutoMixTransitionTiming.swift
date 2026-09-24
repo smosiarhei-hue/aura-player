@@ -8,20 +8,21 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         sourceDur: TimeInterval
     ) -> TimeInterval {
-        let base: Double
-        switch strategy {
-        case .SILENCE_TRIM: base = 2
-        case .VOCAL_CUT, .HARD_CUT, .DROP_SWITCH: base = 6
-        case .ECHO_OUT, .FILTER_TRANSITION: base = 10
-        case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ: base = 16
-        case .INSTRUMENTAL_OVERLAY, .LOOP_TRANSITION: base = 18
-        default: base = 14
+        let bar = (source.barDuration.flatMap { ($0 >= 1.0 && $0 <= 4.0) ? $0 : nil })
+            ?? (source.bpm.flatMap { normalizedBPM($0) }.map { 240.0 / $0 })
+            ?? 2.0
+
+        // Always target 8 to 16 bars (32 to 64 beats) for an authentic DJ blend
+        let maxBars = max(4.0, floor((sourceDur * 0.25) / bar))
+        let targetBars: Double
+        if maxBars >= 16.0 {
+            targetBars = 16.0
+        } else if maxBars >= 8.0 {
+            targetBars = 8.0
+        } else {
+            targetBars = max(4.0, maxBars)
         }
-        let limited = min(base, max(4, sourceDur * 0.30))
-        guard let bar = source.barDuration, bar >= 1.2, bar <= 4 else {
-            return limited
-        }
-        return min(24, max(4, (limited / bar).rounded() * bar))
+        return targetBars * bar
     }
 
     nonisolated static func musicalCueTime(
@@ -29,29 +30,27 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         duration: Double
     ) -> Double {
-        let latestStart = max(0, source.duration - 2)
-        var candidate = max(0, source.duration - duration)
+        // Strictly anchor to the outro (at least 75% of track duration)
+        let minOutroCue = max(0, source.duration * 0.75)
+        var candidate = max(minOutroCue, source.duration - duration)
 
         if strategy == .SILENCE_TRIM, let silence = source.trailingSilence {
-            candidate = max(0, silence.start - 0.5)
-        } else if let vocalEnd = source.lastVocalEnd,
-                  source.duration - vocalEnd >= duration * 0.65,
-                  source.duration - vocalEnd <= 32 {
+            candidate = max(minOutroCue, silence.start - duration)
+        } else if let vocalEnd = source.lastVocalEnd, vocalEnd >= minOutroCue {
             candidate = vocalEnd
-        } else if source.outroStart > 1,
-                  source.duration - source.outroStart >= duration * 0.65,
-                  source.duration - source.outroStart <= 36 {
+        } else if source.outroStart >= minOutroCue {
             candidate = source.outroStart
         } else if let boundary = source.sections.last(where: {
-            ($0.type == .chorus || $0.type == .verse || $0.type == .bridge) && $0.end <= source.duration - 2
+            $0.end >= minOutroCue && $0.end <= source.duration - 4
         })?.end {
-            candidate = max(candidate, boundary)
+            candidate = boundary
         }
 
         if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 3.5) {
             candidate = downbeat
         }
-        return min(latestStart, max(0, candidate))
+        let latestStart = max(minOutroCue, source.duration - 4.0)
+        return min(latestStart, max(minOutroCue, candidate))
     }
 
     nonisolated static func phaseAlignedStart(

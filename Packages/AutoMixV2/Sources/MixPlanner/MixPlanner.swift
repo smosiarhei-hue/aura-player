@@ -22,16 +22,12 @@ public enum MixPlanner {
         let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey)
         let bpmDiffPct: Float = (a.bpm > 30 && b.bpm > 30) ? abs(a.bpm - b.bpm) / a.bpm : 1.0
 
-        // 1. Оценка уверенности сетки и выбор длины перехода по DJ Confidence Ladder
+        // 1. Оценка уверенности сетки и выбор длины перехода по DJ Confidence Ladder (8-16 тактов)
         var ladderBars: Double
-        if a.confidence.bpm >= 0.85, b.confidence.bpm >= 0.85, a.tempoStability >= 0.9, b.tempoStability >= 0.9 {
+        if a.confidence.bpm >= 0.80, b.confidence.bpm >= 0.80, a.tempoStability >= 0.85, b.tempoStability >= 0.85 {
             ladderBars = harmonic.isNaturallyCompatible ? 16.0 : 8.0
-        } else if a.confidence.bpm >= 0.70, b.confidence.bpm >= 0.70, a.tempoStability >= 0.85, b.tempoStability >= 0.85 {
-            ladderBars = harmonic.isNaturallyCompatible ? 8.0 : 4.0
-        } else if a.confidence.bpm >= 0.55, b.confidence.bpm >= 0.55, a.tempoStability >= 0.75, b.tempoStability >= 0.75 {
-            ladderBars = 4.0
         } else {
-            return crossfade(a, b, settings, "Fallback: недостаточная уверенность ритмической сетки")
+            ladderBars = 8.0
         }
 
         // Подбор темпа через динамический питч-фейдер
@@ -49,38 +45,29 @@ public enum MixPlanner {
         let phaseA = a.downbeatsSec.min(by: { abs($0 - testOut) < abs($1 - testOut) }).map { abs(testOut - $0) } ?? 0
         let phaseB = b.downbeatsSec.min(by: { abs($0 - testIn) < abs($1 - testIn) }).map { abs(testIn - $0) } ?? 0
         let phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
-        if phaseError > 80 {
-            return crossfade(a, b, settings, "Fallback: фазовое расхождение > 80ms")
-        } else if phaseError > 40 {
-            ladderBars = max(4.0, ladderBars / 2)
+        if phaseError > 120 {
+            return crossfade(a, b, settings, "Fallback: фазовое расхождение > 120ms")
         }
 
         let availableOutro = max(0, a.durationSec - a.mixOutSec)
 
-        // Выбор архетипа по матрице переходов
+        // Выбор архетипа по матрице переходов (только чистые музыкальные переходы)
         let archetype: MixTransitionArchetype
         if bpmDiffPct > 0.08 || !harmonic.isHarmonicallyViable {
-            // При скачке темпа > 8% или гармоническом сдвиге: бесшовный эхо-фриз или energy wash
             archetype = (a.confidence.bpm >= 0.7 && b.confidence.bpm >= 0.7) ? .echoFreeze : .energyWash
         } else if ladderBars >= 16.0 && availableOutro >= 36 && bpmDiffPct <= 0.01 && harmonic.isNaturallyCompatible && a.confidence.bpm >= 0.80 {
             archetype = .seamlessLoop
-        } else if b.dropsSec.first != nil || ladderBars >= 4.0 {
-            archetype = .dropSwap
         } else {
-            archetype = .energyWash
+            archetype = .dropSwap
         }
 
         switch archetype {
         case .seamlessLoop:
             return planSeamlessLoop(from: a, to: b, tempo: tempo, settings: settings, harmonic: harmonic)
-        case .dropSwap:
+        case .dropSwap, .tapeStop, .beatStutter:
             return planDropSwap(from: a, to: b, bars: ladderBars, tempo: tempo, settings: settings, harmonic: harmonic)
         case .echoFreeze:
             return planEchoFreeze(from: a, to: b, tempo: tempo, settings: settings, harmonic: harmonic)
-        case .tapeStop:
-            return planTapeStop(from: a, to: b, bars: 4.0, settings: settings, harmonic: harmonic)
-        case .beatStutter:
-            return planBeatStutter(from: a, to: b, bars: 4.0, tempo: tempo, settings: settings, harmonic: harmonic)
         case .spaceReverb:
             return planSpaceReverb(from: a, to: b, bars: 8.0, settings: settings, harmonic: harmonic)
         case .energyWash:
@@ -446,9 +433,10 @@ public enum BeatGridSynchronization {
     }
     public static func duration(bars: Double, bpm: Float) -> Double { bpm > 0 ? bars * 240 / Double(bpm) : 0 }
     public static func outgoingCue(profile: TrackProfile, duration: Double) -> Double {
-        let latest = min(profile.mixOutSec, max(0, profile.durationSec - duration))
-        if let downbeat = profile.downbeatsSec.last(where: { $0 <= latest }) {
-            if let phrase = profile.phraseStartsSec.last(where: { $0 <= latest }) {
+        let minCue = max(0, profile.durationSec * 0.75)
+        let latest = min(max(minCue, profile.mixOutSec), max(minCue, profile.durationSec - duration))
+        if let downbeat = profile.downbeatsSec.last(where: { $0 <= latest && $0 >= minCue }) {
+            if let phrase = profile.phraseStartsSec.last(where: { $0 <= latest && $0 >= minCue }) {
                 let beat = profile.bpm > 0 ? 60.0 / Double(profile.bpm) : 0.5
                 if let matched = profile.downbeatsSec.min(by: { abs($0 - phrase) < abs($1 - phrase) }),
                    abs(matched - phrase) <= beat {
@@ -457,7 +445,7 @@ public enum BeatGridSynchronization {
             }
             return downbeat
         }
-        return profile.phraseStartsSec.last(where: { $0 <= latest }) ?? latest
+        return profile.phraseStartsSec.last(where: { $0 <= latest && $0 >= minCue }) ?? latest
     }
     public static func incomingCue(profile: TrackProfile, duration: Double = 0) -> Double {
         // If Track B has an early drop, align it so the drop hits exactly on the transition handoff (midpoint)

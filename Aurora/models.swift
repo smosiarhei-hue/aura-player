@@ -205,75 +205,40 @@ final class AutoMixDJEngine {
         var filterCutoff: Float = 1.0
 
         switch strategy {
-        case .DROP_SWITCH, .HARD_CUT:
-            let switchPoint = 0.50
-            if p < switchPoint {
-                outVol = 1.0
-                let rampIn = Float(p / switchPoint)
-                inVol = Float(sin(Double(rampIn) * (.pi / 2))) * 0.70
-            } else {
-                let exitP = Float((p - switchPoint) / (1.0 - switchPoint))
-                outVol = max(0.0, 1.0 - (exitP * exitP))
-                inVol = 0.70 + (0.30 * exitP)
-            }
-            if p > switchPoint {
-                outBassCut = -24.0 * Float((p - switchPoint) / (1.0 - switchPoint))
-            }
+        case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ, .ENERGY_BLEND, .BUILDUP_TO_DROP:
+            if p < 0.50 {
+                // First half (t0 -> tMid):
+                // Outgoing track stays near full level (1.0 -> 0.85), Bass remains 100% full
+                outVol = max(0.85, Float(1.0 - (p / 0.50) * 0.15))
+                outBassCut = 0.0
 
-        case .VOCAL_CUT:
-            outVol = Float(cos(p * (.pi / 2)))
-            inVol = Float(sin(p * (.pi / 2)))
-            if p > 0.40 {
-                outBassCut = -20.0 * Float((p - 0.40) / 0.60)
-            }
-
-        case .BASS_SWAP, .BEAT_MATCH_EQ:
-            if p > 0.18 {
-                let bassP = Float((p - 0.18) / 0.82)
-                outBassCut = -28.0 * (bassP * bassP)
-            }
-            if p < 0.32 {
-                let inP = Float(p / 0.32)
-                inBassGain = -22.0 * (1.0 - inP)
+                // Incoming track builds up softly to 0.70, Bass is completely cut (-24dB)
+                inVol = Float(sin(p * (.pi / 2))) * 0.70
+                inBassGain = -24.0
             } else {
+                // Second half (tMid -> t1):
+                let secondHalfP = Float((p - 0.50) / 0.50)
+                // Outgoing track fades smoothly to 0, Bass is cut (-24dB)
+                outVol = Float(0.85 * (1.0 - secondHalfP))
+                outBassCut = -24.0 - (8.0 * secondHalfP)
+
+                // Incoming track reaches 1.0, Bass returns to 100% (0dB) on the downbeat!
+                inVol = 0.70 + (0.30 * secondHalfP)
                 inBassGain = 0.0
             }
 
-        case .FILTER_TRANSITION:
-            filterCutoff = max(0.1, Float(1.0 - p))
-            outBassCut = Float(p) * -32.0
-            inBassGain = Float(1.0 - p) * -12.0
-            outVol = Float(cos(p * (.pi / 2)))
-            inVol = Float(sin(p * (.pi / 2)))
-
-        case .ENERGY_BLEND, .BUILDUP_TO_DROP:
-            // DJ/mashup curve: incoming becomes audible early, outgoing ducks
-            // before the final quarter, and the bass hand-off happens in the
-            // middle so the transition has a clear shape on phone speakers.
-            let fastIn = min(1.0, p / 0.72)
-            inVol = max(Float(0.06 + sin(fastIn * (.pi / 2)) * 0.94), inVol)
-            if p < 0.18 {
-                outVol = 1.0
-            } else if p < 0.72 {
-                let q = Float((p - 0.18) / 0.54)
-                outVol = min(outVol, max(0.52, 1.0 - q * 0.48))
+        default:
+            if p < 0.50 {
+                outVol = max(0.85, Float(1.0 - (p / 0.50) * 0.15))
+                outBassCut = 0.0
+                inVol = Float(sin(p * (.pi / 2))) * 0.70
+                inBassGain = -24.0
             } else {
-                let q = Float((p - 0.72) / 0.28)
-                outVol = min(outVol, max(0.0, 0.52 * (1.0 - q)))
-            }
-            outBassCut = -30.0 * Float(min(1.0, max(0.0, (p - 0.18) / 0.62)))
-            inBassGain = -24.0 * Float(max(0.0, 1.0 - min(1.0, p / 0.55)))
-            filterCutoff = max(0.15, Float(1.0 - p * 0.85))
-
-        case .ECHO_OUT:
-            outBassCut = Float(p) * -20.0
-            if p > 0.50 {
-                outVol = outVol * Float(max(0.1, 1.0 - (p - 0.50) * 1.5))
-            }
-
-        case .SILENCE_TRIM, .SIMPLE_CROSSFADE, .BEAT_MATCH, .LOOP_TRANSITION, .INSTRUMENTAL_OVERLAY, .NONE:
-            if p > 0.40 {
-                outBassCut = Float((p - 0.40) / 0.60) * -16.0
+                let secondHalfP = Float((p - 0.50) / 0.50)
+                outVol = Float(0.85 * (1.0 - secondHalfP))
+                outBassCut = -24.0
+                inVol = 0.70 + (0.30 * secondHalfP)
+                inBassGain = 0.0
             }
         }
 

@@ -1484,9 +1484,24 @@ final class PlayerCore {
             idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inLowDB) : inLowDB
             idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inLowDB) : inLowDB
             idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inLowDB) : inLowDB
+
+            // Vocal pocket ducking on incoming track during first half (p < 0.5)
+            let vocalPocketDuckDB: Float = p < 0.5 ? Float(-6.0 * (1.0 - p / 0.5)) : 0.0
+            for bandIdx in 4...6 {
+                idleEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + vocalPocketDuckDB) : vocalPocketDuckDB
+            }
+
+            // High-pass riser sweep on outgoing track during second half (p >= 0.5)
+            if p >= 0.5 {
+                let riserP = Float((p - 0.5) / 0.5)
+                let riserCut = -24.0 * (1.0 + riserP * 0.5)
+                for bandIdx in 0...2 {
+                    activeEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + riserCut) : riserCut
+                }
+            }
         }
 
-        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
+        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? (p >= 0.5 ? Float((p - 0.5) / 0.5 * 0.60) : 0.0)
         let inReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
         if !isUsingStreamPlayer {
             activeReverb.wetDryMix = max(0, min(100, outReverbMix * 100))
@@ -1495,39 +1510,11 @@ final class PlayerCore {
             }
         }
 
-        let isBrakeStrategy = strategy == .DROP_SWITCH || strategy == .VOCAL_CUT || strategy == .FILTER_TRANSITION || strategy == .HARD_CUT || strategy == .ECHO_OUT
-
-        if isBrakeStrategy {
-            if p > 0.15 {
-                let brakeP = Float((p - 0.15) / 0.85)
-                let brakeRate = max(0.04, Float(1.0 - brakeP * 0.96))
-                if !isUsingStreamPlayer {
-                    activeTimePitch.rate = brakeRate
-                    activeTimePitch.pitch = Float(-1800.0 * (brakeP * brakeP))
-                } else if isPlaying {
-                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .varispeed
-                    activeStreamingPlayer.rate = brakeRate
-                }
-            } else {
-                if !isUsingStreamPlayer {
-                    activeTimePitch.rate = 1.0
-                    activeTimePitch.pitch = 0
-                } else if isPlaying {
-                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                    activeStreamingPlayer.rate = 1.0
-                }
-            }
-
-            if incomingIsStream {
-                if isPlaying { idleStreamingPlayer.rate = 1.0 }
-            } else if !isUsingStreamPlayer {
-                idleTimePitch.rate = 1.0
-                idleTimePitch.pitch = 0
-            }
-        } else if let rates, transitionDuration > 0.001 {
-            let outTarget = Float(min(1.10, max(0.90, rates.sourcePlaybackRate)))
-            let inTarget = Float(min(1.10, max(0.90, rates.targetPlaybackRate)))
-            let rampProgress = Float(min(1.0, p / 0.6))
+        // Clean pitch-preserving beatmatching (±7.5% maximum stretch via timeDomain)
+        if let rates, transitionDuration > 0.001 {
+            let outTarget = Float(min(1.075, max(0.925, rates.sourcePlaybackRate)))
+            let inTarget = Float(min(1.075, max(0.925, rates.targetPlaybackRate)))
+            let rampProgress = Float(min(1.0, p / 0.5))
             let outRate = 1.0 + (outTarget - 1.0) * rampProgress
             let inRate = 1.0 + (inTarget - 1.0) * rampProgress
 
@@ -1546,10 +1533,22 @@ final class PlayerCore {
                 idleTimePitch.rate = inRate
                 idleTimePitch.pitch = 0
             }
-        } else if isUsingStreamPlayer {
-            let nudge = Float(1.0 + 0.03 * sin(p * .pi))
-            activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-            activeStreamingPlayer.rate = isPlaying ? nudge : 0
+        } else {
+            if isUsingStreamPlayer {
+                activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+            } else {
+                activeTimePitch.rate = 1.0
+                activeTimePitch.pitch = 0
+            }
+
+            if incomingIsStream {
+                idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                if isPlaying { idleStreamingPlayer.rate = 1.0 }
+            } else if !isUsingStreamPlayer {
+                idleTimePitch.rate = 1.0
+                idleTimePitch.pitch = 0
+            }
         }
         _ = filterCutoff
 
