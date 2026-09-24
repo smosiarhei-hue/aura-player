@@ -190,15 +190,15 @@ struct KineticWordView: View {
 
     var body: some View {
         ZStack(alignment: .leading) {
-            // 1. Не спетый текст: полупрозрачный белый, шрифт SF Pro Rounded Heavy как на скриншоте
+            // 1. Не спетый текст: полупрозрачный белый, стандартный Apple SF Pro Bold
             Text(word.text)
-                .font(.system(size: fontSize, weight: .heavy, design: .rounded))
+                .font(.system(size: fontSize, weight: .bold, design: .default))
                 .foregroundStyle(Color.white.opacity(0.32))
 
             // 2. Спетый текст: чистый белый с мягкой тенью
             if progress > 0 {
                 Text(word.text)
-                    .font(.system(size: fontSize, weight: .heavy, design: .rounded))
+                    .font(.system(size: fontSize, weight: .bold, design: .default))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.40), radius: 2, y: 1.5)
                     .mask(
@@ -219,7 +219,7 @@ struct KineticWordView: View {
             // 3. Ядерный белый луч по тексту во время пения (без палочек)
             if isActivelySinging {
                 Text(word.text)
-                    .font(.system(size: fontSize, weight: .heavy, design: .rounded))
+                    .font(.system(size: fontSize, weight: .bold, design: .default))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.white, radius: 4)
                     .shadow(color: Color.white.opacity(0.90), radius: 8)
@@ -251,7 +251,7 @@ struct KineticLyricsView: View {
     let phrases: [LyricPhrase]
     @Binding var currentTime: TimeInterval
     var isPlaying: Bool = true
-    var fontSize: CGFloat = 22
+    var fontSize: CGFloat = 26
     var onPhraseChange: ((LyricPhrase) -> Void)? = nil
 
     // Hardware ProMotion clock anchor for continuous 120 Hz sub-pixel interpolation
@@ -282,7 +282,7 @@ struct KineticLyricsView: View {
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(0.35))
                         Text(next.text)
-                            .font(.system(size: fontSize * 0.88, weight: .heavy, design: .rounded))
+                            .font(.system(size: fontSize * 0.88, weight: .bold, design: .default))
                             .foregroundStyle(Color.white.opacity(0.42))
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
@@ -293,7 +293,7 @@ struct KineticLyricsView: View {
                     .transition(.opacity)
                 } else {
                     Text("SONIVO")
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .font(.system(size: 24, weight: .bold, design: .default))
                         .tracking(3.0)
                         .foregroundStyle(Color.white.opacity(0.35))
                         .transition(.opacity)
@@ -385,12 +385,12 @@ private struct KineticPhraseStage: View {
 
                 ZStack(alignment: .leading) {
                     Text(phrase.text)
-                        .font(.system(size: baseFontSize, weight: .heavy, design: .rounded))
+                        .font(.system(size: baseFontSize, weight: .bold, design: .default))
                         .foregroundStyle(Color.white.opacity(0.32))
 
                     if prog > 0 {
                         Text(phrase.text)
-                            .font(.system(size: baseFontSize, weight: .heavy, design: .rounded))
+                            .font(.system(size: baseFontSize, weight: .bold, design: .default))
                             .foregroundStyle(Color.white)
                             .shadow(color: Color.black.opacity(0.40), radius: 2, y: 1.5)
                             .mask(
@@ -410,7 +410,7 @@ private struct KineticPhraseStage: View {
 
                     if isSinging {
                         Text(phrase.text)
-                            .font(.system(size: baseFontSize, weight: .heavy, design: .rounded))
+                            .font(.system(size: baseFontSize, weight: .bold, design: .default))
                             .foregroundStyle(Color.white)
                             .shadow(color: Color.white, radius: 4)
                             .shadow(color: Color.white.opacity(0.90), radius: 8)
@@ -438,10 +438,10 @@ private struct KineticPhraseStage: View {
                 .padding(.horizontal, 12)
             }
 
-            // Следующая строка (превью): шрифт SF Pro Rounded Heavy, приглушенный цвет, без точек
+            // Следующая строка (превью): шрифт SF Pro Bold, приглушенный цвет, без точек
             if let next = nextPhrase, !next.text.isEmpty {
                 Text(next.text)
-                    .font(.system(size: baseFontSize * 0.78, weight: .heavy, design: .rounded))
+                    .font(.system(size: baseFontSize * 0.78, weight: .bold, design: .default))
                     .foregroundStyle(Color.white.opacity(0.42))
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)

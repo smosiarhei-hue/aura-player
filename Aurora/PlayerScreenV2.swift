@@ -33,8 +33,6 @@ struct PlayerScreenV2: View {
     @State private var artworkTrackId: UUID?
     @State private var currentArtworkImage: UIImage?
     @State private var cachedPhrases: [LyricPhrase] = []
-    @State private var areSecondaryControlsHidden = false
-    @State private var controlsAutoHideTask: Task<Void, Never>? = nil
     private let tapSide: CGFloat = AG.tapTarget
 
     enum ActivePlayerModal: String, Identifiable {
@@ -139,7 +137,6 @@ struct PlayerScreenV2: View {
         .onChange(of: player.isPlaying) { _, playing in
             if playing {
                 videoLooperPlayer?.play()
-                scheduleSecondaryControlsAutoHide()
             } else {
                 videoLooperPlayer?.pause()
             }
@@ -148,14 +145,9 @@ struct PlayerScreenV2: View {
             videoShotURL = nil
             videoShotTrackID = nil
             teardownVideoLooper()
-            scheduleSecondaryControlsAutoHide()
-        }
-        .onAppear {
-            scheduleSecondaryControlsAutoHide()
         }
         .onDisappear {
             teardownVideoLooper()
-            controlsAutoHideTask?.cancel()
         }
     }
 
@@ -329,18 +321,20 @@ struct PlayerScreenV2: View {
     }
 
     private func lyricsCoverCard(side: CGFloat) -> some View {
-        ZStack {
-            // 1. Четкая обложка с легким затемнением, чтобы арт оставался отчетливо виден
+        ZStack(alignment: .topTrailing) {
+            // 1. Обложка с деликатным размытием и затемнением, чтобы не конфликтовать с текстом
             ZStack {
                 artwork
                     .scaledToFill()
                     .frame(width: side, height: side)
+                    .scaleEffect(1.06)
+                    .blur(radius: 9)
                     .clipped()
 
-                Color.black.opacity(0.40)
+                Color.black.opacity(0.42)
             }
 
-            // 2. Сцена отображения текста
+            // 2. Сцена отображения текста (крупный стандартный шрифт SF Pro Bold)
             VStack(spacing: 0) {
                 if lyricsLoading {
                     Spacer()
@@ -359,7 +353,7 @@ struct PlayerScreenV2: View {
                             return max(0, player.progress - latency + SettingsStore.shared.lyricsOffset)
                         }, set: { _ in }),
                         isPlaying: player.isPlaying,
-                        fontSize: 20
+                        fontSize: 28
                     )
                     .frame(maxWidth: side - 24)
                     Spacer(minLength: 0)
@@ -373,10 +367,10 @@ struct PlayerScreenV2: View {
                     }
                 } else if let lyrics, !lyrics.lines.isEmpty {
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 14) {
                             ForEach(lyrics.lines) { line in
                                 Text(line.text)
-                                    .font(.system(size: 19, weight: .heavy, design: .rounded))
+                                    .font(.system(size: 24, weight: .bold, design: .default))
                                     .foregroundStyle(.white.opacity(0.95))
                                     .multilineTextAlignment(.leading)
                                     .lineSpacing(4)
@@ -393,9 +387,9 @@ struct PlayerScreenV2: View {
                                     .padding(.top, 10)
                             }
                         }
-                        .padding(.horizontal, 18)
-                        .padding(.top, 24)
-                        .padding(.bottom, 16)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 44)
+                        .padding(.bottom, 18)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxWidth: side)
@@ -414,12 +408,12 @@ struct PlayerScreenV2: View {
                 } else {
                     let pair = currentLyricsPair
                     Spacer()
-                    VStack(spacing: 10) {
+                    VStack(spacing: 12) {
                         Image(systemName: "quote.bubble")
                             .font(.system(size: 28, weight: .light))
                             .foregroundStyle(.white.opacity(0.35))
                         Text(pair.current.isEmpty || pair.current == "Слова песни" ? "Текст песни отсутствует" : pair.current)
-                            .font(.system(size: 20, weight: .heavy, design: .rounded))
+                            .font(.system(size: 24, weight: .bold, design: .default))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
@@ -429,7 +423,7 @@ struct PlayerScreenV2: View {
                             .shadow(color: .black.opacity(0.45), radius: 3, y: 1.5)
                         if let next = pair.next {
                             Text(next)
-                                .font(.system(size: 16, weight: .heavy, design: .rounded))
+                                .font(.system(size: 18, weight: .bold, design: .default))
                                 .foregroundStyle(.white.opacity(0.65))
                                 .multilineTextAlignment(.center)
                                 .lineLimit(nil)
@@ -442,6 +436,30 @@ struct PlayerScreenV2: View {
                 }
             }
             .frame(width: side, height: side)
+
+            // 3. Кнопка «Развернуть» в верхнем углу обложки
+            Button {
+                openModal(.lyrics)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Развернуть")
+                        .font(.system(size: 12, weight: .semibold, design: .default))
+                }
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.8)
+                )
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.92))
+            .padding(12)
+            .accessibilityLabel("Развернуть текст песни на весь экран")
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -530,97 +548,64 @@ struct PlayerScreenV2: View {
     }
     private var metadataRow: some View {
         let current = track
-        let favorite = current.map(library.isTrackFavorite) ?? false
         return HStack(spacing: 12) {
             Button(action: openArtist) {
                 VStack(alignment: .leading, spacing: 2) {
                     MarqueeText(text: current?.title ?? "Не играет", font: AG.rounded(.title2, .bold), color: AG.ink, height: 28)
                     MarqueeText(text: current?.artist ?? "", font: AG.rounded(.body, .medium), color: AG.inkMuted, height: 22)
                 }.frame(maxWidth: .infinity, alignment: .leading)
-            }.buttonStyle(.plain).disabled(current == nil || resolvingArtist)
-
-            if areSecondaryControlsHidden {
-                Button {
-                    scheduleSecondaryControlsAutoHide()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Раскрыть")
-                            .font(AG.text(.caption2, .bold))
-                    }
-                    .foregroundStyle(AG.inkMuted)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .glassCapsule()
-                }
-                .transition(.scale(scale: 0.85).combined(with: .opacity))
-                .accessibilityLabel("Раскрыть кнопки управления")
-            } else {
-                HStack(spacing: 10) {
-                    if videoShotURL != nil {
-                        GlassIconButton(
-                            systemImage: isVideoShotEnabled ? "video.fill" : "video.slash.fill",
-                            tint: isVideoShotEnabled ? AG.positive : AG.inkMuted,
-                            accessibilityLabel: "Видео-шот",
-                            action: toggleVideoShot
-                        )
-                    }
-                    if current?.isStream == true {
-                        GlassIconButton(
-                            systemImage: "dot.radiowaves.left.and.right",
-                            tint: waveActive ? AG.amber : AG.inkMuted,
-                            accessibilityLabel: "Моя волна",
-                            action: startTrackWave
-                        )
-                        .disabled(waveLoading)
-                    }
-
-                    if let current {
-                        let disliked = UserTasteEngine.shared.isDisliked(track: current)
-                        Menu {
-                            if disliked {
-                                Button {
-                                    UserTasteEngine.shared.removeDislike(track: current)
-                                    waveMessage = "Трек снова может появиться в волне"
-                                } label: {
-                                    Label("Отменить дизлайк", systemImage: "arrow.uturn.backward")
-                                }
-                            } else {
-                                Button(role: .destructive) {
-                                    UserTasteEngine.shared.recordDislike(track: current)
-                                    MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
-                                    waveMessage = "Трек исключён из Моей волны"
-                                    player.next()
-                                } label: {
-                                    Label("Не рекомендовать", systemImage: "hand.thumbsdown")
-                                }
-                            }
-                        } label: {
-                            Image(systemName: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                                .foregroundStyle(disliked ? AG.heart : AG.inkMuted)
-                                .frame(width: tapSide, height: tapSide)
-                        }
-                        .glassCircle()
-                        .accessibilityLabel(disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек")
-                    }
-                }
-                .transition(.scale(scale: 0.85).combined(with: .opacity))
             }
-        }
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: areSecondaryControlsHidden)
-    }
+            .buttonStyle(.plain)
+            .disabled(current == nil || resolvingArtist)
 
-    private func scheduleSecondaryControlsAutoHide() {
-        controlsAutoHideTask?.cancel()
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-            areSecondaryControlsHidden = false
-        }
-        controlsAutoHideTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled else { return }
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                areSecondaryControlsHidden = true
+            HStack(spacing: 10) {
+                if videoShotURL != nil {
+                    GlassIconButton(
+                        systemImage: isVideoShotEnabled ? "video.fill" : "video.slash.fill",
+                        tint: isVideoShotEnabled ? AG.positive : AG.inkMuted,
+                        accessibilityLabel: "Видео-шот",
+                        action: toggleVideoShot
+                    )
+                }
+
+                if current != nil {
+                    GlassIconButton(
+                        systemImage: "dot.radiowaves.left.and.right",
+                        tint: waveActive ? AG.amber : AG.inkMuted,
+                        accessibilityLabel: "Моя волна по треку",
+                        action: startTrackWave
+                    )
+                    .disabled(waveLoading)
+                }
+
+                if let current {
+                    let disliked = UserTasteEngine.shared.isDisliked(track: current)
+                    Menu {
+                        if disliked {
+                            Button {
+                                UserTasteEngine.shared.removeDislike(track: current)
+                                waveMessage = "Трек снова может появиться в волне"
+                            } label: {
+                                Label("Отменить дизлайк", systemImage: "arrow.uturn.backward")
+                            }
+                        } else {
+                            Button(role: .destructive) {
+                                UserTasteEngine.shared.recordDislike(track: current)
+                                MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
+                                waveMessage = "Трек исключён из Моей волны"
+                                player.next()
+                            } label: {
+                                Label("Не рекомендовать", systemImage: "hand.thumbsdown")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                            .foregroundStyle(disliked ? AG.heart : AG.inkMuted)
+                            .frame(width: tapSide, height: tapSide)
+                    }
+                    .glassCircle()
+                    .accessibilityLabel(disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек")
+                }
             }
         }
     }

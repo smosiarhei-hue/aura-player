@@ -176,7 +176,7 @@ private struct LyricsLineView: View {
                 .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
             } else {
                 Text(line.text)
-                    .font(.system(size: fontSize, weight: .heavy, design: .rounded))
+                    .font(.system(size: fontSize, weight: .bold, design: .default))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.35), radius: 2, y: 1.5)
                     .multilineTextAlignment(.leading)
@@ -190,7 +190,7 @@ private struct LyricsLineView: View {
             }
         } else {
             Text(line.text)
-                .font(.system(size: fontSize * 0.84, weight: .heavy, design: .rounded))
+                .font(.system(size: fontSize * 0.84, weight: .bold, design: .default))
                 .foregroundStyle(Color.white.opacity(0.35))
                 .multilineTextAlignment(.leading)
                 .lineLimit(nil)
@@ -226,7 +226,7 @@ private struct StaticLyricsList: View {
                 }
                 ForEach(lyrics.lines) { line in
                     Text(line.text)
-                        .font(.system(size: settings.lyricsFontSize * 0.82, weight: .heavy, design: .rounded))
+                        .font(.system(size: settings.lyricsFontSize * 0.82, weight: .bold, design: .default))
                         .foregroundStyle(Color.white.opacity(0.92))
                         .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
