@@ -118,7 +118,7 @@ struct SettingsView: View {
 
                 if !engineSelection.isV2Enabled {
                     Section {
-                        ForEach([TransitionMode.off, .crossfade], id: \.rawValue) { mode in
+                        ForEach([TransitionMode.automix, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
                             Button { player.transitionMode = mode } label: {
                                 HStack(alignment: .top, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -137,9 +137,9 @@ struct SettingsView: View {
                             }
                         }
                     } header: {
-                        Text("Обычные переходы")
+                        Text("Переходы между треками")
                     } footer: {
-                        Text("Для автоматического сведения включите AutoMix V2 выше.")
+                        Text("AutoMix выполняет умное сведение треков с выравниванием по тактовой сетке, срезом басов (Bass-Swap) и вокальным дакингом.")
                     }
                 }
 
@@ -215,11 +215,6 @@ struct SettingsView: View {
             .tint(settings.accentColor)
             .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
             .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
-            .onAppear {
-                if player.transitionMode == .automix {
-                    player.transitionMode = .crossfade
-                }
-            }
         }
     }
 

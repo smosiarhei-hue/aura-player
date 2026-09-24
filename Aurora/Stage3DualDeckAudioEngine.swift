@@ -13,7 +13,7 @@ final class DualDeckAudioEngine: @unchecked Sendable {
         let player = AVAudioPlayerNode()
         let timePitch = AVAudioUnitTimePitch()
         let dryMixer = AVAudioMixerNode()
-        let eq = AVAudioUnitEQ(numberOfBands: 3)
+        let eq = AVAudioUnitEQ(numberOfBands: 4)
         let delay = AVAudioUnitDelay()
         let mixer = AVAudioMixerNode()
         var file: AVAudioFile?
@@ -275,6 +275,11 @@ final class DualDeckAudioEngine: @unchecked Sendable {
             // value is in dB (0 dB down to -60 dB)
             let gain: Float = value <= -55 ? 0.0 : pow(10.0, value / 20.0)
             s.dryMixer.outputVolume = min(1, max(0, gain))
+        case .vocalDucking:
+            let x = s.eq.bands[3]
+            x.bypass = abs(value) < 0.1
+            let gainDB: Float = value > 0 ? -abs(value) : value
+            x.gain = max(-24, min(0, gainDB))
         }
     }
 
@@ -450,6 +455,12 @@ final class DualDeckAudioEngine: @unchecked Sendable {
         lp.frequency = 20000
         lp.bandwidth = 0.8
         lp.bypass = true
+        let vocal = s.eq.bands[3]
+        vocal.filterType = .parametric
+        vocal.frequency = 1500
+        vocal.bandwidth = 1.0
+        vocal.gain = 0
+        vocal.bypass = true
         s.delay.wetDryMix = 0
         s.delay.feedback = 0
         s.delay.delayTime = 0.375

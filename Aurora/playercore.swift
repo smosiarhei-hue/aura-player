@@ -1178,23 +1178,54 @@ final class PlayerCore {
         SonivoDiagnostics.log("[AutoMix] Transition: \(currentTrack?.title ?? "?") -> \(nextTrack.title) [\(plan.strategy.rawValue), \(String(format: "%.1f", transitionDuration))s, rate in \(String(format: "%.3f", plan.tempo.targetPlaybackRate)), \(plan.decision.reason)]", tag: "AUTOMIX")
 
         if isUsingStreamPlayer || nextTrack.isStream {
-            guard idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id else {
-                isTransitioning = false
-                transitionScheduled = false
-                AutoMixDJEngine.shared.isTransitionActive = false
-                return
+            let startStreamTransition: @MainActor () -> Void = { [weak self] in
+                guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
+                let laneStart = max(0, plan.targetTrack.startPosition)
+                let seekTime = CMTime(seconds: laneStart, preferredTimescale: 600)
+                self.idleStreamingPlayer.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
+                        self.idleStreamingPlayer.volume = 0.001
+                        self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
+                        self.transitionStartTime = Date()
+                        self.incomingLaneReady = true
+                        self.startTransitionTimer()
+                    }
+                }
             }
-            let laneStart = max(0, plan.targetTrack.startPosition)
-            let seekTime = CMTime(seconds: laneStart, preferredTimescale: 600)
-            idleStreamingPlayer.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
-                    self.idleStreamingPlayer.volume = 0.001
-                    self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                    self.idleStreamingPlayer.playImmediately(atRate: 1.0)
-                    self.transitionStartTime = Date()
-                    self.incomingLaneReady = true
-                    self.startTransitionTimer()
+
+            if idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id {
+                startStreamTransition()
+            } else {
+                let ymID = Self.yandexTrackID(from: nextTrack)
+                let targetStart = max(0, plan.targetTrack.startPosition)
+                Task {
+                    do {
+                        let info = try await YandexMusicService.shared.getStreamInfo(
+                            for: ymID,
+                            preferredQuality: self.audioQuality,
+                            preferredBitrate: self.audioQuality.targetBitrate
+                        )
+                        await MainActor.run {
+                            guard self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
+                            let nextItem = AVPlayerItem(url: info.url)
+                            nextItem.audioTimePitchAlgorithm = .timeDomain
+                            nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+                            StreamBeatTap.shared.attach(to: nextItem)
+                            self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
+                            self.idleStreamingPlayer.volume = 0.001
+                            self.prebufferedTrackId = nextTrack.id
+                            self.isPrebufferingNextStream = false
+                            startStreamTransition()
+                        }
+                    } catch {
+                        await MainActor.run {
+                            self.isTransitioning = false
+                            self.transitionScheduled = false
+                            self.AutoMixDJEngineCleanup()
+                        }
+                    }
                 }
             }
             return
@@ -1441,18 +1472,45 @@ final class PlayerCore {
         var streamSourceVol = sourceLevel
         var streamTargetVol = targetLevel
 
-        if strategy == .BASS_SWAP {
-            if p > 0.40 && p < 0.85 {
-                let dropPct = Float((p - 0.40) / 0.45)
-                streamSourceVol *= max(0.20, 1.0 - dropPct * 0.65)
-            }
-            if p > 0.35 {
-                let risePct = Float((p - 0.35) / 0.65)
-                streamTargetVol = max(streamTargetVol, min(1.0, Float(pow(risePct, 0.7))))
-            }
-        } else if strategy == .BUILDUP_TO_DROP || strategy == .DROP_SWITCH {
-            if p > 0.60 {
-                streamSourceVol *= max(0.05, Float(1.0 - (p - 0.60) / 0.40))
+        // MARK: - Streaming AutoMix DSP Shaping (Downbeat Bass Swap & Vocal Pocket Ducking)
+        // For streaming playback (AVPlayer), EQ nodes cannot be attached directly, so the two hallmark
+        // DJ effects (Downbeat Bass Swap and Vocal Pocket Ducking) are rendered via precision dynamic gain shaping.
+        if isUsingStreamPlayer || incomingIsStream {
+            if strategy == .BASS_SWAP || strategy == .DROP_SWITCH || strategy == .SMART_BLEND || strategy == .ENERGY_MATCH {
+                if p < 0.50 {
+                    // Phase 1 (p < 0.50): Pre-swap vocal pocket ducking & bass avoidance
+                    // Outgoing track retains dominant energy (full presence & kick).
+                    // Incoming is ducked to max 0.42 so vocals and bass never collide.
+                    streamSourceVol = 1.0
+                    let inRamp = Float(p / 0.50)
+                    streamTargetVol = min(0.42, inRamp * 0.42)
+                } else {
+                    // Phase 2 (p >= 0.50): Downbeat Bass Swap & vocal takeover!
+                    // Outgoing bass and level cut instantly to 0.14 on the drop, decaying to zero.
+                    // Incoming punches to 1.0 with full kick, bass, and upfront vocal.
+                    let decayP = Float((p - 0.50) / 0.50)
+                    streamSourceVol = max(0.0, 0.14 * (1.0 - pow(decayP, 0.70)))
+                    streamTargetVol = 1.0
+                }
+            } else if strategy == .BUILDUP_TO_DROP {
+                if p < 0.65 {
+                    streamSourceVol = 1.0
+                    let inRamp = Float(p / 0.65)
+                    streamTargetVol = min(0.40, inRamp * 0.40)
+                } else {
+                    let decayP = Float((p - 0.65) / 0.35)
+                    streamSourceVol = max(0.0, 0.12 * (1.0 - decayP))
+                    streamTargetVol = 1.0
+                }
+            } else {
+                if p < 0.50 {
+                    streamSourceVol = 1.0
+                    streamTargetVol = min(0.45, Float(p / 0.50) * 0.45)
+                } else {
+                    let decayP = Float((p - 0.50) / 0.50)
+                    streamSourceVol = max(0.0, 0.15 * (1.0 - decayP))
+                    streamTargetVol = 1.0
+                }
             }
         }
 

@@ -534,9 +534,14 @@ final class PlaybackCoordinator {
                 await engine.applyEffect(.bassKill,
                                          value: Float(min(1, max(0, 1 - (p - 0.5) / 0.3))),
                                          param: nil, bpm: 0, to: incoming)
+                // Vocal pocket ducking on incoming track before downbeat swap (p < 0.5)
+                let inDuckValue: Float = p < 0.5 ? Float(-7.0 * (1.0 - p / 0.5)) : 0.0
+                await engine.applyEffect(.vocalDucking, value: inDuckValue, param: nil, bpm: 0, to: incoming)
                 if p >= 0.5 {
                     await engine.applyEffect(.echoOut, value: Float(55 * (p - 0.5) / 0.5),
                                              param: 45, bpm: 120, to: outgoing)
+                    await engine.applyEffect(.vocalDucking, value: Float(-8.0 * (1.0 - (p - 0.5) / 0.5)),
+                                             param: nil, bpm: 0, to: outgoing)
                 }
                 if p >= 1 { return }
             } else {

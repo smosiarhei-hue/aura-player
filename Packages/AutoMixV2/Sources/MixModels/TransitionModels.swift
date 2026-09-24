@@ -28,6 +28,7 @@ public enum FxKind: String, Sendable, Codable, Equatable {
     case stutter
     case volume
     case rateRamp
+    case vocalDucking
 }
 
 public enum Deck: String, Sendable, Codable, Equatable {

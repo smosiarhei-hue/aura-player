@@ -765,10 +765,18 @@ final class AutoMixV2Runtime {
         await diagnostics.record(MixDiagnosticEvent(level: .error, category: category, message: message))
     }
     private static func yandexTrackID(from track: Track) -> String? {
-        if let parsed = YandexMusicService.ymId(fromFileName: track.fileName) { return parsed }
-        guard let raw = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty, URL(string: raw)?.scheme == nil else { return nil }
-        return raw
+        if let parsed = YandexMusicService.ymId(fromFileName: track.fileName), !parsed.isEmpty { return parsed }
+        if let raw = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let clean = raw.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+            if !clean.isEmpty && !clean.hasPrefix("http://") && !clean.hasPrefix("https://") {
+                return clean
+            }
+        }
+        let fileClean = track.fileName.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+        if !fileClean.isEmpty && fileClean.allSatisfy({ $0.isNumber }) {
+            return fileClean
+        }
+        return nil
     }
     private static func userMessage(for error: Error) -> String {
         guard let sourceError = error as? TrackSourceError else { return String(describing: error) }
@@ -785,7 +793,7 @@ final class AutoMixV2Runtime {
 @Observable
 final class PlaybackCommandRouter {
     static let shared = PlaybackCommandRouter(); private var installed = false; private init() {}
-    private(set) var owner: PlaybackOwner = .legacy
+    private(set) var owner: PlaybackOwner = AutoMixEngineSelectionStore.shared.isNeuroEnabled ? .neuroMix : (AutoMixEngineSelectionStore.shared.isV2Enabled ? .autoMixV2 : .legacy)
     private(set) var isBusy = false
     private var requestID = 0
     private var transportTask: Task<Void, Never>?

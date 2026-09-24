@@ -148,6 +148,9 @@ public enum MixPlanner {
                     fromValue: 1, toValue: 1, curve: .linear),
             FxEvent(target: .b, kind: .bassOn, startBar: min(2, bars / 2), endBar: min(bars, min(2, bars / 2) + 1),
                     fromValue: 1, toValue: 0, curve: .sCurve),
+            // Vocal Pocket Ducking: приглушение вокального диапазона входящего трека до дропа
+            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: min(2, bars / 2),
+                    fromValue: -7, toValue: 0, curve: .sCurve),
             // High-Pass Resonant Riser (20 -> 4500 Гц с подъемом Q)
             FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
                     fromValue: 20, toValue: 4500, curve: .exp),
