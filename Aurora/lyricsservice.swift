@@ -18,23 +18,49 @@ final class LyricsService {
         let syncedLyrics: String?
     }
 
-    /// Priority: Yandex Music Supplement → LRCLIB synced → LRCLIB plain → embedded static text.
+    /// Hybrid parallel priority:
+    /// 1. Synchronized LRC (Yandex or LRCLIB) -> dynamic karaoke display
+    /// 2. Authoritative full text (Yandex Music official)
+    /// 3. LRCLIB plain text
+    /// 4. Embedded static lyrics
     func fetchLyrics(for track: Track) async throws -> Lyrics {
         let key = cacheKey(for: track)
         if let cached = cache[key] {
             return cached
         }
 
-        if let yandexLyrics = await fetchYandexLyrics(for: track) {
+        // Fetch both sources concurrently for optimal speed and reliability
+        async let yandexTask = fetchYandexLyrics(for: track)
+        async let lrcTask = fetchLRCLib(for: track)
+
+        let yandexLyrics = await yandexTask
+        let lrcLyrics = await lrcTask
+
+        // 1. If Yandex has synchronized lyrics, prioritize it
+        if let yandexLyrics, yandexLyrics.isSynchronized {
             cache[key] = yandexLyrics
             return yandexLyrics
         }
 
-        if let remote = await fetchLRCLib(for: track) {
-            cache[key] = remote
-            return remote
+        // 2. If LRCLIB has synchronized lyrics, prioritize it for dynamic karaoke animation
+        if let lrcLyrics, lrcLyrics.isSynchronized {
+            cache[key] = lrcLyrics
+            return lrcLyrics
         }
 
+        // 3. Official Yandex full text lyrics (authoritative and complete)
+        if let yandexLyrics, !yandexLyrics.lines.isEmpty {
+            cache[key] = yandexLyrics
+            return yandexLyrics
+        }
+
+        // 4. LRCLIB plain lyrics
+        if let lrcLyrics, !lrcLyrics.lines.isEmpty {
+            cache[key] = lrcLyrics
+            return lrcLyrics
+        }
+
+        // 5. Embedded ID3 static lyrics
         if let staticText = track.lyricsText, !staticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let lyrics = staticLyrics(from: staticText, track: track)
             cache[key] = lyrics
@@ -45,16 +71,20 @@ final class LyricsService {
     }
 
     private func fetchYandexLyrics(for track: Track) async -> Lyrics? {
-        let ymId = PlayerCore.yandexTrackID(from: track)
+        var ymId = PlayerCore.yandexTrackID(from: track)
+        if ymId.isEmpty {
+            ymId = await searchYandexTrackId(title: track.title, artist: track.artist) ?? ""
+        }
         guard !ymId.isEmpty else { return nil }
 
-        guard let url = URL(string: YandexMusicService.apiBase + "/tracks/\(ymId)/supplement") else { return nil }
+        let cleanId = ymId.contains(":") ? (ymId.components(separatedBy: ":").last ?? ymId) : ymId
+        guard let url = URL(string: YandexMusicService.apiBase + "/tracks/\(cleanId)/supplement") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         let token = YandexMusicService.shared.token.isEmpty ? YandexMusicService.defaultToken : YandexMusicService.shared.token
         request.setValue("OAuth " + token, forHTTPHeaderField: "Authorization")
         request.setValue("ru", forHTTPHeaderField: "Accept-Language")
-        request.setValue("WindowsPhone/4.75 (Windows Phone 8.1; Microsoft; Lumia 950)", forHTTPHeaderField: "User-Agent")
+        request.setValue("YandexMusic/2024.1", forHTTPHeaderField: "User-Agent")
         request.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
 
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -94,6 +124,31 @@ final class LyricsService {
         // 2. Check for full text lyrics
         if let rawText = lyricsData.fullLyrics ?? lyricsData.lyrics, !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return staticLyrics(from: rawText, track: track)
+        }
+
+        return nil
+    }
+
+    private func searchYandexTrackId(title: String, artist: String) async -> String? {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else { return nil }
+
+        let query = (cleanArtist.isEmpty || cleanArtist == "Неизвестный исполнитель")
+            ? cleanTitle
+            : "\(cleanArtist) \(cleanTitle)"
+
+        let results = await YandexMusicService.shared.searchAll(query: query)
+        if let first = results.tracks.first, !first.id.isEmpty {
+            return first.id
+        }
+
+        // Secondary fallback if combined query yielded 0 tracks
+        if !cleanArtist.isEmpty && cleanArtist != "Неизвестный исполнитель" {
+            let fallbackResults = await YandexMusicService.shared.searchAll(query: cleanTitle)
+            if let first = fallbackResults.tracks.first, !first.id.isEmpty {
+                return first.id
+            }
         }
 
         return nil

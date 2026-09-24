@@ -41,6 +41,7 @@ struct LyricsView: View {
                 Color.black.opacity(0.45).ignoresSafeArea()
             }
         }
+        .preferredColorScheme(.dark)
         .task { await player.observeTimeline() }
     }
 }
@@ -189,16 +190,20 @@ private struct StaticLyricsList: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if let title = lyrics.title, !title.isEmpty {
-                    Text(title).font(AG.display(.title2, .heavy))
+                    Text(title)
+                        .font(AG.display(.title2, .heavy))
+                        .foregroundStyle(.white)
                     if let artist = lyrics.artist, !artist.isEmpty {
-                        Text(artist).font(AG.text(.callout, .semibold)).foregroundStyle(.secondary)
+                        Text(artist)
+                            .font(AG.text(.callout, .semibold))
+                            .foregroundStyle(.white.opacity(0.70))
                     }
-                    Divider().padding(.vertical, 6)
+                    Divider().overlay(Color.white.opacity(0.2)).padding(.vertical, 6)
                 }
                 ForEach(lyrics.lines) { line in
                     Text(line.text)
                         .font(.system(size: settings.lyricsFontSize * 0.82, weight: .medium))
-                        .foregroundStyle(AG.ink.opacity(0.88))
+                        .foregroundStyle(Color.white.opacity(0.92))
                         .lineSpacing(6)
                 }
             }
@@ -218,25 +223,25 @@ private struct EmptyLyricsState: View {
         VStack(spacing: 16) {
             Image(systemName: "quote.bubble")
                 .font(.system(size: 44, weight: .light))
-                .foregroundStyle(AG.inkFaint)
+                .foregroundStyle(Color.white.opacity(0.35))
 
             Text("Текст песни не найден")
                 .font(AG.display(.headline, .bold))
-                .foregroundStyle(AG.ink)
+                .foregroundStyle(.white)
 
             if let staticText = player.displayTrack?.lyricsText, !staticText.isEmpty {
                 ScrollView {
                     Text(staticText)
                         .font(AG.text(.subheadline))
-                        .foregroundStyle(AG.inkMuted)
+                        .foregroundStyle(Color.white.opacity(0.75))
                         .multilineTextAlignment(.center)
                         .lineSpacing(6)
                         .padding(.horizontal, 28)
                 }
             } else {
-                Text("Для этого трека пока нет синхронизированного караоке.")
+                Text("Для этого трека пока нет текста песни.")
                     .font(AG.text(.footnote))
-                    .foregroundStyle(AG.inkMuted)
+                    .foregroundStyle(Color.white.opacity(0.55))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }

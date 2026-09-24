@@ -360,26 +360,52 @@ struct PlayerScreenV2: View {
 
                 if lyricsLoading {
                     ProgressView().tint(.white)
-                    Text("Загрузка текста…").foregroundStyle(AG.inkMuted)
-                } else if !cachedPhrases.isEmpty {
+                    Text("Загрузка текста…")
+                        .font(AG.text(.subheadline, .medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                } else if let lyrics, lyrics.isSynchronized, !cachedPhrases.isEmpty {
                     KineticLyricsView(
                         phrases: cachedPhrases,
                         currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16) }, set: { _ in }),
                         isPlaying: player.isPlaying
                     )
                     .frame(maxWidth: width - 28)
-                } else if let lines = lyrics?.lines, !lines.isEmpty {
-                    KineticLyricsView(
-                        phrases: LyricPhrase.from(lines: lines),
-                        currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset + 0.16) }, set: { _ in }),
-                        isPlaying: player.isPlaying
-                    )
+                } else if let lyrics, !lyrics.lines.isEmpty {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(lyrics.lines) { line in
+                                Text(line.text)
+                                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.92))
+                                    .multilineTextAlignment(.leading)
+                                    .lineSpacing(4)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     .frame(maxWidth: width - 28)
+                    .mask(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.0),
+                                .init(color: .black, location: 0.08),
+                                .init(color: .black, location: 0.92),
+                                .init(color: .clear, location: 1.0)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
                 } else {
                     let pair = currentLyricsPair
                     VStack(spacing: 12) {
-                        Text(pair.current)
-                            .font(.system(size: 32, weight: .heavy, design: .default))
+                        Image(systemName: "quote.bubble")
+                            .font(.system(size: 34, weight: .light))
+                            .foregroundStyle(.white.opacity(0.35))
+                        Text(pair.current.isEmpty || pair.current == "Слова песни" ? "Текст песни отсутствует" : pair.current)
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
@@ -724,8 +750,8 @@ struct PlayerScreenV2: View {
         let result = try? await LyricsService.shared.fetchLyrics(for: requested)
         guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }
         lyrics = result
-        if let lines = result?.lines, !lines.isEmpty {
-            cachedPhrases = LyricPhrase.from(lines: lines)
+        if let result, result.isSynchronized, !result.lines.isEmpty {
+            cachedPhrases = LyricPhrase.from(lines: result.lines)
         }
         lyricsLoading = false
     }
