@@ -354,7 +354,10 @@ struct PlayerScreenV2: View {
                     Spacer(minLength: 0)
                     KineticLyricsView(
                         phrases: cachedPhrases,
-                        currentTime: Binding(get: { max(0, player.progress + SettingsStore.shared.lyricsOffset) }, set: { _ in }),
+                        currentTime: Binding(get: {
+                            let latency = AVAudioSession.sharedInstance().outputLatency
+                            return max(0, player.progress - latency + SettingsStore.shared.lyricsOffset)
+                        }, set: { _ in }),
                         isPlaying: player.isPlaying,
                         fontSize: 20
                     )

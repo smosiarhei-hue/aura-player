@@ -261,7 +261,7 @@ struct KineticLyricsView: View {
         // Native 120 FPS timeline synchronizing directly with iPhone ProMotion display
         TimelineView(.animation(paused: !isPlaying)) { _ in
             let now = CACurrentMediaTime()
-            let dt = isPlaying ? max(0.0, min(0.12, now - anchorTimestamp)) : 0.0
+            let dt = isPlaying ? max(0.0, min(0.025, now - anchorTimestamp)) : 0.0
             let smoothTime = currentTime + dt
             let (current, next) = findCurrentAndNextPhrase(at: smoothTime)
 
@@ -274,6 +274,22 @@ struct KineticLyricsView: View {
                         baseFontSize: fontSize
                     )
                     .id(phrase.id)
+                    .transition(.opacity)
+                } else if let next {
+                    // Музыкальная пауза / интро: отображаем аккуратную плашку подготовки к следующей строке
+                    VStack(spacing: 8) {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.35))
+                        Text(next.text)
+                            .font(.system(size: fontSize * 0.88, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.white.opacity(0.42))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .minimumScaleFactor(0.70)
+                            .padding(.horizontal, 16)
+                    }
                     .transition(.opacity)
                 } else {
                     Text("SONIVO")
@@ -295,34 +311,45 @@ struct KineticLyricsView: View {
         }
     }
 
-    /// Fast search to pinpoint active and next phrase
+    /// Fast search to pinpoint active and next phrase with strict intro & instrumental break detection
     private func findCurrentAndNextPhrase(at time: TimeInterval) -> (current: LyricPhrase?, next: LyricPhrase?) {
         guard !phrases.isEmpty else { return (nil, nil) }
 
-        var activeIndex: Int? = nil
+        // 1. Интро: вокал еще не начался
+        if let first = phrases.first, time < first.timeRange.lowerBound {
+            return (nil, first)
+        }
+
+        // 2. Поиск активной фразы во время пения
         for (i, p) in phrases.enumerated() {
             if p.timeRange.contains(time) {
-                activeIndex = i
-                break
-            } else if p.timeRange.lowerBound > time {
-                if activeIndex == nil {
-                    activeIndex = max(0, i - 1)
-                }
-                break
-            }
-        }
-        if activeIndex == nil && !phrases.isEmpty {
-            if time >= phrases.last!.timeRange.lowerBound {
-                activeIndex = phrases.count - 1
+                let nxt = (i + 1 < phrases.count) ? phrases[i + 1] : nil
+                return (p, nxt)
             }
         }
 
-        guard let idx = activeIndex, idx < phrases.count else {
-            return (nil, nil)
+        // 3. Инструментальная пауза между фразами
+        for i in 0..<(phrases.count - 1) {
+            let cur = phrases[i]
+            let nxt = phrases[i + 1]
+            if time > cur.timeRange.upperBound && time < nxt.timeRange.lowerBound {
+                let gap = nxt.timeRange.lowerBound - cur.timeRange.upperBound
+                if gap <= 1.5 {
+                    // Короткая пауза на вдох: удерживаем текущую фразу
+                    return (cur, nxt)
+                } else {
+                    // Длинный проигрыш / дроп / соло: переключаем в режим ожидания следующей строки
+                    return (nil, nxt)
+                }
+            }
         }
-        let cur = phrases[idx]
-        let nxt = (idx + 1 < phrases.count) ? phrases[idx + 1] : nil
-        return (cur, nxt)
+
+        // 4. После последней фразы
+        if let last = phrases.last, time >= last.timeRange.lowerBound {
+            return (last, nil)
+        }
+
+        return (nil, nil)
     }
 }
 

@@ -57,13 +57,17 @@ private struct SyncedLyrics: View {
     var body: some View {
         TimelineView(.animation(paused: !player.isPlaying)) { _ in
             let now = CACurrentMediaTime()
-            let dt = player.isPlaying ? max(0.0, min(0.02, now - anchorTimestamp)) : 0.0
-            let currentTime = max(0, player.progress + settings.lyricsOffset + dt)
+            let dt = player.isPlaying ? max(0.0, min(0.025, now - anchorTimestamp)) : 0.0
+            let latency = AVAudioSession.sharedInstance().outputLatency
+            let currentTime = max(0, player.progress - latency + settings.lyricsOffset + dt)
 
             let activeIndex: Int? = {
-                lyrics.lines.lastIndex { line in
+                if let first = lyrics.lines.first, currentTime < first.startTime {
+                    return nil
+                }
+                return lyrics.lines.lastIndex { line in
                     currentTime >= line.startTime && currentTime < (line.endTime ?? (line.startTime + 5.0))
-                } ?? lyrics.lines.firstIndex { $0.startTime > currentTime }.map { max(0, $0 - 1) }
+                }
             }()
 
             ScrollViewReader { proxy in

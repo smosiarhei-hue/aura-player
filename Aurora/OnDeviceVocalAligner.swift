@@ -175,11 +175,12 @@ final class OnDeviceVocalAligner: Sendable {
             let request = SFSpeechURLRecognitionRequest(url: audioURL)
             // Allow hybrid recognition so it succeeds even if offline language model is missing
             request.requiresOnDeviceRecognition = false
-            request.shouldReportPartialResults = false
+            request.shouldReportPartialResults = true
             request.addsPunctuation = false
 
             let lock = NSLock()
             var hasResponded = false
+            var latestTokens: [AcousticToken] = []
 
             func safeResume(with tokens: [AcousticToken]) {
                 lock.lock()
@@ -190,25 +191,30 @@ final class OnDeviceVocalAligner: Sendable {
             }
 
             let task = recognizer.recognitionTask(with: request) { result, error in
-                if let result, (result.isFinal || error != nil) {
-                    let tokens: [AcousticToken] = result.bestTranscription.segments.map { seg in
-                        AcousticToken(
-                            text: seg.substring.lowercased(),
-                            startTime: max(0, seg.timestamp - 0.15), // Visual lead compensation
-                            duration: max(0.08, seg.duration)
-                        )
+                if let result {
+                    let segments = result.bestTranscription.segments
+                    if !segments.isEmpty {
+                        latestTokens = segments.map { seg in
+                            AcousticToken(
+                                text: seg.substring.lowercased(),
+                                startTime: seg.timestamp, // Exact physical vocal onset timestamp
+                                duration: max(0.08, seg.duration)
+                            )
+                        }
                     }
-                    safeResume(with: tokens)
+                    if result.isFinal || error != nil {
+                        safeResume(with: latestTokens)
+                    }
                 } else if error != nil {
-                    safeResume(with: [])
+                    safeResume(with: latestTokens)
                 }
             }
 
-            // Safety timeout: 14 seconds max for high-precision recognition
+            // Safety timeout: 15 seconds max
             Task {
-                try? await Task.sleep(for: .seconds(14))
+                try? await Task.sleep(for: .seconds(15))
                 task.cancel()
-                safeResume(with: [])
+                safeResume(with: latestTokens)
             }
         }
     }
@@ -220,70 +226,139 @@ final class OnDeviceVocalAligner: Sendable {
         tokens: [AcousticToken],
         totalDuration: TimeInterval
     ) -> [LyricsLine] {
-        var alignedLines: [LyricsLine] = []
-        var tokenCursor = 0
-        var matchedLineCount = 0
+        guard !tokens.isEmpty, !lines.isEmpty else { return [] }
 
-        for line in lines {
+        struct LineAnchor {
+            let lineIndex: Int
+            let startTime: TimeInterval
+            let endTime: TimeInterval
+            let matchedWords: [LyricsWord]
+            let matchScore: Int
+        }
+
+        var anchors: [LineAnchor] = []
+        var tokenCursor = 0
+
+        for (lineIdx, line) in lines.enumerated() {
             let rawWords = line.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
             guard !rawWords.isEmpty else { continue }
 
-            var lineWords: [LyricsWord] = []
+            var matchedWordsInLine: [LyricsWord] = []
             var lineStartTime: TimeInterval?
             var lineEndTime: TimeInterval?
+            var searchCursor = tokenCursor
+            var matchedTokenIndices: [Int] = []
 
             for word in rawWords {
-                let norm = normalize(word)
-                var matchedToken: AcousticToken? = nil
-
-                // Search ahead in acoustic tokens for matching word phonetics
-                let searchLimit = min(tokens.count, tokenCursor + 15)
-                for i in tokenCursor..<searchLimit {
+                let searchLimit = min(tokens.count, searchCursor + 25)
+                for i in searchCursor..<searchLimit {
                     let candidate = tokens[i]
-                    if isFuzzyMatch(norm, candidate.text) {
-                        matchedToken = candidate
-                        tokenCursor = i + 1
+                    if isAcousticMatch(word, candidate.text) {
+                        matchedWordsInLine.append(LyricsWord(
+                            text: word,
+                            startTime: candidate.startTime,
+                            endTime: candidate.endTime
+                        ))
+                        if lineStartTime == nil { lineStartTime = candidate.startTime }
+                        lineEndTime = candidate.endTime
+                        matchedTokenIndices.append(i)
+                        searchCursor = i + 1
                         break
                     }
                 }
+            }
 
-                if let matched = matchedToken {
-                    lineWords.append(LyricsWord(
-                        text: word,
-                        startTime: matched.startTime,
-                        endTime: matched.endTime
-                    ))
-                    if lineStartTime == nil { lineStartTime = matched.startTime }
-                    lineEndTime = matched.endTime
+            // Accept anchor if at least 1 strong word matched (or 2 for long lines)
+            let minMatches = rawWords.count >= 4 ? 2 : 1
+            if matchedWordsInLine.count >= minMatches,
+               let start = lineStartTime,
+               let end = lineEndTime {
+                anchors.append(LineAnchor(
+                    lineIndex: lineIdx,
+                    startTime: start,
+                    endTime: max(end, start + 0.8),
+                    matchedWords: matchedWordsInLine,
+                    matchScore: matchedWordsInLine.count
+                ))
+                if let lastTokenIdx = matchedTokenIndices.last {
+                    tokenCursor = lastTokenIdx + 1
                 }
             }
+        }
 
-            if lineStartTime != nil {
-                matchedLineCount += 1
+        // Only accept alignment if at least 25% of lines were matched with acoustic confidence
+        guard anchors.count >= max(2, lines.count / 4) else {
+            return []
+        }
+
+        // Construct aligned lines, anchoring to detected acoustic moments and respecting instrumental gaps
+        var alignedLines: [LyricsLine] = []
+        let firstTokenTime = tokens.first?.startTime ?? 0
+
+        for (lineIdx, line) in lines.enumerated() {
+            let rawWords = line.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            guard !rawWords.isEmpty else { continue }
+
+            let charCount = max(5, line.text.count)
+            let estimatedDuration = Double(charCount) * 0.11 + 0.8
+
+            // Case 1: Direct anchor match
+            if let anchor = anchors.first(where: { $0.lineIndex == lineIdx }) {
+                let words: [LyricsWord]
+                if anchor.matchedWords.count == rawWords.count {
+                    words = anchor.matchedWords
+                } else {
+                    words = interpolateWords(rawWords: rawWords, startTime: anchor.startTime, endTime: anchor.endTime)
+                }
+                alignedLines.append(LyricsLine(
+                    text: line.text,
+                    startTime: anchor.startTime,
+                    endTime: anchor.endTime,
+                    words: words
+                ))
+                continue
             }
 
-            // If line words were partially matched, interpolate missing words proportionally
-            let effectiveLineWords: [LyricsWord]
-            let start = lineStartTime ?? (alignedLines.last?.endTime ?? 0) + 0.4
-            let end = lineEndTime ?? (start + max(2.2, Double(line.text.count) * 0.10 + 0.8))
+            // Case 2: Line has no direct anchor - locate surrounding anchors
+            let prevAnchor = anchors.filter { $0.lineIndex < lineIdx }.last
+            let nextAnchor = anchors.filter { $0.lineIndex > lineIdx }.first
 
-            if lineWords.count == rawWords.count {
-                effectiveLineWords = lineWords
+            let start: TimeInterval
+            let end: TimeInterval
+
+            if let prevAnchor, let nextAnchor {
+                let linesBetween = nextAnchor.lineIndex - prevAnchor.lineIndex
+                let stepIndex = lineIdx - prevAnchor.lineIndex
+                let availableWindow = max(0.5, nextAnchor.startTime - prevAnchor.endTime - 0.2)
+                let slotDuration = availableWindow / Double(linesBetween)
+                start = prevAnchor.endTime + Double(stepIndex - 1) * slotDuration + 0.1
+                end = min(nextAnchor.startTime - 0.1, start + min(slotDuration, estimatedDuration))
+            } else if let nextAnchor {
+                // Before first anchor: must not start before first vocal token (respect song intro!)
+                let stepBefore = nextAnchor.lineIndex - lineIdx
+                let introBoundary = firstTokenTime
+                let leadTime = Double(stepBefore) * (estimatedDuration + 0.4)
+                start = max(introBoundary, nextAnchor.startTime - leadTime)
+                end = min(nextAnchor.startTime - 0.2, start + estimatedDuration)
+            } else if let prevAnchor {
+                // After last anchor: sequential trailing phrases
+                start = (alignedLines.last?.endTime ?? prevAnchor.endTime) + 0.3
+                end = min(totalDuration, start + estimatedDuration)
             } else {
-                effectiveLineWords = interpolateWords(rawWords: rawWords, startTime: start, endTime: end)
+                start = (alignedLines.last?.endTime ?? firstTokenTime) + 0.3
+                end = start + estimatedDuration
             }
+
+            let effectiveStart = max(0, start)
+            let effectiveEnd = max(effectiveStart + 0.6, end)
+            let words = interpolateWords(rawWords: rawWords, startTime: effectiveStart, endTime: effectiveEnd)
 
             alignedLines.append(LyricsLine(
                 text: line.text,
-                startTime: start,
-                endTime: end,
-                words: effectiveLineWords
+                startTime: effectiveStart,
+                endTime: effectiveEnd,
+                words: words
             ))
-        }
-
-        // Only accept alignment if at least 25% of lines matched real audio tokens with high confidence
-        guard matchedLineCount >= max(2, lines.count / 4) else {
-            return []
         }
 
         return alignedLines
@@ -405,12 +480,63 @@ final class OnDeviceVocalAligner: Sendable {
         text.lowercased()
             .trimmingCharacters(in: .punctuationCharacters)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "ё", with: "е") // Normalize Russian ё -> е
     }
 
-    private func isFuzzyMatch(_ a: String, _ b: String) -> Bool {
+    private func isAcousticMatch(_ word: String, _ token: String) -> Bool {
+        let a = normalize(word)
+        let b = normalize(token)
+        if a.isEmpty || b.isEmpty { return false }
         if a == b { return true }
-        if a.hasPrefix(b) || b.hasPrefix(a) { return true }
-        if abs(a.count - b.count) <= 2 && (a.contains(b) || b.contains(a)) { return true }
+
+        // Short words (<= 3 letters) MUST match exactly to avoid false positives on prepositions/conjunctions
+        if a.count <= 3 || b.count <= 3 {
+            return false
+        }
+
+        // For medium words (4-5 letters), allow distance of 1
+        if a.count <= 5 && b.count <= 5 {
+            return levenshteinDistance(a, b) <= 1
+        }
+
+        // For long words (6+ letters), allow distance of 1 or 2
+        let dist = levenshteinDistance(a, b)
+        if dist <= 2 { return true }
+
+        // Common stem/prefix for Russian words (declensions, e.g. "задом" vs "задам")
+        if a.count >= 5 && b.count >= 5 {
+            let prefixLen = min(a.count, b.count) - 1
+            if prefixLen >= 4 && a.prefix(prefixLen) == b.prefix(prefixLen) {
+                return true
+            }
+        }
+
         return false
+    }
+
+    private func levenshteinDistance(_ s1: String, _ s2: String) -> Int {
+        let a = Array(s1)
+        let b = Array(s2)
+        let m = a.count
+        let n = b.count
+        if m == 0 { return n }
+        if n == 0 { return m }
+        if abs(m - n) > 2 { return 99 }
+
+        var d = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
+        for i in 0...m { d[i][0] = i }
+        for j in 0...n { d[0][j] = j }
+
+        for i in 1...m {
+            for j in 1...n {
+                let cost = (a[i - 1] == b[j - 1]) ? 0 : 1
+                d[i][j] = min(
+                    d[i - 1][j] + 1,       // deletion
+                    d[i][j - 1] + 1,       // insertion
+                    d[i - 1][j - 1] + cost // substitution
+                )
+            }
+        }
+        return d[m][n]
     }
 }
