@@ -506,7 +506,6 @@ struct PlayerScreenV2: View {
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
             FluidVolumeSlider()
-                .padding(.horizontal, 4)
             .accessibilityElement(children: .contain)
             HStack {
                 GlassIconButton(systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble", tint: showLyricsMode ? AG.amber : AG.inkMuted, accessibilityLabel: "Текст песни") { withAnimation(AG.spring) { showLyricsMode.toggle() } }
@@ -990,22 +989,27 @@ struct PlayerTimelineSection<Center: View>: View {
                 let duration = max(player.duration, 0.01)
                 let fraction = min(1, max(0, effectiveProgress / duration))
                 let width = geo.size.width * fraction
-                let height: CGFloat = isScrubbing ? 8 : 4
+                let height: CGFloat = isScrubbing ? 11 : 6
+                let cornerRadius: CGFloat = 3.0
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.18)).frame(height: height)
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.white.opacity(0.18))
+                        .frame(height: height)
                     if let bufferFraction = player.downloadProgress, bufferFraction > 0.005 {
-                        Capsule()
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                             .fill(.white.opacity(0.38))
                             .frame(width: max(height, geo.size.width * min(1.0, CGFloat(bufferFraction))), height: height)
                             .animation(.easeInOut(duration: 0.25), value: bufferFraction)
                     }
-                    Capsule().fill(.white).frame(width: max(height, width), height: height)
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.white)
+                        .frame(width: max(height, width), height: height)
                     if isScrubbing {
-                        Circle()
+                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
                             .fill(.white)
-                            .frame(width: 20, height: 20)
-                            .offset(x: max(0, min(width - 10, geo.size.width - 20)))
-                            .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+                            .frame(width: 12, height: 24)
+                            .offset(x: max(0, min(width - 6, geo.size.width - 12)))
+                            .shadow(color: .black.opacity(0.40), radius: 4, y: 1)
                     }
                 }
                 .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isScrubbing)
@@ -1029,7 +1033,7 @@ struct PlayerTimelineSection<Center: View>: View {
                             }
                         }
                     })
-            }.frame(height: 24)
+            }.frame(height: 28)
             HStack {
                 Text(player.formatted(effectiveProgress)).font(AG.text(.caption, .semibold).monospacedDigit()).foregroundStyle(AG.inkMuted)
                 Spacer(); center; Spacer()
@@ -1108,53 +1112,94 @@ struct AutoMixBadge: View {
 @Observable
 final class SystemVolumeManager {
     static let shared = SystemVolumeManager()
-    var volume: Float = 0.5
+    var volume: Float = 1.0
     private weak var systemSlider: UISlider?
     private var observation: NSKeyValueObservation?
+    private var isSettingInternal = false
 
     private init() {
+        let saved = PlayerCore.shared.volume
+        volume = saved > 0 ? saved : AVAudioSession.sharedInstance().outputVolume
         let session = AVAudioSession.sharedInstance()
-        volume = session.outputVolume
         observation = session.observe(\.outputVolume, options: [.new]) { [weak self] _, change in
             guard let newVol = change.newValue else { return }
             Task { @MainActor [weak self] in
-                self?.volume = newVol
+                guard let self = self, !self.isSettingInternal else { return }
+                self.volume = newVol
+                PlayerCore.shared.volume = newVol
             }
         }
     }
 
     func attach(slider: UISlider) {
         self.systemSlider = slider
-        self.volume = slider.value
     }
 
     func setVolume(_ newVolume: Float) {
         let clamped = max(0.0, min(1.0, newVolume))
+        isSettingInternal = true
         self.volume = clamped
+        PlayerCore.shared.volume = clamped
         systemSlider?.setValue(clamped, animated: false)
         systemSlider?.sendActions(for: .valueChanged)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.isSettingInternal = false
+        }
+    }
+}
+
+final class SystemVolumeHostView: UIView {
+    private let volumeView = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 60, height: 20))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    private func setup() {
+        clipsToBounds = true
+        volumeView.showsRouteButton = false
+        volumeView.showsVolumeSlider = true
+        volumeView.alpha = 0.001
+        volumeView.isUserInteractionEnabled = false
+        addSubview(volumeView)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        volumeView.frame = bounds
+        findSlider()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        findSlider()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.findSlider()
+        }
+    }
+
+    private func findSlider() {
+        for subview in volumeView.subviews {
+            if let slider = subview as? UISlider {
+                SystemVolumeManager.shared.attach(slider: slider)
+                return
+            }
+        }
     }
 }
 
 struct InvisibleVolumeView: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let view = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 2, height: 2))
-        view.showsRouteButton = false
-        view.showsVolumeSlider = true
-        view.alpha = 0.0001
-        view.clipsToBounds = true
-        DispatchQueue.main.async {
-            for subview in view.subviews {
-                if let slider = subview as? UISlider {
-                    SystemVolumeManager.shared.attach(slider: slider)
-                    break
-                }
-            }
-        }
-        return view
+    func makeUIView(context: Context) -> SystemVolumeHostView {
+        SystemVolumeHostView(frame: CGRect(x: 0, y: 0, width: 60, height: 20))
     }
 
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+    func updateUIView(_ uiView: SystemVolumeHostView, context: Context) {}
 }
 
 struct FluidVolumeSlider: View {
@@ -1163,7 +1208,7 @@ struct FluidVolumeSlider: View {
     @State private var dragVolume: Float = 0.5
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 8) {
             Image(systemName: "speaker.fill")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(AG.inkMuted)
@@ -1173,23 +1218,26 @@ struct FluidVolumeSlider: View {
                 let width = geo.size.width
                 let currentVol = isDragging ? dragVolume : volumeManager.volume
                 let progress = CGFloat(max(0.0, min(1.0, currentVol)))
-                let filledWidth = max(5, width * progress)
-                let trackHeight: CGFloat = isDragging ? 7 : 5
+                let filledWidth = max(6, width * progress)
+                let trackHeight: CGFloat = isDragging ? 11 : 7
+                let cornerRadius: CGFloat = 3.0
+                let thumbWidth: CGFloat = isDragging ? 10 : 6
+                let thumbHeight: CGFloat = isDragging ? 22 : 16
 
                 ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.20))
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(Color.white.opacity(0.18))
                         .frame(height: trackHeight)
 
-                    Capsule()
-                        .fill(Color.white.opacity(0.90))
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(Color.white)
                         .frame(width: filledWidth, height: trackHeight)
 
-                    Circle()
+                    RoundedRectangle(cornerRadius: isDragging ? 3.0 : 2.0, style: .continuous)
                         .fill(Color.white)
-                        .frame(width: isDragging ? 16 : 11, height: isDragging ? 16 : 11)
+                        .frame(width: thumbWidth, height: thumbHeight)
                         .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-                        .offset(x: max(0, min(filledWidth - (isDragging ? 8 : 5.5), width - (isDragging ? 16 : 11))))
+                        .offset(x: max(0, min(filledWidth - (thumbWidth / 2), width - thumbWidth)))
                 }
                 .frame(maxHeight: .infinity, alignment: .center)
                 .contentShape(Rectangle())
@@ -1214,14 +1262,14 @@ struct FluidVolumeSlider: View {
                 )
             }
             .frame(height: 28)
-            .background(InvisibleVolumeView().frame(width: 0, height: 0))
+            .background(InvisibleVolumeView().frame(width: 60, height: 20).opacity(0.001).allowsHitTesting(false))
 
             Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(AG.inkMuted)
                 .frame(width: 16, height: 16, alignment: .center)
         }
-        .frame(height: 32)
+        .frame(height: 34)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Громкость")
         .accessibilityValue("\(Int(volumeManager.volume * 100))%")
