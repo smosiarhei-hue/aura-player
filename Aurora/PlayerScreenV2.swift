@@ -3,6 +3,7 @@ import UIKit
 import MediaPlayer
 import AVFoundation
 import AVKit
+import Combine
 
 struct PlayerScreenV2: View {
     @State private var player = ActivePlayerPresentation()
@@ -244,42 +245,20 @@ struct PlayerScreenV2: View {
     }
 
     private var topHeader: some View {
-        HStack(spacing: 12) {
-            GlassIconButton(systemImage: "chevron.down", tint: AG.inkMuted, weight: .bold,
-                            accessibilityLabel: "Свернуть плеер", action: close)
-            Spacer()
-            VStack(spacing: 2) {
-                Text("СЕЙЧАС ИГРАЕТ")
-                    .font(.system(size: 10, weight: .bold, design: .default))
-                    .tracking(1.0)
-                    .foregroundStyle(AG.inkFaint)
-                Text(track?.title ?? "Sonivo")
-                    .font(AG.text(.caption, .bold))
-                    .foregroundStyle(AG.ink)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            Spacer()
-            Menu {
-                Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: { Label("Текст песни", systemImage: "quote.bubble") }
-                Button { openModal(.queue) } label: { Label("Очередь", systemImage: "list.bullet") }
-                Button { openModal(.equalizer) } label: { Label("Эквалайзер", systemImage: "slider.vertical.3") }
-                Button { openModal(.sleepTimer) } label: { Label("Таймер сна", systemImage: "timer") }
-                Button { openModal(.settings) } label: { Label("Настройки", systemImage: "gearshape") }
-                Button {
-                    Task {
-                        if await SonivoDiagnostics.shared.sendReportToTelegram() {
-                            waveMessage = "✅ Диагностика отправлена"
-                            try? await Task.sleep(for: .seconds(2.5)); waveMessage = nil
-                        }
-                    }
-                } label: { Label("Отправить логи", systemImage: "paperplane") }
-                Button(role: .destructive) { player.stopAndClear(); close() } label: { Label("Остановить и очистить", systemImage: "stop.fill") }
-            } label: {
-                Image(systemName: "ellipsis").font(AG.glyph(.bold)).foregroundStyle(AG.inkMuted)
-                    .frame(width: tapSide, height: tapSide).contentShape(Circle())
-            }.glassCircle().accessibilityLabel("Ещё")
-        }.frame(minHeight: tapSide)
+        VStack(spacing: 5) {
+            Capsule()
+                .fill(Color.white.opacity(0.32))
+                .frame(width: 36, height: 4.5)
+                .padding(.top, 4)
+
+            Text("СЕЙЧАС ИГРАЕТ")
+                .font(.system(size: 10, weight: .bold, design: .default))
+                .tracking(1.0)
+                .foregroundStyle(AG.inkFaint)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 36)
+        .contentShape(Rectangle())
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
@@ -351,17 +330,14 @@ struct PlayerScreenV2: View {
 
     private func lyricsCoverCard(side: CGFloat) -> some View {
         ZStack {
-            // 1. Атмосферная размытая обложка с темным тонированием для максимальной читаемости текста
+            // 1. Четкая обложка с легким затемнением, чтобы арт оставался отчетливо виден
             ZStack {
                 artwork
                     .scaledToFill()
                     .frame(width: side, height: side)
-                    .blur(radius: 24)
-                    .scaleEffect(1.15)
-                    .opacity(0.35)
                     .clipped()
 
-                Color.black.opacity(0.68)
+                Color.black.opacity(0.40)
             }
 
             // 2. Сцена отображения текста
@@ -397,10 +373,13 @@ struct PlayerScreenV2: View {
                         VStack(alignment: .leading, spacing: 12) {
                             ForEach(lyrics.lines) { line in
                                 Text(line.text)
-                                    .font(.system(size: 17, weight: .semibold, design: .default))
-                                    .foregroundStyle(.white.opacity(0.92))
+                                    .font(.system(size: 19, weight: .heavy, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.95))
                                     .multilineTextAlignment(.leading)
-                                    .lineSpacing(3)
+                                    .lineSpacing(4)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .minimumScaleFactor(0.70)
                             }
 
                             // Источник пишется в конце текста
@@ -412,7 +391,7 @@ struct PlayerScreenV2: View {
                             }
                         }
                         .padding(.horizontal, 18)
-                        .padding(.top, 36)
+                        .padding(.top, 24)
                         .padding(.bottom, 16)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -437,20 +416,22 @@ struct PlayerScreenV2: View {
                             .font(.system(size: 28, weight: .light))
                             .foregroundStyle(.white.opacity(0.35))
                         Text(pair.current.isEmpty || pair.current == "Слова песни" ? "Текст песни отсутствует" : pair.current)
-                            .font(.system(size: 18, weight: .bold, design: .default))
+                            .font(.system(size: 20, weight: .heavy, design: .rounded))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
-                            .minimumScaleFactor(0.75)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .minimumScaleFactor(0.70)
                             .padding(.horizontal, 16)
-                            .shadow(color: .black.opacity(0.35), radius: 2, y: 1.5)
+                            .shadow(color: .black.opacity(0.45), radius: 3, y: 1.5)
                         if let next = pair.next {
                             Text(next)
-                                .font(AG.text(.subheadline, .medium))
+                                .font(.system(size: 16, weight: .heavy, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.65))
                                 .multilineTextAlignment(.center)
                                 .lineLimit(nil)
-                                .minimumScaleFactor(0.8)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .minimumScaleFactor(0.70)
                                 .padding(.horizontal, 16)
                         }
                     }
@@ -458,33 +439,6 @@ struct PlayerScreenV2: View {
                 }
             }
             .frame(width: side, height: side)
-
-            // 3. Верхний правый угол: Кнопка на весь экран прямо в обложке
-            VStack {
-                HStack {
-                    Spacer()
-                    Button {
-                        openModal(.lyrics)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 10, weight: .bold))
-                            Text("На весь экран")
-                                .font(.system(size: 11, weight: .semibold, design: .default))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(.ultraThinMaterial.opacity(0.85), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.5))
-                        .shadow(color: .black.opacity(0.35), radius: 3, y: 1.5)
-                    }
-                    .buttonStyle(TactileButtonStyle(scale: 0.94))
-                    .accessibilityLabel("Развернуть текст на весь экран")
-                    .padding(10)
-                }
-                Spacer()
-            }
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -530,16 +484,8 @@ struct PlayerScreenV2: View {
             metadataRow
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
-            HStack(spacing: 12) {
-                Image(systemName: "speaker.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AG.inkMuted)
-                NativeVolumeSlider().frame(height: 32)
-                Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AG.inkMuted)
-            }
-            .padding(.horizontal, 4)
+            FluidVolumeSlider()
+                .padding(.horizontal, 4)
             .accessibilityElement(children: .contain)
             HStack {
                 GlassIconButton(systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble", tint: showLyricsMode ? AG.amber : AG.inkMuted, accessibilityLabel: "Текст песни") { withAnimation(AG.spring) { showLyricsMode.toggle() } }
@@ -626,16 +572,6 @@ struct PlayerScreenV2: View {
                         )
                         .disabled(waveLoading)
                     }
-                    Button {
-                        guard let current else { return }; library.toggleFavorite(current)
-                    } label: {
-                        Image(systemName: favorite ? "heart.fill" : "heart")
-                            .foregroundStyle(favorite ? AG.heart : AG.inkMuted)
-                            .frame(width: tapSide, height: tapSide)
-                    }
-                    .glassCircle()
-                    .disabled(current == nil)
-                    .accessibilityLabel(favorite ? "Убрать из избранного" : "Добавить в избранное")
 
                     if let current {
                         let disliked = UserTasteEngine.shared.isDisliked(track: current)
@@ -711,11 +647,26 @@ struct PlayerScreenV2: View {
     }
     private var transportControls: some View {
         HStack(spacing: 0) {
+            Button {
+                guard let current = track else { return }
+                library.toggleFavorite(current)
+            } label: {
+                let favorite = track.map(library.isTrackFavorite) ?? false
+                Image(systemName: favorite ? "heart.fill" : "heart")
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(favorite ? AG.heart : AG.inkMuted)
+                    .frame(width: 48, height: 48)
+            }
+            .frame(maxWidth: .infinity)
+            .disabled(track == nil)
+            .accessibilityLabel(track.map(library.isTrackFavorite) == true ? "Убрать из избранного" : "В избранное")
+
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 26, weight: .bold))
                     .frame(maxWidth: .infinity, minHeight: 56)
             }
+
             Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 32, weight: .black))
@@ -726,14 +677,83 @@ struct PlayerScreenV2: View {
             .glassCircle()
             .frame(maxWidth: .infinity)
             .disabled(player.isLoading)
+
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 26, weight: .bold))
                     .frame(maxWidth: .infinity, minHeight: 56)
             }
+
+            moreMenuButton
+                .frame(maxWidth: .infinity)
         }
         .foregroundStyle(AG.ink)
         .buttonStyle(TactileButtonStyle(scale: 0.88))
+    }
+
+    private var moreMenuButton: some View {
+        Menu {
+            Button {
+                SettingsStore.shared.isNeuralEngineEnabled.toggle()
+                waveMessage = SettingsStore.shared.isNeuralEngineEnabled ? "🧠 Apple Neural Engine включён" : "🧠 Apple Neural Engine выключен"
+                Task {
+                    try? await Task.sleep(for: .seconds(2.0))
+                    waveMessage = nil
+                }
+                Task { await loadLyrics() }
+            } label: {
+                Label(
+                    SettingsStore.shared.isNeuralEngineEnabled ? "Neural Engine: Включён" : "Neural Engine: Выключен",
+                    systemImage: SettingsStore.shared.isNeuralEngineEnabled ? "brain.fill" : "brain"
+                )
+            }
+
+            Divider()
+
+            Button { withAnimation(AG.spring) { showLyricsMode.toggle() } } label: {
+                Label("Текст песни", systemImage: "quote.bubble")
+            }
+            Button { openModal(.queue) } label: {
+                Label("Очередь", systemImage: "list.bullet")
+            }
+            Button { openModal(.equalizer) } label: {
+                Label("Эквалайзер", systemImage: "slider.vertical.3")
+            }
+            Button { openModal(.sleepTimer) } label: {
+                Label("Таймер сна", systemImage: "timer")
+            }
+            Button { openModal(.settings) } label: {
+                Label("Настройки", systemImage: "gearshape")
+            }
+
+            Divider()
+
+            Button {
+                Task {
+                    if await SonivoDiagnostics.shared.sendReportToTelegram() {
+                        waveMessage = "✅ Диагностика отправлена"
+                        try? await Task.sleep(for: .seconds(2.5))
+                        waveMessage = nil
+                    }
+                }
+            } label: {
+                Label("Отправить логи", systemImage: "paperplane")
+            }
+
+            Button(role: .destructive) {
+                player.stopAndClear()
+                close()
+            } label: {
+                Label("Остановить и очистить", systemImage: "stop.fill")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 21, weight: .bold))
+                .foregroundStyle(AG.inkMuted)
+                .frame(width: 48, height: 48)
+                .contentShape(Circle())
+        }
+        .accessibilityLabel("Ещё")
     }
 
     private var artistSelectionSheet: some View {
@@ -791,6 +811,16 @@ struct PlayerScreenV2: View {
         lyricsLoading = true
         var result = try? await LyricsService.shared.fetchLyrics(for: requested)
         guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }
+
+        // If Neural Engine is disabled by user, use genuine online lyrics without AI transcription/alignment
+        guard SettingsStore.shared.isNeuralEngineEnabled else {
+            lyrics = result
+            if let result, result.isSynchronized, !result.lines.isEmpty {
+                cachedPhrases = LyricPhrase.from(lines: result.lines)
+            }
+            lyricsLoading = false
+            return
+        }
 
         // If no online lyrics found, attempt on-device Apple Neural Engine offline vocal transcription
         if result == nil || result?.lines.isEmpty == true {
@@ -1050,16 +1080,127 @@ struct AutoMixBadge: View {
     }
 }
 
-struct NativeVolumeSlider: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let view = MPVolumeView(frame: .zero); view.showsRouteButton = false; view.showsVolumeSlider = true
-        DispatchQueue.main.async { style(view) }; return view
-    }
-    func updateUIView(_ uiView: MPVolumeView, context: Context) { DispatchQueue.main.async { style(uiView) } }
-    private func style(_ view: MPVolumeView) {
-        for case let slider as UISlider in view.subviews {
-            slider.isContinuous = true; slider.minimumTrackTintColor = .white.withAlphaComponent(0.85); slider.maximumTrackTintColor = .white.withAlphaComponent(0.25)
+@MainActor
+@Observable
+final class SystemVolumeManager {
+    static let shared = SystemVolumeManager()
+    var volume: Float = 0.5
+    private weak var systemSlider: UISlider?
+    private var observation: NSKeyValueObservation?
+
+    private init() {
+        let session = AVAudioSession.sharedInstance()
+        volume = session.outputVolume
+        observation = session.observe(\.outputVolume, options: [.new]) { [weak self] _, change in
+            guard let newVol = change.newValue else { return }
+            Task { @MainActor [weak self] in
+                self?.volume = newVol
+            }
         }
+    }
+
+    func attach(slider: UISlider) {
+        self.systemSlider = slider
+        self.volume = slider.value
+    }
+
+    func setVolume(_ newVolume: Float) {
+        let clamped = max(0.0, min(1.0, newVolume))
+        self.volume = clamped
+        systemSlider?.setValue(clamped, animated: false)
+        systemSlider?.sendActions(for: .valueChanged)
+    }
+}
+
+struct InvisibleVolumeView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let view = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 2, height: 2))
+        view.showsRouteButton = false
+        view.showsVolumeSlider = true
+        view.alpha = 0.0001
+        view.clipsToBounds = true
+        DispatchQueue.main.async {
+            for subview in view.subviews {
+                if let slider = subview as? UISlider {
+                    SystemVolumeManager.shared.attach(slider: slider)
+                    break
+                }
+            }
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
+struct FluidVolumeSlider: View {
+    @State private var volumeManager = SystemVolumeManager.shared
+    @State private var isDragging = false
+    @State private var dragVolume: Float = 0.5
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "speaker.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(AG.inkMuted)
+                .frame(width: 16, height: 16, alignment: .center)
+
+            GeometryReader { geo in
+                let width = geo.size.width
+                let currentVol = isDragging ? dragVolume : volumeManager.volume
+                let progress = CGFloat(max(0.0, min(1.0, currentVol)))
+                let filledWidth = max(5, width * progress)
+                let trackHeight: CGFloat = isDragging ? 7 : 5
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.20))
+                        .frame(height: trackHeight)
+
+                    Capsule()
+                        .fill(Color.white.opacity(0.90))
+                        .frame(width: filledWidth, height: trackHeight)
+
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: isDragging ? 16 : 11, height: isDragging ? 16 : 11)
+                        .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+                        .offset(x: max(0, min(filledWidth - (isDragging ? 8 : 5.5), width - (isDragging ? 16 : 11))))
+                }
+                .frame(maxHeight: .infinity, alignment: .center)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            if !isDragging {
+                                isDragging = true
+                                Haptics.tap(.light)
+                            }
+                            let fraction = Float(max(0.0, min(1.0, value.location.x / max(width, 1))))
+                            dragVolume = fraction
+                            volumeManager.setVolume(fraction)
+                        }
+                        .onEnded { value in
+                            let fraction = Float(max(0.0, min(1.0, value.location.x / max(width, 1))))
+                            volumeManager.setVolume(fraction)
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                isDragging = false
+                            }
+                        }
+                )
+            }
+            .frame(height: 28)
+            .background(InvisibleVolumeView().frame(width: 0, height: 0))
+
+            Image(systemName: "speaker.wave.3.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(AG.inkMuted)
+                .frame(width: 16, height: 16, alignment: .center)
+        }
+        .frame(height: 32)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Громкость")
+        .accessibilityValue("\(Int(volumeManager.volume * 100))%")
     }
 }
 

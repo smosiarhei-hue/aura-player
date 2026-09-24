@@ -33,13 +33,13 @@ final class OnDeviceVocalAligner: Sendable {
 
     /// Aligns plain or unsynchronized lyrics with the audio track using the Apple Neural Engine.
     func align(lyrics: Lyrics, track: Track) async -> Lyrics? {
+        guard await SettingsStore.shared.isNeuralEngineEnabled else { return nil }
         if lyrics.isSynchronized { return lyrics }
         guard !lyrics.lines.isEmpty else { return nil }
 
-        // If speech authorization is not already granted, use rock-solid instant phonetic synthesis
-        // to avoid disruptive permission alerts or crashes during playback.
+        // Speech recognition authorization check
         guard await ensureAuthorization() else {
-            return synthesizeKaraokeTimings(for: lyrics, track: track)
+            return nil
         }
 
         let lang = detectLanguage(for: lyrics)
@@ -48,18 +48,18 @@ final class OnDeviceVocalAligner: Sendable {
         // Check if Speech Recognizer is available
         guard let recognizer = SFSpeechRecognizer(locale: locale),
               recognizer.isAvailable else {
-            return synthesizeKaraokeTimings(for: lyrics, track: track)
+            return nil
         }
 
         // Resolve audio source (local file or stream cache)
         guard let localURL = await resolveLocalAudioURL(for: track) else {
-            return synthesizeKaraokeTimings(for: lyrics, track: track)
+            return nil
         }
 
-        // Execute Apple Neural Engine recognition
+        // Execute Apple Speech recognition
         let acousticTokens = await performOnDeviceRecognition(audioURL: localURL, recognizer: recognizer)
         guard !acousticTokens.isEmpty else {
-            return synthesizeKaraokeTimings(for: lyrics, track: track)
+            return nil
         }
 
         // Perform Forced Alignment: Match official text with acoustic timecodes (zero typos)
@@ -70,7 +70,7 @@ final class OnDeviceVocalAligner: Sendable {
         )
 
         guard !alignedLines.isEmpty else {
-            return synthesizeKaraokeTimings(for: lyrics, track: track)
+            return nil
         }
 
         let baseSource = lyrics.sourceName.isEmpty ? "Lyrics" : lyrics.sourceName
@@ -87,6 +87,7 @@ final class OnDeviceVocalAligner: Sendable {
     /// Listens to song vocals offline via Apple Neural Engine and transcribes
     /// word-level synchronized karaoke lyrics when no lyrics exist online.
     func transcribe(track: Track) async -> Lyrics? {
+        guard await SettingsStore.shared.isNeuralEngineEnabled else { return nil }
         guard await ensureAuthorization() else { return nil }
         guard let localURL = await resolveLocalAudioURL(for: track) else { return nil }
 
@@ -152,19 +153,28 @@ final class OnDeviceVocalAligner: Sendable {
     // MARK: - Safe Authorization Check
 
     private func ensureAuthorization() async -> Bool {
-        // Only proceed if already explicitly authorized. Do not prompt intrusive system alerts during playback.
         let status = SFSpeechRecognizer.authorizationStatus()
-        return status == .authorized
+        switch status {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { newStatus in
+                    continuation.resume(returning: newStatus == .authorized)
+                }
+            }
+        default:
+            return false
+        }
     }
 
-    // MARK: - On-Device Neural Recognition Execution (Thread-Safe & Exception-Safe)
+    // MARK: - Speech Recognition Execution (Thread-Safe & Exception-Safe)
 
     private func performOnDeviceRecognition(audioURL: URL, recognizer: SFSpeechRecognizer) async -> [AcousticToken] {
         return await withCheckedContinuation { continuation in
             let request = SFSpeechURLRecognitionRequest(url: audioURL)
-            if recognizer.supportsOnDeviceRecognition {
-                request.requiresOnDeviceRecognition = true
-            }
+            // Allow hybrid recognition so it succeeds even if offline language model is missing
+            request.requiresOnDeviceRecognition = false
             request.shouldReportPartialResults = false
             request.addsPunctuation = false
 
@@ -194,9 +204,9 @@ final class OnDeviceVocalAligner: Sendable {
                 }
             }
 
-            // Safety timeout: 8 seconds max on Neural Engine
+            // Safety timeout: 14 seconds max for high-precision recognition
             Task {
-                try? await Task.sleep(for: .seconds(8))
+                try? await Task.sleep(for: .seconds(14))
                 task.cancel()
                 safeResume(with: [])
             }
@@ -212,6 +222,7 @@ final class OnDeviceVocalAligner: Sendable {
     ) -> [LyricsLine] {
         var alignedLines: [LyricsLine] = []
         var tokenCursor = 0
+        var matchedLineCount = 0
 
         for line in lines {
             let rawWords = line.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
@@ -247,6 +258,10 @@ final class OnDeviceVocalAligner: Sendable {
                 }
             }
 
+            if lineStartTime != nil {
+                matchedLineCount += 1
+            }
+
             // If line words were partially matched, interpolate missing words proportionally
             let effectiveLineWords: [LyricsWord]
             let start = lineStartTime ?? (alignedLines.last?.endTime ?? 0) + 0.4
@@ -264,6 +279,11 @@ final class OnDeviceVocalAligner: Sendable {
                 endTime: end,
                 words: effectiveLineWords
             ))
+        }
+
+        // Only accept alignment if at least 25% of lines matched real audio tokens with high confidence
+        guard matchedLineCount >= max(2, lines.count / 4) else {
+            return []
         }
 
         return alignedLines

@@ -172,10 +172,13 @@ private struct LyricsLineView: View {
                 .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
             } else {
                 Text(line.text)
-                    .font(.system(size: fontSize, weight: .bold, design: .default))
+                    .font(.system(size: fontSize, weight: .heavy, design: .rounded))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.35), radius: 2, y: 1.5)
                     .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .minimumScaleFactor(0.70)
                     .lineSpacing(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .scaleEffect(1.02, anchor: .leading)
@@ -183,9 +186,12 @@ private struct LyricsLineView: View {
             }
         } else {
             Text(line.text)
-                .font(.system(size: fontSize * 0.84, weight: .semibold, design: .default))
+                .font(.system(size: fontSize * 0.84, weight: .heavy, design: .rounded))
                 .foregroundStyle(Color.white.opacity(0.35))
                 .multilineTextAlignment(.leading)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .minimumScaleFactor(0.70)
                 .lineSpacing(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .scaleEffect(0.96, anchor: .leading)
@@ -216,8 +222,10 @@ private struct StaticLyricsList: View {
                 }
                 ForEach(lyrics.lines) { line in
                     Text(line.text)
-                        .font(.system(size: settings.lyricsFontSize * 0.82, weight: .medium))
+                        .font(.system(size: settings.lyricsFontSize * 0.82, weight: .heavy, design: .rounded))
                         .foregroundStyle(Color.white.opacity(0.92))
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                         .lineSpacing(6)
                 }
                 if !lyrics.sourceName.isEmpty {

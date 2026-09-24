@@ -219,7 +219,8 @@ final class ActivePlayerPresentation {
                 resetTimeline(for: nil)
                 clearNetworkProgress()
             }
-            do { try await ContinuousClock().sleep(for: .milliseconds(200)) }
+            let sleepMs = isPlaying ? 25 : 200
+            do { try await ContinuousClock().sleep(for: .milliseconds(sleepMs)) }
             catch { return }
         }
     }

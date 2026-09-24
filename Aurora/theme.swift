@@ -151,9 +151,10 @@ final class SettingsStore {
         didSet { defaults.set(musicHapticsIntensity.rawValue, forKey: "settings.musicHapticsIntensity") }
     }
 
-    // Karaoke lyrics
+    // Karaoke lyrics & AI alignment
     var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
     var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
+    var isNeuralEngineEnabled: Bool { didSet { defaults.set(isNeuralEngineEnabled, forKey: "lyrics.neuralEngineEnabled") } }
 
     var accentColor: Color { AG.amber }
     var accentGradient: LinearGradient { AG.emberGradient }
@@ -167,6 +168,7 @@ final class SettingsStore {
         ) ?? .strong
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
+        isNeuralEngineEnabled = defaults.object(forKey: "lyrics.neuralEngineEnabled") as? Bool ?? true
     }
 }
 

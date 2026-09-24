@@ -183,7 +183,10 @@ struct SettingsView: View {
                     Toggle("Вибрация при перемотке", isOn: $settings.scrubHapticsEnabled).tint(settings.accentColor)
                 }
 
-                Section("Караоке (текст песни)") {
+                Section {
+                    Toggle("Apple Neural Engine", isOn: $settings.isNeuralEngineEnabled)
+                        .tint(settings.accentColor)
+
                     VStack(alignment: .leading, spacing: 6) {
                         HStack { Text("Размер шрифта"); Spacer(); Text("\(Int(settings.lyricsFontSize)) pt").foregroundStyle(.secondary) }
                         Slider(value: $settings.lyricsFontSize, in: 36...60, step: 1).tint(settings.accentColor)
@@ -192,6 +195,10 @@ struct SettingsView: View {
                         HStack { Text("Сдвиг синхронизации"); Spacer(); Text(String(format: "%+.1f сек", settings.lyricsOffset)).foregroundStyle(.secondary) }
                         Slider(value: $settings.lyricsOffset, in: -3...3, step: 0.1).tint(settings.accentColor)
                     }
+                } header: {
+                    Text("Караоке (текст песни)")
+                } footer: {
+                    Text("Apple Neural Engine автономно синхронизирует и выравнивает текст песен по вокалу. При отключении отображается оригинальный чистый текст без искусственного подгона.")
                 }
 
                 Section("Медиатека") {

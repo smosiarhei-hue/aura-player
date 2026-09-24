@@ -170,7 +170,7 @@ struct LyricsFlowLayout: Layout {
     }
 }
 
-// MARK: - 3. 120 Hz Smooth Syllable Karaoke Highlight Word View With Running White Bar
+// MARK: - 3. 120 Hz Smooth Syllable Karaoke Highlight Word View (Vibrant White Sweep, No Cursor Stick)
 
 struct KineticWordView: View {
     let word: LyricWord
@@ -190,15 +190,15 @@ struct KineticWordView: View {
 
     var body: some View {
         ZStack(alignment: .leading) {
-            // 1. Un-sung base text (Dimmed, standard iOS system font, rock-solid baseline)
+            // 1. Не спетый текст: полупрозрачный белый, шрифт SF Pro Rounded Heavy как на скриншоте
             Text(word.text)
-                .font(.system(size: fontSize, weight: .bold, design: .default))
+                .font(.system(size: fontSize, weight: .heavy, design: .rounded))
                 .foregroundStyle(Color.white.opacity(0.32))
 
-            // 2. Sung crisp text revealed with progressive wipe
+            // 2. Спетый текст: чистый белый с мягкой тенью
             if progress > 0 {
                 Text(word.text)
-                    .font(.system(size: fontSize, weight: .bold, design: .default))
+                    .font(.system(size: fontSize, weight: .heavy, design: .rounded))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.40), radius: 2, y: 1.5)
                     .mask(
@@ -216,42 +216,32 @@ struct KineticWordView: View {
                     )
             }
 
-            // 3. Dynamic running white beam across the letters (белая полоса по тексту)
+            // 3. Ядерный белый луч по тексту во время пения (без палочек)
             if isActivelySinging {
                 Text(word.text)
-                    .font(.system(size: fontSize, weight: .bold, design: .default))
+                    .font(.system(size: fontSize, weight: .heavy, design: .rounded))
                     .foregroundStyle(Color.white)
+                    .shadow(color: Color.white, radius: 4)
+                    .shadow(color: Color.white.opacity(0.90), radius: 8)
                     .mask(
                         LinearGradient(
                             stops: [
-                                .init(color: .clear, location: max(0.0, progress - 0.12)),
-                                .init(color: .white.opacity(0.95), location: max(0.0, progress - 0.02)),
+                                .init(color: .clear, location: max(0.0, progress - 0.22)),
+                                .init(color: .white, location: max(0.0, progress - 0.03)),
                                 .init(color: .white, location: progress),
-                                .init(color: .white.opacity(0.95), location: min(1.0, progress + 0.02)),
-                                .init(color: .clear, location: min(1.0, progress + 0.12))
+                                .init(color: .white, location: min(1.0, progress + 0.03)),
+                                .init(color: .clear, location: min(1.0, progress + 0.22))
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
                     )
-                    .shadow(color: Color.white.opacity(0.90), radius: 3)
             }
         }
-        .overlay {
-            // 4. Dedicated white runner bar (белая полоса караоке) that glides at 120 Hz
-            GeometryReader { geo in
-                if isActivelySinging {
-                    let xPos = max(1.5, min(geo.size.width - 1.5, geo.size.width * progress))
-                    Capsule()
-                        .fill(Color.white)
-                        .frame(width: 3.0, height: geo.size.height * 0.90)
-                        .position(x: xPos, y: geo.size.height / 2)
-                        .shadow(color: Color.white.opacity(0.95), radius: 3.5)
-                }
-            }
-        }
-        .scaleEffect(isActivelySinging ? 1.035 : 1.0, anchor: .leading)
-        .animation(.spring(response: 0.22, dampingFraction: 0.85), value: isActivelySinging)
+        .lineLimit(1)
+        .minimumScaleFactor(0.70)
+        .scaleEffect(isActivelySinging ? 1.025 : 1.0, anchor: .leading)
+        .animation(.spring(response: 0.20, dampingFraction: 0.85), value: isActivelySinging)
     }
 }
 
@@ -271,7 +261,7 @@ struct KineticLyricsView: View {
         // Native 120 FPS timeline synchronizing directly with iPhone ProMotion display
         TimelineView(.animation(paused: !isPlaying)) { _ in
             let now = CACurrentMediaTime()
-            let dt = isPlaying ? max(0.0, min(0.02, now - anchorTimestamp)) : 0.0
+            let dt = isPlaying ? max(0.0, min(0.12, now - anchorTimestamp)) : 0.0
             let smoothTime = currentTime + dt
             let (current, next) = findCurrentAndNextPhrase(at: smoothTime)
 
@@ -287,7 +277,7 @@ struct KineticLyricsView: View {
                     .transition(.opacity)
                 } else {
                     Text("SONIVO")
-                        .font(.system(size: 24, weight: .bold, design: .default))
+                        .font(.system(size: 24, weight: .heavy, design: .rounded))
                         .tracking(3.0)
                         .foregroundStyle(Color.white.opacity(0.35))
                         .transition(.opacity)
@@ -336,7 +326,7 @@ struct KineticLyricsView: View {
     }
 }
 
-// MARK: - 5. Phrase Stage (Crisp Standard Typography — Zero Glow, Vocal Running White Bar)
+// MARK: - 5. Phrase Stage (Dedicated SF Pro Rounded Typography, Zero Dots, Vibrant White Vocal Sweep)
 
 private struct KineticPhraseStage: View {
     let phrase: LyricPhrase
@@ -346,7 +336,7 @@ private struct KineticPhraseStage: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            // Active phrase with real-time vocal timecode tracking & running white bar
+            // Активная строка: караоке с ядерным белым пробегом по словам
             if !phrase.words.isEmpty {
                 LyricsFlowLayout(spacing: 8, lineSpacing: 9, alignment: .center) {
                     ForEach(phrase.words) { word in
@@ -358,7 +348,7 @@ private struct KineticPhraseStage: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
             } else {
                 let start = phrase.timeRange.lowerBound
                 let end = phrase.timeRange.upperBound
@@ -368,12 +358,12 @@ private struct KineticPhraseStage: View {
 
                 ZStack(alignment: .leading) {
                     Text(phrase.text)
-                        .font(.system(size: baseFontSize, weight: .bold, design: .default))
+                        .font(.system(size: baseFontSize, weight: .heavy, design: .rounded))
                         .foregroundStyle(Color.white.opacity(0.32))
 
                     if prog > 0 {
                         Text(phrase.text)
-                            .font(.system(size: baseFontSize, weight: .bold, design: .default))
+                            .font(.system(size: baseFontSize, weight: .heavy, design: .rounded))
                             .foregroundStyle(Color.white)
                             .shadow(color: Color.black.opacity(0.40), radius: 2, y: 1.5)
                             .mask(
@@ -390,33 +380,47 @@ private struct KineticPhraseStage: View {
                                 )
                             )
                     }
-                }
-                .overlay {
-                    GeometryReader { geo in
-                        if isSinging {
-                            let xPos = max(1.5, min(geo.size.width - 1.5, geo.size.width * prog))
-                            Capsule()
-                                .fill(Color.white)
-                                .frame(width: 3.0, height: geo.size.height * 0.90)
-                                .position(x: xPos, y: geo.size.height / 2)
-                                .shadow(color: Color.white.opacity(0.95), radius: 3.5)
-                        }
+
+                    if isSinging {
+                        Text(phrase.text)
+                            .font(.system(size: baseFontSize, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.white)
+                            .shadow(color: Color.white, radius: 4)
+                            .shadow(color: Color.white.opacity(0.90), radius: 8)
+                            .mask(
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .clear, location: max(0.0, prog - 0.20)),
+                                        .init(color: .white, location: max(0.0, prog - 0.03)),
+                                        .init(color: .white, location: prog),
+                                        .init(color: .white, location: min(1.0, prog + 0.03)),
+                                        .init(color: .clear, location: min(1.0, prog + 0.20))
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
                     }
                 }
                 .multilineTextAlignment(.center)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .minimumScaleFactor(0.70)
                 .lineSpacing(6)
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
             }
 
-            // Next phrase preview (standard iOS system font, clean subtle opacity)
+            // Следующая строка (превью): шрифт SF Pro Rounded Heavy, приглушенный цвет, без точек
             if let next = nextPhrase, !next.text.isEmpty {
                 Text(next.text)
-                    .font(.system(size: baseFontSize * 0.72, weight: .medium, design: .default))
-                    .foregroundStyle(Color.white.opacity(0.35))
+                    .font(.system(size: baseFontSize * 0.78, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.42))
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .padding(.horizontal, 24)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .minimumScaleFactor(0.70)
+                    .padding(.horizontal, 16)
                     .transition(.opacity)
             }
         }
