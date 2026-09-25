@@ -1471,13 +1471,26 @@ final class PlayerCore {
         var streamSourceVol = sourceLevel
         var streamTargetVol = targetLevel
 
-        // MARK: - Streaming AutoMix DSP Shaping (Equal-Power Constant Energy Crossfade)
-        // Eliminates track-on-track clash, distortion, and sudden volume spikes.
-        // Follows equal-power law (V_out^2 + V_in^2 = 1.0) with smoothstep easing.
+        // MARK: - Streaming AutoMix DJ Vocal-Safe Transition
+        // Eliminates vocal clash ("песня на песню накладывается") and prevents sudden loudness jumps.
+        // Phase 1 (0.0 .. 0.35): Outgoing track retains full vocal presence (1.0 -> 0.85); incoming is subtle background (0.0 -> 0.15).
+        // Phase 2 (0.35 .. 0.65): The DJ Drop / Handoff on the downbeat: outgoing ducks cleanly to 0.08, incoming sweeps to 0.85.
+        // Phase 3 (0.65 .. 1.0): Incoming takes over full power (0.85 -> 1.0); outgoing fades into silence.
         if isUsingStreamPlayer || incomingIsStream {
-            let s = Float(p * p * (3.0 - 2.0 * p))
-            streamSourceVol = Float(cos(Double(s) * .pi * 0.5))
-            streamTargetVol = Float(sin(Double(s) * .pi * 0.5))
+            if p < 0.35 {
+                let normP = Float(p / 0.35)
+                streamSourceVol = 1.0 - 0.15 * normP
+                streamTargetVol = 0.15 * normP * normP
+            } else if p < 0.65 {
+                let normP = Float((p - 0.35) / 0.30)
+                let s = normP * normP * (3.0 - 2.0 * normP)
+                streamSourceVol = max(0.08, 0.85 * Float(cos(Double(s) * .pi * 0.5)))
+                streamTargetVol = 0.15 + 0.70 * Float(sin(Double(s) * .pi * 0.5))
+            } else {
+                let normP = Float((p - 0.65) / 0.35)
+                streamSourceVol = max(0.0, 0.08 * (1.0 - normP))
+                streamTargetVol = 0.85 + 0.15 * normP
+            }
         }
 
         if isUsingStreamPlayer {
@@ -1598,37 +1611,34 @@ final class PlayerCore {
         reportWaveFinishedIfNeeded()
 
         let wasStream = isUsingStreamPlayer
-        if wasStream {
-            activeStreamingPlayer.pause()
-            activeStreamingPlayer.replaceCurrentItem(with: nil)
-        } else {
-            let outgoingNode = activeTimePitch
-            activePlayer.stop()
-            activePlayer.volume = 1.0
-            outgoingNode.rate = 1.0
-            outgoingNode.pitch = 0
-            outgoingNode.bypass = true
-        }
 
         if nextTrack.isStream || incomingIsStream {
             if !wasStream {
                 isUsingStreamPlayer = true
             }
-            let oldActive = activeStreamingPlayer
-            activeStreamingPlayer = idleStreamingPlayer
-            idleStreamingPlayer = oldActive
+            // Seamless swap: incoming player (already playing at full volume) continues undisturbed.
+            // DO NOT reconfigure its audioTimePitchAlgorithm or rate while it's playing to prevent audio dropout/stutter!
+            let outgoingPlayer = activeStreamingPlayer
+            let incomingPlayer = idleStreamingPlayer
+            activeStreamingPlayer = incomingPlayer
+            idleStreamingPlayer = outgoingPlayer
+
             activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
-            activeStreamingPlayer.rate = 1.0
-            activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-            idleStreamingPlayer.pause()
-            idleStreamingPlayer.volume = 0
+            if activeStreamingPlayer.rate != 1.0 && isPlaying {
+                activeStreamingPlayer.rate = 1.0
+            }
+
+            // Cleanly pause and unbind the outgoing player in the background
+            outgoingPlayer.pause()
+            outgoingPlayer.replaceCurrentItem(with: nil)
+            outgoingPlayer.volume = 0
+
             timePitchA.pitch = 0
             timePitchB.pitch = 0
             timePitchA.rate = 1.0
             timePitchB.rate = 1.0
             playerA.stop()
             playerB.stop()
-            applyEQ()
         } else {
             if wasStream {
                 isUsingStreamPlayer = false
@@ -1636,6 +1646,13 @@ final class PlayerCore {
                 streamingPlayerB.pause()
                 if !engine.isRunning { try? engine.start() }
             }
+            let outgoingNode = activeTimePitch
+            activePlayer.stop()
+            activePlayer.volume = 1.0
+            outgoingNode.rate = 1.0
+            outgoingNode.pitch = 0
+            outgoingNode.bypass = true
+
             generation += 1
             activePlayer = idlePlayer
             activeAudioFile = incomingAudioFile
@@ -1654,10 +1671,15 @@ final class PlayerCore {
         metadataTrack = nil
         metadataSwapped = false
         streamDuration = nextTrack.duration
+
+        // Sync playback progress accurately to the incoming player's actual continuous time
+        let actualTime = isUsingStreamPlayer ? CMTimeGetSeconds(activeStreamingPlayer.currentTime()) : incomingStartPosition
+        let resolvedPos = (actualTime.isFinite && actualTime >= 0) ? actualTime : incomingStartPosition
         anchorDate = Date()
-        anchorOffset = incomingStartPosition
-        pausedProgress = incomingStartPosition
-        progress = incomingStartPosition
+        anchorOffset = resolvedPos
+        pausedProgress = resolvedPos
+        progress = resolvedPos
+
         isTransitioning = false
         transitionScheduled = false
         AutoMixDJEngine.shared.isTransitionActive = false
@@ -1666,8 +1688,6 @@ final class PlayerCore {
 
         if !isUsingStreamPlayer {
             releaseActiveTimePitchToUnity()
-        } else {
-            releaseActiveStreamRateToUnity()
         }
 
         lastNowPlayingSync = nil

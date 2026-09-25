@@ -211,7 +211,7 @@ enum SonivoPlay {
         router.play(service.convertToTrack(item), queue: queue)
     }
 
-    static func wave(_ station: YandexMusicService.StationOption) {
+    static func wave(_ station: YandexMusicService.StationOption, forceFresh: Bool = false) {
         let service = YandexMusicService.shared
 
         if station.stationId == "app:recap" {
@@ -233,20 +233,34 @@ enum SonivoPlay {
         let active = AutoMixV2Runtime.shared.currentTrack
             ?? NeuroMixRuntime.shared.currentTrack
             ?? PlayerCore.shared.currentTrack
-        let immediate = active
-            ?? LibraryStore.shared.favorites.first
-            ?? service.chartCache.first.map { service.convertToTrack($0) }
-        let startedImmediately = immediate != nil
-        if let immediate, active == nil {
+
+        let favorites = LibraryStore.shared.favorites
+        let lastLiked = favorites.first
+
+        // When launching "Моя волна", start a fresh random song based on user's taste
+        // and latest saved/liked track, preventing repeating the same track every time.
+        let immediate: Track? = {
+            if forceFresh || active == nil {
+                if favorites.count > 1 {
+                    return favorites.filter { $0.id != active?.id }.randomElement() ?? lastLiked
+                }
+                return lastLiked ?? service.chartCache.shuffled().first.map { service.convertToTrack($0) }
+            }
+            return active
+        }()
+
+        if let immediate, (forceFresh || active == nil) {
             router.play(immediate, queue: [immediate])
         }
 
         Task {
-
-            let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
-            let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
-            let initial = unplayed.isEmpty ? firstBatch : unplayed
-            let candidates = initial.isEmpty ? (try? await service.getChart()) ?? [] : initial
+            // Seed Yandex Music's recommendation rotor with the last liked track
+            if let lastLiked {
+                let lastLikedYmId = PlayerCore.yandexTrackID(from: lastLiked)
+                if !lastLikedYmId.isEmpty {
+                    service.remember(ymTrackId: lastLikedYmId, action: "trackStarted")
+                }
+            }
 
             if !candidates.isEmpty {
                 let available = candidates

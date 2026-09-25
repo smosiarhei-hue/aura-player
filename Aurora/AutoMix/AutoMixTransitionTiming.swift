@@ -12,8 +12,9 @@ extension TransitionPlanner {
             ?? (source.bpm.flatMap { normalizedBPM($0) }.map { 240.0 / $0 })
             ?? 2.0
 
-        // Comfortable, musical DJ outro crossfade duration (4.5 - 5.5s)
-        let targetDuration = min(5.5, max(4.5, bar * 2.0))
+        // Punchy, vocal-safe DJ transition duration (2.8 - 3.5s)
+        // Prevents muddy long vocal overlap where lyrics clash.
+        let targetDuration = min(3.5, max(2.8, bar * 1.5))
         return targetDuration
     }
 
@@ -22,8 +23,8 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         duration: Double
     ) -> Double {
-        // Strictly anchor to the outro (at least 90% of track duration or last 7-9 seconds)
-        let minOutroCue = max(0, max(source.duration * 0.90, source.duration - 8.5))
+        // Strictly anchor to the outro (at least 92% of track duration or last 6.5 seconds)
+        let minOutroCue = max(0, max(source.duration * 0.92, source.duration - 6.5))
         var candidate = max(minOutroCue, source.duration - duration)
 
         if strategy == .SILENCE_TRIM, let silence = source.trailingSilence {
@@ -33,15 +34,15 @@ extension TransitionPlanner {
         } else if source.outroStart >= minOutroCue {
             candidate = source.outroStart
         } else if let boundary = source.sections.last(where: {
-            $0.end >= minOutroCue && $0.end <= source.duration - 3.5
+            $0.end >= minOutroCue && $0.end <= source.duration - 2.5
         })?.end {
             candidate = boundary
         }
 
-        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 2.0) {
+        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 1.5) {
             candidate = downbeat
         }
-        let latestStart = max(minOutroCue, source.duration - 3.5)
+        let latestStart = max(minOutroCue, source.duration - 2.5)
         return min(latestStart, max(minOutroCue, candidate))
     }
 

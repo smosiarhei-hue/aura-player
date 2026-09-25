@@ -96,22 +96,35 @@ class AntigravitySpecTests(unittest.TestCase):
         timing_content = timing_file.read_text(encoding="utf-8")
         # Incoming track starts at 0.0 (natural musical intro)
         self.assertIn("return 0.0", timing_content)
-        # 4.5 - 5.5s blend length
-        self.assertIn("min(5.5, max(4.5", timing_content)
+        # Punchy, vocal-safe 2.8 - 3.5s blend length (prevents vocal clash)
+        self.assertIn("min(3.5, max(2.8", timing_content)
 
         player_file = self.repo_root / "Aurora" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
-        # Equal-power streaming crossfade
-        self.assertIn("streamSourceVol = Float(cos(Double(s) * .pi * 0.5))", player_content)
-        self.assertIn("streamTargetVol = Float(sin(Double(s) * .pi * 0.5))", player_content)
-        # AVPlayer stream rate locked to 1.0 (no buffering jitter/pitch stretch)
-        self.assertIn("activeStreamingPlayer.rate = isPlaying ? 1.0 : 0", player_content)
+        # 3-phase DJ vocal-safe gain shaping
+        self.assertIn("p < 0.35", player_content)
+        self.assertIn("p < 0.65", player_content)
+        self.assertIn("streamSourceVol = max(0.08, 0.85 * Float(cos(Double(s) * .pi * 0.5)))", player_content)
+        self.assertIn("streamTargetVol = 0.15 + 0.70 * Float(sin(Double(s) * .pi * 0.5))", player_content)
+        # Seamless stream player handoff without dropout
+        self.assertIn("activeStreamingPlayer = incomingPlayer", player_content)
+        self.assertIn("outgoingPlayer.pause()", player_content)
+        self.assertIn("CMTimeGetSeconds(activeStreamingPlayer.currentTime())", player_content)
 
         models_file = self.repo_root / "Aurora" / "models.swift"
         models_content = models_file.read_text(encoding="utf-8")
-        # Pure Equal-Power Cosine Crossfade
+        # Pure Equal-Power Cosine Crossfade for local files
         self.assertIn("let outVol = Float(cos(p * (.pi / 2)))", models_content)
         self.assertIn("let inVol = Float(sin(p * (.pi / 2)))", models_content)
+
+    def test_my_wave_fresh_random_seed(self):
+        catalog_file = self.repo_root / "Aurora" / "sonivocatalog.swift"
+        catalog_content = catalog_file.read_text(encoding="utf-8")
+        # Wave supports forceFresh and seeds from last liked track
+        self.assertIn("forceFresh: Bool = false", catalog_content)
+        self.assertIn("LibraryStore.shared.favorites", catalog_content)
+        self.assertIn("randomElement()", catalog_content)
+        self.assertIn('action: "trackStarted"', catalog_content)
 
 
 if __name__ == "__main__":

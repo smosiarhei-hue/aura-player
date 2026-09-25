@@ -7,7 +7,7 @@ extension TransitionPlanner {
         strategy: TransitionStrategy,
         duration: Double
     ) -> [TransitionAction] {
-        let d = max(4, duration)
+        let d = max(2.5, duration)
         switch strategy {
         case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ:
             return bassSwap(duration: d)

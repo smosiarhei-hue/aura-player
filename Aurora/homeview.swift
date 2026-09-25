@@ -178,7 +178,7 @@ struct HomeView: View {
 
                         Button {
                             Haptics.tap(.medium)
-                            SonivoPlay.wave(moodStation)
+                            SonivoPlay.wave(moodStation, forceFresh: true)
                         } label: {
                             Image(systemName: "sparkles")
                                 .font(AG.glyph(.bold))
@@ -272,7 +272,7 @@ struct HomeView: View {
         if player.isPlaying {
             player.pause()
         } else {
-            SonivoPlay.wave(moodStation)
+            SonivoPlay.wave(moodStation, forceFresh: true)
         }
     }
 

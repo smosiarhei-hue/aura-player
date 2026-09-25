@@ -298,7 +298,7 @@ struct AuraHomeRedesignedView: View {
     private func toggleWave() {
         Haptics.tap(.medium)
         if player.isPlaying { player.pause() }
-        else { SonivoPlay.wave(moodStation) }
+        else { SonivoPlay.wave(moodStation, forceFresh: true) }
     }
 
     /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
