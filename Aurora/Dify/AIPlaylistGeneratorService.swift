@@ -1,13 +1,13 @@
 import Foundation
 
 @MainActor
-public final class AIPlaylistGeneratorService {
-    public static let shared = AIPlaylistGeneratorService()
+final class AIPlaylistGeneratorService {
+    static let shared = AIPlaylistGeneratorService()
 
     private init() {}
 
     /// Разрешает список строковых предложений треков через API Яндекс Музыки в реальные объекты Track
-    public func resolveTracks(for suggestions: [AITrackSuggestion]) async -> [Track] {
+    func resolveTracks(for suggestions: [AITrackSuggestion]) async -> [Track] {
         var resolved: [Track] = []
 
         for item in suggestions {
@@ -37,7 +37,7 @@ public final class AIPlaylistGeneratorService {
 
     /// Сохраняет распознанные треки как плейлист в медиатеку приложения
     @discardableResult
-    public func saveToLibrary(playlist: AIGeneratedPlaylist, tracks: [Track]) -> UUID? {
+    func saveToLibrary(playlist: AIGeneratedPlaylist, tracks: [Track]) -> UUID? {
         guard !tracks.isEmpty else { return nil }
         let title = playlist.playlistTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = title.isEmpty ? "AI Подборка" : title
@@ -53,7 +53,7 @@ public final class AIPlaylistGeneratorService {
     }
 
     /// Мгновенный запуск воспроизведения подборки
-    public func playNow(tracks: [Track]) {
+    func playNow(tracks: [Track]) {
         guard let first = tracks.first else { return }
         Haptics.tap(.heavy)
         PlaybackCommandRouter.shared.play(first, queue: tracks)

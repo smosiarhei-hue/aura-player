@@ -1,28 +1,29 @@
 import Foundation
+import UIKit
 
 @MainActor
-public final class DifyService: ObservableObject {
-    public static let shared = DifyService()
+final class DifyService: ObservableObject {
+    static let shared = DifyService()
 
     private let apiKeyStorageKey = "dify_api_key"
     private let baseURLStorageKey = "dify_base_url"
     private let defaultBaseURL = "https://api.dify.ai/v1"
 
-    @Published public var apiKey: String {
+    @Published var apiKey: String {
         didSet {
             UserDefaults.standard.set(apiKey, forKey: apiKeyStorageKey)
         }
     }
 
-    @Published public var baseURL: String {
+    @Published var baseURL: String {
         didSet {
             UserDefaults.standard.set(baseURL, forKey: baseURLStorageKey)
         }
     }
 
-    @Published public var currentConversationId: String? = nil
+    @Published var currentConversationId: String? = nil
 
-    public var isConfigured: Bool {
+    var isConfigured: Bool {
         !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -33,13 +34,13 @@ public final class DifyService: ObservableObject {
         self.baseURL = storedBaseURL.isEmpty ? defaultBaseURL : storedBaseURL
     }
 
-    public func resetConversation() {
+    func resetConversation() {
         currentConversationId = nil
     }
 
     // MARK: - Send Message (SSE Streaming)
 
-    public func sendMessage(
+    func sendMessage(
         query: String,
         inputs: [String: String] = [:],
         onDelta: @escaping (String) -> Void
@@ -165,12 +166,11 @@ public final class DifyService: ObservableObject {
 
     // MARK: - Health / Connection Test
 
-    public func testConnection() async throws -> Bool {
+    func testConnection() async throws -> Bool {
         guard isConfigured else { throw DifyError.missingApiKey }
 
         let cleanBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        // Dify parameters endpoint check or ping
         guard let url = URL(string: "\(cleanBaseURL)/parameters") else {
             throw DifyError.invalidURL
         }
@@ -190,7 +190,7 @@ public final class DifyService: ObservableObject {
 
     // MARK: - Robust JSON Playlist Extraction
 
-    public static func extractPlaylist(from rawText: String) -> AIGeneratedPlaylist? {
+    static func extractPlaylist(from rawText: String) -> AIGeneratedPlaylist? {
         // 1. Поиск блока ```json ... ```
         if let codeBlockRange = rawText.range(of: "```json([\\s\\S]*?)```", options: .regularExpression) {
             let match = String(rawText[codeBlockRange])
@@ -229,7 +229,7 @@ public final class DifyService: ObservableObject {
         return nil
     }
 
-    public static func cleanDisplayText(from rawText: String) -> String {
+    static func cleanDisplayText(from rawText: String) -> String {
         // Убираем JSON-блок ```json ... ``` из отображаемого сообщения, так как он красиво показывается карточкой
         var cleaned = rawText.replacingOccurrences(of: "```json([\\s\\S]*?)```", with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: "```([\\s\\S]*?)```", with: "", options: .regularExpression)
@@ -243,14 +243,14 @@ public final class DifyService: ObservableObject {
     }
 }
 
-public enum DifyError: LocalizedError {
+enum DifyError: LocalizedError {
     case missingApiKey
     case invalidURL
     case invalidResponse
     case unauthorized
     case serverError(statusCode: Int)
 
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .missingApiKey:
             return "Не настроен API-ключ Dify. Перейдите в настройки ассистента."

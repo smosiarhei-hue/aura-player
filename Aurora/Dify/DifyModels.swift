@@ -2,12 +2,12 @@ import Foundation
 
 // MARK: - Dify API Models
 
-public struct DifyChatRequest: Codable, Sendable {
-    public let inputs: [String: String]
-    public let query: String
-    public let responseMode: String
-    public let conversationId: String?
-    public let user: String
+struct DifyChatRequest: Codable, Sendable {
+    let inputs: [String: String]
+    let query: String
+    let responseMode: String
+    let conversationId: String?
+    let user: String
 
     enum CodingKeys: String, CodingKey {
         case inputs
@@ -17,7 +17,7 @@ public struct DifyChatRequest: Codable, Sendable {
         case user
     }
 
-    public init(
+    init(
         query: String,
         inputs: [String: String] = [:],
         responseMode: String = "streaming",
@@ -32,15 +32,15 @@ public struct DifyChatRequest: Codable, Sendable {
     }
 }
 
-public struct DifyChatBlockingResponse: Codable, Sendable {
-    public let event: String?
-    public let taskId: String?
-    public let id: String?
-    public let messageId: String?
-    public let conversationId: String?
-    public let mode: String?
-    public let answer: String?
-    public let createdAt: Int?
+struct DifyChatBlockingResponse: Codable, Sendable {
+    let event: String?
+    let taskId: String?
+    let id: String?
+    let messageId: String?
+    let conversationId: String?
+    let mode: String?
+    let answer: String?
+    let createdAt: Int?
 
     enum CodingKeys: String, CodingKey {
         case event
@@ -54,12 +54,12 @@ public struct DifyChatBlockingResponse: Codable, Sendable {
     }
 }
 
-public struct DifyStreamChunk: Codable, Sendable {
-    public let event: String?
-    public let taskId: String?
-    public let messageId: String?
-    public let conversationId: String?
-    public let answer: String?
+struct DifyStreamChunk: Codable, Sendable {
+    let event: String?
+    let taskId: String?
+    let messageId: String?
+    let conversationId: String?
+    let answer: String?
 
     enum CodingKeys: String, CodingKey {
         case event
@@ -72,10 +72,10 @@ public struct DifyStreamChunk: Codable, Sendable {
 
 // MARK: - AI Playlist & Music Models
 
-public struct AIGeneratedPlaylist: Codable, Sendable, Equatable {
-    public let playlistTitle: String
-    public let description: String
-    public let tracks: [AITrackSuggestion]
+struct AIGeneratedPlaylist: Codable, Sendable, Equatable {
+    let playlistTitle: String
+    let description: String
+    let tracks: [AITrackSuggestion]
 
     enum CodingKeys: String, CodingKey {
         case playlistTitle = "playlist_title"
@@ -83,20 +83,20 @@ public struct AIGeneratedPlaylist: Codable, Sendable, Equatable {
         case tracks
     }
 
-    public init(playlistTitle: String, description: String, tracks: [AITrackSuggestion]) {
+    init(playlistTitle: String, description: String, tracks: [AITrackSuggestion]) {
         self.playlistTitle = playlistTitle
         self.description = description
         self.tracks = tracks
     }
 }
 
-public struct AITrackSuggestion: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { "\(artist)-\(title)" }
-    public let artist: String
-    public let title: String
-    public let reason: String?
+struct AITrackSuggestion: Codable, Sendable, Equatable, Identifiable {
+    var id: String { "\(artist)-\(title)" }
+    let artist: String
+    let title: String
+    let reason: String?
 
-    public init(artist: String, title: String, reason: String? = nil) {
+    init(artist: String, title: String, reason: String? = nil) {
         self.artist = artist
         self.title = title
         self.reason = reason
@@ -105,23 +105,23 @@ public struct AITrackSuggestion: Codable, Sendable, Equatable, Identifiable {
 
 // MARK: - Chat UI Models
 
-public enum AIMessageRole: String, Codable, Sendable {
+enum AIMessageRole: String, Codable, Sendable {
     case user
     case assistant
 }
 
-public struct AIMessage: Identifiable, Sendable {
-    public let id: UUID
-    public let role: AIMessageRole
-    public var text: String
-    public let timestamp: Date
-    public var playlist: AIGeneratedPlaylist?
-    public var resolvedTracks: [Track]
-    public var isStreaming: Bool
-    public var isResolvingTracks: Bool
-    public var error: String?
+struct AIMessage: Identifiable, Sendable {
+    let id: UUID
+    let role: AIMessageRole
+    var text: String
+    let timestamp: Date
+    var playlist: AIGeneratedPlaylist?
+    var resolvedTracks: [Track]
+    var isStreaming: Bool
+    var isResolvingTracks: Bool
+    var error: String?
 
-    public init(
+    init(
         id: UUID = UUID(),
         role: AIMessageRole,
         text: String,
