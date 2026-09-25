@@ -955,7 +955,7 @@ struct CoverLyricsScrollView: View {
                                 if lyrics.isSynchronized {
                                     player.seek(to: max(0, line.startTime))
                                     if !player.isPlaying {
-                                        player.play()
+                                        player.resume()
                                     }
                                 }
                                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
