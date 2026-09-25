@@ -1063,9 +1063,9 @@ final class PlayerCore {
 
         if let streamURL {
             do {
-                let tempDir = FileManager.default.temporaryDirectory
                 let ext = streamURL.pathExtension.isEmpty ? "mp3" : streamURL.pathExtension
-                let localDest = tempDir.appendingPathComponent("vocal_\(track.id.uuidString).\(ext)")
+                let fileName = "vocal_\(track.id.uuidString).\(ext)"
+                let localDest = documentsDirectoryURL().appendingPathComponent(fileName)
                 if !FileManager.default.fileExists(atPath: localDest.path) {
                     let (tempLocation, _) = try await URLSession.shared.download(from: streamURL)
                     try? FileManager.default.removeItem(at: localDest)
@@ -1073,8 +1073,10 @@ final class PlayerCore {
                 }
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 var localTrack = track
-                localTrack.url = localDest
+                localTrack.fileName = fileName
+                localTrack.relativePath = ""
                 localTrack.isStream = false
+                localTrack.streamUrlString = nil
                 self.startLocal(localTrack, at: self.progress, token: token)
             } catch {
                 SonivoDiagnostics.log("[VocalIsolation] Stream migration to AVAudioEngine error: \(error)", tag: "AUDIO")

@@ -4,6 +4,10 @@ import Foundation
 import AVFoundation
 import Observation
 
+/// Thread-safe state accessible from audio render threads
+nonisolated(unsafe) private var sharedIsolationLevel: Float = 0.0
+nonisolated(unsafe) private var sharedProcessor: any VocalIsolationProcessing = MidSideVocalIsolator()
+
 @Observable
 @MainActor
 final class VocalIsolationManager {
@@ -45,26 +49,22 @@ final class VocalIsolationManager {
     /// Active DSP / ML algorithm conforming to VocalIsolationProcessing
     private(set) var processor: any VocalIsolationProcessing = MidSideVocalIsolator()
 
-    /// Thread-safe isolation level accessible from audio render threads
-    nonisolated(unsafe) private static var _sharedIsolationLevel: Float = 0.0
-    nonisolated(unsafe) private static var _sharedProcessor: any VocalIsolationProcessing = MidSideVocalIsolator()
-
     private init() {}
 
     func setProcessor(_ newProcessor: any VocalIsolationProcessing) {
         self.processor = newProcessor
-        Self._sharedProcessor = newProcessor
+        sharedProcessor = newProcessor
     }
 
     /// Fast audio processing callback callable from CoreAudio real-time tap or render thread
     nonisolated static func processBuffer(_ buffer: AVAudioPCMBuffer) {
-        let level = _sharedIsolationLevel
+        let level = sharedIsolationLevel
         guard abs(level) > 0.001 else { return }
         guard let left = buffer.floatChannelData?[0],
               let right = (buffer.format.channelCount > 1 ? buffer.floatChannelData?[1] : buffer.floatChannelData?[0]) else {
             return
         }
-        _sharedProcessor.process(
+        sharedProcessor.process(
             leftChannel: left,
             rightChannel: right,
             frameCount: Int(buffer.frameLength),
@@ -73,7 +73,7 @@ final class VocalIsolationManager {
     }
 
     private func triggerStreamMigrationIfNeeded() {
-        Self._sharedIsolationLevel = isolationLevel
+        sharedIsolationLevel = isolationLevel
         guard isEnabled, isolationLevel > 0.05 else { return }
 
         // If currently playing through AVPlayer (streaming in PlayerCore),

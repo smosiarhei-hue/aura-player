@@ -111,7 +111,7 @@ struct VocalIsolationControlView: View {
                     }
                     .onEnded { _ in
                         isDragging = false
-                        Haptics.tap(.selection)
+                        Haptics.tap(.light)
                         // If pulled down to 0, keep expanded so user can see it or tap to close
                     }
             )

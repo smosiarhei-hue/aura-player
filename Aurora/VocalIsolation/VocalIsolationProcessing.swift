@@ -18,7 +18,7 @@ public protocol VocalIsolationProcessing: Sendable {
     ///   - frameCount: Number of audio frames in the buffer.
     ///   - isolationLevel: Attenuation factor: 0.0 (original mix) to 1.0 (vocal canceled).
     ///     Negative values (-1.0 .. 0.0) boost the center vocal presence.
-    func process(
+    nonisolated func process(
         leftChannel: UnsafeMutablePointer<Float>,
         rightChannel: UnsafeMutablePointer<Float>,
         frameCount: Int,
@@ -49,7 +49,7 @@ public protocol VocalIsolationProcessing: Sendable {
 // At isolationLevel = 0.0: Mid' == Mid, L' == L, R' == R (exact bit-for-bit passthrough).
 // Parameter ramp (target vs current) is smoothed over ~30 ms to prevent clicks and pops.
 
-public final class MidSideVocalIsolator: VocalIsolationProcessing, @unchecked Sendable {
+nonisolated public final class MidSideVocalIsolator: VocalIsolationProcessing, @unchecked Sendable {
     private var smoothedLevel: Float = 0.0
     private let rampFactor: Float = 0.005 // ~20-30 ms exponential smoothing at 44.1/48 kHz
 
@@ -63,9 +63,9 @@ public final class MidSideVocalIsolator: VocalIsolationProcessing, @unchecked Se
     private let alphaBass: Float = 0.028
     private let alphaTreble: Float = 0.48
 
-    public init() {}
+    public nonisolated init() {}
 
-    public func process(
+    public nonisolated func process(
         leftChannel: UnsafeMutablePointer<Float>,
         rightChannel: UnsafeMutablePointer<Float>,
         frameCount: Int,
@@ -138,15 +138,15 @@ public final class MidSideVocalIsolator: VocalIsolationProcessing, @unchecked Se
 // When an on-device Core ML neural model is integrated in a future release,
 // it plugs directly into this class without changing the UI or audio graph.
 
-public final class MLVocalIsolator: VocalIsolationProcessing, @unchecked Sendable {
+nonisolated public final class MLVocalIsolator: VocalIsolationProcessing, @unchecked Sendable {
     private let fallback = MidSideVocalIsolator()
     private var isModelLoaded: Bool = false
 
-    public init() {
+    public nonisolated init() {
         // TODO: Load compiled Core ML model (.mlmodelc) for Apple Neural Engine execution
     }
 
-    public func process(
+    public nonisolated func process(
         leftChannel: UnsafeMutablePointer<Float>,
         rightChannel: UnsafeMutablePointer<Float>,
         frameCount: Int,
