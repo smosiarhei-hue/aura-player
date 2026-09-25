@@ -137,7 +137,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("let mid = (left + right) * 0.5", content)
         self.assertIn("let side = (left - right) * 0.5", content)
         # Bass preservation filter
-        self.assertIn("bassState += alphaBass * (mid - bassState)", content)
+        self.assertIn("bassState1 += alphaBass * (mid - bassState1)", content)
         # Click-free smoothing ramp
         self.assertIn("smoothedLevel += (target - smoothedLevel) * rampFactor", content)
         # ML future extension point
@@ -148,17 +148,19 @@ class AntigravitySpecTests(unittest.TestCase):
         mgr_content = manager_file.read_text(encoding="utf-8")
         self.assertIn("class VocalIsolationManager", mgr_content)
         self.assertIn("processBuffer", mgr_content)
+        self.assertIn("processAudioBufferList", mgr_content)
+        self.assertIn("AudioUnitAddRenderNotify", mgr_content)
         self.assertIn("migrateStreamToAudioEngineIfNeeded", mgr_content)
 
         player_file = self.repo_root / "Aurora" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
         # PlayerCore stream migration to AVAudioEngine
         self.assertIn("func migrateStreamToAudioEngineIfNeeded()", player_content)
-        self.assertIn("VocalIsolationManager.processBuffer(buffer)", player_content)
+        self.assertIn("VocalIsolationManager.shared.attach(to: vocalUnit)", player_content)
 
         dual_deck_file = self.repo_root / "Aurora" / "Stage3DualDeckAudioEngine.swift"
         dual_content = dual_deck_file.read_text(encoding="utf-8")
-        self.assertIn("VocalIsolationManager.processBuffer(buffer)", dual_content)
+        self.assertIn("VocalIsolationManager.shared.attach(to: userEQ)", dual_content)
 
     def test_vocal_isolation_ui_and_visibility(self):
         control_file = self.repo_root / "Aurora" / "VocalIsolation" / "VocalIsolationControlView.swift"

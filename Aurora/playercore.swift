@@ -156,6 +156,9 @@ final class PlayerCore {
     private var loopBuffer: AVAudioPCMBuffer?
     private var isLoopActive = false
 
+    private let vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
+    private var activeStreamURL: URL?
+
     private let outputLimiter = AVAudioUnitEffect(
         audioComponentDescription: AudioComponentDescription(
             componentType: kAudioUnitType_Effect,
@@ -329,9 +332,11 @@ final class PlayerCore {
 
         looperPlayer.volume = 0
 
-        // Connect mainMixerNode directly to outputNode so CoreAudio/AUHAL preserves
-        // native stereo channel layout (Stereo L/R) and AirPods Pro Spatialize Stereo HRTF.
-        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
+        engine.attach(vocalUnit)
+        vocalUnit.bands[0].bypass = true
+        engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
+        engine.connect(vocalUnit, to: engine.outputNode, format: nil)
+        VocalIsolationManager.shared.attach(to: vocalUnit)
 
         engine.mainMixerNode.outputVolume = volume
         installSpectrumTap()
@@ -867,6 +872,19 @@ final class PlayerCore {
         isPlanningTransition = false
         planningStartedAt = nil
 
+        if VocalIsolationManager.shared.isEnabled && VocalIsolationManager.shared.isolationLevel > 0.05 {
+            if let cachedURL = findLocalOrCachedAudioFile(for: track) {
+                var localTrack = track
+                localTrack.fileName = cachedURL.lastPathComponent
+                localTrack.relativePath = ""
+                localTrack.isStream = false
+                localTrack.streamUrlString = nil
+                streamBufferFraction = 1.0
+                startLocal(localTrack, at: seconds, token: token)
+                return
+            }
+        }
+
         if track.isStream || track.streamUrlString != nil {
             streamBufferFraction = 0.0
             startStream(track, at: seconds, token: token)
@@ -974,6 +992,8 @@ final class PlayerCore {
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
+                self.currentTrack?.streamUrlString = info.url.absoluteString
+                self.activeStreamURL = info.url
                 self.beginStream(info.url, at: seconds)
             } catch {
                 guard self.generation == token else { return }
@@ -1021,12 +1041,16 @@ final class PlayerCore {
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
+                self.currentTrack?.streamUrlString = info.url.absoluteString
+                self.activeStreamURL = info.url
                 self.beginStream(info.url, at: pos)
             } catch { }
         }
     }
 
     private func beginStream(_ url: URL, at seconds: Double) {
+        self.activeStreamURL = url
+        self.currentTrack?.streamUrlString = url.absoluteString
         let item = AVPlayerItem(url: url)
         item.audioTimePitchAlgorithm = .timeDomain
         item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
@@ -1044,20 +1068,56 @@ final class PlayerCore {
         self.updateNowPlayingInfo()
     }
 
+    func findLocalOrCachedAudioFile(for track: Track) -> URL? {
+        if !track.isStream && track.url.isFileURL && FileManager.default.fileExists(atPath: track.url.path) {
+            return track.url
+        }
+        let ext = (track.url.pathExtension.isEmpty ? "mp3" : track.url.pathExtension)
+        let vocalFile = documentsDirectoryURL().appendingPathComponent("vocal_\(track.id.uuidString).\(ext)")
+        if FileManager.default.fileExists(atPath: vocalFile.path) {
+            return vocalFile
+        }
+        let ymID = Self.yandexTrackID(from: track)
+        if !ymID.isEmpty, let cachesDir = try? TrackFileCache.defaultDirectory() {
+            if let files = try? FileManager.default.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil) {
+                if let matched = files.first(where: { $0.lastPathComponent.contains(ymID) }) {
+                    return matched
+                }
+            }
+        }
+        return nil
+    }
+
     /// Migrates streaming playback from AVPlayer to AVAudioEngine so raw PCM samples can be processed in real time
     func migrateStreamToAudioEngineIfNeeded() async {
         guard isUsingStreamPlayer, let track = currentTrack else { return }
         let currentPos = progress
         let token = generation
 
-        if track.url.isFileURL {
-            startLocal(track, at: currentPos, token: token)
+        // 1. Instant zero-latency switch if already in local cache
+        if let cachedURL = findLocalOrCachedAudioFile(for: track) {
+            var localTrack = track
+            localTrack.fileName = cachedURL.lastPathComponent
+            localTrack.relativePath = ""
+            localTrack.isStream = false
+            localTrack.streamUrlString = nil
+            self.startLocal(localTrack, at: currentPos, token: token)
             return
         }
 
-        let streamURL: URL? = {
+        // 2. Resolve stream URL reliably
+        let streamURL: URL? = try? await {
+            if let active = activeStreamURL { return active }
             if let str = track.streamUrlString, let u = URL(string: str) { return u }
+            if let asset = activeStreamingPlayer.currentItem?.asset as? AVURLAsset { return asset.url }
             if track.url.scheme == "http" || track.url.scheme == "https" { return track.url }
+            let ymID = Self.yandexTrackID(from: track)
+            if !ymID.isEmpty {
+                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
+                self.currentTrack?.streamUrlString = info.url.absoluteString
+                self.activeStreamURL = info.url
+                return info.url
+            }
             return nil
         }()
 

@@ -56,6 +56,7 @@ final class DualDeckAudioEngine: @unchecked Sendable {
         graph.disconnectNodeOutput(graph.mainMixerNode)
         graph.connect(graph.mainMixerNode, to: userEQ, format: nil)
         graph.connect(userEQ, to: graph.outputNode, format: nil)
+        VocalIsolationManager.shared.attach(to: userEQ)
         a.dryMixer.outputVolume = 1
         a.mixer.outputVolume = 1
         b.dryMixer.outputVolume = 1
