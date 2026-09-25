@@ -68,7 +68,8 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
             let duration = max(1.2, line.endTime.map { $0 - line.startTime } ?? (nextStart - line.startTime))
             let end = line.startTime + duration
 
-            let effective = line.effectiveWords()
+            let hasWords = line.hasRealWordTimings
+            let effective = hasWords ? (line.words ?? []) : []
             let words: [LyricWord] = effective.enumerated().map { wordIdx, w in
                 let wDur = max(0.08, w.endTime - w.startTime)
                 let isImp = w.text.count > 6 || w.text.contains("!")
@@ -86,7 +87,7 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
                 text: line.text,
                 timeRange: line.startTime...end,
                 words: words,
-                hasWordTimings: true,
+                hasWordTimings: hasWords,
                 isOutlined: false,
                 glowIntensity: 1.0
             ))
@@ -377,65 +378,17 @@ private struct KineticPhraseStage: View {
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 12)
             } else {
-                let start = phrase.timeRange.lowerBound
-                let end = phrase.timeRange.upperBound
-                let dur = max(0.5, end - start)
-                let prog = min(1.0, max(0.0, CGFloat((currentTime - start) / dur)))
-                let isSinging = prog > 0.005 && prog < 0.995
-
-                ZStack(alignment: .leading) {
-                    Text(phrase.text)
-                        .font(.system(size: baseFontSize, weight: .bold, design: .default))
-                        .foregroundStyle(Color.white.opacity(0.32))
-
-                    if prog > 0 {
-                        Text(phrase.text)
-                            .font(.system(size: baseFontSize, weight: .bold, design: .default))
-                            .foregroundStyle(Color.white)
-                            .shadow(color: Color.black.opacity(0.40), radius: 2, y: 1.5)
-                            .mask(
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .white, location: 0.0),
-                                        .init(color: .white, location: max(0.0, prog - 0.02)),
-                                        .init(color: .white, location: prog),
-                                        .init(color: .clear, location: min(1.0, prog + 0.005)),
-                                        .init(color: .clear, location: 1.0)
-                                    ],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    }
-
-                    if isSinging {
-                        Text(phrase.text)
-                            .font(.system(size: baseFontSize, weight: .bold, design: .default))
-                            .foregroundStyle(Color.white)
-                            .shadow(color: Color.white, radius: 4)
-                            .shadow(color: Color.white.opacity(0.90), radius: 8)
-                            .mask(
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .clear, location: max(0.0, prog - 0.20)),
-                                        .init(color: .white, location: max(0.0, prog - 0.03)),
-                                        .init(color: .white, location: prog),
-                                        .init(color: .white, location: min(1.0, prog + 0.03)),
-                                        .init(color: .clear, location: min(1.0, prog + 0.20))
-                                    ],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    }
-                }
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .minimumScaleFactor(0.70)
-                .lineSpacing(6)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 12)
+                Text(phrase.text)
+                    .font(.system(size: baseFontSize, weight: .bold, design: .default))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: Color.black.opacity(0.40), radius: 3, y: 1.5)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .minimumScaleFactor(0.70)
+                    .lineSpacing(6)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 12)
             }
 
             // Следующая строка (превью): шрифт SF Pro Bold, приглушенный цвет, без точек

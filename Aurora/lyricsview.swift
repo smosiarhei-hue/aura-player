@@ -60,15 +60,20 @@ private struct SyncedLyrics: View {
             let now = CACurrentMediaTime()
             let dt = player.isPlaying ? max(0.0, min(0.025, now - anchorTimestamp)) : 0.0
             let latency = AVAudioSession.sharedInstance().outputLatency
-            let currentTime = max(0, player.progress - latency - 0.25 + settings.lyricsOffset + dt)
+            let currentTime = max(0, player.progress - latency + settings.lyricsOffset + dt)
 
             let activeIndex: Int? = {
+                guard !lyrics.lines.isEmpty else { return nil }
                 if let first = lyrics.lines.first, currentTime < first.startTime {
                     return nil
                 }
-                return lyrics.lines.lastIndex { line in
-                    currentTime >= line.startTime && currentTime < (line.endTime ?? (line.startTime + 5.0))
+                for (idx, line) in lyrics.lines.enumerated() {
+                    let nextStart = (idx + 1 < lyrics.lines.count) ? lyrics.lines[idx + 1].startTime : (line.startTime + 20.0)
+                    if currentTime >= line.startTime && currentTime < nextStart {
+                        return idx
+                    }
                 }
+                return lyrics.lines.count - 1
             }()
 
             ScrollViewReader { proxy in
@@ -161,8 +166,8 @@ private struct LyricsLineView: View {
 
     var body: some View {
         if isActive {
-            if !words.isEmpty {
-                // Word-by-word synced line with crisp dynamic vocal sweep (ZERO glow)
+            if line.hasRealWordTimings && !words.isEmpty {
+                // True word-by-word synced line with dynamic vocal sweep
                 LyricsFlowLayout(spacing: 8, lineSpacing: 8, alignment: .leading) {
                     ForEach(words) { word in
                         KineticWordView(
@@ -179,7 +184,7 @@ private struct LyricsLineView: View {
                 Text(line.text)
                     .font(.system(size: fontSize, weight: .bold, design: .default))
                     .foregroundStyle(Color.white)
-                    .shadow(color: Color.black.opacity(0.35), radius: 2, y: 1.5)
+                    .shadow(color: Color.black.opacity(0.40), radius: 3, y: 1.5)
                     .multilineTextAlignment(.leading)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)

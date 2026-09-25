@@ -55,35 +55,29 @@ struct Lyrics: Equatable, Sendable {
     }
 }
 
-// MARK: - Phonetic Word Timing Synthesizer (Karaoke Vocal Tracking for Line-Level LRC)
+// MARK: - Word Timing Verification
 
 extension LyricsLine {
-    /// Returns explicit words if present, or synthesizes natural phonetic timed words
-    /// for line-level synced lyrics so karaoke highlights run dynamically across words.
+    /// True only if genuine word-by-word/syllable timestamps are present from source.
+    var hasRealWordTimings: Bool {
+        guard let words, words.count > 1 else { return false }
+        return words[1].startTime > words[0].startTime
+    }
+
+    /// Returns explicit words if present from source.
+    /// Does NOT synthesize fake word timings for standard line-synced lyrics.
     func effectiveWords() -> [LyricsWord] {
-        if let words, !words.isEmpty {
+        if hasRealWordTimings, let words {
             return words
         }
-        let rawWords = text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        guard !rawWords.isEmpty else { return [] }
-        let start = startTime
-        let end = endTime ?? (start + max(2.4, Double(text.count) * 0.12 + 1.0))
-        let totalDuration = max(0.6, end - start)
-        let totalWeight = rawWords.reduce(0.0) { $0 + max(1.0, Double($1.count)) }
-        var currentStart = start
-        var result: [LyricsWord] = []
-        for (i, word) in rawWords.enumerated() {
-            let weight = max(1.0, Double(word.count))
-            let wordDur = totalDuration * (weight / max(1.0, totalWeight))
-            let wordEnd = (i == rawWords.count - 1) ? end : (currentStart + wordDur)
-            result.append(LyricsWord(
-                text: word,
-                startTime: currentStart,
-                endTime: max(wordEnd, currentStart + 0.08)
-            ))
-            currentStart = wordEnd
-        }
-        return result
+        return []
+    }
+}
+
+extension Lyrics {
+    /// True only if actual syllable/word-level timestamps exist.
+    var hasDynamicWordTimings: Bool {
+        isSyllable && lines.contains { $0.hasRealWordTimings }
     }
 }
 
@@ -137,7 +131,12 @@ enum LRCParser {
 
             let content = lineTimeRegex.stringByReplacingMatches(in: raw, range: range, withTemplate: "")
             let parsed = parseContent(content, globalOffset: globalOffsetSeconds)
-            guard !parsed.text.isEmpty else { continue }
+            let cleanText = parsed.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanText.isEmpty else { continue }
+            // Filter out empty instrumental markers that create gaps in text
+            if cleanText == "//" || cleanText == "---" || cleanText == "..." || cleanText == "♪" {
+                continue
+            }
 
             for match in timeMatches {
                 guard let minR = Range(match.range(at: 1), in: raw),
@@ -148,7 +147,7 @@ enum LRCParser {
                 let rawTime = minutes * 60.0 + seconds
                 let time = max(0, rawTime - globalOffsetSeconds)
 
-                lines.append(LyricsLine(text: parsed.text, startTime: time, endTime: nil, words: parsed.words))
+                lines.append(LyricsLine(text: cleanText, startTime: time, endTime: nil, words: parsed.words))
             }
         }
 
@@ -156,24 +155,12 @@ enum LRCParser {
 
         lines.sort { $0.startTime < $1.startTime }
 
-        // Compute intelligent endTime for each line
+        // Compute contiguous endTime for each line (continuous flow without voids)
         for i in lines.indices {
-            let current = lines[i]
-            let charCount = max(current.text.count, 5)
-            // Estimated sung duration based on natural singing rate (~11 chars/sec + padding)
-            let estimatedSingDuration = Double(charCount) * 0.11 + 1.2
-
             if i + 1 < lines.count {
-                let nextStart = lines[i + 1].startTime
-                let gap = nextStart - current.startTime
-                if gap <= 5.5 {
-                    lines[i].endTime = nextStart
-                } else {
-                    // Instrumental break / pause between verses: fade line out after singing
-                    lines[i].endTime = min(nextStart, current.startTime + max(estimatedSingDuration, 3.2))
-                }
+                lines[i].endTime = lines[i + 1].startTime
             } else {
-                lines[i].endTime = current.startTime + max(estimatedSingDuration, 4.0)
+                lines[i].endTime = lines[i].startTime + 8.0
             }
         }
 

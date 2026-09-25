@@ -344,66 +344,11 @@ struct PlayerScreenV2: View {
                         .foregroundStyle(.white.opacity(0.7))
                         .padding(.top, 8)
                     Spacer()
-                } else if let lyrics, lyrics.isSynchronized, !cachedPhrases.isEmpty {
-                    Spacer(minLength: 0)
-                    KineticLyricsView(
-                        phrases: cachedPhrases,
-                        currentTime: Binding(get: {
-                            let latency = AVAudioSession.sharedInstance().outputLatency
-                            return max(0, player.progress - latency - 0.25 + SettingsStore.shared.lyricsOffset)
-                        }, set: { _ in }),
-                        isPlaying: player.isPlaying,
-                        fontSize: 28
-                    )
-                    .frame(maxWidth: side - 24)
-                    Spacer(minLength: 0)
-
-                    // Источник пишется в конце текста
-                    if !lyrics.sourceName.isEmpty {
-                        Text("Источник: \(lyrics.sourceName)")
-                            .font(.system(size: 11, weight: .medium, design: .default))
-                            .foregroundStyle(.white.opacity(0.40))
-                            .padding(.bottom, 10)
-                    }
                 } else if let lyrics, !lyrics.lines.isEmpty {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ForEach(lyrics.lines) { line in
-                                Text(line.text)
-                                    .font(.system(size: 24, weight: .bold, design: .default))
-                                    .foregroundStyle(.white.opacity(0.95))
-                                    .multilineTextAlignment(.leading)
-                                    .lineSpacing(4)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .minimumScaleFactor(0.70)
-                            }
-
-                            // Источник пишется в конце текста
-                            if !lyrics.sourceName.isEmpty {
-                                Text("Источник: \(lyrics.sourceName)")
-                                    .font(.system(size: 11, weight: .medium, design: .default))
-                                    .foregroundStyle(.white.opacity(0.40))
-                                    .padding(.top, 10)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 44)
-                        .padding(.bottom, 18)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxWidth: side)
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.0),
-                                .init(color: .black, location: 0.08),
-                                .init(color: .black, location: 0.90),
-                                .init(color: .clear, location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+                    CoverLyricsScrollView(
+                        lyrics: lyrics,
+                        player: player,
+                        side: side
                     )
                 } else {
                     let pair = currentLyricsPair
@@ -961,6 +906,101 @@ struct PlayerScreenV2: View {
         Task {
             try? await Task.sleep(for: .seconds(2.0))
             waveMessage = nil
+        }
+    }
+}
+
+// MARK: - Cover Lyrics Continuous Scroll View (Сплошной текст с плавной автопрокруткой)
+
+struct CoverLyricsScrollView: View {
+    let lyrics: Lyrics
+    let player: ActivePlayerPresentation
+    let side: CGFloat
+    @State private var settings = SettingsStore.shared
+
+    private var activeIndex: Int? {
+        guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
+        let latency = AVAudioSession.sharedInstance().outputLatency
+        let time = max(0, player.progress - latency + settings.lyricsOffset)
+        if let first = lyrics.lines.first, time < first.startTime {
+            return nil
+        }
+        for (i, line) in lyrics.lines.enumerated() {
+            let nextStart = (i + 1 < lyrics.lines.count) ? lyrics.lines[i + 1].startTime : (line.startTime + 20.0)
+            if time >= line.startTime && time < nextStart {
+                return i
+            }
+        }
+        return lyrics.lines.count - 1
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
+                        let isActive = (idx == activeIndex)
+                        Button {
+                            if lyrics.isSynchronized {
+                                Haptics.tap(.light)
+                                player.seek(to: max(0, line.startTime))
+                            }
+                        } label: {
+                            Text(line.text)
+                                .font(.system(size: isActive ? 24 : 19, weight: .bold, design: .default))
+                                .foregroundStyle(isActive ? Color.white : (lyrics.isSynchronized ? Color.white.opacity(0.38) : Color.white.opacity(0.92)))
+                                .shadow(color: isActive ? Color.black.opacity(0.55) : .clear, radius: 4, y: 1.5)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .lineSpacing(4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
+                        }
+                        .buttonStyle(.plain)
+                        .id(idx)
+                    }
+
+                    if !lyrics.sourceName.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("Источник: \(lyrics.sourceName)")
+                                .font(.system(size: 11, weight: .medium, design: .default))
+                        }
+                        .foregroundStyle(.white.opacity(0.40))
+                        .padding(.top, 14)
+                        .padding(.bottom, 28)
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.top, 46)
+                .padding(.bottom, 36)
+            }
+            .frame(maxWidth: side, maxHeight: side)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .black, location: 0.12),
+                        .init(color: .black, location: 0.86),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .onChange(of: activeIndex) { _, newIndex in
+                guard let newIndex else { return }
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                    proxy.scrollTo(newIndex, anchor: .center)
+                }
+            }
+            .onAppear {
+                if let activeIndex {
+                    proxy.scrollTo(activeIndex, anchor: .center)
+                }
+            }
         }
     }
 }
