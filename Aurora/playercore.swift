@@ -1044,6 +1044,44 @@ final class PlayerCore {
         self.updateNowPlayingInfo()
     }
 
+    /// Migrates streaming playback from AVPlayer to AVAudioEngine so raw PCM samples can be processed in real time
+    func migrateStreamToAudioEngineIfNeeded() async {
+        guard isUsingStreamPlayer, let track = currentTrack else { return }
+        let currentPos = progress
+        let token = generation
+
+        if track.url.isFileURL {
+            startLocal(track, at: currentPos, token: token)
+            return
+        }
+
+        let streamURL: URL? = {
+            if let str = track.streamUrlString, let u = URL(string: str) { return u }
+            if track.url.scheme == "http" || track.url.scheme == "https" { return track.url }
+            return nil
+        }()
+
+        if let streamURL {
+            do {
+                let tempDir = FileManager.default.temporaryDirectory
+                let ext = streamURL.pathExtension.isEmpty ? "mp3" : streamURL.pathExtension
+                let localDest = tempDir.appendingPathComponent("vocal_\(track.id.uuidString).\(ext)")
+                if !FileManager.default.fileExists(atPath: localDest.path) {
+                    let (tempLocation, _) = try await URLSession.shared.download(from: streamURL)
+                    try? FileManager.default.removeItem(at: localDest)
+                    try FileManager.default.moveItem(at: tempLocation, to: localDest)
+                }
+                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                var localTrack = track
+                localTrack.url = localDest
+                localTrack.isStream = false
+                self.startLocal(localTrack, at: self.progress, token: token)
+            } catch {
+                SonivoDiagnostics.log("[VocalIsolation] Stream migration to AVAudioEngine error: \(error)", tag: "AUDIO")
+            }
+        }
+    }
+
     private func scheduleTransitionIfNeeded() {
         guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
 
@@ -2092,6 +2130,7 @@ final class PlayerCore {
     private var spectrumTapInstalled = false
 
     nonisolated private static func handleSpectrumTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+        VocalIsolationManager.processBuffer(buffer)
         SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
     }
 

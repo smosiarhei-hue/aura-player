@@ -70,6 +70,7 @@ final class DualDeckAudioEngine: @unchecked Sendable {
     }
 
     private nonisolated static func handleSpectrumTap(_ buffer: AVAudioPCMBuffer, _ time: AVAudioTime) {
+        VocalIsolationManager.processBuffer(buffer)
         SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
     }
 

@@ -10,20 +10,27 @@ struct LyricsView: View {
     @State private var settings = SettingsStore.shared
 
     var body: some View {
-        Group {
-            if isLoading {
-                AuraLoadingState(title: "Загрузка текста…")
-            } else if let lyrics, !lyrics.lines.isEmpty {
-                if lyrics.isSynchronized {
-                    SyncedLyrics(lyrics: lyrics, player: player)
+        ZStack(alignment: .bottomTrailing) {
+            Group {
+                if isLoading {
+                    AuraLoadingState(title: "Загрузка текста…")
+                } else if let lyrics, !lyrics.lines.isEmpty {
+                    if lyrics.isSynchronized {
+                        SyncedLyrics(lyrics: lyrics, player: player)
+                    } else {
+                        StaticLyricsList(lyrics: lyrics)
+                    }
                 } else {
-                    StaticLyricsList(lyrics: lyrics)
+                    EmptyLyricsState(player: player)
                 }
-            } else {
-                EmptyLyricsState(player: player)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Real-time Apple Music Sing style vocal isolation slider overlay
+            VocalIsolationControlView()
+                .padding(.trailing, 22)
+                .padding(.bottom, 38)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             ZStack {
                 Color.black.ignoresSafeArea()

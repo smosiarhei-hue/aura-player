@@ -40,6 +40,22 @@ struct PlayerScreenV2: View {
         var id: String { rawValue }
     }
 
+    enum PlayerViewMode: Equatable {
+        case standard
+        case lyrics
+        case karaoke
+    }
+
+    var playerViewMode: PlayerViewMode {
+        if activeModal == .lyrics { return .karaoke }
+        if showLyricsMode { return .lyrics }
+        return .standard
+    }
+
+    var isVocalToggleVisible: Bool {
+        playerViewMode == .lyrics || playerViewMode == .karaoke
+    }
+
     init(isPresented: Binding<Bool>) { _isPresented = isPresented }
     private var track: Track? { player.displayTrack }
     private var palette: [Color] {
@@ -402,6 +418,14 @@ struct PlayerScreenV2: View {
             .buttonStyle(TactileButtonStyle(scale: 0.88))
             .padding(10)
             .accessibilityLabel("Развернуть текст песни на весь экран")
+
+            // 4. Оверлей управления вокалом (караоке-режим / Apple Music Sing style)
+            if isVocalToggleVisible {
+                VocalIsolationControlView()
+                    .padding(VocalIsolationUIConfig.cornerPadding)
+                    .frame(maxWidth: side, maxHeight: side, alignment: VocalIsolationUIConfig.cornerAlignment)
+                    .transition(.opacity.combined(with: .scale(scale: 0.88)))
+            }
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
