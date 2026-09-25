@@ -153,14 +153,15 @@ final class AntigravityAudioFader {
     }
 }
 
-// MARK: - 4. Детекция встряхивания устройства (CoreMotion + Fallback)
+// MARK: - 4. Детекция встряхивания устройства (CoreMotion + Proximity + Fallback)
 
 @MainActor
 final class AntigravityShakeDetector {
     private let motionManager = CMMotionManager()
     private var isMonitoring = false
     private var shakeWindowStart: TimeInterval = 0
-    private var peakAcceleration: Double = 0
+    private var reversalsCount = 0
+    private var lastSign: Double = 0
     private var onShakeDetected: (() -> Void)?
 
     init(onShakeDetected: @escaping () -> Void) {
@@ -170,13 +171,21 @@ final class AntigravityShakeDetector {
     func start() {
         guard !isMonitoring else { return }
         isMonitoring = true
+        UIDevice.current.isProximityMonitoringEnabled = true
+        resetShakeState()
 
-        if motionManager.isAccelerometerAvailable {
-            // Частота опроса акселерометра: 120 Гц (или 60 Гц при ограничении экрана)
+        if motionManager.isDeviceMotionAvailable {
+            // Частота опроса: 120 Гц (ProMotion)
+            motionManager.deviceMotionUpdateInterval = 1.0 / 120.0
+            motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] motion, _ in
+                guard let self, let motion else { return }
+                self.processDeviceMotion(motion)
+            }
+        } else if motionManager.isAccelerometerAvailable {
             motionManager.accelerometerUpdateInterval = 1.0 / 120.0
             motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
                 guard let self, let data else { return }
-                self.processSample(x: data.acceleration.x, y: data.acceleration.y, z: data.acceleration.z)
+                self.processAccelerometer(x: data.acceleration.x, y: data.acceleration.y, z: data.acceleration.z)
             }
         }
     }
@@ -184,45 +193,93 @@ final class AntigravityShakeDetector {
     func stop() {
         guard isMonitoring else { return }
         isMonitoring = false
-        motionManager.stopAccelerometerUpdates()
-        shakeWindowStart = 0
-        peakAcceleration = 0
+        UIDevice.current.isProximityMonitoringEnabled = false
+        if motionManager.isDeviceMotionActive {
+            motionManager.stopDeviceMotionUpdates()
+        }
+        if motionManager.isAccelerometerActive {
+            motionManager.stopAccelerometerUpdates()
+        }
+        resetShakeState()
     }
 
-    /// Фильтрация ускорения:
-    /// Порог: |a_x| + |a_y| + |a_z| >= 2.4g
-    /// Временное окно жеста: 180 - 350 мс
-    private func processSample(x: Double, y: Double, z: Double) {
-        let totalAcceleration = abs(x) + abs(y) + abs(z)
-        let now = CACurrentMediaTime()
+    private func resetShakeState() {
+        shakeWindowStart = 0
+        reversalsCount = 0
+        lastSign = 0
+    }
 
-        if totalAcceleration >= 2.4 {
+    /// Обработка CMDeviceMotion с математически вычтенной гравитацией (userAcceleration)
+    private func processDeviceMotion(_ motion: CMDeviceMotion) {
+        // Блокировка: в кармане, экраном вниз или закрыт датчик приближения
+        if UIDevice.current.proximityState {
+            resetShakeState()
+            return
+        }
+
+        let userAcc = motion.userAcceleration
+        let x = userAcc.x
+        let y = userAcc.y
+        let z = userAcc.z
+        let totalLinear = sqrt(x * x + y * y + z * z)
+        let dominant = abs(x) > abs(y) ? x : y
+        processLinearShake(dominantAxis: dominant, magnitude: totalLinear)
+    }
+
+    private func processAccelerometer(x: Double, y: Double, z: Double) {
+        if UIDevice.current.proximityState {
+            resetShakeState()
+            return
+        }
+
+        // Вычитаем статическую 1.0g гравитацию
+        let rawMag = sqrt(x * x + y * y + z * z)
+        let linearMag = abs(rawMag - 1.0)
+        let dominant = abs(x) > abs(y) ? x : y
+        processLinearShake(dominantAxis: dominant, magnitude: linearMag)
+    }
+
+    private func processLinearShake(dominantAxis: Double, magnitude: Double) {
+        let now = CACurrentMediaTime()
+        let threshold = 1.40 // Порог чистого линейного ускорения без гравитации
+
+        if magnitude >= threshold {
+            let currentSign: Double = dominantAxis >= 0 ? 1.0 : -1.0
+
             if shakeWindowStart == 0 {
                 shakeWindowStart = now
-                peakAcceleration = totalAcceleration
+                lastSign = currentSign
+                reversalsCount = 1
             } else {
-                peakAcceleration = max(peakAcceleration, totalAcceleration)
-                let elapsedMs = (now - shakeWindowStart) * 1000.0
+                let elapsed = (now - shakeWindowStart) * 1000.0
 
-                // Подтверждение жеста внутри временного окна 180 - 350 мс
-                if elapsedMs >= 180.0 && elapsedMs <= 350.0 {
-                    shakeWindowStart = 0
-                    peakAcceleration = 0
-                    onShakeDetected?()
-                } else if elapsedMs > 350.0 {
-                    // Окно истекло — сброс
+                if elapsed > 400.0 {
+                    // Окно истекло — сброс и отсчет нового окна
                     shakeWindowStart = now
-                    peakAcceleration = totalAcceleration
+                    lastSign = currentSign
+                    reversalsCount = 1
+                } else {
+                    // Смена направления рывка (Zero-Crossing)
+                    if currentSign != lastSign {
+                        reversalsCount += 1
+                        lastSign = currentSign
+
+                        // Минимум 2 смены знака (туда-обратно) в окне 160 - 400 мс
+                        if reversalsCount >= 2 && elapsed >= 160.0 {
+                            resetShakeState()
+                            onShakeDetected?()
+                        }
+                    }
                 }
             }
-        } else if shakeWindowStart > 0 && (now - shakeWindowStart) * 1000.0 > 350.0 {
-            shakeWindowStart = 0
-            peakAcceleration = 0
+        } else if shakeWindowStart > 0 && (now - shakeWindowStart) * 1000.0 > 400.0 {
+            resetShakeState()
         }
     }
 
     /// Вызывается при системном событии UIWindow.motionEnded
     func handleSystemShakeEvent() {
+        guard !UIDevice.current.proximityState else { return }
         onShakeDetected?()
     }
 }
@@ -257,6 +314,7 @@ final class AntigravityTransitionManager {
     private var detector: AntigravityShakeDetector?
     private var isAppActive: Bool = true
     private var isModalActive: Bool = false
+    private var isOnMainScreen: Bool = true
 
     private init() {
         self.detector = AntigravityShakeDetector { [weak self] in
@@ -267,11 +325,12 @@ final class AntigravityTransitionManager {
     }
 
     /// Управление жизненным циклом детектора
-    func updateLifecycle(isAppActive: Bool, isModalActive: Bool) {
+    func updateLifecycle(isAppActive: Bool, isModalActive: Bool, isOnMainScreen: Bool = true) {
         self.isAppActive = isAppActive
         self.isModalActive = isModalActive
+        self.isOnMainScreen = isOnMainScreen
 
-        if isAppActive && !isModalActive {
+        if isAppActive && !isModalActive && isOnMainScreen {
             detector?.start()
         } else {
             detector?.stop()
@@ -280,12 +339,16 @@ final class AntigravityTransitionManager {
 
     /// Обработка системного события встряхивания
     func handleSystemShakeNotification() {
-        guard isAppActive && !isModalActive else { return }
+        guard isAppActive && !isModalActive && isOnMainScreen else { return }
+        guard !UIDevice.current.proximityState else { return }
         triggerShift()
     }
 
     /// Основной запуск кинетического перехода «Антигравити»
     func triggerShift(forceDiscover: Bool = true) {
+        guard isAppActive && !isModalActive && isOnMainScreen else { return }
+        guard !UIDevice.current.proximityState else { return }
+
         let now = CACurrentMediaTime()
         // Антидребезг: блокировка повторного вызова на 1.2 с
         guard now - lastTriggerTimestamp > 1.2 else { return }

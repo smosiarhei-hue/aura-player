@@ -91,12 +91,15 @@ struct AuraHomeRedesignedView: View {
             .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
             .task { await load() }
-            .onAppear { updateAntigravityLifecycle() }
-            .onChange(of: scenePhase) { _, _ in updateAntigravityLifecycle() }
-            .onChange(of: showSettings) { _, _ in updateAntigravityLifecycle() }
-            .onChange(of: showWaveSettings) { _, _ in updateAntigravityLifecycle() }
-            .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle() }
+            .onAppear { updateAntigravityLifecycle(isOnMain: true) }
+            .onDisappear { updateAntigravityLifecycle(isOnMain: false) }
+            .onChange(of: scenePhase) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showWaveSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
+                guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings else { return }
+                guard !UIDevice.current.proximityState else { return }
                 antigravity.handleSystemShakeNotification()
                 triggerShakeWave()
             }
@@ -300,6 +303,9 @@ struct AuraHomeRedesignedView: View {
 
     /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
     private func triggerShakeWave(forceDiscover: Bool = true) {
+        guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings else { return }
+        guard !UIDevice.current.proximityState else { return }
+
         let now = Date().timeIntervalSince1970
         guard now - lastShakeTimestamp > 1.2 else { return }
         lastShakeTimestamp = now
@@ -322,10 +328,11 @@ struct AuraHomeRedesignedView: View {
         }
     }
 
-    private func updateAntigravityLifecycle() {
+    private func updateAntigravityLifecycle(isOnMain: Bool = true) {
         antigravity.updateLifecycle(
             isAppActive: scenePhase == .active,
-            isModalActive: showSettings || showWaveSettings || showPlayer
+            isModalActive: showSettings || showWaveSettings || showPlayer,
+            isOnMainScreen: isOnMain
         )
     }
 

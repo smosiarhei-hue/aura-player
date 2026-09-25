@@ -28,12 +28,14 @@ struct MyWaveHeroView: View {
     }
 
     private var accentColor: Color {
-        // Vibrant neon yellow as seen in reference design, or track's bright accent
         if let first = activeTrack?.palette.first {
-            // Brighten up color if too dark
-            return first
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            UIColor(first).getRed(&r, green: &g, blue: &b, alpha: &a)
+            if !(r > 0.68 && g > 0.58 && b < 0.42) {
+                return first
+            }
         }
-        return Color(red: 0.98, green: 0.88, blue: 0.16) // #FBE029 Signature Yellow
+        return AG.accent
     }
 
     private var isFavorite: Bool {
@@ -350,7 +352,7 @@ struct MyWaveHeroView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "waveform.badge.sparkles")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                        .foregroundStyle(Color(red: 0.0, green: 0.95, blue: 0.99))
                     Text("Встряхнуть волну")
                         .font(AG.text(.caption2, .bold))
                         .foregroundStyle(.white.opacity(0.90))
