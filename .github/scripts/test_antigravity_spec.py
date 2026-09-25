@@ -228,7 +228,32 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("AIMusicAssistantView()", lib_content)
         self.assertIn("AI Подборка", lib_content)
 
+    def test_ai_dj_and_vibe_wave(self):
+        dj_service = self.repo_root / "Aurora" / "Dify" / "AIDJService.swift"
+        dj_badge = self.repo_root / "Aurora" / "Dify" / "AIDJTransitionBadgeView.swift"
+
+        self.assertTrue(dj_service.exists(), "AIDJService.swift must exist")
+        self.assertTrue(dj_badge.exists(), "AIDJTransitionBadgeView.swift must exist")
+
+        svc_content = dj_service.read_text(encoding="utf-8")
+        self.assertIn("class AIDJService", svc_content)
+        self.assertIn("func generateVibeWave(", svc_content)
+        self.assertIn("func commentary(", svc_content)
+        self.assertIn("func prefetchCommentaryIfNeeded(", svc_content)
+
+        player_screen = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        ps_content = player_screen.read_text(encoding="utf-8")
+        self.assertIn("AIDJTransitionBadgeView(", ps_content)
+        self.assertIn("startAIVibeWave()", ps_content)
+        self.assertIn("prefetchCommentaryIfNeeded", ps_content)
+
+        lib_view = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_content = lib_view.read_text(encoding="utf-8")
+        self.assertIn("startAIVibeWave(for:", lib_content)
+        self.assertIn("AI Вайб-волна", lib_content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

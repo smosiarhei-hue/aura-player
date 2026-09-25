@@ -162,6 +162,20 @@ struct PlayerScreenV2: View {
             videoShotTrackID = nil
             teardownVideoLooper()
         }
+        .onChange(of: player.isTransitionActive) { _, isActive in
+            if isActive, let outgoing = player.currentTrack, let incoming = player.incomingTrack {
+                Task {
+                    _ = await AIDJService.shared.commentary(outgoing: outgoing, incoming: incoming)
+                }
+            } else if !isActive {
+                AIDJService.shared.clearActiveCommentary()
+            }
+        }
+        .onChange(of: player.incomingTrack?.id) { _, _ in
+            if let outgoing = player.currentTrack, let incoming = player.incomingTrack {
+                AIDJService.shared.prefetchCommentaryIfNeeded(outgoing: outgoing, incoming: incoming)
+            }
+        }
         .onDisappear {
             teardownVideoLooper()
         }
@@ -534,13 +548,26 @@ struct PlayerScreenV2: View {
                 }
 
                 if current != nil {
-                    GlassIconButton(
-                        systemImage: "dot.radiowaves.left.and.right",
-                        tint: waveActive ? AG.amber : AG.inkMuted,
-                        accessibilityLabel: "Моя волна по треку",
-                        action: startTrackWave
-                    )
-                    .disabled(waveLoading)
+                    Menu {
+                        Button {
+                            startAIVibeWave()
+                        } label: {
+                            Label("AI Вайб-волна (умный подбор)", systemImage: "sparkles")
+                        }
+
+                        Button {
+                            startTrackWave()
+                        } label: {
+                            Label("Обычная волна по треку", systemImage: "dot.radiowaves.left.and.right")
+                        }
+                    } label: {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .foregroundStyle(waveActive ? AG.amber : AG.inkMuted)
+                            .frame(width: tapSide, height: tapSide)
+                    }
+                    .glassCircle()
+                    .disabled(waveLoading || AIDJService.shared.isVibeWaveGenerating)
+                    .accessibilityLabel("Волна по треку")
                 }
 
                 if let current {
@@ -576,7 +603,8 @@ struct PlayerScreenV2: View {
     }
     @ViewBuilder private var centerStatusLabel: some View {
         if player.isTransitionActive {
-            AutoMixBadge().transition(.opacity)
+            AIDJTransitionBadgeView(incomingTrack: player.incomingTrack)
+                .transition(.opacity)
         } else {
             qualityBadgeButton.transition(.opacity)
         }
@@ -646,6 +674,13 @@ struct PlayerScreenV2: View {
 
     private var moreMenuButton: some View {
         Menu {
+            Button {
+                startAIVibeWave()
+            } label: {
+                Label("AI Вайб-волна (похожие по вайбу)", systemImage: "sparkles")
+            }
+            .disabled(track == nil || AIDJService.shared.isVibeWaveGenerating)
+
             Button {
                 SettingsStore.shared.isNeuralEngineEnabled.toggle()
                 waveMessage = SettingsStore.shared.isNeuralEngineEnabled ? "🧠 Apple Neural Engine включён" : "🧠 Apple Neural Engine выключен"
@@ -770,6 +805,9 @@ struct PlayerScreenV2: View {
         guard let current = track,
               let idx = q.firstIndex(where: { $0.id == current.id }) else { return }
         let nextTracks = Array(q.dropFirst(idx + 1).prefix(3))
+        if let next = nextTracks.first {
+            AIDJService.shared.prefetchCommentaryIfNeeded(outgoing: current, incoming: next)
+        }
         for next in nextTracks {
             guard LibraryStore.cachedArtworkImage(for: next) == nil,
                   let raw = next.coverURL,
@@ -917,6 +955,38 @@ struct PlayerScreenV2: View {
             }
             try? await Task.sleep(for: .seconds(2.5))
             await MainActor.run { waveMessage = nil }
+        }
+    }
+
+    private func startAIVibeWave() {
+        guard let current = track else { return }
+        waveLoading = true
+        waveMessage = "✨ AI подбирает треки по вайбу..."
+        Task {
+            do {
+                let (vibeTracks, _, _) = try await AIDJService.shared.generateVibeWave(for: current)
+                await MainActor.run {
+                    waveLoading = false
+                    if vibeTracks.isEmpty {
+                        waveMessage = "Не удалось найти похожие по вайбу треки"
+                    } else {
+                        waveActive = true
+                        waveMessage = "✨ AI Вайб-волна: \(vibeTracks.count) треков"
+                        MoodRadioEngine.shared.startTrackWave(seed: current, initialTracks: vibeTracks)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    waveLoading = false
+                    waveMessage = "Ошибка AI подбора: \(error.localizedDescription)"
+                }
+            }
+            try? await Task.sleep(for: .seconds(2.5))
+            await MainActor.run {
+                if waveMessage?.hasPrefix("✨") == true || waveMessage?.hasPrefix("Ошибка") == true || waveMessage?.hasPrefix("Не удалось") == true {
+                    waveMessage = nil
+                }
+            }
         }
     }
 
