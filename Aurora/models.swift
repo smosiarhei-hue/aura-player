@@ -95,61 +95,7 @@ final class AutoMixDJEngine {
             value = startValue + delta * segment
         }
 
-        let total = frames.reduce(0.0) { max($0, $1.time + max(0, $1.duration)) }
-        if total > 0.001 {
-            let p = min(1.0, max(0.0, time / total))
-
-            if target == "target", parameter == "volume" {
-                // Make the mashup unmistakable: the incoming lane is quiet at the
-                // very first beat, clearly audible by 25-30%, and already near full
-                // before the final hand-off. This removes the old "silent until the
-                // last millisecond, then jump" effect the device logs exposed.
-                let fastP = min(1.0, p / 0.72)
-                let equalPower = sin(fastP * (.pi / 2))
-                let audibleFloor = 0.06 + equalPower * 0.94
-                value = max(value, audibleFloor)
-                value = min(1.0, max(0.0, value))
-            }
-
-            if target == "source", parameter == "volume" {
-                // Do not leave the outgoing track at full volume until the final
-                // quarter: start ducking earlier so the blend reads as a DJ move,
-                // not a normal track end.
-                let shaped: Double
-                if p < 0.18 {
-                    shaped = 1.0
-                } else if p < 0.72 {
-                    let q = (p - 0.18) / 0.54
-                    shaped = 1.0 - q * 0.48
-                } else {
-                    let q = (p - 0.72) / 0.28
-                    shaped = max(0.0, 0.52 * (1.0 - q))
-                }
-                value = min(value, shaped)
-                value = min(1.0, max(0.0, value))
-            }
-
-            if target == "source", parameter == "lowEQ" {
-                // Start removing the outgoing bass early; otherwise both songs feel
-                // like a plain volume fade and the bass hand-off is inaudible.
-                let earlyCut = max(0.04, 1.0 - min(1.0, p / 0.62) * 0.96)
-                value = min(value, earlyCut)
-            }
-
-            if target == "target", parameter == "lowEQ" {
-                // Bring the incoming bass back by the middle, not at the very end.
-                let earlyReturn = min(1.0, p / 0.55)
-                value = max(value, earlyReturn)
-            }
-        }
-
-        if parameter == "reverb", value > 0 {
-            // Wet/dry values below ~30% were too subtle on phone speakers and made
-            // the transition feel like a plain fade. Push reverb into an obvious
-            // tail for local AutoMix testing, still bounded to 100%.
-            value = min(1.0, value * 2.4 + 0.20)
-        }
-
+        value = min(1.0, max(0.0, value))
         return Float(value)
     }
 
@@ -196,48 +142,42 @@ final class AutoMixDJEngine {
     ) -> (outgoingVol: Float, incomingVol: Float, outgoingBassCutDB: Float, incomingBassGainDB: Float, filterCutoff: Float) {
         let p = max(0.0, min(1.0, progress))
 
-        // 1. Equal-Power Cosine Crossfade Curve (Section 28)
-        var outVol = Float(cos(p * (.pi / 2)))
-        var inVol = Float(sin(p * (.pi / 2)))
+        // 1. Pure Equal-Power Cosine Crossfade Curve (Constant acoustic energy: V_out^2 + V_in^2 = 1.0)
+        let outVol = Float(cos(p * (.pi / 2)))
+        let inVol = Float(sin(p * (.pi / 2)))
 
         var outBassCut: Float = 0
         var inBassGain: Float = 0
-        var filterCutoff: Float = 1.0
+        let filterCutoff: Float = 1.0
 
         switch strategy {
-        case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ, .ENERGY_BLEND, .BUILDUP_TO_DROP:
+        case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ, .BUILDUP_TO_DROP:
             if p < 0.50 {
-                // First half (t0 -> tMid):
-                // Outgoing track stays near full level (1.0 -> 0.85), Bass remains 100% full
-                outVol = max(0.85, Float(1.0 - (p / 0.50) * 0.15))
+                // First half (0.0 .. 0.50):
+                // Outgoing bass is 100% full (0dB).
+                // Incoming bass is ducked (-24dB) so basslines never clash.
                 outBassCut = 0.0
-
-                // Incoming track builds up softly to 0.70, Bass is completely cut (-24dB)
-                inVol = Float(sin(p * (.pi / 2))) * 0.70
                 inBassGain = -24.0
             } else {
-                // Second half (tMid -> t1):
+                // Second half (0.50 .. 1.0): Bass swap on the downbeat!
+                // Outgoing bass cuts sharply to make room for incoming bass.
+                // Incoming bass returns to full power (0dB).
                 let secondHalfP = Float((p - 0.50) / 0.50)
-                // Outgoing track fades smoothly to 0, Bass is cut (-24dB)
-                outVol = Float(0.85 * (1.0 - secondHalfP))
                 outBassCut = -24.0 - (8.0 * secondHalfP)
-
-                // Incoming track reaches 1.0, Bass returns to 100% (0dB) on the downbeat!
-                inVol = 0.70 + (0.30 * secondHalfP)
                 inBassGain = 0.0
             }
 
+        case .ENERGY_BLEND:
+            let pFloat = Float(p)
+            outBassCut = -18.0 * pFloat
+            inBassGain = -18.0 * (1.0 - pFloat)
+
         default:
             if p < 0.50 {
-                outVol = max(0.85, Float(1.0 - (p / 0.50) * 0.15))
                 outBassCut = 0.0
-                inVol = Float(sin(p * (.pi / 2))) * 0.70
                 inBassGain = -24.0
             } else {
-                let secondHalfP = Float((p - 0.50) / 0.50)
-                outVol = Float(0.85 * (1.0 - secondHalfP))
                 outBassCut = -24.0
-                inVol = 0.70 + (0.30 * secondHalfP)
                 inBassGain = 0.0
             }
         }

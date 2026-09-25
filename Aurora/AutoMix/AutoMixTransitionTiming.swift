@@ -8,14 +8,13 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         sourceDur: TimeInterval
     ) -> TimeInterval {
-        let bar = (source.barDuration.flatMap { ($0 >= 1.0 && $0 <= 4.0) ? $0 : nil })
+        let bar = (source.barDuration.flatMap { ($0 >= 1.0 && $0 <= 3.0) ? $0 : nil })
             ?? (source.bpm.flatMap { normalizedBPM($0) }.map { 240.0 / $0 })
             ?? 2.0
 
-        // Target 2 to 4 bars (8 to 16 beats) for an authentic, crisp outro DJ blend (~5.5 - 7.5s)
-        let maxBars = max(2.0, floor((sourceDur * 0.08) / bar))
-        let targetBars = min(4.0, max(2.0, maxBars))
-        return targetBars * bar
+        // Comfortable, musical DJ outro crossfade duration (4.5 - 5.5s)
+        let targetDuration = min(5.5, max(4.5, bar * 2.0))
+        return targetDuration
     }
 
     nonisolated static func musicalCueTime(
@@ -54,33 +53,15 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         target: TrackAnalysis
     ) -> Double {
-        let musicalEntry: Double = {
-            if let instrumental = target.instrumentalRegions.first(where: { $0.start <= 12 && $0.duration >= 4 }) {
-                return instrumental.start
-            }
-            if target.introEnd >= 2, target.introEnd <= 12 { return target.introEnd }
-            if let downbeat = target.downbeats.first(where: { $0 >= 1 && $0 <= 12 }) { return downbeat }
-            if let firstBeat = target.firstBeat, firstBeat >= 0, firstBeat <= 12 { return firstBeat }
-            return min(8, max(2, target.duration * 0.03))
-        }()
-
-        guard let sourceBPM = normalizedBPM(source.bpm),
-              let targetBPM = normalizedBPM(target.bpm) else {
-            return musicalEntry
-        }
-
-        let sourcePeriod = 60 / sourceBPM / max(0.5, sourceRate)
-        let targetPeriod = 60 / targetBPM / max(0.5, targetRate)
-        guard sourcePeriod.isFinite, targetPeriod.isFinite, targetPeriod > 0 else {
-            return musicalEntry
-        }
-
-        let handoffTime = cueTime + blendDuration * 0.52
-        let sourcePhase = handoffTime.truncatingRemainder(dividingBy: sourcePeriod)
-        let targetPhase = musicalEntry.truncatingRemainder(dividingBy: targetPeriod)
-        var correction = sourcePhase - targetPhase
-        if correction > targetPeriod / 2 { correction -= targetPeriod }
-        if correction < -targetPeriod / 2 { correction += targetPeriod }
-        return min(12, max(0, musicalEntry + correction))
+        // Natural musical intro: incoming track always starts from 0.0 (the natural beginning of the song).
+        // Seeking forward into the middle (introEnd, instrumental) cuts off the track's intro,
+        // triggers vocal-on-vocal clashes with the outgoing song, and stalls streaming buffers.
+        _ = cueTime
+        _ = blendDuration
+        _ = sourceRate
+        _ = targetRate
+        _ = source
+        _ = target
+        return 0.0
     }
 }

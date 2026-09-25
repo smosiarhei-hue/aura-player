@@ -112,7 +112,7 @@ struct MyWaveHeroView: View {
             // Centered "Моя волна" title
             Text("Моя волна")
                 .font(.system(size: 20, weight: .heavy, design: .default))
-                .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                .foregroundStyle(Color.white)
                 .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
 
             Spacer()
@@ -139,7 +139,7 @@ struct MyWaveHeroView: View {
             if let artist = activeTrack?.artist, !artist.isEmpty {
                 Text(artist)
                     .font(.system(size: 28, weight: .black, design: .default))
-                    .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                    .foregroundStyle(Color.white)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
@@ -219,7 +219,7 @@ struct MyWaveHeroView: View {
         HStack(spacing: 10) {
             Image(systemName: "timer")
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                .foregroundStyle(accentColor)
 
             Text("Переключение через \(String(format: "%.1f", pendingCountdown))с")
                 .font(AG.text(.caption, .bold))
@@ -247,7 +247,7 @@ struct MyWaveHeroView: View {
                     .foregroundStyle(Color.black)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Color(red: 0.98, green: 0.88, blue: 0.16), in: Capsule())
+                    .background(accentColor, in: Capsule())
             }
             .buttonStyle(.plain)
         }
@@ -279,7 +279,7 @@ struct MyWaveHeroView: View {
 
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 22, weight: .black))
-                        .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                        .foregroundStyle(accentColor)
                 }
             }
             .buttonStyle(TactileButtonStyle(scale: 0.92))
@@ -296,7 +296,7 @@ struct MyWaveHeroView: View {
                 HStack(spacing: 8) {
                     Text(activeTrack?.title ?? "Включить волну")
                         .font(.system(size: 16, weight: .heavy, design: .default))
-                        .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                        .foregroundStyle(Color.white)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .scaleEffect(antigravity.phase == .antigravity ? antigravity.typographyExitScale : (antigravity.phase == .settling ? antigravity.typographyEnterScale : 1.0))
@@ -304,7 +304,7 @@ struct MyWaveHeroView: View {
 
                     Image(systemName: "info.circle")
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16).opacity(0.9))
+                        .foregroundStyle(accentColor.opacity(0.9))
                 }
                 .padding(.horizontal, 20)
                 .frame(maxWidth: .infinity)
@@ -332,7 +332,7 @@ struct MyWaveHeroView: View {
 
                     Image(systemName: isFavorite ? "heart.fill" : "heart")
                         .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                        .foregroundStyle(isFavorite ? accentColor : Color.white.opacity(0.85))
                 }
             }
             .buttonStyle(TactileButtonStyle(scale: 0.92))

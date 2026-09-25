@@ -71,6 +71,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("delay(Double(index) * 0.040)", content)  # 40ms stagger
         # Yellow signature should be eliminated from hero view
         self.assertNotIn("#FBE029", content)
+        self.assertNotIn("Color(red: 0.98, green: 0.88, blue: 0.16)", content)
 
     def test_vertical_wave_120hz_and_app_colors(self):
         content = self.shake_overlay.read_text(encoding="utf-8")
@@ -89,6 +90,28 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("proximityState", content)
         self.assertIn("onDisappear", content)
         self.assertIn("isOnMain", content)
+
+    def test_automix_clean_equal_power_and_timing(self):
+        timing_file = self.repo_root / "Aurora" / "AutoMix" / "AutoMixTransitionTiming.swift"
+        timing_content = timing_file.read_text(encoding="utf-8")
+        # Incoming track starts at 0.0 (natural musical intro)
+        self.assertIn("return 0.0", timing_content)
+        # 4.5 - 5.5s blend length
+        self.assertIn("min(5.5, max(4.5", timing_content)
+
+        player_file = self.repo_root / "Aurora" / "playercore.swift"
+        player_content = player_file.read_text(encoding="utf-8")
+        # Equal-power streaming crossfade
+        self.assertIn("streamSourceVol = Float(cos(Double(s) * .pi * 0.5))", player_content)
+        self.assertIn("streamTargetVol = Float(sin(Double(s) * .pi * 0.5))", player_content)
+        # AVPlayer stream rate locked to 1.0 (no buffering jitter/pitch stretch)
+        self.assertIn("activeStreamingPlayer.rate = isPlaying ? 1.0 : 0", player_content)
+
+        models_file = self.repo_root / "Aurora" / "models.swift"
+        models_content = models_file.read_text(encoding="utf-8")
+        # Pure Equal-Power Cosine Crossfade
+        self.assertIn("let outVol = Float(cos(p * (.pi / 2)))", models_content)
+        self.assertIn("let inVol = Float(sin(p * (.pi / 2)))", models_content)
 
 
 if __name__ == "__main__":
