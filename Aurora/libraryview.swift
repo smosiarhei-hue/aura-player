@@ -14,6 +14,7 @@ struct LibraryView: View {
     @State private var showFilePicker = false
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistTitle = ""
+    @State private var showAIAssistant = false
     @State private var isSendingAutoMixLogs = false
     @State private var autoMixLogMessage: String? = nil
 
@@ -137,6 +138,9 @@ struct LibraryView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showAIAssistant) {
+                AIMusicAssistantView()
             }
             .sheet(isPresented: $showFilePicker) {
                 LocalAudioDocumentPicker(
@@ -363,10 +367,29 @@ struct LibraryView: View {
 
     private var playlistsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("Ваши плейлисты")
                     .font(.title3.weight(.bold))
                 Spacer()
+                Button {
+                    Haptics.tap(.light)
+                    showAIAssistant = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                        Text("AI Подборка")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.pink, Color.purple],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                }
+                .frame(minHeight: 44)
+
                 Button("+ Создать") {
                     showNewPlaylistAlert = true
                 }

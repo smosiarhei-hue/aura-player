@@ -13,6 +13,7 @@ struct AuraHomeRedesignedView: View {
     @State private var showSettings = false
     @State private var showWaveSettings = false
     @State private var showPlayer = false
+    @State private var showAIAssistant = false
     @State private var waveStore = WaveSettingsStore.shared
     @State private var showShakeOverlay = false
     @State private var shakeTriggerCount = 0
@@ -88,6 +89,7 @@ struct AuraHomeRedesignedView: View {
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showWaveSettings) { WaveSettingsSheet() }
+            .fullScreenCover(isPresented: $showAIAssistant) { AIMusicAssistantView() }
             .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
             .task { await load() }
@@ -96,9 +98,10 @@ struct AuraHomeRedesignedView: View {
             .onChange(of: scenePhase) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onChange(of: showSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onChange(of: showWaveSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showAIAssistant) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
-                guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings else { return }
+                guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings && !showAIAssistant else { return }
                 guard !UIDevice.current.proximityState else { return }
                 antigravity.handleSystemShakeNotification()
                 triggerShakeWave()
@@ -122,6 +125,7 @@ struct AuraHomeRedesignedView: View {
             showPlayer: $showPlayer,
             showSettings: $showSettings,
             showWaveSettings: $showWaveSettings,
+            showAIAssistant: $showAIAssistant,
             onToggleWave: toggleWave,
             onShakeWave: { triggerShakeWave() },
             isWaveShaking: isWaveShaking
@@ -131,6 +135,20 @@ struct AuraHomeRedesignedView: View {
     private var quickDestinations: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
+                // AI Музыкальный Куратор
+                Button {
+                    Haptics.tap(.medium)
+                    showAIAssistant = true
+                } label: {
+                    quickCard(
+                        "AI Куратор",
+                        subtitle: "Плейлисты 2026",
+                        icon: "wand.and.stars",
+                        colors: [Color(hex: "#FF455B") ?? .pink, Color(hex: "#9333EA") ?? .purple]
+                    )
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
+
                 // Пункт «Незнакомое» (быстрый переход в режим открытий и новых треков)
                 Button {
                     Haptics.tap(.medium)

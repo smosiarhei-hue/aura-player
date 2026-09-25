@@ -185,6 +185,50 @@ class AntigravitySpecTests(unittest.TestCase):
         lv_content = lyrics_view.read_text(encoding="utf-8")
         self.assertIn("VocalIsolationControlView()", lv_content)
 
+    def test_dify_models_and_service(self):
+        dify_models = self.repo_root / "Aurora" / "Dify" / "DifyModels.swift"
+        dify_service = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
+        ai_playlist_service = self.repo_root / "Aurora" / "Dify" / "AIPlaylistGeneratorService.swift"
+        ai_assistant_view = self.repo_root / "Aurora" / "Dify" / "AIMusicAssistantView.swift"
+        dify_settings = self.repo_root / "Aurora" / "Dify" / "DifySettingsSheet.swift"
+
+        self.assertTrue(dify_models.exists(), "DifyModels.swift must exist")
+        self.assertTrue(dify_service.exists(), "DifyService.swift must exist")
+        self.assertTrue(ai_playlist_service.exists(), "AIPlaylistGeneratorService.swift must exist")
+        self.assertTrue(ai_assistant_view.exists(), "AIMusicAssistantView.swift must exist")
+        self.assertTrue(dify_settings.exists(), "DifySettingsSheet.swift must exist")
+
+        svc_content = dify_service.read_text(encoding="utf-8")
+        self.assertIn("class DifyService", svc_content)
+        self.assertIn("func sendMessage(", svc_content)
+        self.assertIn("func extractPlaylist(", svc_content)
+        self.assertIn("func cleanDisplayText(", svc_content)
+        self.assertIn("https://api.dify.ai/v1", svc_content)
+
+        gen_content = ai_playlist_service.read_text(encoding="utf-8")
+        self.assertIn("class AIPlaylistGeneratorService", gen_content)
+        self.assertIn("func resolveTracks(", gen_content)
+        self.assertIn("func saveToLibrary(", gen_content)
+        self.assertIn("func playNow(", gen_content)
+
+    def test_dify_ui_integration(self):
+        hero_view = self.repo_root / "Aurora" / "MyWaveHeroView.swift"
+        hero_content = hero_view.read_text(encoding="utf-8")
+        self.assertIn("showAIAssistant", hero_content)
+        self.assertIn("sparkles", hero_content)
+
+        home_view = self.repo_root / "Aurora" / "AuraHomeRedesignedView.swift"
+        home_content = home_view.read_text(encoding="utf-8")
+        self.assertIn("AIMusicAssistantView()", home_content)
+        self.assertIn("showAIAssistant", home_content)
+        self.assertIn("AI Куратор", home_content)
+
+        lib_view = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_content = lib_view.read_text(encoding="utf-8")
+        self.assertIn("AIMusicAssistantView()", lib_content)
+        self.assertIn("AI Подборка", lib_content)
+
 
 if __name__ == "__main__":
     unittest.main()
+

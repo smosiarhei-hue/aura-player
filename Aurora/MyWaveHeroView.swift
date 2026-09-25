@@ -5,6 +5,7 @@ struct MyWaveHeroView: View {
     @Binding var showPlayer: Bool
     @Binding var showSettings: Bool
     @Binding var showWaveSettings: Bool
+    var showAIAssistant: Binding<Bool>? = nil
     var onToggleWave: () -> Void
     var onShakeWave: (() -> Void)? = nil
     var isWaveShaking: Bool = false
@@ -117,18 +118,41 @@ struct MyWaveHeroView: View {
 
             Spacer()
 
-            // Right: Search Button
-            NavigationLink {
-                SearchCatalogView()
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .background(Color.white.opacity(0.12), in: Circle())
+            // Right: AI Assistant & Search
+            HStack(spacing: 8) {
+                if let showAIAssistant = showAIAssistant {
+                    Button {
+                        Haptics.tap(.light)
+                        showAIAssistant.wrappedValue = true
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color(hex: "#FF455B") ?? .pink, Color(hex: "#9333EA") ?? .purple, Color.cyan],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 38, height: 38)
+                            .background(Color.white.opacity(0.12), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("AI Ассистент")
+                }
+
+                NavigationLink {
+                    SearchCatalogView()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .background(Color.white.opacity(0.12), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Поиск")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Поиск")
         }
         .padding(.horizontal, 20)
     }
