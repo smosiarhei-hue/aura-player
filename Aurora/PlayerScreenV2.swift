@@ -323,19 +323,25 @@ struct PlayerScreenV2: View {
 
     private func lyricsCoverCard(side: CGFloat) -> some View {
         ZStack(alignment: .topTrailing) {
-            // 1. Обложка с деликатным размытием и затемнением, чтобы не конфликтовать с текстом
+            // 1. Матовая подложка с мягким размытием обложки в цветах трека (стиль Яндекс Музыки)
             ZStack {
+                if let primary = artworkPaletteColors.first ?? palette.first {
+                    primary.opacity(0.38)
+                } else {
+                    Color(red: 0.31, green: 0.35, blue: 0.38)
+                }
                 artwork
                     .scaledToFill()
                     .frame(width: side, height: side)
-                    .scaleEffect(1.06)
-                    .blur(radius: 9)
+                    .blur(radius: 24)
+                    .scaleEffect(1.15)
+                    .opacity(0.55)
                     .clipped()
 
-                Color.black.opacity(0.42)
+                Color.black.opacity(0.28)
             }
 
-            // 2. Сцена отображения текста (крупный стандартный шрифт SF Pro Bold)
+            // 2. Сцена отображения текста (крупный жирный центрированный шрифт)
             VStack(spacing: 0) {
                 if lyricsLoading {
                     Spacer()
@@ -354,28 +360,28 @@ struct PlayerScreenV2: View {
                 } else {
                     let pair = currentLyricsPair
                     Spacer()
-                    VStack(spacing: 12) {
+                    VStack(spacing: 16) {
                         Image(systemName: "quote.bubble")
                             .font(.system(size: 28, weight: .light))
                             .foregroundStyle(.white.opacity(0.35))
                         Text(pair.current.isEmpty || pair.current == "Слова песни" ? "Текст песни отсутствует" : pair.current)
-                            .font(.system(size: 24, weight: .bold, design: .default))
+                            .font(.system(size: 32, weight: .heavy, design: .default))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
                             .minimumScaleFactor(0.70)
-                            .padding(.horizontal, 16)
+                            .padding(.horizontal, 20)
                             .shadow(color: .black.opacity(0.45), radius: 3, y: 1.5)
                         if let next = pair.next {
                             Text(next)
-                                .font(.system(size: 18, weight: .bold, design: .default))
-                                .foregroundStyle(.white.opacity(0.65))
+                                .font(.system(size: 24, weight: .bold, design: .default))
+                                .foregroundStyle(.white.opacity(0.35))
                                 .multilineTextAlignment(.center)
                                 .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .minimumScaleFactor(0.70)
-                                .padding(.horizontal, 16)
+                                .padding(.horizontal, 20)
                         }
                     }
                     Spacer()
@@ -383,34 +389,24 @@ struct PlayerScreenV2: View {
             }
             .frame(width: side, height: side)
 
-            // 3. Кнопка «Развернуть» в верхнем углу обложки
+            // 3. Минималистичная иконка «Развернуть» в верхнем правом углу обложки
             Button {
                 openModal(.lyrics)
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Развернуть")
-                        .font(.system(size: 12, weight: .semibold, design: .default))
-                }
-                .foregroundStyle(.white.opacity(0.92))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.8)
-                )
-                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.92))
-            .padding(12)
+            .buttonStyle(TactileButtonStyle(scale: 0.88))
+            .padding(10)
             .accessibilityLabel("Развернуть текст песни на весь экран")
         }
         .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.6)
         )
         .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
@@ -943,7 +939,7 @@ struct CoverLyricsScrollView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .center, spacing: 26) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                         CoverLyricLineRow(
                             text: line.text,
@@ -973,14 +969,13 @@ struct CoverLyricsScrollView: View {
                             Text("Источник: \(lyrics.sourceName)")
                                 .font(.system(size: 11, weight: .medium, design: .default))
                         }
-                        .foregroundStyle(.white.opacity(0.40))
-                        .padding(.top, 14)
+                        .foregroundStyle(.white.opacity(0.35))
+                        .padding(.top, 16)
                         .padding(.bottom, 28)
                     }
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 46)
-                .padding(.bottom, 36)
+                .padding(.horizontal, 20)
+                .padding(.vertical, side * 0.35)
             }
             .frame(maxWidth: side, maxHeight: side)
             .simultaneousGesture(
@@ -1052,7 +1047,11 @@ private struct CoverLyricLineRow: View {
     let onSelect: () -> Void
 
     private var fontSize: CGFloat {
-        isActive ? 24.0 : 19.0
+        isActive ? 32.0 : 24.0
+    }
+
+    private var fontWeight: Font.Weight {
+        isActive ? .heavy : .bold
     }
 
     private var textColor: Color {
@@ -1060,30 +1059,30 @@ private struct CoverLyricLineRow: View {
             return Color.white
         }
         if isSynchronized {
-            return Color.white.opacity(0.38)
+            return Color.white.opacity(0.35)
         }
-        return Color.white.opacity(0.92)
+        return Color.white.opacity(0.85)
     }
 
     private var shadowColor: Color {
-        isActive ? Color.black.opacity(0.55) : Color.clear
+        isActive ? Color.black.opacity(0.45) : Color.clear
     }
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 8) {
-                Text(text)
-                    .font(.system(size: fontSize, weight: .bold, design: .default))
-                    .foregroundStyle(textColor)
-                    .shadow(color: shadowColor, radius: 4, y: 1.5)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineSpacing(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
-            }
-            .contentShape(Rectangle())
+            Text(text)
+                .font(.system(size: fontSize, weight: fontWeight, design: .default))
+                .foregroundStyle(textColor)
+                .shadow(color: shadowColor, radius: 4, y: 1.5)
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .minimumScaleFactor(0.75)
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .scaleEffect(isActive ? 1.02 : 0.98)
+                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
+                .contentShape(Rectangle())
         }
         .buttonStyle(LyricsLineButtonStyle())
     }

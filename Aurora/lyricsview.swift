@@ -54,6 +54,11 @@ private struct SyncedLyrics: View {
     @State private var player = ActivePlayerPresentation()
     @State private var settings = SettingsStore.shared
     @State private var anchorTimestamp: Double = CACurrentMediaTime()
+    @State private var userScrolledUntil: Date = .distantPast
+
+    private var isUserInteracting: Bool {
+        Date() < userScrolledUntil
+    }
 
     var body: some View {
         TimelineView(.animation(paused: !player.isPlaying)) { _ in
@@ -78,21 +83,25 @@ private struct SyncedLyrics: View {
 
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: 20) {
+                    LazyVStack(spacing: 28) {
                         ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                             Button {
                                 Haptics.tap(.medium)
-                                player.seek(to: max(0, line.startTime - 0.05))
+                                userScrolledUntil = .distantPast
+                                player.seek(to: max(0, line.startTime))
+                                if !player.isPlaying {
+                                    player.resume()
+                                }
+                                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                    proxy.scrollTo(idx, anchor: .center)
+                                }
                             } label: {
                                 LyricsLineView(
                                     line: line,
-                                    isActive: idx == activeIndex,
-                                    currentTime: currentTime,
-                                    fontSize: 21
+                                    isActive: idx == activeIndex
                                 )
-                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(LyricsLineButtonStyle())
                             .accessibilityLabel(line.text)
                             .accessibilityHint("Перемотать к этой строке")
                             .id(idx)
@@ -111,11 +120,16 @@ private struct SyncedLyrics: View {
                             .padding(.bottom, 40)
                         }
                     }
-                    .padding(.horizontal, 28)
-                    .padding(.top, 90)
-                    .padding(.bottom, 120)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 240)
                     .frame(maxWidth: .infinity)
                 }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { _ in
+                            userScrolledUntil = Date().addingTimeInterval(4.5)
+                        }
+                )
                 .mask(
                     LinearGradient(
                         stops: [
@@ -128,10 +142,43 @@ private struct SyncedLyrics: View {
                         endPoint: .bottom
                     )
                 )
+                .overlay(alignment: .bottomTrailing) {
+                    if isUserInteracting, let activeIndex {
+                        Button {
+                            Haptics.tap(.light)
+                            userScrolledUntil = .distantPast
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                proxy.scrollTo(activeIndex, anchor: .center)
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "arrow.down.to.line")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("К текущей")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Color.black.opacity(0.70), in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8))
+                            .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
+                        }
+                        .buttonStyle(TactileButtonStyle(scale: 0.95))
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 24)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
+                }
                 .onChange(of: activeIndex) { _, newIndex in
-                    guard let newIndex else { return }
+                    guard let newIndex, !isUserInteracting else { return }
                     withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                         proxy.scrollTo(newIndex, anchor: .center)
+                    }
+                }
+                .onAppear {
+                    if let activeIndex {
+                        proxy.scrollTo(activeIndex, anchor: .center)
                     }
                 }
             }
@@ -144,69 +191,35 @@ private struct SyncedLyrics: View {
     }
 }
 
-// MARK: - Single Line (120 Hz Smooth Syllable Karaoke Highlight — ZERO Squares)
+// MARK: - Single Line (Large Bold Centered Typography — Matching Reference)
 
 private struct LyricsLineView: View {
     let line: LyricsLine
     let isActive: Bool
-    let currentTime: Double
-    let fontSize: Double
-
-    private var words: [LyricWord] {
-        let eff = line.effectiveWords()
-        return eff.enumerated().map { i, item in
-            LyricWord(
-                id: "\(line.id)_w\(i)",
-                text: item.text,
-                startTime: item.startTime,
-                duration: max(0.08, item.endTime - item.startTime)
-            )
-        }
-    }
 
     var body: some View {
-        if isActive {
-            if line.hasRealWordTimings && !words.isEmpty {
-                // True word-by-word synced line with dynamic vocal sweep
-                LyricsFlowLayout(spacing: 8, lineSpacing: 8, alignment: .leading) {
-                    ForEach(words) { word in
-                        KineticWordView(
-                            word: word,
-                            currentTime: currentTime,
-                            fontSize: fontSize
-                        )
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .scaleEffect(1.02, anchor: .leading)
-                .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
-            } else {
-                Text(line.text)
-                    .font(.system(size: fontSize, weight: .bold, design: .default))
-                    .foregroundStyle(Color.white)
-                    .shadow(color: Color.black.opacity(0.40), radius: 3, y: 1.5)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .minimumScaleFactor(0.70)
-                    .lineSpacing(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .scaleEffect(1.02, anchor: .leading)
-                    .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
-            }
-        } else {
-            Text(line.text)
-                .font(.system(size: fontSize * 0.84, weight: .bold, design: .default))
-                .foregroundStyle(Color.white.opacity(0.35))
-                .multilineTextAlignment(.leading)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .minimumScaleFactor(0.70)
-                .lineSpacing(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .scaleEffect(0.96, anchor: .leading)
-                .animation(.spring(response: 0.40, dampingFraction: 0.82), value: isActive)
-        }
+        Text(line.text)
+            .font(.system(size: isActive ? 34 : 26, weight: isActive ? .heavy : .bold, design: .default))
+            .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.35))
+            .shadow(color: isActive ? Color.black.opacity(0.40) : Color.clear, radius: 4, y: 1.5)
+            .multilineTextAlignment(.center)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .minimumScaleFactor(0.75)
+            .lineSpacing(6)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .scaleEffect(isActive ? 1.02 : 0.98, anchor: .center)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
+            .contentShape(Rectangle())
+    }
+}
+
+private struct LyricsLineButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.65 : 1.0)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -218,25 +231,29 @@ private struct StaticLyricsList: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .center, spacing: 22) {
                 if let title = lyrics.title, !title.isEmpty {
                     Text(title)
                         .font(AG.display(.title2, .heavy))
                         .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
                     if let artist = lyrics.artist, !artist.isEmpty {
                         Text(artist)
                             .font(AG.text(.callout, .semibold))
                             .foregroundStyle(.white.opacity(0.70))
+                            .multilineTextAlignment(.center)
                     }
                     Divider().overlay(Color.white.opacity(0.2)).padding(.vertical, 6)
                 }
                 ForEach(lyrics.lines) { line in
                     Text(line.text)
-                        .font(.system(size: settings.lyricsFontSize * 0.82, weight: .bold, design: .default))
-                        .foregroundStyle(Color.white.opacity(0.92))
+                        .font(.system(size: 26, weight: .bold, design: .default))
+                        .foregroundStyle(Color.white.opacity(0.88))
+                        .multilineTextAlignment(.center)
                         .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
                         .lineSpacing(6)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 if !lyrics.sourceName.isEmpty {
                     HStack(spacing: 6) {
@@ -253,8 +270,9 @@ private struct StaticLyricsList: View {
                     .padding(.top, 24)
                 }
             }
-            .padding(28)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 80)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }
