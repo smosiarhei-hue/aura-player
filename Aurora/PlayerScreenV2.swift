@@ -279,7 +279,7 @@ struct PlayerScreenV2: View {
         .offset(x: coverDragX)
         .contentShape(Rectangle())
         .gesture(
-            showLyricsCover ? nil : DragGesture(minimumDistance: 15)
+            showLyricsMode ? nil : DragGesture(minimumDistance: 15)
                 .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
                 coverDragX = value.translation.width / (1 + abs(value.translation.width) * 0.001)
@@ -945,36 +945,24 @@ struct CoverLyricsScrollView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
-                        let isActive = (idx == activeIndex)
-                        Button {
-                            // Выбор строки текста: немедленная перемотка и старт пения
-                            Haptics.tap(.medium)
-                            userScrolledUntil = .distantPast
-                            if lyrics.isSynchronized {
-                                player.seek(to: max(0, line.startTime))
-                                if !player.isPlaying {
-                                    player.play()
+                        CoverLyricLineRow(
+                            text: line.text,
+                            isActive: idx == activeIndex,
+                            isSynchronized: lyrics.isSynchronized,
+                            onSelect: {
+                                Haptics.tap(.medium)
+                                userScrolledUntil = .distantPast
+                                if lyrics.isSynchronized {
+                                    player.seek(to: max(0, line.startTime))
+                                    if !player.isPlaying {
+                                        player.play()
+                                    }
+                                }
+                                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                    proxy.scrollTo(idx, anchor: .center)
                                 }
                             }
-                            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                                proxy.scrollTo(idx, anchor: .center)
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text(line.text)
-                                    .font(.system(size: isActive ? 24 : 19, weight: .bold, design: .default))
-                                    .foregroundStyle(isActive ? Color.white : (lyrics.isSynchronized ? Color.white.opacity(0.38) : Color.white.opacity(0.92)))
-                                    .shadow(color: isActive ? Color.black.opacity(0.55) : .clear, radius: 4, y: 1.5)
-                                    .multilineTextAlignment(.leading)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .lineSpacing(4)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(LyricsLineButtonStyle())
+                        )
                         .id(idx)
                     }
 
@@ -1054,6 +1042,50 @@ struct CoverLyricsScrollView: View {
                 }
             }
         }
+    }
+}
+
+private struct CoverLyricLineRow: View {
+    let text: String
+    let isActive: Bool
+    let isSynchronized: Bool
+    let onSelect: () -> Void
+
+    private var fontSize: CGFloat {
+        isActive ? 24.0 : 19.0
+    }
+
+    private var textColor: Color {
+        if isActive {
+            return Color.white
+        }
+        if isSynchronized {
+            return Color.white.opacity(0.38)
+        }
+        return Color.white.opacity(0.92)
+    }
+
+    private var shadowColor: Color {
+        isActive ? Color.black.opacity(0.55) : Color.clear
+    }
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Text(text)
+                    .font(.system(size: fontSize, weight: .bold, design: .default))
+                    .foregroundStyle(textColor)
+                    .shadow(color: shadowColor, radius: 4, y: 1.5)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(LyricsLineButtonStyle())
     }
 }
 
