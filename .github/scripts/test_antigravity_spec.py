@@ -124,7 +124,8 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("forceFresh: Bool = false", catalog_content)
         self.assertIn("LibraryStore.shared.favorites", catalog_content)
         self.assertIn("randomElement()", catalog_content)
-        self.assertIn('action: "trackStarted"', catalog_content)
+        self.assertIn("service.remember(", catalog_content)
+        self.assertIn("ymTrackId: lastLikedYmId", catalog_content)
 
 
 if __name__ == "__main__":

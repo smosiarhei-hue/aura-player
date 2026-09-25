@@ -249,6 +249,7 @@ enum SonivoPlay {
             return active
         }()
 
+        let startedImmediately = immediate != nil
         if let immediate, (forceFresh || active == nil) {
             router.play(immediate, queue: [immediate])
         }
@@ -257,10 +258,17 @@ enum SonivoPlay {
             // Seed Yandex Music's recommendation rotor with the last liked track
             if let lastLiked {
                 let lastLikedYmId = PlayerCore.yandexTrackID(from: lastLiked)
-                if !lastLikedYmId.isEmpty {
-                    service.remember(ymTrackId: lastLikedYmId, action: "trackStarted")
-                }
+                service.remember(
+                    key: lastLiked.id.uuidString,
+                    artist: lastLiked.artist,
+                    ymTrackId: lastLikedYmId.isEmpty ? nil : lastLikedYmId
+                )
             }
+
+            let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
+            let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
+            let initial = unplayed.isEmpty ? firstBatch : unplayed
+            let candidates = initial.isEmpty ? (try? await service.getChart()) ?? [] : initial
 
             if !candidates.isEmpty {
                 let available = candidates
