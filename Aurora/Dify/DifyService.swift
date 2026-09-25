@@ -8,6 +8,7 @@ final class DifyService: ObservableObject {
     private let apiKeyStorageKey = "dify_api_key"
     private let baseURLStorageKey = "dify_base_url"
     private let defaultBaseURL = "https://api.dify.ai/v1"
+    private let defaultApiKey = "app-58WNo9d5oTTMdQgDTeohiwu9"
 
     @Published var apiKey: String {
         didSet {
@@ -30,7 +31,7 @@ final class DifyService: ObservableObject {
     private init() {
         let storedKey = UserDefaults.standard.string(forKey: apiKeyStorageKey) ?? ""
         let storedBaseURL = UserDefaults.standard.string(forKey: baseURLStorageKey) ?? defaultBaseURL
-        self.apiKey = storedKey
+        self.apiKey = storedKey.isEmpty ? defaultApiKey : storedKey
         self.baseURL = storedBaseURL.isEmpty ? defaultBaseURL : storedBaseURL
     }
 
@@ -83,7 +84,8 @@ final class DifyService: ObservableObject {
                 if httpResponse.statusCode == 401 {
                     throw DifyError.unauthorized
                 }
-                throw DifyError.serverError(statusCode: httpResponse.statusCode)
+                // Try blocking fallback to inspect body for specific Dify error
+                return try await sendBlockingFallback(query: query, inputs: inputs, onDelta: onDelta)
             }
 
             for try await line in asyncBytes.lines {
@@ -151,6 +153,11 @@ final class DifyService: ObservableObject {
 
         guard (200...299).contains(httpResponse.statusCode) else {
             if httpResponse.statusCode == 401 { throw DifyError.unauthorized }
+            if let errStr = String(data: data, encoding: .utf8) {
+                if errStr.contains("Workflow not published") || errStr.contains("app_unavailable") {
+                    throw DifyError.notPublished
+                }
+            }
             throw DifyError.serverError(statusCode: httpResponse.statusCode)
         }
 
@@ -171,19 +178,35 @@ final class DifyService: ObservableObject {
 
         let cleanBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(cleanBaseURL)/parameters") else {
+        guard let url = URL(string: "\(cleanBaseURL)/chat-messages") else {
             throw DifyError.invalidURL
         }
 
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let bodyPayload = DifyChatRequest(
+            query: "ping",
+            inputs: [:],
+            responseMode: "blocking",
+            conversationId: nil,
+            user: "ping-test"
+        )
+        request.httpBody = try? JSONEncoder().encode(bodyPayload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse {
             if httpResponse.statusCode == 401 { throw DifyError.unauthorized }
-            return (200...299).contains(httpResponse.statusCode)
+            if (200...299).contains(httpResponse.statusCode) { return true }
+            if let errStr = String(data: data, encoding: .utf8) {
+                if errStr.contains("Workflow not published") || errStr.contains("app_unavailable") {
+                    throw DifyError.notPublished
+                }
+            }
+            throw DifyError.serverError(statusCode: httpResponse.statusCode)
         }
         return false
     }
@@ -248,6 +271,7 @@ enum DifyError: LocalizedError {
     case invalidURL
     case invalidResponse
     case unauthorized
+    case notPublished
     case serverError(statusCode: Int)
 
     var errorDescription: String? {
@@ -260,6 +284,8 @@ enum DifyError: LocalizedError {
             return "Некорректный ответ от Dify Cloud."
         case .unauthorized:
             return "Ошибка авторизации: неверный API-ключ Dify (Bearer token)."
+        case .notPublished:
+            return "Бот создан в Dify, но не опубликован! Откройте cloud.dify.ai и нажмите синюю кнопку «Publish» (Опубликовать) в правом верхнем углу бота."
         case .serverError(let code):
             return "Ошибка сервера Dify (код \(code))."
         }
