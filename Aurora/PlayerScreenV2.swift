@@ -117,7 +117,7 @@ struct PlayerScreenV2: View {
                 case .quality: PlayerQualityModalView(player: player, onDismiss: { activeModal = nil })
                 case .artistSelection: artistSelectionSheet
                 case .lyrics:
-                    LyricsView(lyrics: lyrics, isLoading: lyricsLoading)
+                    LyricsView(lyrics: lyrics, isLoading: lyricsLoading, player: player)
                         .navigationTitle("Текст песни").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
                 }
@@ -939,7 +939,7 @@ struct CoverLyricsScrollView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .center, spacing: 26) {
+                VStack(alignment: .center, spacing: 26) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                         CoverLyricLineRow(
                             text: line.text,
@@ -954,7 +954,7 @@ struct CoverLyricsScrollView: View {
                                         player.resume()
                                     }
                                 }
-                                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                withAnimation(.easeInOut(duration: 0.42)) {
                                     proxy.scrollTo(idx, anchor: .center)
                                 }
                             }
@@ -1002,7 +1002,7 @@ struct CoverLyricsScrollView: View {
                     Button {
                         Haptics.tap(.light)
                         userScrolledUntil = .distantPast
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                        withAnimation(.easeInOut(duration: 0.42)) {
                             proxy.scrollTo(activeIndex, anchor: .center)
                         }
                     } label: {
@@ -1027,7 +1027,7 @@ struct CoverLyricsScrollView: View {
             }
             .onChange(of: activeIndex) { _, newIndex in
                 guard let newIndex, !isUserInteracting else { return }
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                withAnimation(.easeInOut(duration: 0.42)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
@@ -1046,14 +1046,6 @@ private struct CoverLyricLineRow: View {
     let isSynchronized: Bool
     let onSelect: () -> Void
 
-    private var fontSize: CGFloat {
-        isActive ? 32.0 : 24.0
-    }
-
-    private var fontWeight: Font.Weight {
-        isActive ? .heavy : .bold
-    }
-
     private var textColor: Color {
         if isActive {
             return Color.white
@@ -1065,26 +1057,25 @@ private struct CoverLyricLineRow: View {
     }
 
     private var shadowColor: Color {
-        isActive ? Color.black.opacity(0.45) : Color.clear
+        isActive ? Color.black.opacity(0.40) : Color.clear
     }
 
     var body: some View {
         Button(action: onSelect) {
             Text(text)
-                .font(.system(size: fontSize, weight: fontWeight, design: .default))
+                .font(.system(size: 28, weight: .heavy, design: .default))
                 .foregroundStyle(textColor)
                 .shadow(color: shadowColor, radius: 4, y: 1.5)
                 .multilineTextAlignment(.center)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.80)
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .center)
-                .scaleEffect(isActive ? 1.02 : 0.98)
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
                 .contentShape(Rectangle())
         }
         .buttonStyle(LyricsLineButtonStyle())
+        .animation(.easeInOut(duration: 0.32), value: isActive)
     }
 }
 
