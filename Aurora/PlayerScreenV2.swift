@@ -278,8 +278,9 @@ struct PlayerScreenV2: View {
         .scaleEffect(player.isPlaying ? 1.0 : 0.96)
         .offset(x: coverDragX)
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 15)
-            .onChanged { value in
+        .gesture(
+            showLyricsCover ? nil : DragGesture(minimumDistance: 15)
+                .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
                 coverDragX = value.translation.width / (1 + abs(value.translation.width) * 0.001)
             }
@@ -917,6 +918,11 @@ struct CoverLyricsScrollView: View {
     let player: ActivePlayerPresentation
     let side: CGFloat
     @State private var settings = SettingsStore.shared
+    @State private var userScrolledUntil: Date = .distantPast
+
+    private var isUserInteracting: Bool {
+        Date() < userScrolledUntil
+    }
 
     private var activeIndex: Int? {
         guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
@@ -941,23 +947,34 @@ struct CoverLyricsScrollView: View {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                         let isActive = (idx == activeIndex)
                         Button {
+                            // Выбор строки текста: немедленная перемотка и старт пения
+                            Haptics.tap(.medium)
+                            userScrolledUntil = .distantPast
                             if lyrics.isSynchronized {
-                                Haptics.tap(.light)
                                 player.seek(to: max(0, line.startTime))
+                                if !player.isPlaying {
+                                    player.play()
+                                }
+                            }
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                proxy.scrollTo(idx, anchor: .center)
                             }
                         } label: {
-                            Text(line.text)
-                                .font(.system(size: isActive ? 24 : 19, weight: .bold, design: .default))
-                                .foregroundStyle(isActive ? Color.white : (lyrics.isSynchronized ? Color.white.opacity(0.38) : Color.white.opacity(0.92)))
-                                .shadow(color: isActive ? Color.black.opacity(0.55) : .clear, radius: 4, y: 1.5)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .lineSpacing(4)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
+                            HStack(spacing: 8) {
+                                Text(line.text)
+                                    .font(.system(size: isActive ? 24 : 19, weight: .bold, design: .default))
+                                    .foregroundStyle(isActive ? Color.white : (lyrics.isSynchronized ? Color.white.opacity(0.38) : Color.white.opacity(0.92)))
+                                    .shadow(color: isActive ? Color.black.opacity(0.55) : .clear, radius: 4, y: 1.5)
+                                    .multilineTextAlignment(.leading)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .lineSpacing(4)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActive)
+                            }
+                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(LyricsLineButtonStyle())
                         .id(idx)
                     }
 
@@ -978,6 +995,13 @@ struct CoverLyricsScrollView: View {
                 .padding(.bottom, 36)
             }
             .frame(maxWidth: side, maxHeight: side)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { _ in
+                        // Пользователь листает текст пальцем — ставим паузу на автоскролл
+                        userScrolledUntil = Date().addingTimeInterval(4.5)
+                    }
+            )
             .mask(
                 LinearGradient(
                     stops: [
@@ -990,8 +1014,36 @@ struct CoverLyricsScrollView: View {
                     endPoint: .bottom
                 )
             )
+            .overlay(alignment: .bottomTrailing) {
+                if isUserInteracting, let activeIndex {
+                    Button {
+                        Haptics.tap(.light)
+                        userScrolledUntil = .distantPast
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                            proxy.scrollTo(activeIndex, anchor: .center)
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.down.to.line")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("К текущей")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background(Color.black.opacity(0.70), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8))
+                        .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
+                    }
+                    .buttonStyle(TactileButtonStyle(scale: 0.95))
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 12)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            }
             .onChange(of: activeIndex) { _, newIndex in
-                guard let newIndex else { return }
+                guard let newIndex, !isUserInteracting else { return }
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
@@ -1002,6 +1054,15 @@ struct CoverLyricsScrollView: View {
                 }
             }
         }
+    }
+}
+
+private struct LyricsLineButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.65 : 1.0)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

@@ -81,39 +81,43 @@ enum MoodPreset: String, CaseIterable, Identifiable, Sendable {
     case calm = "calm"           // 🧘 Спокойствие (низкий темп, нежная акустика, умиротворение)
     case sad = "sad"             // 😢 Погрустить (минор, низкая энергия, меланхолия)
     case workout = "workout"     // 🏃 Бежать быстрее ветра (спорт, драйв, ритм)
+    case discover = "discover"   // ✨ Незнакомое (новые открытия, редкие треки, свежий звук)
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .dreamy:  return "Время\nпомечтать"
-        case .recap:   return "Быстро\nраспаковать"
-        case .energy:  return "Заряд\nэнергии"
-        case .calm:    return "Спокойствие\nи баланс"
-        case .sad:     return "Время\nпогрустить"
-        case .workout: return "Бежать\nбыстрее ветра"
+        case .dreamy:   return "Время\nпомечтать"
+        case .recap:    return "Быстро\nраспаковать"
+        case .energy:   return "Заряд\nэнергии"
+        case .calm:     return "Спокойствие\nи баланс"
+        case .sad:      return "Время\nпогрустить"
+        case .workout:  return "Бежать\nбыстрее ветра"
+        case .discover: return "Новое\nи незнакомое"
         }
     }
 
     var iconName: String {
         switch self {
-        case .dreamy:  return "sparkles"
-        case .recap:   return "bolt.fill"
-        case .energy:  return "flame.fill"
-        case .calm:    return "leaf.fill"
-        case .sad:     return "drop.fill"
-        case .workout: return "figure.run"
+        case .dreamy:   return "sparkles"
+        case .recap:    return "bolt.fill"
+        case .energy:   return "flame.fill"
+        case .calm:     return "leaf.fill"
+        case .sad:      return "drop.fill"
+        case .workout:  return "figure.run"
+        case .discover: return "sparkles"
         }
     }
 
     var gradientColors: [String] {
         switch self {
-        case .dreamy:  return ["#FF8AD1", "#A855F7"]
-        case .recap:   return ["#FF9F0A", "#FF375F"]
-        case .energy:  return ["#FFD60A", "#FF453A"]
-        case .calm:    return ["#30D158", "#0A84FF"]
-        case .sad:     return ["#5E5CE6", "#64D2FF"]
-        case .workout: return ["#0A84FF", "#30D158"]
+        case .dreamy:   return ["#FF8AD1", "#A855F7"]
+        case .recap:    return ["#FF9F0A", "#FF375F"]
+        case .energy:   return ["#FFD60A", "#FF453A"]
+        case .calm:     return ["#30D158", "#0A84FF"]
+        case .sad:      return ["#5E5CE6", "#64D2FF"]
+        case .workout:  return ["#0A84FF", "#30D158"]
+        case .discover: return ["#00F2FE", "#4FACFE"]
         }
     }
 
@@ -131,6 +135,8 @@ enum MoodPreset: String, CaseIterable, Identifiable, Sendable {
             return TrackVector(tempo: 0.30, energy: 0.25, valence: 0.15, acousticness: 0.50, danceability: 0.25, loudness: 0.30)
         case .workout:
             return TrackVector(tempo: 0.85, energy: 0.90, valence: 0.70, acousticness: 0.15, danceability: 0.90, loudness: 0.85)
+        case .discover:
+            return TrackVector(tempo: 0.55, energy: 0.65, valence: 0.60, acousticness: 0.30, danceability: 0.60, loudness: 0.60)
         }
     }
 }
@@ -194,6 +200,9 @@ final class MoodRadioEngine {
     // MARK: - API: Старт радио по настроению (POST /mood/start)
 
     func start(mood: MoodPreset) {
+        if mood == .discover {
+            WaveSettingsStore.shared.diversity = .discover
+        }
         isTrackWaveActive = false
         trackWaveSeed = nil
         activeMood = mood
@@ -520,11 +529,13 @@ final class MoodRadioEngine {
 
         // Liked tracks are a first-class signal. They seed the wave even when
         // the current station has a small or repetitive catalog response.
-        let favorites = LibraryStore.shared.favorites.filter { track in
-            !playedTrackIDs.contains(track.id) &&
-            !UserTasteEngine.shared.isDisliked(track: track)
+        if mood != .discover {
+            let favorites = LibraryStore.shared.favorites.filter { track in
+                !playedTrackIDs.contains(track.id) &&
+                !UserTasteEngine.shared.isDisliked(track: track)
+            }
+            pool.append(contentsOf: favorites)
         }
-        pool.append(contentsOf: favorites)
 
         // 1. Локальная библиотека: отбираем ТОЛЬКО еще не игравшие треки под вектор настроения
         let localTracks = LibraryStore.shared.tracks.filter { track in
@@ -636,12 +647,13 @@ final class MoodRadioEngine {
 
     private func stationIdForMood(_ mood: MoodPreset) -> String {
         switch mood {
-        case .dreamy:  return "mood:calm"
-        case .recap:   return "genre:pop"
-        case .energy:  return "activity:party"
-        case .calm:    return "mood:calm"
-        case .sad:     return "mood:sad"
-        case .workout: return "activity:workout"
+        case .dreamy:   return "mood:calm"
+        case .recap:    return "genre:pop"
+        case .energy:   return "activity:party"
+        case .calm:     return "mood:calm"
+        case .sad:      return "mood:sad"
+        case .workout:  return "activity:workout"
+        case .discover: return "user:onyourwave"
         }
     }
 

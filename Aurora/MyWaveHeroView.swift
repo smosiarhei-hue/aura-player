@@ -6,6 +6,8 @@ struct MyWaveHeroView: View {
     @Binding var showSettings: Bool
     @Binding var showWaveSettings: Bool
     var onToggleWave: () -> Void
+    var onShakeWave: (() -> Void)? = nil
+    var isWaveShaking: Bool = false
 
     @State private var waveStore = WaveSettingsStore.shared
     @State private var library = LibraryStore.shared
@@ -50,6 +52,8 @@ struct MyWaveHeroView: View {
             // 3. Central Stage: Artist Cutout + Overlaid Track Artwork Sleeve
             centralVisualStage
                 .frame(height: 290)
+                .scaleEffect(isWaveShaking ? 1.07 : 1.0)
+                .animation(.spring(response: 0.38, dampingFraction: 0.65), value: isWaveShaking)
                 .contentShape(Rectangle())
                 .gesture(swipeGesture)
 
@@ -331,10 +335,33 @@ struct MyWaveHeroView: View {
     // MARK: - Bottom Sparkles & Wave Tuning Chips
     private var bottomSparklesAndChips: some View {
         VStack(spacing: 12) {
-            // Subtle sparkles icon as shown on bottom of screenshot
-            Image(systemName: "sparkles")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.24))
+            // Кнопка «Встряхнуть волну» (или деликатные искры)
+            if let onShakeWave {
+                Button {
+                    Haptics.tap(.medium)
+                    onShakeWave()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "waveform.badge.sparkles")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                        Text("Встряхнуть волну")
+                            .font(AG.text(.caption2, .bold))
+                            .foregroundStyle(.white.opacity(0.90))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.8))
+                    .shadow(color: Color.black.opacity(0.3), radius: 6, y: 2)
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
+                .accessibilityLabel("Встряхнуть мою волну")
+            } else {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.24))
+            }
 
             // 1. Музыкальный характер (diversity)
             ScrollView(.horizontal, showsIndicators: false) {

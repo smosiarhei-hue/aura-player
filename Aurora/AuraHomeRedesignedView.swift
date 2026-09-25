@@ -12,6 +12,12 @@ struct AuraHomeRedesignedView: View {
     @State private var showWaveSettings = false
     @State private var showPlayer = false
     @State private var waveStore = WaveSettingsStore.shared
+    @State private var showShakeOverlay = false
+    @State private var shakeTriggerCount = 0
+    @State private var isWaveShaking = false
+    @State private var shakeHUDMessage = "Волна встряхнута!"
+    @State private var shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
+    @State private var lastShakeTimestamp: TimeInterval = 0
 
     private var moodStation: YandexMusicService.StationOption { ym.waveMoodStation }
     private var waveColors: [Color] {
@@ -24,6 +30,13 @@ struct AuraHomeRedesignedView: View {
             Color(red: 0.10, green: 0.72, blue: 1.0)
         ]
         return station.isEmpty ? reference : Array((station + reference).prefix(5))
+    }
+
+    private var trackPalette: [Color] {
+        if let palette = player.displayTrack?.palette, !palette.isEmpty {
+            return palette
+        }
+        return waveColors
     }
 
     var body: some View {
@@ -56,6 +69,19 @@ struct AuraHomeRedesignedView: View {
                     .padding(.bottom, 120)
                 }
                 .refreshable { await load(force: true) }
+
+                // Полноэкранная жидкостная анимация волны при встряхивании телефона
+                WaveShakeOverlayView(
+                    isActive: showShakeOverlay,
+                    triggerCount: shakeTriggerCount,
+                    palette: trackPalette,
+                    title: shakeHUDMessage,
+                    subtitle: shakeHUDDetail,
+                    onDismiss: {
+                        showShakeOverlay = false
+                        isWaveShaking = false
+                    }
+                )
             }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
@@ -63,6 +89,9 @@ struct AuraHomeRedesignedView: View {
             .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
             .task { await load() }
+            .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
+                triggerShakeWave()
+            }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
                 Task { await load(force: true) }
             }
@@ -82,13 +111,29 @@ struct AuraHomeRedesignedView: View {
             showPlayer: $showPlayer,
             showSettings: $showSettings,
             showWaveSettings: $showWaveSettings,
-            onToggleWave: toggleWave
+            onToggleWave: toggleWave,
+            onShakeWave: { triggerShakeWave() },
+            isWaveShaking: isWaveShaking
         )
     }
 
     private var quickDestinations: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
+                // Пункт «Незнакомое» (быстрый переход в режим открытий и новых треков)
+                Button {
+                    Haptics.tap(.medium)
+                    triggerShakeWave(forceDiscover: true)
+                } label: {
+                    quickCard(
+                        "Незнакомое",
+                        subtitle: "Новые открытия",
+                        icon: "sparkles",
+                        colors: [Color(red: 0.0, green: 0.95, blue: 0.99), Color(red: 0.31, green: 0.67, blue: 0.99)]
+                    )
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
+
                 NavigationLink { LibraryView() } label: {
                     quickCard("Для вас", subtitle: "Персональная музыка", icon: "person.2.fill", colors: [waveColors[0], waveColors[2]])
                 }
@@ -243,6 +288,41 @@ struct AuraHomeRedesignedView: View {
         Haptics.tap(.medium)
         if player.isPlaying { player.pause() }
         else { SonivoPlay.wave(moodStation) }
+    }
+
+    /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», свежий поток и полноэкранная анимация)
+    private func triggerShakeWave(forceDiscover: Bool = true) {
+        let now = Date().timeIntervalSince1970
+        guard now - lastShakeTimestamp > 1.2 else { return }
+        lastShakeTimestamp = now
+
+        // 1. Физический отклик всплеска волны
+        Haptics.waveSplash()
+
+        // 2. Запуск полноэкранной жидкостной анимации и пульсации обложки
+        isWaveShaking = true
+        shakeTriggerCount += 1
+        showShakeOverlay = true
+
+        // 3. Логика: переключение на режим «Незнакомое»
+        if forceDiscover || waveStore.diversity != .discover {
+            waveStore.diversity = .discover
+            shakeHUDMessage = "Волна встряхнута!"
+            shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
+        } else {
+            shakeHUDMessage = "Поток обновлен!"
+            shakeHUDDetail = "Свежие треки в «Незнакомом»"
+        }
+
+        // 4. Мгновенная пересборка очереди и воспроизведение свежего трека
+        Task {
+            _ = await waveStore.reseedActiveWaveQueue()
+            if player.isPlaying {
+                player.next()
+            } else {
+                SonivoPlay.wave(moodStation)
+            }
+        }
     }
 
     private func load(force: Bool = false) async {

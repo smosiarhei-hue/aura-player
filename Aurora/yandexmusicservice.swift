@@ -724,6 +724,7 @@ final class YandexMusicService {
         StationOption(id: "party", title: "Вечеринка", subtitle: "Танцевальное", stationId: "activity:party", gradient: ["#FBBF24", "#9A3412"], icon: "party.popper.fill"),
         StationOption(id: "road", title: "В дорогу", subtitle: "Ритм для движения вперёд", stationId: "activity:driving", gradient: ["#E8EDF2", "#8A94A6"], icon: "car.fill"),
         StationOption(id: "dreamy", title: "Время помечтать", subtitle: "Воздушное и атмосферное", stationId: "mood:dreamy", gradient: ["#EAF6FF", "#93A9C7"], icon: "cloud.fill"),
+        StationOption(id: "discover", title: "Незнакомое", subtitle: "Новые имена и открытия", stationId: "user:onyourwave", gradient: ["#00F2FE", "#4FACFE"], icon: "sparkles"),
         StationOption(id: "recap", title: "Итоги", subtitle: "Личный итог: что вы слушали", stationId: "app:recap", gradient: ["#F4E9FF", "#B79CE0"], icon: "sparkles")
     ]
 

@@ -194,6 +194,20 @@ enum Haptics {
         guard SettingsStore.shared.hapticsEnabled, SettingsStore.shared.scrubHapticsEnabled else { return }
         generator.selectionChanged()
     }
+
+    /// Тактильный эффект встряхивания и всплеска волны (rigid -> medium -> light).
+    static func waveSplash() {
+        guard SettingsStore.shared.hapticsEnabled else { return }
+        let rigid = UIImpactFeedbackGenerator(style: .rigid)
+        rigid.prepare()
+        rigid.impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
 }
 
 // MARK: - Liquid Glass surfaces
