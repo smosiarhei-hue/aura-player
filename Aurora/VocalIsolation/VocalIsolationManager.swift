@@ -11,9 +11,8 @@ nonisolated(unsafe) private var sharedProcessor: any VocalIsolationProcessing = 
 
 /// Real-time CoreAudio render notify callback.
 /// Invoked directly on CoreAudio's high-priority audio render thread on every audio buffer slice.
-private let vocalIsolationCallback: AURenderCallback = { inRefCon, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, ioData in
-    guard let ioActionFlags,
-          ioActionFlags.pointee.contains(.unitRenderAction_PostRender),
+nonisolated(unsafe) private let vocalIsolationCallback: AURenderCallback = { inRefCon, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, ioData in
+    guard ioActionFlags.pointee.contains(.unitRenderAction_PostRender),
           let ioData else {
         return noErr
     }

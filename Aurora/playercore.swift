@@ -1078,7 +1078,8 @@ final class PlayerCore {
             return vocalFile
         }
         let ymID = Self.yandexTrackID(from: track)
-        if !ymID.isEmpty, let cachesDir = try? TrackFileCache.defaultDirectory() {
+        if !ymID.isEmpty {
+            let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("tracks", isDirectory: true)
             if let files = try? FileManager.default.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil) {
                 if let matched = files.first(where: { $0.lastPathComponent.contains(ymID) }) {
                     return matched
