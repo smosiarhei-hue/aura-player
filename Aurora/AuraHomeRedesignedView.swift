@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct AuraHomeRedesignedView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var antigravity = AntigravityTransitionManager.shared
     @State private var player = ActivePlayerPresentation()
     @State private var ym = YandexMusicService.shared
     @State private var library = LibraryStore.shared
@@ -89,7 +91,13 @@ struct AuraHomeRedesignedView: View {
             .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
             .task { await load() }
+            .onAppear { updateAntigravityLifecycle() }
+            .onChange(of: scenePhase) { _, _ in updateAntigravityLifecycle() }
+            .onChange(of: showSettings) { _, _ in updateAntigravityLifecycle() }
+            .onChange(of: showWaveSettings) { _, _ in updateAntigravityLifecycle() }
+            .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle() }
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
+                antigravity.handleSystemShakeNotification()
                 triggerShakeWave()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
@@ -290,39 +298,35 @@ struct AuraHomeRedesignedView: View {
         else { SonivoPlay.wave(moodStation) }
     }
 
-    /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», свежий поток и полноэкранная анимация)
+    /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
     private func triggerShakeWave(forceDiscover: Bool = true) {
         let now = Date().timeIntervalSince1970
         guard now - lastShakeTimestamp > 1.2 else { return }
         lastShakeTimestamp = now
 
-        // 1. Физический отклик всплеска волны
-        Haptics.waveSplash()
+        // 1. Запуск кинетического перехода «Антигравити» (CoreHaptics, вихрь, 3D-кувырок, аудио-кроссфейд)
+        antigravity.triggerShift(forceDiscover: forceDiscover)
 
         // 2. Запуск полноэкранной жидкостной анимации и пульсации обложки
         isWaveShaking = true
         shakeTriggerCount += 1
         showShakeOverlay = true
 
-        // 3. Логика: переключение на режим «Незнакомое»
+        // 3. Логика HUD
         if forceDiscover || waveStore.diversity != .discover {
-            waveStore.diversity = .discover
-            shakeHUDMessage = "Волна встряхнута!"
+            shakeHUDMessage = "Антигравити!"
             shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
         } else {
             shakeHUDMessage = "Поток обновлен!"
             shakeHUDDetail = "Свежие треки в «Незнакомом»"
         }
+    }
 
-        // 4. Мгновенная пересборка очереди и воспроизведение свежего трека
-        Task {
-            _ = await waveStore.reseedActiveWaveQueue()
-            if player.isPlaying {
-                player.next()
-            } else {
-                SonivoPlay.wave(moodStation)
-            }
-        }
+    private func updateAntigravityLifecycle() {
+        antigravity.updateLifecycle(
+            isAppActive: scenePhase == .active,
+            isModalActive: showSettings || showWaveSettings || showPlayer
+        )
     }
 
     private func load(force: Bool = false) async {

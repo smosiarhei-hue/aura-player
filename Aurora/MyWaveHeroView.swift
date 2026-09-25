@@ -9,6 +9,8 @@ struct MyWaveHeroView: View {
     var onShakeWave: (() -> Void)? = nil
     var isWaveShaking: Bool = false
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var antigravity = AntigravityTransitionManager.shared
     @State private var waveStore = WaveSettingsStore.shared
     @State private var library = LibraryStore.shared
     @State private var artistImageUrl: String? = nil
@@ -141,6 +143,8 @@ struct MyWaveHeroView: View {
                     .minimumScaleFactor(0.8)
                     .padding(.horizontal, 24)
                     .shadow(color: .black.opacity(0.45), radius: 8, y: 2)
+                    .scaleEffect(antigravity.phase == .antigravity ? antigravity.typographyExitScale : (antigravity.phase == .settling ? antigravity.typographyEnterScale : 1.0))
+                    .opacity(antigravity.phase == .antigravity ? antigravity.typographyExitOpacity : (antigravity.phase == .settling ? antigravity.typographyEnterOpacity : 1.0))
             }
         }
     }
@@ -293,6 +297,8 @@ struct MyWaveHeroView: View {
                         .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .scaleEffect(antigravity.phase == .antigravity ? antigravity.typographyExitScale : (antigravity.phase == .settling ? antigravity.typographyEnterScale : 1.0))
+                        .opacity(antigravity.phase == .antigravity ? antigravity.typographyExitOpacity : (antigravity.phase == .settling ? antigravity.typographyEnterOpacity : 1.0))
 
                     Image(systemName: "info.circle")
                         .font(.system(size: 15, weight: .bold))
@@ -336,37 +342,32 @@ struct MyWaveHeroView: View {
     private var bottomSparklesAndChips: some View {
         VStack(spacing: 12) {
             // Кнопка «Встряхнуть волну» (или деликатные искры)
-            if let onShakeWave {
-                Button {
-                    Haptics.tap(.medium)
-                    onShakeWave()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "waveform.badge.sparkles")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
-                        Text("Встряхнуть волну")
-                            .font(AG.text(.caption2, .bold))
-                            .foregroundStyle(.white.opacity(0.90))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.12), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.8))
-                    .shadow(color: Color.black.opacity(0.3), radius: 6, y: 2)
+            Button {
+                Haptics.tap(.medium)
+                antigravity.triggerShift()
+                onShakeWave?()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.badge.sparkles")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color(red: 0.98, green: 0.88, blue: 0.16))
+                    Text("Встряхнуть волну")
+                        .font(AG.text(.caption2, .bold))
+                        .foregroundStyle(.white.opacity(0.90))
                 }
-                .buttonStyle(TactileButtonStyle(scale: 0.94))
-                .accessibilityLabel("Встряхнуть мою волну")
-            } else {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.24))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.white.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.8))
+                .shadow(color: Color.black.opacity(0.3), radius: 6, y: 2)
             }
+            .buttonStyle(TactileButtonStyle(scale: 0.94))
+            .accessibilityLabel("Встряхнуть мою волну")
 
             // 1. Музыкальный характер (diversity)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(WaveDiversity.allCases) { item in
+                    ForEach(Array(WaveDiversity.allCases.enumerated()), id: \.element.id) { index, item in
                         let isSelected = waveStore.diversity == item
                         Button {
                             Haptics.tap(.light)
@@ -396,6 +397,18 @@ struct MyWaveHeroView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
+                        .rotation3DEffect(
+                            .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
+                            axis: (x: 1, y: 0, z: 0)
+                        )
+                        .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
+                        .animation(
+                            reduceMotion
+                                ? .easeInOut(duration: 0.30)
+                                : .easeInOut(duration: 0.40).delay(Double(index) * 0.040),
+                            value: antigravity.isCardsFlipped
+                        )
                     }
                 }
                 .padding(.horizontal, 20)
@@ -405,7 +418,7 @@ struct MyWaveHeroView: View {
             HStack(spacing: 8) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
-                        ForEach(WaveLanguage.allCases) { item in
+                        ForEach(Array(WaveLanguage.allCases.enumerated()), id: \.element.id) { index, item in
                             let isSelected = waveStore.language == item
                             Button {
                                 Haptics.tap(.light)
@@ -435,6 +448,18 @@ struct MyWaveHeroView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
+                            .rotation3DEffect(
+                                .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
+                                axis: (x: 1, y: 0, z: 0)
+                            )
+                            .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
+                            .animation(
+                                reduceMotion
+                                    ? .easeInOut(duration: 0.30)
+                                    : .easeInOut(duration: 0.40).delay(Double(index + 3) * 0.040),
+                                value: antigravity.isCardsFlipped
+                            )
                         }
                     }
                     .padding(.leading, 20)
@@ -450,6 +475,18 @@ struct MyWaveHeroView: View {
                         .glassCircle()
                 }
                 .buttonStyle(.plain)
+                .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
+                .rotation3DEffect(
+                    .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
+                    axis: (x: 1, y: 0, z: 0)
+                )
+                .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
+                .animation(
+                    reduceMotion
+                        ? .easeInOut(duration: 0.30)
+                        : .easeInOut(duration: 0.40).delay(0.28),
+                    value: antigravity.isCardsFlipped
+                )
                 .padding(.trailing, 20)
                 .accessibilityLabel("Все настройки волны")
             }
@@ -473,6 +510,24 @@ struct MyWaveHeroView: View {
                 endRadius: 450
             )
             .blur(radius: 65)
+
+            // Кинетический вихрь «Антигравити» (Metal Shader)
+            if antigravity.distortionStrength > 0.01 {
+                GeometryReader { geo in
+                    Rectangle()
+                        .colorEffect(
+                            ShaderLibrary.antigravityVortex(
+                                .float4(0, 0, Float(geo.size.width), Float(geo.size.height)),
+                                .float(antigravity.distortionStrength),
+                                .float(antigravity.vortexAngle),
+                                .float(antigravity.colorShift),
+                                .color(accentColor)
+                            )
+                        )
+                        .ignoresSafeArea()
+                        .opacity(Double(min(1.0, antigravity.distortionStrength * 2.0)))
+                }
+            }
 
             LinearGradient(
                 stops: [
