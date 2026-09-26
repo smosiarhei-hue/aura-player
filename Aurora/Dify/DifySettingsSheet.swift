@@ -5,14 +5,20 @@ struct DifySettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var dify = DifyService.shared
 
-    @State private var apiKeyInput: String = ""
-    @State private var baseURLInput: String = ""
+    @State private var selectedProvider: AIProvider = .nvidia
+    @State private var nvidiaKeyInput: String = ""
+    @State private var nvidiaURLInput: String = ""
+    @State private var selectedModelId: String = "deepseek-ai/deepseek-v4.1-flash"
+
+    @State private var difyKeyInput: String = ""
+    @State private var difyURLInput: String = ""
+
     @State private var isTesting = false
     @State private var testResult: TestResult? = nil
     @State private var copiedPrompt = false
 
     enum TestResult {
-        case success
+        case success(Int)
         case failure(String)
     }
 
@@ -44,79 +50,190 @@ struct DifySettingsSheet: View {
                 Color.black.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 24) {
-                        headerSection
-                        connectionSection
-                        cloudDifyGuideSection
-                        systemPromptSection
+                    VStack(spacing: 20) {
+                        providerPickerSection
+
+                        if selectedProvider == .nvidia {
+                            nvidiaHeaderSection
+                            nvidiaModelsSection
+                            nvidiaConnectionSection
+                        } else {
+                            difyHeaderSection
+                            difyConnectionSection
+                            cloudDifyGuideSection
+                            systemPromptSection
+                        }
                     }
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 24)
+                    .padding(.vertical, 20)
                 }
             }
-            .navigationTitle("Настройки Dify AI")
+            .navigationTitle("Настройки AI Куратора")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Готово") {
                         saveAndDismiss()
                     }
-                    .font(.system(size: 16, weight: .bold))
+                    .font(AG.text(.body, .bold))
                     .foregroundStyle(AG.accent)
                 }
             }
             .onAppear {
-                apiKeyInput = dify.apiKey
-                baseURLInput = dify.baseURL
+                selectedProvider = dify.provider
+                nvidiaKeyInput = dify.nvidiaApiKey
+                nvidiaURLInput = dify.nvidiaBaseURL
+                selectedModelId = dify.nvidiaSelectedModel
+
+                difyKeyInput = dify.apiKey
+                difyURLInput = dify.baseURL
             }
         }
     }
 
-    // MARK: - Header
-    private var headerSection: some View {
-        VStack(spacing: 12) {
+    // MARK: - Provider Selector
+    private var providerPickerSection: some View {
+        HStack(spacing: 8) {
+            ForEach(AIProvider.allCases) { prov in
+                let isSelected = selectedProvider == prov
+                Button {
+                    Haptics.tap(.light)
+                    withAnimation(AG.fastSpring) {
+                        selectedProvider = prov
+                        testResult = nil
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: prov == .nvidia ? "cpu.fill" : "cloud.fill")
+                            .font(.system(size: 13, weight: .bold))
+                        Text(prov.title)
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .foregroundStyle(isSelected ? .white : .white.opacity(0.6))
+                    .background(
+                        isSelected
+                            ? LinearGradient(colors: [Color.green.opacity(0.8), Color.teal.opacity(0.8)], startPoint: .leading, endPoint: .trailing)
+                            : LinearGradient(colors: [Color.white.opacity(0.08), Color.white.opacity(0.04)], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Color.white.opacity(0.06))
+        .clipShape(Capsule())
+    }
+
+    // MARK: - NVIDIA NIM Sections
+    private var nvidiaHeaderSection: some View {
+        VStack(spacing: 8) {
             ZStack {
                 Circle()
                     .fill(LinearGradient(
-                        colors: [Color.purple.opacity(0.8), Color.blue.opacity(0.8)],
+                        colors: [Color(hex: "#76B900") ?? .green, Color.teal],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ))
-                    .frame(width: 64, height: 64)
-                    .shadow(color: Color.purple.opacity(0.4), radius: 12)
+                    .frame(width: 54, height: 54)
+                    .shadow(color: (Color(hex: "#76B900") ?? .green).opacity(0.4), radius: 12)
 
-                Image(systemName: "sparkles")
-                    .font(.system(size: 30, weight: .semibold))
+                Image(systemName: "bolt.badge.automatic.fill")
+                    .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(.white)
             }
 
-            Text("Интеграция Dify Cloud")
-                .font(.system(size: 22, weight: .bold))
+            Text("NVIDIA NIM Cloud (2026)")
+                .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(.white)
 
-            Text("Подключение к вашей подписке Dify Professional для генерации плейлистов на базе Claude 3.7 / DeepSeek / GPT-4o.")
-                .font(.system(size: 14))
+            Text("Прямой высокоскоростной API для генерации плейлистов и рекомендаций без сторонних серверов.")
+                .font(.system(size: 13))
                 .foregroundStyle(.white.opacity(0.65))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16)
         }
     }
 
-    // MARK: - Connection Form
-    private var connectionSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("ПАРАМЕТРЫ ПОДКЛЮЧЕНИЯ")
-                .font(.system(size: 12, weight: .bold))
+    private var nvidiaModelsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("МОДЕЛЬ NVIDIA (СЕНТЯБРЬ 2026)")
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white.opacity(0.5))
                 .padding(.leading, 4)
 
-            VStack(spacing: 14) {
+            VStack(spacing: 8) {
+                ForEach(NVIDIAAIModel.availableModels) { model in
+                    let isSelected = selectedModelId == model.id
+                    Button {
+                        Haptics.tap(.light)
+                        withAnimation(AG.fastSpring) {
+                            selectedModelId = model.id
+                        }
+                    } label: {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(isSelected ? (Color(hex: "#76B900") ?? .green) : .white.opacity(0.3))
+                                .padding(.top, 2)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 8) {
+                                    Text(model.displayName)
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundStyle(.white)
+
+                                    Text(model.badge)
+                                        .font(.system(size: 10, weight: .black))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            model.id.contains("deepseek")
+                                                ? Color.purple.opacity(0.8)
+                                                : (Color(hex: "#76B900") ?? .green).opacity(0.8)
+                                        )
+                                        .clipShape(Capsule())
+                                        .foregroundStyle(.white)
+                                }
+
+                                Text(model.summary)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.white.opacity(0.65))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .background(isSelected ? Color.white.opacity(0.12) : Color.white.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(isSelected ? (Color(hex: "#76B900") ?? .green).opacity(0.6) : Color.white.opacity(0.06), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var nvidiaConnectionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ПАРАМЕТРЫ NVIDIA NIM")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white.opacity(0.5))
+                .padding(.leading, 4)
+
+            VStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("API Key (app-...)")
+                    Text("NVIDIA API Key (nvapi-...)")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.8))
 
-                    SecureField("Вставьте app-...", text: $apiKeyInput)
+                    SecureField("nvapi-...", text: $nvidiaKeyInput)
                         .padding(14)
                         .background(Color.white.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -126,11 +243,11 @@ struct DifySettingsSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("API Base URL")
+                    Text("Endpoint Base URL")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.8))
 
-                    TextField("https://api.dify.ai/v1", text: $baseURLInput)
+                    TextField("https://integrate.api.nvidia.com/v1", text: $nvidiaURLInput)
                         .padding(14)
                         .background(Color.white.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -143,10 +260,10 @@ struct DifySettingsSheet: View {
                 if let testResult {
                     HStack(spacing: 8) {
                         switch testResult {
-                        case .success:
+                        case .success(let ms):
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
-                            Text("Соединение успешно установлено!")
+                            Text("Соединение установлено! Пинг: \(ms) мс")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(.green)
                         case .failure(let err):
@@ -166,13 +283,12 @@ struct DifySettingsSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         if isTesting {
-                            ProgressView()
-                                .tint(.white)
+                            ProgressView().tint(.white)
                         } else {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                         }
-                        Text(isTesting ? "Проверка..." : "Проверить подключение")
-                            .font(.system(size: 15, weight: .semibold))
+                        Text(isTesting ? "Проверка..." : "Проверить API ключ")
+                            .font(.system(size: 14, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -180,7 +296,7 @@ struct DifySettingsSheet: View {
                     .foregroundStyle(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .disabled(isTesting || apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(isTesting || nvidiaKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(16)
             .background(Color(white: 0.12).opacity(0.6))
@@ -192,19 +308,136 @@ struct DifySettingsSheet: View {
         }
     }
 
-    // MARK: - Guide Section
-    private var cloudDifyGuideSection: some View {
+    // MARK: - Dify Sections
+    private var difyHeaderSection: some View {
+        VStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [Color.purple.opacity(0.8), Color.blue.opacity(0.8)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 54, height: 54)
+                    .shadow(color: Color.purple.opacity(0.4), radius: 12)
+
+                Image(systemName: "sparkles")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+
+            Text("Интеграция Dify Cloud")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+
+            Text("Подключение к кастомным пайплайнам и ботам в облаке cloud.dify.ai.")
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.65))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+        }
+    }
+
+    private var difyConnectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("КАК НАСТРОИТЬ В DIFY")
-                .font(.system(size: 12, weight: .bold))
+            Text("ПАРАМЕТРЫ DIFY")
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white.opacity(0.5))
                 .padding(.leading, 4)
 
-            VStack(alignment: .leading, spacing: 12) {
-                stepRow(number: "1", text: "Откройте cloud.dify.ai и создайте приложение типа Chatbot или Agent.")
-                stepRow(number: "2", text: "В правом верхнем углу выберите любую топовую модель: Claude 3.7 Sonnet, DeepSeek R1 или GPT-4o.")
-                stepRow(number: "3", text: "Вставьте системный промпт (ниже) в поле Instructions / System Prompt.")
-                stepRow(number: "4", text: "Перейдите в раздел «API Access» слева, нажмите «API Secret Key» и скопируйте ключ.")
+            VStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("API Key (app-...)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.8))
+
+                    SecureField("Вставьте app-...", text: $difyKeyInput)
+                        .padding(14)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .foregroundStyle(.white)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("API Base URL")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.8))
+
+                    TextField("https://api.dify.ai/v1", text: $difyURLInput)
+                        .padding(14)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .foregroundStyle(.white)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                }
+
+                if let testResult {
+                    HStack(spacing: 8) {
+                        switch testResult {
+                        case .success(let ms):
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("Соединение успешно установлено! (\(ms) мс)")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.green)
+                        case .failure(let err):
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                            Text(err)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                }
+
+                Button {
+                    runTest()
+                } label: {
+                    HStack(spacing: 8) {
+                        if isTesting {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                        }
+                        Text(isTesting ? "Проверка..." : "Проверить подключение")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.12))
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .disabled(isTesting || difyKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(16)
+            .background(Color(white: 0.12).opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            )
+        }
+    }
+
+    private var cloudDifyGuideSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("КАК НАСТРОИТЬ В DIFY")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white.opacity(0.5))
+                .padding(.leading, 4)
+
+            VStack(alignment: .leading, spacing: 10) {
+                stepRow(number: "1", text: "Откройте cloud.dify.ai и создайте приложение Chatbot.")
+                stepRow(number: "2", text: "В Settings -> Model Provider добавьте NVIDIA NIM (https://integrate.api.nvidia.com/v1) с вашим nvapi ключом.")
+                stepRow(number: "3", text: "Вставьте системный промпт (ниже) в инструкции бота.")
+                stepRow(number: "4", text: "Скопируйте ключ API Access (app-...) и вставьте выше.")
             }
             .padding(16)
             .background(Color(white: 0.12).opacity(0.6))
@@ -231,12 +464,11 @@ struct DifySettingsSheet: View {
         }
     }
 
-    // MARK: - System Prompt Section
     private var systemPromptSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("СИСТЕМНЫЙ ПРОМПТ")
-                    .font(.system(size: 12, weight: .bold))
+                Text("СИСТЕМНЫЙ ПРОМПТ ДЛЯ DIFY")
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.white.opacity(0.5))
 
                 Spacer()
@@ -273,18 +505,28 @@ struct DifySettingsSheet: View {
         }
     }
 
+    // MARK: - Actions
+
     private func runTest() {
         isTesting = true
         testResult = nil
-        dify.apiKey = apiKeyInput
-        dify.baseURL = baseURLInput.isEmpty ? "https://api.dify.ai/v1" : baseURLInput
+
+        dify.provider = selectedProvider
+        if selectedProvider == .nvidia {
+            dify.nvidiaApiKey = nvidiaKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            dify.nvidiaBaseURL = nvidiaURLInput.isEmpty ? "https://integrate.api.nvidia.com/v1" : nvidiaURLInput
+            dify.nvidiaSelectedModel = selectedModelId
+        } else {
+            dify.apiKey = difyKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            dify.baseURL = difyURLInput.isEmpty ? "https://api.dify.ai/v1" : difyURLInput
+        }
 
         Task {
             do {
-                let success = try await dify.testConnection()
+                let res = try await dify.testConnection()
                 await MainActor.run {
                     isTesting = false
-                    testResult = success ? .success : .failure("Сервер не ответил успешным кодом.")
+                    testResult = res.success ? .success(res.latencyMs) : .failure("Сервер не ответил успешным кодом.")
                 }
             } catch {
                 await MainActor.run {
@@ -296,9 +538,14 @@ struct DifySettingsSheet: View {
     }
 
     private func saveAndDismiss() {
-        dify.apiKey = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanBase = baseURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        dify.baseURL = cleanBase.isEmpty ? "https://api.dify.ai/v1" : cleanBase
+        dify.provider = selectedProvider
+        dify.nvidiaApiKey = nvidiaKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        dify.nvidiaBaseURL = nvidiaURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        dify.nvidiaSelectedModel = selectedModelId
+
+        dify.apiKey = difyKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        dify.baseURL = difyURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+
         Haptics.tap(.light)
         dismiss()
     }

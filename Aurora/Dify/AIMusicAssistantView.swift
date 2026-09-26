@@ -23,15 +23,19 @@ struct AIMusicAssistantView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // Background dark gradient
-                LinearGradient(
+                // Liquid Glass native ambient background
+                AG.bg.ignoresSafeArea()
+
+                // Subtle atmospheric backdrop glow
+                RadialGradient(
                     colors: [
-                        Color(red: 0.08, green: 0.05, blue: 0.16),
-                        Color(red: 0.04, green: 0.04, blue: 0.08),
-                        Color.black
+                        (Color(hex: "#76B900") ?? .green).opacity(dify.provider == .nvidia ? 0.15 : 0.0),
+                        Color.purple.opacity(0.12),
+                        Color.clear
                     ],
-                    startPoint: .top,
-                    endPoint: .bottom
+                    center: .top,
+                    startRadius: 20,
+                    endRadius: 400
                 )
                 .ignoresSafeArea()
 
@@ -43,60 +47,65 @@ struct AIMusicAssistantView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        Haptics.tap(.light)
+                    GlassIconButton(
+                        systemImage: "xmark",
+                        tint: AG.ink,
+                        accessibilityLabel: "Закрыть ассистент"
+                    ) {
                         dismiss()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(.white.opacity(0.6))
                     }
                 }
 
                 ToolbarItem(placement: .principal) {
-                    VStack(spacing: 2) {
-                        HStack(spacing: 6) {
+                    Button {
+                        Haptics.tap(.light)
+                        showSettings = true
+                    } label: {
+                        VStack(spacing: 2) {
                             Text("AI Куратор")
-                                .font(.system(size: 17, weight: .bold))
-                                .foregroundStyle(.white)
+                                .font(AG.text(.subheadline, .bold))
+                                .foregroundStyle(AG.ink)
 
-                            Text("2026")
-                                .font(.system(size: 10, weight: .black))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    LinearGradient(colors: [Color.purple, Color.indigo], startPoint: .leading, endPoint: .trailing)
-                                )
-                                .clipShape(Capsule())
-                                .foregroundStyle(.white)
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(dify.isConfigured ? AG.positive : .orange)
+                                    .frame(width: 6, height: 6)
+
+                                Text(dify.activeModelDisplayName)
+                                    .font(AG.text(.caption2, .semibold))
+                                    .foregroundStyle(AG.inkMuted)
+                                    .lineLimit(1)
+
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(AG.inkMuted)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .glassCapsule(interactive: true)
                         }
-
-                        Text(dify.isConfigured ? "Dify Cloud • Готов к работе" : "Требуется API-ключ")
-                            .font(.system(size: 11))
-                            .foregroundStyle(dify.isConfigured ? .green.opacity(0.85) : .orange)
                     }
+                    .buttonStyle(.plain)
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 8) {
                         if !messages.isEmpty {
-                            Button {
-                                Haptics.tap(.light)
+                            GlassIconButton(
+                                systemImage: "trash",
+                                tint: AG.inkMuted,
+                                accessibilityLabel: "Очистить диалог"
+                            ) {
                                 clearChat()
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 16))
-                                    .foregroundStyle(.white.opacity(0.6))
                             }
                         }
 
-                        Button {
-                            Haptics.tap(.light)
+                        GlassIconButton(
+                            systemImage: "gearshape.fill",
+                            tint: AG.accent,
+                            accessibilityLabel: "Настройки"
+                        ) {
                             showSettings = true
-                        } label: {
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: 17))
-                                .foregroundStyle(.white.opacity(0.8))
                         }
                     }
                 }
@@ -140,30 +149,41 @@ struct AIMusicAssistantView: View {
 
             ZStack {
                 Circle()
-                    .fill(RadialGradient(
-                        colors: [Color.purple.opacity(0.6), Color.blue.opacity(0.2), Color.clear],
-                        center: .center,
-                        startRadius: 10,
-                        endRadius: 80
-                    ))
-                    .frame(width: 140, height: 140)
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                (dify.provider == .nvidia ? (Color(hex: "#76B900") ?? .green) : Color.purple).opacity(0.45),
+                                Color.blue.opacity(0.15),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 10,
+                            endRadius: 90
+                        )
+                    )
+                    .frame(width: 130, height: 130)
 
                 Image(systemName: "sparkles")
-                    .font(.system(size: 48, weight: .bold))
+                    .font(.system(size: 44, weight: .bold))
                     .foregroundStyle(
-                        LinearGradient(colors: [Color(hex: "#FF455B") ?? .pink, Color(hex: "#9333EA") ?? .purple, Color.cyan],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+                        LinearGradient(
+                            colors: [dify.provider == .nvidia ? (Color(hex: "#76B900") ?? .green) : Color.pink, Color.teal, Color.cyan],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
+                    .glassEffect(.regular, in: .circle)
+                    .frame(width: 80, height: 80)
             }
 
             VStack(spacing: 8) {
-                Text("Музыкальный AI-ассистент")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.white)
+                Text("Музыкальный AI-Куратор")
+                    .font(AG.display(.title2, .bold))
+                    .foregroundStyle(AG.ink)
 
-                Text("Попроси собрать подборку под любое настроение, тренировку или жанр. Я найду треки в каталоге и создам готовый плейлист.")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.7))
+                Text("Соберет подборку под любое настроение, тренировку или жанр на базе \(dify.activeModelDisplayName). Нажмите на быстрый запрос или напишите свой.")
+                    .font(AG.text(.subheadline))
+                    .foregroundStyle(AG.inkMuted)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
             }
@@ -175,22 +195,21 @@ struct AIMusicAssistantView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "key.fill")
-                        Text("Настроить API-ключ Dify")
+                        Text("Указать API-ключ")
                     }
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(AG.text(.subheadline, .bold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 18)
                     .padding(.vertical, 10)
-                    .background(Color.purple.opacity(0.7))
-                    .clipShape(Capsule())
+                    .glassProminent(AG.amber)
                 }
                 .padding(.top, 4)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("ПОПУЛЯРНЫЕ ЗАПРОСЫ")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.4))
+                Text("БЫСТРЫЕ ВАЙБЫ")
+                    .font(AG.text(.caption2, .bold))
+                    .foregroundStyle(AG.inkFaint)
                     .padding(.leading, 8)
 
                 ForEach(quickPrompts, id: \.self) { prompt in
@@ -200,21 +219,21 @@ struct AIMusicAssistantView: View {
                     } label: {
                         HStack {
                             Text(prompt)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.9))
+                                .font(AG.text(.subheadline, .medium))
+                                .foregroundStyle(AG.ink)
                             Spacer()
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.white.opacity(0.4))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(AG.inkMuted)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .glassCard(corner: 14)
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.top, 10)
+            .padding(.top, 8)
 
             Spacer(minLength: 40)
         }
@@ -228,13 +247,13 @@ struct AIMusicAssistantView: View {
             HStack {
                 Spacer(minLength: 48)
                 Text(msg.text)
-                    .font(.system(size: 15))
+                    .font(AG.text(.body))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .background(
                         LinearGradient(
-                            colors: [Color.purple.opacity(0.85), Color.indigo.opacity(0.9)],
+                            colors: [AG.amber, AG.flame],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -246,10 +265,14 @@ struct AIMusicAssistantView: View {
             HStack(alignment: .top, spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(LinearGradient(colors: [Color.purple, Color.cyan], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .fill(LinearGradient(
+                            colors: [dify.provider == .nvidia ? (Color(hex: "#76B900") ?? .green) : Color.purple, Color.cyan],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ))
                         .frame(width: 32, height: 32)
                     Image(systemName: "sparkles")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.white)
                 }
 
@@ -257,15 +280,15 @@ struct AIMusicAssistantView: View {
                     let cleanedText = DifyService.cleanDisplayText(from: msg.text)
                     if !cleanedText.isEmpty {
                         Text(cleanedText)
-                            .font(.system(size: 15))
-                            .foregroundStyle(.white.opacity(0.95))
+                            .font(AG.text(.body))
+                            .foregroundStyle(AG.ink)
                             .lineSpacing(3)
                     }
 
                     if msg.isStreaming && msg.text.isEmpty {
-                        HStack(spacing: 4) {
-                            Circle().fill(Color.purple).frame(width: 6, height: 6)
-                            Circle().fill(Color.cyan).frame(width: 6, height: 6)
+                        HStack(spacing: 5) {
+                            Circle().fill(Color(hex: "#76B900") ?? .green).frame(width: 6, height: 6)
+                            Circle().fill(Color.teal).frame(width: 6, height: 6)
                             Circle().fill(Color.white).frame(width: 6, height: 6)
                         }
                         .padding(.vertical, 8)
@@ -278,18 +301,13 @@ struct AIMusicAssistantView: View {
                     if let err = msg.error {
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
-                            Text(err).font(.system(size: 13)).foregroundStyle(.red)
+                            Text(err).font(AG.text(.footnote)).foregroundStyle(.red)
                         }
                         .padding(.top, 4)
                     }
                 }
                 .padding(14)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
+                .glassCard(corner: 18)
 
                 Spacer(minLength: 24)
             }
@@ -302,7 +320,7 @@ struct AIMusicAssistantView: View {
             HStack(alignment: .center, spacing: 10) {
                 ZStack {
                     LinearGradient(
-                        colors: [Color(hex: "#FF455B") ?? .pink, Color(hex: "#9333EA") ?? .purple],
+                        colors: [AG.amber, Color(hex: "#9333EA") ?? .purple],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -310,29 +328,29 @@ struct AIMusicAssistantView: View {
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(.white)
                 }
-                .frame(width: 42, height: 42)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(playlist.playlistTitle)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white)
+                        .font(AG.rounded(.headline, .bold))
+                        .foregroundStyle(AG.ink)
 
                     Text(playlist.description)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.65))
+                        .font(AG.text(.caption))
+                        .foregroundStyle(AG.inkMuted)
                         .lineLimit(2)
                 }
             }
 
-            Divider().background(Color.white.opacity(0.15))
+            Divider().overlay(AG.ink.opacity(0.12))
 
             if msg.isResolvingTracks {
                 HStack(spacing: 8) {
-                    ProgressView().tint(.white)
+                    ProgressView().tint(AG.ink)
                     Text("Поиск треков в Яндекс Музыке...")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .font(AG.text(.subheadline))
+                        .foregroundStyle(AG.inkMuted)
                 }
                 .padding(.vertical, 8)
             } else if !msg.resolvedTracks.isEmpty {
@@ -343,8 +361,8 @@ struct AIMusicAssistantView: View {
 
                     if msg.resolvedTracks.count > 8 {
                         Text("И ещё \(msg.resolvedTracks.count - 8) треков...")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .font(AG.text(.caption2))
+                            .foregroundStyle(AG.inkFaint)
                             .padding(.top, 2)
                     }
                 }
@@ -359,15 +377,13 @@ struct AIMusicAssistantView: View {
                             Image(systemName: "play.fill")
                             Text("Слушать")
                         }
-                        .font(.system(size: 14, weight: .bold))
+                        .font(AG.text(.subheadline, .bold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(
-                            LinearGradient(colors: [Color.pink, Color.purple], startPoint: .leading, endPoint: .trailing)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .glassProminent(AG.amber)
                     }
+                    .buttonStyle(.plain)
 
                     let isSaved = savedPlaylistTitles.contains(playlist.playlistTitle)
                     Button {
@@ -380,34 +396,32 @@ struct AIMusicAssistantView: View {
                             Image(systemName: isSaved ? "checkmark" : "plus.rectangle.on.folder")
                             Text(isSaved ? "Сохранено" : "В коллекцию")
                         }
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(isSaved ? .green : .white)
+                        .font(AG.text(.subheadline, .semibold))
+                        .foregroundStyle(isSaved ? AG.positive : AG.ink)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .glassCapsule(interactive: true)
                     }
+                    .buttonStyle(.plain)
                 }
                 .padding(.top, 4)
             } else {
-                // If resolving returned no playable tracks, show suggestions list
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(playlist.tracks) { item in
                         HStack {
                             Image(systemName: "music.note")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.white.opacity(0.5))
+                                .font(.system(size: 11))
+                                .foregroundStyle(AG.inkMuted)
                             Text("\(item.artist) — \(item.title)")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.white.opacity(0.85))
+                                .font(AG.text(.subheadline))
+                                .foregroundStyle(AG.ink)
                         }
                     }
                 }
             }
         }
         .padding(12)
-        .background(Color.black.opacity(0.45))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .glassCard(corner: 16)
     }
 
     private func trackRow(track: Track, allTracks: [Track]) -> some View {
@@ -424,36 +438,36 @@ struct AIMusicAssistantView: View {
                             Color.purple.opacity(0.3)
                         }
                     }
-                    .frame(width: 32, height: 32)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .frame(width: 34, height: 34)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
                     ZStack {
                         Color.purple.opacity(0.3)
                         Image(systemName: "music.note")
                             .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(AG.inkMuted)
                     }
-                    .frame(width: 32, height: 32)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .frame(width: 34, height: 34)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white)
+                        .font(AG.rounded(.subheadline, .medium))
+                        .foregroundStyle(AG.ink)
                         .lineLimit(1)
 
                     Text(track.artist)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .font(AG.text(.caption2))
+                        .foregroundStyle(AG.inkMuted)
                         .lineLimit(1)
                 }
 
                 Spacer()
 
-                Image(systemName: "play.circle")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white.opacity(0.5))
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(AG.amber)
             }
             .contentShape(Rectangle())
         }
@@ -463,7 +477,6 @@ struct AIMusicAssistantView: View {
     // MARK: - Input Bottom Bar
     private var inputBottomBar: some View {
         VStack(spacing: 8) {
-            // Horizontal quick chips if text is empty
             if inputText.isEmpty && !messages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -473,13 +486,13 @@ struct AIMusicAssistantView: View {
                                 send(prompt)
                             } label: {
                                 Text(prompt)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.85))
+                                    .font(AG.text(.caption, .medium))
+                                    .foregroundStyle(AG.ink)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
-                                    .background(Color.white.opacity(0.08))
-                                    .clipShape(Capsule())
+                                    .glassCapsule(interactive: true)
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -487,13 +500,13 @@ struct AIMusicAssistantView: View {
             }
 
             HStack(spacing: 10) {
-                TextField("Попроси создать плейлист...", text: $inputText)
+                TextField("Спроси или опиши настроение...", text: $inputText)
                     .focused($isInputFocused)
+                    .font(AG.text(.body))
+                    .foregroundStyle(AG.ink)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .background(Color.white.opacity(0.09))
-                    .clipShape(Capsule())
-                    .foregroundStyle(.white)
+                    .glassCapsule(interactive: true)
                     .onSubmit {
                         submitCurrentText()
                     }
@@ -504,27 +517,28 @@ struct AIMusicAssistantView: View {
                     ZStack {
                         Circle()
                             .fill(
-                                LinearGradient(
-                                    colors: isSendDisabled ? [Color.white.opacity(0.1), Color.white.opacity(0.1)] : [Color.pink, Color.purple],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
+                                isSendDisabled
+                                    ? LinearGradient(colors: [Color.white.opacity(0.1), Color.white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                    : AG.emberGradient
                             )
                             .frame(width: 44, height: 44)
 
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(isSendDisabled ? .white.opacity(0.3) : .white)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(isSendDisabled ? AG.inkFaint : .white)
                     }
+                    .glassCircle(interactive: !isSendDisabled)
                 }
                 .disabled(isSendDisabled)
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
             .padding(.top, 4)
         }
         .background(
-            Color.black.opacity(0.85)
+            Color.clear
+                .glassEffect(.regular, in: .rect(cornerRadius: 0))
                 .ignoresSafeArea(edges: .bottom)
         )
     }
@@ -577,7 +591,6 @@ struct AIMusicAssistantView: View {
                     messages[idx].isStreaming = false
                     messages[idx].playlist = playlist
 
-                    // Resolve tracks from Yandex Music API
                     if let playlist = playlist, !playlist.tracks.isEmpty {
                         messages[idx].isResolvingTracks = true
                         let resolved = await AIPlaylistGeneratorService.shared.resolveTracks(for: playlist.tracks)
