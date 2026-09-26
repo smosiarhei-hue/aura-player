@@ -252,6 +252,29 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("startAIVibeWave(for:", lib_content)
         self.assertIn("AI Вайб-волна", lib_content)
 
+    def test_ai_videoshot_service(self):
+        service_file = self.repo_root / "Aurora" / "VideoShot" / "AIVideoShotGeneratorService.swift"
+        self.assertTrue(service_file.exists(), "AIVideoShotGeneratorService.swift must exist")
+
+        content = service_file.read_text(encoding="utf-8")
+        self.assertIn("class AIVideoShotGeneratorService", content)
+        self.assertIn("func generateVideoShot(", content)
+        self.assertIn("func localVideoShotURL(", content)
+        self.assertIn("https://siftq.com/api/minimax-trial/video-generation", content)
+        self.assertIn("X-MiniMax-Trial-Client", content)
+        self.assertIn("X-Forwarded-For", content)
+        self.assertIn("didGenerateAIVideoShot", content)
+
+        dify_file = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
+        dify_content = dify_file.read_text(encoding="utf-8")
+        self.assertIn("generateVideoShotPrompt", dify_content)
+
+        player_screen = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        ps_content = player_screen.read_text(encoding="utf-8")
+        self.assertIn("AIVideoShotGeneratorService.shared", ps_content)
+        self.assertIn("generateAIVideoShot()", ps_content)
+        self.assertIn("didGenerateAIVideoShot", ps_content)
+
 
 if __name__ == "__main__":
     unittest.main()

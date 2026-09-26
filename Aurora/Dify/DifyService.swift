@@ -453,6 +453,37 @@ final class DifyService: ObservableObject {
         return cleaned.isEmpty ? "Вот подборка треков по твоему запросу:" : cleaned
     }
 
+    // MARK: - AI VideoShot Prompt Generation (Song Meaning & Visuals)
+    /// Understand song meaning, vibe, and lyrics snippet using NVIDIA DeepSeek V4.1 Flash / Dify to generate a cinematic MiniMax video prompt
+    func generateVideoShotPrompt(title: String, artist: String, lyricsSnippet: String?) async -> String {
+        let snippet = lyricsSnippet?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptQuery = """
+        Track: "\(title)" by "\(artist)".
+        \(snippet.isEmpty ? "" : "Lyrics excerpt: \"\(snippet.prefix(200))\"")
+
+        Analyze the mood, rhythm, and atmosphere of this song.
+        Write a single cinematic camera motion and atmospheric lighting description in English to animate this music cover art into a seamless 9:16 vertical video loop.
+        Rules:
+        1. Output ONLY 1 sentence in English.
+        2. Focus strictly on camera motion (e.g. slow push-in, subtle floating camera, gentle rotating pan) and atmosphere (e.g. volumetric neon lighting, floating particles, bokeh, glowing haze).
+        3. Do not include quotes, preamble, or any text/subtitles instructions.
+        """
+
+        do {
+            let result = try await sendMessage(query: promptQuery, onDelta: { _ in })
+            let cleaned = Self.cleanDisplayText(from: result.fullText)
+                .replacingOccurrences(of: "\"", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleaned.count > 10 {
+                return cleaned
+            }
+        } catch {
+            SonivoDiagnostics.log("[VideoShot] NVIDIA AI prompt fallback: \(error.localizedDescription)", tag: "VIDEOSHOT")
+        }
+
+        return "Cinematic slow push-in camera with atmospheric volumetric lighting, floating dust motes, subtle bokeh, and gentle rhythmic motion."
+    }
+
     private static func decodePlaylistJSON(from string: String) -> AIGeneratedPlaylist? {
         guard let data = string.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(AIGeneratedPlaylist.self, from: data)

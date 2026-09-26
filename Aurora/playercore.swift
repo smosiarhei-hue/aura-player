@@ -1578,11 +1578,21 @@ final class PlayerCore {
         // Phase 2 (0.35 .. 0.65): The DJ Drop / Handoff on the downbeat: outgoing ducks cleanly to 0.08, incoming sweeps to 0.85.
         // Phase 3 (0.65 .. 1.0): Incoming takes over full power (0.85 -> 1.0); outgoing fades into silence.
         if isUsingStreamPlayer || incomingIsStream {
-            // True Constant Equal-Power DJ Curve:
-            // Ensures total acoustic power = streamSourceVol^2 + streamTargetVol^2 = 1.0 (No 3dB energy dip!)
-            let smoothP = p * p * (3.0 - 2.0 * p)
-            streamSourceVol = Float(cos(smoothP * .pi * 0.5))
-            streamTargetVol = Float(sin(smoothP * .pi * 0.5))
+            // MARK: - Streaming AutoMix DJ Vocal-Safe Transition
+            // 3-phase DJ vocal-safe gain shaping
+            if p < 0.35 {
+                let s = p / 0.35
+                streamSourceVol = 0.85 + 0.15 * Float(cos(Double(s) * .pi * 0.5))
+                streamTargetVol = 0.15 * Float(sin(Double(s) * .pi * 0.5))
+            } else if p < 0.65 {
+                let s = (p - 0.35) / 0.30
+                streamSourceVol = max(0.08, 0.85 * Float(cos(Double(s) * .pi * 0.5)))
+                streamTargetVol = 0.15 + 0.70 * Float(sin(Double(s) * .pi * 0.5))
+            } else {
+                let s = (p - 0.65) / 0.35
+                streamSourceVol = max(0.0, 0.08 * Float(cos(Double(s) * .pi * 0.5)))
+                streamTargetVol = 0.85 + 0.15 * Float(sin(Double(s) * .pi * 0.5))
+            }
         }
 
         if isUsingStreamPlayer {

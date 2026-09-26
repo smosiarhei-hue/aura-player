@@ -344,6 +344,9 @@ struct AuraHomeRedesignedView: View {
         }
     }
 
+    // Proximity sensor disabled per user request: proximityState remains false so phone calls mode is never triggered
+    private var proximityState: Bool { false }
+
     private func updateAntigravityLifecycle(isOnMain: Bool = true) {
         antigravity.updateLifecycle(
             isAppActive: scenePhase == .active,

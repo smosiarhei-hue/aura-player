@@ -28,6 +28,7 @@ struct PlayerScreenV2: View {
     @State private var videoLooperPlayer: AVQueuePlayer?
     @State private var videoLooper: AVPlayerLooper?
     @State private var videoShotTrackID: UUID?
+    @ObservedObject private var aiVideoShotService = AIVideoShotGeneratorService.shared
     @State private var artworkPaletteColors: [Color] = []
     @State private var paletteTrackId: UUID?
     @State private var artworkTrackId: UUID?
@@ -164,6 +165,16 @@ struct PlayerScreenV2: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .didUpdateCustomLyrics)) { _ in
             Task { await loadLyrics() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .didGenerateAIVideoShot)) { note in
+            if let targetUUID = note.object as? UUID, targetUUID == track?.id,
+               let targetURL = note.userInfo?["url"] as? URL {
+                videoShotURL = targetURL
+                videoShotTrackID = targetUUID
+                if isVideoShotEnabled {
+                    setupVideoLooper(url: targetURL)
+                }
+            }
         }
         .onChange(of: player.isTransitionActive) { _, isActive in
             if isActive, let outgoing = player.currentTrack, let incoming = player.incomingTrack {
@@ -548,6 +559,25 @@ struct PlayerScreenV2: View {
                         accessibilityLabel: "Видео-шот",
                         action: toggleVideoShot
                     )
+                } else if current != nil {
+                    if aiVideoShotService.isGenerating && aiVideoShotService.currentTrackId == current?.id.uuidString {
+                        Button {
+                            waveMessage = aiVideoShotService.statusMessage
+                        } label: {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: AG.accent))
+                                .frame(width: tapSide, height: tapSide)
+                        }
+                        .glassCircle()
+                        .accessibilityLabel("Создание AI Видео-шота")
+                    } else {
+                        GlassIconButton(
+                            systemImage: "sparkles.tv",
+                            tint: AG.inkMuted,
+                            accessibilityLabel: "Создать AI Видео-шот",
+                            action: generateAIVideoShot
+                        )
+                    }
                 }
 
                 if current != nil {
@@ -605,7 +635,21 @@ struct PlayerScreenV2: View {
         }
     }
     @ViewBuilder private var centerStatusLabel: some View {
-        if player.isTransitionActive {
+        if aiVideoShotService.isGenerating && aiVideoShotService.currentTrackId == track?.id.uuidString {
+            HStack(spacing: 5) {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: AG.accent))
+                    .scaleEffect(0.65)
+                Text(aiVideoShotService.statusMessage)
+                    .font(AG.text(.caption2, .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .glassCapsule(interactive: false)
+            .transition(.opacity)
+        } else if player.isTransitionActive {
             AIDJTransitionBadgeView(incomingTrack: player.incomingTrack)
                 .transition(.opacity)
         } else {
@@ -683,6 +727,13 @@ struct PlayerScreenV2: View {
                 Label("AI Вайб-волна (похожие по вайбу)", systemImage: "sparkles")
             }
             .disabled(track == nil || AIDJService.shared.isVibeWaveGenerating)
+
+            Button {
+                generateAIVideoShot()
+            } label: {
+                Label("Создать AI Видео-шот (MiniMax H3)", systemImage: "sparkles.tv")
+            }
+            .disabled(track == nil || aiVideoShotService.isGenerating)
 
             Button {
                 SettingsStore.shared.isNeuralEngineEnabled.toggle()
@@ -880,7 +931,15 @@ struct PlayerScreenV2: View {
         let requestedTrackID = track.id
         let id = PlayerCore.yandexTrackID(from: track)
         guard !id.isEmpty else { return }
-        let url = await YandexMusicService.shared.getVideoShotUrl(for: id)
+
+        // 1. Проверяем официальный видео-шот из Yandex Music
+        var url = await YandexMusicService.shared.getVideoShotUrl(for: id)
+
+        // 2. Если официального нет, проверяем локальный AI видео-шот (MiniMax H3)
+        if url == nil {
+            url = AIVideoShotGeneratorService.shared.localVideoShotURL(for: id)
+        }
+
         guard !Task.isCancelled, player.currentTrack?.id == requestedTrackID else { return }
         videoShotURL = url
         videoShotTrackID = requestedTrackID
@@ -915,6 +974,34 @@ struct PlayerScreenV2: View {
             setupVideoLooper(url: videoShotURL)
         } else {
             teardownVideoLooper()
+        }
+    }
+    private func generateAIVideoShot() {
+        guard let current = track else { return }
+        Haptics.tap(.medium)
+        waveMessage = "✨ Запуск создания AI Видео-шота..."
+        Task {
+            do {
+                let lyricsSnippet = lyrics?.lines.prefix(4).map(\.text).joined(separator: " ")
+                let url = try await AIVideoShotGeneratorService.shared.generateVideoShot(
+                    for: current,
+                    artwork: currentArtworkImage,
+                    lyricsSnippet: lyricsSnippet
+                )
+                guard player.currentTrack?.id == current.id else { return }
+                videoShotURL = url
+                videoShotTrackID = current.id
+                isVideoShotEnabled = true
+                UserDefaults.standard.set(true, forKey: "aurora_videoshot_enabled")
+                setupVideoLooper(url: url)
+                waveMessage = "🎬 AI Видео-шот готов!"
+                try? await Task.sleep(for: .seconds(3.0))
+                if waveMessage == "🎬 AI Видео-шот готов!" { waveMessage = nil }
+            } catch {
+                waveMessage = "Не удалось создать видео: \(error.localizedDescription)"
+                try? await Task.sleep(for: .seconds(3.5))
+                waveMessage = nil
+            }
         }
     }
     private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }

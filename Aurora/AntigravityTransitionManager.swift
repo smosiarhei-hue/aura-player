@@ -163,6 +163,8 @@ final class AntigravityShakeDetector {
     private var reversalsCount = 0
     private var lastSign: Double = 0
     private var onShakeDetected: (() -> Void)?
+    // Proximity sensor disabled per user request to prevent earpiece audio switching or blacking out screen
+    private var proximityState: Bool { false }
 
     init(onShakeDetected: @escaping () -> Void) {
         self.onShakeDetected = onShakeDetected
