@@ -136,17 +136,16 @@ final class DifyService: ObservableObject {
         }
 
         let systemPrompt = """
-        Ты — профессиональный музыкальный AI-куратор и DJ в приложении Sonivo.
-        Твоя задача — точно понимать настроение, вайб, ритм и музыкальные предпочтения пользователя.
-        Всегда подбирай реальные, существующие треки известных артистов.
+        Ты — ведущий музыкальный AI-куратор и DJ Sonivo с безупречным вкусом.
+        Твой стиль общения — живой, стильный, вдохновляющий и дружелюбный, как у музыкального редактора Apple Music или радиоведущего.
 
-        Когда просят составить плейлист или подборку:
-        1. Сделай краткое красивое описание атмосферы и вайба (1-2 предложения).
-        2. В конце ответа ОБЯЗАТЕЛЬНО приложи JSON строго в таком формате:
+        Когда пользователь просит составить плейлист, микс или подобрать музыку:
+        1. Начни с 2-3 красивых, атмосферных предложений о вайбе этой подборки: опиши настроение, музыкальную текстуру и эмоции. Никогда не упоминай в тексте слова "JSON", "код", "структура", "скрипт", "формат" или технические детали.
+        2. В конце своего ответа приложи данные подборки СТРОГО в блоке ```json с МИНИМУМ 50 разнообразными треками известных артистов (50-60 треков, идеально подходящих по концепции):
         ```json
         {
           "playlist_title": "Название подборки",
-          "description": "Краткое описание атмосферы",
+          "description": "Краткое описание атмосферы и настроения",
           "tracks": [
             { "artist": "Исполнитель", "title": "Название трека" }
           ]
@@ -170,7 +169,7 @@ final class DifyService: ObservableObject {
             systemPrompt: systemPrompt,
             userQuery: query,
             temperature: 0.7,
-            maxTokens: 1200,
+            maxTokens: 4096,
             stream: true
         )
         request.httpBody = try JSONEncoder().encode(bodyPayload)
@@ -244,7 +243,7 @@ final class DifyService: ObservableObject {
             systemPrompt: systemPrompt,
             userQuery: query,
             temperature: 0.7,
-            maxTokens: 1024,
+            maxTokens: 4096,
             stream: true
         )
         request.httpBody = try JSONEncoder().encode(bodyPayload)
@@ -445,12 +444,62 @@ final class DifyService: ObservableObject {
     }
 
     static func cleanDisplayText(from rawText: String) -> String {
-        var cleaned = rawText.replacingOccurrences(of: "```json([\\s\\S]*?)```", with: "", options: .regularExpression)
-        cleaned = cleaned.replacingOccurrences(of: "```([\\s\\S]*?)```", with: "", options: .regularExpression)
-        // Убираем теги <think>...</think> если модель рассуждала
-        cleaned = cleaned.replacingOccurrences(of: "<think>[\\s\\S]*?</think>", with: "", options: .regularExpression)
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? "Вот подборка треков по твоему запросу:" : cleaned
+        var text = rawText
+        // 1. Remove completed <think>...</think>
+        text = text.replacingOccurrences(of: "<think>[\\s\\S]*?</think>", with: "", options: .regularExpression)
+        // If <think> tag is unclosed (streaming), cut off from <think>
+        if let thinkRange = text.range(of: "<think>") {
+            text = String(text[..<thinkRange.lowerBound])
+        }
+
+        // 2. Strip completed markdown blocks
+        text = text.replacingOccurrences(of: "```json([\\s\\S]*?)```", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "```([\\s\\S]*?)```", with: "", options: .regularExpression)
+
+        // 3. Cut off at opening code block fence (streaming JSON block)
+        if let fenceRange = text.range(of: "```") {
+            text = String(text[..<fenceRange.lowerBound])
+        }
+
+        // 4. Cut off if raw JSON starts without backticks
+        if let jsonStart = text.range(of: "{\"playlist_title\"", options: .caseInsensitive)?.lowerBound ??
+           text.range(of: "{\n  \"playlist_title\"", options: .caseInsensitive)?.lowerBound ??
+           text.range(of: "{\"tracks\"", options: .caseInsensitive)?.lowerBound ??
+           text.range(of: "{\n  \"tracks\"", options: .caseInsensitive)?.lowerBound {
+            text = String(text[..<jsonStart])
+        }
+
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned
+    }
+
+    /// Запрос к ИИ на интеллектуальное дополнение плейлиста ещё 50 новыми треками того же вайба
+    func extendPlaylist(
+        title: String,
+        description: String,
+        existingTracks: [Track]
+    ) async throws -> AIGeneratedPlaylist? {
+        let existingSummary = existingTracks.prefix(25).map { "\($0.artist) — \($0.title)" }.joined(separator: ", ")
+        let query = """
+        У нас есть плейлист: "\(title)"
+        Вайб и настроение: "\(description)"
+        Уже присутствуют треки: [\(existingSummary)]
+
+        Пожалуйста, подбери ЕЩЁ ровно 50 НОВЫХ отличных треков, подходящих по стилю и настроению, БЕЗ повторов с уже имеющимися.
+        Выведи результат СТРОГО в блоке ```json:
+        ```json
+        {
+          "playlist_title": "\(title)",
+          "description": "\(description)",
+          "tracks": [
+            { "artist": "Исполнитель", "title": "Название трека" }
+          ]
+        }
+        ```
+        """
+
+        let result = try await sendMessage(query: query, onDelta: { _ in })
+        return result.playlist ?? Self.extractPlaylist(from: result.fullText)
     }
 
     // MARK: - AI VideoShot Prompt Generation (Song Meaning & Visuals)

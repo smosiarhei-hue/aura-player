@@ -276,6 +276,41 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("didGenerateAIVideoShot", ps_content)
 
 
+    def test_playlist_detail_and_curator_50_tracks(self):
+        playlist_detail = self.repo_root / "Aurora" / "PlaylistDetailView.swift"
+        self.assertTrue(playlist_detail.exists(), "PlaylistDetailView.swift must exist")
+
+        pd_content = playlist_detail.read_text(encoding="utf-8")
+        self.assertIn("struct PlaylistDetailView", pd_content)
+        self.assertIn("PlaybackCommandRouter.shared.play", pd_content)
+        self.assertIn("Дополнить ещё +50", pd_content)
+        self.assertIn("extendPlaylistInLibrary", pd_content)
+        self.assertIn("tracksListSection", pd_content)
+
+        lib_view = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_content = lib_view.read_text(encoding="utf-8")
+        self.assertIn("PlaylistDetailView(playlist:", lib_content)
+        self.assertIn("NavigationLink(destination: PlaylistDetailView", lib_content)
+        self.assertIn("playlistsShelfSection", lib_content)
+
+        dify_file = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
+        dify_content = dify_file.read_text(encoding="utf-8")
+        self.assertIn("МИНИМУМ 50", dify_content)
+        self.assertIn("maxTokens: 4096", dify_content)
+        self.assertIn("extendPlaylist", dify_content)
+
+        gen_file = self.repo_root / "Aurora" / "Dify" / "AIPlaylistGeneratorService.swift"
+        gen_content = gen_file.read_text(encoding="utf-8")
+        self.assertIn("extendPlaylist(", gen_content)
+        self.assertIn("extendPlaylistInLibrary(", gen_content)
+        self.assertIn("addTracksToPlaylist", gen_content)
+
+        assistant_view = self.repo_root / "Aurora" / "Dify" / "AIMusicAssistantView.swift"
+        as_content = assistant_view.read_text(encoding="utf-8")
+        self.assertIn("extendPlaylistBy50", as_content)
+        self.assertIn("+50 ещё", as_content)
+
+
 if __name__ == "__main__":
     unittest.main()
 

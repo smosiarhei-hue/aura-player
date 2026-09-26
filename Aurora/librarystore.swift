@@ -81,8 +81,10 @@ final class LibraryStore {
 
     // MARK: - Playlists Management
 
-    func createPlaylist(title: String) {
-        guard !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+    @discardableResult
+    func createPlaylist(title: String, coverGradient: [String]? = nil) -> Playlist {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        let resolvedTitle = trimmed.isEmpty ? "Новый плейлист" : trimmed
         let gradients = [
             ["#FF455B", "#9333EA"],
             ["#F97316", "#E11D48"],
@@ -90,8 +92,9 @@ final class LibraryStore {
             ["#10B981", "#6366F1"],
             ["#EC4899", "#F59E0B"]
         ]
-        let p = Playlist(title: title, coverGradient: gradients.randomElement() ?? ["#FF455B", "#9333EA"])
+        let p = Playlist(title: resolvedTitle, coverGradient: coverGradient ?? gradients.randomElement() ?? ["#FF455B", "#9333EA"])
         playlists.insert(p, at: 0)
+        return p
     }
 
     func addTrackToPlaylist(track: Track, playlistId: UUID) {
@@ -106,13 +109,42 @@ final class LibraryStore {
         }
     }
 
+    func addTracksToPlaylist(tracks newTracks: [Track], playlistId: UUID) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
+        var currentTracks = tracks
+        let existingIds = Set(currentTracks.map(\.id))
+        for track in newTracks where !existingIds.contains(track.id) {
+            currentTracks.append(track)
+        }
+        self.tracks = currentTracks
+
+        var currentPlaylistTrackIds = playlists[idx].trackIds
+        let playlistIdSet = Set(currentPlaylistTrackIds)
+        for track in newTracks where !playlistIdSet.contains(track.id) {
+            currentPlaylistTrackIds.append(track.id)
+        }
+        playlists[idx].trackIds = currentPlaylistTrackIds
+        persistPlaylists()
+    }
+
+    func removeTrackFromPlaylist(trackId: UUID, playlistId: UUID) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
+        playlists[idx].trackIds.removeAll { $0 == trackId }
+        persistPlaylists()
+    }
+
     func deletePlaylist(_ playlist: Playlist) {
         playlists.removeAll { $0.id == playlist.id }
+        persistPlaylists()
+    }
+
+    func playlist(byId id: UUID) -> Playlist? {
+        playlists.first { $0.id == id }
     }
 
     func tracks(for playlist: Playlist) -> [Track] {
-        let set = Set(playlist.trackIds)
-        return tracks.filter { set.contains($0.id) }
+        let dict = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+        return playlist.trackIds.compactMap { dict[$0] }
     }
 
     // MARK: - Favorites (Works for BOTH local and online tracks!)

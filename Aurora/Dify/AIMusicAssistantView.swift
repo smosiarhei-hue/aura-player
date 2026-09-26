@@ -9,6 +9,7 @@ struct AIMusicAssistantView: View {
     @State private var isSending = false
     @State private var showSettings = false
     @State private var selectedFilterCategory: ClarifyCategory? = nil
+    @State private var extendingMessageId: UUID? = nil
     @FocusState private var isInputFocused: Bool
 
     private let quickPrompts = [
@@ -356,15 +357,20 @@ struct AIMusicAssistantView: View {
                             }
                             .buttonStyle(.plain)
                         }
+                    } else if !msg.isStreaming && msg.playlist != nil {
+                        Text("Вот эксклюзивная подборка треков по твоему запросу:")
+                            .font(AG.text(.body))
+                            .foregroundStyle(AG.ink)
                     }
 
-                    if msg.isStreaming && msg.text.isEmpty {
-                        HStack(spacing: 5) {
-                            Circle().fill(Color(hex: "#76B900") ?? .green).frame(width: 6, height: 6)
-                            Circle().fill(Color.teal).frame(width: 6, height: 6)
-                            Circle().fill(Color.white).frame(width: 6, height: 6)
+                    if msg.isStreaming {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(dify.provider == .nvidia ? (Color(hex: "#76B900") ?? .green) : Color.purple).scaleEffect(0.85)
+                            Text(cleanedText.isEmpty ? "AI-Куратор подбирает треки…" : "Формирую плейлист…")
+                                .font(AG.text(.subheadline, .medium))
+                                .foregroundStyle(AG.inkMuted)
                         }
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 4)
                     }
 
                     if let playlist = msg.playlist {
@@ -413,6 +419,13 @@ struct AIMusicAssistantView: View {
                         .font(AG.text(.caption))
                         .foregroundStyle(AG.inkMuted)
                         .lineLimit(2)
+
+                    if !msg.resolvedTracks.isEmpty {
+                        Text("\(msg.resolvedTracks.count) треков")
+                            .font(AG.text(.caption2, .bold))
+                            .foregroundStyle(AG.amber)
+                            .padding(.top, 1)
+                    }
                 }
 
                 Spacer()
@@ -455,13 +468,13 @@ struct AIMusicAssistantView: View {
                     }
                 }
 
-                // Action buttons: Play & Save
-                HStack(spacing: 10) {
+                // Action buttons: Play, Save & Extend (+50)
+                HStack(spacing: 8) {
                     Button {
                         Haptics.tap(.heavy)
                         AIPlaylistGeneratorService.shared.playNow(tracks: msg.resolvedTracks)
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 5) {
                             Image(systemName: "play.fill")
                             Text("Слушать")
                         }
@@ -481,9 +494,9 @@ struct AIMusicAssistantView: View {
                         store.savedPlaylistTitles.insert(playlist.playlistTitle)
                         store.savePersistedState()
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 5) {
                             Image(systemName: isSaved ? "checkmark" : "plus.rectangle.on.folder")
-                            Text(isSaved ? "Сохранено" : "В коллекцию")
+                            Text(isSaved ? "В коллекции" : "В коллекцию")
                         }
                         .font(AG.text(.subheadline, .semibold))
                         .foregroundStyle(isSaved ? AG.positive : AG.ink)
@@ -492,6 +505,27 @@ struct AIMusicAssistantView: View {
                         .glassCapsule(interactive: true)
                     }
                     .buttonStyle(.plain)
+
+                    Button {
+                        extendPlaylistBy50(msg: msg)
+                    } label: {
+                        HStack(spacing: 5) {
+                            if extendingMessageId == msg.id {
+                                ProgressView().tint(AG.ink).scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundStyle(AG.amber)
+                            }
+                            Text(extendingMessageId == msg.id ? "…" : "+50 ещё")
+                        }
+                        .font(AG.text(.subheadline, .semibold))
+                        .foregroundStyle(AG.ink)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .glassCapsule(interactive: true)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(extendingMessageId == msg.id)
                 }
                 .padding(.top, 4)
             } else {
@@ -727,6 +761,12 @@ struct AIMusicAssistantView: View {
                     store.messages[idx].isStreaming = false
                     store.messages[idx].playlist = playlist
 
+                    // Ensure cleaned editorial text is saved without any raw JSON
+                    let clean = DifyService.cleanDisplayText(from: store.messages[idx].text)
+                    if !clean.isEmpty {
+                        store.messages[idx].text = clean
+                    }
+
                     if let playlist = playlist, !playlist.tracks.isEmpty {
                         store.messages[idx].isResolvingTracks = true
                         let resolved = await AIPlaylistGeneratorService.shared.resolveTracks(for: playlist.tracks)
@@ -749,6 +789,45 @@ struct AIMusicAssistantView: View {
                 await MainActor.run {
                     isSending = false
                 }
+            }
+        }
+    }
+
+    // MARK: - Extend Playlist (+50)
+    private func extendPlaylistBy50(msg: AIMessage) {
+        guard extendingMessageId == nil else { return }
+        guard let playlist = msg.playlist else { return }
+        Haptics.tap(.medium)
+        extendingMessageId = msg.id
+
+        Task {
+            do {
+                let newTracks = try await AIPlaylistGeneratorService.shared.extendPlaylist(
+                    playlistTitle: playlist.playlistTitle,
+                    description: playlist.description,
+                    existingTracks: msg.resolvedTracks
+                )
+
+                if let idx = store.messages.firstIndex(where: { $0.id == msg.id }) {
+                    store.messages[idx].resolvedTracks.append(contentsOf: newTracks)
+                    let newSuggestions = newTracks.map { AITrackSuggestion(artist: $0.artist, title: $0.title) }
+                    store.messages[idx].playlist?.tracks.append(contentsOf: newSuggestions)
+
+                    // If already saved in library, update library playlist too!
+                    if let libPlaylist = LibraryStore.shared.playlists.first(where: { $0.title == playlist.playlistTitle }) {
+                        LibraryStore.shared.addTracksToPlaylist(tracks: newTracks, playlistId: libPlaylist.id)
+                    }
+
+                    store.savePersistedState()
+                    store.copyToClipboard("", notice: "Добавлено +\(newTracks.count) треков в подборку!")
+                    Haptics.notification(.success)
+                }
+            } catch {
+                store.copyToClipboard("", notice: "Ошибка: \(error.localizedDescription)")
+            }
+
+            await MainActor.run {
+                extendingMessageId = nil
             }
         }
     }

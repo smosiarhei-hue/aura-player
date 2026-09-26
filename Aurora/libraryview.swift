@@ -179,6 +179,10 @@ struct LibraryView: View {
                 if filter == .playlists {
                     playlistsSection
                 } else {
+                    if filter == .all && searchText.isEmpty && !library.playlists.isEmpty {
+                        playlistsShelfSection
+                    }
+
                     if filter == .all && searchText.isEmpty && library.tracks.count >= 2 {
                         recentlyAddedSection
                     }
@@ -407,31 +411,34 @@ struct LibraryView: View {
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 16) {
                     ForEach(library.playlists) { playlist in
-                        VStack(alignment: .leading, spacing: 8) {
-                            ZStack {
-                                LinearGradient(
-                                    colors: playlist.coverGradient.compactMap { Color(hex: $0) },
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
+                        NavigationLink(destination: PlaylistDetailView(playlist: playlist)) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ZStack {
+                                    LinearGradient(
+                                        colors: playlist.coverGradient.compactMap { Color(hex: $0) },
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
 
-                                Image(systemName: "music.note.list")
-                                    .font(.system(size: 36, weight: .bold))
-                                    .foregroundStyle(AG.ink)
+                                    Image(systemName: "music.note.list")
+                                        .font(.system(size: 36, weight: .bold))
+                                        .foregroundStyle(AG.ink)
+                                }
+                                .frame(height: 140)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+
+                                Text(playlist.title)
+                                    .font(.headline.weight(.semibold))
+                                    .lineLimit(1)
+                                    .foregroundStyle(.primary)
+
+                                Text("\(playlist.trackIds.count) треков")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
-                            .frame(height: 140)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
-
-                            Text(playlist.title)
-                                .font(.headline.weight(.semibold))
-                                .lineLimit(1)
-                                .foregroundStyle(.primary)
-
-                            Text("\(playlist.trackIds.count) треков")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
                         }
+                        .buttonStyle(.plain)
                         .contextMenu {
                             Button(role: .destructive) {
                                 library.deletePlaylist(playlist)
@@ -439,6 +446,63 @@ struct LibraryView: View {
                                 Label("Удалить плейлист", systemImage: "trash")
                             }
                         }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    // MARK: - Playlists Shelf (for "Все песни")
+
+    private var playlistsShelfSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Плейлисты")
+                    .font(.title3.weight(.bold))
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.25)) { filter = .playlists }
+                } label: {
+                    Text("Все (\(library.playlists.count))")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(settings.accentColor)
+                }
+            }
+            .padding(.horizontal, 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(library.playlists) { playlist in
+                        NavigationLink(destination: PlaylistDetailView(playlist: playlist)) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ZStack {
+                                    LinearGradient(
+                                        colors: playlist.coverGradient.compactMap { Color(hex: $0) },
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+
+                                    Image(systemName: "music.note.list")
+                                        .font(.system(size: 28, weight: .bold))
+                                        .foregroundStyle(AG.ink)
+                                }
+                                .frame(width: 130, height: 130)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .shadow(color: .black.opacity(0.16), radius: 6, y: 3)
+
+                                Text(playlist.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                    .foregroundStyle(.primary)
+
+                                Text("\(playlist.trackIds.count) треков")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(width: 130)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 16)

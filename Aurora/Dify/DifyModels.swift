@@ -227,9 +227,9 @@ struct DifyStreamChunk: Codable, Sendable {
 // MARK: - AI Playlist & Music Models
 
 struct AIGeneratedPlaylist: Codable, Sendable, Equatable {
-    let playlistTitle: String
-    let description: String
-    let tracks: [AITrackSuggestion]
+    var playlistTitle: String
+    var description: String
+    var tracks: [AITrackSuggestion]
 
     enum CodingKeys: String, CodingKey {
         case playlistTitle = "playlist_title"
