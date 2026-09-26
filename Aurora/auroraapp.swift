@@ -178,3 +178,18 @@ struct MiniArtworkPulse: View {
             .frame(width: 44, height: 44).clipped().compositingGroup()
     }
 }
+
+// MARK: - Системный жест встряхивания устройства (Shake to Wave)
+
+extension NSNotification.Name {
+    static let deviceDidShakeNotification = NSNotification.Name("aura.deviceDidShakeNotification")
+}
+
+extension UIWindow {
+    open override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        super.motionEnded(motion, with: event)
+        if motion == .motionShake {
+            NotificationCenter.default.post(name: .deviceDidShakeNotification, object: event)
+        }
+    }
+}

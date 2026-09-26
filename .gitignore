@@ -5,8 +5,16 @@ build/
 xcuserdata/
 *.ipa
 *.zip
+__pycache__/
+*.pyc
 .openclaw/
 
 scripts/__pycache__/
 
 agent_config.json
+Aurora/incoming/node_modules/
+Aurora/incoming/dist/
+Aurora/incoming/scratch/
+Aurora/incoming/public/*.mp3
+Aurora/incoming/public/*.bin
+

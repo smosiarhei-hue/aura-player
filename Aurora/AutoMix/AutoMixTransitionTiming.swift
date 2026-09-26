@@ -8,20 +8,14 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         sourceDur: TimeInterval
     ) -> TimeInterval {
-        let base: Double
-        switch strategy {
-        case .SILENCE_TRIM: base = 2
-        case .VOCAL_CUT, .HARD_CUT, .DROP_SWITCH: base = 6
-        case .ECHO_OUT, .FILTER_TRANSITION: base = 10
-        case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ: base = 16
-        case .INSTRUMENTAL_OVERLAY, .LOOP_TRANSITION: base = 18
-        default: base = 14
-        }
-        let limited = min(base, max(4, sourceDur * 0.30))
-        guard let bar = source.barDuration, bar >= 1.2, bar <= 4 else {
-            return limited
-        }
-        return min(24, max(4, (limited / bar).rounded() * bar))
+        let bar = (source.barDuration.flatMap { ($0 >= 1.0 && $0 <= 3.0) ? $0 : nil })
+            ?? (source.bpm.flatMap { normalizedBPM($0) }.map { 240.0 / $0 })
+            ?? 2.0
+
+        // Punchy, vocal-safe DJ transition duration (2.8 - 3.5s)
+        // Prevents muddy long vocal overlap where lyrics clash.
+        let targetDuration = min(3.5, max(2.8, bar * 1.5))
+        return targetDuration
     }
 
     nonisolated static func musicalCueTime(
@@ -29,29 +23,27 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         duration: Double
     ) -> Double {
-        let latestStart = max(0, source.duration - 2)
-        var candidate = max(0, source.duration - duration)
+        // Strictly anchor to the outro (at least 92% of track duration or last 6.5 seconds)
+        let minOutroCue = max(0, max(source.duration * 0.92, source.duration - 6.5))
+        var candidate = max(minOutroCue, source.duration - duration)
 
         if strategy == .SILENCE_TRIM, let silence = source.trailingSilence {
-            candidate = max(0, silence.start - 0.5)
-        } else if let vocalEnd = source.lastVocalEnd,
-                  source.duration - vocalEnd >= duration * 0.65,
-                  source.duration - vocalEnd <= 32 {
+            candidate = max(minOutroCue, silence.start - duration)
+        } else if let vocalEnd = source.lastVocalEnd, vocalEnd >= minOutroCue {
             candidate = vocalEnd
-        } else if source.outroStart > 1,
-                  source.duration - source.outroStart >= duration * 0.65,
-                  source.duration - source.outroStart <= 36 {
+        } else if source.outroStart >= minOutroCue {
             candidate = source.outroStart
         } else if let boundary = source.sections.last(where: {
-            ($0.type == .chorus || $0.type == .verse || $0.type == .bridge) && $0.end <= source.duration - 2
+            $0.end >= minOutroCue && $0.end <= source.duration - 2.5
         })?.end {
-            candidate = max(candidate, boundary)
+            candidate = boundary
         }
 
-        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 3.5) {
+        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 1.5) {
             candidate = downbeat
         }
-        return min(latestStart, max(0, candidate))
+        let latestStart = max(minOutroCue, source.duration - 2.5)
+        return min(latestStart, max(minOutroCue, candidate))
     }
 
     nonisolated static func phaseAlignedStart(
@@ -62,33 +54,15 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         target: TrackAnalysis
     ) -> Double {
-        let musicalEntry: Double = {
-            if let instrumental = target.instrumentalRegions.first(where: { $0.start <= 12 && $0.duration >= 4 }) {
-                return instrumental.start
-            }
-            if target.introEnd >= 2, target.introEnd <= 12 { return target.introEnd }
-            if let downbeat = target.downbeats.first(where: { $0 >= 1 && $0 <= 12 }) { return downbeat }
-            if let firstBeat = target.firstBeat, firstBeat >= 0, firstBeat <= 12 { return firstBeat }
-            return min(8, max(2, target.duration * 0.03))
-        }()
-
-        guard let sourceBPM = normalizedBPM(source.bpm),
-              let targetBPM = normalizedBPM(target.bpm) else {
-            return musicalEntry
-        }
-
-        let sourcePeriod = 60 / sourceBPM / max(0.5, sourceRate)
-        let targetPeriod = 60 / targetBPM / max(0.5, targetRate)
-        guard sourcePeriod.isFinite, targetPeriod.isFinite, targetPeriod > 0 else {
-            return musicalEntry
-        }
-
-        let handoffTime = cueTime + blendDuration * 0.52
-        let sourcePhase = handoffTime.truncatingRemainder(dividingBy: sourcePeriod)
-        let targetPhase = musicalEntry.truncatingRemainder(dividingBy: targetPeriod)
-        var correction = sourcePhase - targetPhase
-        if correction > targetPeriod / 2 { correction -= targetPeriod }
-        if correction < -targetPeriod / 2 { correction += targetPeriod }
-        return min(12, max(0, musicalEntry + correction))
+        // Natural musical intro: incoming track always starts from 0.0 (the natural beginning of the song).
+        // Seeking forward into the middle (introEnd, instrumental) cuts off the track's intro,
+        // triggers vocal-on-vocal clashes with the outgoing song, and stalls streaming buffers.
+        _ = cueTime
+        _ = blendDuration
+        _ = sourceRate
+        _ = targetRate
+        _ = source
+        _ = target
+        return 0.0
     }
 }

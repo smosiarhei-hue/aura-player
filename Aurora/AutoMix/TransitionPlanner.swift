@@ -146,18 +146,14 @@ nonisolated enum TransitionPlanner {
         energyDifference: Double,
         seed: UInt64
     ) -> TransitionStrategy {
-        if (source.trailingSilence?.duration ?? 0) > 2.5 { return .SILENCE_TRIM }
-        if vocalCollision {
-            return target.instrumentalRegions.isEmpty ? .VOCAL_CUT : .INSTRUMENTAL_OVERLAY
-        }
-        if rhythm.canSynchronize, harmonic >= 0.75 {
-            return seed.isMultiple(of: 3) ? .BEAT_MATCH_EQ : .BASS_SWAP
+        if (source.trailingSilence?.duration ?? 0) > 3.0 { return .SILENCE_TRIM }
+        if rhythm.canSynchronize, harmonic >= 0.70 {
+            return .BASS_SWAP
         }
         if rhythm.canSynchronize {
-            return seed.isMultiple(of: 2) ? .FILTER_TRANSITION : .BEAT_MATCH_EQ
+            return seed.isMultiple(of: 2) ? .BEAT_MATCH_EQ : .BASS_SWAP
         }
-        if energyDifference >= 0.32 { return .ENERGY_BLEND }
-        return seed.isMultiple(of: 2) ? .ECHO_OUT : .ENERGY_BLEND
+        return .ENERGY_BLEND
     }
 
     nonisolated private static func vocalCollision(source: TrackAnalysis, target: TrackAnalysis) -> Bool {

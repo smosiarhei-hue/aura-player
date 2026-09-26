@@ -40,6 +40,7 @@ final class SpectrumAnalyzer {
 
     func reset() {
         Self.processor.reset()
+        MusicHapticsManager.shared.reset()
         bands = Array(repeating: 0, count: Self.bandCount)
         bass = 0; kick = 0; mids = 0; highs = 0; level = 0; streamLevel = 0
     }
@@ -113,6 +114,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
                     values[band] /= Float(counts[band])
                     displayValues[band] = max(values[band], displayValues[band] * 0.80)
                 }
+                MusicHapticsManager.core.processRawBands(values)
             }
         }
         let now = Date()

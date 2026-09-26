@@ -30,6 +30,16 @@ export interface TrackAnalysis {
   loudnessDb: number;
   /** Волновая форма для UI (0..1) */
   waveform: number[];
+  /** Моменты дропов / кульминаций (сек) */
+  drops: number[];
+  /** Моменты ям / брейкдаунов (сек) */
+  breakdowns: number[];
+  /** Моменты билдапов / разгонов (сек) */
+  buildUps: number[];
+  /** Секунда вступления вокала в интро */
+  vocalStart?: number;
+  /** Секунда окончания вокала перед аутро */
+  vocalEnd?: number;
 }
 
 export interface Track {
@@ -45,17 +55,22 @@ export interface Track {
   color2: string;
 }
 
-export type MixStyle = "smooth" | "club" | "cut" | "echo";
+export type MixStyle = "mashup" | "smooth" | "club" | "echo" | "cut";
 
 export interface MixSettings {
   style: MixStyle;
-  /** длина перехода в битах */
+  /** длина перехода в битах (при ручном режиме) */
   lengthBeats: number;
+  /** ИИ-автоподбор длины перехода (в тактах и долях) под структуру треков */
+  autoLength: boolean;
   beatmatch: boolean;
   keyMatch: boolean;
   wave: boolean; // «Моя волна» — автоподбор
   eqSwap: boolean;
   autoGain: boolean;
+  riserEffect: boolean; // Резонансный свип-райзер
+  beatRoll: boolean; // Заикание/строб перед дропом
+  smartCues: boolean; // ИИ подбор точек дропа/входа
 }
 
 export interface TransitionState {
@@ -67,6 +82,11 @@ export interface TransitionState {
   duration: number;
   tempoShift: number; // %
   style: MixStyle;
+  plannedBars: number;
+  plannedBeats: number;
+  currentBar: number;
+  currentBeat: number;
+  description?: string;
 }
 
 export interface WaveReason {

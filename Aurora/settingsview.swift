@@ -118,7 +118,7 @@ struct SettingsView: View {
 
                 if !engineSelection.isV2Enabled {
                     Section {
-                        ForEach([TransitionMode.off, .crossfade], id: \.rawValue) { mode in
+                        ForEach([TransitionMode.automix, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
                             Button { player.transitionMode = mode } label: {
                                 HStack(alignment: .top, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -137,18 +137,56 @@ struct SettingsView: View {
                             }
                         }
                     } header: {
-                        Text("Обычные переходы")
+                        Text("Переходы между треками")
                     } footer: {
-                        Text("Для автоматического сведения включите AutoMix V2 выше.")
+                        Text("AutoMix выполняет умное сведение треков с выравниванием по тактовой сетке, срезом басов (Bass-Swap) и вокальным дакингом.")
                     }
                 }
 
-                Section("Тактильный отклик") {
+                Section {
+                    Toggle("Тактильные сигналы музыки", isOn: $settings.musicHapticsEnabled)
+                        .tint(settings.accentColor)
+
+                    if settings.musicHapticsEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Сила вибрации")
+                                Spacer()
+                                Text(settings.musicHapticsIntensity.title)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Picker("Сила вибрации", selection: $settings.musicHapticsIntensity) {
+                                ForEach(MusicHapticsIntensity.allCases) { item in
+                                    Text(item.title).tag(item)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: settings.musicHapticsIntensity) { _, newIntensity in
+                                MusicHapticsManager.shared.playPreview(intensity: newIntensity)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("Универсальный доступ")
+                } footer: {
+                    Text("Тактильные сигналы музыки в стиле Apple Music (iOS 18+). Taptic Engine передает ритм через раздельные тактильные ощущения: глубокий удар бочки (кик), четкие тарелочки (хай-хэт) и мягкий резонанс баса (808). Специально для тактильного восприятия музыки и людей с нарушениями слуха.")
+                }
+                .onChange(of: settings.musicHapticsEnabled) { _, isEnabled in
+                    if isEnabled {
+                        MusicHapticsManager.shared.playPreview(intensity: settings.musicHapticsIntensity)
+                    }
+                }
+
+                Section("Тактильный отклик интерфейса") {
                     Toggle("Вибрация при управлении", isOn: $settings.hapticsEnabled).tint(settings.accentColor)
                     Toggle("Вибрация при перемотке", isOn: $settings.scrubHapticsEnabled).tint(settings.accentColor)
                 }
 
-                Section("Караоке (текст песни)") {
+                Section {
+                    Toggle("Apple Neural Engine", isOn: $settings.isNeuralEngineEnabled)
+                        .tint(settings.accentColor)
+
                     VStack(alignment: .leading, spacing: 6) {
                         HStack { Text("Размер шрифта"); Spacer(); Text("\(Int(settings.lyricsFontSize)) pt").foregroundStyle(.secondary) }
                         Slider(value: $settings.lyricsFontSize, in: 36...60, step: 1).tint(settings.accentColor)
@@ -157,6 +195,10 @@ struct SettingsView: View {
                         HStack { Text("Сдвиг синхронизации"); Spacer(); Text(String(format: "%+.1f сек", settings.lyricsOffset)).foregroundStyle(.secondary) }
                         Slider(value: $settings.lyricsOffset, in: -3...3, step: 0.1).tint(settings.accentColor)
                     }
+                } header: {
+                    Text("Караоке (текст песни)")
+                } footer: {
+                    Text("Apple Neural Engine автономно синхронизирует и выравнивает текст песен по вокалу. При отключении отображается оригинальный чистый текст без искусственного подгона.")
                 }
 
                 Section("Медиатека") {
@@ -180,11 +222,6 @@ struct SettingsView: View {
             .tint(settings.accentColor)
             .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
             .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
-            .onAppear {
-                if player.transitionMode == .automix {
-                    player.transitionMode = .crossfade
-                }
-            }
         }
     }
 

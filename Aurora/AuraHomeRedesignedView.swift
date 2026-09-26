@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct AuraHomeRedesignedView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var antigravity = AntigravityTransitionManager.shared
     @State private var player = ActivePlayerPresentation()
     @State private var ym = YandexMusicService.shared
     @State private var library = LibraryStore.shared
@@ -9,301 +11,355 @@ struct AuraHomeRedesignedView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var showSettings = false
+    @State private var showWaveSettings = false
     @State private var showPlayer = false
+    @State private var showAIAssistant = false
+    @State private var waveStore = WaveSettingsStore.shared
+    @State private var showShakeOverlay = false
+    @State private var shakeTriggerCount = 0
+    @State private var isWaveShaking = false
+    @State private var shakeHUDMessage = "Волна встряхнута!"
+    @State private var shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
+    @State private var lastShakeTimestamp: TimeInterval = 0
 
     private var moodStation: YandexMusicService.StationOption { ym.waveMoodStation }
-    private var moodColors: [Color] {
-        let colors = moodStation.gradient.compactMap { Color(hex: $0) }
-        return colors.isEmpty ? [AG.flame, AG.ember, AG.amber] : colors
+    private var waveColors: [Color] {
+        let station = moodStation.gradient.compactMap(Color.init(hex:))
+        let reference: [Color] = [
+            Color(red: 1.0, green: 0.02, blue: 0.72),
+            Color(red: 0.52, green: 0.08, blue: 1.0),
+            Color(red: 1.0, green: 0.08, blue: 0.10),
+            Color(red: 1.0, green: 0.55, blue: 0.03),
+            Color(red: 0.10, green: 0.72, blue: 1.0)
+        ]
+        return station.isEmpty ? reference : Array((station + reference).prefix(5))
     }
-    private var currentTrack: Track? { player.displayTrack }
-    private var topSix: [YandexMusicService.YMTrackItem] { Array(chart.prefix(6)) }
+
+    private var trackPalette: [Color] {
+        if let palette = player.displayTrack?.palette, !palette.isEmpty {
+            return palette
+        }
+        return waveColors
+    }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                AuraScreenBackground(colors: [AG.bgRaised, AG.bg, AG.card], showsMesh: false)
+            ZStack(alignment: .top) {
+                Color.black.ignoresSafeArea()
+
+                // Soft ambient blurred backdrop that adds depth and glow behind the whole screen
+                RadialGradient(
+                    colors: [
+                        Color.cyan.opacity(0.18),
+                        Color.purple.opacity(0.10),
+                        Color.black
+                    ],
+                    center: .top,
+                    startRadius: 40,
+                    endRadius: 550
+                )
+                .blur(radius: 60)
+                .ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 28) {
-                        header
-                        hero
+                    VStack(spacing: 24) {
+                        waveHero
+                        quickDestinations
                         moodSection
-                        playlistsSection
                         chartSection
                         newTracksSection
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
                     .padding(.bottom, 120)
                 }
-                .refreshable { await load() }
+                .refreshable { await load(force: true) }
+
+                // Полноэкранная жидкостная анимация волны при встряхивании телефона
+                WaveShakeOverlayView(
+                    isActive: showShakeOverlay,
+                    triggerCount: shakeTriggerCount,
+                    palette: trackPalette,
+                    title: shakeHUDMessage,
+                    subtitle: shakeHUDDetail,
+                    onDismiss: {
+                        showShakeOverlay = false
+                        isWaveShaking = false
+                    }
+                )
             }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .fullScreenCover(isPresented: $showPlayer) {
-                PlayerScreenV2(isPresented: $showPlayer)
-            }
+            .sheet(isPresented: $showWaveSettings) { WaveSettingsSheet() }
+            .fullScreenCover(isPresented: $showAIAssistant) { AIMusicAssistantView() }
+            .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
             .task { await load() }
+            .onAppear { updateAntigravityLifecycle(isOnMain: true) }
+            .onDisappear { updateAntigravityLifecycle(isOnMain: false) }
+            .onChange(of: scenePhase) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showWaveSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showAIAssistant) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
+            .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
+                guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings && !showAIAssistant else { return }
+                antigravity.handleSystemShakeNotification()
+                triggerShakeWave()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+                Task { await load(force: true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                if !ym.isDailyPremiereCacheValid {
+                    Task { await load() }
+                }
+            }
         }
+        .preferredColorScheme(.dark)
     }
 
-    private var header: some View {
+
+    private var waveHero: some View {
+        MyWaveHeroView(
+            player: player,
+            showPlayer: $showPlayer,
+            showSettings: $showSettings,
+            showWaveSettings: $showWaveSettings,
+            showAIAssistant: $showAIAssistant,
+            onToggleWave: toggleWave,
+            onShakeWave: { triggerShakeWave() },
+            isWaveShaking: isWaveShaking
+        )
+    }
+
+    private var quickDestinations: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                // AI Музыкальный Куратор
+                Button {
+                    Haptics.tap(.medium)
+                    showAIAssistant = true
+                } label: {
+                    quickCard(
+                        "AI Куратор",
+                        subtitle: "Плейлисты 2026",
+                        icon: "wand.and.stars",
+                        colors: [Color(hex: "#FF455B") ?? .pink, Color(hex: "#9333EA") ?? .purple]
+                    )
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
+
+                // Пункт «Незнакомое» (быстрый переход в режим открытий и новых треков)
+                Button {
+                    Haptics.tap(.medium)
+                    triggerShakeWave(forceDiscover: true)
+                } label: {
+                    quickCard(
+                        "Незнакомое",
+                        subtitle: "Новые открытия",
+                        icon: "sparkles",
+                        colors: [Color(red: 0.0, green: 0.95, blue: 0.99), Color(red: 0.31, green: 0.67, blue: 0.99)]
+                    )
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
+
+                NavigationLink { LibraryView() } label: {
+                    quickCard("Для вас", subtitle: "Персональная музыка", icon: "person.2.fill", colors: [waveColors[0], waveColors[2]])
+                }
+                NavigationLink { TrendsExploreView() } label: {
+                    quickCard("Тренды", subtitle: "Сейчас слушают", icon: "chart.line.uptrend.xyaxis", colors: [waveColors[1], waveColors[4]])
+                }
+                NavigationLink { LibraryView() } label: {
+                    quickCard("Мне нравится", subtitle: "Любимые треки", icon: "heart.fill", colors: [Color.red, waveColors[0]])
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func quickCard(_ title: String, subtitle: String, icon: String,
+                           colors: [Color]) -> some View {
         HStack(spacing: 12) {
-            Button { showSettings = true } label: {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(AG.ink)
-                    .frame(width: 44, height: 44)
+            ZStack {
+                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                Image(systemName: icon).font(.system(size: 20, weight: .bold)).foregroundStyle(.white)
             }
-            .buttonStyle(GlassPressStyle())
-            .accessibilityLabel("Профиль и настройки")
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("AURA")
-                    .font(AG.text(.caption, .bold))
-                    .tracking(2.4)
-                    .foregroundStyle(AG.amber)
-                Text("Музыка для твоего ритма")
-                    .font(AG.display(.title3, .bold))
-                    .foregroundStyle(AG.ink)
-            }
-
-            Spacer()
-
-            NavigationLink { SearchCatalogView() } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(AG.glyph(.bold))
-                    .foregroundStyle(AG.ink)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .glassCircle()
-            .accessibilityLabel("Поиск")
-        }
-    }
-
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                AuraStatusBadge(title: "МОЯ ВОЛНА", systemImage: "sparkles", tint: moodColors.first ?? AG.amber)
-                Spacer()
-                if player.isPlaying {
-                    LiveWaveEqualizer(isPlaying: true, color: AG.amber, barCount: 4)
-                }
-            }
-
-            HStack(spacing: 18) {
-                artwork
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(currentTrack == nil ? "Готово к прослушиванию" : "Сейчас играет")
-                        .font(AG.text(.caption, .semibold))
-                        .foregroundStyle(AG.inkMuted)
-                    Text(currentTrack?.title ?? "Запусти свою волну")
-                        .font(AG.display(.title3, .bold))
-                        .foregroundStyle(AG.ink)
-                        .lineLimit(2)
-                    Text(currentTrack?.artist ?? "Персональные рекомендации под настроение")
-                        .font(AG.text(.subheadline))
-                        .foregroundStyle(AG.inkMuted)
-                        .lineLimit(2)
-
-                    Button {
-                        Haptics.tap(.medium)
-                        if player.isPlaying { player.pause() } else { SonivoPlay.wave(moodStation) }
-                    } label: {
-                        Label(player.isPlaying ? "Пауза" : "Слушать", systemImage: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(AG.text(.subheadline, .bold))
-                            .foregroundStyle(.black.opacity(0.88))
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 44)
-                    }
-                    .glassProminent(moodColors.first ?? AG.amber)
-                    .buttonStyle(GlassPressStyle())
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: 48, height: 48).clipShape(Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(AG.text(.headline, .bold)).foregroundStyle(.white)
+                Text(subtitle).font(AG.text(.caption)).foregroundStyle(.white.opacity(0.58))
             }
         }
-        .padding(18)
-        .background(AG.card.opacity(0.88), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(AG.ink.opacity(0.10), lineWidth: 1))
-    }
-
-    @ViewBuilder
-    private var artwork: some View {
-        if let currentTrack {
-            SmallArtwork(track: currentTrack, size: 132)
-                .frame(width: 132, height: 132)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        } else {
-            FluidWaveView(colors: [AG.coal, AG.bgRaised, AG.card], isBackgroundMode: false, isPlaying: player.isPlaying)
-                .frame(width: 132, height: 132)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        }
+        .padding(14).frame(width: 245, alignment: .leading)
+        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.08)))
     }
 
     private var moodSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AuraSectionHeader(title: "Настроение", subtitle: "Выбери направление для новой волны")
+            sectionTitle("Настроение", subtitle: "Измени характер своей волны")
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(MoodPreset.allCases) { preset in
                         LiquidGlassMoodCapsule(preset: preset) {
-                            Haptics.tap(.light)
-                            MoodRadioEngine.shared.start(mood: preset)
+                            Haptics.tap(.light); MoodRadioEngine.shared.start(mood: preset)
                         }
                     }
-                }
+                }.padding(.horizontal, 16)
             }
         }
     }
 
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(title: "Чарт") {
-                Top100ChartView(title: "Чарт", tracks: chart)
-            }
-
-            if isLoading && chart.isEmpty {
-                AuraLoadingState(title: "Обновляем чарт…")
-            } else if let loadError, chart.isEmpty {
-                AuraErrorState(message: loadError) { Task { await load() } }
-            } else {
-                trackList(topSix, includeRank: true, queue: chart)
-            }
-        }
-    }
-
-    private var playlistsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                AuraSectionHeader(title: "Мои плейлисты", subtitle: "Твои подборки в одном месте")
-                NavigationLink { LibraryView() } label: {
-                    Text("Все")
-                        .font(AG.text(.footnote, .semibold))
-                        .foregroundStyle(AG.amber)
-                        .frame(minWidth: AG.tapTarget, minHeight: AG.tapTarget)
-                }
-            }
-
-            if library.playlists.isEmpty {
-                NavigationLink { LibraryView() } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "plus")
-                            .font(AG.glyph(.bold))
-                            .foregroundStyle(AG.amber)
-                            .frame(width: 44, height: 44)
-                            .glassCircle(interactive: false)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Создай первую подборку")
-                                .font(AG.text(.body, .semibold))
-                                .foregroundStyle(AG.ink)
-                            Text("Сохраняй треки по настроению")
-                                .font(AG.text(.caption))
-                                .foregroundStyle(AG.inkMuted)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .foregroundStyle(AG.inkMuted)
+            NavigationLink {
+                Top100ChartView(title: "Чарт · Топ 100", tracks: chart)
+            } label: {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Чарт").font(AG.display(.title2, .bold)).foregroundStyle(.white)
+                        Text("Главные треки сегодня").font(AG.text(.caption)).foregroundStyle(.white.opacity(0.48))
                     }
-                    .padding(12)
-                    .background(AG.card.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: AG.tapTarget, height: AG.tapTarget)
                 }
-                .buttonStyle(CardPressStyle(haptic: false))
-            } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                    ForEach(library.playlists.prefix(6)) { playlist in
-                        NavigationLink { LibraryView() } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ZStack {
-                                    LinearGradient(
-                                        colors: playlist.coverGradient.compactMap { Color(hex: $0) },
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                    Image(systemName: "music.note.list")
-                                        .font(.title2.weight(.bold))
-                                        .foregroundStyle(.white)
-                                }
-                                .frame(height: 86)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                Text(playlist.title)
-                                    .font(AG.text(.subheadline, .semibold))
-                                    .foregroundStyle(AG.ink)
-                                    .lineLimit(1)
-                                Text("\(playlist.trackIds.count) треков")
-                                    .font(AG.text(.caption))
-                                    .foregroundStyle(AG.inkMuted)
-                            }
-                        }
-                        .buttonStyle(CardPressStyle(haptic: false))
+                .padding(.horizontal, 20)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isLoading && chart.isEmpty { AuraLoadingState(title: "Обновляем чарт…") }
+            else if let loadError, chart.isEmpty { AuraErrorState(message: loadError) { Task { await load() } } }
+            else {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(chart.prefix(6).enumerated()), id: \.element.id) { index, item in
+                        AuraCatalogTrackRow(item: item, rank: index + 1) { SonivoPlay.track(item, in: chart) }
                     }
-                }
+                }.padding(.horizontal, 12)
             }
         }
     }
 
     private var newTracksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(title: "Премьера") {
-                PremiereTracksView(tracks: newTracks)
+        VStack(alignment: .leading, spacing: 14) {
+            NavigationLink {
+                PremiereTracksView(tracks: newTracks, title: "Топ-100 премьер")
+            } label: {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Премьера")
+                            .font(AG.display(.title2, .bold))
+                            .foregroundStyle(.white)
+                        Text("Топ-100 премьер • Обновление в 00:00")
+                            .font(AG.text(.caption))
+                            .foregroundStyle(.white.opacity(0.48))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: AG.tapTarget, height: AG.tapTarget)
+                }
+                .padding(.horizontal, 20)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
-            if isLoading && newTracks.isEmpty {
-                AuraLoadingState(title: "Загружаем новинки…")
-            } else if newTracks.isEmpty {
-                AuraEmptyState(
-                    systemImage: "music.note.list",
-                    title: "Новинки пока недоступны",
-                    message: "Попробуйте обновить ленту позже."
-                )
-            } else {
-                trackList(Array(newTracks.prefix(6)), includeRank: false, queue: newTracks)
-            }
-        }
-    }
-
-    private func sectionHeader<Destination: View>(title: String, @ViewBuilder destination: @escaping () -> Destination) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(AG.display(.title2, .bold))
-                .foregroundStyle(AG.ink)
-            Spacer()
-            NavigationLink { destination() } label: {
-                Text("Все")
-                    .font(AG.text(.subheadline, .semibold))
-                    .foregroundStyle(AG.accent)
-                    .frame(minWidth: AG.tapTarget, minHeight: AG.tapTarget)
-            }
-        }
-    }
-
-    private func trackList(
-        _ items: [YandexMusicService.YMTrackItem],
-        includeRank: Bool,
-        queue: [YandexMusicService.YMTrackItem]
-    ) -> some View {
-        LazyVStack(spacing: 2) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                AuraCatalogTrackRow(item: item, rank: includeRank ? index + 1 : nil) {
-                    SonivoPlay.track(item, in: queue)
+            LazyVStack(spacing: 2) {
+                ForEach(Array(newTracks.prefix(5).enumerated()), id: \.element.id) { index, item in
+                    AuraCatalogTrackRow(item: item, rank: index + 1) {
+                        SonivoPlay.track(item, in: newTracks)
+                    }
                 }
             }
+            .padding(.horizontal, 12)
+
+            if !newTracks.isEmpty {
+                NavigationLink {
+                    PremiereTracksView(tracks: newTracks, title: "Топ-100 премьер")
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Смотреть все 100 премьер")
+                            .font(AG.text(.subheadline, .bold))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(GlassPressStyle())
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+            }
         }
     }
 
-    private func load() async {
-        isLoading = true
-        loadError = nil
-        do {
-            chart = try await ym.getChart()
-        } catch {
-            chart = []
-            loadError = "Не удалось обновить чарт. Проверь подключение к Яндекс Музыке."
+    private func sectionTitle(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(AG.display(.title2, .bold)).foregroundStyle(.white)
+            Text(subtitle).font(AG.text(.caption)).foregroundStyle(.white.opacity(0.48))
+        }.padding(.horizontal, 20)
+    }
+
+    private func toggleWave() {
+        Haptics.tap(.medium)
+        if player.isPlaying { player.pause() }
+        else { SonivoPlay.wave(moodStation, forceFresh: true) }
+    }
+
+    /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
+    private func triggerShakeWave(forceDiscover: Bool = true) {
+        guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings else { return }
+
+        let now = Date().timeIntervalSince1970
+        guard now - lastShakeTimestamp > 1.2 else { return }
+        lastShakeTimestamp = now
+
+        // 1. Запуск кинетического перехода «Антигравити» (CoreHaptics, вихрь, 3D-кувырок, аудио-кроссфейд)
+        antigravity.triggerShift(forceDiscover: forceDiscover)
+
+        // 2. Запуск полноэкранной жидкостной анимации и пульсации обложки
+        isWaveShaking = true
+        shakeTriggerCount += 1
+        showShakeOverlay = true
+
+        // 3. Логика HUD
+        if forceDiscover || waveStore.diversity != .discover {
+            shakeHUDMessage = "Антигравити!"
+            shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
+        } else {
+            shakeHUDMessage = "Поток обновлен!"
+            shakeHUDDetail = "Свежие треки в «Незнакомом»"
         }
-        newTracks = await ym.getNewTracks(limit: 100)
+    }
+
+    // Proximity sensor disabled per user request: proximityState remains false so phone calls mode is never triggered
+    private var proximityState: Bool { false }
+
+    private func updateAntigravityLifecycle(isOnMain: Bool = true) {
+        antigravity.updateLifecycle(
+            isAppActive: scenePhase == .active,
+            isModalActive: showSettings || showWaveSettings || showPlayer,
+            isOnMainScreen: isOnMain
+        )
+    }
+
+    private func load(force: Bool = false) async {
+        isLoading = true; loadError = nil
+        do { chart = try await ym.getChart(force: force) }
+        catch { chart = []; loadError = "Не удалось обновить чарт. Проверь подключение к Яндекс Музыке." }
+        newTracks = await ym.getNewTracks(limit: 100, force: force)
         isLoading = false
     }
 }

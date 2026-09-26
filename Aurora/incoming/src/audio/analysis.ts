@@ -1,6 +1,7 @@
 import type { TrackAnalysis } from "../types";
 import { analyzeAudio } from "./analysisCore";
 import AnalyzerWorker from "./analyzer.worker.ts?worker&inline";
+import { analyzeFullBuffer } from "realtime-bpm-analyzer";
 
 let worker: Worker | null = null;
 let workerBroken = false;
@@ -51,6 +52,18 @@ function toMono(buffer: AudioBuffer): { samples: Float32Array; sampleRate: numbe
 export async function analyzeBuffer(id: string, buffer: AudioBuffer): Promise<TrackAnalysis> {
   const { samples, sampleRate } = toMono(buffer);
   const duration = buffer.duration;
+
+  // Точный низкочастотно-фильтрованный BPM анализ через realtime-bpm-analyzer
+  let hintBpm: number | undefined;
+  try {
+    const candidates = await analyzeFullBuffer(buffer);
+    if (candidates && candidates.length > 0 && candidates[0].tempo > 0) {
+      hintBpm = candidates[0].tempo;
+    }
+  } catch (err) {
+    console.warn("realtime-bpm-analyzer error, using spectral onset fallback:", err);
+  }
+
   const w = getWorker();
   if (w) {
     try {
@@ -58,7 +71,7 @@ export async function analyzeBuffer(id: string, buffer: AudioBuffer): Promise<Tr
       const copy = samples.slice();
       return await new Promise<TrackAnalysis>((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        w.postMessage({ id, samples: copy, sampleRate, duration }, [copy.buffer]);
+        w.postMessage({ id, samples: copy, sampleRate, duration, hintBpm }, [copy.buffer]);
       });
     } catch (err) {
       console.warn("worker analysis failed, falling back to main thread", err);
@@ -66,5 +79,5 @@ export async function analyzeBuffer(id: string, buffer: AudioBuffer): Promise<Tr
   }
   // Фолбэк: главный поток, но уступаем кадр UI перед тяжёлой работой
   await new Promise((r) => setTimeout(r, 0));
-  return analyzeAudio({ samples, sampleRate, duration });
+  return analyzeAudio({ samples, sampleRate, duration, hintBpm });
 }

@@ -211,7 +211,7 @@ enum SonivoPlay {
         router.play(service.convertToTrack(item), queue: queue)
     }
 
-    static func wave(_ station: YandexMusicService.StationOption) {
+    static func wave(_ station: YandexMusicService.StationOption, forceFresh: Bool = false) {
         let service = YandexMusicService.shared
 
         if station.stationId == "app:recap" {
@@ -233,15 +233,37 @@ enum SonivoPlay {
         let active = AutoMixV2Runtime.shared.currentTrack
             ?? NeuroMixRuntime.shared.currentTrack
             ?? PlayerCore.shared.currentTrack
-        let immediate = active
-            ?? LibraryStore.shared.favorites.first
-            ?? service.chartCache.first.map { service.convertToTrack($0) }
+
+        let favorites = LibraryStore.shared.favorites
+        let lastLiked = favorites.first
+
+        // When launching "Моя волна", start a fresh random song based on user's taste
+        // and latest saved/liked track, preventing repeating the same track every time.
+        let immediate: Track? = {
+            if forceFresh || active == nil {
+                if favorites.count > 1 {
+                    return favorites.filter { $0.id != active?.id }.randomElement() ?? lastLiked
+                }
+                return lastLiked ?? service.chartCache.shuffled().first.map { service.convertToTrack($0) }
+            }
+            return active
+        }()
+
         let startedImmediately = immediate != nil
-        if let immediate, active == nil {
+        if let immediate, (forceFresh || active == nil) {
             router.play(immediate, queue: [immediate])
         }
 
         Task {
+            // Seed Yandex Music's recommendation rotor with the last liked track
+            if let lastLiked {
+                let lastLikedYmId = PlayerCore.yandexTrackID(from: lastLiked)
+                service.remember(
+                    key: lastLiked.id.uuidString,
+                    artist: lastLiked.artist,
+                    ymTrackId: lastLikedYmId.isEmpty ? nil : lastLikedYmId
+                )
+            }
 
             let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
             let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
@@ -350,6 +372,7 @@ struct Top100ChartView: View {
 
 struct PremiereTracksView: View {
     let tracks: [YandexMusicService.YMTrackItem]
+    var title: String = "Топ-100 премьер"
 
     private var ranked: [RankedTrack] {
         tracks.enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
@@ -360,7 +383,11 @@ struct PremiereTracksView: View {
             SonivoBackdrop()
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    SonivoHeader(title: "Премьера")
+                    SonivoHeader(
+                        title: title,
+                        accent: tracks.isEmpty ? nil : "\(tracks.count)",
+                        subtitle: "Ежедневный чарт новинок • Обновляется в 00:00"
+                    )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
 
@@ -382,7 +409,7 @@ struct PremiereTracksView: View {
                 .padding(.bottom, 28)
             }
         }
-        .navigationTitle("Премьера")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
     }

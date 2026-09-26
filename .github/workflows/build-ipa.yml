@@ -30,8 +30,8 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Test IPA delivery safety
-        run: python3 -m unittest discover -s .github/scripts -p 'test_send_ipa_telegram.py' -v
+      - name: Test scripts and IPA delivery safety
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
       - name: Compute version
         run: |
@@ -47,66 +47,239 @@ jobs:
           sed -i '' -E "s/(CFBundleShortVersionString: \")[0-9.]+(\")/\1${MARKETING_VERSION}\2/" project.yml
           sed -i '' -E "s/(CFBundleVersion: \")[0-9]+(\")/\1${BUILD_NUMBER}\2/" project.yml
 
+      - name: Check for Apple Certificate Secrets
+        id: cert_check
+        env:
+          P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROV_BASE64: ${{ secrets.PROVISION_PROFILE_BASE64 }}
+        run: |
+          if [ -n "$P12_BASE64" ] && [ -n "$P12_PASSWORD" ] && [ -n "$PROV_BASE64" ]; then
+            echo "HAS_SIGNING=true" >> "$GITHUB_ENV"
+            echo "Apple Certificate secrets detected. Code signing ENABLED."
+          else
+            echo "HAS_SIGNING=false" >> "$GITHUB_ENV"
+            echo "Apple Certificate secrets missing. Building unsigned."
+          fi
+
+      - name: Install Apple Certificate and Provisioning Profile
+        if: env.HAS_SIGNING == 'true'
+        env:
+          P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROV_BASE64: ${{ secrets.PROVISION_PROFILE_BASE64 }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          CLEAN_PASS=$(echo -n "$P12_PASSWORD" | tr -d '\r\n')
+          CERT_FILE="$RUNNER_TEMP/cert.p12"
+          echo -n "$P12_BASE64" | tr -d '\r\n' | base64 --decode > "$CERT_FILE"
+
+          # Apple's security import requires legacy 3DES encryption. If the p12 is modern AES-256 (OpenSSL 3), convert it.
+          if ! security import "$CERT_FILE" -k "$KEYCHAIN_PATH" -P "$CLEAN_PASS" -T /usr/bin/codesign -T /usr/bin/security 2>/dev/null; then
+            echo "Direct PKCS12 import failed (modern OpenSSL 3 PBES2 encryption detected). Converting to Apple-compatible format..."
+            OPENSSL_BIN=$(which openssl || echo "/usr/bin/openssl")
+            for candidate in /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl /opt/homebrew/bin/openssl; do
+              if [ -x "$candidate" ]; then
+                OPENSSL_BIN="$candidate"
+                break
+              fi
+            done
+            "$OPENSSL_BIN" pkcs12 -in "$CERT_FILE" -passin "pass:$CLEAN_PASS" -nodes -out "$RUNNER_TEMP/cert.pem"
+            "$OPENSSL_BIN" pkcs12 -export -in "$RUNNER_TEMP/cert.pem" -out "$RUNNER_TEMP/cert-legacy.p12" -passout "pass:$CLEAN_PASS" -legacy 2>/dev/null || \
+            "$OPENSSL_BIN" pkcs12 -export -in "$RUNNER_TEMP/cert.pem" -out "$RUNNER_TEMP/cert-legacy.p12" -passout "pass:$CLEAN_PASS"
+            security import "$RUNNER_TEMP/cert-legacy.p12" -k "$KEYCHAIN_PATH" -P "$CLEAN_PASS" -T /usr/bin/codesign -T /usr/bin/security
+          fi
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          # Discover the exact signing identity imported
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -n 1 | awk -F '"' '{print $2}')
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            SIGNING_IDENTITY="iPhone Distribution"
+          fi
+
+          PROV_FILE="$RUNNER_TEMP/profile.mobileprovision"
+          echo -n "$PROV_BASE64" | tr -d '\r\n' | base64 --decode > "$PROV_FILE"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+
+          PLIST_CONTENT=$(security cms -D -i "$PROV_FILE")
+          UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin <<< "$PLIST_CONTENT")
+          APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /dev/stdin <<< "$PLIST_CONTENT")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.team-identifier" /dev/stdin <<< "$PLIST_CONTENT")
+          BUNDLE_ID="${APP_ID#${TEAM_ID}.}"
+
+          cp "$PROV_FILE" ~/Library/MobileDevice/Provisioning\ Profiles/${UUID}.mobileprovision
+
+          echo "Configured Profile: UUID=$UUID, Team=$TEAM_ID, Bundle=$BUNDLE_ID"
+          echo "Discovered Signing Identity: $SIGNING_IDENTITY"
+          echo "PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
+          echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "BUNDLE_ID=$BUNDLE_ID" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "PROV_FILE=$PROV_FILE" >> "$GITHUB_ENV"
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+          # Patch project.yml to match profile Bundle ID, Team ID and enable code signing
+          python3 .github/scripts/patch_project_signing.py "$BUNDLE_ID" "$TEAM_ID" "$SIGNING_IDENTITY" "$UUID" project.yml
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build unsigned app
+      - name: Build app
         id: xcodebuild
         shell: bash
         run: |
           set -o pipefail
-          xcodebuild \
-            -project Sonivo.xcodeproj \
-            -scheme Sonivo \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath derived \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build 2>&1 | tee build.log
+          if [ "$HAS_SIGNING" = "true" ]; then
+            echo "==> Building and signing with developer certificate..."
+            xcodebuild \
+              -project Sonivo.xcodeproj \
+              -scheme Sonivo \
+              -configuration Release \
+              -sdk iphoneos \
+              -destination 'generic/platform=iOS' \
+              -derivedDataPath derived \
+              CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM="${TEAM_ID}" \
+              PROVISIONING_PROFILE_SPECIFIER="${PROFILE_UUID}" \
+              CODE_SIGN_IDENTITY="${SIGNING_IDENTITY}" \
+              OTHER_CODE_SIGN_FLAGS="--keychain ${KEYCHAIN_PATH}" \
+              build 2>&1 | tee build.log
+          else
+            echo "==> Building unsigned..."
+            xcodebuild \
+              -project Sonivo.xcodeproj \
+              -scheme Sonivo \
+              -configuration Release \
+              -sdk iphoneos \
+              -destination 'generic/platform=iOS' \
+              -derivedDataPath derived \
+              CODE_SIGN_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              build 2>&1 | tee build.log
+          fi
 
       - name: Upload build log
-        if: always()
+        if: always() && hashFiles('build.log') != ''
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
           if-no-files-found: warn
 
-      - name: Package unsigned IPA
+      - name: Expose compiler errors
+        if: failure() && hashFiles('build.log') != ''
+        shell: bash
+        run: |
+          ERRORS=$(grep -E "(^|[[:space:]])[^[:space:]]+\.swift:[0-9]+:[0-9]+: error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n')
+          if [ -z "$ERRORS" ]; then ERRORS=$(grep -E "error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n'); fi
+          echo "::error title=Swift compiler errors::$ERRORS"
+          exit 1
+
+      - name: Package IPA
         run: |
           APP=$(find derived/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
           test -n "$APP"
-          mkdir -p Payload
-          cp -R "$APP" Payload/
-          zip -qry Sonivo-unsigned.ipa Payload
-          ls -lh Sonivo-unsigned.ipa
+          echo "Found app: $APP"
+
+          if [ "$HAS_SIGNING" = "true" ]; then
+            echo "==> Embedding provisioning profile into app bundle..."
+            cp "$PROV_FILE" "$APP/embedded.mobileprovision"
+
+            echo "==> Extracting entitlements from provisioning profile..."
+            security cms -D -i "$PROV_FILE" > "$RUNNER_TEMP/profile.plist"
+            /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$RUNNER_TEMP/profile.plist" > "$RUNNER_TEMP/entitlements.plist"
+
+            echo "Extracted entitlements:"
+            cat "$RUNNER_TEMP/entitlements.plist"
+
+            echo "==> Unlocking keychain before codesigning..."
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+            echo "==> Signing any embedded frameworks or dylibs..."
+            if [ -d "$APP/Frameworks" ]; then
+              find "$APP/Frameworks" -mindepth 1 -maxdepth 2 \( -name "*.dylib" -o -name "*.framework" \) | while read -r item; do
+                echo "Signing: $item"
+                codesign --force --sign "$SIGNING_IDENTITY" --keychain "$KEYCHAIN_PATH" --timestamp=none "$item" || true
+              done
+            fi
+
+            echo "==> Signing app bundle with entitlements..."
+            codesign --force --sign "$SIGNING_IDENTITY" \
+              --keychain "$KEYCHAIN_PATH" \
+              --entitlements "$RUNNER_TEMP/entitlements.plist" \
+              --timestamp=none \
+              --generate-entitlement-der \
+              "$APP"
+
+            echo "==> Verifying signature:"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -dvvv "$APP"
+
+            mkdir -p Payload
+            cp -R "$APP" Payload/
+            zip -qry Sonivo.ipa Payload
+            cp Sonivo.ipa Sonivo-unsigned.ipa
+            echo "IPA_IS_SIGNED=true" >> "$GITHUB_ENV"
+            echo "SUCCESS: Signed IPA packaged."
+            ls -lh Sonivo.ipa
+          else
+            mkdir -p Payload
+            cp -R "$APP" Payload/
+            zip -qry Sonivo-unsigned.ipa Payload
+            cp Sonivo-unsigned.ipa Sonivo.ipa
+            echo "IPA_IS_SIGNED=false" >> "$GITHUB_ENV"
+            ls -lh Sonivo-unsigned.ipa
+          fi
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Sonivo-unsigned-ipa
-          path: Sonivo-unsigned.ipa
+          name: Sonivo-ipa
+          path: |
+            Sonivo.ipa
+            Sonivo-unsigned.ipa
           if-no-files-found: error
+
+      - name: Deploy OTA to GitHub Pages
+        if: env.HAS_SIGNING == 'true'
+        env:
+          GH_PAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_ID: ${{ env.BUNDLE_ID }}
+          MARKETING_VERSION: ${{ env.MARKETING_VERSION }}
+          BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
+        run: python3 .github/scripts/deploy_ota_pages.py
 
       - name: Send current main IPA to configured Telegram chat
         if: >-
           github.repository == 'smosiarhei-hue/aura-player' &&
-          github.event_name != 'pull_request' &&
-          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.head_ref == 'feature/modern-my-wave-home' || github.ref == 'refs/heads/feature/modern-my-wave-home' || github.event_name == 'workflow_dispatch')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
+          IPA_IS_SIGNED: ${{ env.IPA_IS_SIGNED }}
+          MARKETING_VERSION: ${{ env.MARKETING_VERSION }}
+          BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
         run: python3 .github/scripts/send_ipa_telegram.py
 
       - name: Release on tag
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: Sonivo-unsigned.ipa
+          files: |
+            Sonivo.ipa
+            Sonivo-unsigned.ipa
           generate_release_notes: true

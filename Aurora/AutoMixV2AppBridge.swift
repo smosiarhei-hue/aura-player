@@ -163,6 +163,19 @@ final class NeuroMixRuntime {
         queue = newQueue
     }
 
+    func replaceUpcomingQueue(with tracks: [Track]) {
+        if let current = currentTrack {
+            var newQ = [current]
+            var seen = Set([current.id])
+            for t in tracks where seen.insert(t.id).inserted {
+                newQ.append(t)
+            }
+            queue = newQ
+        } else {
+            queue = tracks
+        }
+    }
+
     func appendQueue(_ tracks: [Track]) {
         guard !tracks.isEmpty else { return }
         let existing = Set(queue.map(\.id))
@@ -674,18 +687,26 @@ final class AutoMixV2Runtime {
 
         let currentIndex = queue.firstIndex(where: { $0.id == current.id }) ?? 0
         let remainingAhead = queue.count - 1 - currentIndex
-        guard remainingAhead <= 2 else { return }
+        guard remainingAhead <= 5 else { return }
 
         isRefillingWave = true
         Task { [weak self] in
             defer { self?.isRefillingWave = false }
             guard let self else { return }
-            let freshTracks = (await YandexMusicService.shared.buildWaveQueue(
-                stationId: YandexMusicService.shared.waveMoodStation.stationId,
-                target: 30
-            )).map { $0.toTrack() }
+            let ym = YandexMusicService.shared
+            let rawTracks: [Track]
+            if MoodRadioEngine.shared.isTrackWaveActive || ym.activeStationId?.hasPrefix("track:") == true {
+                rawTracks = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 30)
+            } else {
+                let stationId = ym.activeStationId ?? ym.waveMoodStation.stationId
+                rawTracks = (await ym.buildWaveQueue(
+                    stationId: stationId,
+                    target: 30
+                )).map { $0.toTrack() }
+            }
+            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
-            let fresh = freshTracks.filter {
+            let fresh = ranked.filter {
                 !existing.contains($0.id) && $0.id != current.id &&
                 !UserTasteEngine.shared.isDisliked(track: $0)
             }
@@ -744,10 +765,18 @@ final class AutoMixV2Runtime {
         await diagnostics.record(MixDiagnosticEvent(level: .error, category: category, message: message))
     }
     private static func yandexTrackID(from track: Track) -> String? {
-        if let parsed = YandexMusicService.ymId(fromFileName: track.fileName) { return parsed }
-        guard let raw = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty, URL(string: raw)?.scheme == nil else { return nil }
-        return raw
+        if let parsed = YandexMusicService.ymId(fromFileName: track.fileName), !parsed.isEmpty { return parsed }
+        if let raw = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let clean = raw.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+            if !clean.isEmpty && !clean.hasPrefix("http://") && !clean.hasPrefix("https://") {
+                return clean
+            }
+        }
+        let fileClean = track.fileName.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
+        if !fileClean.isEmpty && fileClean.allSatisfy({ $0.isNumber }) {
+            return fileClean
+        }
+        return nil
     }
     private static func userMessage(for error: Error) -> String {
         guard let sourceError = error as? TrackSourceError else { return String(describing: error) }
@@ -764,7 +793,7 @@ final class AutoMixV2Runtime {
 @Observable
 final class PlaybackCommandRouter {
     static let shared = PlaybackCommandRouter(); private var installed = false; private init() {}
-    private(set) var owner: PlaybackOwner = .legacy
+    private(set) var owner: PlaybackOwner = AutoMixEngineSelectionStore.shared.isNeuroEnabled ? .neuroMix : (AutoMixEngineSelectionStore.shared.isV2Enabled ? .autoMixV2 : .legacy)
     private(set) var isBusy = false
     private var requestID = 0
     private var transportTask: Task<Void, Never>?

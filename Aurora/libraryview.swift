@@ -14,6 +14,7 @@ struct LibraryView: View {
     @State private var showFilePicker = false
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistTitle = ""
+    @State private var showAIAssistant = false
     @State private var isSendingAutoMixLogs = false
     @State private var autoMixLogMessage: String? = nil
 
@@ -137,6 +138,9 @@ struct LibraryView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showAIAssistant) {
+                AIMusicAssistantView()
             }
             .sheet(isPresented: $showFilePicker) {
                 LocalAudioDocumentPicker(
@@ -363,10 +367,29 @@ struct LibraryView: View {
 
     private var playlistsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("Ваши плейлисты")
                     .font(.title3.weight(.bold))
                 Spacer()
+                Button {
+                    Haptics.tap(.light)
+                    showAIAssistant = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                        Text("AI Подборка")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.pink, Color.purple],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                }
+                .frame(minHeight: 44)
+
                 Button("+ Создать") {
                     showNewPlaylistAlert = true
                 }
@@ -542,6 +565,12 @@ struct LibraryView: View {
                       systemImage: library.isTrackFavorite(track) ? "star.slash" : "star")
             }
 
+            Button {
+                startAIVibeWave(for: track)
+            } label: {
+                Label("AI Вайб-волна (Dify)", systemImage: "sparkles")
+            }
+
             if !library.playlists.isEmpty {
                 Menu("Добавить в плейлист") {
                     ForEach(library.playlists) { p in
@@ -557,6 +586,26 @@ struct LibraryView: View {
                 library.delete(track)
             } label: {
                 Label("Удалить файл", systemImage: "trash")
+            }
+        }
+    }
+
+    private func startAIVibeWave(for seedTrack: Track) {
+        Task {
+            do {
+                let (vibeTracks, _, _) = try await AIDJService.shared.generateVibeWave(for: seedTrack)
+                await MainActor.run {
+                    if !vibeTracks.isEmpty {
+                        PlaybackCommandRouter.shared.play(seedTrack, queue: [seedTrack] + vibeTracks)
+                        MoodRadioEngine.shared.startTrackWave(seed: seedTrack, initialTracks: vibeTracks)
+                    } else {
+                        PlaybackCommandRouter.shared.play(seedTrack, queue: filteredTracks)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    PlaybackCommandRouter.shared.play(seedTrack, queue: filteredTracks)
+                }
             }
         }
     }

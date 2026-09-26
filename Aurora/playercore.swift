@@ -156,6 +156,9 @@ final class PlayerCore {
     private var loopBuffer: AVAudioPCMBuffer?
     private var isLoopActive = false
 
+    private let vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
+    private var activeStreamURL: URL?
+
     private let outputLimiter = AVAudioUnitEffect(
         audioComponentDescription: AudioComponentDescription(
             componentType: kAudioUnitType_Effect,
@@ -233,7 +236,7 @@ final class PlayerCore {
             p.automaticallyWaitsToMinimizeStalling = false
             p.volume = volume * Self.streamHeadroomCeiling
 
-            let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
+            let interval = CMTime(seconds: 1.0 / 120.0, preferredTimescale: 2400)
             p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 Task { @MainActor [weak self] in
                     guard let self, self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
@@ -329,9 +332,11 @@ final class PlayerCore {
 
         looperPlayer.volume = 0
 
-        // Connect mainMixerNode directly to outputNode so CoreAudio/AUHAL preserves
-        // native stereo channel layout (Stereo L/R) and AirPods Pro Spatialize Stereo HRTF.
-        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
+        engine.attach(vocalUnit)
+        vocalUnit.bands[0].bypass = true
+        engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
+        engine.connect(vocalUnit, to: engine.outputNode, format: nil)
+        VocalIsolationManager.shared.attach(to: vocalUnit)
 
         engine.mainMixerNode.outputVolume = volume
         installSpectrumTap()
@@ -712,6 +717,7 @@ final class PlayerCore {
             transitionPausedAt = Date()
         }
         isPlaying = false
+        MusicHapticsManager.shared.stop()
         updateNowPlayingInfo()
         savePlaybackState()
     }
@@ -767,7 +773,12 @@ final class PlayerCore {
             refillQueueIfNeeded()
         } else if let cur = currentTrack, repeatMode != .one {
             Task { @MainActor in
-                let wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
+                let wave: [Track]
+                if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                    wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
+                } else {
+                    wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
+                }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id }
                 if let first = fresh.first {
@@ -860,6 +871,19 @@ final class PlayerCore {
         let token = generation
         isPlanningTransition = false
         planningStartedAt = nil
+
+        if VocalIsolationManager.shared.isEnabled && VocalIsolationManager.shared.isolationLevel > 0.05 {
+            if let cachedURL = findLocalOrCachedAudioFile(for: track) {
+                var localTrack = track
+                localTrack.fileName = cachedURL.lastPathComponent
+                localTrack.relativePath = ""
+                localTrack.isStream = false
+                localTrack.streamUrlString = nil
+                streamBufferFraction = 1.0
+                startLocal(localTrack, at: seconds, token: token)
+                return
+            }
+        }
 
         if track.isStream || track.streamUrlString != nil {
             streamBufferFraction = 0.0
@@ -968,6 +992,8 @@ final class PlayerCore {
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
+                self.currentTrack?.streamUrlString = info.url.absoluteString
+                self.activeStreamURL = info.url
                 self.beginStream(info.url, at: seconds)
             } catch {
                 guard self.generation == token else { return }
@@ -1015,12 +1041,16 @@ final class PlayerCore {
                 guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
+                self.currentTrack?.streamUrlString = info.url.absoluteString
+                self.activeStreamURL = info.url
                 self.beginStream(info.url, at: pos)
             } catch { }
         }
     }
 
     private func beginStream(_ url: URL, at seconds: Double) {
+        self.activeStreamURL = url
+        self.currentTrack?.streamUrlString = url.absoluteString
         let item = AVPlayerItem(url: url)
         item.audioTimePitchAlgorithm = .timeDomain
         item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
@@ -1036,6 +1066,83 @@ final class PlayerCore {
         self.transitionScheduled = false
         self.lastNowPlayingSync = nil
         self.updateNowPlayingInfo()
+    }
+
+    func findLocalOrCachedAudioFile(for track: Track) -> URL? {
+        if !track.isStream && track.url.isFileURL && FileManager.default.fileExists(atPath: track.url.path) {
+            return track.url
+        }
+        let ext = (track.url.pathExtension.isEmpty ? "mp3" : track.url.pathExtension)
+        let vocalFile = documentsDirectoryURL().appendingPathComponent("vocal_\(track.id.uuidString).\(ext)")
+        if FileManager.default.fileExists(atPath: vocalFile.path) {
+            return vocalFile
+        }
+        let ymID = Self.yandexTrackID(from: track)
+        if !ymID.isEmpty {
+            let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("tracks", isDirectory: true)
+            if let files = try? FileManager.default.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil) {
+                if let matched = files.first(where: { $0.lastPathComponent.contains(ymID) }) {
+                    return matched
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Migrates streaming playback from AVPlayer to AVAudioEngine so raw PCM samples can be processed in real time
+    func migrateStreamToAudioEngineIfNeeded() async {
+        guard isUsingStreamPlayer, let track = currentTrack else { return }
+        let currentPos = progress
+        let token = generation
+
+        // 1. Instant zero-latency switch if already in local cache
+        if let cachedURL = findLocalOrCachedAudioFile(for: track) {
+            var localTrack = track
+            localTrack.fileName = cachedURL.lastPathComponent
+            localTrack.relativePath = ""
+            localTrack.isStream = false
+            localTrack.streamUrlString = nil
+            self.startLocal(localTrack, at: currentPos, token: token)
+            return
+        }
+
+        // 2. Resolve stream URL reliably
+        let streamURL: URL? = try? await {
+            if let active = activeStreamURL { return active }
+            if let str = track.streamUrlString, let u = URL(string: str) { return u }
+            if let asset = activeStreamingPlayer.currentItem?.asset as? AVURLAsset { return asset.url }
+            if track.url.scheme == "http" || track.url.scheme == "https" { return track.url }
+            let ymID = Self.yandexTrackID(from: track)
+            if !ymID.isEmpty {
+                let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
+                self.currentTrack?.streamUrlString = info.url.absoluteString
+                self.activeStreamURL = info.url
+                return info.url
+            }
+            return nil
+        }()
+
+        if let streamURL {
+            do {
+                let ext = streamURL.pathExtension.isEmpty ? "mp3" : streamURL.pathExtension
+                let fileName = "vocal_\(track.id.uuidString).\(ext)"
+                let localDest = documentsDirectoryURL().appendingPathComponent(fileName)
+                if !FileManager.default.fileExists(atPath: localDest.path) {
+                    let (tempLocation, _) = try await URLSession.shared.download(from: streamURL)
+                    try? FileManager.default.removeItem(at: localDest)
+                    try FileManager.default.moveItem(at: tempLocation, to: localDest)
+                }
+                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                var localTrack = track
+                localTrack.fileName = fileName
+                localTrack.relativePath = ""
+                localTrack.isStream = false
+                localTrack.streamUrlString = nil
+                self.startLocal(localTrack, at: self.progress, token: token)
+            } catch {
+                SonivoDiagnostics.log("[VocalIsolation] Stream migration to AVAudioEngine error: \(error)", tag: "AUDIO")
+            }
+        }
     }
 
     private func scheduleTransitionIfNeeded() {
@@ -1123,15 +1230,14 @@ final class PlayerCore {
         }
 
         let cueRemaining = max(totalDur - (activeTransitionPlan?.cueTime ?? (totalDur - 20.0)), activeTransitionPlan?.leadTime ?? 18.0)
-        let prebufferThreshold = cueRemaining + 16.0
+        let prebufferThreshold = cueRemaining + 32.0
         if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream {
             isPrebufferingNextStream = true
             let ymID = Self.yandexTrackID(from: nextTrack)
-            let targetStart = max(0, activeTransitionPlan?.targetTrack.startPosition ?? 0)
+            let resolvedStart: Double = 0.0
             Task {
                 do {
                     let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                    let resolvedStart = self.activeTransitionPlan != nil ? targetStart : 0
                     let nextItem = AVPlayerItem(url: info.url)
                     nextItem.audioTimePitchAlgorithm = .timeDomain
                     nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
@@ -1150,7 +1256,7 @@ final class PlayerCore {
         }
 
         guard let plan = activeTransitionPlan else { return }
-        let effectiveCueTime = max(plan.cueTime, totalDur - 35.0)
+        let effectiveCueTime = max(plan.cueTime, totalDur - 8.0)
         guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
 
         if effectiveCueTime > currentPos + 1.0 { return }
@@ -1158,12 +1264,12 @@ final class PlayerCore {
         transitionScheduled = true
         isTransitioning = true
         incomingLaneReady = false
-        transitionDuration = plan.leadTime
+        transitionDuration = min(plan.leadTime, 6.5)
         incomingTrack = nextTrack
         metadataSwapped = false
         metadataTrack = nil
         incomingIsStream = nextTrack.isStream
-        incomingStartPosition = max(0, plan.targetTrack.startPosition)
+        incomingStartPosition = 0.0
         AutoMixDJEngine.shared.isTransitionActive = true
         AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
         AutoMixDJEngine.shared.activePlan = plan
@@ -1172,23 +1278,54 @@ final class PlayerCore {
         SonivoDiagnostics.log("[AutoMix] Transition: \(currentTrack?.title ?? "?") -> \(nextTrack.title) [\(plan.strategy.rawValue), \(String(format: "%.1f", transitionDuration))s, rate in \(String(format: "%.3f", plan.tempo.targetPlaybackRate)), \(plan.decision.reason)]", tag: "AUTOMIX")
 
         if isUsingStreamPlayer || nextTrack.isStream {
-            guard idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id else {
-                isTransitioning = false
-                transitionScheduled = false
-                AutoMixDJEngine.shared.isTransitionActive = false
-                return
+            let startStreamTransition: @MainActor () -> Void = { [weak self] in
+                guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
+                let laneStart: Double = 0.0
+                let seekTime = CMTime(seconds: laneStart, preferredTimescale: 600)
+                self.idleStreamingPlayer.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
+                        self.idleStreamingPlayer.volume = 0.001
+                        self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
+                        self.transitionStartTime = Date()
+                        self.incomingLaneReady = true
+                        self.startTransitionTimer()
+                    }
+                }
             }
-            let laneStart = max(0, plan.targetTrack.startPosition)
-            let seekTime = CMTime(seconds: laneStart, preferredTimescale: 600)
-            idleStreamingPlayer.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
-                    self.idleStreamingPlayer.volume = 0.001
-                    self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                    self.idleStreamingPlayer.playImmediately(atRate: 1.0)
-                    self.transitionStartTime = Date()
-                    self.incomingLaneReady = true
-                    self.startTransitionTimer()
+
+            if idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id {
+                startStreamTransition()
+            } else {
+                let ymID = Self.yandexTrackID(from: nextTrack)
+                let targetStart: Double = 0.0
+                Task {
+                    do {
+                        let info = try await YandexMusicService.shared.getStreamInfo(
+                            for: ymID,
+                            preferredQuality: self.audioQuality,
+                            preferredBitrate: self.audioQuality.targetBitrate
+                        )
+                        await MainActor.run {
+                            guard self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
+                            let nextItem = AVPlayerItem(url: info.url)
+                            nextItem.audioTimePitchAlgorithm = .timeDomain
+                            nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+                            StreamBeatTap.shared.attach(to: nextItem)
+                            self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
+                            self.idleStreamingPlayer.volume = 0.001
+                            self.prebufferedTrackId = nextTrack.id
+                            self.isPrebufferingNextStream = false
+                            startStreamTransition()
+                        }
+                    } catch {
+                        await MainActor.run {
+                            self.isTransitioning = false
+                            self.transitionScheduled = false
+                            self.AutoMixDJEngineCleanup()
+                        }
+                    }
                 }
             }
             return
@@ -1435,18 +1572,26 @@ final class PlayerCore {
         var streamSourceVol = sourceLevel
         var streamTargetVol = targetLevel
 
-        if strategy == .BASS_SWAP {
-            if p > 0.40 && p < 0.85 {
-                let dropPct = Float((p - 0.40) / 0.45)
-                streamSourceVol *= max(0.20, 1.0 - dropPct * 0.65)
-            }
-            if p > 0.35 {
-                let risePct = Float((p - 0.35) / 0.65)
-                streamTargetVol = max(streamTargetVol, min(1.0, Float(pow(risePct, 0.7))))
-            }
-        } else if strategy == .BUILDUP_TO_DROP || strategy == .DROP_SWITCH {
-            if p > 0.60 {
-                streamSourceVol *= max(0.05, Float(1.0 - (p - 0.60) / 0.40))
+        // MARK: - Streaming AutoMix DJ Vocal-Safe Transition
+        // Eliminates vocal clash ("песня на песню накладывается") and prevents sudden loudness jumps.
+        // Phase 1 (0.0 .. 0.35): Outgoing track retains full vocal presence (1.0 -> 0.85); incoming is subtle background (0.0 -> 0.15).
+        // Phase 2 (0.35 .. 0.65): The DJ Drop / Handoff on the downbeat: outgoing ducks cleanly to 0.08, incoming sweeps to 0.85.
+        // Phase 3 (0.65 .. 1.0): Incoming takes over full power (0.85 -> 1.0); outgoing fades into silence.
+        if isUsingStreamPlayer || incomingIsStream {
+            // MARK: - Streaming AutoMix DJ Vocal-Safe Transition
+            // 3-phase DJ vocal-safe gain shaping
+            if p < 0.35 {
+                let s = p / 0.35
+                streamSourceVol = 0.85 + 0.15 * Float(cos(Double(s) * .pi * 0.5))
+                streamTargetVol = 0.15 * Float(sin(Double(s) * .pi * 0.5))
+            } else if p < 0.65 {
+                let s = (p - 0.35) / 0.30
+                streamSourceVol = max(0.08, 0.85 * Float(cos(Double(s) * .pi * 0.5)))
+                streamTargetVol = 0.15 + 0.70 * Float(sin(Double(s) * .pi * 0.5))
+            } else {
+                let s = (p - 0.65) / 0.35
+                streamSourceVol = max(0.0, 0.08 * Float(cos(Double(s) * .pi * 0.5)))
+                streamTargetVol = 0.85 + 0.15 * Float(sin(Double(s) * .pi * 0.5))
             }
         }
 
@@ -1478,9 +1623,24 @@ final class PlayerCore {
             idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inLowDB) : inLowDB
             idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inLowDB) : inLowDB
             idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inLowDB) : inLowDB
+
+            // Vocal pocket ducking on incoming track during first half (p < 0.5)
+            let vocalPocketDuckDB: Float = p < 0.5 ? Float(-6.0 * (1.0 - p / 0.5)) : 0.0
+            for bandIdx in 4...6 {
+                idleEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + vocalPocketDuckDB) : vocalPocketDuckDB
+            }
+
+            // High-pass riser sweep on outgoing track during second half (p >= 0.5)
+            if p >= 0.5 {
+                let riserP = Float((p - 0.5) / 0.5)
+                let riserCut = -24.0 * (1.0 + riserP * 0.5)
+                for bandIdx in 0...2 {
+                    activeEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + riserCut) : riserCut
+                }
+            }
         }
 
-        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
+        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? (p >= 0.5 ? Float((p - 0.5) / 0.5 * 0.60) : 0.0)
         let inReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
         if !isUsingStreamPlayer {
             activeReverb.wetDryMix = max(0, min(100, outReverbMix * 100))
@@ -1489,39 +1649,11 @@ final class PlayerCore {
             }
         }
 
-        let isBrakeStrategy = strategy == .DROP_SWITCH || strategy == .VOCAL_CUT || strategy == .FILTER_TRANSITION || strategy == .HARD_CUT || strategy == .ECHO_OUT
-
-        if isBrakeStrategy {
-            if p > 0.15 {
-                let brakeP = Float((p - 0.15) / 0.85)
-                let brakeRate = max(0.04, Float(1.0 - brakeP * 0.96))
-                if !isUsingStreamPlayer {
-                    activeTimePitch.rate = brakeRate
-                    activeTimePitch.pitch = Float(-1800.0 * (brakeP * brakeP))
-                } else if isPlaying {
-                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .varispeed
-                    activeStreamingPlayer.rate = brakeRate
-                }
-            } else {
-                if !isUsingStreamPlayer {
-                    activeTimePitch.rate = 1.0
-                    activeTimePitch.pitch = 0
-                } else if isPlaying {
-                    activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                    activeStreamingPlayer.rate = 1.0
-                }
-            }
-
-            if incomingIsStream {
-                if isPlaying { idleStreamingPlayer.rate = 1.0 }
-            } else if !isUsingStreamPlayer {
-                idleTimePitch.rate = 1.0
-                idleTimePitch.pitch = 0
-            }
-        } else if let rates, transitionDuration > 0.001 {
-            let outTarget = Float(min(1.10, max(0.90, rates.sourcePlaybackRate)))
-            let inTarget = Float(min(1.10, max(0.90, rates.targetPlaybackRate)))
-            let rampProgress = Float(min(1.0, p / 0.6))
+        // Clean pitch-preserving beatmatching (±7.5% maximum stretch via timeDomain)
+        if let rates, transitionDuration > 0.001 {
+            let outTarget = Float(min(1.075, max(0.925, rates.sourcePlaybackRate)))
+            let inTarget = Float(min(1.075, max(0.925, rates.targetPlaybackRate)))
+            let rampProgress = Float(min(1.0, p / 0.5))
             let outRate = 1.0 + (outTarget - 1.0) * rampProgress
             let inRate = 1.0 + (inTarget - 1.0) * rampProgress
 
@@ -1540,10 +1672,22 @@ final class PlayerCore {
                 idleTimePitch.rate = inRate
                 idleTimePitch.pitch = 0
             }
-        } else if isUsingStreamPlayer {
-            let nudge = Float(1.0 + 0.03 * sin(p * .pi))
-            activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-            activeStreamingPlayer.rate = isPlaying ? nudge : 0
+        } else {
+            if isUsingStreamPlayer {
+                activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+            } else {
+                activeTimePitch.rate = 1.0
+                activeTimePitch.pitch = 0
+            }
+
+            if incomingIsStream {
+                idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                if isPlaying { idleStreamingPlayer.rate = 1.0 }
+            } else if !isUsingStreamPlayer {
+                idleTimePitch.rate = 1.0
+                idleTimePitch.pitch = 0
+            }
         }
         _ = filterCutoff
 
@@ -1569,37 +1713,34 @@ final class PlayerCore {
         reportWaveFinishedIfNeeded()
 
         let wasStream = isUsingStreamPlayer
-        if wasStream {
-            activeStreamingPlayer.pause()
-            activeStreamingPlayer.replaceCurrentItem(with: nil)
-        } else {
-            let outgoingNode = activeTimePitch
-            activePlayer.stop()
-            activePlayer.volume = 1.0
-            outgoingNode.rate = 1.0
-            outgoingNode.pitch = 0
-            outgoingNode.bypass = true
-        }
 
         if nextTrack.isStream || incomingIsStream {
             if !wasStream {
                 isUsingStreamPlayer = true
             }
-            let oldActive = activeStreamingPlayer
-            activeStreamingPlayer = idleStreamingPlayer
-            idleStreamingPlayer = oldActive
+            // Seamless swap: incoming player (already playing at full volume) continues undisturbed.
+            // DO NOT reconfigure its audioTimePitchAlgorithm or rate while it's playing to prevent audio dropout/stutter!
+            let outgoingPlayer = activeStreamingPlayer
+            let incomingPlayer = idleStreamingPlayer
+            activeStreamingPlayer = incomingPlayer
+            idleStreamingPlayer = outgoingPlayer
+
             activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
-            activeStreamingPlayer.rate = 1.0
-            activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-            idleStreamingPlayer.pause()
-            idleStreamingPlayer.volume = 0
+            if activeStreamingPlayer.rate != 1.0 && isPlaying {
+                activeStreamingPlayer.rate = 1.0
+            }
+
+            // Cleanly pause and unbind the outgoing player in the background
+            outgoingPlayer.pause()
+            outgoingPlayer.replaceCurrentItem(with: nil)
+            outgoingPlayer.volume = 0
+
             timePitchA.pitch = 0
             timePitchB.pitch = 0
             timePitchA.rate = 1.0
             timePitchB.rate = 1.0
             playerA.stop()
             playerB.stop()
-            applyEQ()
         } else {
             if wasStream {
                 isUsingStreamPlayer = false
@@ -1607,6 +1748,13 @@ final class PlayerCore {
                 streamingPlayerB.pause()
                 if !engine.isRunning { try? engine.start() }
             }
+            let outgoingNode = activeTimePitch
+            activePlayer.stop()
+            activePlayer.volume = 1.0
+            outgoingNode.rate = 1.0
+            outgoingNode.pitch = 0
+            outgoingNode.bypass = true
+
             generation += 1
             activePlayer = idlePlayer
             activeAudioFile = incomingAudioFile
@@ -1625,10 +1773,15 @@ final class PlayerCore {
         metadataTrack = nil
         metadataSwapped = false
         streamDuration = nextTrack.duration
+
+        // Sync playback progress accurately to the incoming player's actual continuous time
+        let actualTime = isUsingStreamPlayer ? CMTimeGetSeconds(activeStreamingPlayer.currentTime()) : incomingStartPosition
+        let resolvedPos = (actualTime.isFinite && actualTime >= 0) ? actualTime : incomingStartPosition
         anchorDate = Date()
-        anchorOffset = incomingStartPosition
-        pausedProgress = incomingStartPosition
-        progress = incomingStartPosition
+        anchorOffset = resolvedPos
+        pausedProgress = resolvedPos
+        progress = resolvedPos
+
         isTransitioning = false
         transitionScheduled = false
         AutoMixDJEngine.shared.isTransitionActive = false
@@ -1637,8 +1790,6 @@ final class PlayerCore {
 
         if !isUsingStreamPlayer {
             releaseActiveTimePitchToUnity()
-        } else {
-            releaseActiveStreamRateToUnity()
         }
 
         lastNowPlayingSync = nil
@@ -1829,7 +1980,12 @@ final class PlayerCore {
             refillQueueIfNeeded()
         } else if let current = currentTrack, repeatMode != .one {
             Task { @MainActor in
-                let wave = await YandexMusicService.shared.buildTrackWave(from: current, target: 20)
+                let wave: [Track]
+                if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                    wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
+                } else {
+                    wave = await YandexMusicService.shared.buildTrackWave(from: current, target: 20)
+                }
                 guard self.currentTrack?.id == current.id else { return }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id }
@@ -1860,16 +2016,29 @@ final class PlayerCore {
         let q = effectiveQueue()
         guard let currentIndex = q.firstIndex(where: { $0.id == current.id }) else { return }
         let remainingAhead = q.count - 1 - currentIndex
-        guard remainingAhead <= 2 else { return }
+        guard remainingAhead <= 5 else { return }
 
         isRefillingWave = true
         let seed = q.last ?? current
         Task { @MainActor [weak self] in
             defer { self?.isRefillingWave = false }
             guard let self, self.currentTrack != nil else { return }
-            let freshTracks = await YandexMusicService.shared.buildTrackWave(from: seed, target: 20)
+            let ym = YandexMusicService.shared
+            let rawTracks: [Track]
+            if MoodRadioEngine.shared.isTrackWaveActive || ym.activeStationId?.hasPrefix("track:") == true {
+                rawTracks = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 25)
+            } else if let station = ym.activeStationId {
+                let rotorTracks = await ym.buildWaveQueue(stationId: station, target: 25)
+                rawTracks = rotorTracks.map { ym.convertToTrack($0) }
+            } else if let mood = MoodRadioEngine.shared.activeMood {
+                let rotorTracks = await ym.buildWaveQueue(stationId: ym.waveMoodStationId, target: 25)
+                rawTracks = rotorTracks.map { ym.convertToTrack($0) }
+            } else {
+                rawTracks = await ym.buildTrackWave(from: seed, target: 20)
+            }
+            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
-            let fresh = freshTracks.filter { !existing.contains($0.id) && $0.id != current.id }
+            let fresh = ranked.filter { !existing.contains($0.id) && $0.id != current.id && !UserTasteEngine.shared.isDisliked(track: $0) }
             guard !fresh.isEmpty else { return }
             SonivoDiagnostics.log("[Wave] Infinite queue refill: +\(fresh.count) tracks", tag: "WAVE")
             self.queue.append(contentsOf: fresh)
@@ -1924,6 +2093,19 @@ final class PlayerCore {
         queue.append(contentsOf: tracks)
     }
 
+    func replaceUpcomingQueue(with tracks: [Track]) {
+        if let current = currentTrack {
+            var newQ = [current]
+            var seen = Set([current.id])
+            for t in tracks where seen.insert(t.id).inserted {
+                newQ.append(t)
+            }
+            queue = newQ
+        } else {
+            queue = tracks
+        }
+    }
+
     private func peekNext(auto: Bool) -> Track? {
         let q = effectiveQueue()
         guard !q.isEmpty else { return nil }
@@ -1948,7 +2130,7 @@ final class PlayerCore {
 
     private func startTimer() {
         progressTimer?.invalidate()
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickProgress() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -2012,6 +2194,7 @@ final class PlayerCore {
     private var spectrumTapInstalled = false
 
     nonisolated private static func handleSpectrumTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+        VocalIsolationManager.processBuffer(buffer)
         SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
     }
 

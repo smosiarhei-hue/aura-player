@@ -98,11 +98,32 @@ final class UserTasteEngine: @unchecked Sendable {
     /// performer never stacks at the top, and tracks that already opened a
     /// recent wave are demoted so two sessions never start identically.
     func filterAndRankWave(tracks: [Track]) -> [Track] {
-        let available = tracks.filter { !isDisliked(track: $0) }
-        guard available.count > 1 else { return available }
+        let waveSettings = WaveSettingsStore.shared
+
+        // 1. Фильтрация по языку и исключение дизлайков
+        var pool = tracks.filter { track in
+            guard !isDisliked(track: track) else { return false }
+            switch waveSettings.language {
+            case .any:
+                return true
+            case .russian:
+                let text = track.title + " " + track.artist
+                return text.range(of: "\\p{Cyrillic}", options: .regularExpression) != nil
+            case .foreign:
+                let text = track.title + " " + track.artist
+                return text.range(of: "\\p{Cyrillic}", options: .regularExpression) == nil
+            case .instrumental:
+                let lower = (track.title + " " + track.album).lowercased()
+                return lower.contains("instrumental") || lower.contains("инструментал") || lower.contains("karaoke") || lower.contains("минус")
+            }
+        }
+        // Если строгий фильтр языка отсеял слишком много треков, откатываемся к оригинальному пулу
+        if pool.isEmpty {
+            pool = tracks.filter { !isDisliked(track: $0) }
+        }
+        guard pool.count > 1 else { return pool }
 
         // Fisher-Yates shuffle first: inside a taste tier the order rotates.
-        var pool = available
         for index in stride(from: pool.count - 1, through: 1, by: -1) {
             let swap = Int.random(in: 0...index)
             pool.swapAt(index, swap)
@@ -112,6 +133,22 @@ final class UserTasteEngine: @unchecked Sendable {
         let scored = pool.map { track -> (track: Track, score: Double) in
             var score = artistScores[track.artist, default: 0]
             if openerPenalty.contains(track.id.uuidString) { score -= 2.5 }
+
+            // 2. Модификаторы характера (diversity)
+            switch waveSettings.diversity {
+            case .favorite:
+                if score > 0 { score += 12.0 }
+                if LibraryStore.shared.isTrackFavorite(track) { score += 18.0 }
+            case .discover:
+                if score > 4.0 { score -= 10.0 }
+                if score == 0 { score += 12.0 }
+                if !LibraryStore.shared.isTrackFavorite(track) { score += 4.0 }
+            case .popular:
+                score += 3.0
+            case .defaultMode:
+                break
+            }
+
             return (track, score)
         }
 
@@ -121,7 +158,7 @@ final class UserTasteEngine: @unchecked Sendable {
             return false
         }
 
-        // Spread artists: max 2 in a row from the same performer.
+        // Spread artists: no back-to-back songs from the same performer.
         var result: [Track] = []
         var taken = Set<UUID>()
         var streakArtist: String?
@@ -136,7 +173,7 @@ final class UserTasteEngine: @unchecked Sendable {
                 continue
             }
             let artist = entry.track.artist
-            if artist == streakArtist, streakCount >= 2 {
+            if artist == streakArtist, streakCount >= 1 {
                 // Find the next candidate from a different artist.
                 if let alternative = sorted.firstIndex(where: { !taken.contains($0.track.id) && $0.track.artist != artist }) {
                     let pick = sorted[alternative]

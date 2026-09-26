@@ -88,7 +88,7 @@ enum AG {
     // follow the user's accessibility setting. Weight and design are the
     // only knobs views may turn.
     static func display(_ style: Font.TextStyle = .title2, _ weight: Font.Weight = .bold) -> Font {
-        .system(style, design: .rounded, weight: weight)
+        .system(style, design: .default, weight: weight)
     }
 
     static func text(_ style: Font.TextStyle = .body, _ weight: Font.Weight = .regular) -> Font {
@@ -96,7 +96,7 @@ enum AG {
     }
 
     static func rounded(_ style: Font.TextStyle = .body, _ weight: Font.Weight = .medium) -> Font {
-        .system(style, design: .rounded, weight: weight)
+        .system(style, design: .default, weight: weight)
     }
 
     static func serifAccent(_ style: Font.TextStyle = .title2) -> Font {
@@ -114,6 +114,30 @@ enum AG {
 
 // MARK: - Settings
 
+enum MusicHapticsIntensity: String, CaseIterable, Identifiable, Codable, Sendable {
+    case soft = "soft"
+    case medium = "medium"
+    case strong = "strong"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .soft: return "Слабая"
+        case .medium: return "Средняя"
+        case .strong: return "Сильная"
+        }
+    }
+
+    var scaleFactor: Float {
+        switch self {
+        case .soft: return 0.45
+        case .medium: return 0.75
+        case .strong: return 1.00
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class SettingsStore {
@@ -122,10 +146,15 @@ final class SettingsStore {
 
     var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
     var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
+    var musicHapticsEnabled: Bool { didSet { defaults.set(musicHapticsEnabled, forKey: "settings.musicHaptics") } }
+    var musicHapticsIntensity: MusicHapticsIntensity {
+        didSet { defaults.set(musicHapticsIntensity.rawValue, forKey: "settings.musicHapticsIntensity") }
+    }
 
-    // Karaoke lyrics
+    // Karaoke lyrics & AI alignment
     var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
     var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
+    var isNeuralEngineEnabled: Bool { didSet { defaults.set(isNeuralEngineEnabled, forKey: "lyrics.neuralEngineEnabled") } }
 
     var accentColor: Color { AG.amber }
     var accentGradient: LinearGradient { AG.emberGradient }
@@ -133,8 +162,13 @@ final class SettingsStore {
     private init() {
         hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
+        musicHapticsEnabled = defaults.object(forKey: "settings.musicHaptics") as? Bool ?? true
+        musicHapticsIntensity = MusicHapticsIntensity(
+            rawValue: defaults.string(forKey: "settings.musicHapticsIntensity") ?? ""
+        ) ?? .strong
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
+        isNeuralEngineEnabled = defaults.object(forKey: "lyrics.neuralEngineEnabled") as? Bool ?? true
     }
 }
 
@@ -159,6 +193,20 @@ enum Haptics {
     static func scrubTick(_ generator: UISelectionFeedbackGenerator) {
         guard SettingsStore.shared.hapticsEnabled, SettingsStore.shared.scrubHapticsEnabled else { return }
         generator.selectionChanged()
+    }
+
+    /// Тактильный эффект встряхивания и всплеска волны (rigid -> medium -> light).
+    static func waveSplash() {
+        guard SettingsStore.shared.hapticsEnabled else { return }
+        let rigid = UIImpactFeedbackGenerator(style: .rigid)
+        rigid.prepare()
+        rigid.impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
     }
 }
 

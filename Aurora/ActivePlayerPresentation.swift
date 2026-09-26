@@ -9,6 +9,8 @@ import TrackSource
 @Observable
 @MainActor
 final class ActivePlayerPresentation {
+    static let shared = ActivePlayerPresentation()
+
     private let legacy: PlayerCore
     private let runtime: AutoMixV2Runtime
     private let neuroRuntime: NeuroMixRuntime
@@ -44,8 +46,9 @@ final class ActivePlayerPresentation {
     }
     var isV2Enabled: Bool { v2OwnsPlayback || neuroOwnsPlayback }
     var currentTrack: Track? {
-        neuroOwnsPlayback ? neuroRuntime.currentTrack :
-            (v2OwnsPlayback ? runtime.currentTrack : legacy.currentTrack)
+        if neuroOwnsPlayback { return neuroRuntime.currentTrack }
+        if v2OwnsPlayback { return runtime.currentTrack }
+        return legacy.currentTrack ?? runtime.currentTrack ?? neuroRuntime.currentTrack
     }
     var incomingTrack: Track? {
         v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack
@@ -102,14 +105,35 @@ final class ActivePlayerPresentation {
     var isNextDownloading: Bool { v2OwnsPlayback && nextNetworkDownloading }
     var queue: [Track] {
         get {
-            neuroOwnsPlayback ? neuroRuntime.playbackQueue :
-                (v2OwnsPlayback ? runtime.playbackQueue : legacy.queue)
+            if router.owner == .neuroMix || neuroOwnsPlayback { return neuroRuntime.playbackQueue }
+            if router.owner == .autoMixV2 || v2OwnsPlayback { return runtime.playbackQueue }
+            return legacy.queue
         }
         set {
-            if neuroOwnsPlayback { neuroRuntime.replaceQueue(newValue) }
-            else if v2OwnsPlayback { runtime.replaceQueue(newValue) }
-            else { legacy.queue = newValue }
+            if router.owner == .neuroMix || neuroOwnsPlayback {
+                neuroRuntime.replaceQueue(newValue)
+            } else if router.owner == .autoMixV2 || v2OwnsPlayback {
+                runtime.replaceQueue(newValue)
+            } else {
+                legacy.queue = newValue
+            }
         }
+    }
+
+    /// Заменяет предстоящие треки в очереди активного движка без прерывания текущего звучания
+    func replaceUpcomingQueue(with tracks: [Track]) {
+        let current = currentTrack
+        var newQ: [Track] = []
+        if let current {
+            newQ.append(current)
+            var seen = Set([current.id])
+            for t in tracks where seen.insert(t.id).inserted {
+                newQ.append(t)
+            }
+        } else {
+            newQ = tracks
+        }
+        self.queue = newQ
     }
     var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
     var currentBitrate: Int? { v2OwnsPlayback ? runtime.currentBitrate : legacy.currentBitrate }
@@ -134,7 +158,15 @@ final class ActivePlayerPresentation {
     func pause() { router.pause() }
     func resume() { router.play() }
     func previous() { router.previous() }
-    func next() { router.next() }
+    func next() {
+        if let current = currentTrack, current.isStream {
+            let ymId = PlayerCore.yandexTrackID(from: current)
+            if !ymId.isEmpty {
+                YandexMusicService.shared.reportSkip(trackId: ymId)
+            }
+        }
+        router.next()
+    }
     func seek(to seconds: Double) { router.seek(to: seconds) }
     func play(_ track: Track) { router.play(track, queue: queue) }
     func removeFromQueue(_ track: Track) {
@@ -187,7 +219,8 @@ final class ActivePlayerPresentation {
                 resetTimeline(for: nil)
                 clearNetworkProgress()
             }
-            do { try await ContinuousClock().sleep(for: .milliseconds(200)) }
+            let sleepMs = isPlaying ? 25 : 200
+            do { try await ContinuousClock().sleep(for: .milliseconds(sleepMs)) }
             catch { return }
         }
     }

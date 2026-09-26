@@ -4,14 +4,34 @@ type DeckId = "A" | "B";
 
 interface Glide { t0: number; t1: number; r0: number; r1: number }
 
+/** Генератор натурального стерео импульса реверберации */
+function createReverbImpulse(ctx: AudioContext, duration = 3.0, decay = 2.0): AudioBuffer {
+  const rate = ctx.sampleRate;
+  const length = Math.floor(rate * duration);
+  const impulse = ctx.createBuffer(2, length, rate);
+  const left = impulse.getChannelData(0);
+  const right = impulse.getChannelData(1);
+
+  for (let i = 0; i < length; i++) {
+    const t = i / rate;
+    const env = Math.exp(-t * decay);
+    left[i] = (Math.random() * 2 - 1) * env;
+    right[i] = (Math.random() * 2 - 1) * env;
+  }
+  return impulse;
+}
+
 class Deck {
   id: DeckId;
   ctx: AudioContext;
   input: GainNode; // trim (автогейн)
   hp: BiquadFilterNode;
+  lp: BiquadFilterNode;
   low: BiquadFilterNode;
+  mid: BiquadFilterNode; // подавление/выделение вокала (1.2 кГц)
   gain: GainNode;
   echoSend: GainNode;
+  reverbSend: GainNode;
   analyser: AnalyserNode;
   source: AudioBufferSourceNode | null = null;
   track: Track | null = null;
@@ -21,7 +41,7 @@ class Deck {
   glide: Glide | null = null;
   private levelBuf = new Uint8Array(256);
 
-  constructor(id: DeckId, ctx: AudioContext, master: AudioNode, echoIn: AudioNode) {
+  constructor(id: DeckId, ctx: AudioContext, master: AudioNode, echoIn: AudioNode, reverbIn: AudioNode) {
     this.id = id;
     this.ctx = ctx;
     this.input = ctx.createGain();
@@ -29,24 +49,39 @@ class Deck {
     this.hp.type = "highpass";
     this.hp.frequency.value = 20;
     this.hp.Q.value = 0.7;
+    this.lp = ctx.createBiquadFilter();
+    this.lp.type = "lowpass";
+    this.lp.frequency.value = 20000;
+    this.lp.Q.value = 0.7;
     this.low = ctx.createBiquadFilter();
     this.low.type = "lowshelf";
     this.low.frequency.value = 220;
     this.low.gain.value = 0;
+    this.mid = ctx.createBiquadFilter();
+    this.mid.type = "peaking";
+    this.mid.frequency.value = 1200;
+    this.mid.Q.value = 0.7;
+    this.mid.gain.value = 0;
     this.gain = ctx.createGain();
     this.gain.gain.value = 0;
     this.echoSend = ctx.createGain();
     this.echoSend.gain.value = 0;
+    this.reverbSend = ctx.createGain();
+    this.reverbSend.gain.value = 0;
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 256;
 
     this.input.connect(this.hp);
-    this.hp.connect(this.low);
-    this.low.connect(this.gain);
+    this.hp.connect(this.lp);
+    this.lp.connect(this.low);
+    this.low.connect(this.mid);
+    this.mid.connect(this.gain);
     this.gain.connect(this.analyser);
     this.analyser.connect(master);
-    this.gain.connect(this.echoSend);
+    this.mid.connect(this.echoSend);
     this.echoSend.connect(echoIn);
+    this.mid.connect(this.reverbSend);
+    this.reverbSend.connect(reverbIn);
   }
 
   get isPlaying() {
@@ -129,11 +164,28 @@ class Deck {
   }
 
   reset(now: number) {
-    for (const p of [this.gain.gain, this.low.gain, this.hp.frequency, this.echoSend.gain]) p.cancelScheduledValues(now);
+    for (const p of [
+      this.gain.gain,
+      this.low.gain,
+      this.mid.gain,
+      this.hp.frequency,
+      this.hp.Q,
+      this.lp.frequency,
+      this.lp.Q,
+      this.echoSend.gain,
+      this.reverbSend.gain,
+    ]) {
+      p.cancelScheduledValues(now);
+    }
     this.gain.gain.setValueAtTime(this.gain.gain.value, now);
     this.low.gain.setValueAtTime(0, now);
+    this.mid.gain.setValueAtTime(0, now);
     this.hp.frequency.setValueAtTime(20, now);
+    this.hp.Q.setValueAtTime(0.7, now);
+    this.lp.frequency.setValueAtTime(20000, now);
+    this.lp.Q.setValueAtTime(0.7, now);
     this.echoSend.gain.setValueAtTime(0, now);
+    this.reverbSend.gain.setValueAtTime(0, now);
   }
 
   level(): number {
@@ -180,6 +232,11 @@ export class AutoMixEngine {
     duration: 0,
     tempoShift: 0,
     style: "smooth",
+    plannedBars: 8,
+    plannedBeats: 32,
+    currentBar: 1,
+    currentBeat: 1,
+    description: "",
   };
   private listeners: Listener[] = [];
   private freqBuf: Uint8Array<ArrayBuffer>;
@@ -188,7 +245,13 @@ export class AutoMixEngine {
   private echoDelay: DelayNode;
   private echoFeedback: GainNode;
   private echoFilter: BiquadFilterNode;
-  private pendingSwitch: { at: number; to: DeckId; stopOutAt: number } | null = null;
+  private echoHp: BiquadFilterNode;
+  private echoReturn: GainNode;
+  private reverbNode: ConvolverNode;
+  private reverbHp: BiquadFilterNode;
+  private reverbReturn: GainNode;
+  private pendingSwitch: { at: number; to: DeckId; stopOutAt: number; fromDeck: Deck } | null = null;
+  private pendingRetire: { at: number; deck: Deck } | null = null;
 
   constructor(settings: MixSettings) {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -207,26 +270,47 @@ export class AutoMixEngine {
     this.analyser.smoothingTimeConstant = 0.82;
     this.freqBuf = new Uint8Array(this.analyser.frequencyBinCount);
 
-    // эхо-шина
-    this.echoDelay = this.ctx.createDelay(2);
+    // Студийная эхо-шина с фильтрацией суб-баса и сочным возвратом
+    this.echoDelay = this.ctx.createDelay(3);
     this.echoDelay.delayTime.value = 0.375;
     this.echoFeedback = this.ctx.createGain();
-    this.echoFeedback.gain.value = 0.55;
+    this.echoFeedback.gain.value = 0.68;
     this.echoFilter = this.ctx.createBiquadFilter();
     this.echoFilter.type = "lowpass";
-    this.echoFilter.frequency.value = 3500;
+    this.echoFilter.frequency.value = 4200;
+    this.echoHp = this.ctx.createBiquadFilter();
+    this.echoHp.type = "highpass";
+    this.echoHp.frequency.value = 350;
+    this.echoReturn = this.ctx.createGain();
+    this.echoReturn.gain.value = 1.15;
+
     this.echoDelay.connect(this.echoFilter);
-    this.echoFilter.connect(this.echoFeedback);
+    this.echoFilter.connect(this.echoHp);
+    this.echoHp.connect(this.echoFeedback);
     this.echoFeedback.connect(this.echoDelay);
-    this.echoFilter.connect(this.master);
+    this.echoHp.connect(this.echoReturn);
+    this.echoReturn.connect(this.master);
+
+    // Космическая реверберационная шина (Space Reverb Bus)
+    this.reverbNode = this.ctx.createConvolver();
+    this.reverbNode.buffer = createReverbImpulse(this.ctx, 3.2, 1.9);
+    this.reverbHp = this.ctx.createBiquadFilter();
+    this.reverbHp.type = "highpass";
+    this.reverbHp.frequency.value = 400; // срез суб-баса для прозрачности
+    this.reverbReturn = this.ctx.createGain();
+    this.reverbReturn.gain.value = 0.95;
+
+    this.reverbNode.connect(this.reverbHp);
+    this.reverbHp.connect(this.reverbReturn);
+    this.reverbReturn.connect(this.master);
 
     this.master.connect(this.limiter);
     this.limiter.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
 
     this.decks = {
-      A: new Deck("A", this.ctx, this.master, this.echoDelay),
-      B: new Deck("B", this.ctx, this.master, this.echoDelay),
+      A: new Deck("A", this.ctx, this.master, this.echoDelay, this.reverbNode),
+      B: new Deck("B", this.ctx, this.master, this.echoDelay, this.reverbNode),
     };
   }
 
@@ -302,63 +386,136 @@ export class AutoMixEngine {
   private cancelTransition() {
     this.transition = { ...this.transition, active: false };
     this.pendingSwitch = null;
+    if (this.pendingRetire) {
+      this.pendingRetire.deck.stop();
+      this.pendingRetire = null;
+    }
   }
 
-  /** Запуск перехода на nextTrack на ближайшем бите */
+  /**
+   * Интеллектуальный расчет длины перехода в музыкальных тактах (1 такт = 4 бита).
+   * Базируется на сетке треков, кульминациях (дропах) и музыкальном стиле.
+   */
+  computePlannedBars(outTrack: Track, target: Track, style: MixStyle): number {
+    const s = this.settings;
+    if (!s.autoLength) {
+      return Math.max(1, Math.round(s.lengthBeats / 4));
+    }
+    if (style === "cut") return 1;
+
+    const targetA = target.analysis;
+    const outA = outTrack.analysis;
+    const bpm = outA?.bpm ?? targetA?.bpm ?? 120;
+    const barSec = (60 / bpm) * 4;
+
+    // Оцениваем доступный хронометраж в аутро уходящего трека
+    const remainingSec = outTrack.duration - (outA?.mixOut ?? (outTrack.duration * 0.80));
+
+    // 1. Проверяем наличие кульминации (дропа) во входящем треке B
+    if (targetA?.drops && targetA.drops.length > 0) {
+      const earlyDrop = targetA.drops.find((d) => d >= barSec * 4 && d <= 75);
+      if (earlyDrop) {
+        const dropBars = Math.round(earlyDrop / barSec);
+        if (dropBars >= 12 && dropBars <= 20 && remainingSec >= barSec * 16 + 2) return 16;
+        if (dropBars >= 6 && dropBars <= 10 && remainingSec >= barSec * 8 + 1) return 8;
+      }
+    }
+
+    // 2. Золотой стандарт AutoMix: 16 тактов (~28-34 сек) для длинного богатого сведения, иначе 8 тактов
+    if (remainingSec >= barSec * 16 + 2 && outTrack.duration >= 90) {
+      return 16;
+    }
+    if (remainingSec >= barSec * 8 + 1 || outTrack.duration >= 45) {
+      return 8;
+    }
+    return 4;
+  }
+
+  /** Запуск перехода на nextTrack с выравниванием по тактам, фразам и долям */
   startTransition(next?: Track, styleOverride?: MixStyle): boolean {
     const target = next ?? this.nextTrack;
     const out = this.activeDeck;
     if (!target || !target.buffer || !target.analysis || !out.track || !out.isPlaying || this.transition.active) return false;
     const inn = this.decks[this.active === "A" ? "B" : "A"];
     const s = this.settings;
-    const style = styleOverride ?? s.style;
     const now = this.ctx.currentTime;
 
     const outA = out.track.analysis;
     const outRate = out.effectiveRate(now);
     const outBpm = (outA?.bpm ?? 120) * outRate;
-    const beat = 60 / outBpm;
 
-    // --- битмэтчинг ---
+    let style = styleOverride ?? s.style;
     let rate = 1;
-    if (s.beatmatch) {
+
+    // --- 1. Гармоничная подгонка темпа под ритмическую сетку (Beatmatching) ---
+    // Октавное приведение темпа: 146 BPM и 73 BPM совпадают 1:1 (double/half time)
+    if (s.beatmatch && target.analysis?.bpm) {
       let r = outBpm / target.analysis.bpm;
-      if (r > 1.45) r /= 2;
-      if (r < 0.69) r *= 2;
-      rate = Math.min(1.08, Math.max(0.92, r));
+      while (r > 1.414) r /= 2;
+      while (r < 0.707) r *= 2;
+      // Деликатная подгонка темпа в безопасном диапазоне ±7.5% для сохранения гармонии
+      rate = Math.min(1.075, Math.max(0.925, r));
     }
 
-    // --- время старта: следующий бит (для club/cut — ближайшая «единица» такта) ---
+    const beat = 60 / outBpm;
+    const bar = beat * 4;
+
+    // --- 2. Интеллектуальный расчет количества тактов и битов ---
+    let plannedBars = this.computePlannedBars(out.track, target, style);
+    let plannedBeats = plannedBars * 4;
+
+    // --- 3. Выравнивание времени старта (t0) строго по СИЛЬНОЙ ДОЛЕ ТАКТА (Downbeat / бит 1) ---
     const pos = out.position(now);
     const grid = outA?.beatOffset ?? 0;
     const beatTrack = 60 / (outA?.bpm ?? 120);
-    const quant = style === "club" || style === "cut" ? 4 : 1;
-    const k = Math.ceil((pos + 0.06 * outRate - grid) / (beatTrack * quant));
-    let startTrack = grid + k * beatTrack * quant;
-    if (startTrack > out.track.duration - 0.2) startTrack = pos + 0.05;
-    const t0 = Math.max(now + 0.01, out.ctxTimeFor(startTrack));
+    const barTrack = beatTrack * 4;
 
-    // --- длительность ---
-    let D: number;
-    switch (style) {
-      case "cut":
-        D = beat * 0.5;
-        break;
-      case "echo":
-        D = beat * 2;
-        break;
-      case "club":
-        D = beat * Math.max(4, s.lengthBeats);
-        break;
-      default:
-        D = beat * Math.max(4, s.lengthBeats);
+    // Квантование до ближайшего начала следующего такта (с запасом 150мс на планирование Web Audio)
+    let kBar = Math.ceil((pos + 0.15 * outRate - grid) / barTrack);
+    let startTrack = grid + kBar * barTrack;
+    let t0 = out.ctxTimeFor(startTrack);
+    if (t0 - now < 0.08) {
+      kBar += 1;
+      startTrack = grid + kBar * barTrack;
+      t0 = out.ctxTimeFor(startTrack);
     }
-    const remaining = (out.track.duration - startTrack) / outRate;
-    D = Math.max(0.15, Math.min(D, remaining - 0.05));
+
+    // Проверяем, сколько тактов доступно до конца уходящего трека
+    const remainingSec = out.track.duration - startTrack;
+    const maxFittingBars = Math.floor(remainingSec / (barTrack * outRate));
+    if (maxFittingBars < plannedBars) {
+      if (maxFittingBars >= 8) plannedBars = 8;
+      else if (maxFittingBars >= 4) plannedBars = 4;
+      else plannedBars = Math.max(1, maxFittingBars);
+      plannedBeats = plannedBars * 4;
+    }
+
+    const D = plannedBeats * beat;
     const t1 = t0 + D;
 
-    // --- входящая дека ---
-    const inOffset = target.analysis.mixIn;
+    // --- 4. Подбор точки входа трека B (inOffset) под такт, вокал и кульминацию ---
+    const targetA = target.analysis;
+    const targetBeat = 60 / targetA.bpm;
+    const targetBar = targetBeat * 4;
+    const targetGrid = targetA.beatOffset;
+    let inOffset = targetA.mixIn;
+
+    if ((style === "mashup" || style === "club" || s.smartCues) && targetA.drops && targetA.drops.length > 0) {
+      const leadInSec = D * rate;
+      const fittingDrop = targetA.drops.find((d) => d >= leadInSec && d <= 90);
+      if (fittingDrop) {
+        const rawOffset = fittingDrop - leadInSec;
+        inOffset = targetGrid + Math.round((rawOffset - targetGrid) / targetBar) * targetBar;
+      }
+    }
+    // Гарантируем квантование строго по сильной доле такта (Downbeat: Бит 1)
+    inOffset = targetGrid + Math.round((inOffset - targetGrid) / targetBar) * targetBar;
+    if (inOffset < 0) {
+      inOffset = targetGrid + Math.ceil(-targetGrid / targetBar) * targetBar;
+    }
+    inOffset = Math.max(0, Math.min(target.duration - 5, inOffset));
+
+    // --- 5. Запуск деки B ---
     inn.reset(now);
     inn.start(target, inOffset, t0, rate, this.trimFor(target));
     const gIn = inn.gain.gain;
@@ -369,69 +526,314 @@ export class AutoMixEngine {
     gOut.setValueAtTime(gOut.value, now);
     const pre = t0 - 0.002;
 
+    let stopOutAt = t1 + 0.2;
+
+    // --- 6. Настройка DSP-кривых сведения под выбранный стиль ---
     if (style === "cut") {
       gIn.setValueAtTime(0, pre);
       gIn.linearRampToValueAtTime(1, t0 + 0.01);
       gOut.setValueAtTime(1, pre);
-      gOut.linearRampToValueAtTime(0, t0 + D);
+      gOut.linearRampToValueAtTime(0, t0 + 0.02);
+      stopOutAt = t0 + 0.05;
+    } else if (style === "tapestop") {
+      // 🛑 ТЕЙП-СТОП / СЛОУ-МО (КОЛЕСО ДИДЖЕЯ):
+      const brakeDur = beat * 1.5;
+      const brakeStart = t1 - brakeDur;
+
+      // 1. Входящий трек B молчит до дропа, затем ВЗРЫВАЕТСЯ на 100% на сильную долю t1 ("БАЦ!")
+      gIn.setValueAtTime(0, pre);
+      gIn.setValueAtTime(0, t1 - 0.01);
+      gIn.linearRampToValueAtTime(1.0, t1 + 0.02);
+      inn.low.gain.setValueAtTime(0, t1);
+      inn.mid.gain.setValueAtTime(0, t1);
+      inn.hp.frequency.setValueAtTime(20, t1);
+      inn.lp.frequency.setValueAtTime(20000, t1);
+
+      // 2. Уходящий трек A играет на полную мощность до начала торможения
+      gOut.setValueAtTime(1.0, pre);
+      gOut.setValueAtTime(1.0, brakeStart);
+
+      // Замедление винилового диска (колесо диджея)
+      if (out.source) {
+        const pRate = out.source.playbackRate;
+        pRate.cancelScheduledValues(now);
+        pRate.setValueAtTime(out.rate, brakeStart);
+        pRate.exponentialRampToValueAtTime(0.015, t1 - 0.08);
+      }
+
+      // Фильтр плавно закрывается в глухой виниловый спуск:
+      out.lp.frequency.cancelScheduledValues(now);
+      out.lp.frequency.setValueAtTime(20000, brakeStart);
+      out.lp.frequency.exponentialRampToValueAtTime(250, t1 - 0.08);
+
+      // Зазор тишины перед дропом (Pre-Drop Silence 80мс для максимального контраста "БАЦ!"):
+      gOut.setValueAtTime(1.0, t1 - 0.12);
+      gOut.linearRampToValueAtTime(0, t1 - 0.08);
+      gOut.setValueAtTime(0, t1);
+
+      // Эхо-хвост подхватывает торможение:
+      const send = out.echoSend.gain;
+      send.cancelScheduledValues(now);
+      send.setValueAtTime(0, t0);
+      send.setValueAtTime(0, brakeStart);
+      send.linearRampToValueAtTime(0.65, t1 - 0.10);
+      send.linearRampToValueAtTime(0, t1 + 0.1);
+      this.echoDelay.delayTime.setValueAtTime(beat * 0.75, now);
+      this.echoFeedback.gain.setValueAtTime(0.55, now);
+
+      stopOutAt = t1 + 2.0;
+    } else if (style === "stutter") {
+      // ⚡ ЗАИКАНИЕ (1/16 BEAT STUTTER ROLL):
+      // Входящий трек B готовится:
+      gIn.setValueAtTime(0, pre);
+      gIn.setValueAtTime(0, t1 - bar);
+      gIn.linearRampToValueAtTime(0.30, t1 - beat);
+      gIn.setValueAtTime(0.30, t1 - beat * 0.25);
+      gIn.linearRampToValueAtTime(0, t1 - beat * 0.1); // затихает перед дропом
+      // На сильную долю t1 — ВЗРЫВ!
+      gIn.setValueAtTime(0, t1 - 0.005);
+      gIn.linearRampToValueAtTime(1.0, t1 + 0.02);
+
+      inn.low.gain.setValueAtTime(-24, t1 - bar);
+      inn.low.gain.setValueAtTime(-24, t1 - beat * 0.25);
+      inn.low.gain.linearRampToValueAtTime(0, t1);
+      inn.mid.gain.setValueAtTime(-8, t1 - bar);
+      inn.mid.gain.linearRampToValueAtTime(0, t1);
+
+      // Трек A: ритмичное стробирование громкости
+      gOut.setValueAtTime(1.0, pre);
+      gOut.setValueAtTime(1.0, t1 - bar);
+
+      // Бит 3: 1/8 пульсации
+      const b3 = t1 - beat * 2;
+      const eighth = beat / 2;
+      for (let step = 0; step < 2; step++) {
+        const tStep = b3 + step * eighth;
+        gOut.setValueAtTime(1.0, tStep);
+        gOut.setValueAtTime(0.05, tStep + eighth * 0.55);
+      }
+
+      // Бит 4: 1/16 пулеметный ролл
+      const b4 = t1 - beat;
+      const sixteenth = beat / 4;
+      for (let step = 0; step < 3; step++) {
+        const tStep = b4 + step * sixteenth;
+        gOut.setValueAtTime(1.0, tStep);
+        gOut.setValueAtTime(0.02, tStep + sixteenth * 0.50);
+      }
+
+      // Pre-Drop Silence на последней 1/16 доли (зазор тишины перед ударом):
+      gOut.setValueAtTime(0, t1 - sixteenth);
+      gOut.setValueAtTime(0, t1);
+
+      // Подъем резонансного фильтра во время заикания:
+      out.hp.frequency.setValueAtTime(20, t1 - bar);
+      out.hp.frequency.exponentialRampToValueAtTime(3200, t1 - sixteenth);
+      out.hp.Q.setValueAtTime(0.7, t1 - bar);
+      out.hp.Q.linearRampToValueAtTime(3.6, t1 - sixteenth);
+
+      out.low.gain.setValueAtTime(0, t1 - bar);
+      out.low.gain.linearRampToValueAtTime(-24, t1 - beat);
+
+      stopOutAt = t1 + 1.5;
+    } else if (style === "reverb") {
+      // 🌌 КОСМИЧЕСКИЙ РЕВЕРБ:
+      const revStart = Math.max(t0 + 0.1, t1 - bar * 2);
+      gIn.setValueAtTime(0, pre);
+      gIn.setValueAtTime(0, t1 - 0.01);
+      gIn.linearRampToValueAtTime(1.0, t1 + 0.02);
+      inn.low.gain.setValueAtTime(0, t1);
+      inn.mid.gain.setValueAtTime(0, t1);
+
+      // Уходящий трек A: сухой звук затихает, растворяясь в глубоком ревербе
+      gOut.setValueAtTime(1.0, pre);
+      gOut.setValueAtTime(1.0, revStart);
+      gOut.linearRampToValueAtTime(0.12, t1 - beat * 0.5);
+      gOut.linearRampToValueAtTime(0, t1);
+
+      out.low.gain.setValueAtTime(0, revStart);
+      out.low.gain.linearRampToValueAtTime(-24, t1 - bar);
+      out.hp.frequency.setValueAtTime(20, revStart);
+      out.hp.frequency.exponentialRampToValueAtTime(600, t1);
+
+      const rSend = out.reverbSend.gain;
+      rSend.cancelScheduledValues(now);
+      rSend.setValueAtTime(0, t0);
+      rSend.setValueAtTime(0, revStart);
+      rSend.linearRampToValueAtTime(0.90, t1 - beat * 0.25);
+      rSend.setValueAtTime(0.90, t1);
+      rSend.linearRampToValueAtTime(0, t1 + 0.3);
+
+      stopOutAt = t1 + 3.2;
+    } else if (style === "mashup") {
+      // ⚡ НАСТОЯЩИЙ PIONEER AI MASHUP (С ЗАЩИТОЙ ВОКАЛА И BASS SWAP):
+      const tMid = t0 + D * 0.5; // Ровно середина перехода (4-й такт из 8 или 8-й из 16)
+      const tRiserStart = Math.max(t0 + 0.1, tMid);
+
+      // 1. Входящий трек B:
+      // В первой половине (t0 -> tMid) играет подложкой с плавным нарастанием до 0.70
+      gIn.setValueAtTime(0, pre);
+      gIn.linearRampToValueAtTime(0.70, tMid);
+      // Во второй половине (tMid -> t1) выходит на полную мощность 1.00
+      gIn.linearRampToValueAtTime(1.0, t1);
+
+      // 2. Вокальная защита (Vocal Pocket Ducking):
+      // В первой половине ducking средних частот (-6 dB на 1.2 кГц), чтобы вокал трека A звучал кристально четко!
+      // На экваторе tMid вокал трека B плавно открывается до 0 dB
+      inn.mid.gain.setValueAtTime(-6, t0);
+      inn.mid.gain.setValueAtTime(-6, tMid - beat * 0.5);
+      inn.mid.gain.linearRampToValueAtTime(0, tMid);
+
+      // 3. Обмен басом (Bass Handoff):
+      // Бас трека B срезан (-24 dB) в первой половине — никакого гула и каши в саб-басе!
+      // Ровно на сильную долю середины (tMid) бас трека B взрывается на 0 dB ("БАЦ!")
+      inn.low.gain.setValueAtTime(-24, t0);
+      inn.low.gain.setValueAtTime(-24, tMid - beat * 0.5);
+      inn.low.gain.linearRampToValueAtTime(0, tMid);
+
+      // 4. Уходящий трек A:
+      // В первой половине играет на 100%, плавно снижаясь до 0.85 к экватору
+      gOut.setValueAtTime(1.0, pre);
+      gOut.setValueAtTime(1.0, t0);
+      gOut.linearRampToValueAtTime(0.85, tMid);
+      // Во второй половине плавно растворяется в ноль (tMid -> t1)
+      gOut.linearRampToValueAtTime(0, t1);
+
+      // Бас трека A уходит ровно на сильной доле tMid (Bass Swap):
+      out.low.gain.setValueAtTime(0, t0);
+      out.low.gain.setValueAtTime(0, tMid - beat * 0.5);
+      out.low.gain.linearRampToValueAtTime(-24, tMid);
+
+      // 5. Резонансный High-Pass Riser на треке A (подъем фильтра во второй половине):
+      if (s.riserEffect) {
+        out.hp.frequency.setValueAtTime(20, t0);
+        out.hp.frequency.setValueAtTime(20, tRiserStart);
+        out.hp.frequency.exponentialRampToValueAtTime(2400, t1);
+        out.hp.Q.setValueAtTime(0.7, t0);
+        out.hp.Q.setValueAtTime(0.7, tRiserStart);
+        out.hp.Q.linearRampToValueAtTime(2.4, t1);
+      }
+
+      // 6. Студийный дилей и реверберация (хвост перетекания):
+      const sendStart = Math.max(t0 + 0.1, t1 - bar * 2);
+      const send = out.echoSend.gain;
+      send.cancelScheduledValues(now);
+      send.setValueAtTime(0, t0);
+      send.setValueAtTime(0, sendStart);
+      send.linearRampToValueAtTime(0.65, t1);
+      send.linearRampToValueAtTime(0, t1 + 0.3);
+      this.echoDelay.delayTime.setValueAtTime(beat * 0.75, now);
+      this.echoFeedback.gain.setValueAtTime(0.60, now);
+
+      stopOutAt = t1 + 2.5;
+    } else if (style === "club") {
+      // Клубный режим (Club Bass-Swap): чистый кроссфейд с обменом басами на сильной доле такта
+      const tMid = t0 + D * 0.5;
+      gIn.setValueAtTime(0, pre);
+      gIn.setValueCurveAtTime(equalPowerIn, t0, D);
+      gOut.setValueAtTime(1, pre);
+      gOut.setValueCurveAtTime(equalPowerOut, t0, D);
+
+      if (s.eqSwap) {
+        const lo = out.low.gain;
+        const li = inn.low.gain;
+        lo.cancelScheduledValues(now);
+        li.cancelScheduledValues(now);
+        li.setValueAtTime(-24, t0);
+        li.setValueAtTime(-24, tMid - beat * 0.25);
+        li.linearRampToValueAtTime(0, tMid);
+
+        lo.setValueAtTime(0, t0);
+        lo.setValueAtTime(0, tMid - beat * 0.25);
+        lo.linearRampToValueAtTime(-24, tMid);
+      }
+      stopOutAt = t1 + 1.2;
+    } else if (style === "smooth") {
+      // 🎵 Spotify Premium AutoMix (Continuous Harmonic Flow):
+      const tMid = t0 + D * 0.5;
+
+      gIn.setValueAtTime(0, pre);
+      gIn.setValueCurveAtTime(equalPowerIn, t0, D);
+      gOut.setValueAtTime(1, pre);
+      gOut.setValueCurveAtTime(equalPowerOut, t0, D);
+
+      if (s.eqSwap) {
+        const lo = out.low.gain;
+        const li = inn.low.gain;
+        lo.cancelScheduledValues(now);
+        li.cancelScheduledValues(now);
+
+        lo.setValueAtTime(0, t0);
+        lo.setValueAtTime(0, tMid - beat * 0.5);
+        lo.linearRampToValueAtTime(-24, tMid);
+
+        li.setValueAtTime(-20, t0);
+        li.setValueAtTime(-20, tMid - beat * 0.5);
+        li.linearRampToValueAtTime(0, tMid);
+      }
+
+      if (s.riserEffect) {
+        const riserStart = Math.max(t0 + 0.1, tMid);
+        out.hp.frequency.setValueAtTime(20, t0);
+        out.hp.frequency.setValueAtTime(20, riserStart);
+        out.hp.frequency.exponentialRampToValueAtTime(1600, t1);
+        out.hp.Q.setValueAtTime(0.7, t0);
+        out.hp.Q.setValueAtTime(0.7, riserStart);
+        out.hp.Q.linearRampToValueAtTime(1.8, t1);
+      }
+
+      const send = out.echoSend.gain;
+      send.cancelScheduledValues(now);
+      send.setValueAtTime(0, t0);
+      const sendStart = Math.max(t0 + 0.1, t1 - bar);
+      send.setValueAtTime(0, sendStart);
+      send.linearRampToValueAtTime(0.50, t1);
+      send.linearRampToValueAtTime(0, t1 + 0.2);
+      this.echoDelay.delayTime.setValueAtTime(beat * 0.75, now);
+      this.echoFeedback.gain.setValueAtTime(0.50, now);
+
+      stopOutAt = t1 + 2.0;
+    } else if (style === "echo") {
+      // Cosmic Echo Out
+      const tMid = t0 + D * 0.5;
+      this.echoDelay.delayTime.setValueAtTime(beat * 0.75, now);
+      this.echoFeedback.gain.setValueAtTime(0.65, now);
+      gIn.setValueAtTime(0, pre);
+      gIn.setValueCurveAtTime(equalPowerIn, t0, D);
+      gOut.setValueAtTime(1, pre);
+      gOut.setValueAtTime(1, tMid);
+      gOut.linearRampToValueAtTime(0, t1);
+      const send = out.echoSend.gain;
+      send.cancelScheduledValues(now);
+      send.setValueAtTime(0, t0);
+      send.setValueAtTime(0, tMid);
+      send.linearRampToValueAtTime(0.80, t1);
+      send.linearRampToValueAtTime(0, t1 + 0.3);
+      out.hp.frequency.setValueAtTime(20, tMid);
+      out.hp.frequency.exponentialRampToValueAtTime(2000, t1);
+      stopOutAt = t1 + 2.8;
     } else {
       gIn.setValueAtTime(0, pre);
       gIn.setValueCurveAtTime(equalPowerIn, t0, D);
       gOut.setValueAtTime(1, pre);
       gOut.setValueCurveAtTime(equalPowerOut, t0, D);
+      stopOutAt = t1 + 0.5;
     }
 
-    // --- EQ swap: басы уходящего убираем, входящего — вводим ---
-    if (s.eqSwap && style !== "cut") {
-      const lo = out.low.gain;
-      const li = inn.low.gain;
-      lo.cancelScheduledValues(now);
-      li.cancelScheduledValues(now);
-      if (style === "club") {
-        // резкий обмен басами в середине перехода
-        const swap = t0 + D * 0.5;
-        li.setValueAtTime(-26, t0);
-        li.setValueAtTime(-26, swap - beat * 0.5);
-        li.linearRampToValueAtTime(0, swap);
-        lo.setValueAtTime(0, t0);
-        lo.setValueAtTime(0, swap - beat * 0.5);
-        lo.linearRampToValueAtTime(-30, swap);
-        // хай-пасс уходящего уезжает вверх к концу
-        out.hp.frequency.setValueAtTime(20, swap);
-        out.hp.frequency.exponentialRampToValueAtTime(900, t1);
-      } else {
-        li.setValueAtTime(-18, t0);
-        li.setValueAtTime(-18, t0 + D * 0.35);
-        li.linearRampToValueAtTime(0, t0 + D * 0.85);
-        lo.setValueAtTime(0, t0);
-        lo.setValueAtTime(0, t0 + D * 0.15);
-        lo.linearRampToValueAtTime(-20, t0 + D * 0.7);
-        out.hp.frequency.setValueAtTime(20, t0 + D * 0.5);
-        out.hp.frequency.exponentialRampToValueAtTime(500, t1);
-      }
-    }
-
-    // --- эхо-аут ---
-    let stopOutAt = t1 + 0.1;
-    if (style === "echo") {
-      this.echoDelay.delayTime.setValueAtTime(beat * 0.75, now);
-      const send = out.echoSend.gain;
-      send.cancelScheduledValues(now);
-      send.setValueAtTime(0, t0 - 0.001);
-      send.linearRampToValueAtTime(0.9, t0 + 0.02);
-      send.setValueAtTime(0.9, t1);
-      send.linearRampToValueAtTime(0, t1 + 0.05);
-      this.echoFeedback.gain.setValueAtTime(0.62, now);
-      stopOutAt = t1 + 0.1; // хвост живёт в шине задержки
-    }
-
-    // --- возврат темпа к оригиналу после перехода ---
+    // --- 7. Плавный возврат темпа после перехода ---
     if (Math.abs(rate - 1) > 0.001) {
-      inn.scheduleGlide(t1 + 0.05, t1 + 0.05 + Math.max(6, D), 1);
+      inn.scheduleGlide(t1 + 0.1, t1 + 0.1 + Math.max(8, D), 1);
     }
 
     out.stop(stopOutAt);
-    this.pendingSwitch = { at: t1, to: inn.id, stopOutAt };
+    this.pendingSwitch = { at: t1, to: inn.id, stopOutAt, fromDeck: out };
+    const styleLabels: Record<string, string> = {
+      mashup: "⚡ AI Мэшап Drop Swap",
+      smooth: "🌊 Spotify Flow",
+      club: "🎛 Клубный Kick-Swap",
+      echo: "🌌 Cosmic Echo",
+      cut: "✂ Прямой Кат",
+    };
     this.transition = {
       active: true,
       fromId: out.track.id,
@@ -441,6 +843,11 @@ export class AutoMixEngine {
       duration: D,
       tempoShift: (rate - 1) * 100,
       style,
+      plannedBars,
+      plannedBeats,
+      currentBar: 1,
+      currentBeat: 1,
+      description: `${styleLabels[style]} (${plannedBars} тактов · ${plannedBeats} бита)`,
     };
     this.transitionScheduledFor = out.track.id;
     this.emit({ type: "transitionStart", track: target });
@@ -455,34 +862,53 @@ export class AutoMixEngine {
 
     if (tr.active) {
       tr.progress = Math.max(0, Math.min(1, (now - tr.startedAt) / tr.duration));
+      const elapsed = Math.max(0, now - tr.startedAt);
+      const beatDur = tr.duration / (tr.plannedBeats || 1);
+      const totalBeats = Math.floor(elapsed / beatDur);
+      tr.currentBar = Math.min(tr.plannedBars, Math.floor(totalBeats / 4) + 1);
+      tr.currentBeat = (totalBeats % 4) + 1;
+
       if (this.pendingSwitch && now >= this.pendingSwitch.at) {
-        const from = this.decks[this.active];
+        const retiringDeck = this.pendingSwitch.fromDeck;
+        const retireAt = this.pendingSwitch.stopOutAt;
         this.active = this.pendingSwitch.to;
         this.pendingSwitch = null;
+        this.pendingRetire = { at: retireAt, deck: retiringDeck };
         this.transition = { ...tr, active: false, progress: 1 };
         this.endedFired = false;
         this.transitionScheduledFor = null;
-        // источник уходящей деки остановлен по расписанию (stopOutAt); чистим состояние
-        from.source = null;
-        from.reset(this.ctx.currentTime);
+        // Источник уходящей деки НЕ сбрасывается здесь — хвост дилея (Delay Spillover) продолжает звучать!
         this.emit({ type: "trackChange", track: this.activeDeck.track ?? undefined });
         this.emit({ type: "transitionEnd" });
       }
-    } else if (out.track && out.isPlaying && this.ctx.state === "running") {
+    }
+
+    // Чистка деки только после полного затухания хвоста эффектов (Spillover)
+    if (this.pendingRetire && now >= this.pendingRetire.at) {
+      const d = this.pendingRetire.deck;
+      d.source = null;
+      d.reset(now);
+      this.pendingRetire = null;
+    }
+
+    if (!tr.active && out.track && out.isPlaying && this.ctx.state === "running") {
       const a = out.track.analysis;
       const pos = out.position(now);
       const beat = a ? 60 / a.bpm : 0.5;
-      const style = this.settings.style;
-      const plannedBeats = style === "cut" ? 0.5 : style === "echo" ? 2 : Math.max(4, this.settings.lengthBeats);
-      const quant = style === "club" || style === "cut" ? 4 : 1;
-      // Гарантируем, что переход успеет прозвучать целиком до конца трека
-      const latest = out.track.duration - plannedBeats * beat - 0.3;
-      const mixOut = Math.min(a ? a.mixOut : out.track.duration - 10, latest);
+      const bar = beat * 4;
+
       if (this.nextTrack && this.nextTrack.buffer && this.nextTrack.analysis && this.transitionScheduledFor !== out.track.id) {
-        if (pos >= mixOut - beat * quant * 1.02) {
+        const plannedBars = this.computePlannedBars(out.track, this.nextTrack, this.settings.style);
+        const plannedSec = plannedBars * bar;
+        // Точка схода: mixOut или крайний рубеж за plannedSec до конца трека
+        const latestStart = Math.max(0, out.track.duration - plannedSec - 0.8);
+        const mixOut = Math.min(a?.mixOut ?? latestStart, latestStart);
+
+        // Инициируем переход за 0.8 такта до mixOut (или принудительно на рубеже latestStart)
+        if (pos >= mixOut - bar * 0.8 || pos >= latestStart) {
           this.startTransition();
         }
-      } else if (pos >= out.track.duration - 0.05 && !this.endedFired) {
+      } else if (pos >= out.track.duration - 0.1 && !this.endedFired) {
         this.endedFired = true;
         this.emit({ type: "ended", track: out.track });
       }

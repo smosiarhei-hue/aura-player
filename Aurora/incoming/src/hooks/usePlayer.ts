@@ -7,13 +7,17 @@ import { deleteTrack, loadSettings, loadTracks, saveSettings, saveTrack, updateA
 import type { Genre, MixSettings, Track } from "../types";
 
 export const DEFAULT_SETTINGS: MixSettings = {
-  style: "club",
-  lengthBeats: 16,
+  style: "mashup",
+  lengthBeats: 32,
+  autoLength: true,
   beatmatch: true,
   keyMatch: true,
   wave: true,
   eqSwap: true,
   autoGain: true,
+  riserEffect: true,
+  beatRoll: false,
+  smartCues: true,
 };
 
 const PALETTE: [string, string][] = [
@@ -46,7 +50,11 @@ export function usePlayer() {
   const tracksRef = useRef<Track[]>([]);
   tracksRef.current = tracks;
 
-  const [settings, setSettingsState] = useState<MixSettings>(() => loadSettings(DEFAULT_SETTINGS));
+  const [settings, setSettingsState] = useState<MixSettings>(() => {
+    const s = loadSettings(DEFAULT_SETTINGS);
+    // Включаем полноценный AI Mashup с точным битмэтчингом и обменом баса
+    return { ...s, style: "mashup", beatmatch: true, eqSwap: true, riserEffect: true, beatRoll: false };
+  });
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -224,6 +232,9 @@ export function usePlayer() {
     (async () => {
       const stored = await loadTracks();
       const e = getEngine();
+      const analysisVer = localStorage.getItem("automix-analysis-version");
+      const needsUpgrade = analysisVer !== "v3-true-downbeat";
+
       for (const s of stored) {
         try {
           const buf = await e.ctx.decodeAudioData(await s.blob.arrayBuffer());
@@ -234,16 +245,19 @@ export function usePlayer() {
             duration: buf.duration,
             source: "file",
             buffer: buf,
-            analysis: s.analysis,
-            analyzing: !s.analysis,
+            analysis: needsUpgrade ? null : s.analysis,
+            analyzing: needsUpgrade || !s.analysis,
             color: s.color,
             color2: s.color2,
           };
           upsert(track);
-          if (!s.analysis) void runAnalysis(track);
+          if (needsUpgrade || !s.analysis) void runAnalysis(track);
         } catch (err) {
           console.error("restore failed", s.title, err);
         }
+      }
+      if (needsUpgrade) {
+        localStorage.setItem("automix-analysis-version", "v3-true-downbeat");
       }
       setReady(true);
       if (stored.length === 0) void loadDemo();
@@ -274,7 +288,7 @@ export function usePlayer() {
     const target = tracksRef.current.find((t) => t.id === nextId && t.analysis) ?? e.nextTrack;
     if (!target) return;
     if (e.playing && e.currentTrack?.analysis) {
-      if (!e.startTransition(target, e.settings.style === "smooth" ? "club" : e.settings.style)) await e.play(target, true);
+      if (!e.startTransition(target, e.settings.style)) await e.play(target, true);
     } else {
       await e.play(target);
     }
@@ -299,6 +313,15 @@ export function usePlayer() {
     const e = getEngine();
     e.startTransition();
   }, [getEngine]);
+
+  const jumpToMix = useCallback((leadSeconds = 8) => {
+    const e = getEngine();
+    const current = tracksRef.current.find((t) => t.id === currentId);
+    if (!current || !current.analysis) return;
+    const targetTime = Math.max(0, current.analysis.mixOut - leadSeconds);
+    e.seek(targetTime);
+    if (!e.playing) e.togglePlay();
+  }, [getEngine, currentId]);
 
   const seek = useCallback((t: number) => getEngine().seek(t), [getEngine]);
 
@@ -333,6 +356,15 @@ export function usePlayer() {
     navigator.mediaSession.playbackState = snap?.playing ? "playing" : "paused";
   }, [snap?.playing]);
 
+  const reanalyzeAll = useCallback(async () => {
+    for (const track of tracksRef.current) {
+      if (track.buffer) {
+        upsert({ ...track, analyzing: true });
+        void runAnalysis(track);
+      }
+    }
+  }, [runAnalysis, upsert]);
+
   const nextTrack = tracks.find((t) => t.id === nextId) ?? null;
 
   return {
@@ -345,6 +377,6 @@ export function usePlayer() {
     setSettings,
     demoProgress,
     ready,
-    actions: { play, toggle, next, prev, mixNow, seek, remove, addFiles, loadDemo, setNext },
+    actions: { play, toggle, next, prev, mixNow, jumpToMix, seek, remove, addFiles, loadDemo, setNext, reanalyzeAll },
   };
 }
