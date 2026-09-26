@@ -102,7 +102,6 @@ struct AuraHomeRedesignedView: View {
             .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
                 guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings && !showAIAssistant else { return }
-                guard !UIDevice.current.proximityState else { return }
                 antigravity.handleSystemShakeNotification()
                 triggerShakeWave()
             }
@@ -322,7 +321,6 @@ struct AuraHomeRedesignedView: View {
     /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
     private func triggerShakeWave(forceDiscover: Bool = true) {
         guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings else { return }
-        guard !UIDevice.current.proximityState else { return }
 
         let now = Date().timeIntervalSince1970
         guard now - lastShakeTimestamp > 1.2 else { return }

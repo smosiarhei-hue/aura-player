@@ -1230,7 +1230,7 @@ final class PlayerCore {
         }
 
         let cueRemaining = max(totalDur - (activeTransitionPlan?.cueTime ?? (totalDur - 20.0)), activeTransitionPlan?.leadTime ?? 18.0)
-        let prebufferThreshold = cueRemaining + 16.0
+        let prebufferThreshold = cueRemaining + 32.0
         if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream {
             isPrebufferingNextStream = true
             let ymID = Self.yandexTrackID(from: nextTrack)
@@ -1578,20 +1578,11 @@ final class PlayerCore {
         // Phase 2 (0.35 .. 0.65): The DJ Drop / Handoff on the downbeat: outgoing ducks cleanly to 0.08, incoming sweeps to 0.85.
         // Phase 3 (0.65 .. 1.0): Incoming takes over full power (0.85 -> 1.0); outgoing fades into silence.
         if isUsingStreamPlayer || incomingIsStream {
-            if p < 0.35 {
-                let normP = Float(p / 0.35)
-                streamSourceVol = 1.0 - 0.15 * normP
-                streamTargetVol = 0.15 * normP * normP
-            } else if p < 0.65 {
-                let normP = Float((p - 0.35) / 0.30)
-                let s = normP * normP * (3.0 - 2.0 * normP)
-                streamSourceVol = max(0.08, 0.85 * Float(cos(Double(s) * .pi * 0.5)))
-                streamTargetVol = 0.15 + 0.70 * Float(sin(Double(s) * .pi * 0.5))
-            } else {
-                let normP = Float((p - 0.65) / 0.35)
-                streamSourceVol = max(0.0, 0.08 * (1.0 - normP))
-                streamTargetVol = 0.85 + 0.15 * normP
-            }
+            // True Constant Equal-Power DJ Curve:
+            // Ensures total acoustic power = streamSourceVol^2 + streamTargetVol^2 = 1.0 (No 3dB energy dip!)
+            let smoothP = p * p * (3.0 - 2.0 * p)
+            streamSourceVol = Float(cos(smoothP * .pi * 0.5))
+            streamTargetVol = Float(sin(smoothP * .pi * 0.5))
         }
 
         if isUsingStreamPlayer {
@@ -1658,7 +1649,7 @@ final class PlayerCore {
 
             if isUsingStreamPlayer {
                 activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+                activeStreamingPlayer.rate = isPlaying ? outRate : 0
             } else {
                 activeTimePitch.rate = outRate
                 activeTimePitch.pitch = 0
@@ -1666,7 +1657,7 @@ final class PlayerCore {
 
             if incomingIsStream {
                 idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                if isPlaying { idleStreamingPlayer.rate = 1.0 }
+                if isPlaying { idleStreamingPlayer.rate = inRate }
             } else if !isUsingStreamPlayer {
                 idleTimePitch.rate = inRate
                 idleTimePitch.pitch = 0

@@ -3,12 +3,12 @@ import SwiftUI
 struct AIMusicAssistantView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var dify = DifyService.shared
+    @ObservedObject private var store = AIMusicCuratorStore.shared
 
-    @State private var messages: [AIMessage] = []
     @State private var inputText: String = ""
     @State private var isSending = false
     @State private var showSettings = false
-    @State private var savedPlaylistTitles: Set<String> = []
+    @State private var selectedFilterCategory: ClarifyCategory? = nil
     @FocusState private var isInputFocused: Bool
 
     private let quickPrompts = [
@@ -19,6 +19,28 @@ struct AIMusicAssistantView: View {
         "☕ Спокойный лоу-фай для концентрации",
         "🌌 Космический эмбиент без слов"
     ]
+
+    enum ClarifyCategory: String, CaseIterable, Identifiable {
+        case language = "Язык"
+        case mood = "Вайб"
+        case era = "Эпоха"
+        case questions = "Вопросы"
+
+        var id: String { rawValue }
+
+        var options: [String] {
+            switch self {
+            case .language:
+                return ["🇷🇺 Только на русском", "🇺🇸 Англоязычные треки", "🎹 Без слов / Инструментал", "🌍 Любой язык"]
+            case .mood:
+                return ["⚡ Максимальный кач и энергия", "☕ Спокойный chill / релакс", "💔 Грустная меланхолия", "🚗 Драйв для ночного авто"]
+            case .era:
+                return ["✨ Свежие новинки 2026", "💿 Золотая эра 2000-х", "📼 Винтаж 80-е и 90-е"]
+            case .questions:
+                return ["🎯 Задай мне 3 вопроса для точного подбора", "🔍 Подбери похожие на мой текущий трек", "🎲 Случайный концептуальный микс"]
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -43,6 +65,26 @@ struct AIMusicAssistantView: View {
                     messagesScrollView
                     inputBottomBar
                 }
+
+                // Toast notification overlay for copying
+                if let toast = store.copiedToastMessage {
+                    VStack {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(AG.positive)
+                            Text(toast)
+                                .font(AG.text(.subheadline, .semibold))
+                                .foregroundStyle(AG.ink)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .glassCapsule(interactive: false)
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+
+                        Spacer()
+                    }
+                }
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -52,6 +94,7 @@ struct AIMusicAssistantView: View {
                         tint: AG.ink,
                         accessibilityLabel: "Закрыть ассистент"
                     ) {
+                        store.savePersistedState()
                         dismiss()
                     }
                 }
@@ -90,13 +133,13 @@ struct AIMusicAssistantView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 8) {
-                        if !messages.isEmpty {
+                        if !store.messages.isEmpty {
                             GlassIconButton(
                                 systemImage: "trash",
                                 tint: AG.inkMuted,
                                 accessibilityLabel: "Очистить диалог"
                             ) {
-                                clearChat()
+                                store.clearChat()
                             }
                         }
 
@@ -121,10 +164,10 @@ struct AIMusicAssistantView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    if messages.isEmpty {
+                    if store.messages.isEmpty {
                         welcomeHero
                     } else {
-                        ForEach(messages) { msg in
+                        ForEach(store.messages) { msg in
                             messageRow(msg)
                                 .id(msg.id)
                         }
@@ -133,10 +176,10 @@ struct AIMusicAssistantView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 16)
             }
-            .onChange(of: messages.count) { _, _ in
+            .onChange(of: store.messages.count) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
-            .onChange(of: messages.last?.text) { _, _ in
+            .onChange(of: store.messages.last?.text) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
         }
@@ -181,7 +224,7 @@ struct AIMusicAssistantView: View {
                     .font(AG.display(.title2, .bold))
                     .foregroundStyle(AG.ink)
 
-                Text("Соберет подборку под любое настроение, тренировку или жанр на базе \(dify.activeModelDisplayName). Нажмите на быстрый запрос или напишите свой.")
+                Text("Соберет подборку под любое настроение, тренировку или жанр на базе \(dify.activeModelDisplayName). Нажмите на быстрый запрос или задайте свой.")
                     .font(AG.text(.subheadline))
                     .foregroundStyle(AG.inkMuted)
                     .multilineTextAlignment(.center)
@@ -246,19 +289,31 @@ struct AIMusicAssistantView: View {
         case .user:
             HStack {
                 Spacer(minLength: 48)
-                Text(msg.text)
-                    .font(AG.text(.body))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(
-                        LinearGradient(
-                            colors: [AG.amber, AG.flame],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(msg.text)
+                        .font(AG.text(.body))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            LinearGradient(
+                                colors: [AG.amber, AG.flame],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                    Button {
+                        store.copyToClipboard(msg.text, notice: "Запрос скопирован")
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AG.inkFaint)
+                            .padding(.trailing, 6)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
         case .assistant:
@@ -279,10 +334,28 @@ struct AIMusicAssistantView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     let cleanedText = DifyService.cleanDisplayText(from: msg.text)
                     if !cleanedText.isEmpty {
-                        Text(cleanedText)
-                            .font(AG.text(.body))
-                            .foregroundStyle(AG.ink)
-                            .lineSpacing(3)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(cleanedText)
+                                .font(AG.text(.body))
+                                .foregroundStyle(AG.ink)
+                                .lineSpacing(3)
+
+                            // Quick copy button for assistant text
+                            Button {
+                                store.copyToClipboard(cleanedText, notice: "Ответ скопирован")
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.on.doc")
+                                    Text("Скопировать текст")
+                                }
+                                .font(AG.text(.caption2, .semibold))
+                                .foregroundStyle(AG.inkMuted)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .glassCapsule(interactive: true)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
 
                     if msg.isStreaming && msg.text.isEmpty {
@@ -341,6 +414,21 @@ struct AIMusicAssistantView: View {
                         .foregroundStyle(AG.inkMuted)
                         .lineLimit(2)
                 }
+
+                Spacer()
+
+                // Copy tracklist button
+                Button {
+                    let text = playlist.tracks.enumerated().map { "\($0.offset + 1). \($0.element.artist) — \($0.element.title)" }.joined(separator: "\n")
+                    store.copyToClipboard("Плейлист: \(playlist.playlistTitle)\n\n" + text, notice: "Список треков скопирован")
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 14))
+                        .foregroundStyle(AG.inkMuted)
+                        .padding(8)
+                        .glassCircle(interactive: true)
+                }
+                .buttonStyle(.plain)
             }
 
             Divider().overlay(AG.ink.opacity(0.12))
@@ -348,7 +436,7 @@ struct AIMusicAssistantView: View {
             if msg.isResolvingTracks {
                 HStack(spacing: 8) {
                     ProgressView().tint(AG.ink)
-                    Text("Поиск треков в Яндекс Музыке...")
+                    Text("Мгновенный поиск треков в каталоге…")
                         .font(AG.text(.subheadline))
                         .foregroundStyle(AG.inkMuted)
                 }
@@ -385,12 +473,13 @@ struct AIMusicAssistantView: View {
                     }
                     .buttonStyle(.plain)
 
-                    let isSaved = savedPlaylistTitles.contains(playlist.playlistTitle)
+                    let isSaved = store.savedPlaylistTitles.contains(playlist.playlistTitle)
                     Button {
                         guard !isSaved else { return }
                         Haptics.tap(.medium)
                         AIPlaylistGeneratorService.shared.saveToLibrary(playlist: playlist, tracks: msg.resolvedTracks)
-                        savedPlaylistTitles.insert(playlist.playlistTitle)
+                        store.savedPlaylistTitles.insert(playlist.playlistTitle)
+                        store.savePersistedState()
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: isSaved ? "checkmark" : "plus.rectangle.on.folder")
@@ -477,30 +566,11 @@ struct AIMusicAssistantView: View {
     // MARK: - Input Bottom Bar
     private var inputBottomBar: some View {
         VStack(spacing: 8) {
-            if inputText.isEmpty && !messages.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(quickPrompts, id: \.self) { prompt in
-                            Button {
-                                Haptics.tap(.light)
-                                send(prompt)
-                            } label: {
-                                Text(prompt)
-                                    .font(AG.text(.caption, .medium))
-                                    .foregroundStyle(AG.ink)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .glassCapsule(interactive: true)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-            }
+            // Clarifying precision chips (No duplication with welcomeHero!)
+            clarifyingFilterBar
 
             HStack(spacing: 10) {
-                TextField("Спроси или опиши настроение...", text: $inputText)
+                TextField("Спроси или уточни параметры подборки...", text: $inputText)
                     .focused($isInputFocused)
                     .font(AG.text(.body))
                     .foregroundStyle(AG.ink)
@@ -543,6 +613,71 @@ struct AIMusicAssistantView: View {
         )
     }
 
+    // MARK: - Clarifying Filter Bar
+    private var clarifyingFilterBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ClarifyCategory.allCases) { cat in
+                        Button {
+                            Haptics.tap(.light)
+                            if selectedFilterCategory == cat {
+                                selectedFilterCategory = nil
+                            } else {
+                                selectedFilterCategory = cat
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(cat.rawValue)
+                                    .font(AG.text(.caption, .semibold))
+                                Image(systemName: selectedFilterCategory == cat ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(selectedFilterCategory == cat ? .white : AG.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(selectedFilterCategory == cat ? AG.amber : Color.clear)
+                            .glassCapsule(interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+
+            if let cat = selectedFilterCategory {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(cat.options, id: \.self) { opt in
+                            Button {
+                                Haptics.tap(.light)
+                                selectedFilterCategory = nil
+                                if opt.contains("3 вопроса") {
+                                    send("Задай мне 3 коротких вопроса о моих предпочтениях (язык, жанр, темп), чтобы составить идеальный плейлист.")
+                                } else {
+                                    let query = inputText.isEmpty ? "Собери плейлист: \(opt)" : "\(inputText) (\(opt))"
+                                    inputText = ""
+                                    send(query)
+                                }
+                            } label: {
+                                Text(opt)
+                                    .font(AG.text(.caption2, .medium))
+                                    .foregroundStyle(AG.ink)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .glassCard(corner: 10)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 2)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
     private var isSendDisabled: Bool {
         isSending || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -568,7 +703,8 @@ struct AIMusicAssistantView: View {
         isSending = true
 
         let userMsg = AIMessage(role: .user, text: prompt)
-        messages.append(userMsg)
+        store.messages.append(userMsg)
+        store.savePersistedState()
 
         let assistantMsgId = UUID()
         let assistantMsg = AIMessage(
@@ -577,36 +713,39 @@ struct AIMusicAssistantView: View {
             text: "",
             isStreaming: true
         )
-        messages.append(assistantMsg)
+        store.messages.append(assistantMsg)
 
         Task {
             do {
                 let (_, _, playlist) = try await dify.sendMessage(query: prompt) { delta in
-                    if let idx = messages.firstIndex(where: { $0.id == assistantMsgId }) {
-                        messages[idx].text += delta
+                    if let idx = store.messages.firstIndex(where: { $0.id == assistantMsgId }) {
+                        store.messages[idx].text += delta
                     }
                 }
 
-                if let idx = messages.firstIndex(where: { $0.id == assistantMsgId }) {
-                    messages[idx].isStreaming = false
-                    messages[idx].playlist = playlist
+                if let idx = store.messages.firstIndex(where: { $0.id == assistantMsgId }) {
+                    store.messages[idx].isStreaming = false
+                    store.messages[idx].playlist = playlist
 
                     if let playlist = playlist, !playlist.tracks.isEmpty {
-                        messages[idx].isResolvingTracks = true
+                        store.messages[idx].isResolvingTracks = true
                         let resolved = await AIPlaylistGeneratorService.shared.resolveTracks(for: playlist.tracks)
-                        messages[idx].resolvedTracks = resolved
-                        messages[idx].isResolvingTracks = false
+                        store.messages[idx].resolvedTracks = resolved
+                        store.messages[idx].isResolvingTracks = false
                     }
                 }
+
+                store.savePersistedState()
 
                 await MainActor.run {
                     isSending = false
                 }
             } catch {
-                if let idx = messages.firstIndex(where: { $0.id == assistantMsgId }) {
-                    messages[idx].isStreaming = false
-                    messages[idx].error = error.localizedDescription
+                if let idx = store.messages.firstIndex(where: { $0.id == assistantMsgId }) {
+                    store.messages[idx].isStreaming = false
+                    store.messages[idx].error = error.localizedDescription
                 }
+                store.savePersistedState()
                 await MainActor.run {
                     isSending = false
                 }
@@ -614,14 +753,8 @@ struct AIMusicAssistantView: View {
         }
     }
 
-    private func clearChat() {
-        messages = []
-        savedPlaylistTitles.removeAll()
-        dify.resetConversation()
-    }
-
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let lastId = messages.last?.id {
+        if let lastId = store.messages.last?.id {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo(lastId, anchor: .bottom)
             }

@@ -171,7 +171,7 @@ final class AntigravityShakeDetector {
     func start() {
         guard !isMonitoring else { return }
         isMonitoring = true
-        UIDevice.current.isProximityMonitoringEnabled = true
+        UIDevice.current.isProximityMonitoringEnabled = false
         resetShakeState()
 
         if motionManager.isDeviceMotionAvailable {
@@ -211,12 +211,6 @@ final class AntigravityShakeDetector {
 
     /// Обработка CMDeviceMotion с математически вычтенной гравитацией (userAcceleration)
     private func processDeviceMotion(_ motion: CMDeviceMotion) {
-        // Блокировка: в кармане, экраном вниз или закрыт датчик приближения
-        if UIDevice.current.proximityState {
-            resetShakeState()
-            return
-        }
-
         let userAcc = motion.userAcceleration
         let x = userAcc.x
         let y = userAcc.y
@@ -227,11 +221,6 @@ final class AntigravityShakeDetector {
     }
 
     private func processAccelerometer(x: Double, y: Double, z: Double) {
-        if UIDevice.current.proximityState {
-            resetShakeState()
-            return
-        }
-
         // Вычитаем статическую 1.0g гравитацию
         let rawMag = sqrt(x * x + y * y + z * z)
         let linearMag = abs(rawMag - 1.0)
@@ -279,7 +268,6 @@ final class AntigravityShakeDetector {
 
     /// Вызывается при системном событии UIWindow.motionEnded
     func handleSystemShakeEvent() {
-        guard !UIDevice.current.proximityState else { return }
         onShakeDetected?()
     }
 }
@@ -340,14 +328,12 @@ final class AntigravityTransitionManager {
     /// Обработка системного события встряхивания
     func handleSystemShakeNotification() {
         guard isAppActive && !isModalActive && isOnMainScreen else { return }
-        guard !UIDevice.current.proximityState else { return }
         triggerShift()
     }
 
     /// Основной запуск кинетического перехода «Антигравити»
     func triggerShift(forceDiscover: Bool = true) {
         guard isAppActive && !isModalActive && isOnMainScreen else { return }
-        guard !UIDevice.current.proximityState else { return }
 
         let now = CACurrentMediaTime()
         // Антидребезг: блокировка повторного вызова на 1.2 с

@@ -264,7 +264,7 @@ enum AIMessageRole: String, Codable, Sendable {
     case assistant
 }
 
-struct AIMessage: Identifiable, Sendable {
+struct AIMessage: Identifiable, Codable, Sendable {
     let id: UUID
     let role: AIMessageRole
     var text: String

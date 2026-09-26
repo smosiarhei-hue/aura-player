@@ -162,6 +162,9 @@ struct PlayerScreenV2: View {
             videoShotTrackID = nil
             teardownVideoLooper()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .didUpdateCustomLyrics)) { _ in
+            Task { await loadLyrics() }
+        }
         .onChange(of: player.isTransitionActive) { _, isActive in
             if isActive, let outgoing = player.currentTrack, let incoming = player.incomingTrack {
                 Task {

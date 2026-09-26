@@ -1,7 +1,11 @@
 import Foundation
 import Observation
 
-// MARK: - Synchronized Lyrics Service (LRCLIB → LRC → cache → static fallback)
+extension Notification.Name {
+    static let didUpdateCustomLyrics = Notification.Name("sonivo.didUpdateCustomLyrics")
+}
+
+// MARK: - Synchronized Lyrics Service (Custom -> LRCLIB -> LRC -> cache -> static fallback)
 
 @Observable
 @MainActor
@@ -19,12 +23,20 @@ final class LyricsService {
     }
 
     /// Hybrid parallel priority:
+    /// 0. User custom lyrics (plain or dynamic LRC)
     /// 1. Synchronized LRC (Yandex or LRCLIB) -> dynamic karaoke display
     /// 2. Authoritative full text (Yandex Music official)
     /// 3. LRCLIB plain text
     /// 4. Embedded static lyrics
     func fetchLyrics(for track: Track) async throws -> Lyrics {
         let key = cacheKey(for: track)
+
+        // 0. User-provided custom lyrics have top priority
+        if let custom = getCustomLyrics(for: track) {
+            cache[key] = custom
+            return custom
+        }
+
         if let cached = cache[key] {
             return cached
         }
@@ -411,5 +423,79 @@ final class LyricsService {
 
     private func cacheKey(for track: Track) -> String {
         "\(track.title.lowercased())|\(track.artist.lowercased())"
+    }
+
+    // MARK: - Пользовательский текст (Обычный и Динамический LRC)
+
+    func getCustomLyrics(for track: Track) -> Lyrics? {
+        let key = "custom_lyrics_\(track.id.uuidString)"
+        if let text = UserDefaults.standard.string(forKey: key), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return parseCustomLyrics(text, track: track)
+        }
+
+        let fallbackKey = "custom_lyrics_\(cacheKey(for: track))"
+        if let fallbackText = UserDefaults.standard.string(forKey: fallbackKey), !fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return parseCustomLyrics(fallbackText, track: track)
+        }
+
+        return nil
+    }
+
+    func parseCustomLyrics(_ rawText: String, track: Track) -> Lyrics {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 1. Проверяем, содержит ли текст таймкоды LRC формата [mm:ss.xx]
+        if trimmed.contains("[") && trimmed.contains("]") {
+            let parsed = LRCParser.parse(trimmed, sourceName: "Пользовательский (LRC)")
+            if parsed.isSynchronized {
+                return parsed
+            }
+        }
+
+        // 2. Проверяем флаг динамического распределения по длительности
+        let isDynamic = UserDefaults.standard.bool(forKey: "custom_lyrics_dynamic_\(track.id.uuidString)")
+        if isDynamic {
+            let rawLines = trimmed.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard !rawLines.isEmpty else { return .empty }
+            let totalDur = track.duration > 10 ? track.duration : 180.0
+            let interval = max(1.8, (totalDur - 5.0) / Double(rawLines.count))
+            var lines: [LyricsLine] = []
+            for (idx, line) in rawLines.enumerated() {
+                let start = Double(idx) * interval
+                let end = start + interval
+                lines.append(LyricsLine(text: line, startTime: start, endTime: end))
+            }
+            return Lyrics(title: track.title, artist: track.artist, lines: lines, isSyllable: false, sourceName: "Пользовательский (Синхронный)")
+        }
+
+        return staticLyrics(from: trimmed, track: track, sourceName: "Пользовательский текст")
+    }
+
+    func saveCustomLyrics(text: String, isDynamic: Bool, for track: Track) {
+        let key = "custom_lyrics_\(track.id.uuidString)"
+        let fallbackKey = "custom_lyrics_\(cacheKey(for: track))"
+        let dynamicKey = "custom_lyrics_dynamic_\(track.id.uuidString)"
+
+        UserDefaults.standard.set(text, forKey: key)
+        UserDefaults.standard.set(text, forKey: fallbackKey)
+        UserDefaults.standard.set(isDynamic, forKey: dynamicKey)
+
+        let parsed = parseCustomLyrics(text, track: track)
+        cache[cacheKey(for: track)] = parsed
+        NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: track.id)
+    }
+
+    func removeCustomLyrics(for track: Track) {
+        let key = "custom_lyrics_\(track.id.uuidString)"
+        let fallbackKey = "custom_lyrics_\(cacheKey(for: track))"
+        let dynamicKey = "custom_lyrics_dynamic_\(track.id.uuidString)"
+
+        UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.removeObject(forKey: fallbackKey)
+        UserDefaults.standard.removeObject(forKey: dynamicKey)
+        cache.removeValue(forKey: cacheKey(for: track))
+        NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: track.id)
     }
 }
