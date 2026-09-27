@@ -60,7 +60,7 @@ final class ActivePlayerPresentation {
         legacy.isPlaying
     }
     var isLoading: Bool {
-        router.isBusy || legacy.isLoading
+        router.isBusy
     }
     var isTransitionActive: Bool {
         AutoMixDJEngine.shared.isTransitionActive
