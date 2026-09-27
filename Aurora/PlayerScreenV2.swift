@@ -159,6 +159,9 @@ struct PlayerScreenV2: View {
             }
         }
         .onChange(of: track?.id) { _, _ in
+            lyrics = nil
+            cachedPhrases = []
+            lyricsLoading = true
             videoShotURL = nil
             videoShotTrackID = nil
             teardownVideoLooper()
@@ -913,9 +916,15 @@ struct PlayerScreenV2: View {
         lyrics = nil
         cachedPhrases = []
         guard let requested = track else { lyricsLoading = false; return }
+        let requestedId = requested.id
         lyricsLoading = true
+        defer {
+            if self.track?.id == requestedId {
+                self.lyricsLoading = false
+            }
+        }
         var result = try? await LyricsService.shared.fetchLyrics(for: requested)
-        guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }
+        guard !Task.isCancelled, self.track?.id == requestedId else { return }
 
         // If Neural Engine is disabled by user, use genuine online lyrics without AI transcription/alignment
         guard SettingsStore.shared.isNeuralEngineEnabled else {
@@ -923,7 +932,6 @@ struct PlayerScreenV2: View {
             if let result, result.isSynchronized, !result.lines.isEmpty {
                 cachedPhrases = LyricPhrase.from(lines: result.lines)
             }
-            lyricsLoading = false
             return
         }
 
@@ -934,7 +942,7 @@ struct PlayerScreenV2: View {
             }
         }
 
-        guard !Task.isCancelled, player.currentTrack?.id == requested.id else { return }
+        guard !Task.isCancelled, self.track?.id == requestedId else { return }
         lyrics = result
 
         if let result {
@@ -945,7 +953,7 @@ struct PlayerScreenV2: View {
                 Task.detached(priority: .userInitiated) {
                     if let aligned = await OnDeviceVocalAligner.shared.align(lyrics: result, track: requested) {
                         await MainActor.run {
-                            guard self.player.currentTrack?.id == requested.id else { return }
+                            guard self.track?.id == requestedId else { return }
                             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                                 self.lyrics = aligned
                                 self.cachedPhrases = LyricPhrase.from(lines: aligned.lines)
@@ -955,7 +963,6 @@ struct PlayerScreenV2: View {
                 }
             }
         }
-        lyricsLoading = false
     }
     private func loadVideoShot() async {
         videoShotURL = nil
@@ -1176,22 +1183,20 @@ struct CoverLyricsScrollView: View {
     let player: ActivePlayerPresentation
     let side: CGFloat
     @State private var settings = SettingsStore.shared
-    @State private var userScrolledUntil: Date = .distantPast
+    @State private var isUserInteracting = false
+    @State private var interactionResetTask: Task<Void, Never>? = nil
+    @State private var activeIndex: Int? = nil
 
-    private var isUserInteracting: Bool {
-        Date() < userScrolledUntil
-    }
-
-    private var activeIndex: Int? {
+    private func computeActiveIndex(at time: Double) -> Int? {
         guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
         let latency = AVAudioSession.sharedInstance().outputLatency
-        let time = max(0, player.progress - latency + settings.lyricsOffset)
-        if let first = lyrics.lines.first, time < first.startTime {
+        let currentTime = max(0, time - latency + settings.lyricsOffset)
+        if let first = lyrics.lines.first, currentTime < first.startTime {
             return nil
         }
         for (i, line) in lyrics.lines.enumerated() {
             let nextStart = (i + 1 < lyrics.lines.count) ? lyrics.lines[i + 1].startTime : (line.startTime + 20.0)
-            if time >= line.startTime && time < nextStart {
+            if currentTime >= line.startTime && currentTime < nextStart {
                 return i
             }
         }
@@ -1209,7 +1214,8 @@ struct CoverLyricsScrollView: View {
                             isSynchronized: lyrics.isSynchronized,
                             onSelect: {
                                 Haptics.tap(.medium)
-                                userScrolledUntil = .distantPast
+                                interactionResetTask?.cancel()
+                                isUserInteracting = false
                                 if lyrics.isSynchronized {
                                     player.seek(to: max(0, line.startTime))
                                     if !player.isPlaying {
@@ -1243,10 +1249,21 @@ struct CoverLyricsScrollView: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { _ in
-                        // Пользователь листает текст пальцем — ставим паузу на автоскролл
-                        userScrolledUntil = Date().addingTimeInterval(4.5)
+                        if !isUserInteracting {
+                            isUserInteracting = true
+                        }
+                        interactionResetTask?.cancel()
+                        interactionResetTask = Task {
+                            try? await Task.sleep(nanoseconds: 4_000_000_000)
+                            if !Task.isCancelled {
+                                await MainActor.run {
+                                    isUserInteracting = false
+                                }
+                            }
+                        }
                     }
             )
+            .compositingGroup()
             .mask(
                 LinearGradient(
                     stops: [
@@ -1263,7 +1280,8 @@ struct CoverLyricsScrollView: View {
                 if isUserInteracting, let activeIndex {
                     Button {
                         Haptics.tap(.light)
-                        userScrolledUntil = .distantPast
+                        interactionResetTask?.cancel()
+                        isUserInteracting = false
                         withAnimation(.easeInOut(duration: 0.42)) {
                             proxy.scrollTo(activeIndex, anchor: .center)
                         }
@@ -1287,15 +1305,22 @@ struct CoverLyricsScrollView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
-            .onChange(of: activeIndex) { _, newIndex in
-                guard let newIndex, !isUserInteracting else { return }
-                withAnimation(.easeInOut(duration: 0.42)) {
-                    proxy.scrollTo(newIndex, anchor: .center)
+            .onChange(of: player.progress) { _, newProgress in
+                let newIndex = computeActiveIndex(at: newProgress)
+                if newIndex != activeIndex {
+                    activeIndex = newIndex
+                    if let newIndex, !isUserInteracting {
+                        withAnimation(.easeInOut(duration: 0.42)) {
+                            proxy.scrollTo(newIndex, anchor: .center)
+                        }
+                    }
                 }
             }
             .onAppear {
-                if let activeIndex {
-                    proxy.scrollTo(activeIndex, anchor: .center)
+                let initial = computeActiveIndex(at: player.progress)
+                activeIndex = initial
+                if let initial {
+                    proxy.scrollTo(initial, anchor: .center)
                 }
             }
         }

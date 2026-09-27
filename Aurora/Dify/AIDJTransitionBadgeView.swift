@@ -1,61 +1,56 @@
 import SwiftUI
 
 struct AIDJTransitionBadgeView: View {
-    @ObservedObject private var dj = AIDJService.shared
     let incomingTrack: Track?
+
+    init(incomingTrack: Track? = nil) {
+        self.incomingTrack = incomingTrack
+    }
 
     @State private var pulse = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [Color.pink, Color.purple, Color.cyan],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 18, height: 18)
-                    .scaleEffect(pulse ? 1.15 : 0.95)
+        HStack(spacing: 5) {
+            Image(systemName: "waveform")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.white, Color(white: 0.85)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .opacity(pulse ? 1.0 : 0.75)
 
-                Image(systemName: "sparkles")
-                    .font(.system(size: 9, weight: .black))
-                    .foregroundStyle(.white)
-            }
-
-            if let commentary = dj.currentDJCommentary, !commentary.isEmpty {
-                Text("DJ: \(commentary)")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            } else {
-                Text(incomingTrack != nil ? "DJ: Переход к \(incomingTrack!.artist)" : "DJ: Сведение треков")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
-            }
+            Text("Automix")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.white, Color(white: 0.92)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .shadow(color: Color.white.opacity(0.55), radius: 6, x: 0, y: 0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            Color.black.opacity(0.4)
-        )
+        .padding(.vertical, 5.5)
+        .background(Color.black.opacity(0.45))
         .clipShape(Capsule())
         .overlay(
             Capsule()
-                .stroke(
+                .strokeBorder(
                     LinearGradient(
-                        colors: [Color.purple.opacity(0.6), Color.cyan.opacity(0.4)],
-                        startPoint: .leading,
-                        endPoint: .trailing
+                        colors: [Color.white.opacity(0.42), Color.white.opacity(0.15)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1
+                    lineWidth: 0.8
                 )
         )
-        .shadow(color: Color.purple.opacity(0.25), radius: 6, y: 2)
+        .shadow(color: Color.black.opacity(0.35), radius: 6, y: 2)
         .onAppear {
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
                 pulse = true
             }
         }

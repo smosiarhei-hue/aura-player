@@ -159,15 +159,31 @@ final class LyricsService {
             : "\(cleanArtist) \(cleanTitle)"
 
         let results = await YandexMusicService.shared.searchAll(query: query)
-        if let first = results.tracks.first, !first.id.isEmpty {
-            return first.id
+        let targetTitle = cleanTitle.lowercased()
+        let targetArtist = cleanArtist.lowercased()
+
+        // Validate hit: ensure title and artist match
+        for item in results.tracks {
+            guard !item.id.isEmpty else { continue }
+            let itemTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let titleMatches = itemTitle.contains(targetTitle) || targetTitle.contains(itemTitle)
+            let artistMatches = targetArtist.isEmpty || item.artists.contains { $0.name.lowercased().contains(targetArtist) || targetArtist.contains($0.name.lowercased()) }
+            if titleMatches && (artistMatches || targetArtist == "неизвестный исполнитель") {
+                return item.id
+            }
         }
 
         // Secondary fallback if combined query yielded 0 tracks
         if !cleanArtist.isEmpty && cleanArtist != "Неизвестный исполнитель" {
             let fallbackResults = await YandexMusicService.shared.searchAll(query: cleanTitle)
-            if let first = fallbackResults.tracks.first, !first.id.isEmpty {
-                return first.id
+            for item in fallbackResults.tracks {
+                guard !item.id.isEmpty else { continue }
+                let itemTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let titleMatches = itemTitle.contains(targetTitle) || targetTitle.contains(itemTitle)
+                let artistMatches = item.artists.contains { $0.name.lowercased().contains(targetArtist) || targetArtist.contains($0.name.lowercased()) }
+                if titleMatches && artistMatches {
+                    return item.id
+                }
             }
         }
 
@@ -249,11 +265,25 @@ final class LyricsService {
             return nil
         }
 
+        let targetTitle = title.lowercased()
+        let targetArtist = artist.lowercased()
+
+        // Filter list to candidates that actually match the requested track name & artist
+        let matchingList = list.filter { item in
+            guard let name = item.trackName?.lowercased() else { return false }
+            let titleOk = name.contains(targetTitle) || targetTitle.contains(name)
+            if !titleOk { return false }
+            if let art = item.artistName?.lowercased(), !targetArtist.isEmpty {
+                return art.contains(targetArtist) || targetArtist.contains(art)
+            }
+            return true
+        }
+
         // Prioritize results that have synchronized lyrics
-        if let syncedItem = list.first(where: { ($0.syncedLyrics?.count ?? 0) > 20 }) {
+        if let syncedItem = matchingList.first(where: { ($0.syncedLyrics?.count ?? 0) > 20 }) {
             return syncedItem
         }
-        return list.first
+        return matchingList.first
     }
 
     private func convertLRCLibDetail(_ detail: TrackDetail, track: Track) -> Lyrics? {
@@ -321,12 +351,23 @@ final class LyricsService {
             return nil
         }
 
+        let targetTitle = title.lowercased()
         var songPath: String?
         for section in sections where section.type == "song" || section.type == "top_hit" {
-            if let firstHit = section.hits?.first?.result, let path = firstHit.path, !path.isEmpty {
-                songPath = path
-                break
+            for hit in section.hits ?? [] {
+                if let res = hit.result, let path = res.path, !path.isEmpty {
+                    if let resTitle = res.title?.lowercased() {
+                        if resTitle.contains(targetTitle) || targetTitle.contains(resTitle) {
+                            songPath = path
+                            break
+                        }
+                    } else {
+                        songPath = path
+                        break
+                    }
+                }
             }
+            if songPath != nil { break }
         }
 
         guard let path = songPath, let pageURL = URL(string: "https://genius.com\(path)") else {
@@ -422,7 +463,16 @@ final class LyricsService {
     }
 
     private func cacheKey(for track: Track) -> String {
-        "\(track.title.lowercased())|\(track.artist.lowercased())"
+        let ymId = PlayerCore.yandexTrackID(from: track)
+        if !ymId.isEmpty {
+            return "ym_\(ymId)"
+        }
+        let cleanTitle = track.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !cleanTitle.isEmpty && !cleanArtist.isEmpty {
+            return "\(cleanTitle)|\(cleanArtist)"
+        }
+        return "track_\(track.id.uuidString)"
     }
 
     // MARK: - Пользовательский текст (Обычный и Динамический LRC)

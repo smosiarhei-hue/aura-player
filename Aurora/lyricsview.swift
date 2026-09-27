@@ -16,7 +16,14 @@ struct LyricsView: View {
                 if isLoading {
                     AuraLoadingState(title: "Загрузка текста…")
                 } else if let lyrics, !lyrics.lines.isEmpty {
-                    if lyrics.isSynchronized {
+                    if let currentTrack = player.displayTrack,
+                       !currentTrack.title.isEmpty,
+                       !lyrics.title.isEmpty,
+                       !currentTrack.title.localizedCaseInsensitiveContains(lyrics.title) &&
+                       !lyrics.title.localizedCaseInsensitiveContains(currentTrack.title) {
+                        // Title mismatch guard during track transition
+                        AuraLoadingState(title: "Загрузка текста…")
+                    } else if lyrics.isSynchronized {
                         SyncedLyrics(lyrics: lyrics, player: player, onEditLyrics: { showAddCustomLyrics = true })
                     } else {
                         StaticLyricsList(lyrics: lyrics, onEditLyrics: { showAddCustomLyrics = true })
@@ -65,16 +72,14 @@ private struct SyncedLyrics: View {
     let player: ActivePlayerPresentation
     var onEditLyrics: (() -> Void)? = nil
     @State private var settings = SettingsStore.shared
-    @State private var userScrolledUntil: Date = .distantPast
+    @State private var isUserInteracting = false
+    @State private var interactionResetTask: Task<Void, Never>? = nil
+    @State private var activeIndex: Int? = nil
 
-    private var isUserInteracting: Bool {
-        Date() < userScrolledUntil
-    }
-
-    private var activeIndex: Int? {
+    private func computeActiveIndex(at time: Double) -> Int? {
         guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
         let latency = AVAudioSession.sharedInstance().outputLatency
-        let currentTime = max(0, player.progress - latency + settings.lyricsOffset)
+        let currentTime = max(0, time - latency + settings.lyricsOffset)
         if let first = lyrics.lines.first, currentTime < first.startTime {
             return nil
         }
@@ -94,7 +99,8 @@ private struct SyncedLyrics: View {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { idx, line in
                         Button {
                             Haptics.tap(.medium)
-                            userScrolledUntil = .distantPast
+                            interactionResetTask?.cancel()
+                            isUserInteracting = false
                             if lyrics.isSynchronized {
                                 player.seek(to: max(0, line.startTime))
                                 if !player.isPlaying {
@@ -155,9 +161,21 @@ private struct SyncedLyrics: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { _ in
-                        userScrolledUntil = Date().addingTimeInterval(4.5)
+                        if !isUserInteracting {
+                            isUserInteracting = true
+                        }
+                        interactionResetTask?.cancel()
+                        interactionResetTask = Task {
+                            try? await Task.sleep(nanoseconds: 4_000_000_000)
+                            if !Task.isCancelled {
+                                await MainActor.run {
+                                    isUserInteracting = false
+                                }
+                            }
+                        }
                     }
             )
+            .compositingGroup()
             .mask(
                 LinearGradient(
                     stops: [
@@ -174,7 +192,8 @@ private struct SyncedLyrics: View {
                 if isUserInteracting, let activeIndex {
                     Button {
                         Haptics.tap(.light)
-                        userScrolledUntil = .distantPast
+                        interactionResetTask?.cancel()
+                        isUserInteracting = false
                         withAnimation(.easeInOut(duration: 0.42)) {
                             proxy.scrollTo(activeIndex, anchor: .center)
                         }
@@ -198,15 +217,22 @@ private struct SyncedLyrics: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
-            .onChange(of: activeIndex) { _, newIndex in
-                guard let newIndex, !isUserInteracting else { return }
-                withAnimation(.easeInOut(duration: 0.42)) {
-                    proxy.scrollTo(newIndex, anchor: .center)
+            .onChange(of: player.progress) { _, newProgress in
+                let newIndex = computeActiveIndex(at: newProgress)
+                if newIndex != activeIndex {
+                    activeIndex = newIndex
+                    if let newIndex, !isUserInteracting {
+                        withAnimation(.easeInOut(duration: 0.42)) {
+                            proxy.scrollTo(newIndex, anchor: .center)
+                        }
+                    }
                 }
             }
             .onAppear {
-                if let activeIndex {
-                    proxy.scrollTo(activeIndex, anchor: .center)
+                let initial = computeActiveIndex(at: player.progress)
+                activeIndex = initial
+                if let initial {
+                    proxy.scrollTo(initial, anchor: .center)
                 }
             }
         }

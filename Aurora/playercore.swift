@@ -1308,13 +1308,15 @@ final class PlayerCore {
             return
         }
 
-        let effectiveCueTime = max(plan.cueTime, totalDur - 24.0)
+        let isStreamMix = isUsingStreamPlayer || nextTrack.isStream
+        let maxTail: Double = isStreamMix ? 12.0 : 24.0
+        let effectiveCueTime = max(plan.cueTime, totalDur - maxTail)
         guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
 
         transitionScheduled = true
         isTransitioning = true
         incomingLaneReady = false
-        transitionDuration = min(plan.leadTime, 20.0)
+        transitionDuration = isStreamMix ? min(plan.leadTime, 10.0) : min(plan.leadTime, 20.0)
         incomingTrack = nextTrack
         metadataSwapped = false
         metadataTrack = nil
@@ -1331,7 +1333,6 @@ final class PlayerCore {
             let startStreamTransition: @MainActor () -> Void = { [weak self] in
                 guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
                 self.idleStreamingPlayer.volume = 0.001
-                self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
                 self.idleStreamingPlayer.playImmediately(atRate: 1.0)
                 self.transitionStartTime = Date()
                 self.incomingLaneReady = true
@@ -1343,7 +1344,31 @@ final class PlayerCore {
                 && prebufferedTrackId == nextTrack.id
 
             if itemIsValid {
-                startStreamTransition()
+                if idleStreamingPlayer.currentItem?.status == .readyToPlay {
+                    startStreamTransition()
+                } else {
+                    var obs: NSKeyValueObservation?
+                    obs = idleStreamingPlayer.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
+                        if item.status == .readyToPlay {
+                            obs?.invalidate()
+                            obs = nil
+                            Task { @MainActor in
+                                guard let self, self.isTransitioning else { return }
+                                startStreamTransition()
+                            }
+                        }
+                    }
+                    Task {
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        await MainActor.run {
+                            if obs != nil {
+                                obs?.invalidate()
+                                obs = nil
+                                startStreamTransition()
+                            }
+                        }
+                    }
+                }
             } else {
                 let ymID = Self.yandexTrackID(from: nextTrack)
                 Task {
@@ -1705,32 +1730,40 @@ final class PlayerCore {
             let inRate = 1.0 + (inTarget - 1.0) * rampProgress
 
             if isUsingStreamPlayer {
-                activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                activeStreamingPlayer.rate = isPlaying ? outRate : 0
+                let targetRate: Float = isPlaying ? outRate : 0
+                if abs(activeStreamingPlayer.rate - targetRate) > 0.005 {
+                    activeStreamingPlayer.rate = targetRate
+                }
             } else {
                 activeTimePitch.rate = outRate
                 activeTimePitch.pitch = 0
             }
 
             if incomingIsStream {
-                idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                if isPlaying { idleStreamingPlayer.rate = inRate }
+                let targetRate: Float = isPlaying ? inRate : 0
+                if abs(idleStreamingPlayer.rate - targetRate) > 0.005 {
+                    idleStreamingPlayer.rate = targetRate
+                }
             } else if !isUsingStreamPlayer {
                 idleTimePitch.rate = inRate
                 idleTimePitch.pitch = 0
             }
         } else {
             if isUsingStreamPlayer {
-                activeStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+                let targetRate: Float = isPlaying ? 1.0 : 0
+                if abs(activeStreamingPlayer.rate - targetRate) > 0.005 {
+                    activeStreamingPlayer.rate = targetRate
+                }
             } else {
                 activeTimePitch.rate = 1.0
                 activeTimePitch.pitch = 0
             }
 
             if incomingIsStream {
-                idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                if isPlaying { idleStreamingPlayer.rate = 1.0 }
+                let targetRate: Float = isPlaying ? 1.0 : 0
+                if abs(idleStreamingPlayer.rate - targetRate) > 0.005 {
+                    idleStreamingPlayer.rate = targetRate
+                }
             } else if !isUsingStreamPlayer {
                 idleTimePitch.rate = 1.0
                 idleTimePitch.pitch = 0
