@@ -457,6 +457,16 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("DJAutoMixCoordinator", coord_content)
         self.assertIn("prepareTransition", coord_content)
 
+        # 8. Pre-cache worker & Yandex Music streaming pipeline
+        precache_file = dj_dir / "DJPreCacheWorker.swift"
+        self.assertTrue(precache_file.exists(), "DJPreCacheWorker.swift missing")
+        precache_content = precache_file.read_text(encoding="utf-8")
+        self.assertIn("class DJPreCacheWorker", precache_content)
+        self.assertIn("resolveLocalURL", precache_content)
+        self.assertIn("extractBuffer", precache_content)
+        self.assertIn("prepareTransition", precache_content)
+        self.assertIn("YandexMusicService.shared.getStreamInfo", precache_content)
+
 
 if __name__ == "__main__":
     unittest.main()

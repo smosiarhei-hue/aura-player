@@ -1253,6 +1253,15 @@ final class PlayerCore {
                     self.isPlanningTransition = false
                     self.planningStartedAt = nil
                     AutoMixDJEngine.shared.currentBPM = plan.tempo.targetBPM
+                    DJPreCacheWorker.shared.preCacheTrackIfNeeded(nextTrack)
+                    Task {
+                        _ = await DJPreCacheWorker.shared.prepareTransition(
+                            outgoing: current,
+                            incoming: nextTrack,
+                            outgoingPosition: currentPos,
+                            totalDuration: totalDur
+                        )
+                    }
                 }
             }
         }
@@ -1264,6 +1273,7 @@ final class PlayerCore {
             isPrebufferingNextStream = true
             lastPrebufferAttempt = Date()
             let ymID = Self.yandexTrackID(from: nextTrack)
+            DJPreCacheWorker.shared.preCacheTrackIfNeeded(nextTrack)
             Task {
                 do {
                     let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)

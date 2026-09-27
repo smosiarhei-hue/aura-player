@@ -103,6 +103,13 @@ def deploy(env=None):
 
     push_res = subprocess.run(["git", "-C", str(pages_dir), "push", "origin", "gh-pages"], capture_output=True, text=True)
     if push_res.returncode != 0:
+        print(f"Standard push to gh-pages rejected ({push_res.stderr.strip()}), retrying with rebase/force...")
+        subprocess.run(["git", "-C", str(pages_dir), "pull", "--rebase", "-Xtheirs", "origin", "gh-pages"], capture_output=True)
+        push_res = subprocess.run(["git", "-C", str(pages_dir), "push", "origin", "gh-pages"], capture_output=True, text=True)
+        if push_res.returncode != 0:
+            push_res = subprocess.run(["git", "-C", str(pages_dir), "push", "--force", "origin", "gh-pages"], capture_output=True, text=True)
+
+    if push_res.returncode != 0:
         print(f"Failed to push to gh-pages: {push_res.stderr}")
         return 1
 
