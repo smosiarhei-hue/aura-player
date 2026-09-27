@@ -13,6 +13,8 @@ enum AudioQuality: Int, CaseIterable, Identifiable, Sendable {
     case auto = 3
     case economical = 4
 
+    static let standard: AudioQuality = .hq
+
     var id: Int { rawValue }
 
     var label: String {
@@ -1008,10 +1010,10 @@ final class PlayerCore {
                 self.activeStreamURL = info.url
                 self.beginStream(info.url, at: seconds)
             } catch {
-                // Secondary attempt with fallback quality (standard MP3) if HQ/Lossless was unavailable
+                // Secondary attempt with fallback quality (standard MP3 / HQ) if Lossless was unavailable
                 if self.audioQuality != .standard {
                     do {
-                        let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 192)
+                        let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 320)
                         guard self.generation == token, self.currentTrack?.id == track.id else { return }
                         self.currentBitrate = fallbackInfo.bitrate
                         self.currentCodec = fallbackInfo.codec

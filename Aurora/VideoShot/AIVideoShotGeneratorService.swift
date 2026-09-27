@@ -358,7 +358,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
                     finalURL = try await generateLocalCanvasVideoShot(
                         for: cleanId,
                         artwork: compositeArtwork,
-                        prompt: cinematicPrompt,
+                        prompt: visualPrompt,
                         vibeProfile: vibeProfile,
                         artistName: artistProfile.name,
                         artistImage: artistImage
@@ -369,7 +369,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
                 finalURL = try await generateLocalCanvasVideoShot(
                     for: cleanId,
                     artwork: compositeArtwork,
-                    prompt: cinematicPrompt,
+                    prompt: visualPrompt,
                     vibeProfile: vibeProfile,
                     artistName: artistProfile.name,
                     artistImage: artistImage
