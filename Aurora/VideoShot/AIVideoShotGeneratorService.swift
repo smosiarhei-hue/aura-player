@@ -109,18 +109,121 @@ final class AIVideoShotGeneratorService: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Проверка наличия уже сгенерированного видео-шота на диске
-    func localVideoShotURL(for trackId: String) -> URL? {
+    static func cleanFilename(_ raw: String) -> String {
+        let invalid = CharacterSet(charactersIn: "\\/:*?\"<>| \n\t")
+        return raw.components(separatedBy: invalid).filter { !$0.isEmpty }.joined(separator: "_").lowercased()
+    }
+
+    /// Проверка наличия видео-шота на диске, в документах или встроенного в App Bundle.
+    /// Гарантирует воспроизведение 24/7 даже при полностью выключенном ПК.
+    func localVideoShotURL(for trackId: String, title: String? = nil, artist: String? = nil) -> URL? {
         let clean = Self.cleanTrackId(trackId)
-        guard !clean.isEmpty else { return nil }
-        let fileURL = storageDirectory.appendingPathComponent("\(clean).mp4")
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+
+        // 1. Проверяем постоянный кэш в Documents/AIVideoShots/<trackId>.mp4
+        if !clean.isEmpty {
+            let fileURL = storageDirectory.appendingPathComponent("\(clean).mp4")
+            if FileManager.default.fileExists(atPath: fileURL.path),
+               let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
                let size = attrs[.size] as? Int64, size > 10_000 {
                 return fileURL
             }
         }
+
+        // 2. Проверяем Documents/AIVideoShots по названию трека
+        if let title, !title.isEmpty {
+            let cleanTitle = Self.cleanFilename(title)
+            let titleURL = storageDirectory.appendingPathComponent("\(cleanTitle).mp4")
+            if FileManager.default.fileExists(atPath: titleURL.path),
+               let attrs = try? FileManager.default.attributesOfItem(atPath: titleURL.path),
+               let size = attrs[.size] as? Int64, size > 10_000 {
+                return titleURL
+            }
+        }
+
+        // 3. Проверяем встроенные ресурсы в App Bundle приложения
+        if !clean.isEmpty, let bundleURL = Bundle.main.url(forResource: clean, withExtension: "mp4") {
+            return bundleURL
+        }
+        if let title, !title.isEmpty {
+            let cleanTitle = Self.cleanFilename(title)
+            if let bundleURL = Bundle.main.url(forResource: cleanTitle, withExtension: "mp4") {
+                return bundleURL
+            }
+        }
+
+        // 4. Проверяем трек «Басок» (Platina & Voskresenskii, track ID 77691072)
+        let isBassok = (clean == "77691072") ||
+                       (title?.localizedCaseInsensitiveContains("басок") == true) ||
+                       (title?.localizedCaseInsensitiveContains("bassok") == true)
+        if isBassok {
+            if let bundleBassok = Bundle.main.url(forResource: "platina_voskresenskii_bassok_cinematic", withExtension: "mp4") {
+                return bundleBassok
+            }
+            if let bundle77 = Bundle.main.url(forResource: "77691072", withExtension: "mp4") {
+                return bundle77
+            }
+            let docBassok = storageDirectory.appendingPathComponent("platina_voskresenskii_bassok_cinematic.mp4")
+            if FileManager.default.fileExists(atPath: docBassok.path),
+               let attrs = try? FileManager.default.attributesOfItem(atPath: docBassok.path),
+               let size = attrs[.size] as? Int64, size > 10_000 {
+                return docBassok
+            }
+        }
+
         return nil
+    }
+
+    /// Скачивает и кэширует видео навсегда в память iPhone (Documents/AIVideoShots).
+    /// После одного воспроизведения видео работает 24/7 офлайн, даже если ПК выключен.
+    @discardableResult
+    func saveVideoLocally(from remoteURL: URL, for trackId: String, title: String? = nil) async -> URL? {
+        let clean = Self.cleanTrackId(trackId)
+        guard !clean.isEmpty || (title != nil && !title!.isEmpty) else { return nil }
+
+        let targetFilename = !clean.isEmpty ? "\(clean).mp4" : "\(Self.cleanFilename(title!)).mp4"
+        let destURL = storageDirectory.appendingPathComponent(targetFilename)
+
+        // Если файл уже есть и валидного размера, не скачиваем повторно
+        if FileManager.default.fileExists(atPath: destURL.path),
+           let attrs = try? FileManager.default.attributesOfItem(atPath: destURL.path),
+           let size = attrs[.size] as? Int64, size > 50_000 {
+            return destURL
+        }
+
+        SonivoDiagnostics.log("[AIVideoShot] Caching video for offline storage: \(remoteURL.absoluteString)", tag: "VIDEOSHOT")
+
+        do {
+            var request = URLRequest(url: remoteURL)
+            request.timeoutInterval = 30.0
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode), data.count > 50_000 else {
+                return nil
+            }
+
+            let tempURL = storageDirectory.appendingPathComponent("temp_\(UUID().uuidString).mp4")
+            try data.write(to: tempURL, options: .atomic)
+
+            if FileManager.default.fileExists(atPath: destURL.path) {
+                try? FileManager.default.removeItem(at: destURL)
+            }
+            try FileManager.default.moveItem(at: tempURL, to: destURL)
+
+            // Если есть название трека, делаем копию под название трека для надежности
+            if let title, !title.isEmpty {
+                let titleFilename = "\(Self.cleanFilename(title)).mp4"
+                let titleURL = storageDirectory.appendingPathComponent(titleFilename)
+                if titleURL.path != destURL.path {
+                    try? FileManager.default.removeItem(at: titleURL)
+                    try? FileManager.default.copyItem(at: destURL, to: titleURL)
+                }
+            }
+
+            SonivoDiagnostics.log("[AIVideoShot] Cached video saved to device for \(clean) (\(data.count) bytes). Offline 24/7 active.", tag: "VIDEOSHOT")
+            return destURL
+        } catch {
+            SonivoDiagnostics.log("[AIVideoShot] Failed to cache video: \(error.localizedDescription)", tag: "VIDEOSHOT")
+            return nil
+        }
     }
 
     func hasVideoShot(for trackId: String) -> Bool {
@@ -207,19 +310,10 @@ final class AIVideoShotGeneratorService: ObservableObject {
                 dominantRGB: dominantRGB
             )
 
-            // 5. Осмысление трека через NVIDIA DeepSeek с артистом, жанром, ритмом и текстом
-            statusMessage = "Анализ смысла трека и артиста через AI..."
-            let cinematicPrompt = await DifyService.shared.generateVideoShotPrompt(
-                title: track.title,
-                artist: artistProfile.name,
-                lyricsSnippet: lyricsSnippet,
-                genre: artistProfile.genres.first,
-                bpm: vibeProfile.bpm,
-                energy: vibeProfile.energy,
-                valence: vibeProfile.valence,
-                vibeStyle: vibeProfile.style.rawValue
-            )
-            SonivoDiagnostics.log("[AIVideoShot] Prompt: \(cinematicPrompt), Vibe: \(vibeProfile.style.rawValue), BPM: \(Int(vibeProfile.bpm)), Artist: \(artistProfile.name)", tag: "VIDEOSHOT")
+            // 5. Прямой визуальный профиль без текстовых галлюцинаций LLM
+            statusMessage = "Подготовка визуального профиля артиста..."
+            let visualPrompt = "Cinematic 9:16 vertical music video of \(artistProfile.name). Dynamic lighting, stage atmosphere, photorealistic artist performance, 808 beat motion."
+            SonivoDiagnostics.log("[AIVideoShot] Visual Prompt: \(visualPrompt), Vibe: \(vibeProfile.style.rawValue), BPM: \(Int(vibeProfile.bpm)), Artist: \(artistProfile.name)", tag: "VIDEOSHOT")
 
             // 6. AI Агент автоматически выбирает оптимальную модель генерации
             statusMessage = "AI Агент выбирает оптимальную модель..."
@@ -240,7 +334,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
                     let taskInfo = try await submitMiniMaxTask(
                         clientId: clientId,
                         fakeIP: fakeIP,
-                        prompt: cinematicPrompt,
+                        prompt: visualPrompt,
                         jpegData: jpegData
                     )
 

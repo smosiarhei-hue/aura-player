@@ -18,3 +18,11 @@ Aurora/incoming/scratch/
 Aurora/incoming/public/*.mp3
 Aurora/incoming/public/*.bin
 
+# VideoShot Studio
+tools/videoshot-studio/cache/
+tools/videoshot-studio/output/
+tools/videoshot-studio/google-flow-api/
+tools/videoshot-studio/__pycache__/
+tools/videoshot-studio/*.mp4
+
+

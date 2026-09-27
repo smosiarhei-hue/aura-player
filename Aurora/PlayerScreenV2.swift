@@ -964,14 +964,41 @@ struct PlayerScreenV2: View {
         guard let track else { return }
         let requestedTrackID = track.id
         let id = PlayerCore.yandexTrackID(from: track)
-        guard !id.isEmpty else { return }
 
-        // 1. Проверяем официальный видео-шот из Yandex Music
-        var url = await YandexMusicService.shared.getVideoShotUrl(for: id)
+        var url: URL? = nil
 
-        // 2. Если официального нет, проверяем локальный AI видео-шот (MiniMax H3)
+        // 1. ПРИОРИТЕТ 1: Локальный кэш устройства и встроенные видео в App Bundle (работает всегда 24/7 офлайн, когда ПК выключен)
+        url = AIVideoShotGeneratorService.shared.localVideoShotURL(for: id, title: track.title, artist: track.artist)
+
+        // 2. ПРИОРИТЕТ 2: Официальный видео-шот из Yandex Music (по LTE/5G/Wi-Fi)
+        if url == nil && !id.isEmpty {
+            if let ymURL = await YandexMusicService.shared.getVideoShotUrl(for: id) {
+                url = ymURL
+                // Автоматически сохраняем видео в постоянную память iPhone для работы офлайн
+                let trackTitle = track.title
+                Task.detached(priority: .background) {
+                    await AIVideoShotGeneratorService.shared.saveVideoLocally(from: ymURL, for: id, title: trackTitle)
+                }
+            }
+        }
+
+        // 3. ПРИОРИТЕТ 3: Локальная студия видео-шотов Aura Studio на ПК (RTX 4060) по Wi-Fi
         if url == nil {
-            url = AIVideoShotGeneratorService.shared.localVideoShotURL(for: id)
+            let key = !id.isEmpty ? id : (track.title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "video")
+            if let studioURL = URL(string: "http://192.168.0.150:5055/videos/\(key).mp4") {
+                var headReq = URLRequest(url: studioURL)
+                headReq.httpMethod = "HEAD"
+                headReq.timeoutInterval = 0.6
+                if let (_, resp) = try? await URLSession.shared.data(for: headReq),
+                   let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    url = studioURL
+                    // Мгновенно кэшируем в постоянную память iPhone! Как только ПК выключится, видео останется на телефоне навсегда
+                    let trackTitle = track.title
+                    Task.detached(priority: .background) {
+                        await AIVideoShotGeneratorService.shared.saveVideoLocally(from: studioURL, for: id, title: trackTitle)
+                    }
+                }
+            }
         }
 
         guard !Task.isCancelled, player.currentTrack?.id == requestedTrackID else { return }

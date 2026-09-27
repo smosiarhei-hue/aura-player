@@ -1315,6 +1315,35 @@ final class YandexMusicService {
             }
         }
 
+        // 3. Резервный запрос официального видео артиста через /artists/{id}/brief-info
+        if let trackURL = URL(string: Self.apiBase + "/tracks/" + cleanId) {
+            if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: trackURL)),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let result = (json["result"] as? [[String: Any]])?.first ?? (json["result"] as? [String: Any]),
+               let artists = result["artists"] as? [[String: Any]],
+               let firstArtist = artists.first,
+               let artistId = firstArtist["id"] {
+                let artistIdStr = "\(artistId)"
+                if let artURL = URL(string: Self.apiBase + "/artists/" + artistIdStr + "/brief-info") {
+                    if let (artData, _) = try? await URLSession.shared.data(for: authorizedRequest(url: artURL)),
+                       let artJson = try? JSONSerialization.jsonObject(with: artData) as? [String: Any],
+                       let artRes = artJson["result"] as? [String: Any],
+                       let artistObj = artRes["artist"] as? [String: Any] {
+                        var candidate: String? = nil
+                        if let bg = artistObj["backgroundVideoUrl"] as? String, !bg.isEmpty { candidate = bg }
+                        else if let bg = artistObj["videoUrl"] as? String, !bg.isEmpty { candidate = bg }
+                        else if let bg = artistObj["headerVideoUrl"] as? String, !bg.isEmpty { candidate = bg }
+
+                        if let candidate, let shotURL = URL(string: candidate.hasPrefix("http") ? candidate : "https://" + candidate) {
+                            videoShotCache[cleanId] = shotURL
+                            SonivoDiagnostics.log("VideoShot found from artist brief-info for \(cleanId): \(shotURL.absoluteString)", tag: "VIDEOSHOT")
+                            return shotURL
+                        }
+                    }
+                }
+            }
+        }
+
         return nil
     }
 

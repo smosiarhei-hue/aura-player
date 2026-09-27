@@ -1,0 +1,1278 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura VideoShot Neural Studio — AI Генератор клипов 9:16</title>
+    <style>
+        :root {
+            --bg-dark: #0a0b10;
+            --card-bg: rgba(18, 20, 32, 0.75);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --accent: #ff3366;
+            --accent-glow: rgba(255, 51, 102, 0.4);
+            --neon-blue: #00d2ff;
+            --neon-purple: #9d4edd;
+            --neon-green: #00f59b;
+            --text-main: #f0f3f8;
+            --text-muted: #8e99ac;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(255, 51, 102, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(0, 210, 255, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 50% 50%, rgba(157, 78, 221, 0.05) 0%, transparent 60%);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .studio-container {
+            max-width: 1300px;
+            width: 100%;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .logo-wrap {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .logo-badge {
+            background: linear-gradient(135deg, var(--accent), var(--neon-purple));
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .logo-title {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, #fff, #b4c6ef);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .status-pill {
+            background: rgba(0, 245, 155, 0.1);
+            border: 1px solid rgba(0, 245, 155, 0.3);
+            color: var(--neon-green);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--neon-green);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--neon-green);
+            animation: pulse 1.8s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+        }
+
+        /* Layout Grid */
+        .grid {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 960px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+
+        /* Cards */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 24px;
+            padding: 22px;
+            backdrop-filter: blur(20px);
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        }
+
+        .card-header {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #fff;
+        }
+
+        /* Sample buttons */
+        .sample-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .sample-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: var(--text-main);
+            padding: 9px 15px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .sample-btn:hover {
+            background: rgba(255, 51, 102, 0.15);
+            border-color: var(--accent);
+            transform: translateY(-1px);
+        }
+
+        /* Upload Area */
+        .dropzone {
+            border: 2px dashed rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            padding: 28px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--accent);
+            background: rgba(255, 51, 102, 0.04);
+        }
+
+        .dropzone-icon {
+            font-size: 36px;
+            margin-bottom: 8px;
+        }
+
+        .dropzone-title {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .dropzone-hint {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        /* Track Analysis Info */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .meta-item {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 14px;
+            padding: 10px;
+            text-align: center;
+        }
+
+        .meta-val {
+            font-size: 17px;
+            font-weight: 800;
+            color: var(--neon-blue);
+        }
+
+        .meta-lbl {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 3px;
+        }
+
+        /* Artist Info Box */
+        .artist-card {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 12px 16px;
+            margin-top: 14px;
+        }
+
+        .artist-avatar {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            background: #111;
+        }
+
+        .artist-name {
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .artist-genre {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 3px;
+        }
+
+        /* Waveform */
+        .waveform-box {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            height: 48px;
+            margin-top: 12px;
+            padding: 0 4px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .wave-bar {
+            flex: 1;
+            background: linear-gradient(180deg, var(--neon-blue), var(--accent));
+            border-radius: 2px;
+            min-height: 4px;
+            opacity: 0.85;
+        }
+
+        /* AI Auto Vibe Card */
+        .auto-vibe-card {
+            background: linear-gradient(145deg, rgba(255, 51, 102, 0.08), rgba(157, 78, 221, 0.08));
+            border: 1px solid rgba(255, 51, 102, 0.3);
+            border-radius: 20px;
+            padding: 18px;
+            margin-top: 16px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            position: relative;
+        }
+
+        .auto-vibe-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 51, 102, 0.2);
+            border: 1px solid var(--accent);
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .auto-vibe-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        .auto-vibe-mood {
+            font-size: 13px;
+            color: var(--neon-blue);
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .vibe-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+
+        .vibe-tag {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #cfd6e6;
+        }
+
+        .vibe-attr-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 14px;
+            padding: 12px;
+            margin-bottom: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .vibe-attr-item {
+            display: flex;
+            gap: 8px;
+            line-height: 1.4;
+        }
+
+        .vibe-attr-label {
+            color: var(--text-muted);
+            min-width: 90px;
+            font-weight: 700;
+        }
+
+        .vibe-attr-value {
+            color: #e2e8f0;
+            flex: 1;
+        }
+
+        /* Director prompt box */
+        .director-prompt-container {
+            background: rgba(7, 9, 18, 0.95);
+            border: 1px solid rgba(0, 210, 255, 0.3);
+            border-radius: 14px;
+            padding: 14px;
+            position: relative;
+        }
+
+        .director-prompt-label {
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--neon-blue);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .director-prompt-textarea {
+            width: 100%;
+            height: 90px;
+            background: transparent;
+            border: none;
+            color: #e2e8f0;
+            font-family: 'SF Mono', Consolas, Monaco, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            resize: vertical;
+            outline: none;
+        }
+
+        .prompt-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .btn-vibe-action {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-vibe-action:hover {
+            background: rgba(255, 51, 102, 0.2);
+            border-color: var(--accent);
+        }
+
+        /* Auto-launch banner */
+        .auto-launch-banner {
+            background: linear-gradient(90deg, rgba(0, 210, 255, 0.15), rgba(255, 51, 102, 0.15));
+            border: 1px solid var(--neon-blue);
+            border-radius: 14px;
+            padding: 12px 16px;
+            margin-top: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            font-weight: 700;
+            color: #fff;
+            animation: glowBorder 2s infinite alternate;
+        }
+
+        @keyframes glowBorder {
+            0% { box-shadow: 0 0 10px rgba(0, 210, 255, 0.2); }
+            100% { box-shadow: 0 0 20px rgba(255, 51, 102, 0.4); }
+        }
+
+        /* Duration Chips & Engine tabs */
+        .vibe-chips {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .vibe-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+            padding: 9px 15px;
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .vibe-btn.active {
+            background: linear-gradient(135deg, var(--accent), var(--neon-purple));
+            border-color: transparent;
+            box-shadow: 0 0 16px var(--accent-glow);
+        }
+
+        .engine-tabs {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .engine-tab {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .engine-tab.active {
+            background: rgba(0, 210, 255, 0.15);
+            border-color: var(--neon-blue);
+            color: #fff;
+        }
+
+        /* Generate Button */
+        .btn-generate {
+            width: 100%;
+            margin-top: 20px;
+            background: linear-gradient(135deg, var(--accent), #ff1a53);
+            border: none;
+            color: #fff;
+            padding: 16px;
+            border-radius: 16px;
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            box-shadow: 0 8px 24px var(--accent-glow);
+            transition: all 0.25s ease;
+        }
+
+        .btn-generate:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 30px rgba(255, 51, 102, 0.55);
+        }
+
+        .btn-generate:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Live Progress Bar */
+        .progress-box {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 16px;
+            margin-top: 18px;
+            display: none;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 10px 0 8px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--neon-blue), var(--accent));
+            border-radius: 8px;
+            transition: width 0.2s ease;
+            box-shadow: 0 0 12px var(--accent-glow);
+        }
+
+        /* Status Log */
+        .status-box {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 14px;
+            padding: 12px;
+            max-height: 110px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 16px;
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+            color: #b0b7c7;
+        }
+        .log-entry.success { color: var(--neon-green); font-weight: bold; }
+        .log-entry.accent { color: var(--accent); }
+
+        /* 9:16 Phone Mockup */
+        .phone-mockup {
+            width: 100%;
+            aspect-ratio: 9 / 16;
+            max-height: 640px;
+            background: #000;
+            border-radius: 40px;
+            border: 5px solid rgba(255, 255, 255, 0.12);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .placeholder-text {
+            color: var(--text-muted);
+            text-align: center;
+            padding: 30px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        #resultVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #livePreviewImg {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .live-badge {
+            position: absolute;
+            top: 18px;
+            left: 18px;
+            background: rgba(255, 51, 102, 0.85);
+            backdrop-filter: blur(8px);
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            z-index: 10;
+        }
+
+        /* Checkbox styling */
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #cfd6e6;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .checkbox-label input {
+            accent-color: var(--accent);
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div class="studio-container">
+    <header>
+        <div class="logo-wrap">
+            <div class="logo-badge">⚡</div>
+            <div>
+                <div class="logo-title">Aura VideoShot Neural Studio</div>
+                <div class="logo-subtitle">Автономная генерация 9:16 видео-шотов под трек • MiniMax H3 (Hailuo AI)</div>
+            </div>
+        </div>
+        <div class="status-pill">
+            <span class="status-dot"></span>
+            <span>GPU RTX 4060 & MiniMax H3 Ready</span>
+        </div>
+    </header>
+
+    <div class="grid">
+        <!-- Левая колонка -->
+        <div>
+            <!-- Быстрые семплы и загрузка -->
+            <div class="card">
+                <div class="card-header">
+                    <span>🎵 Выбор аудиофайла</span>
+                    <label class="checkbox-label" title="При выборе трека AI автоматически синтезирует промпт и запустит генерацию">
+                        <input type="checkbox" id="autoGenerateCheck" checked>
+                        <span>⚡ Авто-генерация под трек</span>
+                    </label>
+                </div>
+
+                <div class="sample-buttons">
+                    <button class="sample-btn" onclick="loadSample('barskih')">
+                        <span>⚡</span> Макс Барских — Берега
+                    </button>
+                    <button class="sample-btn" onclick="loadSample('avariya')">
+                        <span>⚡</span> Дискотека Авария — Кукла
+                    </button>
+                </div>
+
+                <input type="file" id="audioFileInput" accept=".mp3,.wav,.m4a,.flac,.ogg,audio/*" style="display: none;" onchange="if(this.files.length) handleAudioUpload(this.files[0]); this.value='';">
+
+                <div class="dropzone" id="dropzone" onclick="document.getElementById('audioFileInput').click()">
+                    <div class="dropzone-icon">📥</div>
+                    <div class="dropzone-title">Перетащите MP3 / WAV трек сюда</div>
+                    <div class="dropzone-hint">или нажмите в любую область для выбора файла</div>
+                    <button type="button" style="margin-top: 14px; background: rgba(255, 51, 102, 0.25); border: 1px solid var(--accent); color: #fff; padding: 10px 22px; border-radius: 12px; font-weight: 700; font-size: 13px; cursor: pointer; pointer-events: auto;">
+                        📂 Выбрать аудиофайл с диска
+                    </button>
+                </div>
+
+                <!-- Аудиоплеер и форма волны -->
+                <div id="audioPlayerBox" style="display: none; margin-top: 16px;">
+                    <audio id="audioElement" controls style="width: 100%; border-radius: 12px;"></audio>
+                    <div class="waveform-box" id="waveform"></div>
+                </div>
+
+                <!-- Метаданные трека -->
+                <div id="trackMetaBox" style="display: none;">
+                    <div class="meta-grid">
+                        <div class="meta-item">
+                            <div class="meta-val" id="metaBPM">--</div>
+                            <div class="meta-lbl">Темп (BPM)</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-val" id="metaKey">--</div>
+                            <div class="meta-lbl">Тональность</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-val" id="metaEnergy">--</div>
+                            <div class="meta-lbl">Энергия</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-val" id="metaBass">--</div>
+                            <div class="meta-lbl">808 Саб-бас</div>
+                        </div>
+                    </div>
+
+                    <div class="artist-card">
+                        <img id="artistAvatar" class="artist-avatar" src="" alt="">
+                        <div>
+                            <div class="artist-name" id="artistNameLabel">--</div>
+                            <div class="artist-genre" id="artistGenreLabel">Официальный профиль найден</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Автоматический вайб и промпт AI-режиссёра -->
+            <div class="card" id="autoVibeCardWrapper" style="display: none;">
+                <div class="card-header">
+                    <span>🎬 Распознанный вайб & Промпт AI-режиссёра</span>
+                    <span id="autoVibeTagBadge" style="font-size: 12px; color: var(--neon-blue); font-weight: 700;">100% Авто-детекция</span>
+                </div>
+
+                <div class="auto-vibe-card">
+                    <div class="auto-vibe-badge">✨ АВТОМАТИЧЕСКИЙ ВАЙБ ТРЕКА</div>
+                    <div class="auto-vibe-title" id="autoVibeTitle">🔥 Загрузка вайба...</div>
+                    <div class="auto-vibe-mood" id="autoVibeMood">Анализ ритма, энергии и тональности...</div>
+
+                    <div class="vibe-tags" id="autoVibeTags"></div>
+
+                    <div class="vibe-attr-grid">
+                        <div class="vibe-attr-item">
+                            <span class="vibe-attr-label">💡 Освещение:</span>
+                            <span class="vibe-attr-value" id="autoVibeLighting">--</span>
+                        </div>
+                        <div class="vibe-attr-item">
+                            <span class="vibe-attr-label">📍 Сцена:</span>
+                            <span class="vibe-attr-value" id="autoVibeScene">--</span>
+                        </div>
+                        <div class="vibe-attr-item">
+                            <span class="vibe-attr-label">🎥 Камера:</span>
+                            <span class="vibe-attr-value" id="autoVibeCamera">--</span>
+                        </div>
+                    </div>
+
+                    <div class="director-prompt-container">
+                        <div class="director-prompt-label">
+                            <span>🎬 Сгенерированный промпт для MiniMax H3:</span>
+                            <span style="font-size: 10px; color: var(--text-muted);">БЕЗ РОМАНТИКИ / ЧИСТЫЙ КЛИП</span>
+                        </div>
+                        <textarea id="directorPromptInput" class="director-prompt-textarea" spellcheck="false"></textarea>
+                        
+                        <div class="prompt-actions">
+                            <button class="btn-vibe-action" onclick="regenerateVibe()">
+                                <span>🎲</span> Сгенерировать другой ракурс вайба
+                            </button>
+                            <button class="btn-vibe-action" onclick="copyPrompt()">
+                                <span>📋</span> Скопировать промпт
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Авто-запуск баннер при загрузке трека -->
+                <div class="auto-launch-banner" id="autoLaunchBanner" style="display: none;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="status-dot"></span>
+                        <span id="autoLaunchText">🚀 Промпт синтезирован! Запуск генерации клипа через 1.5 сек...</span>
+                    </div>
+                    <button class="btn-vibe-action" style="padding: 4px 10px; font-size: 11px;" onclick="cancelAutoLaunch()">
+                        Отмена
+                    </button>
+                </div>
+
+                <label style="font-size: 13px; color: var(--text-muted); font-weight: 600; display: block; margin-top: 18px;">ДЛИТЕЛЬНОСТЬ ВИДЕО-ШОТА (ЯНДЕКС МУЗЫКА 9:16):</label>
+                <div class="vibe-chips">
+                    <div class="vibe-btn" id="durBtn6" onclick="setDuration(6)">⚡ 6 сек (Спринт)</div>
+                    <div class="vibe-btn" id="durBtn10" onclick="setDuration(10)">🎬 10 сек (Короткий)</div>
+                    <div class="vibe-btn active" id="durBtn15" onclick="setDuration(15)">🏆 15 секунд (Мульти-сцена Клип)</div>
+                </div>
+
+                <label style="font-size: 13px; color: var(--text-muted); font-weight: 600; display: block; margin-top: 18px;">ДВИЖОК ГЕНЕРАЦИИ (100% БЕСПЛАТНО):</label>
+                <div class="engine-tabs">
+                    <div class="engine-tab active" id="tabLocalAi" onclick="setEngine('local_ai')">⚡ RTX 4060 Multi-Shot (0 сек)</div>
+                    <div class="engine-tab" id="tabGoogleFlow" onclick="setEngine('google_flow')">🌊 Google Flow (Veo 3.1)</div>
+                    <div class="engine-tab" id="tabMiniMax" onclick="setEngine('minimax')">🎬 MiniMax H3</div>
+                </div>
+
+                <button class="btn-generate" id="generateBtn" disabled onclick="startGeneration()">
+                    <span>✨</span> Сгенерировать AI Видео-шот
+                </button>
+
+                <!-- Индикатор живого прогресса генерации -->
+                <div class="progress-box" id="progressBox">
+                    <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 700;">
+                        <span id="stageLabel" style="color: #fff;">Инициализация...</span>
+                        <span id="percentLabel" style="color: var(--neon-blue);">0%</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div id="progressBarFill" class="progress-bar-fill"></div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">
+                        <span id="frameCounter">Кадр 0 / 360</span>
+                        <span id="engineBadgeLabel">MiniMax H3 (10s)</span>
+                    </div>
+                </div>
+
+                <!-- Статус бар -->
+                <div class="status-box" id="statusBox">
+                    <div class="log-entry">Ожидание выбора трека...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Правая колонка: 9:16 Видео плеер -->
+        <div>
+            <div class="card">
+                <div class="card-header">
+                    <span>📱 9:16 Музыкальный Видео-шот</span>
+                    <span id="renderStateBadge" style="font-size: 12px; color: var(--text-muted);">Ожидание</span>
+                </div>
+
+                <div class="phone-mockup" id="phonePreview">
+                    <div class="placeholder-text" id="previewPlaceholder">
+                        Видео-шот появится здесь.<br><br>
+                        ⚡ <strong>Во время генерации</strong> здесь будет отображаться статус очереди и кадры в реальном времени!
+                    </div>
+
+                    <!-- Живой кадр в реальном времени -->
+                    <img id="livePreviewImg" style="display: none;" alt="Live frame">
+                    <div class="live-badge" id="liveBadge" style="display: none;">
+                        <span class="status-dot"></span> LIVE ГЕНЕРАЦИЯ
+                    </div>
+
+                    <!-- Финальный готовый видео-шот с аудио -->
+                    <video id="resultVideo" controls autoplay loop playsinline style="display: none;"></video>
+                </div>
+
+                <div style="display: flex; gap: 10px; margin-top: 16px;">
+                    <a id="downloadBtn" style="display: none; flex: 1; text-align: center; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 12px; border-radius: 14px; font-weight: 700; text-decoration: none;" download="videoshot.mp4">
+                        ⬇️ Скачать MP4
+                    </a>
+                    <button id="regenBtn" style="display: none; flex: 1; background: var(--accent); border: none; color: #fff; padding: 12px; border-radius: 14px; font-weight: 700; cursor: pointer;" onclick="startGeneration(true)">
+                        🔄 Перегенерировать
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentAudioId = null;
+let currentTrackData = null;
+let currentVibe = null;
+let vibeVariationIndex = 0;
+let pollTimer = null;
+let autoLaunchTimer = null;
+
+let selectedDuration = 15;
+let selectedEngine = "local_ai";
+
+function log(msg, type = "normal") {
+    const box = document.getElementById("statusBox");
+    const div = document.createElement("div");
+    div.className = "log-entry " + type;
+    div.innerText = "[" + new Date().toLocaleTimeString() + "] " + msg;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+function setDuration(dur) {
+    selectedDuration = dur;
+    document.getElementById("durBtn6").classList.toggle("active", dur === 6);
+    document.getElementById("durBtn10").classList.toggle("active", dur === 10);
+    document.getElementById("durBtn15").classList.toggle("active", dur === 15);
+    log("Выбрана длительность клипа: " + dur + " сек (Яндекс Музыка)");
+}
+
+function setEngine(engine) {
+    selectedEngine = engine;
+    const tabLocal = document.getElementById("tabLocalAi");
+    const tabFlow = document.getElementById("tabGoogleFlow");
+    const tabMini = document.getElementById("tabMiniMax");
+    if (tabLocal) tabLocal.classList.toggle("active", engine === "local_ai");
+    if (tabFlow) tabFlow.classList.toggle("active", engine === "google_flow");
+    if (tabMini) tabMini.classList.toggle("active", engine === "minimax");
+    const labels = {
+        "local_ai": "Локальный RTX 4060 Multi-Shot (Живое видео & кадры, 0 сек)",
+        "google_flow": "Google Flow CLI (Google Veo 3.1 Fast, 9:16)",
+        "minimax": "MiniMax H3 (Облако Hailuo AI)"
+    };
+    log("Выбран движок: " + (labels[engine] || engine));
+}
+
+function renderVibeUI(vibe) {
+    currentVibe = vibe;
+    document.getElementById("autoVibeTitle").innerText = vibe.title;
+    document.getElementById("autoVibeMood").innerText = vibe.mood;
+    document.getElementById("autoVibeLighting").innerText = vibe.lighting;
+    document.getElementById("autoVibeScene").innerText = vibe.scene;
+    document.getElementById("autoVibeCamera").innerText = vibe.camera;
+
+    // Tags
+    const tagsBox = document.getElementById("autoVibeTags");
+    tagsBox.innerHTML = "";
+    (vibe.tags || []).forEach(t => {
+        const span = document.createElement("span");
+        span.className = "vibe-tag";
+        span.innerText = t;
+        tagsBox.appendChild(span);
+    });
+
+    // Prompt
+    document.getElementById("directorPromptInput").value = vibe.director_prompt;
+    document.getElementById("autoVibeCardWrapper").style.display = "block";
+}
+
+function copyPrompt() {
+    const txt = document.getElementById("directorPromptInput").value;
+    navigator.clipboard.writeText(txt).then(() => {
+        log("📋 Промпт скопирован в буфер обмена!");
+    });
+}
+
+function regenerateVibe() {
+    if (!currentAudioId) return;
+    vibeVariationIndex++;
+    log("🎲 Регенерация кинематографичного ракурса (вариация #" + (vibeVariationIndex + 1) + ")...");
+    
+    fetch("/api/regenerate-vibe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_id: currentAudioId, variation_index: vibeVariationIndex })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.vibe) {
+            renderVibeUI(data.vibe);
+            log("✨ Новый ракурс вайба синтезирован: " + data.vibe.title, "success");
+        }
+    })
+    .catch(err => log("Ошибка регенерации вайба: " + err, "accent"));
+}
+
+function cancelAutoLaunch() {
+    if (autoLaunchTimer) {
+        clearTimeout(autoLaunchTimer);
+        autoLaunchTimer = null;
+    }
+    document.getElementById("autoLaunchBanner").style.display = "none";
+    log("Авто-старт генерации отменен пользователем.");
+}
+
+function updateTrackUI(data, localBlobUrl = null) {
+    currentAudioId = data.audio_id;
+    currentTrackData = data;
+    vibeVariationIndex = 0;
+
+    // Воспроизведение через внутренний Blob URL (полная защита от перехвата IDM / Download Manager)
+    const audioEl = document.getElementById("audioElement");
+    if (localBlobUrl) {
+        audioEl.src = localBlobUrl;
+    } else {
+        fetch(data.audio_url)
+            .then(r => r.blob())
+            .then(b => { audioEl.src = URL.createObjectURL(b); })
+            .catch(() => { audioEl.src = data.audio_url; });
+    }
+    document.getElementById("audioPlayerBox").style.display = "block";
+
+    // Отрисовка формы волны
+    renderWaveform(data.analysis.waveform);
+
+    // Метаданные
+    document.getElementById("metaBPM").innerText = Math.round(data.analysis.bpm);
+    document.getElementById("metaKey").innerText = data.analysis.key;
+    document.getElementById("metaEnergy").innerText = Math.round(data.analysis.energy * 100) + "%";
+    document.getElementById("metaBass").innerText = data.analysis.bass_ratio ? (data.analysis.bass_ratio + "x") : "High";
+    document.getElementById("trackMetaBox").style.display = "block";
+
+    // Артист
+    document.getElementById("artistNameLabel").innerText = data.artist_info.name;
+    document.getElementById("artistGenreLabel").innerText = (data.artist_info.genres || []).join(", ") || "Modern";
+    if (data.artist_info.local_photo) {
+        document.getElementById("artistAvatar").src = "/api/artist-photo/" + data.audio_id;
+    }
+
+    // Отображаем авто-распознанный вайб и синтезированный промпт
+    const vibe = data.analysis.vibe;
+    renderVibeUI(vibe);
+    document.getElementById("generateBtn").disabled = false;
+
+    log("✅ Трек проанализирован! Вайб: " + vibe.title + " (BPM: " + data.analysis.bpm + ", " + data.analysis.key + ")", "success");
+    log("🎬 AI Режиссёр автоматически сгенерировал промпт под трек!", "accent");
+
+    // Автономный запуск генерации ("он сам под трек должен сгенерировать промт и начать генерацию под трек")
+    const autoGen = document.getElementById("autoGenerateCheck").checked;
+    if (autoGen) {
+        const banner = document.getElementById("autoLaunchBanner");
+        banner.style.display = "flex";
+        let countdown = 1.5;
+        document.getElementById("autoLaunchText").innerText = "🚀 AI Режиссёр синтезировал промпт! Авто-старт генерации через " + countdown.toFixed(1) + " сек...";
+
+        if (autoLaunchTimer) clearTimeout(autoLaunchTimer);
+        autoLaunchTimer = setTimeout(() => {
+            banner.style.display = "none";
+            startGeneration();
+        }, 1500);
+    }
+}
+
+function loadSample(key) {
+    cancelAutoLaunch();
+    log("Загрузка трека: " + key + "...");
+    fetch("/api/load-sample", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sample: key })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            log("Ошибка загрузки семпла: " + data.error, "accent");
+            return;
+        }
+        updateTrackUI(data);
+    })
+    .catch(err => log("Ошибка сети: " + err, "accent"));
+}
+
+function handleAudioUpload(file) {
+    if (!file) return;
+    cancelAutoLaunch();
+    log("Файл выбран: " + file.name + " (" + (file.size / 1024 / 1024).toFixed(1) + " MB)");
+
+    // Создаем защищенный локальный Blob URL для плеера (IDM не перехватывает blob: протокол)
+    const localBlobUrl = URL.createObjectURL(file);
+
+    const dz = document.getElementById("dropzone");
+    const origContent = dz.innerHTML;
+    dz.innerHTML = `
+        <div class="dropzone-icon">⏳</div>
+        <div class="dropzone-title">Анализируем трек: ${file.name}</div>
+        <div class="dropzone-hint">Идет детекция ритма, BPM, баса и синтез вайба AI-режиссёром...</div>
+    `;
+
+    const formData = new FormData();
+    formData.append("audio", file);
+
+    fetch("/api/upload-audio", { method: "POST", body: formData })
+        .then(r => r.json())
+        .then(data => {
+            dz.innerHTML = origContent;
+            if (data.error) {
+                log("❌ Ошибка анализа: " + data.error, "accent");
+                alert("Ошибка анализа аудио: " + data.error);
+                return;
+            }
+            updateTrackUI(data, localBlobUrl);
+        })
+        .catch(err => {
+            dz.innerHTML = origContent;
+            log("❌ Ошибка загрузки: " + err, "accent");
+            alert("Ошибка загрузки файла на сервер: " + err);
+        });
+}
+
+function renderWaveform(samples) {
+    const wf = document.getElementById("waveform");
+    wf.innerHTML = "";
+    (samples || []).forEach(s => {
+        const bar = document.createElement("div");
+        bar.className = "wave-bar";
+        bar.style.height = Math.max(6, s * 44) + "px";
+        wf.appendChild(bar);
+    });
+}
+
+function startGeneration(isRegen = false) {
+    if (!currentAudioId) return;
+    cancelAutoLaunch();
+
+    const btn = document.getElementById("generateBtn");
+    btn.disabled = true;
+    btn.innerHTML = "⏳ Идёт синтез видео-шота...";
+    log(isRegen ? "Перегенерация видео-шота..." : "🚀 Старт генерации 9:16 видео-шота...", "accent");
+
+    // UI состояния
+    document.getElementById("progressBox").style.display = "block";
+    document.getElementById("progressBarFill").style.width = "0%";
+    document.getElementById("percentLabel").innerText = "0%";
+    document.getElementById("stageLabel").innerText = "Отправка задачи в нейросеть...";
+    document.getElementById("renderStateBadge").innerText = "Генерация...";
+    
+    // Включаем показ в телефоне
+    document.getElementById("previewPlaceholder").style.display = "none";
+    document.getElementById("resultVideo").style.display = "none";
+    document.getElementById("resultVideo").pause();
+    document.getElementById("livePreviewImg").style.display = "block";
+    document.getElementById("liveBadge").style.display = "flex";
+    document.getElementById("downloadBtn").style.display = "none";
+    document.getElementById("regenBtn").style.display = "none";
+
+    const promptText = document.getElementById("directorPromptInput").value;
+    const payload = {
+        audio_id: currentAudioId,
+        vibe: {
+            ...(currentVibe || {}),
+            director_prompt: promptText
+        },
+        engine: selectedEngine,
+        duration: selectedDuration
+    };
+
+    fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            btn.disabled = false;
+            btn.innerHTML = "<span>✨</span> Сгенерировать AI Видео-шот";
+            log("❌ Ошибка: " + data.error, "accent");
+            return;
+        }
+
+        const taskId = data.task_id;
+        document.getElementById("engineBadgeLabel").innerText = data.engine_used;
+        log("🎬 Задача запущена: " + taskId + " на " + data.engine_used);
+
+        // Опрос статуса и живых кадров
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(() => pollTaskStatus(taskId), 500);
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = "<span>✨</span> Сгенерировать AI Видео-шот";
+        log("❌ Сетевая ошибка: " + err, "accent");
+    });
+}
+
+function pollTaskStatus(taskId) {
+    fetch("/api/task-status/" + taskId)
+        .then(r => r.json())
+        .then(task => {
+            if (task.error) {
+                clearInterval(pollTimer);
+                finishWithError(task.error);
+                return;
+            }
+
+            // Обновляем прогресс-бар
+            document.getElementById("progressBarFill").style.width = task.progress + "%";
+            document.getElementById("percentLabel").innerText = task.progress + "%";
+            document.getElementById("stageLabel").innerText = task.stage;
+            document.getElementById("frameCounter").innerText = "Кадр " + task.frame + " / " + task.total_frames;
+
+            // Обновляем живой кадр в 9:16 экране
+            if (task.has_preview && task.preview_url) {
+                const liveImg = document.getElementById("livePreviewImg");
+                liveImg.src = task.preview_url;
+            }
+
+            // Завершено
+            if (task.status === "completed") {
+                clearInterval(pollTimer);
+                finishWithSuccess(task);
+            } else if (task.status === "error") {
+                clearInterval(pollTimer);
+                finishWithError(task.error);
+            }
+        })
+        .catch(err => console.error("Poll error:", err));
+}
+
+function finishWithSuccess(task) {
+    const btn = document.getElementById("generateBtn");
+    btn.disabled = false;
+    btn.innerHTML = "<span>✨</span> Сгенерировать AI Видео-шот";
+    document.getElementById("renderStateBadge").innerText = "Готово (" + selectedDuration + "s)";
+
+    log("🎬 Видео-шот успешно создан и сведён со звуком!", "success");
+
+    // Прячем превью и показываем видео
+    document.getElementById("livePreviewImg").style.display = "none";
+    document.getElementById("liveBadge").style.display = "none";
+
+    const video = document.getElementById("resultVideo");
+    fetch(task.video_url)
+        .then(r => r.blob())
+        .then(b => {
+            video.src = URL.createObjectURL(b);
+            video.style.display = "block";
+            video.play();
+        })
+        .catch(() => {
+            video.src = task.video_url;
+            video.style.display = "block";
+            video.play();
+        });
+
+    const dlBtn = document.getElementById("downloadBtn");
+    dlBtn.href = task.video_url;
+    dlBtn.style.display = "block";
+
+    document.getElementById("regenBtn").style.display = "block";
+}
+
+function finishWithError(errorMsg) {
+    const btn = document.getElementById("generateBtn");
+    btn.disabled = false;
+    btn.innerHTML = "<span>✨</span> Сгенерировать AI Видео-шот";
+    document.getElementById("renderStateBadge").innerText = "Ошибка";
+    document.getElementById("liveBadge").style.display = "none";
+    log("❌ Ошибка генерации: " + errorMsg, "accent");
+}
+
+// Drag & drop handlers
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+const dz = document.getElementById("dropzone");
+dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("dragover"); });
+dz.addEventListener("dragleave", e => { dz.classList.remove("dragover"); });
+dz.addEventListener("drop", e => {
+    e.preventDefault();
+    dz.classList.remove("dragover");
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        handleAudioUpload(e.dataTransfer.files[0]);
+    }
+});
+</script>
+
+</body>
+</html>
