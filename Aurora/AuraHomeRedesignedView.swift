@@ -202,7 +202,9 @@ struct AuraHomeRedesignedView: View {
                 HStack(spacing: 10) {
                     ForEach(MoodPreset.allCases) { preset in
                         LiquidGlassMoodCapsule(preset: preset) {
-                            Haptics.tap(.light); MoodRadioEngine.shared.start(mood: preset)
+                            Haptics.tap(.light)
+                            MoodRadioEngine.shared.start(mood: preset)
+                            showPlayer = true
                         }
                     }
                 }.padding(.horizontal, 16)
@@ -236,7 +238,10 @@ struct AuraHomeRedesignedView: View {
             else {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(chart.prefix(6).enumerated()), id: \.element.id) { index, item in
-                        AuraCatalogTrackRow(item: item, rank: index + 1) { SonivoPlay.track(item, in: chart) }
+                        AuraCatalogTrackRow(item: item, rank: index + 1) { 
+                            SonivoPlay.track(item, in: chart)
+                            showPlayer = true
+                        }
                     }
                 }.padding(.horizontal, 12)
             }
@@ -272,6 +277,7 @@ struct AuraHomeRedesignedView: View {
                 ForEach(Array(newTracks.prefix(5).enumerated()), id: \.element.id) { index, item in
                     AuraCatalogTrackRow(item: item, rank: index + 1) {
                         SonivoPlay.track(item, in: newTracks)
+                        showPlayer = true
                     }
                 }
             }
@@ -314,8 +320,12 @@ struct AuraHomeRedesignedView: View {
 
     private func toggleWave() {
         Haptics.tap(.medium)
-        if player.isPlaying { player.pause() }
-        else { SonivoPlay.wave(moodStation, forceFresh: true) }
+        if player.isPlaying {
+            player.pause()
+        } else {
+            SonivoPlay.wave(moodStation, forceFresh: true)
+            showPlayer = true
+        }
     }
 
     /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
