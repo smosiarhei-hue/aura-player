@@ -411,6 +411,24 @@ final class AIVideoShotGeneratorService: ObservableObject {
             try? FileManager.default.removeItem(at: destURL)
         }
 
+        guard let jpegData = prepareArtworkJPEG(from: artwork) else {
+            throw AIVideoShotError.imagePreparationFailed
+        }
+
+        let encodedURL = try await Self.encodeCanvasVideo(destURL: destURL, artworkJPEGData: jpegData)
+        SonivoDiagnostics.log("[AIVideoShot] Generated on-device 9:16 Canvas: \(encodedURL.lastPathComponent)", tag: "VIDEOSHOT")
+        return encodedURL
+    }
+
+    private nonisolated static func encodeCanvasVideo(
+        destURL: URL,
+        artworkJPEGData: Data
+    ) async throws -> URL {
+        guard let sourceImage = UIImage(data: artworkJPEGData),
+              let sourceCGImage = sourceImage.cgImage else {
+            throw AIVideoShotError.imagePreparationFailed
+        }
+
         let width = 720
         let height = 1280
         let fps: Int32 = 30
@@ -455,136 +473,128 @@ final class AIVideoShotGeneratorService: ObservableObject {
         }
         writer.startSession(atSourceTime: .zero)
 
-        // Подготовка CGImage обложки
-        guard let sourceCGImage = artwork.cgImage ?? prepareArtworkJPEG(from: artwork).flatMap({ UIImage(data: $0)?.cgImage }) else {
-            throw AIVideoShotError.imagePreparationFailed
-        }
+        let pool: CVPixelBufferPool? = adaptor.pixelBufferPool
 
-        // Рендеринг кадров анимации
-        try await Task.detached(priority: .userInitiated) {
-            let pool: CVPixelBufferPool? = adaptor.pixelBufferPool
+        for frameIndex in 0..<totalFrames {
+            try Task.checkCancellation()
 
-            for frameIndex in 0..<totalFrames {
-                try Task.checkCancellation()
-
-                var waitCycles = 0
-                while !writerInput.isReadyForMoreMediaData && waitCycles < 100 {
-                    try await Task.sleep(nanoseconds: 10_000_000)
-                    waitCycles += 1
-                }
-
-                guard writerInput.isReadyForMoreMediaData else { break }
-
-                let progress = Double(frameIndex) / Double(totalFrames)
-                let loopProgress = sin(progress * .pi)
-
-                var pixelBuffer: CVPixelBuffer?
-                if let pool = pool {
-                    CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
-                }
-                if pixelBuffer == nil {
-                    CVPixelBufferCreate(
-                        kCFAllocatorDefault,
-                        width,
-                        height,
-                        kCVPixelFormatType_32ARGB,
-                        sourcePixelBufferAttributes as CFDictionary,
-                        &pixelBuffer
-                    )
-                }
-
-                guard let buffer = pixelBuffer else { continue }
-
-                CVPixelBufferLockBaseAddress(buffer, [])
-                if let pxData = CVPixelBufferGetBaseAddress(buffer) {
-                    let colorSpace = CGColorSpaceCreateDeviceRGB()
-                    if let ctx = CGContext(
-                        data: pxData,
-                        width: width,
-                        height: height,
-                        bitsPerComponent: 8,
-                        bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-                        space: colorSpace,
-                        bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                    ) {
-                        ctx.saveGState()
-
-                        // 1. Темный глубокий фон
-                        ctx.setFillColor(UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0).cgColor)
-                        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
-
-                        // 2. Размытый масштабный фон под размер экрана
-                        let bgScale: CGFloat = 1.65 + CGFloat(loopProgress) * 0.1
-                        let bgW = CGFloat(height) * bgScale
-                        let bgH = CGFloat(height) * bgScale
-                        let bgX = (CGFloat(width) - bgW) / 2.0
-                        let bgY = (CGFloat(height) - bgH) / 2.0
-                        ctx.setAlpha(0.38)
-                        ctx.draw(sourceCGImage, in: CGRect(x: bgX, y: bgY, width: bgW, height: bgH))
-
-                        // 3. Атмосферное виньетирование
-                        let gradientColors = [
-                            UIColor.black.withAlphaComponent(0.85).cgColor,
-                            UIColor.clear.cgColor,
-                            UIColor.black.withAlphaComponent(0.90).cgColor
-                        ] as CFArray
-                        let locations: [CGFloat] = [0.0, 0.5, 1.0]
-                        if let grad = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: locations) {
-                            ctx.setAlpha(1.0)
-                            ctx.drawLinearGradient(
-                                grad,
-                                start: CGPoint(x: 0, y: height),
-                                end: CGPoint(x: 0, y: 0),
-                                options: []
-                            )
-                        }
-
-                        // 4. Центральный арт трека с Ken Burns и скругленными углами
-                        let cardBaseSize: CGFloat = 580.0
-                        let cardZoom: CGFloat = 1.0 + CGFloat(loopProgress) * 0.05
-                        let cardSize = cardBaseSize * cardZoom
-                        let cardX = (CGFloat(width) - cardSize) / 2.0
-                        let cardY = (CGFloat(height) - cardSize) / 2.0 + CGFloat(sin(progress * .pi * 2.0)) * 6.0
-                        let cardRect = CGRect(x: cardX, y: cardY, width: cardSize, height: cardSize)
-
-                        // Тень от карточки
-                        ctx.setShadow(offset: CGSize(width: 0, height: 18), blur: 36, color: UIColor.black.withAlphaComponent(0.60).cgColor)
-
-                        let clipPath = CGPath(roundedRect: cardRect, cornerWidth: 32, cornerHeight: 32, transform: nil)
-                        ctx.addPath(clipPath)
-                        ctx.clip()
-
-                        ctx.setAlpha(1.0)
-                        ctx.draw(sourceCGImage, in: cardRect)
-
-                        ctx.restoreGState()
-
-                        // 5. Мягкое плавающее свечение
-                        let glowY = CGFloat(height) * (0.35 + CGFloat(loopProgress) * 0.3)
-                        let glowColors = [
-                            UIColor.white.withAlphaComponent(0.08).cgColor,
-                            UIColor.clear.cgColor
-                        ] as CFArray
-                        if let glowGrad = CGGradient(colorsSpace: colorSpace, colors: glowColors, locations: [0.0, 1.0]) {
-                            ctx.drawRadialGradient(
-                                glowGrad,
-                                startCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
-                                startRadius: 10,
-                                endCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
-                                endRadius: 360,
-                                options: []
-                            )
-                        }
-                    }
-                }
-                CVPixelBufferUnlockBaseAddress(buffer, [])
-
-                let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: fps)
-                adaptor.append(buffer, withPresentationTime: presentationTime)
+            var waitCycles = 0
+            while !writerInput.isReadyForMoreMediaData && waitCycles < 100 {
+                try await Task.sleep(nanoseconds: 10_000_000)
+                waitCycles += 1
             }
 
-            writerInput.markAsFinished()
-        }.value
+            guard writerInput.isReadyForMoreMediaData else { break }
+
+            let progress = Double(frameIndex) / Double(totalFrames)
+            let loopProgress = sin(progress * .pi)
+
+            var pixelBuffer: CVPixelBuffer?
+            if let pool = pool {
+                CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+            }
+            if pixelBuffer == nil {
+                CVPixelBufferCreate(
+                    kCFAllocatorDefault,
+                    width,
+                    height,
+                    kCVPixelFormatType_32ARGB,
+                    sourcePixelBufferAttributes as CFDictionary,
+                    &pixelBuffer
+                )
+            }
+
+            guard let buffer = pixelBuffer else { continue }
+
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let pxData = CVPixelBufferGetBaseAddress(buffer) {
+                let colorSpace = CGColorSpaceCreateDeviceRGB()
+                if let ctx = CGContext(
+                    data: pxData,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                    space: colorSpace,
+                    bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                ) {
+                    ctx.saveGState()
+
+                    // 1. Темный глубокий фон
+                    ctx.setFillColor(UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0).cgColor)
+                    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+                    // 2. Размытый масштабный фон под размер экрана
+                    let bgScale: CGFloat = 1.65 + CGFloat(loopProgress) * 0.1
+                    let bgW = CGFloat(height) * bgScale
+                    let bgH = CGFloat(height) * bgScale
+                    let bgX = (CGFloat(width) - bgW) / 2.0
+                    let bgY = (CGFloat(height) - bgH) / 2.0
+                    ctx.setAlpha(0.38)
+                    ctx.draw(sourceCGImage, in: CGRect(x: bgX, y: bgY, width: bgW, height: bgH))
+
+                    // 3. Атмосферное виньетирование
+                    let gradientColors = [
+                        UIColor.black.withAlphaComponent(0.85).cgColor,
+                        UIColor.clear.cgColor,
+                        UIColor.black.withAlphaComponent(0.90).cgColor
+                    ] as CFArray
+                    let locations: [CGFloat] = [0.0, 0.5, 1.0]
+                    if let grad = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: locations) {
+                        ctx.setAlpha(1.0)
+                        ctx.drawLinearGradient(
+                            grad,
+                            start: CGPoint(x: 0, y: height),
+                            end: CGPoint(x: 0, y: 0),
+                            options: []
+                        )
+                    }
+
+                    // 4. Центральный арт трека с Ken Burns и скругленными углами
+                    let cardBaseSize: CGFloat = 580.0
+                    let cardZoom: CGFloat = 1.0 + CGFloat(loopProgress) * 0.05
+                    let cardSize = cardBaseSize * cardZoom
+                    let cardX = (CGFloat(width) - cardSize) / 2.0
+                    let cardY = (CGFloat(height) - cardSize) / 2.0 + CGFloat(sin(progress * .pi * 2.0)) * 6.0
+                    let cardRect = CGRect(x: cardX, y: cardY, width: cardSize, height: cardSize)
+
+                    // Тень от карточки
+                    ctx.setShadow(offset: CGSize(width: 0, height: 18), blur: 36, color: UIColor.black.withAlphaComponent(0.60).cgColor)
+
+                    let clipPath = CGPath(roundedRect: cardRect, cornerWidth: 32, cornerHeight: 32, transform: nil)
+                    ctx.addPath(clipPath)
+                    ctx.clip()
+
+                    ctx.setAlpha(1.0)
+                    ctx.draw(sourceCGImage, in: cardRect)
+
+                    ctx.restoreGState()
+
+                    // 5. Мягкое плавающее свечение
+                    let glowY = CGFloat(height) * (0.35 + CGFloat(loopProgress) * 0.3)
+                    let glowColors = [
+                        UIColor.white.withAlphaComponent(0.08).cgColor,
+                        UIColor.clear.cgColor
+                    ] as CFArray
+                    if let glowGrad = CGGradient(colorsSpace: colorSpace, colors: glowColors, locations: [0.0, 1.0]) {
+                        ctx.drawRadialGradient(
+                            glowGrad,
+                            startCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
+                            startRadius: 10,
+                            endCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
+                            endRadius: 360,
+                            options: []
+                        )
+                    }
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+
+            let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: fps)
+            adaptor.append(buffer, withPresentationTime: presentationTime)
+        }
+
+        writerInput.markAsFinished()
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             writer.finishWriting {
@@ -600,7 +610,6 @@ final class AIVideoShotGeneratorService: ObservableObject {
             throw AIVideoShotError.generationFailed("Сгенерированный файл отсутствует на диске")
         }
 
-        SonivoDiagnostics.log("[AIVideoShot] Generated on-device 9:16 Canvas: \(destURL.lastPathComponent)", tag: "VIDEOSHOT")
         return destURL
     }
 
