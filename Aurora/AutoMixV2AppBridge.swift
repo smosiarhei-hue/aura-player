@@ -889,6 +889,7 @@ final class PlaybackCommandRouter {
             guard let self else { return }
             await stopOtherEngines(except: target)
             guard request == requestID, !Task.isCancelled else { return }
+            switch target {
             case .legacy:
                 PlayerCore.shared.play(track, newQueue: queue)
             case .autoMixV2:

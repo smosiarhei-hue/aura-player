@@ -17,7 +17,7 @@ final class DifyService: ObservableObject {
     // MARK: - Defaults (Сентябрь 2026)
     private let defaultNvidiaApiKey = "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"
     private let defaultNvidiaBaseURL = "https://integrate.api.nvidia.com/v1"
-    private let defaultNvidiaModel = "deepseek-ai/deepseek-v4.1-flash"
+    private let defaultNvidiaModel = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 
     private let defaultDifyApiKey = "app-58WNo9d5oTTMdQgDTeohiwu9"
     private let defaultDifyBaseURL = "https://api.dify.ai/v1"
@@ -162,7 +162,7 @@ final class DifyService: ObservableObject {
         request.setValue("Bearer \(nvidiaApiKey.trimmingCharacters(in: .whitespacesAndNewlines))", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 45
+        request.timeoutInterval = 30
 
         let bodyPayload = OpenAIChatRequest(
             model: targetModel,
@@ -175,6 +175,7 @@ final class DifyService: ObservableObject {
         request.httpBody = try JSONEncoder().encode(bodyPayload)
 
         var accumulatedAnswer = ""
+        var accumulatedReasoning = ""
 
         do {
             let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
@@ -184,9 +185,9 @@ final class DifyService: ObservableObject {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 if httpResponse.statusCode == 401 { throw DifyError.unauthorized }
-                if httpResponse.statusCode == 404 {
-                    // Модель не найдена в каталоге, пробуем быстрый фолбек
-                    return try await sendNVIDIAFallback(query: query, systemPrompt: systemPrompt, onDelta: onDelta)
+                if httpResponse.statusCode == 404 || httpResponse.statusCode >= 500 {
+                    // Ошибка модели или лимит воркеров — пробуем резервную модель
+                    return try await sendNVIDIAFallback(query: query, systemPrompt: systemPrompt, failedModel: targetModel, onDelta: onDelta)
                 }
                 throw DifyError.serverError(statusCode: httpResponse.statusCode)
             }
@@ -201,29 +202,33 @@ final class DifyService: ObservableObject {
 
                 guard let data = payload.data(using: .utf8) else { continue }
                 if let chunk = try? JSONDecoder().decode(OpenAIChatChunk.self, from: data),
-                   let firstChoice = chunk.choices?.first,
-                   let text = firstChoice.delta?.content,
-                   !text.isEmpty {
-                    accumulatedAnswer += text
-                    onDelta(text)
+                   let firstChoice = chunk.choices?.first {
+                    if let text = firstChoice.delta?.content, !text.isEmpty {
+                        accumulatedAnswer += text
+                        onDelta(text)
+                    } else if let reasoning = firstChoice.delta?.reasoningContent, !reasoning.isEmpty {
+                        accumulatedReasoning += reasoning
+                    }
                 }
             }
         } catch {
-            // Если модель долго в очереди (>15-20s timeout), запускаем быстрый фолбек на ultra-fast Nemotron
-            if targetModel != "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" {
-                onDelta("\n\n*(Переключаюсь на скоростной отклик NVIDIA...)*\n")
-                return try await sendNVIDIAFallback(query: query, systemPrompt: systemPrompt, onDelta: onDelta)
-            }
-            throw error
+            // Если модель долго в очереди (>25s timeout) или ошибка, запускаем быстрый фолбек
+            onDelta("\n\n*(Переключаюсь на скоростной отклик NVIDIA...)*\n")
+            return try await sendNVIDIAFallback(query: query, systemPrompt: systemPrompt, failedModel: targetModel, onDelta: onDelta)
         }
 
-        let playlist = Self.extractPlaylist(from: accumulatedAnswer)
-        return (accumulatedAnswer, nil, playlist)
+        var playlist = Self.extractPlaylist(from: accumulatedAnswer)
+        if playlist == nil && !accumulatedReasoning.isEmpty {
+            playlist = Self.extractPlaylist(from: accumulatedReasoning)
+        }
+        let fullText = accumulatedAnswer.isEmpty ? accumulatedReasoning : accumulatedAnswer
+        return (fullText, nil, playlist)
     }
 
     private func sendNVIDIAFallback(
         query: String,
         systemPrompt: String,
+        failedModel: String,
         onDelta: @escaping (String) -> Void
     ) async throws -> (fullText: String, conversationId: String?, playlist: AIGeneratedPlaylist?) {
         let cleanBaseURL = nvidiaBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -232,14 +237,18 @@ final class DifyService: ObservableObject {
             throw DifyError.invalidURL
         }
 
+        let fallbackModel = (failedModel == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+            ? "nvidia/nemotron-3-super-120b-a12b"
+            : "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(nvidiaApiKey.trimmingCharacters(in: .whitespacesAndNewlines))", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 20
+        request.timeoutInterval = 25
 
         let bodyPayload = OpenAIChatRequest(
-            model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            model: fallbackModel,
             systemPrompt: systemPrompt,
             userQuery: query,
             temperature: 0.7,
@@ -254,6 +263,7 @@ final class DifyService: ObservableObject {
         }
 
         var accumulated = ""
+        var accumulatedReasoning = ""
         for try await line in asyncBytes.lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix("data:") else { continue }
@@ -261,13 +271,21 @@ final class DifyService: ObservableObject {
             if payload == "[DONE]" { break }
             guard let data = payload.data(using: .utf8),
                   let chunk = try? JSONDecoder().decode(OpenAIChatChunk.self, from: data),
-                  let delta = chunk.choices?.first?.delta?.content, !delta.isEmpty else { continue }
-            accumulated += delta
-            onDelta(delta)
+                  let firstChoice = chunk.choices?.first else { continue }
+            if let delta = firstChoice.delta?.content, !delta.isEmpty {
+                accumulated += delta
+                onDelta(delta)
+            } else if let reasoning = firstChoice.delta?.reasoningContent, !reasoning.isEmpty {
+                accumulatedReasoning += reasoning
+            }
         }
 
-        let playlist = Self.extractPlaylist(from: accumulated)
-        return (accumulated, nil, playlist)
+        var playlist = Self.extractPlaylist(from: accumulated)
+        if playlist == nil && !accumulatedReasoning.isEmpty {
+            playlist = Self.extractPlaylist(from: accumulatedReasoning)
+        }
+        let finalText = accumulated.isEmpty ? accumulatedReasoning : accumulated
+        return (finalText, nil, playlist)
     }
 
     // MARK: - Dify Cloud API

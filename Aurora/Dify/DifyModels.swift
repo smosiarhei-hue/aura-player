@@ -34,17 +34,10 @@ struct NVIDIAAIModel: Identifiable, Hashable, Sendable {
 
     static let availableModels: [NVIDIAAIModel] = [
         NVIDIAAIModel(
-            id: "deepseek-ai/deepseek-v4.1-flash",
-            displayName: "DeepSeek V4.1 Flash",
-            summary: "Флагманский MoE Flash 2026 года для музыкального анализа и глубокого подбора треков.",
-            badge: "Выбор пользователя",
-            isRecommended: true
-        ),
-        NVIDIAAIModel(
             id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             displayName: "Nemotron 3 Nano Omni (30B)",
             summary: "Сверхскоростной отклик (~1.8 сек), точное понимание настроений и живые рекомендации.",
-            badge: "⚡ 1.8s Ultra-Fast",
+            badge: "⚡ Рекомендовано",
             isRecommended: true
         ),
         NVIDIAAIModel(
@@ -52,6 +45,13 @@ struct NVIDIAAIModel: Identifiable, Hashable, Sendable {
             displayName: "Nemotron 3 Super (120B)",
             summary: "Мощная 120-миллиардная модель с энциклопедическим кругозором в музыке и редких жанрах.",
             badge: "120B MoE",
+            isRecommended: true
+        ),
+        NVIDIAAIModel(
+            id: "deepseek-ai/deepseek-v4.1-flash",
+            displayName: "DeepSeek V4.1 Flash",
+            summary: "Флагманский MoE Flash для музыкального анализа и глубокого подбора треков.",
+            badge: "MoE Flash",
             isRecommended: false
         ),
         NVIDIAAIModel(
@@ -130,7 +130,14 @@ struct OpenAIChatChunk: Codable, Sendable {
     struct Choice: Codable, Sendable {
         struct Delta: Codable, Sendable {
             let content: String?
+            let reasoningContent: String?
             let role: String?
+
+            enum CodingKeys: String, CodingKey {
+                case content
+                case reasoningContent = "reasoning_content"
+                case role
+            }
         }
         let delta: Delta?
         let finishReason: String?
