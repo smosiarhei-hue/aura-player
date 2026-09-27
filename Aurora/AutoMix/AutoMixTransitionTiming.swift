@@ -12,9 +12,10 @@ extension TransitionPlanner {
             ?? (source.bpm.flatMap { normalizedBPM($0) }.map { 240.0 / $0 })
             ?? 2.0
 
-        // Punchy, vocal-safe DJ transition duration (2.8 - 3.5s)
-        // Prevents muddy long vocal overlap where lyrics clash.
-        let targetDuration = min(3.5, max(2.8, bar * 1.5))
+        // Real DJ Mashup transition duration across 8 to 16 musical bars (12.0s - 20.0s)
+        // Provides authentic iOS 27 style harmonic mashup blending with beatmatched phrasing
+        let barsCount: Double = (sourceDur > 100.0) ? 8.0 : 4.0
+        let targetDuration = min(20.0, max(12.0, bar * barsCount))
         return targetDuration
     }
 
@@ -23,8 +24,8 @@ extension TransitionPlanner {
         source: TrackAnalysis,
         duration: Double
     ) -> Double {
-        // Strictly anchor to the outro (at least 92% of track duration or last 6.5 seconds)
-        let minOutroCue = max(0, max(source.duration * 0.92, source.duration - 6.5))
+        // Musical phrase mashup cue: anchor 16 to 24s before track end or at outro phrase
+        let minOutroCue = max(0, source.duration - max(duration + 4.0, 24.0))
         var candidate = max(minOutroCue, source.duration - duration)
 
         if strategy == .SILENCE_TRIM, let silence = source.trailingSilence {
@@ -39,10 +40,10 @@ extension TransitionPlanner {
             candidate = boundary
         }
 
-        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 1.5) {
+        if let downbeat = source.nearestDownbeat(to: candidate, tolerance: 2.0) {
             candidate = downbeat
         }
-        let latestStart = max(minOutroCue, source.duration - 2.5)
+        let latestStart = max(minOutroCue, source.duration - 4.0)
         return min(latestStart, max(minOutroCue, candidate))
     }
 

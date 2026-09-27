@@ -96,16 +96,16 @@ class AntigravitySpecTests(unittest.TestCase):
         timing_content = timing_file.read_text(encoding="utf-8")
         # Incoming track starts at 0.0 (natural musical intro)
         self.assertIn("return 0.0", timing_content)
-        # Punchy, vocal-safe 2.8 - 3.5s blend length (prevents vocal clash)
-        self.assertIn("min(3.5, max(2.8", timing_content)
+        # Real DJ Mashup transition duration across 8 to 16 musical bars (12.0s - 20.0s)
+        self.assertIn("min(20.0, max(12.0", timing_content)
 
         player_file = self.repo_root / "Aurora" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
-        # 3-phase DJ vocal-safe gain shaping
-        self.assertIn("p < 0.35", player_content)
-        self.assertIn("p < 0.65", player_content)
-        self.assertIn("streamSourceVol = max(0.08, 0.85 * Float(cos(Double(s) * .pi * 0.5)))", player_content)
-        self.assertIn("streamTargetVol = 0.15 + 0.70 * Float(sin(Double(s) * .pi * 0.5))", player_content)
+        # 3-phase DJ Mashup streaming gain shaping
+        self.assertIn("p < 0.45", player_content)
+        self.assertIn("p < 0.55", player_content)
+        self.assertIn("streamSourceVol = 0.75 + 0.25 * Float(cos(Double(s) * .pi * 0.5))", player_content)
+        self.assertIn("streamTargetVol = 0.70 * Float(sin(Double(s) * .pi * 0.5))", player_content)
         # Seamless stream player handoff without dropout
         self.assertIn("activeStreamingPlayer = incomingPlayer", player_content)
         self.assertIn("outgoingPlayer.pause()", player_content)
@@ -391,6 +391,67 @@ class AntigravitySpecTests(unittest.TestCase):
         bridge_file = self.repo_root / "Aurora" / "AutoMixV2AppBridge.swift"
         bridge_content = bridge_file.read_text(encoding="utf-8")
         self.assertIn("Falling back to PlayerCore stream.", bridge_content)
+
+    def test_dj_automix_engine_spec(self):
+        dj_dir = self.repo_root / "Aurora" / "DJAutoMixEngine"
+        camelot_file = dj_dir / "CamelotKey.swift"
+        models_file = dj_dir / "DJMixModels.swift"
+        analyzer_file = dj_dir / "TrackAnalyzer.swift"
+        planner_file = dj_dir / "DJTransitionPlanner.swift"
+        sync_file = dj_dir / "SyncEngine.swift"
+        renderer_file = dj_dir / "MixRenderer.swift"
+        coord_file = dj_dir / "DJAutoMixCoordinator.swift"
+
+        self.assertTrue(camelot_file.exists(), "CamelotKey.swift missing")
+        self.assertTrue(models_file.exists(), "DJMixModels.swift missing")
+        self.assertTrue(analyzer_file.exists(), "TrackAnalyzer.swift missing")
+        self.assertTrue(planner_file.exists(), "DJTransitionPlanner.swift missing")
+        self.assertTrue(sync_file.exists(), "SyncEngine.swift missing")
+        self.assertTrue(renderer_file.exists(), "MixRenderer.swift missing")
+        self.assertTrue(coord_file.exists(), "DJAutoMixCoordinator.swift missing")
+
+        # 1. CamelotKey Wheel rules
+        camelot_content = camelot_file.read_text(encoding="utf-8")
+        self.assertIn("isHarmonicallyCompatible", camelot_content)
+        self.assertIn("diff == 1 || diff == 11", camelot_content)
+
+        # 2. Models and protocol definitions
+        models_content = models_file.read_text(encoding="utf-8")
+        self.assertIn("struct StructureSegment", models_content)
+        self.assertIn("struct DJTrackAnalysis", models_content)
+        self.assertIn("struct DJMixPlan", models_content)
+        self.assertIn("enum DJTransitionType", models_content)
+
+        # 3. TrackAnalyzer protocol and Mock
+        analyzer_content = analyzer_file.read_text(encoding="utf-8")
+        self.assertIn("protocol DJTrackAnalyzer", analyzer_content)
+        self.assertIn("class MockTrackAnalyzer", analyzer_content)
+        self.assertIn("actor DJTrackAnalysisCache", analyzer_content)
+
+        # 4. TransitionPlanner with 6% BPM threshold, double/half time, and fallbacks
+        planner_content = planner_file.read_text(encoding="utf-8")
+        self.assertIn("protocol DJTransitionPlanner", planner_content)
+        self.assertIn("maxTempoDiffPct: Double = 0.06", planner_content)
+        self.assertIn("minSilenceForCrossfade: TimeInterval = 0.30", planner_content)
+        self.assertIn("candidates = [incomingBPM, incomingBPM * 2.0, incomingBPM / 2.0]", planner_content)
+
+        # 5. SyncEngine beat alignment and time pitch
+        sync_content = sync_file.read_text(encoding="utf-8")
+        self.assertIn("protocol DJSyncEngine", sync_content)
+        self.assertIn("AVAudioUnitTimePitch", sync_content)
+        self.assertIn("nearestBeat - entryPoint", sync_content)
+
+        # 6. MixRenderer offline rendering mode and EQ automation
+        renderer_content = renderer_file.read_text(encoding="utf-8")
+        self.assertIn("protocol DJMixRenderer", renderer_content)
+        self.assertIn("enableManualRenderingMode", renderer_content)
+        self.assertIn("AVAudioUnitEQ", renderer_content)
+        self.assertIn("lowShelfOut.gain = -24.0", renderer_content)
+
+        # 7. Pipeline coordinator
+        coord_content = coord_file.read_text(encoding="utf-8")
+        self.assertIn("actor DJAutoMixCoordinator", coord_content)
+        self.assertIn("prepareTransition", coord_content)
 
 
 if __name__ == "__main__":

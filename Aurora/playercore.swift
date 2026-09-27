@@ -1257,8 +1257,8 @@ final class PlayerCore {
             }
         }
 
-        let cueRemaining = max(totalDur - (activeTransitionPlan?.cueTime ?? (totalDur - 20.0)), activeTransitionPlan?.leadTime ?? 18.0)
-        let prebufferThreshold = cueRemaining + 32.0
+        let cueRemaining = max(totalDur - (activeTransitionPlan?.cueTime ?? (totalDur - 22.0)), activeTransitionPlan?.leadTime ?? 16.0)
+        let prebufferThreshold = cueRemaining + 36.0
         let shouldThrottlePrebuffer = (failedPrebufferTrackId == nextTrack.id) && (lastPrebufferAttempt.map { Date().timeIntervalSince($0) < 6.0 } ?? false)
         if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream, !shouldThrottlePrebuffer {
             isPrebufferingNextStream = true
@@ -1301,13 +1301,13 @@ final class PlayerCore {
             return
         }
 
-        let effectiveCueTime = max(plan.cueTime, totalDur - 8.0)
+        let effectiveCueTime = max(plan.cueTime, totalDur - 24.0)
         guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
 
         transitionScheduled = true
         isTransitioning = true
         incomingLaneReady = false
-        transitionDuration = min(plan.leadTime, 6.5)
+        transitionDuration = min(plan.leadTime, 20.0)
         incomingTrack = nextTrack
         metadataSwapped = false
         metadataTrack = nil
@@ -1331,7 +1331,11 @@ final class PlayerCore {
                 self.startTransitionTimer()
             }
 
-            if idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id {
+            let itemIsValid = idleStreamingPlayer.currentItem != nil
+                && idleStreamingPlayer.currentItem?.status != .failed
+                && prebufferedTrackId == nextTrack.id
+
+            if itemIsValid {
                 startStreamTransition()
             } else {
                 let ymID = Self.yandexTrackID(from: nextTrack)
@@ -1610,26 +1614,24 @@ final class PlayerCore {
         var streamSourceVol = sourceLevel
         var streamTargetVol = targetLevel
 
-        // MARK: - Streaming AutoMix DJ Vocal-Safe Transition
-        // Eliminates vocal clash ("песня на песню накладывается") and prevents sudden loudness jumps.
-        // Phase 1 (0.0 .. 0.35): Outgoing track retains full vocal presence (1.0 -> 0.85); incoming is subtle background (0.0 -> 0.15).
-        // Phase 2 (0.35 .. 0.65): The DJ Drop / Handoff on the downbeat: outgoing ducks cleanly to 0.08, incoming sweeps to 0.85.
-        // Phase 3 (0.65 .. 1.0): Incoming takes over full power (0.85 -> 1.0); outgoing fades into silence.
+        // MARK: - Streaming AutoMix iOS 27 DJ Mashup Transition
+        // Authentic DJ mashup: Both songs overlap harmoniously with equal power across 8-16 musical bars.
+        // Stage 1 (0.0 .. 0.45): Outgoing retains presence (1.0 -> 0.75); incoming builds up groove (0.0 -> 0.70).
+        // Stage 2 (0.45 .. 0.55): The DJ Drop / Downbeat handoff: incoming rises (0.70 -> 0.90), outgoing steps down (0.75 -> 0.35).
+        // Stage 3 (0.55 .. 1.0): Incoming finishes rising to full power (0.90 -> 1.0); outgoing gracefully sweeps out into silence.
         if isUsingStreamPlayer || incomingIsStream {
-            // MARK: - Streaming AutoMix DJ Vocal-Safe Transition
-            // 3-phase DJ vocal-safe gain shaping
-            if p < 0.35 {
-                let s = p / 0.35
-                streamSourceVol = 0.85 + 0.15 * Float(cos(Double(s) * .pi * 0.5))
-                streamTargetVol = 0.15 * Float(sin(Double(s) * .pi * 0.5))
-            } else if p < 0.65 {
-                let s = (p - 0.35) / 0.30
-                streamSourceVol = max(0.08, 0.85 * Float(cos(Double(s) * .pi * 0.5)))
-                streamTargetVol = 0.15 + 0.70 * Float(sin(Double(s) * .pi * 0.5))
+            if p < 0.45 {
+                let s = p / 0.45
+                streamSourceVol = 0.75 + 0.25 * Float(cos(Double(s) * .pi * 0.5))
+                streamTargetVol = 0.70 * Float(sin(Double(s) * .pi * 0.5))
+            } else if p < 0.55 {
+                let s = (p - 0.45) / 0.10
+                streamSourceVol = 0.35 + 0.40 * Float(cos(Double(s) * .pi * 0.5))
+                streamTargetVol = 0.70 + 0.20 * Float(sin(Double(s) * .pi * 0.5))
             } else {
-                let s = (p - 0.65) / 0.35
-                streamSourceVol = max(0.0, 0.08 * Float(cos(Double(s) * .pi * 0.5)))
-                streamTargetVol = 0.85 + 0.15 * Float(sin(Double(s) * .pi * 0.5))
+                let s = (p - 0.55) / 0.45
+                streamSourceVol = max(0.0, 0.35 * Float(cos(Double(s) * .pi * 0.5)))
+                streamTargetVol = 0.90 + 0.10 * Float(sin(Double(s) * .pi * 0.5))
             }
         }
 
