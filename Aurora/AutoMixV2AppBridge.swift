@@ -51,10 +51,12 @@ final class AutoMixEngineSelectionStore {
         }
     }
     private init() {
-        UserDefaults.standard.register(defaults: [Self.defaultsKey: true, Self.neuroDefaultsKey: false])
-        let neuroEnabled = UserDefaults.standard.bool(forKey: Self.neuroDefaultsKey)
-        isNeuroEnabled = neuroEnabled
-        isV2Enabled = neuroEnabled ? false : UserDefaults.standard.bool(forKey: Self.defaultsKey)
+        UserDefaults.standard.register(defaults: [Self.defaultsKey: false, Self.neuroDefaultsKey: false])
+        // Отключаем старый проблемный AutoMixV2, чтобы всё управление шло через новый нативный DJ AutoMix Engine
+        UserDefaults.standard.set(false, forKey: Self.defaultsKey)
+        UserDefaults.standard.set(false, forKey: Self.neuroDefaultsKey)
+        isNeuroEnabled = false
+        isV2Enabled = false
     }
 
 }
