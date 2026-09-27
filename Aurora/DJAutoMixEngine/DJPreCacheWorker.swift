@@ -3,21 +3,21 @@ import Foundation
 import AVFoundation
 
 @MainActor
-public final class DJPreCacheWorker {
-    public static let shared = DJPreCacheWorker()
+final class DJPreCacheWorker {
+    static let shared = DJPreCacheWorker()
 
     private let cacheDirectory: URL
     private var inFlightDownloads: [String: Task<URL, Error>] = [:]
     private var preparedTransitions: [String: PreparedTransition] = [:]
 
-    public init() {
+    init() {
         let temp = FileManager.default.temporaryDirectory
         self.cacheDirectory = temp.appendingPathComponent("AutoMixDJCache", isDirectory: true)
         try? FileManager.default.createDirectory(at: self.cacheDirectory, withIntermediateDirectories: true)
     }
 
     /// Извлечение чистого Yandex Music ID
-    public static func yandexTrackID(from track: Track) -> String {
+    static func yandexTrackID(from track: Track) -> String {
         var raw = track.url.lastPathComponent
         if raw.hasPrefix("ym_") { raw = String(raw.dropFirst(3)) }
         if raw.hasSuffix(".mp3") { raw = String(raw.dropLast(4)) }
@@ -26,7 +26,7 @@ public final class DJPreCacheWorker {
     }
 
     /// Получение локального файла трека (с предварительным кешированием через Yandex API для стриминга)
-    public func resolveLocalURL(for track: Track) async throws -> URL {
+    func resolveLocalURL(for track: Track) async throws -> URL {
         if !track.isStream, track.url.isFileURL {
             return track.url
         }
@@ -66,7 +66,7 @@ public final class DJPreCacheWorker {
     }
 
     /// Пре-кеширование предстоящего трека в фоне
-    public func preCacheTrackIfNeeded(_ track: Track) {
+    func preCacheTrackIfNeeded(_ track: Track) {
         guard track.isStream else { return }
         Task {
             do {
@@ -79,7 +79,7 @@ public final class DJPreCacheWorker {
     }
 
     /// Извлечение фрагмента PCM-буфера из локального аудиофайла
-    nonisolated public func extractBuffer(url: URL, start: TimeInterval, duration: TimeInterval) throws -> AVAudioPCMBuffer {
+    nonisolated func extractBuffer(url: URL, start: TimeInterval, duration: TimeInterval) throws -> AVAudioPCMBuffer {
         let file = try AVAudioFile(forReading: url)
         let format = file.processingFormat
         let sampleRate = format.sampleRate
@@ -99,7 +99,7 @@ public final class DJPreCacheWorker {
     }
 
     /// Ресемплирование буфера при несовпадении частот дискретизации
-    nonisolated public func resample(buffer: AVAudioPCMBuffer, to targetFormat: AVAudioFormat) -> AVAudioPCMBuffer {
+    nonisolated func resample(buffer: AVAudioPCMBuffer, to targetFormat: AVAudioFormat) -> AVAudioPCMBuffer {
         guard buffer.format != targetFormat,
               let converter = AVAudioConverter(from: buffer.format, to: targetFormat) else {
             return buffer
@@ -124,7 +124,7 @@ public final class DJPreCacheWorker {
     }
 
     /// Полная подготовка DJ-перехода (включая скачивание через Yandex API, анализ и офлайн-рендеринг)
-    public func prepareTransition(outgoing: Track, incoming: Track, outgoingPosition: TimeInterval, totalDuration: TimeInterval) async -> PreparedTransition {
+    func prepareTransition(outgoing: Track, incoming: Track, outgoingPosition: TimeInterval, totalDuration: TimeInterval) async -> PreparedTransition {
         let pairKey = "\(outgoing.id.uuidString)_\(incoming.id.uuidString)"
         if let cached = preparedTransitions[pairKey] {
             return cached
@@ -180,7 +180,7 @@ public final class DJPreCacheWorker {
         }
     }
 
-    public func clearCache() {
+    func clearCache() {
         preparedTransitions.removeAll()
         try? FileManager.default.removeItem(at: cacheDirectory)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
