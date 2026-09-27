@@ -231,7 +231,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
 
             var finalURL: URL? = nil
 
-            if engineDecision.engine == .cloudMiniMaxH3 {
+            if engineDecision.engine == VideoShotEngineType.cloudMiniMaxH3 {
                 do {
                     statusMessage = "Генерация через нейросеть MiniMax H3..."
                     let clientId = "mmtrial_\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
@@ -683,7 +683,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
     /// Построение аудио-визуального профиля вайба на основе аудио-вектора и спектра обложки
     static func determineVibeProfile(
         track: Track,
-        vector: MoodRadioEngine.MoodVector,
+        vector: TrackVector,
         dominantRGB: [CGFloat]
     ) -> AudioVibeVisualProfile {
         let preset: AudioVibeVisualProfile.VibeVisualPreset
@@ -699,7 +699,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
             preset = .cosmicDream
         }
 
-        let bpm = Double(max(60, min(180, vector.bpm)))
+        let bpm = Double(max(60, min(180, Int(60.0 + vector.tempo * 120.0))))
         let r = dominantRGB.indices.contains(0) ? dominantRGB[0] : 0.35
         let g = dominantRGB.indices.contains(1) ? dominantRGB[1] : 0.25
         let b = dominantRGB.indices.contains(2) ? dominantRGB[2] : 0.65
