@@ -192,6 +192,8 @@ final class PlayerCore {
     private var rateReleaseTimer: Timer?
 
     var streamBufferFraction: Double = 0.0
+    private var failedPrebufferTrackId: UUID?
+    private var lastPrebufferAttempt: Date?
 
     var displayTrack: Track? { metadataTrack ?? currentTrack }
 
@@ -862,6 +864,7 @@ final class PlayerCore {
     }
 
     private func start(at seconds: Double) {
+        cancelTransition()
         guard let track = currentTrack else { return }
         playError = nil
         activeTransitionPlan = nil
@@ -985,6 +988,15 @@ final class PlayerCore {
             return
         }
 
+        if let streamStr = track.streamUrlString,
+           let streamURL = URL(string: streamStr),
+           streamURL.scheme == "http" || streamURL.scheme == "https" {
+            currentBitrate = 128
+            currentCodec = "mp3"
+            beginStream(streamURL, at: seconds)
+            return
+        }
+
         let ymID = Self.yandexTrackID(from: track)
         Task {
             do {
@@ -996,6 +1008,19 @@ final class PlayerCore {
                 self.activeStreamURL = info.url
                 self.beginStream(info.url, at: seconds)
             } catch {
+                // Secondary attempt with fallback quality (standard MP3) if HQ/Lossless was unavailable
+                if self.audioQuality != .standard {
+                    do {
+                        let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 192)
+                        guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                        self.currentBitrate = fallbackInfo.bitrate
+                        self.currentCodec = fallbackInfo.codec
+                        self.currentTrack?.streamUrlString = fallbackInfo.url.absoluteString
+                        self.activeStreamURL = fallbackInfo.url
+                        self.beginStream(fallbackInfo.url, at: seconds)
+                        return
+                    } catch { }
+                }
                 guard self.generation == token else { return }
                 self.isPlaying = false
                 self.transitionScheduled = false
@@ -1016,8 +1041,9 @@ final class PlayerCore {
         if !clean.isEmpty, !clean.hasPrefix("http") {
             return clean
         }
-        if let fromFile = YandexMusicService.ymId(fromFileName: track.fileName) {
-            return fromFile
+        let digits = track.fileName.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        if digits.count >= 4 {
+            return digits
         }
         return ""
     }
@@ -1231,10 +1257,11 @@ final class PlayerCore {
 
         let cueRemaining = max(totalDur - (activeTransitionPlan?.cueTime ?? (totalDur - 20.0)), activeTransitionPlan?.leadTime ?? 18.0)
         let prebufferThreshold = cueRemaining + 32.0
-        if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream {
+        let shouldThrottlePrebuffer = (failedPrebufferTrackId == nextTrack.id) && (lastPrebufferAttempt.map { Date().timeIntervalSince($0) < 6.0 } ?? false)
+        if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream, !shouldThrottlePrebuffer {
             isPrebufferingNextStream = true
+            lastPrebufferAttempt = Date()
             let ymID = Self.yandexTrackID(from: nextTrack)
-            let resolvedStart: Double = 0.0
             Task {
                 do {
                     let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
@@ -1244,22 +1271,36 @@ final class PlayerCore {
                     StreamBeatTap.shared.attach(to: nextItem)
                     self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                     self.idleStreamingPlayer.volume = 0
-                    self.idleStreamingPlayer.seek(to: CMTime(seconds: resolvedStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
                     self.idleStreamingPlayer.pause()
                     self.prebufferedTrackId = nextTrack.id
+                    self.failedPrebufferTrackId = nil
                     self.isPrebufferingNextStream = false
                     SonivoDiagnostics.log("[AutoMix] Pre-buffered upcoming stream: \(nextTrack.title)", tag: "AUTOMIX")
                 } catch {
+                    self.failedPrebufferTrackId = nextTrack.id
                     self.isPrebufferingNextStream = false
                 }
             }
         }
 
-        guard let plan = activeTransitionPlan else { return }
+        let plan: TransitionPlan
+        if let active = activeTransitionPlan {
+            plan = active
+        } else if remaining <= 5.0 {
+            let fallbackPlan = TransitionPlanner.planLocalFallback(
+                sourceTrackID: current.id,
+                sourceAnalysis: TrackAnalysis.minimal(trackID: current.id.uuidString, duration: totalDur),
+                targetTrackID: nextTrack.id,
+                targetAnalysis: TrackAnalysis.minimal(trackID: nextTrack.id.uuidString, duration: nextTrack.duration)
+            )
+            self.activeTransitionPlan = fallbackPlan
+            plan = fallbackPlan
+        } else {
+            return
+        }
+
         let effectiveCueTime = max(plan.cueTime, totalDur - 8.0)
         guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
-
-        if effectiveCueTime > currentPos + 1.0 { return }
 
         transitionScheduled = true
         isTransitioning = true
@@ -1280,26 +1321,18 @@ final class PlayerCore {
         if isUsingStreamPlayer || nextTrack.isStream {
             let startStreamTransition: @MainActor () -> Void = { [weak self] in
                 guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
-                let laneStart: Double = 0.0
-                let seekTime = CMTime(seconds: laneStart, preferredTimescale: 600)
-                self.idleStreamingPlayer.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
-                        self.idleStreamingPlayer.volume = 0.001
-                        self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
-                        self.transitionStartTime = Date()
-                        self.incomingLaneReady = true
-                        self.startTransitionTimer()
-                    }
-                }
+                self.idleStreamingPlayer.volume = 0.001
+                self.idleStreamingPlayer.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                self.idleStreamingPlayer.playImmediately(atRate: 1.0)
+                self.transitionStartTime = Date()
+                self.incomingLaneReady = true
+                self.startTransitionTimer()
             }
 
             if idleStreamingPlayer.currentItem != nil, prebufferedTrackId == nextTrack.id {
                 startStreamTransition()
             } else {
                 let ymID = Self.yandexTrackID(from: nextTrack)
-                let targetStart: Double = 0.0
                 Task {
                     do {
                         let info = try await YandexMusicService.shared.getStreamInfo(
@@ -1324,6 +1357,9 @@ final class PlayerCore {
                             self.isTransitioning = false
                             self.transitionScheduled = false
                             self.AutoMixDJEngineCleanup()
+                            if self.duration - self.progress <= 1.5 || self.progress >= self.duration - 0.5 {
+                                self.handleTrackFinish()
+                            }
                         }
                     }
                 }
@@ -1905,6 +1941,8 @@ final class PlayerCore {
         incomingLaneReady = false
         transitionPausedAt = nil
         transitionScheduledAt = nil
+        failedPrebufferTrackId = nil
+        lastPrebufferAttempt = nil
         guard isTransitioning else { return }
         transitionTimer?.invalidate()
         transitionTimer = nil
@@ -1962,7 +2000,16 @@ final class PlayerCore {
     }
 
     private func handleTrackFinish() {
-        guard !isTransitioning, !transitionScheduled else { return }
+        if isTransitioning || transitionScheduled {
+            if let target = incomingTrack, (incomingLaneReady || idleStreamingPlayer.currentItem != nil || incomingAudioFile != nil) {
+                SonivoDiagnostics.log("[AutoMix] Track finished during transition: completing immediately to \(target.title)", tag: "AUTOMIX")
+                completeTransition(to: target)
+                return
+            } else {
+                SonivoDiagnostics.log("[AutoMix] Track finished but incoming lane was not ready. Forcing advance to next track.", tag: "AUTOMIX")
+                cancelTransition()
+            }
+        }
         flushListeningStats()
         reportWaveFinishedIfNeeded()
         progress = duration

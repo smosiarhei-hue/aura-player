@@ -889,13 +889,22 @@ final class PlaybackCommandRouter {
             guard let self else { return }
             await stopOtherEngines(except: target)
             guard request == requestID, !Task.isCancelled else { return }
-            switch target {
             case .legacy:
                 PlayerCore.shared.play(track, newQueue: queue)
             case .autoMixV2:
-                _ = await AutoMixV2Runtime.shared.play(track, queue: queue)
+                let ok = await AutoMixV2Runtime.shared.play(track, queue: queue)
+                if !ok && request == requestID && !Task.isCancelled {
+                    SonivoDiagnostics.log("[Router] AutoMix V2 failed to play \(track.title). Falling back to PlayerCore stream.", tag: "ROUTER")
+                    self.owner = .legacy
+                    PlayerCore.shared.play(track, newQueue: queue)
+                }
             case .neuroMix:
-                _ = await NeuroMixRuntime.shared.play(track, queue: queue)
+                let ok = await NeuroMixRuntime.shared.play(track, queue: queue)
+                if !ok && request == requestID && !Task.isCancelled {
+                    SonivoDiagnostics.log("[Router] NeuroMix failed to play \(track.title). Falling back to PlayerCore stream.", tag: "ROUTER")
+                    self.owner = .legacy
+                    PlayerCore.shared.play(track, newQueue: queue)
+                }
             }
             if request == requestID {
                 self.isBusy = false

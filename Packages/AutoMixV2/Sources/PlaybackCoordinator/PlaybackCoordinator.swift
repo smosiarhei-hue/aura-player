@@ -256,14 +256,22 @@ public final class PlaybackCoordinator {
                 beginTransition(next, duration: min(crossfadeSeconds, remaining, incomingDuration / 2), token: token)
             }
         } else if ended {
-            waitingForNext = prefetchTask != nil
-            if !waitingForNext {
+            if prefetchTask != nil {
+                waitingForNext = true
+                publish()
+            } else if let index = currentIndex, index + 1 < queue.count {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    try? await self.next()
+                }
+            } else {
+                waitingForNext = false
                 wantsPlayback = false
                 if let meta = activeMeta { phase = .ready(meta) }
                 monitorTask?.cancel()
                 monitorTask = nil
+                publish()
             }
-            publish()
         }
     }
     private var otherDeck: Deck { activeDeck == .a ? .b : .a }
@@ -370,6 +378,10 @@ public final class PlaybackCoordinator {
                     await engine.setGain(0, for: deck)
                     try check(token)
                     prepared = item
+                    if self.waitingForNext {
+                        self.waitingForNext = false
+                        self.beginTransition(item, duration: nil, token: token)
+                    }
                     publish()
                     return
                 } catch {

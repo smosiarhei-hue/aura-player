@@ -365,6 +365,33 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("vibePresets", as_content)
         self.assertIn("modernPlaylistShowcaseCard", as_content)
 
+    def test_automix_transition_and_playback_resilience(self):
+        player_file = self.repo_root / "Aurora" / "playercore.swift"
+        player_content = player_file.read_text(encoding="utf-8")
+
+        # 1. handleTrackFinish must safely complete transition or advance, not deadlock
+        self.assertIn("completeTransition(to: target)", player_content)
+        self.assertNotIn("guard !isTransitioning, !transitionScheduled else { return }", player_content)
+
+        # 2. start(at:) must cancel prior transitions to prevent stuck flags
+        self.assertIn("cancelTransition()", player_content)
+
+        # 3. startStream must directly stream valid HTTP URLs
+        self.assertIn("streamURL.scheme == \"http\" || streamURL.scheme == \"https\"", player_content)
+
+        # 4. Fallback audio quality attempt if preferred quality fails
+        self.assertIn("preferredQuality: .standard", player_content)
+
+        # 5. PlaybackCoordinator auto-advance on track end
+        coord_file = self.repo_root / "Packages" / "AutoMixV2" / "Sources" / "PlaybackCoordinator" / "PlaybackCoordinator.swift"
+        coord_content = coord_file.read_text(encoding="utf-8")
+        self.assertIn("try? await self.next()", coord_content)
+
+        # 6. PlaybackCommandRouter fallback to PlayerCore
+        bridge_file = self.repo_root / "Aurora" / "AutoMixV2AppBridge.swift"
+        bridge_content = bridge_file.read_text(encoding="utf-8")
+        self.assertIn("Falling back to PlayerCore stream.", bridge_content)
+
 
 if __name__ == "__main__":
     unittest.main()
