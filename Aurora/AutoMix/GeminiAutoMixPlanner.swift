@@ -41,6 +41,7 @@ nonisolated struct TransitionSourceTrackInfo: Codable, Sendable {
 
 nonisolated struct TransitionTargetTrackInfo: Codable, Sendable {
     let startPosition: Double
+    var dropTime: Double? = nil
 }
 
 nonisolated struct TransitionTempoInfo: Codable, Sendable {

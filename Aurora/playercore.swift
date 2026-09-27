@@ -1322,12 +1322,17 @@ final class PlayerCore {
         metadataTrack = nil
         incomingIsStream = nextTrack.isStream
         incomingStartPosition = 0.0
+        AutoMixDJEngine.shared.resetDrop()
         AutoMixDJEngine.shared.isTransitionActive = true
         AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
         AutoMixDJEngine.shared.activePlan = plan
+        AutoMixDJEngine.shared.currentBPM = plan.tempo.targetBPM
+        let targetDrop = plan.targetTrack.dropTime ?? 5.0
+        let calculatedDropP: Double = (targetDrop > 0.5 && targetDrop < transitionDuration) ? (targetDrop / transitionDuration) : 0.50
+        AutoMixDJEngine.shared.dropProgress = min(0.65, max(0.40, calculatedDropP))
         applyReverbPreset(plan.effects.resolvedReverbPreset)
 
-        SonivoDiagnostics.log("[AutoMix] Transition: \(currentTrack?.title ?? "?") -> \(nextTrack.title) [\(plan.strategy.rawValue), \(String(format: "%.1f", transitionDuration))s, rate in \(String(format: "%.3f", plan.tempo.targetPlaybackRate)), \(plan.decision.reason)]", tag: "AUTOMIX")
+        SonivoDiagnostics.log("[AutoMix] Transition: \(currentTrack?.title ?? "?") -> \(nextTrack.title) [\(plan.strategy.rawValue), \(String(format: "%.1f", transitionDuration))s, rate in \(String(format: "%.3f", plan.tempo.targetPlaybackRate)), dropProgress=\(String(format: "%.2f", AutoMixDJEngine.shared.dropProgress)), \(plan.decision.reason)]", tag: "AUTOMIX")
 
         if isUsingStreamPlayer || nextTrack.isStream {
             let startStreamTransition: @MainActor () -> Void = { [weak self] in
@@ -1603,6 +1608,7 @@ final class PlayerCore {
         incomingLaneReady = false
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.resetDrop()
     }
 
     private func startTransitionTimer() {
@@ -1643,6 +1649,16 @@ final class PlayerCore {
             }
         }
 
+        // iOS 27 AutoMix: Drop Event Triggering (T=0)
+        let dropP = AutoMixDJEngine.shared.dropProgress
+        if p >= dropP && !AutoMixDJEngine.shared.isDropTriggered {
+            AutoMixDJEngine.shared.notifyDrop(targetTrack: incomingTrack)
+            if let incomingTrack {
+                metadataSwapped = true
+                metadataTrack = incomingTrack
+            }
+        }
+
         var streamSourceVol = sourceLevel
         var streamTargetVol = targetLevel
 
@@ -1665,6 +1681,17 @@ final class PlayerCore {
                 streamSourceVol = max(0.0, 0.35 * Float(cos(Double(s) * .pi * 0.5)))
                 streamTargetVol = 0.90 + 0.10 * Float(sin(Double(s) * .pi * 0.5))
             }
+
+            // iOS 27 AutoMix ТЗ Section 3.2: At Drop (T=0), Outgoing Track A is completely silenced, Track B takes over at 100% full volume
+            if AutoMixDJEngine.shared.isDropTriggered {
+                streamSourceVol = 0.0
+                streamTargetVol = 1.0
+            }
+        }
+
+        if AutoMixDJEngine.shared.isDropTriggered {
+            sourceLevel = 0.0
+            targetLevel = 1.0
         }
 
         if isUsingStreamPlayer {
@@ -1866,6 +1893,8 @@ final class PlayerCore {
         transitionScheduled = false
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.resetDrop()
+        AutoMixDJEngine.shared.isPostMixActive = true
         SonivoDiagnostics.log("[AutoMix] Transition completed: now playing \(nextTrack.title)", tag: "AUTOMIX")
 
         if !isUsingStreamPlayer {
@@ -2006,6 +2035,8 @@ final class PlayerCore {
         isTransitioning = false
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.resetDrop()
+        AutoMixDJEngine.shared.isPostMixActive = false
         applyEQ()
     }
 

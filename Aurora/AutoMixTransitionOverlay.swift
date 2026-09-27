@@ -27,16 +27,17 @@ struct AutoMixTransitionOverlay: View {
 
     var body: some View {
         ZStack {
-            if player.isTransitionActive, let incomingImage {
-                let progress = min(1.0, max(0.0, player.transitionProgress))
+            // iOS 27 AutoMix:
+            // 1. Pre-mix isolation: While audio mixes in background, UI is strictly locked to Track A.
+            // 2. Drop (T=0): Instantaneous HARD CUT to Track B (no fade/dissolve allowed!).
+            if player.isTransitionActive, AutoMixDJEngine.shared.isDropTriggered, let incomingImage {
                 Image(uiImage: incomingImage)
                     .resizable()
                     .scaledToFill()
                     .frame(width: width, height: height)
                     .clipped()
-                    .opacity(progress)
-                    .scaleEffect(0.98 + 0.02 * progress)
-                    .transition(.opacity)
+                    .opacity(1.0)
+                    .transition(.identity)
             }
         }
         .frame(width: width, height: height)

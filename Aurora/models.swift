@@ -27,6 +27,11 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
 
 // MARK: - AutoMix DJ Engine (AI & DSP Transition Executor)
 
+extension Notification.Name {
+    static let didTriggerAutoMixDrop = Notification.Name("didTriggerAutoMixDrop")
+    static let didCompleteAutoMixTransition = Notification.Name("didCompleteAutoMixTransition")
+}
+
 @Observable
 @MainActor
 final class AutoMixDJEngine {
@@ -40,9 +45,29 @@ final class AutoMixDJEngine {
     var activePlan: TransitionPlan? = nil
     var statusBadge: String? = nil
     var currentBPM: Double = 0
+    var isDropTriggered: Bool = false
+    var dropProgress: Double = 0.50
+    var isPostMixActive: Bool = false
     private var lastTransitionLogBucket: Int = -1
 
     private init() {}
+
+    func notifyDrop(targetTrack: Track?) {
+        guard !isDropTriggered else { return }
+        isDropTriggered = true
+        isPostMixActive = true
+        Haptics.tap(.rigid)
+        NotificationCenter.default.post(
+            name: .didTriggerAutoMixDrop,
+            object: targetTrack
+        )
+        SonivoDiagnostics.log("[AutoMix iOS 27] DROP TRIGGER FIRED -> Hard cut to: \(targetTrack?.title ?? "Unknown")", tag: "AUTOMIX")
+    }
+
+    func resetDrop() {
+        isDropTriggered = false
+        isPostMixActive = false
+    }
 
     /// Execute the plan's action envelopes (TZ Section 15): piecewise ramps
     /// over the plan's keyframes for one lane/parameter. A keyframe

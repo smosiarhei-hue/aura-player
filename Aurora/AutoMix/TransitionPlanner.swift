@@ -80,6 +80,20 @@ nonisolated enum TransitionPlanner {
             source: sourceAnalysis,
             target: targetAnalysis
         )
+        let targetDropTime: Double = {
+            if let firstDrop = targetAnalysis.drops.first(where: { $0 > 0.5 && $0 <= 30.0 }) {
+                return firstDrop
+            }
+            if targetAnalysis.introEnd > 1.0 && targetAnalysis.introEnd <= 30.0 {
+                return targetAnalysis.nearestDownbeat(to: targetAnalysis.introEnd, tolerance: 2.0) ?? targetAnalysis.introEnd
+            }
+            if let firstBeat = targetAnalysis.firstBeat, firstBeat > 0.5 {
+                return firstBeat
+            }
+            let bpm = targetAnalysis.bpm ?? 120.0
+            let barLength = 240.0 / bpm
+            return barLength * 2.0
+        }()
         let reverb = chooseReverbPreset(
             source: sourceAnalysis,
             target: targetAnalysis,
@@ -97,7 +111,7 @@ nonisolated enum TransitionPlanner {
                 transitionStart: cue,
                 transitionEnd: min(sourceDuration, cue + duration)
             ),
-            targetTrack: TransitionTargetTrackInfo(startPosition: targetStart),
+            targetTrack: TransitionTargetTrackInfo(startPosition: targetStart, dropTime: targetDropTime),
             tempo: TransitionTempoInfo(
                 targetBPM: normalizedBPM(targetAnalysis.bpm) ?? normalizedBPM(sourceAnalysis.bpm) ?? 120,
                 sourcePlaybackRate: rhythm.sourceRate,

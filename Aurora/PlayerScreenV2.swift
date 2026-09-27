@@ -179,6 +179,23 @@ struct PlayerScreenV2: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .didTriggerAutoMixDrop)) { note in
+            // iOS 27 AutoMix ТЗ Section 2.2: Instant HARD CUT to Track B (no fade/dissolve allowed)
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                if let next = (note.object as? Track) ?? player.incomingTrack {
+                    artworkTrackId = next.id
+                    paletteTrackId = next.id
+                    if let cached = LibraryStore.cachedArtworkImage(for: next) {
+                        currentArtworkImage = cached
+                    }
+                    if !next.palette.isEmpty {
+                        artworkPaletteColors = next.palette
+                    }
+                }
+            }
+        }
         .onChange(of: player.isTransitionActive) { _, isActive in
             if isActive, let outgoing = player.currentTrack, let incoming = player.incomingTrack {
                 Task {
@@ -254,25 +271,41 @@ struct PlayerScreenV2: View {
                                         .init(color: .black.opacity(0.75), location: 1)],
                                 startPoint: .top, endPoint: .bottom)
             } else {
-                let bgImg = currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
-                if let bgImg {
-                    Image(uiImage: bgImg)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .blur(radius: 12)
-                        .scaleEffect(1.08)
-                        .opacity(0.28)
-                        .clipped()
-                        .drawingGroup()
-                } else {
-                    gradientBackground
+                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { _ in
+                    let bgImg = currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
+                    let analyzer = SpectrumAnalyzer.shared
+                    let kick = analyzer.dynamicKick
+                    let bass = analyzer.dynamicBass
+                    let pulseScale: CGFloat = 1.0 + CGFloat(kick) * 0.038
+                    let pulseBrightness: Double = Double(kick) * 0.12
+                    let pulseSaturation: Double = 1.0 + Double(kick) * 0.22
+
+                    ZStack {
+                        if let bgImg {
+                            Image(uiImage: bgImg)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .blur(radius: 14)
+                                .scaleEffect(1.08 * pulseScale)
+                                .opacity(0.28 + Double(bass) * 0.08)
+                                .brightness(pulseBrightness)
+                                .saturation(pulseSaturation)
+                                .clipped()
+                                .drawingGroup()
+                        } else {
+                            gradientBackground
+                                .brightness(pulseBrightness)
+                                .saturation(pulseSaturation)
+                        }
+                        AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3)))
+                            .opacity(0.25 + Double(kick) * 0.15)
+                        LinearGradient(stops: [.init(color: .black.opacity(0.10), location: 0),
+                                                .init(color: .black.opacity(0.35), location: 0.50),
+                                                .init(color: .black.opacity(0.85), location: 1.0)],
+                                        startPoint: .top, endPoint: .bottom)
+                    }
                 }
-                AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3))).opacity(0.25)
-                LinearGradient(stops: [.init(color: .black.opacity(0.10), location: 0),
-                                        .init(color: .black.opacity(0.35), location: 0.50),
-                                        .init(color: .black.opacity(0.85), location: 1.0)],
-                                startPoint: .top, endPoint: .bottom)
             }
         }.allowsHitTesting(false)
     }
@@ -364,7 +397,6 @@ struct PlayerScreenV2: View {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }
                 }
             })
-        .animation(.easeInOut(duration: 0.35), value: player.isTransitionActive)
         .animation(AG.slowSpring, value: player.isPlaying)
     }
 
@@ -869,7 +901,13 @@ struct PlayerScreenV2: View {
     private func updatePalette(from image: UIImage) async {
         let hexes = await Task.detached(priority: .utility) { LibraryStore.artworkPalette(from: image) }.value
         let colors = hexes.compactMap(Color.init(hex:)); guard !colors.isEmpty else { return }
-        withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
+        if AutoMixDJEngine.shared.isDropTriggered {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { artworkPaletteColors = colors }
+        } else {
+            withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
+        }
     }
     private func refreshPalette() async {
         guard let track, paletteTrackId != track.id else { return }

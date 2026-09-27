@@ -52,9 +52,8 @@ final class ActivePlayerPresentation {
     }
 
     // Artwork, title, seek and transport controls must always address the deck
-    // that is currently audible. The incoming track is visualized separately by
-    // the transition overlay and is promoted only after the handoff succeeds.
-    var displayTrack: Track? { currentTrack }
+    // that is currently audible. In iOS 27 AutoMix, this switches on the Drop (T=0) hard cut.
+    var displayTrack: Track? { legacy.displayTrack }
 
     var isPlaying: Bool {
         legacy.isPlaying

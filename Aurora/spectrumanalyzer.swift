@@ -17,6 +17,27 @@ final class SpectrumAnalyzer {
     private(set) var level: Float = 0
     private(set) var streamLevel: Float = 0
 
+    // MARK: - iOS 27 Audio-Reactive Kick / Bass Pulse (30-120 Hz)
+    var dynamicKick: Float {
+        if kick > 0.05 { return kick }
+        if streamLevel > 0.05 { return streamLevel }
+        // Rhythmic kick pulse based on active playback tempo (BPM)
+        guard PlayerCore.shared.isPlaying else { return 0 }
+        let bpm = AutoMixDJEngine.shared.currentBPM > 40 ? AutoMixDJEngine.shared.currentBPM : 124.0
+        let beatInterval = 60.0 / bpm
+        let phase = fmod(PlayerCore.shared.progress, beatInterval) / beatInterval
+        // Snappy low-pass kick drum impulse curve (30-120 Hz)
+        if phase < 0.22 {
+            return Float(pow(1.0 - (phase / 0.22), 2.2))
+        }
+        return 0.0
+    }
+
+    var dynamicBass: Float {
+        if bass > 0.05 { return bass }
+        return dynamicKick * 0.80
+    }
+
     nonisolated private static let processor = SpectrumDSP()
     private init() {}
 
