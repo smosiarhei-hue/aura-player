@@ -3,7 +3,7 @@ import Foundation
 import AVFoundation
 
 public protocol DJSyncEngine: Sendable {
-    func align(
+    nonisolated func align(
         incoming: AVAudioPCMBuffer,
         plan: DJMixPlan,
         analysis: DJTrackAnalysis
@@ -27,10 +27,10 @@ public enum DJSyncError: LocalizedError {
     }
 }
 
-public final class DefaultDJSyncEngine: DJSyncEngine, @unchecked Sendable {
+public final class DefaultDJSyncEngine: DJSyncEngine, Sendable {
     public init() {}
 
-    public func align(
+    nonisolated public func align(
         incoming: AVAudioPCMBuffer,
         plan: DJMixPlan,
         analysis: DJTrackAnalysis
@@ -57,7 +57,7 @@ public final class DefaultDJSyncEngine: DJSyncEngine, @unchecked Sendable {
         return (stretched, phaseOffset)
     }
 
-    private func timeStretch(buffer: AVAudioPCMBuffer, rate: Float) throws -> AVAudioPCMBuffer {
+    nonisolated private func timeStretch(buffer: AVAudioPCMBuffer, rate: Float) throws -> AVAudioPCMBuffer {
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         let timePitch = AVAudioUnitTimePitch()
@@ -121,7 +121,7 @@ public final class DefaultDJSyncEngine: DJSyncEngine, @unchecked Sendable {
         return outputBuffer
     }
 
-    private func append(buffer source: AVAudioPCMBuffer, to destination: AVAudioPCMBuffer) {
+    nonisolated private func append(buffer source: AVAudioPCMBuffer, to destination: AVAudioPCMBuffer) {
         guard source.frameLength > 0 else { return }
         let channelCount = Int(source.format.channelCount)
         let sourceFrames = Int(source.frameLength)

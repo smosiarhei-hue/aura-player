@@ -2,25 +2,26 @@
 import Foundation
 import AVFoundation
 
-public enum PreparedTransition {
+public enum PreparedTransition: Sendable {
     case hardCut
     case simpleCrossfade(duration: TimeInterval)
     case offlineRenderedMix(plan: DJMixPlan, buffer: AVAudioPCMBuffer)
 }
 
-public actor DJAutoMixCoordinator {
+@MainActor
+public final class DJAutoMixCoordinator {
     public static let shared = DJAutoMixCoordinator()
 
-    public let analyzer: DJTrackAnalyzer
-    public let planner: DJTransitionPlanner
-    public let syncEngine: DJSyncEngine
-    public let renderer: DJMixRenderer
+    public let analyzer: any DJTrackAnalyzer
+    public let planner: any DJTransitionPlanner
+    public let syncEngine: any DJSyncEngine
+    public let renderer: any DJMixRenderer
 
     public init(
-        analyzer: DJTrackAnalyzer = MockTrackAnalyzer(),
-        planner: DJTransitionPlanner = DefaultDJTransitionPlanner(),
-        syncEngine: DJSyncEngine = DefaultDJSyncEngine(),
-        renderer: DJMixRenderer = DefaultDJMixRenderer()
+        analyzer: any DJTrackAnalyzer = MockTrackAnalyzer(),
+        planner: any DJTransitionPlanner = DefaultDJTransitionPlanner(),
+        syncEngine: any DJSyncEngine = DefaultDJSyncEngine(),
+        renderer: any DJMixRenderer = DefaultDJMixRenderer()
     ) {
         self.analyzer = analyzer
         self.planner = planner

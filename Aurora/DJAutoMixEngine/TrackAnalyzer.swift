@@ -25,24 +25,19 @@ public actor DJTrackAnalysisCache {
     }
 }
 
-public final class MockTrackAnalyzer: DJTrackAnalyzer, @unchecked Sendable {
+public actor MockTrackAnalyzer: DJTrackAnalyzer {
     private var stubs: [URL: DJTrackAnalysis] = [:]
     private var defaultStub: DJTrackAnalysis?
-    private let lock = NSLock()
 
     public init(defaultStub: DJTrackAnalysis? = nil) {
         self.defaultStub = defaultStub
     }
 
     public func stub(url: URL, analysis: DJTrackAnalysis) {
-        lock.lock()
-        defer { lock.unlock() }
         stubs[url] = analysis
     }
 
     public func setDefault(_ analysis: DJTrackAnalysis) {
-        lock.lock()
-        defer { lock.unlock() }
         defaultStub = analysis
     }
 
@@ -52,10 +47,7 @@ public final class MockTrackAnalyzer: DJTrackAnalyzer, @unchecked Sendable {
             return cached
         }
 
-        lock.lock()
         let stub = stubs[url] ?? defaultStub
-        lock.unlock()
-
         if let stub {
             await DJTrackAnalysisCache.shared.set(key: cacheKey, analysis: stub)
             return stub

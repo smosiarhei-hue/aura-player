@@ -4,7 +4,7 @@ import AVFoundation
 import Accelerate
 
 public protocol DJMixRenderer: Sendable {
-    func renderTransition(
+    nonisolated func renderTransition(
         plan: DJMixPlan,
         outgoing: AVAudioPCMBuffer,
         incoming: AVAudioPCMBuffer
@@ -28,10 +28,10 @@ public enum DJMixRenderError: LocalizedError {
     }
 }
 
-public final class DefaultDJMixRenderer: DJMixRenderer, @unchecked Sendable {
+public final class DefaultDJMixRenderer: DJMixRenderer, Sendable {
     public init() {}
 
-    public func renderTransition(
+    nonisolated public func renderTransition(
         plan: DJMixPlan,
         outgoing: AVAudioPCMBuffer,
         incoming: AVAudioPCMBuffer
@@ -73,7 +73,7 @@ public final class DefaultDJMixRenderer: DJMixRenderer, @unchecked Sendable {
         }
     }
 
-    private func renderViaEngine(
+    nonisolated private func renderViaEngine(
         plan: DJMixPlan,
         outgoing: AVAudioPCMBuffer,
         incoming: AVAudioPCMBuffer,
@@ -162,7 +162,7 @@ public final class DefaultDJMixRenderer: DJMixRenderer, @unchecked Sendable {
         return output
     }
 
-    private func renderViaAccelerateDSP(
+    nonisolated private func renderViaAccelerateDSP(
         plan: DJMixPlan,
         outgoing: AVAudioPCMBuffer,
         incoming: AVAudioPCMBuffer,
@@ -202,7 +202,7 @@ public final class DefaultDJMixRenderer: DJMixRenderer, @unchecked Sendable {
         return output
     }
 
-    private func volumeGains(progress: Double, curve: FadeCurve) -> (outgoing: Float, incoming: Float) {
+    nonisolated private func volumeGains(progress: Double, curve: FadeCurve) -> (outgoing: Float, incoming: Float) {
         let p = min(1.0, max(0.0, progress))
         switch curve {
         case .linear:
@@ -238,7 +238,7 @@ public final class DefaultDJMixRenderer: DJMixRenderer, @unchecked Sendable {
         }
     }
 
-    private func append(buffer source: AVAudioPCMBuffer, to destination: AVAudioPCMBuffer) {
+    nonisolated private func append(buffer source: AVAudioPCMBuffer, to destination: AVAudioPCMBuffer) {
         guard source.frameLength > 0 else { return }
         let channelCount = Int(source.format.channelCount)
         let sourceFrames = Int(source.frameLength)

@@ -2,10 +2,10 @@
 import Foundation
 
 public protocol DJTransitionPlanner: Sendable {
-    func plan(outgoing: DJTrackAnalysis, incoming: DJTrackAnalysis) -> DJTransitionType
+    nonisolated func plan(outgoing: DJTrackAnalysis, incoming: DJTrackAnalysis) -> DJTransitionType
 }
 
-public struct DefaultDJTransitionPlanner: DJTransitionPlanner {
+public struct DefaultDJTransitionPlanner: DJTransitionPlanner, Sendable {
     public var maxTempoDiffPct: Double = 0.06       // ≤ 6% разница темпа
     public var minConfidence: Double = 0.65         // Минимальная достоверность анализа
     public var minSilenceForCrossfade: TimeInterval = 0.30 // ≥ 300 мс тишины для simpleCrossfade
@@ -26,7 +26,7 @@ public struct DefaultDJTransitionPlanner: DJTransitionPlanner {
         self.targetMixBars = targetMixBars
     }
 
-    public func plan(outgoing: DJTrackAnalysis, incoming: DJTrackAnalysis) -> DJTransitionType {
+    nonisolated public func plan(outgoing: DJTrackAnalysis, incoming: DJTrackAnalysis) -> DJTransitionType {
         // 1. Проверка уверенности анализа (п. 4 ТЗ: Низкий confidence -> hardCut)
         guard outgoing.confidence >= minConfidence, incoming.confidence >= minConfidence else {
             return .hardCut
@@ -63,7 +63,7 @@ public struct DefaultDJTransitionPlanner: DJTransitionPlanner {
 
     /// Сравнение темпа с учетом half-time и double-time:
     /// Возвращает ближайший эквивалентный темп, процент расхождения и коэффициент растяжения.
-    public func matchTempo(outgoingBPM: Double, incomingBPM: Double) -> (isCompatible: Bool, tempoRatio: Double, diffPct: Double) {
+    nonisolated public func matchTempo(outgoingBPM: Double, incomingBPM: Double) -> (isCompatible: Bool, tempoRatio: Double, diffPct: Double) {
         guard outgoingBPM > 30, incomingBPM > 30 else {
             return (false, 1.0, 1.0)
         }
@@ -78,7 +78,7 @@ public struct DefaultDJTransitionPlanner: DJTransitionPlanner {
         return (isCompatible, tempoRatio, diffPct)
     }
 
-    private func buildDJMixPlan(
+    nonisolated private func buildDJMixPlan(
         outgoing: DJTrackAnalysis,
         incoming: DJTrackAnalysis,
         tempoRatio: Double,

@@ -425,7 +425,7 @@ class AntigravitySpecTests(unittest.TestCase):
         # 3. TrackAnalyzer protocol and Mock
         analyzer_content = analyzer_file.read_text(encoding="utf-8")
         self.assertIn("protocol DJTrackAnalyzer", analyzer_content)
-        self.assertIn("class MockTrackAnalyzer", analyzer_content)
+        self.assertIn("MockTrackAnalyzer", analyzer_content)
         self.assertIn("actor DJTrackAnalysisCache", analyzer_content)
 
         # 4. TransitionPlanner with 6% BPM threshold, double/half time, and fallbacks
@@ -450,7 +450,7 @@ class AntigravitySpecTests(unittest.TestCase):
 
         # 7. Pipeline coordinator
         coord_content = coord_file.read_text(encoding="utf-8")
-        self.assertIn("actor DJAutoMixCoordinator", coord_content)
+        self.assertIn("DJAutoMixCoordinator", coord_content)
         self.assertIn("prepareTransition", coord_content)
 
 
