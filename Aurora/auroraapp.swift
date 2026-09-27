@@ -27,20 +27,18 @@ enum AppTab: String, CaseIterable, Identifiable {
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
-    @State private var v2 = AutoMixV2Runtime.shared
-    @State private var engineSelection = AutoMixEngineSelectionStore.shared
     @State private var router = PlaybackCommandRouter.shared
     @State private var tab: AppTab = .wave
     @State private var showPlayer = false
     @Namespace private var playerTransition
     static let playerZoomID = "now-playing-artwork"
-    private var v2OwnsPlayback: Bool { router.owner == .autoMixV2 && v2.currentTrack != nil }
-    private var neuroOwnsPlayback: Bool { router.owner == .neuroMix && NeuroMixRuntime.shared.currentTrack != nil }
+    private var v2OwnsPlayback: Bool { false }
+    private var neuroOwnsPlayback: Bool { false }
     private var presentedTrack: Track? {
-        neuroOwnsPlayback ? NeuroMixRuntime.shared.currentTrack : (v2OwnsPlayback ? v2.currentTrack : player.currentTrack)
+        player.currentTrack
     }
     private var presentedIsPlaying: Bool {
-        neuroOwnsPlayback ? NeuroMixRuntime.shared.isPlaying : (v2OwnsPlayback ? v2.isPlaying : player.isPlaying)
+        player.isPlaying
     }
     private var miniVisible: Bool {
         guard let track = presentedTrack else { return false }
@@ -82,12 +80,8 @@ struct RootView: View {
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in showPlayer = true }
         .onContinueUserActivity("com.apple.mediaitem") { _ in showPlayer = true }
         .onChange(of: player.currentTrack?.id) { _, _ in rememberCurrentTrack() }
-        .onChange(of: v2.currentTrack?.id) { _, _ in rememberCurrentTrack() }
         .onChange(of: player.isPlaying) { _, playing in
-            if !v2OwnsPlayback, playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
-        }
-        .onChange(of: v2.isPlaying) { _, playing in
-            if v2OwnsPlayback, playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
+            if playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
     }
     private func rememberCurrentTrack() {

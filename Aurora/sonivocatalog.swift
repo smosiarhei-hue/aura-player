@@ -230,9 +230,7 @@ enum SonivoPlay {
         }
 
         service.beginStationSession(station.stationId)
-        let active = AutoMixV2Runtime.shared.currentTrack
-            ?? NeuroMixRuntime.shared.currentTrack
-            ?? PlayerCore.shared.currentTrack
+        let active = PlayerCore.shared.currentTrack
 
         let favorites = LibraryStore.shared.favorites
         let lastLiked = favorites.first
@@ -287,15 +285,7 @@ enum SonivoPlay {
                 .map { service.convertToTrack($0) }
                 .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
 
-            if PlaybackCommandRouter.shared.owner == .autoMixV2 {
-                guard let current = AutoMixV2Runtime.shared.currentTrack else {
-                    if !startedImmediately, let first = filtered.first { router.play(first, queue: filtered) }
-                    return
-                }
-                var newQueue = filtered.filter { $0.id != current.id }
-                newQueue.insert(current, at: 0)
-                AutoMixV2Runtime.shared.replaceQueue(newQueue)
-            } else if let current = PlayerCore.shared.currentTrack {
+            if let current = PlayerCore.shared.currentTrack {
                 var newQueue = filtered.filter { $0.id != current.id }
                 newQueue.insert(current, at: 0)
                 PlayerCore.shared.queue = newQueue

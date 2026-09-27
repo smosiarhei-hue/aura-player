@@ -251,13 +251,7 @@ final class MoodRadioEngine {
                 }
             } else {
                 self.queue.append(contentsOf: freshSequenced)
-                if PlaybackCommandRouter.shared.owner == .autoMixV2 {
-                    AutoMixV2Runtime.shared.appendQueue(freshSequenced)
-                } else if PlaybackCommandRouter.shared.owner == .neuroMix {
-                    NeuroMixRuntime.shared.appendQueue(freshSequenced)
-                } else {
-                    PlayerCore.shared.appendToQueue(freshSequenced)
-                }
+                PlayerCore.shared.appendToQueue(freshSequenced)
             }
         }
     }
@@ -407,13 +401,7 @@ final class MoodRadioEngine {
         }
         guard !fresh.isEmpty else { return }
         queue.append(contentsOf: fresh)
-        if PlaybackCommandRouter.shared.owner == .autoMixV2 {
-            AutoMixV2Runtime.shared.appendQueue(fresh)
-        } else if PlaybackCommandRouter.shared.owner == .neuroMix {
-            NeuroMixRuntime.shared.appendQueue(fresh)
-        } else {
-            PlayerCore.shared.appendToQueue(fresh)
-        }
+        PlayerCore.shared.appendToQueue(fresh)
     }
 
     // MARK: - API: Сигнал обратной связи (POST /mood/feedback)
@@ -635,13 +623,7 @@ final class MoodRadioEngine {
         let sequenced = sequenceCandidates(converted, targetVector: sessionVector, count: 24)
         if !sequenced.isEmpty {
             queue.append(contentsOf: sequenced)
-            if PlaybackCommandRouter.shared.owner == .autoMixV2 {
-                AutoMixV2Runtime.shared.appendQueue(sequenced)
-            } else if PlaybackCommandRouter.shared.owner == .neuroMix {
-                NeuroMixRuntime.shared.appendQueue(sequenced)
-            } else {
-                PlayerCore.shared.appendToQueue(sequenced)
-            }
+            PlayerCore.shared.appendToQueue(sequenced)
         }
     }
 

@@ -38,23 +38,17 @@ final class ActivePlayerPresentation {
         self.router = router
     }
 
-    private var v2OwnsPlayback: Bool {
-        router.owner == .autoMixV2 && runtime.currentTrack != nil
-    }
-    private var neuroOwnsPlayback: Bool {
-        router.owner == .neuroMix && neuroRuntime.currentTrack != nil
-    }
-    var isV2Enabled: Bool { v2OwnsPlayback || neuroOwnsPlayback }
+    private var v2OwnsPlayback: Bool { false }
+    private var neuroOwnsPlayback: Bool { false }
+    var isV2Enabled: Bool { false }
     var currentTrack: Track? {
-        if neuroOwnsPlayback { return neuroRuntime.currentTrack }
-        if v2OwnsPlayback { return runtime.currentTrack }
-        return legacy.currentTrack ?? runtime.currentTrack ?? neuroRuntime.currentTrack
+        legacy.currentTrack
     }
     var incomingTrack: Track? {
-        v2OwnsPlayback ? runtime.incomingTrack : legacy.incomingTrack
+        legacy.incomingTrack
     }
     var transitionProgress: Double {
-        v2OwnsPlayback ? timelineTransitionProgress : AutoMixDJEngine.shared.transitionProgress
+        AutoMixDJEngine.shared.transitionProgress
     }
 
     // Artwork, title, seek and transport controls must always address the deck
@@ -63,60 +57,37 @@ final class ActivePlayerPresentation {
     var displayTrack: Track? { currentTrack }
 
     var isPlaying: Bool {
-        neuroOwnsPlayback ? neuroRuntime.isPlaying :
-            (v2OwnsPlayback ? (runtime.isPlaying || (runtime.isLoading && timelineAdvancing)) : legacy.isPlaying)
+        legacy.isPlaying
     }
     var isLoading: Bool {
-        router.isBusy || (v2OwnsPlayback && runtime.isLoading && timelineDuration <= 0 && !timelineAdvancing)
+        router.isBusy || legacy.isLoading
     }
     var isTransitionActive: Bool {
-        v2OwnsPlayback ? timelineTransitioning : AutoMixDJEngine.shared.isTransitionActive
+        AutoMixDJEngine.shared.isTransitionActive
     }
     var progress: Double {
-        if neuroOwnsPlayback {
-            return timelineTrackID == neuroRuntime.currentTrack?.id ? timelinePosition : 0
-        }
-        if v2OwnsPlayback {
-            return timelineTrackID == runtime.currentTrack?.id ? timelinePosition : 0
-        }
-        return legacy.progress
+        legacy.progress
     }
     var duration: Double {
-        guard v2OwnsPlayback || neuroOwnsPlayback else { return legacy.duration }
-        let value = neuroOwnsPlayback
-            ? (timelineTrackID == neuroRuntime.currentTrack?.id ? timelineDuration : neuroRuntime.currentTrack?.duration ?? 0)
-            : (timelineTrackID == runtime.currentTrack?.id && timelineDuration > 0
-               ? timelineDuration : runtime.currentTrack?.duration ?? 0)
-        return value.isFinite ? max(0, value) : 0
+        legacy.duration
     }
     var downloadProgress: Double? {
-        if neuroOwnsPlayback { return 1 }
-        if v2OwnsPlayback { return networkFraction }
         if legacy.currentTrack?.isStream == true {
             return legacy.streamBufferFraction > 0 ? legacy.streamBufferFraction : nil
         }
         return 1
     }
     var isDownloading: Bool {
-        v2OwnsPlayback ? networkDownloading :
-            (legacy.streamBufferFraction < 0.99 && legacy.currentTrack?.isStream == true)
+        legacy.streamBufferFraction < 0.99 && legacy.currentTrack?.isStream == true
     }
-    var nextDownloadProgress: Double? { v2OwnsPlayback ? nextNetworkFraction : nil }
-    var isNextDownloading: Bool { v2OwnsPlayback && nextNetworkDownloading }
+    var nextDownloadProgress: Double? { nil }
+    var isNextDownloading: Bool { false }
     var queue: [Track] {
         get {
-            if router.owner == .neuroMix || neuroOwnsPlayback { return neuroRuntime.playbackQueue }
-            if router.owner == .autoMixV2 || v2OwnsPlayback { return runtime.playbackQueue }
-            return legacy.queue
+            legacy.queue
         }
         set {
-            if router.owner == .neuroMix || neuroOwnsPlayback {
-                neuroRuntime.replaceQueue(newValue)
-            } else if router.owner == .autoMixV2 || v2OwnsPlayback {
-                runtime.replaceQueue(newValue)
-            } else {
-                legacy.queue = newValue
-            }
+            legacy.queue = newValue
         }
     }
 
@@ -170,11 +141,7 @@ final class ActivePlayerPresentation {
     func seek(to seconds: Double) { router.seek(to: seconds) }
     func play(_ track: Track) { router.play(track, queue: queue) }
     func removeFromQueue(_ track: Track) {
-        if v2OwnsPlayback {
-            runtime.replaceQueue(runtime.playbackQueue.filter { $0.id != track.id })
-        } else {
-            legacy.removeFromQueue(track)
-        }
+        legacy.removeFromQueue(track)
     }
     func stopAndClear() { router.stopAndClear() }
 

@@ -6,7 +6,6 @@ struct SettingsView: View {
     @State private var player = PlayerCore.shared
     @State private var ym = YandexMusicService.shared
     @State private var socialAuth = SocialAuthStore.shared
-    @State private var engineSelection = AutoMixEngineSelectionStore.shared
     @State private var showYandexAuthSheet = false
     @State private var showEqualizerSheet = false
     @State private var isSyncingLikes = false
@@ -68,22 +67,6 @@ struct SettingsView: View {
                     }
                 }
 
-                Section {
-                    Toggle("AutoMix V2", isOn: $engineSelection.isV2Enabled).tint(settings.accentColor)
-                    Toggle("NeuroMix", isOn: $engineSelection.isNeuroEnabled).tint(settings.accentColor)
-                    LabeledContent(
-                        "Текущий движок",
-                        value: engineSelection.isNeuroEnabled
-                            ? "NeuroMix"
-                            : (engineSelection.isV2Enabled ? "AutoMix V2" : "Обычное воспроизведение")
-                    )
-                    NavigationLink("Диагностика AutoMix V2") { AutoMixV2DiagnosticsView() }
-                } header: {
-                    Text("Движок воспроизведения")
-                } footer: {
-                    Text("Локальные и онлайн-треки используют один граф воспроизведения. EQ, AutoMix и ручные переходы больше не переключаются между плеерами.")
-                }
-
                 Section("Звук") {
                     Button {
                         showEqualizerSheet = true
@@ -116,31 +99,29 @@ struct SettingsView: View {
                     }
                 }
 
-                if !engineSelection.isV2Enabled {
-                    Section {
-                        ForEach([TransitionMode.automix, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
-                            Button { player.transitionMode = mode } label: {
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(mode.rawValue).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                        Text(mode.description).font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if player.transitionMode == mode { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
-                                }.contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                        }
-                        if player.transitionMode == .crossfade {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack { Text("Длительность кроссфейда"); Spacer(); Text(String(format: "%.1f сек", player.crossfadeDuration)).foregroundStyle(.secondary) }
-                                Slider(value: $player.crossfadeDuration, in: 1...12, step: 0.5).tint(settings.accentColor)
-                            }
-                        }
-                    } header: {
-                        Text("Переходы между треками")
-                    } footer: {
-                        Text("AutoMix выполняет умное сведение треков с выравниванием по тактовой сетке, срезом басов (Bass-Swap) и вокальным дакингом.")
+                Section {
+                    ForEach([TransitionMode.automix, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
+                        Button { player.transitionMode = mode } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(mode.rawValue).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                    Text(mode.description).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if player.transitionMode == mode { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain)
                     }
+                    if player.transitionMode == .crossfade {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack { Text("Длительность кроссфейда"); Spacer(); Text(String(format: "%.1f сек", player.crossfadeDuration)).foregroundStyle(.secondary) }
+                            Slider(value: $player.crossfadeDuration, in: 1...12, step: 0.5).tint(settings.accentColor)
+                        }
+                    }
+                } header: {
+                    Text("Переходы между треками")
+                } footer: {
+                    Text("AutoMix (iOS 27 DJ Engine) выполняет гармоническое сведение (Camelot Wheel), фазовое выравнивание битов (Beat Sync), срез басов (Bass Swap) и 3-фазный мэшап треков.")
                 }
 
                 Section {
