@@ -82,7 +82,12 @@ final class LibraryStore {
     // MARK: - Playlists Management
 
     @discardableResult
-    func createPlaylist(title: String, coverGradient: [String]? = nil) -> Playlist {
+    func createPlaylist(
+        title: String,
+        coverGradient: [String]? = nil,
+        coverURL: String? = nil,
+        initialTracks: [Track] = []
+    ) -> Playlist {
         let trimmed = title.trimmingCharacters(in: .whitespaces)
         let resolvedTitle = trimmed.isEmpty ? "Новый плейлист" : trimmed
         let gradients = [
@@ -92,8 +97,29 @@ final class LibraryStore {
             ["#10B981", "#6366F1"],
             ["#EC4899", "#F59E0B"]
         ]
-        let p = Playlist(title: resolvedTitle, coverGradient: coverGradient ?? gradients.randomElement() ?? ["#FF455B", "#9333EA"])
+        let resolvedCover = coverURL ?? initialTracks.first(where: { $0.coverURL != nil && !($0.coverURL?.isEmpty ?? true) })?.coverURL
+        let p = Playlist(
+            title: resolvedTitle,
+            trackIds: initialTracks.map(\.id),
+            coverGradient: coverGradient ?? gradients.randomElement() ?? ["#FF455B", "#9333EA"],
+            coverURL: resolvedCover,
+            cachedTracks: initialTracks
+        )
         playlists.insert(p, at: 0)
+        if !initialTracks.isEmpty {
+            var currentTracks = tracks
+            let existingIds = Set(currentTracks.map(\.id))
+            var addedAny = false
+            for track in initialTracks where !existingIds.contains(track.id) {
+                currentTracks.append(track)
+                addedAny = true
+            }
+            self.tracks = currentTracks
+            if addedAny {
+                persistTracks()
+            }
+        }
+        persistPlaylists()
         return p
     }
 
@@ -102,21 +128,33 @@ final class LibraryStore {
         // Ensure track is in library
         if !tracks.contains(where: { $0.id == track.id }) {
             tracks.append(track)
+            persistTracks()
         }
         if !playlists[idx].trackIds.contains(track.id) {
             playlists[idx].trackIds.append(track.id)
-            persistPlaylists()
         }
+        if !playlists[idx].cachedTracks.contains(where: { $0.id == track.id }) {
+            playlists[idx].cachedTracks.append(track)
+        }
+        if playlists[idx].coverURL == nil || playlists[idx].coverURL?.isEmpty == true {
+            playlists[idx].coverURL = track.coverURL
+        }
+        persistPlaylists()
     }
 
     func addTracksToPlaylist(tracks newTracks: [Track], playlistId: UUID) {
         guard let idx = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
         var currentTracks = tracks
         let existingIds = Set(currentTracks.map(\.id))
+        var addedAny = false
         for track in newTracks where !existingIds.contains(track.id) {
             currentTracks.append(track)
+            addedAny = true
         }
         self.tracks = currentTracks
+        if addedAny {
+            persistTracks()
+        }
 
         var currentPlaylistTrackIds = playlists[idx].trackIds
         let playlistIdSet = Set(currentPlaylistTrackIds)
@@ -124,12 +162,24 @@ final class LibraryStore {
             currentPlaylistTrackIds.append(track.id)
         }
         playlists[idx].trackIds = currentPlaylistTrackIds
+
+        var cached = playlists[idx].cachedTracks
+        let cachedIdSet = Set(cached.map(\.id))
+        for track in newTracks where !cachedIdSet.contains(track.id) {
+            cached.append(track)
+        }
+        playlists[idx].cachedTracks = cached
+
+        if playlists[idx].coverURL == nil || playlists[idx].coverURL?.isEmpty == true {
+            playlists[idx].coverURL = newTracks.first(where: { $0.coverURL != nil && !($0.coverURL?.isEmpty ?? true) })?.coverURL
+        }
         persistPlaylists()
     }
 
     func removeTrackFromPlaylist(trackId: UUID, playlistId: UUID) {
         guard let idx = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
         playlists[idx].trackIds.removeAll { $0 == trackId }
+        playlists[idx].cachedTracks.removeAll { $0.id == trackId }
         persistPlaylists()
     }
 
@@ -143,8 +193,16 @@ final class LibraryStore {
     }
 
     func tracks(for playlist: Playlist) -> [Track] {
-        let dict = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
-        return playlist.trackIds.compactMap { dict[$0] }
+        let cachedDict = Dictionary(playlist.cachedTracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let libraryDict = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+        let resolved = playlist.trackIds.compactMap { id in
+            libraryDict[id] ?? cachedDict[id]
+        }
+        if !resolved.isEmpty {
+            return resolved
+        }
+        return playlist.cachedTracks
     }
 
     // MARK: - Favorites (Works for BOTH local and online tracks!)

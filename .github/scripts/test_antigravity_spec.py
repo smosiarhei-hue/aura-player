@@ -310,8 +310,41 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("extendPlaylistBy50", as_content)
         self.assertIn("+50 ещё", as_content)
 
+    def test_playlist_cover_art_and_collection_navigation(self):
+        models_file = self.repo_root / "Aurora" / "models.swift"
+        models_content = models_file.read_text(encoding="utf-8")
+        self.assertIn("var coverURL: String? = nil", models_content)
+        self.assertIn("var cachedTracks: [Track] = []", models_content)
+
+        visuals_file = self.repo_root / "Aurora" / "visuals.swift"
+        vis_content = visuals_file.read_text(encoding="utf-8")
+        self.assertIn("struct PlaylistCoverArtView: View", vis_content)
+        self.assertIn("resolvedCoverURL", vis_content)
+
+        lib_store_file = self.repo_root / "Aurora" / "librarystore.swift"
+        store_content = lib_store_file.read_text(encoding="utf-8")
+        self.assertIn("uniquingKeysWith: { a, _ in a }", store_content)
+        self.assertIn("return playlist.cachedTracks", store_content)
+
+        lib_view_file = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_content = lib_view_file.read_text(encoding="utf-8")
+        self.assertIn("PlaylistCoverArtView(", lib_content)
+        self.assertIn(".contentShape(Rectangle())", lib_content)
+
+        gen_file = self.repo_root / "Aurora" / "Dify" / "AIPlaylistGeneratorService.swift"
+        gen_content = gen_file.read_text(encoding="utf-8")
+        self.assertIn("YandexMusicService.shared.getChart()", gen_content)
+        self.assertIn("coverURL = tracks.first(where:", gen_content)
+
+        as_file = self.repo_root / "Aurora" / "Dify" / "AIMusicAssistantView.swift"
+        as_content = as_file.read_text(encoding="utf-8")
+        self.assertIn("VibeEqualizerWaveView", as_content)
+        self.assertIn("vibePresets", as_content)
+        self.assertIn("modernPlaylistShowcaseCard", as_content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

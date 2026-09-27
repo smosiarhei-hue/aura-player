@@ -413,19 +413,12 @@ struct LibraryView: View {
                     ForEach(library.playlists) { playlist in
                         NavigationLink(destination: PlaylistDetailView(playlist: playlist)) {
                             VStack(alignment: .leading, spacing: 8) {
-                                ZStack {
-                                    LinearGradient(
-                                        colors: playlist.coverGradient.compactMap { Color(hex: $0) },
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-
-                                    Image(systemName: "music.note.list")
-                                        .font(.system(size: 36, weight: .bold))
-                                        .foregroundStyle(AG.ink)
-                                }
+                                PlaylistCoverArtView(
+                                    playlist: playlist,
+                                    cornerRadius: 16,
+                                    size: nil
+                                )
                                 .frame(height: 140)
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                 .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
 
                                 Text(playlist.title)
@@ -437,8 +430,10 @@ struct LibraryView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .contentShape(Rectangle())
                         .contextMenu {
                             Button(role: .destructive) {
                                 library.deletePlaylist(playlist)
@@ -476,19 +471,11 @@ struct LibraryView: View {
                     ForEach(library.playlists) { playlist in
                         NavigationLink(destination: PlaylistDetailView(playlist: playlist)) {
                             VStack(alignment: .leading, spacing: 6) {
-                                ZStack {
-                                    LinearGradient(
-                                        colors: playlist.coverGradient.compactMap { Color(hex: $0) },
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-
-                                    Image(systemName: "music.note.list")
-                                        .font(.system(size: 28, weight: .bold))
-                                        .foregroundStyle(AG.ink)
-                                }
-                                .frame(width: 130, height: 130)
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                PlaylistCoverArtView(
+                                    playlist: playlist,
+                                    cornerRadius: 16,
+                                    size: CGSize(width: 130, height: 130)
+                                )
                                 .shadow(color: .black.opacity(0.16), radius: 6, y: 3)
 
                                 Text(playlist.title)
@@ -501,8 +488,10 @@ struct LibraryView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .frame(width: 130)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .contentShape(Rectangle())
                     }
                 }
                 .padding(.horizontal, 16)

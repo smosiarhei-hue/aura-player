@@ -110,3 +110,66 @@ struct SmallArtwork: View {
         }
     }
 }
+
+// MARK: - Playlist Cover Art View
+
+struct PlaylistCoverArtView: View {
+    let playlist: Playlist
+    var cornerRadius: CGFloat = 16
+    var size: CGSize? = nil
+
+    private var gradientColors: [Color] {
+        let colors = playlist.coverGradient.compactMap { Color(hex: $0) }
+        return colors.isEmpty ? [Color(hex: "#FF455B") ?? .pink, Color(hex: "#9333EA") ?? .purple] : colors
+    }
+
+    private var resolvedCoverURL: String? {
+        if let cover = playlist.coverURL, !cover.isEmpty {
+            return cover
+        }
+        return playlist.cachedTracks.first(where: { $0.coverURL != nil && !($0.coverURL?.isEmpty ?? true) })?.coverURL
+    }
+
+    var body: some View {
+        ZStack {
+            if let coverStr = resolvedCoverURL, let url = URL(string: coverStr) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    case .failure:
+                        fallbackGradient
+                    case .empty:
+                        ZStack {
+                            fallbackGradient
+                            ProgressView().tint(.white).scaleEffect(0.8)
+                        }
+                    @unknown default:
+                        fallbackGradient
+                    }
+                }
+            } else {
+                fallbackGradient
+            }
+        }
+        .frame(width: size?.width, height: size?.height)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+
+    private var fallbackGradient: some View {
+        ZStack {
+            LinearGradient(
+                colors: gradientColors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: "music.note.list")
+                .font(.system(size: (size?.height ?? 120) * 0.30, weight: .bold))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+        }
+    }
+}
+

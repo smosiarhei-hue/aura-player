@@ -104,20 +104,11 @@ struct PlaylistDetailView: View {
     // MARK: - Hero Header
     private var playlistHeroHeader: some View {
         HStack(spacing: 16) {
-            ZStack {
-                LinearGradient(
-                    colors: currentPlaylist.coverGradient.compactMap { Color(hex: $0) },
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-
-                Image(systemName: "music.note.list")
-                    .font(.system(size: 42, weight: .bold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
-            }
-            .frame(width: 110, height: 110)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            PlaylistCoverArtView(
+                playlist: currentPlaylist,
+                cornerRadius: 22,
+                size: CGSize(width: 110, height: 110)
+            )
             .shadow(color: .black.opacity(0.22), radius: 14, y: 6)
 
             VStack(alignment: .leading, spacing: 6) {

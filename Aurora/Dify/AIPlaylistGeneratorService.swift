@@ -59,6 +59,31 @@ final class AIPlaylistGeneratorService {
             }
         }
 
+        // 2-й уровень top-up: если всё ещё меньше 50, добираем из горячего чарта
+        if results.count < 50 {
+            if let chartTracks = try? await YandexMusicService.shared.getChart() {
+                for ymTrack in chartTracks {
+                    guard results.count < 50 else { break }
+                    let tr = YandexMusicService.shared.convertToTrack(ymTrack)
+                    if !seenIDs.contains(tr.id) {
+                        seenIDs.insert(tr.id)
+                        results.append(tr)
+                    }
+                }
+            }
+        }
+
+        // 3-й уровень fallback: если всё ещё меньше 50, добираем из локальной медиатеки
+        if results.count < 50 {
+            for tr in LibraryStore.shared.tracks {
+                guard results.count < 50 else { break }
+                if !seenIDs.contains(tr.id) {
+                    seenIDs.insert(tr.id)
+                    results.append(tr)
+                }
+            }
+        }
+
         return results
     }
 
@@ -131,6 +156,19 @@ final class AIPlaylistGeneratorService {
             }
         }
 
+        if resolved.count < 50 {
+            if let chartTracks = try? await YandexMusicService.shared.getChart() {
+                for ymTrack in chartTracks {
+                    guard resolved.count < 50 else { break }
+                    let tr = YandexMusicService.shared.convertToTrack(ymTrack)
+                    let key = "\(tr.artist.lowercased()) \(tr.title.lowercased())"
+                    if !existingIDs.contains(tr.id) && !existingTitles.contains(key) && !resolved.contains(where: { $0.id == tr.id }) {
+                        resolved.append(tr)
+                    }
+                }
+            }
+        }
+
         return resolved
     }
 
@@ -157,7 +195,13 @@ final class AIPlaylistGeneratorService {
         let title = playlist.playlistTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = title.isEmpty ? "AI Подборка" : title
 
-        let newPlaylist = LibraryStore.shared.createPlaylist(title: resolvedTitle)
+        let coverURL = tracks.first(where: { $0.coverURL != nil && !($0.coverURL?.isEmpty ?? true) })?.coverURL
+
+        let newPlaylist = LibraryStore.shared.createPlaylist(
+            title: resolvedTitle,
+            coverURL: coverURL,
+            initialTracks: tracks
+        )
         LibraryStore.shared.addTracksToPlaylist(tracks: tracks, playlistId: newPlaylist.id)
 
         sendCreationNotification(title: resolvedTitle, count: tracks.count)

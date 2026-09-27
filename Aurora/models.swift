@@ -234,6 +234,41 @@ struct Playlist: Identifiable, Codable, Equatable, Sendable {
     var createdAt: Date = Date()
     var trackIds: [UUID] = []
     var coverGradient: [String] = ["#FF455B", "#9333EA"]
+    var coverURL: String? = nil
+    var cachedTracks: [Track] = []
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, createdAt, trackIds, coverGradient, coverURL, cachedTracks
+    }
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        createdAt: Date = Date(),
+        trackIds: [UUID] = [],
+        coverGradient: [String] = ["#FF455B", "#9333EA"],
+        coverURL: String? = nil,
+        cachedTracks: [Track] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.createdAt = createdAt
+        self.trackIds = trackIds
+        self.coverGradient = coverGradient
+        self.coverURL = coverURL
+        self.cachedTracks = cachedTracks
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.trackIds = try container.decodeIfPresent([UUID].self, forKey: .trackIds) ?? []
+        self.coverGradient = try container.decodeIfPresent([String].self, forKey: .coverGradient) ?? ["#FF455B", "#9333EA"]
+        self.coverURL = try container.decodeIfPresent(String.self, forKey: .coverURL)
+        self.cachedTracks = try container.decodeIfPresent([Track].self, forKey: .cachedTracks) ?? []
+    }
 }
 
 // MARK: - Repeat / Shuffle
