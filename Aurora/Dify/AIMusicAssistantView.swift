@@ -7,6 +7,7 @@ struct AIMusicAssistantView: View {
     @ObservedObject private var dify = DifyService.shared
     @ObservedObject private var store = AIMusicCuratorStore.shared
     @State private var player = PlayerCore.shared
+    @State private var settings = SettingsStore.shared
 
     @State private var inputText: String = ""
     @State private var isSending = false

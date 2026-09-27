@@ -189,6 +189,11 @@ enum Haptics {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
+    static func notification(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+        guard SettingsStore.shared.hapticsEnabled else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(type)
+    }
+
     /// Scrubber ticks are opt-in separately: they fire far more often than taps.
     static func scrubTick(_ generator: UISelectionFeedbackGenerator) {
         guard SettingsStore.shared.hapticsEnabled, SettingsStore.shared.scrubHapticsEnabled else { return }
