@@ -167,7 +167,8 @@ final class LyricsService {
             guard !item.id.isEmpty else { continue }
             let itemTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let titleMatches = itemTitle.contains(targetTitle) || targetTitle.contains(itemTitle)
-            let artistMatches = targetArtist.isEmpty || item.artists.contains { $0.name.lowercased().contains(targetArtist) || targetArtist.contains($0.name.lowercased()) }
+            let itemArtist = item.artistName.lowercased()
+            let artistMatches = targetArtist.isEmpty || itemArtist.contains(targetArtist) || targetArtist.contains(itemArtist)
             if titleMatches && (artistMatches || targetArtist == "неизвестный исполнитель") {
                 return item.id
             }
@@ -180,7 +181,8 @@ final class LyricsService {
                 guard !item.id.isEmpty else { continue }
                 let itemTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 let titleMatches = itemTitle.contains(targetTitle) || targetTitle.contains(itemTitle)
-                let artistMatches = item.artists.contains { $0.name.lowercased().contains(targetArtist) || targetArtist.contains($0.name.lowercased()) }
+                let itemArtist = item.artistName.lowercased()
+                let artistMatches = itemArtist.contains(targetArtist) || targetArtist.contains(itemArtist)
                 if titleMatches && artistMatches {
                     return item.id
                 }

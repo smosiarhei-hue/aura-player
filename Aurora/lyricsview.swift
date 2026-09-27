@@ -17,10 +17,11 @@ struct LyricsView: View {
                     AuraLoadingState(title: "Загрузка текста…")
                 } else if let lyrics, !lyrics.lines.isEmpty {
                     if let currentTrack = player.displayTrack,
+                       let lyricsTitle = lyrics.title,
                        !currentTrack.title.isEmpty,
-                       !lyrics.title.isEmpty,
-                       !currentTrack.title.localizedCaseInsensitiveContains(lyrics.title) &&
-                       !lyrics.title.localizedCaseInsensitiveContains(currentTrack.title) {
+                       !lyricsTitle.isEmpty,
+                       !currentTrack.title.localizedCaseInsensitiveContains(lyricsTitle) &&
+                       !lyricsTitle.localizedCaseInsensitiveContains(currentTrack.title) {
                         // Title mismatch guard during track transition
                         AuraLoadingState(title: "Загрузка текста…")
                     } else if lyrics.isSynchronized {
