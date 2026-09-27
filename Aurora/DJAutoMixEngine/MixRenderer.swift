@@ -11,7 +11,7 @@ public protocol DJMixRenderer: Sendable {
     ) async throws -> AVAudioPCMBuffer
 }
 
-public enum DJMixRenderError: LocalizedError {
+nonisolated public enum DJMixRenderError: LocalizedError {
     case invalidBuffers
     case formatMismatch
     case renderEngineFailed(String)

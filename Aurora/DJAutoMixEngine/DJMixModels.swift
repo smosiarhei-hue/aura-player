@@ -1,7 +1,7 @@
 // Path: Aurora/DJAutoMixEngine/DJMixModels.swift
 import Foundation
 
-public struct StructureSegment: Equatable, Sendable, Codable {
+nonisolated public struct StructureSegment: Equatable, Sendable, Codable {
     public let range: Range<TimeInterval>
     public let energy: Double     // 0...1
     public let isVocal: Bool
@@ -13,7 +13,7 @@ public struct StructureSegment: Equatable, Sendable, Codable {
     }
 }
 
-public struct DJTrackAnalysis: Equatable, Sendable, Codable {
+nonisolated public struct DJTrackAnalysis: Equatable, Sendable, Codable {
     public let trackID: UUID
     public let bpm: Double
     public let key: CamelotKey
@@ -44,20 +44,20 @@ public struct DJTrackAnalysis: Equatable, Sendable, Codable {
     }
 }
 
-public enum FadeCurve: String, Codable, Sendable, Equatable {
+nonisolated public enum FadeCurve: String, Codable, Sendable, Equatable {
     case linear
     case equalPower
     case sCurve
     case djMashup
 }
 
-public enum EQBand: String, Codable, Sendable, Equatable {
+nonisolated public enum EQBand: String, Codable, Sendable, Equatable {
     case lowShelf
     case midPeaking
     case highShelf
 }
 
-public struct EQKeyframe: Equatable, Sendable, Codable {
+nonisolated public struct EQKeyframe: Equatable, Sendable, Codable {
     public let time: TimeInterval
     public let band: EQBand
     public let gainDB: Float
@@ -71,7 +71,7 @@ public struct EQKeyframe: Equatable, Sendable, Codable {
     }
 }
 
-public struct DJMixPlan: Equatable, Sendable {
+nonisolated public struct DJMixPlan: Equatable, Sendable {
     public let duration: TimeInterval
     public let outgoingExitPoint: TimeInterval
     public let incomingEntryPoint: TimeInterval
@@ -96,13 +96,13 @@ public struct DJMixPlan: Equatable, Sendable {
     }
 }
 
-public enum DJTransitionType: Equatable, Sendable {
+nonisolated public enum DJTransitionType: Equatable, Sendable {
     case hardCut
     case simpleCrossfade(duration: TimeInterval)
     case djStyleMix(DJMixPlan)
 }
 
-public enum DJAutoMix {
+nonisolated public enum DJAutoMix {
     public typealias TrackAnalysis = DJTrackAnalysis
     public typealias TransitionType = DJTransitionType
     public typealias MixPlan = DJMixPlan

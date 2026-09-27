@@ -1,7 +1,7 @@
 // Path: Aurora/DJAutoMixEngine/CamelotKey.swift
 import Foundation
 
-public struct CamelotKey: Equatable, Sendable, Codable {
+nonisolated public struct CamelotKey: Equatable, Sendable, Codable {
     public enum Letter: String, Codable, Sendable {
         case a // Minor
         case b // Major

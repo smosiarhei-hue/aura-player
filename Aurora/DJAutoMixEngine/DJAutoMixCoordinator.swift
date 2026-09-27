@@ -2,7 +2,7 @@
 import Foundation
 import AVFoundation
 
-public enum PreparedTransition: Sendable {
+nonisolated public enum PreparedTransition: Sendable {
     case hardCut
     case simpleCrossfade(duration: TimeInterval)
     case offlineRenderedMix(plan: DJMixPlan, buffer: AVAudioPCMBuffer)

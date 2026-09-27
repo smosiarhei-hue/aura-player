@@ -10,7 +10,7 @@ public protocol DJSyncEngine: Sendable {
     ) throws -> (buffer: AVAudioPCMBuffer, phaseOffset: TimeInterval)
 }
 
-public enum DJSyncError: LocalizedError {
+nonisolated public enum DJSyncError: LocalizedError {
     case invalidBuffer
     case engineFailed(String)
     case unsupportedFormat
