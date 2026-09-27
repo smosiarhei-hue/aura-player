@@ -13,20 +13,33 @@ final class AIPlaylistGeneratorService {
     func resolveTracks(for suggestions: [AITrackSuggestion]) async -> [Track] {
         guard !suggestions.isEmpty else { return [] }
 
-        // Параллельное асинхронное разрешение с сохранением исходного порядка
-        let indexedSuggestions = Array(suggestions.enumerated())
+        // Параллельно запускаем фоновую предзагрузку чарта для мгновенного top-up при необходимости
+        async let chartPrefetch = try? await YandexMusicService.shared.getChart()
+
+        // 1. Высокоскоростной параллельный поиск с пулом воркеров (max 8 соединений, без блокировки сокетов)
         let resolvedMap: [Int: Track] = await withTaskGroup(of: (Int, Track?).self) { group in
-            for (index, item) in indexedSuggestions {
-                group.addTask {
-                    let matched = await Self.searchSingleTrack(item)
-                    return (index, matched)
+            var dict: [Int: Track] = [:]
+            var iterator = suggestions.enumerated().makeIterator()
+            let maxConcurrent = 8
+
+            for _ in 0..<maxConcurrent {
+                if let (index, item) = iterator.next() {
+                    group.addTask {
+                        let matched = await Self.searchSingleTrack(item)
+                        return (index, matched)
+                    }
                 }
             }
 
-            var dict: [Int: Track] = [:]
             for await (index, track) in group {
                 if let track {
                     dict[index] = track
+                }
+                if let (nextIndex, nextItem) = iterator.next() {
+                    group.addTask {
+                        let matched = await Self.searchSingleTrack(nextItem)
+                        return (nextIndex, matched)
+                    }
                 }
             }
             return dict
@@ -42,26 +55,9 @@ final class AIPlaylistGeneratorService {
             }
         }
 
-        // Интеллектуальный top-up: если найдено меньше 50 треков, дополняем треками артистов из подборки
+        // Мгновенный top-up из предзагруженного чарта (0 мс ожидания)
         if results.count < 50 {
-            let candidateArtists = Array(Set(suggestions.map(\.artist)))
-            for artist in candidateArtists {
-                guard results.count < 50 else { break }
-                let searchResult = await YandexMusicService.shared.searchAllFixed(query: artist)
-                for ymTrack in searchResult.tracks {
-                    let tr = YandexMusicService.shared.convertToTrack(ymTrack)
-                    if !seenIDs.contains(tr.id) {
-                        seenIDs.insert(tr.id)
-                        results.append(tr)
-                        if results.count >= 50 { break }
-                    }
-                }
-            }
-        }
-
-        // 2-й уровень top-up: если всё ещё меньше 50, добираем из горячего чарта
-        if results.count < 50 {
-            if let chartTracks = try? await YandexMusicService.shared.getChart() {
+            if let chartTracks = await chartPrefetch {
                 for ymTrack in chartTracks {
                     guard results.count < 50 else { break }
                     let tr = YandexMusicService.shared.convertToTrack(ymTrack)
@@ -73,7 +69,7 @@ final class AIPlaylistGeneratorService {
             }
         }
 
-        // 3-й уровень fallback: если всё ещё меньше 50, добираем из локальной медиатеки
+        // Резервный fallback: добираем из локальной медиатеки
         if results.count < 50 {
             for tr in LibraryStore.shared.tracks {
                 guard results.count < 50 else { break }
@@ -87,33 +83,18 @@ final class AIPlaylistGeneratorService {
         return results
     }
 
-    /// Трёхуровневый интеллектуальный поиск трека с fallback-стратегией
+    /// Быстрый точный поиск трека в каталоге
     private static func searchSingleTrack(_ item: AITrackSuggestion) async -> Track? {
         let artist = item.artist.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 1. Прямой точный поиск: "Исполнитель Название"
-        if !artist.isEmpty && !title.isEmpty {
-            let direct = await YandexMusicService.shared.searchAllFixed(query: "\(artist) \(title)")
-            if let first = direct.tracks.first {
-                return YandexMusicService.shared.convertToTrack(first)
-            }
-        }
+        guard !artist.isEmpty || !title.isEmpty else { return nil }
 
-        // 2. Поиск только по названию трека
-        if !title.isEmpty {
-            let byTitle = await YandexMusicService.shared.searchAllFixed(query: title)
-            if let first = byTitle.tracks.first {
-                return YandexMusicService.shared.convertToTrack(first)
-            }
-        }
-
-        // 3. Поиск по исполнителю (лучший трек артиста)
-        if !artist.isEmpty {
-            let byArtist = await YandexMusicService.shared.searchAllFixed(query: artist)
-            if let first = byArtist.tracks.first {
-                return YandexMusicService.shared.convertToTrack(first)
-            }
+        // Прямой точный поиск: "Исполнитель Название" (мгновенное нахождение нужного трека)
+        let query = !artist.isEmpty && !title.isEmpty ? "\(artist) \(title)" : (!title.isEmpty ? title : artist)
+        let direct = await YandexMusicService.shared.searchAllFixed(query: query)
+        if let first = direct.tracks.first {
+            return YandexMusicService.shared.convertToTrack(first)
         }
 
         return nil
@@ -139,23 +120,7 @@ final class AIPlaylistGeneratorService {
         var resolved = await resolveTracks(for: aiPlaylist.tracks)
         resolved.removeAll { existingIDs.contains($0.id) || existingTitles.contains("\($0.artist.lowercased()) \($0.title.lowercased())") }
 
-        // Дополняем до 50 треков при необходимости
-        if resolved.count < 50 {
-            let candidateArtists = Array(Set(aiPlaylist.tracks.map(\.artist) + existingTracks.map(\.artist)))
-            for artist in candidateArtists {
-                guard resolved.count < 50 else { break }
-                let searchResult = await YandexMusicService.shared.searchAllFixed(query: artist)
-                for ymTrack in searchResult.tracks {
-                    let tr = YandexMusicService.shared.convertToTrack(ymTrack)
-                    let key = "\(tr.artist.lowercased()) \(tr.title.lowercased())"
-                    if !existingIDs.contains(tr.id) && !existingTitles.contains(key) && !resolved.contains(where: { $0.id == tr.id }) {
-                        resolved.append(tr)
-                        if resolved.count >= 50 { break }
-                    }
-                }
-            }
-        }
-
+        // Дополняем до 50 треков при необходимости без долгих сетевых задержек
         if resolved.count < 50 {
             if let chartTracks = try? await YandexMusicService.shared.getChart() {
                 for ymTrack in chartTracks {
@@ -165,6 +130,16 @@ final class AIPlaylistGeneratorService {
                     if !existingIDs.contains(tr.id) && !existingTitles.contains(key) && !resolved.contains(where: { $0.id == tr.id }) {
                         resolved.append(tr)
                     }
+                }
+            }
+        }
+
+        if resolved.count < 50 {
+            for tr in LibraryStore.shared.tracks {
+                guard resolved.count < 50 else { break }
+                let key = "\(tr.artist.lowercased()) \(tr.title.lowercased())"
+                if !existingIDs.contains(tr.id) && !existingTitles.contains(key) && !resolved.contains(where: { $0.id == tr.id }) {
+                    resolved.append(tr)
                 }
             }
         }

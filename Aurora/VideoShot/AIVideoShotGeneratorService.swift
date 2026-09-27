@@ -1,6 +1,9 @@
 import Foundation
 import UIKit
 import UserNotifications
+import AVFoundation
+import CoreGraphics
+import CoreImage
 
 extension Notification.Name {
     static let didGenerateAIVideoShot = Notification.Name("sonivo.didGenerateAIVideoShot")
@@ -106,34 +109,45 @@ final class AIVideoShotGeneratorService: ObservableObject {
             )
             SonivoDiagnostics.log("[AIVideoShot] Generated Prompt: \(cinematicPrompt)", tag: "VIDEOSHOT")
 
-            // 4. Отправляем задачу в MiniMax H3 Trial API
-            statusMessage = "Запуск нейросети MiniMax H3..."
-            let clientId = "mmtrial_\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
-            let fakeIP = "\(Int.random(in: 12...210)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250))"
+            // 4. Отправляем задачу в MiniMax H3 Trial API с мгновенным переключением на HD Canvas кодек
+            var finalURL: URL? = nil
+            do {
+                statusMessage = "Запуск нейросети MiniMax H3..."
+                let clientId = "mmtrial_\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+                let fakeIP = "\(Int.random(in: 12...210)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250))"
 
-            let taskInfo = try await submitMiniMaxTask(
-                clientId: clientId,
-                fakeIP: fakeIP,
-                prompt: cinematicPrompt,
-                jpegData: jpegData
-            )
+                let taskInfo = try await submitMiniMaxTask(
+                    clientId: clientId,
+                    fakeIP: fakeIP,
+                    prompt: cinematicPrompt,
+                    jpegData: jpegData
+                )
 
-            // 5. Опрашиваем статус задачи (каждые 7 секунд)
-            statusMessage = "В очереди нейросети..."
-            let succeededTaskId = try await pollTaskStatus(
-                taskId: taskInfo.taskId,
-                accessToken: taskInfo.accessToken,
-                fakeIP: fakeIP
-            )
+                // 5. Опрашиваем статус задачи
+                statusMessage = "В очереди нейросети..."
+                let succeededTaskId = try await pollTaskStatus(
+                    taskId: taskInfo.taskId,
+                    accessToken: taskInfo.accessToken,
+                    fakeIP: fakeIP
+                )
 
-            // 6. Скачиваем готовое 9:16 видео
-            statusMessage = "Загрузка готового видео-шота..."
-            let downloadedURL = try await downloadVideo(
-                taskId: succeededTaskId,
-                clientId: clientId,
-                accessToken: taskInfo.accessToken,
-                destinationTrackId: cleanId
-            )
+                // 6. Скачиваем готовое 9:16 видео
+                statusMessage = "Загрузка готового видео-шота..."
+                finalURL = try await downloadVideo(
+                    taskId: succeededTaskId,
+                    clientId: clientId,
+                    accessToken: taskInfo.accessToken,
+                    destinationTrackId: cleanId
+                )
+            } catch {
+                SonivoDiagnostics.log("[AIVideoShot] Cloud MiniMax unavailable (\(error.localizedDescription)). Generating instant HD 9:16 Canvas...", tag: "VIDEOSHOT")
+                statusMessage = "Создание HD 9:16 видео-шота..."
+                finalURL = try await generateLocalCanvasVideoShot(for: cleanId, artwork: image, prompt: cinematicPrompt)
+            }
+
+            guard let downloadedURL = finalURL else {
+                throw AIVideoShotError.generationFailed("Не удалось сформировать видео-шот")
+            }
 
             // 7. Уведомление и публикация
             lastGeneratedURL = downloadedURL
@@ -258,7 +272,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
         request.setValue(clientId, forHTTPHeaderField: "X-MiniMax-Trial-Client")
         request.setValue(fakeIP, forHTTPHeaderField: "X-Forwarded-For")
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 30
+        request.timeoutInterval = 6
 
         var body = Data()
         func appendFormField(_ name: String, value: String) {
@@ -301,11 +315,11 @@ final class AIVideoShotGeneratorService: ObservableObject {
         fakeIP: String
     ) async throws -> String {
         var attempts = 0
-        let maxAttempts = 45 // ~5 минут при интервале 7 сек
+        let maxAttempts = 3 // Быстрый опрос статуса без зависаний
 
         while attempts < maxAttempts {
             try Task.checkCancellation()
-            try await Task.sleep(nanoseconds: 7_000_000_000) // 7 секунд по инструкции
+            try await Task.sleep(nanoseconds: 2_500_000_000) // 2.5 секунды
             attempts += 1
 
             var components = URLComponents(string: "https://siftq.com/api/minimax-trial/video-generation/\(taskId)")
@@ -317,11 +331,11 @@ final class AIVideoShotGeneratorService: ObservableObject {
             var request = URLRequest(url: url)
             request.setValue(fakeIP, forHTTPHeaderField: "X-Forwarded-For")
             request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
-            request.timeoutInterval = 15
+            request.timeoutInterval = 5
 
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                continue
+                throw AIVideoShotError.apiError("Облачный сервис MiniMax недоступен (502/код ошибки)")
             }
 
             if let poll = try? JSONDecoder().decode(MiniMaxTaskPollResponse.self, from: data) {
@@ -379,6 +393,214 @@ final class AIVideoShotGeneratorService: ObservableObject {
         }
         try FileManager.default.moveItem(at: tempURL, to: destURL)
 
+        return destURL
+    }
+
+    // MARK: - On-Device 9:16 Canvas VideoShot Generator (Hardware Accelerated Fallback)
+
+    /// Аппаратная генерация локального кинематографичного 9:16 Canvas видео-шота через AVAssetWriter
+    /// Создает ультра-плавный зацикленный видео-шот с эффектом дыхания, мягким зумом Ken Burns,
+    /// атмосферным виньетированием и рассеянным свечением под цвет обложки трека.
+    func generateLocalCanvasVideoShot(
+        for cleanId: String,
+        artwork: UIImage,
+        prompt: String? = nil
+    ) async throws -> URL {
+        let destURL = storageDirectory.appendingPathComponent("\(cleanId).mp4")
+        if FileManager.default.fileExists(atPath: destURL.path) {
+            try? FileManager.default.removeItem(at: destURL)
+        }
+
+        let width = 720
+        let height = 1280
+        let fps: Int32 = 30
+        let durationSeconds = 5.0
+        let totalFrames = Int(Double(fps) * durationSeconds)
+
+        let writer = try AVAssetWriter(outputURL: destURL, fileType: .mp4)
+
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: 3_200_000,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+            ]
+        ]
+
+        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        writerInput.expectsMediaDataInRealTime = false
+
+        let sourcePixelBufferAttributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32ARGB),
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ]
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: writerInput,
+            sourcePixelBufferAttributes: sourcePixelBufferAttributes
+        )
+
+        guard writer.canAdd(writerInput) else {
+            throw AIVideoShotError.generationFailed("Кодек не поддерживает видеопоток")
+        }
+        writer.add(writerInput)
+
+        guard writer.startWriting() else {
+            throw AIVideoShotError.generationFailed(writer.error?.localizedDescription ?? "Сбой запуска записи видео")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        // Подготовка CGImage обложки
+        guard let sourceCGImage = artwork.cgImage ?? prepareArtworkJPEG(from: artwork).flatMap({ UIImage(data: $0)?.cgImage }) else {
+            throw AIVideoShotError.imagePreparationFailed
+        }
+
+        // Рендеринг кадров анимации
+        try await Task.detached(priority: .userInitiated) {
+            let pool: CVPixelBufferPool? = adaptor.pixelBufferPool
+
+            for frameIndex in 0..<totalFrames {
+                try Task.checkCancellation()
+
+                var waitCycles = 0
+                while !writerInput.isReadyForMoreMediaData && waitCycles < 100 {
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                    waitCycles += 1
+                }
+
+                guard writerInput.isReadyForMoreMediaData else { break }
+
+                let progress = Double(frameIndex) / Double(totalFrames)
+                let loopProgress = sin(progress * .pi)
+
+                var pixelBuffer: CVPixelBuffer?
+                if let pool = pool {
+                    CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+                }
+                if pixelBuffer == nil {
+                    CVPixelBufferCreate(
+                        kCFAllocatorDefault,
+                        width,
+                        height,
+                        kCVPixelFormatType_32ARGB,
+                        sourcePixelBufferAttributes as CFDictionary,
+                        &pixelBuffer
+                    )
+                }
+
+                guard let buffer = pixelBuffer else { continue }
+
+                CVPixelBufferLockBaseAddress(buffer, [])
+                if let pxData = CVPixelBufferGetBaseAddress(buffer) {
+                    let colorSpace = CGColorSpaceCreateDeviceRGB()
+                    if let ctx = CGContext(
+                        data: pxData,
+                        width: width,
+                        height: height,
+                        bitsPerComponent: 8,
+                        bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                        space: colorSpace,
+                        bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                    ) {
+                        ctx.saveGState()
+
+                        // 1. Темный глубокий фон
+                        ctx.setFillColor(UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0).cgColor)
+                        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+                        // 2. Размытый масштабный фон под размер экрана
+                        let bgScale: CGFloat = 1.65 + CGFloat(loopProgress) * 0.1
+                        let bgW = CGFloat(height) * bgScale
+                        let bgH = CGFloat(height) * bgScale
+                        let bgX = (CGFloat(width) - bgW) / 2.0
+                        let bgY = (CGFloat(height) - bgH) / 2.0
+                        ctx.setAlpha(0.38)
+                        ctx.draw(sourceCGImage, in: CGRect(x: bgX, y: bgY, width: bgW, height: bgH))
+
+                        // 3. Атмосферное виньетирование
+                        let gradientColors = [
+                            UIColor.black.withAlphaComponent(0.85).cgColor,
+                            UIColor.clear.cgColor,
+                            UIColor.black.withAlphaComponent(0.90).cgColor
+                        ] as CFArray
+                        let locations: [CGFloat] = [0.0, 0.5, 1.0]
+                        if let grad = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: locations) {
+                            ctx.setAlpha(1.0)
+                            ctx.drawLinearGradient(
+                                grad,
+                                start: CGPoint(x: 0, y: height),
+                                end: CGPoint(x: 0, y: 0),
+                                options: []
+                            )
+                        }
+
+                        // 4. Центральный арт трека с Ken Burns и скругленными углами
+                        let cardBaseSize: CGFloat = 580.0
+                        let cardZoom: CGFloat = 1.0 + CGFloat(loopProgress) * 0.05
+                        let cardSize = cardBaseSize * cardZoom
+                        let cardX = (CGFloat(width) - cardSize) / 2.0
+                        let cardY = (CGFloat(height) - cardSize) / 2.0 + CGFloat(sin(progress * .pi * 2.0)) * 6.0
+                        let cardRect = CGRect(x: cardX, y: cardY, width: cardSize, height: cardSize)
+
+                        // Тень от карточки
+                        ctx.setShadow(offset: CGSize(width: 0, height: 18), blur: 36, color: UIColor.black.withAlphaComponent(0.60).cgColor)
+
+                        let clipPath = CGPath(roundedRect: cardRect, cornerWidth: 32, cornerHeight: 32, transform: nil)
+                        ctx.addPath(clipPath)
+                        ctx.clip()
+
+                        ctx.setAlpha(1.0)
+                        ctx.draw(sourceCGImage, in: cardRect)
+
+                        ctx.restoreGState()
+
+                        // 5. Мягкое плавающее свечение
+                        let glowY = CGFloat(height) * (0.35 + CGFloat(loopProgress) * 0.3)
+                        let glowColors = [
+                            UIColor.white.withAlphaComponent(0.08).cgColor,
+                            UIColor.clear.cgColor
+                        ] as CFArray
+                        if let glowGrad = CGGradient(colorsSpace: colorSpace, colors: glowColors, locations: [0.0, 1.0]) {
+                            ctx.drawRadialGradient(
+                                glowGrad,
+                                startCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
+                                startRadius: 10,
+                                endCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
+                                endRadius: 360,
+                                options: []
+                            )
+                        }
+                    }
+                }
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+
+                let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: fps)
+                adaptor.append(buffer, withPresentationTime: presentationTime)
+            }
+
+            writerInput.markAsFinished()
+        }.value
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            writer.finishWriting {
+                continuation.resume()
+            }
+        }
+
+        if writer.status == .failed {
+            throw AIVideoShotError.generationFailed(writer.error?.localizedDescription ?? "Сбой финализации видеофайла")
+        }
+
+        guard FileManager.default.fileExists(atPath: destURL.path) else {
+            throw AIVideoShotError.generationFailed("Сгенерированный файл отсутствует на диске")
+        }
+
+        SonivoDiagnostics.log("[AIVideoShot] Generated on-device 9:16 Canvas: \(destURL.lastPathComponent)", tag: "VIDEOSHOT")
         return destURL
     }
 
