@@ -553,12 +553,37 @@ struct PlayerScreenV2: View {
 
             HStack(spacing: 10) {
                 if videoShotURL != nil {
-                    GlassIconButton(
-                        systemImage: isVideoShotEnabled ? "video.fill" : "video.slash.fill",
-                        tint: isVideoShotEnabled ? AG.positive : AG.inkMuted,
-                        accessibilityLabel: "Видео-шот",
-                        action: toggleVideoShot
-                    )
+                    Menu {
+                        Button {
+                            toggleVideoShot()
+                        } label: {
+                            Label(
+                                isVideoShotEnabled ? "Скрыть видео-шот" : "Показать видео-шот",
+                                systemImage: isVideoShotEnabled ? "eye.slash" : "eye"
+                            )
+                        }
+
+                        Button {
+                            generateAIVideoShot(forceRegenerate: true)
+                        } label: {
+                            Label("Перегенерировать AI Видео-шот (новый вайб)", systemImage: "arrow.triangle.2.circlepath")
+                        }
+
+                        Divider()
+
+                        Button(role: .destructive) {
+                            deleteCurrentVideoShot()
+                        } label: {
+                            Label("Удалить видео-шот", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: isVideoShotEnabled ? "video.fill" : "video.slash.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(isVideoShotEnabled ? AG.positive : AG.inkMuted)
+                            .frame(width: tapSide, height: tapSide)
+                            .glassCircle()
+                    }
+                    .accessibilityLabel("Меню видео-шота")
                 } else if current != nil {
                     if aiVideoShotService.isGenerating && aiVideoShotService.currentTrackId == current?.id.uuidString {
                         Button {
@@ -575,7 +600,7 @@ struct PlayerScreenV2: View {
                             systemImage: "sparkles.tv",
                             tint: AG.inkMuted,
                             accessibilityLabel: "Создать AI Видео-шот",
-                            action: generateAIVideoShot
+                            action: { generateAIVideoShot() }
                         )
                     }
                 }
@@ -728,12 +753,21 @@ struct PlayerScreenV2: View {
             }
             .disabled(track == nil || AIDJService.shared.isVibeWaveGenerating)
 
-            Button {
-                generateAIVideoShot()
-            } label: {
-                Label("Создать AI Видео-шот (MiniMax H3)", systemImage: "sparkles.tv")
+            if videoShotURL != nil {
+                Button {
+                    generateAIVideoShot(forceRegenerate: true)
+                } label: {
+                    Label("Перегенерировать AI Видео-шот (новый вайб)", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(track == nil || aiVideoShotService.isGenerating)
+            } else {
+                Button {
+                    generateAIVideoShot()
+                } label: {
+                    Label("Создать AI Видео-шот (MiniMax H3)", systemImage: "sparkles.tv")
+                }
+                .disabled(track == nil || aiVideoShotService.isGenerating)
             }
-            .disabled(track == nil || aiVideoShotService.isGenerating)
 
             Button {
                 SettingsStore.shared.isNeuralEngineEnabled.toggle()
@@ -976,17 +1010,18 @@ struct PlayerScreenV2: View {
             teardownVideoLooper()
         }
     }
-    private func generateAIVideoShot() {
+    private func generateAIVideoShot(forceRegenerate: Bool = false) {
         guard let current = track else { return }
         Haptics.tap(.medium)
-        waveMessage = "✨ Запуск создания AI Видео-шота..."
+        waveMessage = forceRegenerate ? "✨ Перегенерация AI Видео-шота под вайб..." : "✨ Запуск создания AI Видео-шота..."
         Task {
             do {
-                let lyricsSnippet = lyrics?.lines.prefix(4).map(\.text).joined(separator: " ")
+                let lyricsSnippet = lyrics?.lines.prefix(16).map(\.text).joined(separator: "\n")
                 let url = try await AIVideoShotGeneratorService.shared.generateVideoShot(
                     for: current,
                     artwork: currentArtworkImage,
-                    lyricsSnippet: lyricsSnippet
+                    lyricsSnippet: lyricsSnippet,
+                    forceRegenerate: forceRegenerate
                 )
                 guard player.currentTrack?.id == current.id else { return }
                 videoShotURL = url
@@ -1000,6 +1035,22 @@ struct PlayerScreenV2: View {
             } catch {
                 waveMessage = "Не удалось создать видео: \(error.localizedDescription)"
                 try? await Task.sleep(for: .seconds(3.5))
+                waveMessage = nil
+            }
+        }
+    }
+
+    private func deleteCurrentVideoShot() {
+        guard let current = track else { return }
+        let cleanId = PlayerCore.yandexTrackID(from: current)
+        AIVideoShotGeneratorService.shared.deleteVideoShot(for: cleanId)
+        teardownVideoLooper()
+        videoShotURL = nil
+        videoShotTrackID = nil
+        waveMessage = "🗑️ Видео-шот удалён"
+        Task {
+            try? await Task.sleep(for: .seconds(2.0))
+            if waveMessage == "🗑️ Видео-шот удалён" {
                 waveMessage = nil
             }
         }

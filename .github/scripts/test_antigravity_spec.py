@@ -275,6 +275,29 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("generateAIVideoShot()", ps_content)
         self.assertIn("didGenerateAIVideoShot", ps_content)
 
+    def test_ai_videoshot_vibe_artist_and_regeneration(self):
+        service_file = self.repo_root / "Aurora" / "VideoShot" / "AIVideoShotGeneratorService.swift"
+        content = service_file.read_text(encoding="utf-8")
+        self.assertIn("struct AudioVibeVisualProfile", content)
+        self.assertIn("class AIVideoShotModelAgent", content)
+        self.assertIn("func resolveArtistProfile(", content)
+        self.assertIn("func prepareCompositeArtwork(", content)
+        self.assertIn("func deleteVideoShot(", content)
+        self.assertIn("forceRegenerate: Bool", content)
+        self.assertIn("durationSeconds = 12.0", content)
+
+        dify_file = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
+        dify_content = dify_file.read_text(encoding="utf-8")
+        self.assertIn("ABSOLUTELY NO KISSING", dify_content)
+        self.assertIn("no kissing", dify_content)
+        self.assertIn("proceduralArtistPrompt", dify_content)
+
+        player_screen = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        ps_content = player_screen.read_text(encoding="utf-8")
+        self.assertIn("Перегенерировать AI Видео-шот (новый вайб)", ps_content)
+        self.assertIn("deleteCurrentVideoShot", ps_content)
+        self.assertIn("forceRegenerate: true", ps_content)
+
 
     def test_playlist_detail_and_curator_50_tracks(self):
         playlist_detail = self.repo_root / "Aurora" / "PlaylistDetailView.swift"

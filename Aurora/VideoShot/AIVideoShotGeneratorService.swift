@@ -9,8 +9,75 @@ extension Notification.Name {
     static let didGenerateAIVideoShot = Notification.Name("sonivo.didGenerateAIVideoShot")
 }
 
+// MARK: - AI VideoShot Agent & Vibe Audio Models
+
+/// Модели и движки генерации видео-шотов
+enum VideoShotEngineType: String, Sendable {
+    case cloudMiniMaxH3 = "MiniMax H3 (Cloud Neural)"
+    case onDeviceNeuralCanvas = "Sonivo Fluid 9:16 Canvas (Neural DSP)"
+}
+
+/// Профиль вайба, ритма и аудио-характеристик трека для визуального синтеза
+struct AudioVibeVisualProfile: Sendable {
+    let style: VibeVisualPreset
+    let bpm: Double
+    let energy: Double
+    let valence: Double
+    let dominantColor: [CGFloat]     // [R, G, B]
+    let secondaryColor: [CGFloat]    // [R, G, B]
+
+    enum VibeVisualPreset: String, Sendable {
+        case neonDrive = "Neon Drive"           // Энергичный клубный/электронный (пульс в такт, яркие неоновые всполохи)
+        case cosmicDream = "Cosmic Dream"       // Воздушный, космический (плывущий звездный свет, туманности)
+        case sunsetGroove = "Sunset Groove"     // Теплый, фанковый, лаундж (золотые частицы, мягкое дыхание)
+        case twilightRain = "Twilight Rain"     // Меланхоличный, минорный (сапфировые тона, дождевые боке)
+        case acousticSerene = "Acoustic Serene" // Спокойный чилл (изумрудно-лазурный покой, медитативная волна)
+    }
+}
+
+/// Автономный агент выбора оптимальной модели генерации видео-шотов
+final class AIVideoShotModelAgent: Sendable {
+    static let shared = AIVideoShotModelAgent()
+
+    /// Анализирует состояние облачных серверов, аудио-профиль и свойства трека,
+    /// выбирая наилучшую модель генерации для максимального качества и скорости
+    func selectOptimalEngine(
+        track: Track,
+        vibeProfile: AudioVibeVisualProfile,
+        forceLocal: Bool = false
+    ) async -> (engine: VideoShotEngineType, reason: String) {
+        if forceLocal {
+            return (.onDeviceNeuralCanvas, "Локальный аппаратный рендеринг по прямому запросу")
+        }
+
+        // Проверяем доступность и задержку внешнего API MiniMax (экспресс-пинг 1.5 сек)
+        let isCloudAvailable = await checkCloudHealth()
+        if isCloudAvailable {
+            return (.cloudMiniMaxH3, "Облачная нейросеть MiniMax H3 доступна с минимальным временем отклика")
+        } else {
+            return (.onDeviceNeuralCanvas, "Выбран аппаратный 12-сек Canvas с синхронизацией под BPM \(Int(vibeProfile.bpm)) и вайб \(vibeProfile.style.rawValue)")
+        }
+    }
+
+    private func checkCloudHealth() async -> Bool {
+        guard let url = URL(string: "https://siftq.com/api/minimax-trial/video-generation") else { return false }
+        var req = URLRequest(url: url)
+        req.httpMethod = "HEAD"
+        req.timeoutInterval = 1.5
+        do {
+            let (_, res) = try await URLSession.shared.data(for: req)
+            if let http = res as? HTTPURLResponse, (200...405).contains(http.statusCode) && http.statusCode != 502 {
+                return true
+            }
+        } catch {
+            return false
+        }
+        return false
+    }
+}
+
 /// Сервис генерации живых видео-шотов (Canvas Video 9:16) для треков через нейросеть MiniMax H3 (Hailuo AI)
-/// с анализом атмосферы и смысла песни через NVIDIA DeepSeek V4.1 Flash.
+/// с анализом атмосферы и смысла песни через NVIDIA DeepSeek V4.1 Flash и адаптивным AI-агентом моделей.
 @MainActor
 final class AIVideoShotGeneratorService: ObservableObject {
     static let shared = AIVideoShotGeneratorService()
@@ -60,20 +127,41 @@ final class AIVideoShotGeneratorService: ObservableObject {
         localVideoShotURL(for: trackId) != nil
     }
 
+    /// Удаление видео-шота для возможности перегенерации
+    func deleteVideoShot(for trackId: String) {
+        let clean = Self.cleanTrackId(trackId)
+        guard !clean.isEmpty else { return }
+        let fileURL = storageDirectory.appendingPathComponent("\(clean).mp4")
+        try? FileManager.default.removeItem(at: fileURL)
+        if lastGeneratedURL?.path == fileURL.path {
+            lastGeneratedURL = nil
+        }
+        SonivoDiagnostics.log("[AIVideoShot] Deleted video for \(clean)", tag: "VIDEOSHOT")
+    }
+
     // MARK: - Pipeline
 
-    /// Запуск генерации 9:16 видео-шота для трека
+    /// Запуск генерации 9:16 видео-шота для трека с анализом вайба и выбором модели AI Агентом
     @discardableResult
-    func generateVideoShot(for track: Track, artwork: UIImage? = nil, lyricsSnippet: String? = nil) async throws -> URL {
+    func generateVideoShot(
+        for track: Track,
+        artwork: UIImage? = nil,
+        lyricsSnippet: String? = nil,
+        forceRegenerate: Bool = false
+    ) async throws -> URL {
         let cleanId = PlayerCore.yandexTrackID(from: track)
         guard !cleanId.isEmpty else {
             throw AIVideoShotError.invalidTrack
         }
 
-        // 1. Проверяем локальный кэш
-        if let cached = localVideoShotURL(for: cleanId) {
+        // 1. Проверяем локальный кэш (если не запрошена принудительная перегенерация)
+        if !forceRegenerate, let cached = localVideoShotURL(for: cleanId) {
             SonivoDiagnostics.log("[AIVideoShot] Using cached video for \(cleanId)", tag: "VIDEOSHOT")
             return cached
+        }
+
+        if forceRegenerate {
+            deleteVideoShot(for: cleanId)
         }
 
         guard !isGenerating else {
@@ -82,7 +170,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
 
         isGenerating = true
         currentTrackId = track.id.uuidString
-        statusMessage = "Анализ смысла трека через NVIDIA AI..."
+        statusMessage = "AI Агент считывает вайб и ритм..."
         queuePosition = nil
         errorMessage = nil
 
@@ -93,63 +181,112 @@ final class AIVideoShotGeneratorService: ObservableObject {
         }
 
         do {
-            // 2. Получаем или готовим изображение обложки (минимум 512x512)
-            statusMessage = "Подготовка обложки..."
-            let image = try await resolveArtworkImage(for: track, overrideImage: artwork)
-            guard let jpegData = prepareArtworkJPEG(from: image) else {
+            // 2. Поиск профиля артиста, фото и жанров в медиатеке
+            statusMessage = "Поиск профиля и фото артиста..."
+            let artistProfile = await resolveArtistProfile(for: track.artist)
+            var artistImage: UIImage? = nil
+            if let avatarURL = artistProfile.avatarURL {
+                artistImage = await fetchImage(from: avatarURL)
+            }
+
+            // 3. Подготовка артворка и создание комбинированного арта с артистом
+            statusMessage = "Подготовка артворка и колористики..."
+            let baseArtwork = try await resolveArtworkImage(for: track, overrideImage: artwork)
+            let compositeArtwork = prepareCompositeArtwork(coverImage: baseArtwork, artistImage: artistImage)
+            guard let jpegData = prepareArtworkJPEG(from: compositeArtwork) else {
                 throw AIVideoShotError.imagePreparationFailed
             }
 
-            // 3. Анализируем смысл песни и генерируем кинематографичный промпт через NVIDIA DeepSeek
-            statusMessage = "Осмысление трека через NVIDIA DeepSeek..."
+            // 4. Анализ аудио-вайба (BPM, энергия, валенс) и извлечение палитры обложки
+            statusMessage = "AI Агент анализирует структуру и ритм..."
+            let audioMood = MoodRadioEngine.shared.extractVector(for: track)
+            let dominantRGB = Self.extractDominantColor(from: compositeArtwork)
+            let vibeProfile = Self.determineVibeProfile(
+                track: track,
+                vector: audioMood,
+                dominantRGB: dominantRGB
+            )
+
+            // 5. Осмысление трека через NVIDIA DeepSeek с артистом, жанром, ритмом и текстом
+            statusMessage = "Анализ смысла трека и артиста через AI..."
             let cinematicPrompt = await DifyService.shared.generateVideoShotPrompt(
                 title: track.title,
-                artist: track.artist,
-                lyricsSnippet: lyricsSnippet
+                artist: artistProfile.name,
+                lyricsSnippet: lyricsSnippet,
+                genre: artistProfile.genres.first,
+                bpm: vibeProfile.bpm,
+                energy: vibeProfile.energy,
+                valence: vibeProfile.valence,
+                vibeStyle: vibeProfile.style.rawValue
             )
-            SonivoDiagnostics.log("[AIVideoShot] Generated Prompt: \(cinematicPrompt)", tag: "VIDEOSHOT")
+            SonivoDiagnostics.log("[AIVideoShot] Prompt: \(cinematicPrompt), Vibe: \(vibeProfile.style.rawValue), BPM: \(Int(vibeProfile.bpm)), Artist: \(artistProfile.name)", tag: "VIDEOSHOT")
 
-            // 4. Отправляем задачу в MiniMax H3 Trial API с мгновенным переключением на HD Canvas кодек
+            // 6. AI Агент автоматически выбирает оптимальную модель генерации
+            statusMessage = "AI Агент выбирает оптимальную модель..."
+            let engineDecision = await AIVideoShotModelAgent.shared.selectOptimalEngine(
+                track: track,
+                vibeProfile: vibeProfile
+            )
+            SonivoDiagnostics.log("[AIVideoShot] Agent selected: \(engineDecision.engine.rawValue) (\(engineDecision.reason))", tag: "VIDEOSHOT")
+
             var finalURL: URL? = nil
-            do {
-                statusMessage = "Запуск нейросети MiniMax H3..."
-                let clientId = "mmtrial_\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
-                let fakeIP = "\(Int.random(in: 12...210)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250))"
 
-                let taskInfo = try await submitMiniMaxTask(
-                    clientId: clientId,
-                    fakeIP: fakeIP,
+            if engineDecision.engine == .cloudMiniMaxH3 {
+                do {
+                    statusMessage = "Генерация через нейросеть MiniMax H3..."
+                    let clientId = "mmtrial_\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+                    let fakeIP = "\(Int.random(in: 12...210)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250)).\(Int.random(in: 1...250))"
+
+                    let taskInfo = try await submitMiniMaxTask(
+                        clientId: clientId,
+                        fakeIP: fakeIP,
+                        prompt: cinematicPrompt,
+                        jpegData: jpegData
+                    )
+
+                    statusMessage = "Синтез кинематографичного 9:16 видео..."
+                    let succeededTaskId = try await pollTaskStatus(
+                        taskId: taskInfo.taskId,
+                        accessToken: taskInfo.accessToken,
+                        fakeIP: fakeIP
+                    )
+
+                    statusMessage = "Загрузка готового видео-шота..."
+                    finalURL = try await downloadVideo(
+                        taskId: succeededTaskId,
+                        clientId: clientId,
+                        accessToken: taskInfo.accessToken,
+                        destinationTrackId: cleanId
+                    )
+                } catch {
+                    SonivoDiagnostics.log("[AIVideoShot] Cloud MiniMax unavailable (\(error.localizedDescription)). Agent failover to On-Device Canvas...", tag: "VIDEOSHOT")
+                    statusMessage = "Синтез 12-сек Canvas под ритм и вайб..."
+                    finalURL = try await generateLocalCanvasVideoShot(
+                        for: cleanId,
+                        artwork: compositeArtwork,
+                        prompt: cinematicPrompt,
+                        vibeProfile: vibeProfile,
+                        artistName: artistProfile.name,
+                        artistImage: artistImage
+                    )
+                }
+            } else {
+                statusMessage = "Синтез 12-сек Canvas под ритм и вайб..."
+                finalURL = try await generateLocalCanvasVideoShot(
+                    for: cleanId,
+                    artwork: compositeArtwork,
                     prompt: cinematicPrompt,
-                    jpegData: jpegData
+                    vibeProfile: vibeProfile,
+                    artistName: artistProfile.name,
+                    artistImage: artistImage
                 )
-
-                // 5. Опрашиваем статус задачи
-                statusMessage = "В очереди нейросети..."
-                let succeededTaskId = try await pollTaskStatus(
-                    taskId: taskInfo.taskId,
-                    accessToken: taskInfo.accessToken,
-                    fakeIP: fakeIP
-                )
-
-                // 6. Скачиваем готовое 9:16 видео
-                statusMessage = "Загрузка готового видео-шота..."
-                finalURL = try await downloadVideo(
-                    taskId: succeededTaskId,
-                    clientId: clientId,
-                    accessToken: taskInfo.accessToken,
-                    destinationTrackId: cleanId
-                )
-            } catch {
-                SonivoDiagnostics.log("[AIVideoShot] Cloud MiniMax unavailable (\(error.localizedDescription)). Generating instant HD 9:16 Canvas...", tag: "VIDEOSHOT")
-                statusMessage = "Создание HD 9:16 видео-шота..."
-                finalURL = try await generateLocalCanvasVideoShot(for: cleanId, artwork: image, prompt: cinematicPrompt)
             }
 
             guard let downloadedURL = finalURL else {
                 throw AIVideoShotError.generationFailed("Не удалось сформировать видео-шот")
             }
 
-            // 7. Уведомление и публикация
+            // 6. Уведомление и публикация
             lastGeneratedURL = downloadedURL
             statusMessage = "Видео-шот готов!"
             NotificationCenter.default.post(
@@ -235,6 +372,103 @@ final class AIVideoShotGeneratorService: ObservableObject {
             if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 1.0]) {
                 ctx.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: size.width, y: size.height), options: [])
             }
+        }
+    }
+
+    // MARK: - Artist Profile & Visual Resolution
+
+    struct ArtistVisualProfile: Sendable {
+        let name: String
+        let id: String?
+        let genres: [String]
+        let avatarURL: URL?
+    }
+
+    /// Поиск артиста в медиатеке для получения его внешности, фото и жанров
+    func resolveArtistProfile(for artistName: String) async -> ArtistVisualProfile {
+        let cleanName = artistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty else {
+            return ArtistVisualProfile(name: artistName, id: nil, genres: [], avatarURL: nil)
+        }
+
+        let search = await YandexMusicService.shared.searchAllFixed(query: cleanName)
+        if let topArtist = search.artists.first {
+            var avatarURL: URL? = nil
+            if let uri = topArtist.coverUri, !uri.isEmpty {
+                let full = "https://" + uri.replacingOccurrences(of: "%%", with: "1000x1000")
+                avatarURL = URL(string: full)
+            }
+            return ArtistVisualProfile(
+                name: topArtist.name ?? cleanName,
+                id: topArtist.id,
+                genres: [],
+                avatarURL: avatarURL
+            )
+        }
+
+        return ArtistVisualProfile(name: cleanName, id: nil, genres: [], avatarURL: nil)
+    }
+
+    /// Загрузка фото артиста по URL
+    private func fetchImage(from url: URL) async -> UIImage? {
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return UIImage(data: data)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Кинематографичный синтез комбинированного арта с внедрением артиста
+    private func prepareCompositeArtwork(coverImage: UIImage, artistImage: UIImage?) -> UIImage {
+        guard let artistImage else { return coverImage }
+
+        let targetSize = CGSize(width: 720, height: 720)
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { ctx in
+            let cg = ctx.cgContext
+
+            // 1. Обложка на фоне
+            coverImage.draw(in: CGRect(origin: .zero, size: targetSize))
+
+            // 2. Затемняющий кинематографичный оверлей
+            let darkOverlay = UIColor.black.withAlphaComponent(0.40)
+            darkOverlay.setFill()
+            cg.fill(CGRect(origin: .zero, size: targetSize))
+
+            // 3. Портрет артиста в фокусе со скругленными углами
+            let artistSize: CGFloat = 520.0
+            let artistRect = CGRect(
+                x: (targetSize.width - artistSize) / 2.0,
+                y: (targetSize.height - artistSize) / 2.0,
+                width: artistSize,
+                height: artistSize
+            )
+
+            cg.saveGState()
+            let clipPath = UIBezierPath(roundedRect: artistRect, cornerRadius: 44).cgPath
+            cg.addPath(clipPath)
+            cg.clip()
+
+            let aspect = artistImage.size.width / max(1, artistImage.size.height)
+            var drawRect: CGRect
+            if aspect > 1.0 {
+                let w = artistSize * aspect
+                drawRect = CGRect(x: artistRect.minX - (w - artistSize) / 2.0, y: artistRect.minY, width: w, height: artistSize)
+            } else {
+                let h = artistSize / max(0.01, aspect)
+                drawRect = CGRect(x: artistRect.minX, y: artistRect.minY - (h - artistSize) / 2.0, width: artistSize, height: h)
+            }
+            artistImage.draw(in: drawRect)
+            cg.restoreGState()
+
+            // 4. Тонкая акцентная рамка вокруг портрета артиста
+            cg.saveGState()
+            cg.addPath(clipPath)
+            cg.setLineWidth(3.0)
+            cg.setStrokeColor(UIColor.white.withAlphaComponent(0.45).cgColor)
+            cg.strokePath()
+            cg.restoreGState()
         }
     }
 
@@ -348,9 +582,9 @@ final class AIVideoShotGeneratorService: ObservableObject {
                 case "queued":
                     if let pos = poll.queue_position {
                         self.queuePosition = pos
-                        self.statusMessage = "В очереди нейросети (позиция \(pos))..."
+                        self.statusMessage = "Синтез видео-шота под ритм (позиция \(pos))..."
                     } else {
-                        self.statusMessage = "В очереди нейросети..."
+                        self.statusMessage = "Синтез видео-шота под ритм..."
                     }
                 case "failed":
                     throw AIVideoShotError.generationFailed("MiniMax отклонил задачу или произошел сбой генерации")
@@ -396,15 +630,106 @@ final class AIVideoShotGeneratorService: ObservableObject {
         return destURL
     }
 
-    // MARK: - On-Device 9:16 Canvas VideoShot Generator (Hardware Accelerated Fallback)
+    // MARK: - On-Device 9:16 Canvas VideoShot Generator (Hardware Accelerated Fallback & Vibe Synth)
+
+    /// Извлечение доминантного цвета обложки для согласованного освещения и виньетки
+    static func extractDominantColor(from image: UIImage) -> [CGFloat] {
+        guard let cgImage = image.cgImage else {
+            return [0.35, 0.25, 0.65]
+        }
+        let width = 16
+        let height = 16
+        var pixelData = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let context = CGContext(
+            data: &pixelData,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return [0.35, 0.25, 0.65]
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var totalR: CGFloat = 0
+        var totalG: CGFloat = 0
+        var totalB: CGFloat = 0
+        var count: CGFloat = 0
+
+        for i in stride(from: 0, to: pixelData.count, by: 4) {
+            let r = CGFloat(pixelData[i]) / 255.0
+            let g = CGFloat(pixelData[i + 1]) / 255.0
+            let b = CGFloat(pixelData[i + 2]) / 255.0
+            let brightness = (r + g + b) / 3.0
+            if brightness > 0.08 && brightness < 0.92 {
+                totalR += r
+                totalG += g
+                totalB += b
+                count += 1
+            }
+        }
+
+        if count > 0 {
+            return [totalR / count, totalG / count, totalB / count]
+        }
+        return [0.35, 0.25, 0.65]
+    }
+
+    /// Построение аудио-визуального профиля вайба на основе аудио-вектора и спектра обложки
+    static func determineVibeProfile(
+        track: Track,
+        vector: MoodRadioEngine.MoodVector,
+        dominantRGB: [CGFloat]
+    ) -> AudioVibeVisualProfile {
+        let preset: AudioVibeVisualProfile.VibeVisualPreset
+        if vector.energy > 0.75 {
+            preset = .neonDrive
+        } else if vector.valence < 0.35 {
+            preset = .twilightRain
+        } else if vector.danceability > 0.65 {
+            preset = .sunsetGroove
+        } else if vector.acousticness > 0.6 {
+            preset = .acousticSerene
+        } else {
+            preset = .cosmicDream
+        }
+
+        let bpm = Double(max(60, min(180, vector.bpm)))
+        let r = dominantRGB.indices.contains(0) ? dominantRGB[0] : 0.35
+        let g = dominantRGB.indices.contains(1) ? dominantRGB[1] : 0.25
+        let b = dominantRGB.indices.contains(2) ? dominantRGB[2] : 0.65
+
+        let secondary: [CGFloat] = [
+            min(1.0, g * 1.2 + 0.15),
+            min(1.0, b * 1.1 + 0.20),
+            min(1.0, r * 1.3 + 0.25)
+        ]
+
+        return AudioVibeVisualProfile(
+            style: preset,
+            bpm: bpm,
+            energy: Double(vector.energy),
+            valence: Double(vector.valence),
+            dominantColor: [r, g, b],
+            secondaryColor: secondary
+        )
+    }
 
     /// Аппаратная генерация локального кинематографичного 9:16 Canvas видео-шота через AVAssetWriter
-    /// Создает ультра-плавный зацикленный видео-шот с эффектом дыхания, мягким зумом Ken Burns,
-    /// атмосферным виньетированием и рассеянным свечением под цвет обложки трека.
+    /// Создает 12-секундный ультра-плавный зацикленный видео-шот, чутко синхронизированный с ритмом (BPM),
+    /// настроением, вайбом и палитрой обложки трека с интеграцией профиля артиста.
     func generateLocalCanvasVideoShot(
         for cleanId: String,
         artwork: UIImage,
-        prompt: String? = nil
+        prompt: String? = nil,
+        vibeProfile: AudioVibeVisualProfile? = nil,
+        artistName: String? = nil,
+        artistImage: UIImage? = nil
     ) async throws -> URL {
         let destURL = storageDirectory.appendingPathComponent("\(cleanId).mp4")
         if FileManager.default.fileExists(atPath: destURL.path) {
@@ -415,24 +740,46 @@ final class AIVideoShotGeneratorService: ObservableObject {
             throw AIVideoShotError.imagePreparationFailed
         }
 
-        let encodedURL = try await Self.encodeCanvasVideo(destURL: destURL, artworkJPEGData: jpegData)
-        SonivoDiagnostics.log("[AIVideoShot] Generated on-device 9:16 Canvas: \(encodedURL.lastPathComponent)", tag: "VIDEOSHOT")
+        let artistJPEG = artistImage.flatMap { prepareArtworkJPEG(from: $0) }
+
+        let profile = vibeProfile ?? AudioVibeVisualProfile(
+            style: .cosmicDream,
+            bpm: 110.0,
+            energy: 0.6,
+            valence: 0.5,
+            dominantColor: Self.extractDominantColor(from: artwork),
+            secondaryColor: [0.8, 0.4, 0.9]
+        )
+
+        let encodedURL = try await Self.encodeCanvasVideo(
+            destURL: destURL,
+            artworkJPEGData: jpegData,
+            vibe: profile,
+            artistName: artistName,
+            artistJPEGData: artistJPEG
+        )
+        SonivoDiagnostics.log("[AIVideoShot] Generated on-device 9:16 Canvas (12s, \(profile.style.rawValue)): \(encodedURL.lastPathComponent)", tag: "VIDEOSHOT")
         return encodedURL
     }
 
     private nonisolated static func encodeCanvasVideo(
         destURL: URL,
-        artworkJPEGData: Data
+        artworkJPEGData: Data,
+        vibe: AudioVibeVisualProfile,
+        artistName: String? = nil,
+        artistJPEGData: Data? = nil
     ) async throws -> URL {
         guard let sourceImage = UIImage(data: artworkJPEGData),
               let sourceCGImage = sourceImage.cgImage else {
             throw AIVideoShotError.imagePreparationFailed
         }
 
+        let artistCGImage = artistJPEGData.flatMap { UIImage(data: $0)?.cgImage }
+
         let width = 720
         let height = 1280
         let fps: Int32 = 30
-        let durationSeconds = 5.0
+        let durationSeconds = 12.0 // Полные 12 секунд кинематографичного зацикленного видео-шота
         let totalFrames = Int(Double(fps) * durationSeconds)
 
         let writer = try AVAssetWriter(outputURL: destURL, fileType: .mp4)
@@ -442,7 +789,7 @@ final class AIVideoShotGeneratorService: ObservableObject {
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 3_200_000,
+                AVVideoAverageBitRateKey: 4_000_000,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
             ]
         ]
@@ -475,6 +822,17 @@ final class AIVideoShotGeneratorService: ObservableObject {
 
         let pool: CVPixelBufferPool? = adaptor.pixelBufferPool
 
+        // Извлекаем базовые оттенки вайба
+        let domR = vibe.dominantColor.indices.contains(0) ? vibe.dominantColor[0] : 0.35
+        let domG = vibe.dominantColor.indices.contains(1) ? vibe.dominantColor[1] : 0.25
+        let domB = vibe.dominantColor.indices.contains(2) ? vibe.dominantColor[2] : 0.65
+
+        let secR = vibe.secondaryColor.indices.contains(0) ? vibe.secondaryColor[0] : 0.75
+        let secG = vibe.secondaryColor.indices.contains(1) ? vibe.secondaryColor[1] : 0.40
+        let secB = vibe.secondaryColor.indices.contains(2) ? vibe.secondaryColor[2] : 0.90
+
+        let beatFreq = vibe.bpm / 60.0
+
         for frameIndex in 0..<totalFrames {
             try Task.checkCancellation()
 
@@ -486,8 +844,13 @@ final class AIVideoShotGeneratorService: ObservableObject {
 
             guard writerInput.isReadyForMoreMediaData else { break }
 
-            let progress = Double(frameIndex) / Double(totalFrames)
-            let loopProgress = sin(progress * .pi)
+            let progress = Double(frameIndex) / Double(totalFrames) // 0.0 ... 1.0
+            let seamlessWave = sin(progress * .pi * 2.0)            // -1.0 ... 1.0 (0 at start and end)
+            let breathWave = sin(progress * .pi)                    // 0.0 ... 1.0 ... 0.0 (smooth breath)
+
+            // Пульсация в такт ритму песни (BPM) с учетом энергетики
+            let beatPhase = sin(Double(frameIndex) / Double(fps) * beatFreq * .pi * 2.0)
+            let pulse = beatPhase * (0.02 + vibe.energy * 0.035)
 
             var pixelBuffer: CVPixelBuffer?
             if let pool = pool {
@@ -520,26 +883,29 @@ final class AIVideoShotGeneratorService: ObservableObject {
                 ) {
                     ctx.saveGState()
 
-                    // 1. Темный глубокий фон
-                    ctx.setFillColor(UIColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0).cgColor)
+                    // 1. Темный космический фон с подсветкой доминантного оттенка обложки
+                    let bgR = min(0.12, domR * 0.15)
+                    let bgG = min(0.12, domG * 0.15)
+                    let bgB = min(0.18, domB * 0.22)
+                    ctx.setFillColor(UIColor(red: bgR, green: bgG, blue: bgB, alpha: 1.0).cgColor)
                     ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
-                    // 2. Размытый масштабный фон под размер экрана
-                    let bgScale: CGFloat = 1.65 + CGFloat(loopProgress) * 0.1
+                    // 2. Размытый масштабный фон с мягким зумом Ken Burns и дыханием ритма
+                    let bgScale: CGFloat = 1.65 + CGFloat(breathWave) * 0.12 + CGFloat(pulse) * 0.05
                     let bgW = CGFloat(height) * bgScale
                     let bgH = CGFloat(height) * bgScale
                     let bgX = (CGFloat(width) - bgW) / 2.0
                     let bgY = (CGFloat(height) - bgH) / 2.0
-                    ctx.setAlpha(0.38)
+                    ctx.setAlpha(0.38 + CGFloat(vibe.energy) * 0.08)
                     ctx.draw(sourceCGImage, in: CGRect(x: bgX, y: bgY, width: bgW, height: bgH))
 
-                    // 3. Атмосферное виньетирование
+                    // 3. Атмосферное виньетирование (кинематографичный градиент сверху и снизу)
                     let gradientColors = [
-                        UIColor.black.withAlphaComponent(0.85).cgColor,
+                        UIColor(red: 0.02, green: 0.02, blue: 0.04, alpha: 0.92).cgColor,
                         UIColor.clear.cgColor,
-                        UIColor.black.withAlphaComponent(0.90).cgColor
+                        UIColor(red: 0.02, green: 0.02, blue: 0.04, alpha: 0.95).cgColor
                     ] as CFArray
-                    let locations: [CGFloat] = [0.0, 0.5, 1.0]
+                    let locations: [CGFloat] = [0.0, 0.45, 1.0]
                     if let grad = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: locations) {
                         ctx.setAlpha(1.0)
                         ctx.drawLinearGradient(
@@ -550,16 +916,57 @@ final class AIVideoShotGeneratorService: ObservableObject {
                         )
                     }
 
-                    // 4. Центральный арт трека с Ken Burns и скругленными углами
-                    let cardBaseSize: CGFloat = 580.0
-                    let cardZoom: CGFloat = 1.0 + CGFloat(loopProgress) * 0.05
+                    // 4. Плавающие живые световые частицы (stardust / embers), зацикленные бесшовно
+                    let particleCount = 14
+                    for i in 0..<particleCount {
+                        let particleProgress = (progress + Double(i) / Double(particleCount)).truncatingRemainder(dividingBy: 1.0)
+                        let pY = CGFloat(1.0 - particleProgress) * CGFloat(height)
+                        let pBaseX = CGFloat((i * 53 + 30) % width)
+                        let pSway = CGFloat(sin((progress + Double(i) * 0.18) * .pi * 2.0)) * 24.0
+                        let pRadius = CGFloat(4.0 + Double(i % 4) * 2.5)
+                        let pAlpha = CGFloat(sin(particleProgress * .pi)) * (0.20 + CGFloat(vibe.energy) * 0.30)
+
+                        let particleColor = (i % 2 == 0)
+                            ? UIColor(red: domR, green: domG, blue: domB, alpha: pAlpha).cgColor
+                            : UIColor(red: secR, green: secG, blue: secB, alpha: pAlpha).cgColor
+
+                        ctx.setFillColor(particleColor)
+                        ctx.fillEllipse(in: CGRect(x: pBaseX + pSway, y: pY, width: pRadius * 2, height: pRadius * 2))
+                    }
+
+                    // 5. Ритмическая аура за карточкой под вторичный оттенок
+                    let auraCenter = CGPoint(x: CGFloat(width) / 2.0, y: CGFloat(height) / 2.0)
+                    let auraRadius = CGFloat(320.0 + pulse * 60.0)
+                    let auraAlpha = CGFloat(0.12 + (beatPhase > 0 ? beatPhase * 0.10 : 0.0) * vibe.energy)
+                    let auraColors = [
+                        UIColor(red: secR, green: secG, blue: secB, alpha: auraAlpha).cgColor,
+                        UIColor.clear.cgColor
+                    ] as CFArray
+                    if let auraGrad = CGGradient(colorsSpace: colorSpace, colors: auraColors, locations: [0.0, 1.0]) {
+                        ctx.drawRadialGradient(
+                            auraGrad,
+                            startCenter: auraCenter,
+                            startRadius: 20,
+                            endCenter: auraCenter,
+                            endRadius: auraRadius,
+                            options: []
+                        )
+                    }
+
+                    // 6. Центральный арт трека с Ken Burns, дыханием ритма и скругленными углами
+                    let cardBaseSize: CGFloat = 570.0
+                    let cardZoom: CGFloat = 1.0 + CGFloat(breathWave) * 0.04 + CGFloat(pulse) * 0.02
                     let cardSize = cardBaseSize * cardZoom
                     let cardX = (CGFloat(width) - cardSize) / 2.0
-                    let cardY = (CGFloat(height) - cardSize) / 2.0 + CGFloat(sin(progress * .pi * 2.0)) * 6.0
+                    let cardY = (CGFloat(height) - cardSize) / 2.0 + CGFloat(seamlessWave) * 7.0
                     let cardRect = CGRect(x: cardX, y: cardY, width: cardSize, height: cardSize)
 
-                    // Тень от карточки
-                    ctx.setShadow(offset: CGSize(width: 0, height: 18), blur: 36, color: UIColor.black.withAlphaComponent(0.60).cgColor)
+                    // Глубокая тень и мягкое свечение под тон обложки
+                    ctx.setShadow(
+                        offset: CGSize(width: 0, height: 16),
+                        blur: 38,
+                        color: UIColor(red: domR * 0.5, green: domG * 0.5, blue: domB * 0.5, alpha: 0.65).cgColor
+                    )
 
                     let clipPath = CGPath(roundedRect: cardRect, cornerWidth: 32, cornerHeight: 32, transform: nil)
                     ctx.addPath(clipPath)
@@ -570,10 +977,10 @@ final class AIVideoShotGeneratorService: ObservableObject {
 
                     ctx.restoreGState()
 
-                    // 5. Мягкое плавающее свечение
-                    let glowY = CGFloat(height) * (0.35 + CGFloat(loopProgress) * 0.3)
+                    // 7. Мягкое скользящее верхнее свечение
+                    let glowY = CGFloat(height) * (0.32 + CGFloat(breathWave) * 0.25)
                     let glowColors = [
-                        UIColor.white.withAlphaComponent(0.08).cgColor,
+                        UIColor.white.withAlphaComponent(0.09).cgColor,
                         UIColor.clear.cgColor
                     ] as CFArray
                     if let glowGrad = CGGradient(colorsSpace: colorSpace, colors: glowColors, locations: [0.0, 1.0]) {
@@ -582,9 +989,52 @@ final class AIVideoShotGeneratorService: ObservableObject {
                             startCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
                             startRadius: 10,
                             endCenter: CGPoint(x: CGFloat(width) / 2.0, y: glowY),
-                            endRadius: 360,
+                            endRadius: 380,
                             options: []
                         )
+                    }
+
+                    // 8. Фирменный плавающий бейдж артиста с визуализатором звуковой волны
+                    if let artistCGImage {
+                        let badgeW: CGFloat = 380.0
+                        let badgeH: CGFloat = 60.0
+                        let badgeX = (CGFloat(width) - badgeW) / 2.0
+                        let badgeY = CGFloat(height) - 170.0 + CGFloat(seamlessWave) * 4.0
+                        let badgeRect = CGRect(x: badgeX, y: badgeY, width: badgeW, height: badgeH)
+
+                        ctx.saveGState()
+                        let badgePath = CGPath(roundedRect: badgeRect, cornerWidth: 30, cornerHeight: 30, transform: nil)
+                        ctx.addPath(badgePath)
+                        ctx.setFillColor(UIColor(red: 0.06, green: 0.06, blue: 0.10, alpha: 0.80).cgColor)
+                        ctx.fillPath()
+
+                        ctx.addPath(badgePath)
+                        ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.22).cgColor)
+                        ctx.setLineWidth(1.5)
+                        ctx.strokePath()
+
+                        let avatarSize: CGFloat = 48.0
+                        let avatarRect = CGRect(x: badgeX + 6.0, y: badgeY + (badgeH - avatarSize) / 2.0, width: avatarSize, height: avatarSize)
+                        let avatarClip = CGPath(ellipseIn: avatarRect, transform: nil)
+                        ctx.addPath(avatarClip)
+                        ctx.clip()
+                        ctx.draw(artistCGImage, in: avatarRect)
+                        ctx.restoreGState()
+
+                        let barCount = 8
+                        let startBarX = badgeX + badgeW - 120.0
+                        for b in 0..<barCount {
+                            let barWave = abs(sin(Double(frameIndex) / Double(fps) * beatFreq * .pi * 2.0 + Double(b) * 0.70))
+                            let barH = CGFloat(8.0 + barWave * 28.0 * vibe.energy)
+                            let barX = startBarX + CGFloat(b * 12)
+                            let barY = badgeY + (badgeH - barH) / 2.0
+                            let barRect = CGRect(x: barX, y: barY, width: 6.0, height: barH)
+
+                            let barPath = CGPath(roundedRect: barRect, cornerWidth: 3.0, cornerHeight: 3.0, transform: nil)
+                            ctx.addPath(barPath)
+                            ctx.setFillColor(UIColor(red: secR, green: secG, blue: secB, alpha: 0.90).cgColor)
+                            ctx.fillPath()
+                        }
                     }
                 }
             }

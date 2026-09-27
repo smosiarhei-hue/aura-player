@@ -503,34 +503,95 @@ final class DifyService: ObservableObject {
     }
 
     // MARK: - AI VideoShot Prompt Generation (Song Meaning & Visuals)
-    /// Understand song meaning, vibe, and lyrics snippet using NVIDIA DeepSeek V4.1 Flash / Dify to generate a cinematic MiniMax video prompt
-    func generateVideoShotPrompt(title: String, artist: String, lyricsSnippet: String?) async -> String {
+    /// Understand song meaning, artist presence, structure, vibe, and lyrics using NVIDIA DeepSeek V4.1 Flash / Dify
+    /// to generate a cinematic, diverse, artist-focused MiniMax video prompt with strict anti-cliché & anti-kissing rules.
+    func generateVideoShotPrompt(
+        title: String,
+        artist: String,
+        lyricsSnippet: String?,
+        genre: String? = nil,
+        bpm: Double? = nil,
+        energy: Double? = nil,
+        valence: Double? = nil,
+        vibeStyle: String? = nil
+    ) async -> String {
         let snippet = lyricsSnippet?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let promptQuery = """
-        Track: "\(title)" by "\(artist)".
-        \(snippet.isEmpty ? "" : "Lyrics excerpt: \"\(snippet.prefix(200))\"")
+        let tempoBPM = Int(bpm ?? 120)
+        let resolvedGenre = (genre?.isEmpty == false) ? genre! : "Modern"
+        let resolvedVibe = vibeStyle ?? "Dynamic Rhythmic"
 
-        Analyze the mood, rhythm, and atmosphere of this song.
-        Write a single cinematic camera motion and atmospheric lighting description in English to animate this music cover art into a seamless 9:16 vertical video loop.
-        Rules:
-        1. Output ONLY 1 sentence in English.
-        2. Focus strictly on camera motion (e.g. slow push-in, subtle floating camera, gentle rotating pan) and atmosphere (e.g. volumetric neon lighting, floating particles, bokeh, glowing haze).
-        3. Do not include quotes, preamble, or any text/subtitles instructions.
+        let promptQuery = """
+        You are a visionary music video director creating a 9:16 vertical looping music video for the song "\(title)" by the musical artist "\(artist)".
+        Musical Context:
+        - Genre: \(resolvedGenre)
+        - Tempo / Rhythm: \(tempoBPM) BPM
+        - Vibe & Energy: \(resolvedVibe) (Energy: \(Int((energy ?? 0.6) * 100))%, Mood valence: \(Int((valence ?? 0.5) * 100))%)
+        \(snippet.isEmpty ? "" : "- Lyrics / Story: \"\(snippet.prefix(400))\"")
+
+        DIRECTOR INSTRUCTIONS:
+        1. ARTIST PERFORMANCE: The visual MUST feature the musical artist "\(artist)" in a charismatic solo music video performance (e.g. singing into a microphone on stage, rhythmic movement in a high-tech or moody studio, performing amidst cinematic atmospheric elements matching the track's theme).
+        2. DIVERSITY & SONG STRUCTURE: Tailor the setting specifically to the song's genre and lyrics story. Do not make it generic. Reflect the \(tempoBPM) BPM pulse and vibe in the lighting and movement.
+        3. STRICT NEGATIVE CONSTRAINTS (CRITICAL):
+           - ABSOLUTELY NO KISSING.
+           - ABSOLUTELY NO ROMANTIC COUPLE EMBRACES OR INTIMACY.
+           - NO CHEESY ROMANTIC TROPE.
+           - The video is a SOLO music performance of the artist "\(artist)".
+        4. Output format: Write exactly 2 vivid sentences in English describing:
+           (1) The musical artist "\(artist)" performing passionately to the rhythm in a unique cinematic setting.
+           (2) Dynamic cinematic lighting, camera movement (tracking, subtle pan or orbit), and atmospheric particle/lens flare effects.
+        5. Output ONLY the 2 English sentences without quotes, numbering, or preamble.
         """
 
         do {
             let result = try await sendMessage(query: promptQuery, onDelta: { _ in })
-            let cleaned = Self.cleanDisplayText(from: result.fullText)
+            var cleaned = Self.cleanDisplayText(from: result.fullText)
                 .replacingOccurrences(of: "\"", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleaned.count > 10 {
+
+            cleaned = cleaned.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.joined(separator: " ")
+
+            if !cleaned.lowercased().contains("no kissing") {
+                cleaned += " Solo musical performance, absolutely no kissing."
+            }
+
+            if cleaned.count > 25 {
                 return cleaned
             }
         } catch {
             SonivoDiagnostics.log("[VideoShot] NVIDIA AI prompt fallback: \(error.localizedDescription)", tag: "VIDEOSHOT")
         }
 
-        return "Cinematic slow push-in camera with atmospheric volumetric lighting, floating dust motes, subtle bokeh, and gentle rhythmic motion."
+        return proceduralArtistPrompt(
+            title: title,
+            artist: artist,
+            bpm: tempoBPM,
+            vibeStyle: resolvedVibe,
+            energy: energy ?? 0.6
+        )
+    }
+
+    /// Процедурная генерация богатых вариативных промптов с участием артиста и защитой от клише поцелуев
+    private func proceduralArtistPrompt(
+        title: String,
+        artist: String,
+        bpm: Int,
+        vibeStyle: String,
+        energy: Double
+    ) -> String {
+        let cleanArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artistName = cleanArtist.isEmpty ? "The lead artist" : cleanArtist
+
+        if vibeStyle.contains("Neon") || energy > 0.75 {
+            return "The musical artist \(artistName) delivering an energetic solo performance with a microphone on a concert stage illuminated by pulsing neon lasers and volumetric smoke, synchronized to the driving \(bpm) BPM rhythm. Dynamic orbiting camera with anamorphic lens flare and crisp cinematic contrast. Solo performance, absolutely no kissing."
+        } else if vibeStyle.contains("Twilight") || vibeStyle.contains("Rain") || energy < 0.4 {
+            return "The musical artist \(artistName) in an emotional solo performance amidst a rain-slicked nocturnal city bathed in deep sapphire streetlights and glowing bokeh, immersed in the bittersweet atmosphere of \(title). Smooth slow tracking camera with moody atmospheric fog and cinematic depth of field. Solitary solo performance, no romance, no kissing."
+        } else if vibeStyle.contains("Sunset") || vibeStyle.contains("Groove") {
+            return "The musical artist \(artistName) performing with effortless rhythmic groove in a warm sun-drenched studio surrounded by vintage audio gear and golden hour light rays, feeling the upbeat tempo of \(title). Fluid gliding camera movement with floating dust motes and vibrant cinematic color grade. Solo artist performance, no kissing."
+        } else if vibeStyle.contains("Acoustic") {
+            return "The musical artist \(artistName) performing an intimate acoustic session under warm amber spotlighting with a vintage condenser microphone, deeply connected to the soul of \(title). Gentle cinematic panning camera with soft bokeh and organic film grain. Solo music performance, no kissing."
+        } else {
+            return "The musical artist \(artistName) performing as a solitary figure surrounded by surreal floating stardust and ethereal light waves, their expressive motion resonating with the cosmic rhythm of \(title). Hypnotic drift camera with iridescent prism light refractions and deep atmospheric glow. Solo performance, absolutely no kissing."
+        }
     }
 
     private static func decodePlaylistJSON(from string: String) -> AIGeneratedPlaylist? {
