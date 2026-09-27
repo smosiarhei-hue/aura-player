@@ -27,7 +27,7 @@ nonisolated public enum DJSyncError: LocalizedError {
     }
 }
 
-public final class DefaultDJSyncEngine: DJSyncEngine, Sendable {
+public final class DefaultDJSyncEngine: DJSyncEngine, @unchecked Sendable {
     public init() {}
 
     nonisolated public func align(

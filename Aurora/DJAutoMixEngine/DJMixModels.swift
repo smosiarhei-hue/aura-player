@@ -1,5 +1,8 @@
 // Path: Aurora/DJAutoMixEngine/DJMixModels.swift
 import Foundation
+import AVFoundation
+
+extension AVAudioPCMBuffer: @unchecked @retroactive Sendable {}
 
 nonisolated public struct StructureSegment: Equatable, Sendable, Codable {
     public let range: Range<TimeInterval>

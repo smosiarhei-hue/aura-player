@@ -28,7 +28,7 @@ nonisolated public enum DJMixRenderError: LocalizedError {
     }
 }
 
-public final class DefaultDJMixRenderer: DJMixRenderer, Sendable {
+public final class DefaultDJMixRenderer: DJMixRenderer, @unchecked Sendable {
     public init() {}
 
     nonisolated public func renderTransition(
