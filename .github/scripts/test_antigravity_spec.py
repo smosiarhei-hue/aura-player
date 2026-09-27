@@ -422,11 +422,15 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("struct DJMixPlan", models_content)
         self.assertIn("enum DJTransitionType", models_content)
 
-        # 3. TrackAnalyzer protocol and Mock
+        # 3. TrackAnalyzer protocol, Mock and AudioTrackAnalyzer
         analyzer_content = analyzer_file.read_text(encoding="utf-8")
         self.assertIn("protocol DJTrackAnalyzer", analyzer_content)
         self.assertIn("MockTrackAnalyzer", analyzer_content)
+        self.assertIn("AudioTrackAnalyzer", analyzer_content)
         self.assertIn("actor DJTrackAnalysisCache", analyzer_content)
+        self.assertIn("AutoMixDSP.features(for: url)", analyzer_content)
+        self.assertIn("KeyDetector.detect", analyzer_content)
+        self.assertIn("BeatAnalyzer.analyze", analyzer_content)
 
         # 4. TransitionPlanner with 6% BPM threshold, double/half time, and fallbacks
         planner_content = planner_file.read_text(encoding="utf-8")

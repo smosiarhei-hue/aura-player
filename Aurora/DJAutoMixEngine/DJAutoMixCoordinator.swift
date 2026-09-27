@@ -18,7 +18,7 @@ public final class DJAutoMixCoordinator {
     public let renderer: any DJMixRenderer
 
     public init(
-        analyzer: any DJTrackAnalyzer = MockTrackAnalyzer(),
+        analyzer: any DJTrackAnalyzer = AudioTrackAnalyzer(),
         planner: any DJTransitionPlanner = DefaultDJTransitionPlanner(),
         syncEngine: any DJSyncEngine = DefaultDJSyncEngine(),
         renderer: any DJMixRenderer = DefaultDJMixRenderer()
