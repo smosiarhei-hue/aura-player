@@ -117,17 +117,11 @@ final class ActivePlayerPresentation {
 
     var eqEnabled: Bool {
         get { legacy.eqEnabled }
-        set {
-            objectWillChange.send()
-            legacy.eqEnabled = newValue
-        }
+        set { legacy.eqEnabled = newValue }
     }
     var eqGains: [Float] {
         get { legacy.eqGains }
-        set {
-            objectWillChange.send()
-            legacy.eqGains = newValue
-        }
+        set { legacy.eqGains = newValue }
     }
 
     func togglePlay() { router.toggle() }

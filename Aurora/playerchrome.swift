@@ -386,7 +386,7 @@ struct InteractiveEQGraph: View {
                         let isActive = (activeBandIndex == i)
                         Button {
                             guard enabled else { return }
-                            Haptics.tap(.selection)
+                            Haptics.tap(.light)
                             withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
                                 activeBandIndex = i
                             }
@@ -425,7 +425,7 @@ struct InteractiveEQGraph: View {
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                                 activeBandIndex = touchedIndex
                             }
-                            Haptics.tap(.selection)
+                            Haptics.tap(.light)
                         }
 
                         guard touchedIndex < gains.count else { return }
