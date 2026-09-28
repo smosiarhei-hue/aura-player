@@ -143,7 +143,7 @@ struct QueueSheetView: View {
 }
 
 struct PlayerEQSheetView: View {
-    @State private var player = PlayerCore.shared
+    @ObservedObject private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
 
     private let frequencies = ["20", "40", "60", "90", "160", "400", "1k", "2.5k", "6k", "16k"]
@@ -278,6 +278,8 @@ struct InteractiveEQGraph: View {
     @Binding var gains: [Float]
     let enabled: Bool
 
+    @State private var activeBandIndex: Int? = nil
+
     private let yellow = Color(red: 0.90, green: 0.98, blue: 0.12)
     private let nodeCount = 10
     private let maxGain: CGFloat = 20.0
@@ -285,22 +287,46 @@ struct InteractiveEQGraph: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let topLabelH: CGFloat = 22
-            let bottomLabelH: CGFloat = 22
+            let topLabelH: CGFloat = 24
+            let bottomLabelH: CGFloat = 26
             let graphH = max(80, geo.size.height - topLabelH - bottomLabelH)
             let midY = topLabelH + graphH / 2
             let sidePad: CGFloat = 16
             let stepX = (w - 2 * sidePad) / CGFloat(max(1, nodeCount - 1))
 
             ZStack {
+                // Vertical accent guide for active band
+                if let active = activeBandIndex {
+                    let activeX = sidePad + CGFloat(active) * stepX
+                    Path { path in
+                        path.move(to: CGPoint(x: activeX, y: topLabelH - 2))
+                        path.addLine(to: CGPoint(x: activeX, y: geo.size.height - bottomLabelH + 2))
+                    }
+                    .stroke(yellow.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .animation(.spring(response: 0.25, dampingFraction: 0.75), value: active)
+                }
+
                 // Top dB Labels
                 HStack(spacing: 0) {
                     ForEach(0..<nodeCount, id: \.self) { i in
                         let g = i < gains.count ? gains[i] : 0
+                        let isActive = (activeBandIndex == i)
                         Text(formatDB(g))
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
-                            .foregroundStyle(enabled ? yellow : yellow.opacity(0.4))
+                            .font(.system(size: isActive ? 12 : 10, weight: isActive ? .heavy : .bold).monospacedDigit())
+                            .foregroundStyle(isActive ? yellow : (enabled ? yellow.opacity(0.8) : yellow.opacity(0.35)))
+                            .scaleEffect(isActive ? 1.35 : 1.0)
+                            .padding(.horizontal, isActive ? 4 : 0)
+                            .padding(.vertical, isActive ? 2 : 0)
+                            .background(
+                                Capsule()
+                                    .fill(Color.black.opacity(isActive ? 0.70 : 0.0))
+                                    .overlay(
+                                        Capsule().stroke(yellow.opacity(isActive ? 0.45 : 0.0), lineWidth: 1)
+                                    )
+                            )
                             .frame(width: stepX, alignment: .center)
+                            .zIndex(isActive ? 5 : 1)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isActive)
                     }
                 }
                 .padding(.horizontal, sidePad - stepX / 2)
@@ -311,52 +337,117 @@ struct InteractiveEQGraph: View {
                     path.move(to: CGPoint(x: 0, y: midY))
                     path.addLine(to: CGPoint(x: w, y: midY))
                 }
-                .stroke(enabled ? yellow.opacity(0.7) : yellow.opacity(0.2), lineWidth: 1.5)
+                .stroke(enabled ? yellow.opacity(0.65) : yellow.opacity(0.2), lineWidth: 1.5)
 
                 // Continuous Spline Curve connecting nodes
                 splinePath(width: w, midY: midY, graphH: graphH, sidePad: sidePad, stepX: stepX)
                     .stroke(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2)
 
-                // 10 Draggable Circular Nodes
+                // 10 Draggable Circular Nodes with native scaling on selection
                 ForEach(0..<nodeCount, id: \.self) { i in
                     let x = sidePad + CGFloat(i) * stepX
                     let gain = CGFloat(i < gains.count ? gains[i] : 0)
-                    let y = midY - (gain / maxGain) * (graphH / 2 - 10)
+                    let y = midY - (gain / maxGain) * (graphH / 2 - 12)
+                    let isActive = (activeBandIndex == i)
 
-                    Circle()
-                        .strokeBorder(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2.5)
-                        .background(Circle().fill(AG.bg))
-                        .frame(width: 18, height: 18)
-                        .position(x: x, y: y)
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { val in
-                                    guard enabled, i < gains.count else { return }
-                                    let deltaY = midY - val.location.y
-                                    let maxRange = graphH / 2 - 10
-                                    let rawGain = Float((deltaY / maxRange) * maxGain)
-                                    let clamped = min(Float(maxGain), max(-Float(maxGain), rawGain))
-                                    if abs(clamped) < 0.4 {
-                                        gains[i] = 0
-                                    } else {
-                                        gains[i] = round(clamped)
-                                    }
-                                }
-                        )
+                    ZStack {
+                        // Luminous halo around active node
+                        if isActive {
+                            Circle()
+                                .stroke(yellow.opacity(0.35), lineWidth: 2.0)
+                                .frame(width: 36, height: 36)
+                                .scaleEffect(1.2)
+                        }
+
+                        // Core node circle
+                        Circle()
+                            .fill(isActive ? yellow : AG.bg)
+                            .overlay(
+                                Circle().stroke(enabled ? yellow : yellow.opacity(0.4), lineWidth: isActive ? 3.0 : 2.5)
+                            )
+                            .overlay(
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 5, height: 5)
+                                    .opacity(isActive ? 1.0 : 0.0)
+                            )
+                            .frame(width: 18, height: 18)
+                            .scaleEffect(isActive ? 1.65 : 1.0)
+                            .shadow(color: yellow.opacity(isActive ? 0.95 : 0.0), radius: isActive ? 12 : 0)
+                    }
+                    .position(x: x, y: y)
+                    .zIndex(isActive ? 10 : 1)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isActive)
                 }
 
-                // Bottom Frequency Labels
+                // Bottom Frequency Labels with native enlargement when selected
                 HStack(spacing: 0) {
                     ForEach(0..<nodeCount, id: \.self) { i in
-                        Text(frequencies[i])
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color(white: 0.6))
-                            .frame(width: stepX, alignment: .center)
+                        let isActive = (activeBandIndex == i)
+                        Button {
+                            guard enabled else { return }
+                            Haptics.tap(.selection)
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                                activeBandIndex = i
+                            }
+                        } label: {
+                            Text(frequencies[i])
+                                .font(.system(size: isActive ? 13 : 10, weight: isActive ? .heavy : .semibold))
+                                .foregroundStyle(isActive ? yellow : Color(white: enabled ? 0.70 : 0.35))
+                                .scaleEffect(isActive ? 1.35 : 1.0)
+                                .padding(.horizontal, isActive ? 6 : 0)
+                                .padding(.vertical, isActive ? 2 : 0)
+                                .background(
+                                    Capsule()
+                                        .fill(yellow.opacity(isActive ? 0.22 : 0.0))
+                                        .overlay(
+                                            Capsule().stroke(yellow.opacity(isActive ? 0.45 : 0.0), lineWidth: 1)
+                                        )
+                                )
+                                .frame(width: stepX, alignment: .center)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .zIndex(isActive ? 5 : 1)
+                        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isActive)
                     }
                 }
                 .padding(.horizontal, sidePad - stepX / 2)
                 .position(x: w / 2, y: geo.size.height - bottomLabelH / 2)
             }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { val in
+                        guard enabled else { return }
+                        let touchedIndex = min(nodeCount - 1, max(0, Int(round((val.location.x - sidePad) / stepX))))
+                        if activeBandIndex != touchedIndex {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                                activeBandIndex = touchedIndex
+                            }
+                            Haptics.tap(.selection)
+                        }
+
+                        guard touchedIndex < gains.count else { return }
+                        let deltaY = midY - val.location.y
+                        let maxRange = graphH / 2 - 12
+                        let rawGain = Float((deltaY / maxRange) * maxGain)
+                        let clamped = min(Float(maxGain), max(-Float(maxGain), rawGain))
+                        let newGain: Float = abs(clamped) < 0.4 ? 0 : round(clamped)
+
+                        if gains[touchedIndex] != newGain {
+                            if (gains[touchedIndex] > 0 && newGain <= 0) || (gains[touchedIndex] < 0 && newGain >= 0) {
+                                Haptics.tap(.light)
+                            }
+                            gains[touchedIndex] = newGain
+                        }
+                    }
+                    .onEnded { _ in
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                            activeBandIndex = nil
+                        }
+                    }
+            )
         }
     }
 

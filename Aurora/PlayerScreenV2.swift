@@ -271,40 +271,26 @@ struct PlayerScreenV2: View {
                                         .init(color: .black.opacity(0.75), location: 1)],
                                 startPoint: .top, endPoint: .bottom)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { _ in
-                    let bgImg = currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
-                    let analyzer = SpectrumAnalyzer.shared
-                    let kick = analyzer.dynamicKick
-                    let bass = analyzer.dynamicBass
-                    let pulseScale: CGFloat = 1.0 + CGFloat(kick) * 0.038
-                    let pulseBrightness: Double = Double(kick) * 0.12
-                    let pulseSaturation: Double = 1.0 + Double(kick) * 0.22
-
-                    ZStack {
-                        if let bgImg {
-                            Image(uiImage: bgImg)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .blur(radius: 14)
-                                .scaleEffect(1.08 * pulseScale)
-                                .opacity(0.28 + Double(bass) * 0.08)
-                                .brightness(pulseBrightness)
-                                .saturation(pulseSaturation)
-                                .clipped()
-                                .drawingGroup()
-                        } else {
-                            gradientBackground
-                                .brightness(pulseBrightness)
-                                .saturation(pulseSaturation)
-                        }
-                        AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3)))
-                            .opacity(0.25 + Double(kick) * 0.15)
-                        LinearGradient(stops: [.init(color: .black.opacity(0.10), location: 0),
-                                                .init(color: .black.opacity(0.35), location: 0.50),
-                                                .init(color: .black.opacity(0.85), location: 1.0)],
-                                        startPoint: .top, endPoint: .bottom)
+                let bgImg = currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
+                ZStack {
+                    if let bgImg {
+                        Image(uiImage: bgImg)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .blur(radius: 20)
+                            .scaleEffect(1.10)
+                            .opacity(0.30)
+                            .clipped()
+                    } else {
+                        gradientBackground
                     }
+                    AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3)))
+                        .opacity(0.32)
+                    LinearGradient(stops: [.init(color: .black.opacity(0.10), location: 0),
+                                            .init(color: .black.opacity(0.35), location: 0.50),
+                                            .init(color: .black.opacity(0.85), location: 1.0)],
+                                    startPoint: .top, endPoint: .bottom)
                 }
             }
         }.allowsHitTesting(false)

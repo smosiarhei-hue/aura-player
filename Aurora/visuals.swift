@@ -19,12 +19,15 @@ struct AnimatedMeshBackground: View {
                 // backdrop actually breathes with the music instead of just
                 // drifting on a fixed, silent sine wave.
                 let bands = analyzer.bands
-                let bassEnergy: Double = bands.isEmpty ? 0 : {
-                    let count = min(6, bands.count)
-                    let sum = bands.prefix(count).reduce(Float(0), +)
-                    return Double(sum / Float(count))
+                let bassEnergy: Double = {
+                    if !bands.isEmpty {
+                        let count = min(6, bands.count)
+                        let sum = bands.prefix(count).reduce(Float(0), +)
+                        return Double(sum / Float(count))
+                    }
+                    return Double(analyzer.dynamicBass)
                 }()
-                let pulse = 1.0 + min(0.22, bassEnergy * 0.45)
+                let pulse = 1.0 + min(0.20, bassEnergy * 0.35)
 
                 for i in 0..<6 {
                     let fi = Double(i)

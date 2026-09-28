@@ -99,8 +99,8 @@ final class PlayerCore {
     var queue: [Track] = []
     var shuffle: Bool = false { didSet { defaults.set(shuffle, forKey: "player.shuffle") } }
     var repeatMode: RepeatMode = .off { didSet { defaults.set(repeatMode.rawValue, forKey: "player.repeat") } }
-    var eqEnabled: Bool = true { didSet { applyEQ(); defaults.set(eqEnabled, forKey: "eq.enabled") } }
-    var eqGains: [Float] = EQPresets.flat.gains { didSet { applyEQ(); saveEQ() } }
+    @Published var eqEnabled: Bool = true { didSet { applyEQ(); defaults.set(eqEnabled, forKey: "eq.enabled") } }
+    @Published var eqGains: [Float] = EQPresets.flat.gains { didSet { applyEQ(); saveEQ() } }
 
     var transitionMode: TransitionMode = .automix { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
     var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
@@ -439,6 +439,11 @@ final class PlayerCore {
         for (i, band) in eqNodeA.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in eqNodeB.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
         for (i, band) in looperEQ.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
+        if isUsingStreamPlayer && isPlaying {
+            Task { [weak self] in
+                await self?.migrateStreamToAudioEngineIfNeeded()
+            }
+        }
     }
 
     private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
@@ -874,17 +879,15 @@ final class PlayerCore {
         isPlanningTransition = false
         planningStartedAt = nil
 
-        if VocalIsolationManager.shared.isEnabled && VocalIsolationManager.shared.isolationLevel > 0.05 {
-            if let cachedURL = findLocalOrCachedAudioFile(for: track) {
-                var localTrack = track
-                localTrack.fileName = cachedURL.lastPathComponent
-                localTrack.relativePath = ""
-                localTrack.isStream = false
-                localTrack.streamUrlString = nil
-                streamBufferFraction = 1.0
-                startLocal(localTrack, at: seconds, token: token)
-                return
-            }
+        if let cachedURL = findLocalOrCachedAudioFile(for: track) {
+            var localTrack = track
+            localTrack.fileName = cachedURL.lastPathComponent
+            localTrack.relativePath = ""
+            localTrack.isStream = false
+            localTrack.streamUrlString = nil
+            streamBufferFraction = 1.0
+            startLocal(localTrack, at: seconds, token: token)
+            return
         }
 
         if track.isStream || track.streamUrlString != nil {
@@ -896,10 +899,13 @@ final class PlayerCore {
         }
     }
 
-    private func startLocal(_ track: Track, at seconds: Double, token: Int) {
-        isUsingStreamPlayer = false
-        activeStreamingPlayer.pause()
-        idleStreamingPlayer.pause()
+    private func startLocal(_ track: Track, at seconds: Double, token: Int, isMigration: Bool = false) {
+        let wasStreaming = isUsingStreamPlayer
+        if !isMigration {
+            isUsingStreamPlayer = false
+            activeStreamingPlayer.pause()
+            idleStreamingPlayer.pause()
+        }
         playerA.stop()
         playerB.stop()
         stopBeatLoop()
@@ -954,6 +960,11 @@ final class PlayerCore {
                 }
 
                 self.playerA.play()
+                if isMigration || wasStreaming {
+                    self.isUsingStreamPlayer = false
+                    self.activeStreamingPlayer.pause()
+                    self.idleStreamingPlayer.pause()
+                }
                 self.isPlaying = true
                 self.anchorDate = Date()
                 self.anchorOffset = seconds
@@ -1091,6 +1102,13 @@ final class PlayerCore {
         self.transitionScheduled = false
         self.lastNowPlayingSync = nil
         self.updateNowPlayingInfo()
+
+        // Background caching & seamless migration to AVAudioEngine so 10-band EQ and DSP work unconditionally
+        let token = self.generation
+        Task { [weak self] in
+            guard let self, self.generation == token else { return }
+            await self.migrateStreamToAudioEngineIfNeeded()
+        }
     }
 
     func findLocalOrCachedAudioFile(for track: Track) -> URL? {
@@ -1127,7 +1145,7 @@ final class PlayerCore {
             localTrack.relativePath = ""
             localTrack.isStream = false
             localTrack.streamUrlString = nil
-            self.startLocal(localTrack, at: currentPos, token: token)
+            self.startLocal(localTrack, at: currentPos, token: token, isMigration: true)
             return
         }
 
@@ -1163,7 +1181,7 @@ final class PlayerCore {
                 localTrack.relativePath = ""
                 localTrack.isStream = false
                 localTrack.streamUrlString = nil
-                self.startLocal(localTrack, at: self.progress, token: token)
+                self.startLocal(localTrack, at: self.progress, token: token, isMigration: true)
             } catch {
                 SonivoDiagnostics.log("[VocalIsolation] Stream migration to AVAudioEngine error: \(error)", tag: "AUDIO")
             }
@@ -1692,6 +1710,9 @@ final class PlayerCore {
         if AutoMixDJEngine.shared.isDropTriggered {
             sourceLevel = 0.0
             targetLevel = 1.0
+            if !isUsingStreamPlayer {
+                activeReverb.wetDryMix = 75.0
+            }
         }
 
         if isUsingStreamPlayer {
@@ -1727,6 +1748,15 @@ final class PlayerCore {
             let vocalPocketDuckDB: Float = p < 0.5 ? Float(-6.0 * (1.0 - p / 0.5)) : 0.0
             for bandIdx in 4...6 {
                 idleEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + vocalPocketDuckDB) : vocalPocketDuckDB
+            }
+
+            // Underwater LPF sweep on outgoing Track A in the last 2-3 seconds before drop (p approaching 0.5)
+            if p >= 0.38 && p < 0.50 {
+                let underwaterFactor = Float((p - 0.38) / 0.12)
+                let lpfCut = -24.0 * underwaterFactor
+                for bandIdx in 6...9 {
+                    activeEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + lpfCut) : lpfCut
+                }
             }
 
             // High-pass riser sweep on outgoing track during second half (p >= 0.5)
