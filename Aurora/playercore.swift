@@ -111,8 +111,11 @@ final class PlayerCore {
 
     private(set) var sleepTimerMinutes: Int? = nil
     private(set) var sleepTimerRemaining: Double? = nil
-    private var sleepTimer: Timer?
     private var sleepDeadline: Date?
+    private var sleepDispatchTimer: DispatchSourceTimer?
+    private var sleepExactTimer: DispatchSourceTimer?
+    private var sleepTimerTask: Task<Void, Never>?
+    private let sleepTimerQueue = DispatchQueue(label: "com.aurora.sleeptimer", qos: .userInitiated)
 
     private let defaults = UserDefaults.standard
 
@@ -243,7 +246,9 @@ final class PlayerCore {
             let interval = CMTime(seconds: 1.0 / 120.0, preferredTimescale: 2400)
             p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 Task { @MainActor [weak self] in
-                    guard let self, self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
+                    guard let self else { return }
+                    self.tickSleepTimer()
+                    guard self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
                     let sec = CMTimeGetSeconds(time)
                     if sec.isFinite && sec >= 0 {
                         self.progress = sec
@@ -470,6 +475,7 @@ final class PlayerCore {
     func setApplicationSceneActive(_ active: Bool) {
         guard applicationIsActive != active else { return }
         applicationIsActive = active
+        tickSleepTimer()
         if active {
             publishNowPlaying(nil, state: .stopped)
         } else {
@@ -664,6 +670,7 @@ final class PlayerCore {
     }
 
     private func syncNowPlayingElapsedIfNeeded() {
+        tickSleepTimer()
         guard !applicationIsActive else { return }
         guard currentTrack != nil else { return }
         let now = Date()
@@ -2290,6 +2297,7 @@ final class PlayerCore {
     }
 
     private func tickProgress() {
+        tickSleepTimer()
         guard isPlaying, !isUsingStreamPlayer else { return }
         progress = liveProgress()
         syncNowPlayingElapsedIfNeeded()
@@ -2304,40 +2312,134 @@ final class PlayerCore {
         return String(format: "%d:%02d", m, s)
     }
 
+    var sleepTimerFormatted: String? {
+        guard let rem = sleepTimerRemaining, rem > 0 else { return nil }
+        let totalSec = Int(ceil(rem))
+        let hours = totalSec / 3600
+        let minutes = (totalSec % 3600) / 60
+        let seconds = totalSec % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%d:%02d", minutes, seconds)
+        }
+    }
+
     func setSleepTimer(minutes: Int?) {
-        sleepTimer?.invalidate()
-        sleepTimer = nil
+        cancelSleepTimer()
+        guard let minutes, minutes > 0 else { return }
+        let deadline = Date().addingTimeInterval(Double(minutes) * 60)
+        sleepDeadline = deadline
+        sleepTimerMinutes = minutes
+        sleepTimerRemaining = Double(minutes) * 60
+        startSleepTimerWatchdog(deadline: deadline)
+        SonivoDiagnostics.log("[SleepTimer] Set sleep timer for \(minutes) min (deadline: \(deadline)).", tag: "SLEEP_TIMER")
+    }
+
+    func extendSleepTimer(byMinutes: Int) {
+        guard byMinutes > 0 else { return }
+        let currentRemaining = sleepTimerRemaining ?? 0
+        let newTotal = currentRemaining + Double(byMinutes * 60)
+        let newMinutes = max(1, Int(ceil(newTotal / 60.0)))
+        setSleepTimer(minutes: newMinutes)
+    }
+
+    func cancelSleepTimer() {
+        stopSleepTimerWatchdog()
         sleepDeadline = nil
         sleepTimerRemaining = nil
         sleepTimerMinutes = nil
-        guard let minutes, minutes > 0 else { return }
-        sleepDeadline = Date().addingTimeInterval(Double(minutes) * 60)
-        sleepTimerRemaining = Double(minutes) * 60
-        sleepTimerMinutes = minutes
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tickSleepTimer() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        sleepTimer = timer
     }
 
-    private func tickSleepTimer() {
+    private func startSleepTimerWatchdog(deadline: Date) {
+        stopSleepTimerWatchdog()
+
+        // 1. Periodic countdown timer on dedicated background queue (continues in background)
+        let periodic = DispatchSource.makeTimerSource(flags: .strict, queue: sleepTimerQueue)
+        periodic.schedule(deadline: .now() + 1.0, repeating: 1.0, leeway: .milliseconds(250))
+        periodic.setEventHandler { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                self?.tickSleepTimer()
+            }
+        }
+        periodic.resume()
+        sleepDispatchTimer = periodic
+
+        // 2. Exact wall-clock deadline trigger (guarantees stopping on time even under iOS timer coalescing)
+        let exact = DispatchSource.makeTimerSource(flags: .strict, queue: sleepTimerQueue)
+        let timeRemaining = max(0.1, deadline.timeIntervalSinceNow)
+        exact.schedule(wallDeadline: .now() + timeRemaining, leeway: .milliseconds(100))
+        exact.setEventHandler { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                self?.tickSleepTimer()
+            }
+        }
+        exact.resume()
+        sleepExactTimer = exact
+
+        // 3. Resilient Swift Concurrency watchdog
+        sleepTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { break }
+                await MainActor.run { [weak self] in
+                    self?.tickSleepTimer()
+                }
+            }
+        }
+    }
+
+    private func stopSleepTimerWatchdog() {
+        if let periodic = sleepDispatchTimer {
+            periodic.setEventHandler(handler: nil)
+            periodic.cancel()
+            sleepDispatchTimer = nil
+        }
+        if let exact = sleepExactTimer {
+            exact.setEventHandler(handler: nil)
+            exact.cancel()
+            sleepExactTimer = nil
+        }
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
+    }
+
+    func tickSleepTimer() {
         guard let deadline = sleepDeadline else { return }
         let remaining = deadline.timeIntervalSinceNow
         if remaining <= 0 {
-            pause()
-            cancelSleepTimer()
+            triggerSleepTimerExpiry()
         } else {
             sleepTimerRemaining = remaining
         }
     }
 
-    private func cancelSleepTimer() {
-        sleepTimer?.invalidate()
-        sleepTimer = nil
+    private func triggerSleepTimerExpiry() {
+        stopSleepTimerWatchdog()
         sleepDeadline = nil
         sleepTimerRemaining = nil
         sleepTimerMinutes = nil
+
+        SonivoDiagnostics.log("[SleepTimer] Sleep timer reached deadline. Fading out and pausing playback.", tag: "SLEEP_TIMER")
+
+        guard isPlaying else { return }
+
+        let initialVolume = volume
+        let fadeSteps = 15
+        let fadeDuration = 1.5
+        let stepDelay = fadeDuration / Double(fadeSteps)
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for step in 1...fadeSteps {
+                try? await Task.sleep(nanoseconds: UInt64(stepDelay * 1_000_000_000))
+                guard self.isPlaying else { break }
+                let fraction = Float(fadeSteps - step) / Float(fadeSteps)
+                self.volume = max(0.0, initialVolume * fraction)
+            }
+            self.pause()
+            self.volume = initialVolume
+        }
     }
 
     private var spectrumTapInstalled = false

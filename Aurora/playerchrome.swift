@@ -1,5 +1,6 @@
 // Path: Aurora/playerchrome.swift
 
+import Observation
 import SwiftUI
 import UIKit
 
@@ -50,28 +51,213 @@ struct MarqueeText: View {
 }
 
 struct SleepTimerSheetView: View {
-    @State private var player = PlayerCore.shared
+    @Bindable private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var minutes = 30
-    private let options = [5, 10, 15, 30, 45, 60, 90, 120]
+    private let options = [5, 10, 15, 20, 30, 45, 60, 90, 120]
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 8) {
-                Picker("Время", selection: $minutes) {
-                    ForEach(options, id: \.self) { Text(String($0) + " мин").tag($0) }
-                }.pickerStyle(.wheel)
-                if player.sleepTimerMinutes != nil {
-                    Button("Выключить таймер сна", role: .destructive) { player.setSleepTimer(minutes: nil); dismiss() }
-                        .frame(minHeight: 44).padding(.bottom, 12)
+            ZStack {
+                AuraScreenBackground(colors: [AG.ember, AG.bgRaised], showsMesh: false)
+
+                VStack(spacing: 16) {
+                    if let remaining = player.sleepTimerRemaining, remaining > 0 {
+                        // Active Timer State Card
+                        VStack(spacing: 14) {
+                            HStack {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "timer")
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundStyle(Color.orange)
+                                    Text("Таймер активен")
+                                        .font(AG.text(.headline, .bold))
+                                        .foregroundStyle(AG.ink)
+                                }
+                                Spacer()
+                                if let totalMins = player.sleepTimerMinutes {
+                                    Text("на \(totalMins) мин")
+                                        .font(AG.text(.subheadline, .medium))
+                                        .foregroundStyle(AG.inkMuted)
+                                }
+                            }
+
+                            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                                Text(player.sleepTimerFormatted ?? "0:00")
+                                    .font(.system(size: 40, weight: .heavy, design: .rounded))
+                                    .foregroundStyle(Color.orange)
+                                Text("до отключения")
+                                    .font(AG.text(.subheadline, .medium))
+                                    .foregroundStyle(AG.inkMuted)
+                                Spacer()
+                            }
+
+                            // Dynamic Progress Bar
+                            if let totalMinutes = player.sleepTimerMinutes, totalMinutes > 0 {
+                                let totalSec = Double(totalMinutes * 60)
+                                let progress = max(0.0, min(1.0, remaining / totalSec))
+                                GeometryReader { geo in
+                                    ZStack(alignment: .leading) {
+                                        Capsule()
+                                            .fill(Color.white.opacity(0.12))
+                                            .frame(height: 6)
+                                        Capsule()
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: [Color.orange, Color.yellow],
+                                                    startPoint: .leading,
+                                                    endPoint: .trailing
+                                                )
+                                            )
+                                            .frame(width: geo.size.width * progress, height: 6)
+                                    }
+                                }
+                                .frame(height: 6)
+                            }
+
+                            Text("Воспроизведение плавно затихнет и плеер отключится.")
+                                .font(AG.text(.caption, .regular))
+                                .foregroundStyle(AG.inkFaint)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            // Quick extend buttons
+                            HStack(spacing: 8) {
+                                ForEach([5, 15, 30], id: \.self) { ext in
+                                    Button {
+                                        Haptics.tap(.light)
+                                        player.extendSleepTimer(byMinutes: ext)
+                                    } label: {
+                                        Text("+\(ext) мин")
+                                            .font(AG.text(.caption, .semibold))
+                                            .foregroundStyle(AG.ink)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 7)
+                                            .background(Color.white.opacity(0.12), in: Capsule())
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .padding(.top, 2)
+
+                            Divider().background(Color.white.opacity(0.12)).padding(.vertical, 2)
+
+                            Button(role: .destructive) {
+                                Haptics.tap(.medium)
+                                player.cancelSleepTimer()
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "xmark.circle.fill")
+                                    Text("Выключить таймер сна")
+                                }
+                                .font(AG.text(.body, .semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(Color.red.opacity(0.16))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .foregroundStyle(Color.red)
+                            }
+                        }
+                        .padding(18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .fill(AG.card.opacity(0.85))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .strokeBorder(Color.orange.opacity(0.32), lineWidth: 1)
+                                )
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+
+                        Spacer()
+                    } else {
+                        // Set Timer Form
+                        VStack(spacing: 12) {
+                            // Preset buttons
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach([15, 30, 45, 60, 90], id: \.self) { opt in
+                                        Button {
+                                            Haptics.tap(.light)
+                                            minutes = opt
+                                        } label: {
+                                            Text("\(opt) мин")
+                                                .font(AG.text(.subheadline, minutes == opt ? .bold : .medium))
+                                                .foregroundStyle(minutes == opt ? Color.black : AG.ink)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 8)
+                                                .background(
+                                                    Capsule()
+                                                        .fill(minutes == opt ? Color.orange : Color.white.opacity(0.12))
+                                                )
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 20)
+                            }
+                            .padding(.top, 10)
+
+                            Picker("Время", selection: $minutes) {
+                                ForEach(options, id: \.self) { opt in
+                                    Text("\(opt) мин").tag(opt)
+                                }
+                            }
+                            .pickerStyle(.wheel)
+                            .frame(height: 130)
+
+                            Button {
+                                Haptics.tap(.medium)
+                                player.setSleepTimer(minutes: minutes)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "timer")
+                                        .font(.system(size: 16, weight: .bold))
+                                    Text("Запустить на \(minutes) мин")
+                                        .font(AG.text(.headline, .bold))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(
+                                    LinearGradient(
+                                        colors: [Color.orange, Color.red.opacity(0.85)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .foregroundStyle(Color.white)
+                                .shadow(color: Color.orange.opacity(0.3), radius: 8, y: 4)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 4)
+
+                            Spacer()
+                        }
+                    }
                 }
             }
-            .navigationTitle("Таймер сна").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Таймер сна")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Готово") { player.setSleepTimer(minutes: minutes); dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
+                }
+                if player.sleepTimerRemaining == nil {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Готово") {
+                            Haptics.tap(.light)
+                            player.setSleepTimer(minutes: minutes)
+                            dismiss()
+                        }
+                        .fontWeight(.bold)
+                    }
+                }
             }
         }
-        .presentationDetents([.height(320)]).presentationDragIndicator(.visible)
+        .presentationDetents([.height(370)])
+        .presentationDragIndicator(.visible)
     }
 }
 

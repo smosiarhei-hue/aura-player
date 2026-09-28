@@ -113,7 +113,10 @@ final class ActivePlayerPresentation {
 
     var sleepTimerMinutes: Int? { legacy.sleepTimerMinutes }
     var sleepTimerRemaining: Double? { legacy.sleepTimerRemaining }
+    var sleepTimerFormatted: String? { legacy.sleepTimerFormatted }
     func setSleepTimer(minutes: Int?) { legacy.setSleepTimer(minutes: minutes) }
+    func extendSleepTimer(byMinutes: Int) { legacy.extendSleepTimer(byMinutes: byMinutes) }
+    func cancelSleepTimer() { legacy.cancelSleepTimer() }
 
     var eqEnabled: Bool {
         get { legacy.eqEnabled }

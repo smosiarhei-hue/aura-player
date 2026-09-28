@@ -467,6 +467,45 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("prepareTransition", precache_content)
         self.assertIn("YandexMusicService.shared.getStreamInfo", precache_content)
 
+    def test_sleep_timer_spec(self):
+        core_file = self.repo_root / "Aurora" / "playercore.swift"
+        self.assertTrue(core_file.exists(), "playercore.swift missing")
+        core_content = core_file.read_text(encoding="utf-8")
+
+        # 1. PlayerCore background-resilient timers and methods
+        self.assertIn("sleepTimerFormatted", core_content)
+        self.assertIn("setSleepTimer(minutes: Int?)", core_content)
+        self.assertIn("extendSleepTimer(byMinutes: Int)", core_content)
+        self.assertIn("cancelSleepTimer()", core_content)
+        self.assertIn("sleepDispatchTimer", core_content)
+        self.assertIn("sleepExactTimer", core_content)
+        self.assertIn("sleepTimerQueue", core_content)
+        self.assertIn("triggerSleepTimerExpiry", core_content)
+
+        # 2. Fade out logic on expiry
+        self.assertIn("fadeSteps", core_content)
+        self.assertIn("self.pause()", core_content)
+
+        # 3. ActivePlayerPresentation delegation
+        pres_file = self.repo_root / "Aurora" / "ActivePlayerPresentation.swift"
+        pres_content = pres_file.read_text(encoding="utf-8")
+        self.assertIn("sleepTimerFormatted", pres_content)
+        self.assertIn("extendSleepTimer", pres_content)
+
+        # 4. PlayerScreenV2 display in topHeader and moreMenuButton
+        player_file = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        player_content = player_file.read_text(encoding="utf-8")
+        self.assertIn("player.sleepTimerFormatted", player_content)
+        self.assertIn("Таймер сна (\\(timerText))", player_content)
+
+        # 5. SleepTimerSheetView active countdown and progress
+        chrome_file = self.repo_root / "Aurora" / "playerchrome.swift"
+        chrome_content = chrome_file.read_text(encoding="utf-8")
+        self.assertIn("SleepTimerSheetView", chrome_content)
+        self.assertIn("player.sleepTimerFormatted", chrome_content)
+        self.assertIn("player.extendSleepTimer", chrome_content)
+        self.assertIn("Выключить таймер сна", chrome_content)
+
 
 if __name__ == "__main__":
     unittest.main()

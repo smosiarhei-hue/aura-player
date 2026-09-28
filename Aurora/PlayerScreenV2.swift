@@ -303,16 +303,48 @@ struct PlayerScreenV2: View {
     }
 
     private var topHeader: some View {
-        VStack(spacing: 5) {
-            Capsule()
-                .fill(Color.white.opacity(0.32))
-                .frame(width: 36, height: 4.5)
-                .padding(.top, 4)
+        ZStack {
+            VStack(spacing: 5) {
+                Capsule()
+                    .fill(Color.white.opacity(0.32))
+                    .frame(width: 36, height: 4.5)
+                    .padding(.top, 4)
 
-            Text("СЕЙЧАС ИГРАЕТ")
-                .font(.system(size: 10, weight: .bold, design: .default))
-                .tracking(1.0)
-                .foregroundStyle(AG.inkFaint)
+                Text("СЕЙЧАС ИГРАЕТ")
+                    .font(.system(size: 10, weight: .bold, design: .default))
+                    .tracking(1.0)
+                    .foregroundStyle(AG.inkFaint)
+            }
+
+            if let timerText = player.sleepTimerFormatted {
+                HStack {
+                    Spacer()
+                    Button {
+                        Haptics.tap(.light)
+                        openModal(.sleepTimer)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "timer")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(timerText)
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        }
+                        .foregroundStyle(Color.orange)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4.5)
+                        .background(
+                            Capsule()
+                                .fill(Color.orange.opacity(0.18))
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(Color.orange.opacity(0.42), lineWidth: 0.8)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                }
+            }
         }
         .frame(maxWidth: .infinity)
         .frame(height: 36)
@@ -843,7 +875,11 @@ struct PlayerScreenV2: View {
                 Label("Эквалайзер", systemImage: "slider.vertical.3")
             }
             Button { openModal(.sleepTimer) } label: {
-                Label("Таймер сна", systemImage: "timer")
+                if let timerText = player.sleepTimerFormatted {
+                    Label("Таймер сна (\(timerText))", systemImage: "timer")
+                } else {
+                    Label("Таймер сна", systemImage: "timer")
+                }
             }
             Button { openModal(.settings) } label: {
                 Label("Настройки", systemImage: "gearshape")
