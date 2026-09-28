@@ -143,7 +143,7 @@ struct QueueSheetView: View {
 }
 
 struct PlayerEQSheetView: View {
-    @ObservedObject private var player = PlayerCore.shared
+    @Bindable private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
 
     private let frequencies = ["20", "40", "60", "90", "160", "400", "1k", "2.5k", "6k", "16k"]
