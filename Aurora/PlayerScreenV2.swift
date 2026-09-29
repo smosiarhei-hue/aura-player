@@ -18,6 +18,7 @@ struct PlayerScreenV2: View {
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
     @State private var coverDragX: CGFloat = 0
+    @State private var coverDragDirection: CGFloat = 0
     @State private var isCoverSwitching = false
     @State private var waveLoading = false
     @State private var waveActive = false
@@ -93,7 +94,17 @@ struct PlayerScreenV2: View {
             _ = await (p, l, v)
         }
         .onChange(of: player.currentTrack?.id) { _, _ in
-            isCoverSwitching = false
+            if isCoverSwitching {
+                coverDragX = -coverDragDirection * 240
+                withAnimation(AG.spring) {
+                    coverDragX = 0
+                }
+                isCoverSwitching = false
+            } else {
+                withAnimation(AG.spring) {
+                    coverDragX = 0
+                }
+            }
         }
         .onChange(of: player.isPlaying) { _, playing in
             if playing {
@@ -251,46 +262,55 @@ struct PlayerScreenV2: View {
             radius: player.isPlaying ? 24 : 8,
             y: player.isPlaying ? 12 : 4
         )
-        .scaleEffect(player.isPlaying ? 1 : 0.88).offset(x: coverDragX)
+        .scaleEffect(player.isPlaying ? (1.0 - min(0.04, abs(coverDragX) / (side * 5))) : 0.88)
+        .rotationEffect(.degrees(Double(coverDragX / side) * 3.5))
+        .offset(x: coverDragX)
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 15)
-            .onChanged { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                coverDragX = value.translation.width / (1 + abs(value.translation.width) * 0.001)
-            }
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }; return
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { value in
+                    guard !isCoverSwitching else { return }
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    let translation = value.translation.width
+                    let resistance: CGFloat = 1.0 / (1.0 + abs(translation) / (side * 1.5))
+                    coverDragX = translation * resistance
                 }
-                let threshold: CGFloat = 65
-                if value.translation.width < -threshold, !isCoverSwitching {
-                    Haptics.tap(.light)
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        coverDragX = -side * 1.15
+                .onEnded { value in
+                    guard !isCoverSwitching else { return }
+                    guard abs(value.translation.width) > abs(value.translation.height) else {
+                        withAnimation(AG.fastSpring) { coverDragX = 0 }
+                        return
                     }
-                    nextTrack()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                        coverDragX = side * 0.85
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    let velocityX = value.predictedEndTranslation.width - value.translation.width
+                    let threshold: CGFloat = side * 0.22
+                    let velocityThreshold: CGFloat = 240
+
+                    let isNext = value.translation.width < -threshold || velocityX < -velocityThreshold
+                    let isPrev = value.translation.width > threshold || velocityX > velocityThreshold
+
+                    if isNext {
+                        coverDragDirection = -1
+                        isCoverSwitching = true
+                        Haptics.tap(.light)
+                        withAnimation(AG.fastSpring) {
+                            coverDragX = -side * 1.08
+                        }
+                        nextTrack()
+                    } else if isPrev {
+                        coverDragDirection = 1
+                        isCoverSwitching = true
+                        Haptics.tap(.light)
+                        withAnimation(AG.fastSpring) {
+                            coverDragX = side * 1.08
+                        }
+                        previousTrack()
+                    } else {
+                        withAnimation(AG.spring) {
                             coverDragX = 0
                         }
                     }
-                } else if value.translation.width > threshold, !isCoverSwitching {
-                    Haptics.tap(.light)
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        coverDragX = side * 1.15
-                    }
-                    previousTrack()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                        coverDragX = -side * 0.85
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                            coverDragX = 0
-                        }
-                    }
-                } else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }
                 }
-            })
+        )
         .animation(.easeInOut(duration: 0.35), value: player.isTransitionActive)
         .animation(AG.slowSpring, value: player.isPlaying)
     }
@@ -460,7 +480,7 @@ struct PlayerScreenV2: View {
             Button(action: previousTrack) { Image(systemName: "backward.fill").font(.system(.largeTitle, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52) }
             Button(action: togglePlayback) { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 40, weight: .black)).frame(maxWidth: .infinity, minHeight: 56) }.disabled(player.isLoading)
             Button(action: nextTrack) { Image(systemName: "forward.fill").font(.system(.largeTitle, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52) }
-        }.foregroundStyle(AG.ink).buttonStyle(TactileButtonStyle(scale: 0.86))
+        }.foregroundStyle(AG.ink).buttonStyle(TactileButtonStyle(scale: 0.94))
     }
 
     private var artistSelectionSheet: some View {
@@ -566,22 +586,35 @@ struct PlayerScreenV2: View {
     private func previousTrack() {
         guard !isCoverSwitching else { return }
         isCoverSwitching = true
+        coverDragDirection = 1
         Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.previous()
-        releaseCoverSwitchLock()
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            if isCoverSwitching {
+                withAnimation(AG.spring) {
+                    coverDragX = 0
+                    isCoverSwitching = false
+                }
+            }
+        }
     }
     private func nextTrack() {
         guard !isCoverSwitching else { return }
         isCoverSwitching = true
+        coverDragDirection = -1
         Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.next()
-        releaseCoverSwitchLock()
-    }
-    private func releaseCoverSwitchLock() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
-            isCoverSwitching = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            if isCoverSwitching {
+                withAnimation(AG.spring) {
+                    coverDragX = 0
+                    isCoverSwitching = false
+                }
+            }
         }
     }
     private func close() { Haptics.tap(.light); isPresented = false }

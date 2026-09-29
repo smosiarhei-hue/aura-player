@@ -399,7 +399,7 @@ struct InteractiveEQGraph: View {
 }
 struct TactileButtonStyle: ButtonStyle {
     let scaleAmount: CGFloat
-    init(scale: CGFloat = 0.86) { self.scaleAmount = scale }
+    init(scale: CGFloat = 0.94) { self.scaleAmount = scale }
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.scaleEffect(configuration.isPressed ? scaleAmount : 1.0)
             .animation(AG.fastSpring, value: configuration.isPressed)
