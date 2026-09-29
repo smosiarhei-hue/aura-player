@@ -15,7 +15,8 @@ final class PlaybackAudioSessionCoordinator {
     func install() {
         guard !installed else { return }
         installed = true
-        configure()
+        // Wiring only — installing observers must never steal audio focus from another app.
+        prepare()
         PlaybackCommandRouter.shared.install()
         AutoMixV2NowPlayingCenter.shared.install()
 
@@ -30,7 +31,7 @@ final class PlaybackAudioSessionCoordinator {
                 case .began:
                     PlayerCore.shared.pause()
                 case .ended:
-                    PlaybackAudioSessionCoordinator.shared.configure()
+                    PlaybackAudioSessionCoordinator.shared.prepare()
                     let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
                     if shouldResume {
                         PlayerCore.shared.resume()
@@ -48,7 +49,7 @@ final class PlaybackAudioSessionCoordinator {
                 if reason == .oldDeviceUnavailable {
                     PlaybackCommandRouter.shared.pause()
                 }
-                PlaybackAudioSessionCoordinator.shared.configure()
+                PlaybackAudioSessionCoordinator.shared.prepare()
             }
         })
 
@@ -58,43 +59,73 @@ final class PlaybackAudioSessionCoordinator {
             queue: .main
         ) { _ in
             Task { @MainActor in
-                PlaybackAudioSessionCoordinator.shared.configure()
+                PlaybackAudioSessionCoordinator.shared.prepare()
             }
         })
 
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { _ in
             Task { @MainActor in
-                PlaybackAudioSessionCoordinator.shared.configure()
+                PlaybackAudioSessionCoordinator.shared.prepare()
             }
         })
 
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in
-                PlaybackAudioSessionCoordinator.shared.configure()
+                PlaybackAudioSessionCoordinator.shared.prepare()
                 PlayerCore.shared.resume()
             }
         })
 
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            Task { @MainActor in PlaybackAudioSessionCoordinator.shared.configure() }
+            Task { @MainActor in PlaybackAudioSessionCoordinator.shared.prepare() }
+        })
+
+        // While Sonivo is backgrounded and silent it must not hold audio focus — that is
+        // exactly what made it fight with other audio apps. Hand the session back so they
+        // can play instead of being interrupted by us.
+        observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in PlayerCore.shared.releaseAudioSessionIfIdle() }
+        })
+        observers.append(center.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in PlayerCore.shared.releaseAudioSessionIfIdle() }
         })
     }
 
-    func activateForPlayback() {
-        configure()
+    /// Category and hardware preferences only. Safe to call from any lifecycle event:
+    /// it never claims audio focus, so it cannot interrupt another app that is playing.
+    func prepare() {
+        configure(activate: false)
     }
 
-    private func configure() {
+    /// Claims audio focus. Call only when sound is about to be produced.
+    func activateForPlayback() {
+        configure(activate: true)
+    }
+
+    /// Releases audio focus so other apps can resume. Callers must only reach this while
+    /// Sonivo itself is silent.
+    func deactivateWhenIdle() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setActive(false, options: .notifyOthersOnDeactivation)
+            print("[Audio] session released; other apps may resume")
+        } catch {
+            // Already inactive, or interrupted by another app. Not worth surfacing.
+        }
+    }
+
+    private func configure(activate: Bool) {
         let session = AVAudioSession.sharedInstance()
         let usesV2 = AutoMixEngineSelectionStore.shared.isV2Enabled || AutoMixEngineSelectionStore.shared.isNeuroEnabled
         let result = PlaybackAudioSessionSetup.configure(
             session: SystemPlaybackAudioSessionConfiguration(session: session),
-            usesV2: usesV2
+            usesV2: usesV2,
+            activateSession: activate
         ) { error, step in
             report(error, step: step.rawValue)
         }
 
-        guard result.isActive, usesV2 else { return }
+        guard usesV2, (activate ? result.isActive : true) else { return }
 
         let actualRate = session.sampleRate
         let actualBuffer = session.ioBufferDuration

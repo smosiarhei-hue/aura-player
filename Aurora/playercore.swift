@@ -81,7 +81,7 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
-    static let bandFrequencies: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
+    nonisolated static let bandFrequencies: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
     private static let streamHeadroomCeiling: Float = 0.89
 
     private(set) var isPlaying = false
@@ -99,8 +99,28 @@ final class PlayerCore {
     var queue: [Track] = []
     var shuffle: Bool = false { didSet { defaults.set(shuffle, forKey: "player.shuffle") } }
     var repeatMode: RepeatMode = .off { didSet { defaults.set(repeatMode.rawValue, forKey: "player.repeat") } }
-    var eqEnabled: Bool = true { didSet { applyEQ(); defaults.set(eqEnabled, forKey: "eq.enabled") } }
-    var eqGains: [Float] = EQPresets.flat.gains { didSet { applyEQ(); saveEQ() } }
+    var eqEnabled: Bool = true {
+        didSet {
+            guard eqEnabled != oldValue else { return }
+            applyEQ()
+            defaults.set(eqEnabled, forKey: "eq.enabled")
+            scheduleStreamMigrationIfNeeded()
+        }
+    }
+
+    /// User EQ curve. The audio graph is only ever fed through `applyEQ()`, which reads
+    /// this via `normalizedUserGains`, so a short or long array can never index-crash.
+    var eqGains: [Float] = EQPresets.flat.gains {
+        didSet {
+            let normalized = Self.normalized(eqGains)
+            if normalized != eqGains {
+                eqGains = normalized
+                return
+            }
+            applyEQ()
+            saveEQ()
+        }
+    }
 
     var transitionMode: TransitionMode = .automix { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
     var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
@@ -112,10 +132,13 @@ final class PlayerCore {
     private(set) var sleepTimerMinutes: Int? = nil
     private(set) var sleepTimerRemaining: Double? = nil
     private var sleepDeadline: Date?
-    private var sleepDispatchTimer: DispatchSourceTimer?
-    private var sleepExactTimer: DispatchSourceTimer?
-    private var sleepTimerTask: Task<Void, Never>?
-    private let sleepTimerQueue = DispatchQueue(label: "com.aurora.sleeptimer", qos: .userInitiated)
+
+    /// Single watchdog. This used to be two `DispatchSourceTimer`s plus an endless `Task`,
+    /// all publishing `@Observable` state from several queues while `tickProgress()` called
+    /// `tickSleepTimer()` 60x/s on top — re-rendering the player screen until the app died.
+    private var sleepWatchdog: DispatchSourceTimer?
+    private var lastPublishedSleepRemaining: Double = 0
+    private let sleepTimerQueue = DispatchQueue(label: "com.aurora.sleeptimer", qos: .utility)
 
     private let defaults = UserDefaults.standard
 
@@ -227,15 +250,19 @@ final class PlayerCore {
         UIApplication.shared.beginReceivingRemoteControlEvents()
     }
 
+    /// `AVAudioSession` category and activation are owned exclusively by
+    /// `PlaybackAudioSessionCoordinator`. Configuring — and especially *activating* — the
+    /// session here as well made two components fight over it and stole audio focus from
+    /// other apps on every launch and every foreground, even with nothing playing.
     private func configureSession() {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .moviePlayback, policy: .default, options: [])
-            try? session.setSupportsMultichannelContent(true)
-            try session.setActive(true)
-        } catch {
-            print("AVAudioSession error: \(error)")
-        }
+        PlaybackAudioSessionCoordinator.shared.prepare()
+    }
+
+    /// Hands audio focus back so other apps can play again.
+    /// Internal (not private) so `PlaybackAudioSessionCoordinator` can call it on backgrounding.
+    func releaseAudioSessionIfIdle() {
+        guard !isPlaying, !isTransitioning else { return }
+        PlaybackAudioSessionCoordinator.shared.deactivateWhenIdle()
     }
 
     private func setupStreamingPlayer() {
@@ -247,7 +274,6 @@ final class PlayerCore {
             p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.tickSleepTimer()
                     guard self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
                     let sec = CMTimeGetSeconds(time)
                     if sec.isFinite && sec >= 0 {
@@ -353,7 +379,7 @@ final class PlayerCore {
 
     private func configureEQ(_ node: AVAudioUnitEQ) {
         for (i, band) in node.bands.enumerated() {
-            band.frequency = PlayerCore.bandFrequencies[i]
+            band.frequency = i < PlayerCore.bandFrequencies.count ? PlayerCore.bandFrequencies[i] : 1000
             band.bandwidth = 1.0
             band.bypass = false
             band.gain = 0
@@ -440,19 +466,86 @@ final class PlayerCore {
         }
     }
 
+    // MARK: - Single-writer EQ
+
+    /// Per-deck dB offsets produced by AutoMix transition FX.
+    ///
+    /// Neither the slider UI nor the transition code touches `AVAudioUnitEQ.bands` directly:
+    /// both publish their intent here and `applyEQ()` is the only writer. Previously both
+    /// wrote `bands[i].gain` every tick and clobbered each other — the "EQ conflicts with
+    /// the timer / something fights over the node" crash.
+    private var eqOffsetA = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
+    private var eqOffsetB = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
+    private var eqOffsetLooper = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
+    private var streamMigrationInFlight = false
+    private var lastStreamMigrationAttempt = Date.distantPast
+
+    private var normalizedUserGains: [Float] { Self.normalized(eqGains) }
+
+    /// Always exactly `bandFrequencies.count` elements — the only safe basis for indexing.
+    nonisolated static func normalized(_ gains: [Float]) -> [Float] {
+        let count = bandFrequencies.count
+        var out = Array(gains.prefix(count))
+        if out.count < count { out.append(contentsOf: Array(repeating: 0, count: count - out.count)) }
+        return out
+    }
+
+    /// Publishes transition FX offsets for the active/idle decks and repaints the graph.
+    private func setTransitionEQOffsets(active: [Float], idle: [Float]) {
+        let a = Self.normalized(active)
+        let i = Self.normalized(idle)
+        if activePlayer === playerA {
+            eqOffsetA = a
+            eqOffsetB = i
+        } else {
+            eqOffsetB = a
+            eqOffsetA = i
+        }
+        applyEQ()
+    }
+
+    /// Neutral EQ again (user curve only). Called whenever a transition is aborted.
+    private func resetTransitionEQOffsets() {
+        let zero = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
+        eqOffsetA = zero
+        eqOffsetB = zero
+        applyEQ()
+    }
+
     private func applyEQ() {
-        for (i, band) in eqNodeA.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
-        for (i, band) in eqNodeB.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
-        for (i, band) in looperEQ.bands.enumerated() { band.gain = eqEnabled ? eqGains[i] : 0 }
-        if isUsingStreamPlayer && isPlaying {
-            Task { [weak self] in
-                await self?.migrateStreamToAudioEngineIfNeeded()
-            }
+        let user = normalizedUserGains
+        let on = eqEnabled
+        func compose(_ offset: [Float]) -> [Float] {
+            (0..<PlayerCore.bandFrequencies.count).map { on ? (user[$0] + offset[$0]) : offset[$0] }
+        }
+        writeBands(eqNodeA, compose(eqOffsetA))
+        writeBands(eqNodeB, compose(eqOffsetB))
+        writeBands(looperEQ, compose(eqOffsetLooper))
+    }
+
+    private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float]) {
+        let bands = node.bands
+        for i in 0..<min(bands.count, gains.count) where bands[i].gain != gains[i] {
+            bands[i].gain = gains[i]
         }
     }
 
-    private var activeEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeA : eqNodeB }
-    private var idleEQ: AVAudioUnitEQ { (activePlayer === playerA) ? eqNodeB : eqNodeA }
+    /// Migrating a stream onto `AVAudioEngine` downloads the asset and rebuilds the audio
+    /// graph. It used to be kicked off from `applyEQ()` — i.e. once per EQ slider tick —
+    /// which re-entered `startLocal(...)` in the middle of a drag and crashed the app.
+    /// Now single-flight and rate limited.
+    private func scheduleStreamMigrationIfNeeded() {
+        guard isUsingStreamPlayer, isPlaying, !streamMigrationInFlight else { return }
+        guard Date().timeIntervalSince(lastStreamMigrationAttempt) > 5 else { return }
+        streamMigrationInFlight = true
+        lastStreamMigrationAttempt = Date()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.migrateStreamToAudioEngineIfNeeded()
+            self.streamMigrationInFlight = false
+        }
+    }
+
     private var idlePlayer: AVAudioPlayerNode { (activePlayer === playerA) ? playerB : playerA }
     private var activeTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchA : timePitchB }
     private var idleTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchB : timePitchA }
@@ -1528,9 +1621,9 @@ final class PlayerCore {
                 self.looperPlayer.volume = self.volume
                 self.looperTimePitch.rate = 1.0
                 self.looperReverb.wetDryMix = 0
-                for (i, band) in self.looperEQ.bands.enumerated() {
-                    band.gain = self.eqEnabled ? self.eqGains[i] : 0
-                }
+                // Restores the looper chain to the user curve through the single writer
+                // instead of indexing `eqGains` by band position.
+                self.applyEQ()
                 if !self.engine.isRunning { try? self.engine.start() }
                 self.looperPlayer.scheduleBuffer(buffer, at: nil, options: [.loops])
                 self.looperPlayer.play()
@@ -1735,6 +1828,10 @@ final class PlayerCore {
         }
 
         if !isUsingStreamPlayer {
+            let bandCount = PlayerCore.bandFrequencies.count
+            var activeOffset = [Float](repeating: 0, count: bandCount)
+            var idleOffset = [Float](repeating: 0, count: bandCount)
+
             var outLowDB = outBassCut
             var inLowDB = inBassGain
             if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0) {
@@ -1743,26 +1840,26 @@ final class PlayerCore {
             if let inLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0) {
                 inLowDB = max(-30.0, min(0.0, (inLow - 1) * 24.0))
             }
-            activeEQ.bands[0].gain = eqEnabled ? (eqGains[0] + outLowDB) : outLowDB
-            activeEQ.bands[1].gain = eqEnabled ? (eqGains[1] + outLowDB * 0.8) : (outLowDB * 0.8)
-            activeEQ.bands[2].gain = eqEnabled ? (eqGains[2] + outLowDB * 0.5) : (outLowDB * 0.5)
+            activeOffset[0] = outLowDB
+            activeOffset[1] = outLowDB * 0.8
+            activeOffset[2] = outLowDB * 0.5
 
-            idleEQ.bands[0].gain = eqEnabled ? (eqGains[0] + inLowDB) : inLowDB
-            idleEQ.bands[1].gain = eqEnabled ? (eqGains[1] + inLowDB) : inLowDB
-            idleEQ.bands[2].gain = eqEnabled ? (eqGains[2] + inLowDB) : inLowDB
+            idleOffset[0] = inLowDB
+            idleOffset[1] = inLowDB
+            idleOffset[2] = inLowDB
 
             // Vocal pocket ducking on incoming track during first half (p < 0.5)
             let vocalPocketDuckDB: Float = p < 0.5 ? Float(-6.0 * (1.0 - p / 0.5)) : 0.0
-            for bandIdx in 4...6 {
-                idleEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + vocalPocketDuckDB) : vocalPocketDuckDB
+            for bandIdx in 4...6 where bandIdx < bandCount {
+                idleOffset[bandIdx] = vocalPocketDuckDB
             }
 
             // Underwater LPF sweep on outgoing Track A in the last 2-3 seconds before drop (p approaching 0.5)
             if p >= 0.38 && p < 0.50 {
                 let underwaterFactor = Float((p - 0.38) / 0.12)
                 let lpfCut = -24.0 * underwaterFactor
-                for bandIdx in 6...9 {
-                    activeEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + lpfCut) : lpfCut
+                for bandIdx in 6...9 where bandIdx < bandCount {
+                    activeOffset[bandIdx] = lpfCut
                 }
             }
 
@@ -1770,10 +1867,13 @@ final class PlayerCore {
             if p >= 0.5 {
                 let riserP = Float((p - 0.5) / 0.5)
                 let riserCut = -24.0 * (1.0 + riserP * 0.5)
-                for bandIdx in 0...2 {
-                    activeEQ.bands[bandIdx].gain = eqEnabled ? (eqGains[bandIdx] + riserCut) : riserCut
+                for bandIdx in 0...2 where bandIdx < bandCount {
+                    activeOffset[bandIdx] = riserCut
                 }
             }
+
+            // One writer only: user EQ + FX offsets are composed inside `applyEQ()`.
+            setTransitionEQOffsets(active: activeOffset, idle: idleOffset)
         }
 
         let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? (p >= 0.5 ? Float((p - 0.5) / 0.5 * 0.60) : 0.0)
@@ -2053,6 +2153,9 @@ final class PlayerCore {
         transitionScheduledAt = nil
         failedPrebufferTrackId = nil
         lastPrebufferAttempt = nil
+        // FX offsets have to be dropped too, otherwise an aborted transition leaves the user
+        // EQ stuck with riser / underwater-LPF cuts baked into the bands.
+        resetTransitionEQOffsets()
         guard isTransitioning else { return }
         transitionTimer?.invalidate()
         transitionTimer = nil
@@ -2297,7 +2400,6 @@ final class PlayerCore {
     }
 
     private func tickProgress() {
-        tickSleepTimer()
         guard isPlaying, !isUsingStreamPlayer else { return }
         progress = liveProgress()
         syncNowPlayingElapsedIfNeeded()
@@ -2331,8 +2433,9 @@ final class PlayerCore {
         let deadline = Date().addingTimeInterval(Double(minutes) * 60)
         sleepDeadline = deadline
         sleepTimerMinutes = minutes
-        sleepTimerRemaining = Double(minutes) * 60
-        startSleepTimerWatchdog(deadline: deadline)
+        lastPublishedSleepRemaining = Double(minutes) * 60
+        sleepTimerRemaining = lastPublishedSleepRemaining
+        startSleepTimerWatchdog()
         SonivoDiagnostics.log("[SleepTimer] Set sleep timer for \(minutes) min (deadline: \(deadline)).", tag: "SLEEP_TIMER")
     }
 
@@ -2349,59 +2452,29 @@ final class PlayerCore {
         sleepDeadline = nil
         sleepTimerRemaining = nil
         sleepTimerMinutes = nil
+        lastPublishedSleepRemaining = 0
     }
 
-    private func startSleepTimerWatchdog(deadline: Date) {
+    /// One watchdog only, firing once per second with generous leeway. It runs on a private
+    /// queue purely so it survives backgrounding; every state mutation hops to the main actor.
+    private func startSleepTimerWatchdog() {
         stopSleepTimerWatchdog()
-
-        // 1. Periodic countdown timer on dedicated background queue (continues in background)
-        let periodic = DispatchSource.makeTimerSource(flags: .strict, queue: sleepTimerQueue)
-        periodic.schedule(deadline: .now() + 1.0, repeating: 1.0, leeway: .milliseconds(250))
-        periodic.setEventHandler { [weak self] in
-            DispatchQueue.main.async { [weak self] in
+        let source = DispatchSource.makeTimerSource(queue: sleepTimerQueue)
+        source.schedule(deadline: .now() + 1.0, repeating: 1.0, leeway: .milliseconds(250))
+        source.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
                 self?.tickSleepTimer()
             }
         }
-        periodic.resume()
-        sleepDispatchTimer = periodic
-
-        // 2. Exact wall-clock deadline trigger (guarantees stopping on time even under iOS timer coalescing)
-        let exact = DispatchSource.makeTimerSource(flags: .strict, queue: sleepTimerQueue)
-        let timeRemaining = max(0.1, deadline.timeIntervalSinceNow)
-        exact.schedule(wallDeadline: .now() + timeRemaining, leeway: .milliseconds(100))
-        exact.setEventHandler { [weak self] in
-            DispatchQueue.main.async { [weak self] in
-                self?.tickSleepTimer()
-            }
-        }
-        exact.resume()
-        sleepExactTimer = exact
-
-        // 3. Resilient Swift Concurrency watchdog
-        sleepTimerTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled { break }
-                await MainActor.run { [weak self] in
-                    self?.tickSleepTimer()
-                }
-            }
-        }
+        source.resume()
+        sleepWatchdog = source
     }
 
     private func stopSleepTimerWatchdog() {
-        if let periodic = sleepDispatchTimer {
-            periodic.setEventHandler(handler: nil)
-            periodic.cancel()
-            sleepDispatchTimer = nil
-        }
-        if let exact = sleepExactTimer {
-            exact.setEventHandler(handler: nil)
-            exact.cancel()
-            sleepExactTimer = nil
-        }
-        sleepTimerTask?.cancel()
-        sleepTimerTask = nil
+        guard let source = sleepWatchdog else { return }
+        sleepWatchdog = nil
+        source.setEventHandler {}
+        source.cancel()
     }
 
     func tickSleepTimer() {
@@ -2409,9 +2482,14 @@ final class PlayerCore {
         let remaining = deadline.timeIntervalSinceNow
         if remaining <= 0 {
             triggerSleepTimerExpiry()
-        } else {
-            sleepTimerRemaining = remaining
+            return
         }
+        // Publish only on real change at 1s granularity. Writing this on every tick (it used
+        // to run at 60 and 120 Hz too) invalidated the whole player view on every frame.
+        let rounded = ceil(remaining)
+        guard abs(rounded - lastPublishedSleepRemaining) >= 0.5 else { return }
+        lastPublishedSleepRemaining = rounded
+        sleepTimerRemaining = remaining
     }
 
     private func triggerSleepTimerExpiry() {
@@ -2422,7 +2500,10 @@ final class PlayerCore {
 
         SonivoDiagnostics.log("[SleepTimer] Sleep timer reached deadline. Fading out and pausing playback.", tag: "SLEEP_TIMER")
 
-        guard isPlaying else { return }
+        guard isPlaying else {
+            releaseAudioSessionIfIdle()
+            return
+        }
 
         let initialVolume = volume
         let fadeSteps = 15
@@ -2439,6 +2520,9 @@ final class PlayerCore {
             }
             self.pause()
             self.volume = initialVolume
+            // Sleep timer always ends the session: the point of the feature is to hand the
+            // phone (and the audio focus) back to whatever plays next.
+            self.releaseAudioSessionIfIdle()
         }
     }
 
