@@ -91,21 +91,19 @@ final class DualDeckAudioEngine: @unchecked Sendable {
             }
             band.gain = 0
         }
-        let enabled = UserDefaults.standard.bool(forKey: "eq.enabled")
-        if let data = UserDefaults.standard.data(forKey: "eq.gains"),
-           let gains = try? JSONDecoder().decode([Float].self, from: data),
-           gains.count == 10 {
-            applyUserEQ(gains: gains, enabled: enabled)
-        } else {
-            applyUserEQ(gains: Array(repeating: 0, count: 10), enabled: enabled)
-        }
+        // EQ state is owned by PlayerCore. Reading UserDefaults here directly used to
+        // disagree with it (bool(forKey:) defaults to false, PlayerCore defaults the EQ to on)
+        // and kept a second, diverging copy of the curve.
+        let (gains, enabled) = PlayerCore.persistedEQ()
+        applyUserEQ(gains: gains, enabled: enabled)
     }
 
     func applyUserEQ(gains: [Float], enabled: Bool) {
         userEQ.bypass = !enabled
-        guard enabled else { return }
-        for (i, gain) in gains.prefix(userEQ.bands.count).enumerated() {
-            userEQ.bands[i].gain = gain
+        // Normalised to the band count so a short/long curve can never index-crash.
+        let curve = PlayerCore.normalized(gains)
+        for (i, band) in userEQ.bands.enumerated() {
+            band.gain = enabled && i < curve.count ? curve[i] : 0
         }
     }
 

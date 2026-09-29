@@ -82,6 +82,26 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
 final class PlayerCore {
     static let shared = PlayerCore()
     nonisolated static let bandFrequencies: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
+    nonisolated static let eqEnabledKey = "eq.enabled"
+    nonisolated static let eqGainsKey = "eq.gains"
+
+    /// Single reader for the persisted EQ curve.
+    ///
+    /// `PlayerCore` owns EQ state at runtime, but the AutoMix V2 / NeuroMix engines are built
+    /// outside its control and used to read `UserDefaults` on their own — with `bool(forKey:)`,
+    /// which answers `false` for a missing key while `PlayerCore` defaults the EQ to *on*.
+    /// So one deck could play with the EQ bypassed while the UI showed it enabled. Every audio
+    /// node now gets the same answer from here.
+    nonisolated static func persistedEQ() -> (gains: [Float], enabled: Bool) {
+        let defaults = UserDefaults.standard
+        let enabled = (defaults.object(forKey: eqEnabledKey) as? Bool) ?? true
+        var gains: [Float] = []
+        if let data = defaults.data(forKey: eqGainsKey),
+           let decoded = try? JSONDecoder().decode([Float].self, from: data) {
+            gains = decoded
+        }
+        return (normalized(gains), enabled)
+    }
     private static let streamHeadroomCeiling: Float = 0.89
 
     private(set) var isPlaying = false
@@ -103,7 +123,7 @@ final class PlayerCore {
         didSet {
             guard eqEnabled != oldValue else { return }
             applyEQ()
-            defaults.set(eqEnabled, forKey: "eq.enabled")
+            defaults.set(eqEnabled, forKey: Self.eqEnabledKey)
             scheduleStreamMigrationIfNeeded()
         }
     }
@@ -400,7 +420,7 @@ final class PlayerCore {
     private func loadSettings() {
         shuffle = defaults.bool(forKey: "player.shuffle")
         repeatMode = RepeatMode(rawValue: defaults.integer(forKey: "player.repeat")) ?? .off
-        eqEnabled = defaults.object(forKey: "eq.enabled") as? Bool ?? true
+        eqEnabled = defaults.object(forKey: Self.eqEnabledKey) as? Bool ?? true
 
         if let modeStr = defaults.string(forKey: "player.transitionMode"),
            let mode = TransitionMode(rawValue: modeStr) {
@@ -419,7 +439,7 @@ final class PlayerCore {
         engine.mainMixerNode.outputVolume = volume
         streamingPlayer.volume = volume * Self.streamHeadroomCeiling
 
-        if let data = defaults.data(forKey: "eq.gains"),
+        if let data = defaults.data(forKey: Self.eqGainsKey),
            let gains = try? JSONDecoder().decode([Float].self, from: data),
            gains.count == PlayerCore.bandFrequencies.count {
             eqGains = gains
@@ -462,7 +482,7 @@ final class PlayerCore {
 
     private func saveEQ() {
         if let data = try? JSONEncoder().encode(eqGains) {
-            defaults.set(data, forKey: "eq.gains")
+            defaults.set(data, forKey: Self.eqGainsKey)
         }
     }
 
