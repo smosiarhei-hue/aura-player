@@ -31,6 +31,8 @@ public final class PlaybackCoordinator {
     private var commandTask: Task<Void, Error>?
     private var prefetchTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
+    private var transitionStartedAt: Date?
+    private var transitionDurationSeconds: Double?
     private var monitorTask: Task<Void, Never>?
 
     public init(source: any TrackSource, engine: any PlaybackEngine,
@@ -72,6 +74,14 @@ public final class PlaybackCoordinator {
         case .ready: return "Переход готов"
         case .fallback: return "Fallback crossfade"
         }
+    }
+
+    /// 0...1 progress of the in-flight transition, or nil when none is running.
+    /// Drives the transition timeline in the app's AutoMix V2 bridge.
+    public var transitionProgress: Double? {
+        guard transitionTask != nil, let started = transitionStartedAt,
+              let duration = transitionDurationSeconds, duration > 0 else { return nil }
+        return min(1, max(0, -started.timeIntervalSinceNow / duration))
     }
     deinit {
         commandTask?.cancel()
@@ -323,6 +333,8 @@ public final class PlaybackCoordinator {
         monitorTask?.cancel()
         prefetchTask = nil
         transitionTask = nil
+        transitionStartedAt = nil
+        transitionDurationSeconds = nil
         monitorTask = nil
         // Cancelled fades may have advanced the prepared player's timeline; never reuse that position.
         if transition != nil { prepared = nil }
@@ -428,17 +440,23 @@ public final class PlaybackCoordinator {
     }
     private func beginTransition(_ next: PreparedTrack, duration: Double?, token: UUID) {
         waitingForNext = false
+        transitionStartedAt = Date()
+        transitionDurationSeconds = duration ?? crossfadeSeconds
         transitionTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try await promote(next, fadeDuration: duration, token: token)
                 try check(token)
                 transitionTask = nil
+                transitionStartedAt = nil
+                transitionDurationSeconds = nil
                 publish()
                 startPrefetch()
             } catch {
                 guard token == generation, !Task.isCancelled else { return }
                 transitionTask = nil
+                transitionStartedAt = nil
+                transitionDurationSeconds = nil
                 prepared = nil
                 lastQueueError = String(describing: error)
                 wantsPlayback = false
