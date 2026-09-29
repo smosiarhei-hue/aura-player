@@ -14,7 +14,7 @@ PlayerScreenV2.swift is also rewritten by player_ux_fixes.py during the build.
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCREEN = ROOT / "Aurora" / "PlayerScreenV2.swift"
+SCREEN = ROOT / "Sonivo" / "PlayerScreenV2.swift"
 
 
 def replace_once(text, old, new, label):
@@ -46,12 +46,12 @@ screen = replace_once(
     screen,
     r'''                            Image(systemName: "sparkles")
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(AG.amber)
+                                .foregroundStyle(SN.amber)
                             Text("AutoMix DJ: \(dj.activeStyle.localizedTitle)")
 ''',
     r'''                            Image(systemName: automix.isBeatMatched ? "metronome.fill" : "sparkles")
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(AG.amber)
+                                .foregroundStyle(SN.amber)
                             Text(automix.badge ?? "AutoMix DJ: \(dj.activeStyle.localizedTitle)")
 ''',
     "automix badge toast",

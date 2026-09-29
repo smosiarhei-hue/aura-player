@@ -8,17 +8,17 @@ from pathlib import Path
 class AntigravitySpecTests(unittest.TestCase):
     def setUp(self):
         self.repo_root = Path(__file__).resolve().parent.parent.parent
-        self.swift_manager = self.repo_root / "Aurora" / "AntigravityTransitionManager.swift"
-        self.metal_shader = self.repo_root / "Aurora" / "AntigravityVortex.metal"
-        self.hero_view = self.repo_root / "Aurora" / "MyWaveHeroView.swift"
-        self.home_view = self.repo_root / "Aurora" / "AuraHomeRedesignedView.swift"
-        self.shake_overlay = self.repo_root / "Aurora" / "WaveShakeOverlayView.swift"
+        self.swift_manager = self.repo_root / "Sonivo" / "AntigravityTransitionManager.swift"
+        self.metal_shader = self.repo_root / "Sonivo" / "AntigravityVortex.metal"
+        self.hero_view = self.repo_root / "Sonivo" / "MyWaveHeroView.swift"
+        self.home_view = self.repo_root / "Sonivo" / "SonivoHomeRedesignedView.swift"
+        self.shake_overlay = self.repo_root / "Sonivo" / "WaveShakeOverlayView.swift"
 
     def test_files_exist(self):
         self.assertTrue(self.swift_manager.exists(), "AntigravityTransitionManager.swift missing")
         self.assertTrue(self.metal_shader.exists(), "AntigravityVortex.metal missing")
         self.assertTrue(self.hero_view.exists(), "MyWaveHeroView.swift missing")
-        self.assertTrue(self.home_view.exists(), "AuraHomeRedesignedView.swift missing")
+        self.assertTrue(self.home_view.exists(), "SonivoHomeRedesignedView.swift missing")
         self.assertTrue(self.shake_overlay.exists(), "WaveShakeOverlayView.swift missing")
 
     def test_anti_pocket_and_motion_detector(self):
@@ -92,14 +92,14 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("isOnMain", content)
 
     def test_automix_clean_equal_power_and_timing(self):
-        timing_file = self.repo_root / "Aurora" / "AutoMix" / "AutoMixTransitionTiming.swift"
+        timing_file = self.repo_root / "Sonivo" / "AutoMix" / "AutoMixTransitionTiming.swift"
         timing_content = timing_file.read_text(encoding="utf-8")
         # Incoming track starts at 0.0 (natural musical intro)
         self.assertIn("return 0.0", timing_content)
         # Real DJ Mashup transition duration across 8 to 16 musical bars (12.0s - 20.0s)
         self.assertIn("min(20.0, max(12.0", timing_content)
 
-        player_file = self.repo_root / "Aurora" / "playercore.swift"
+        player_file = self.repo_root / "Sonivo" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
         # 3-phase DJ Mashup streaming gain shaping
         self.assertIn("p < 0.45", player_content)
@@ -111,14 +111,14 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("outgoingPlayer.pause()", player_content)
         self.assertIn("CMTimeGetSeconds(activeStreamingPlayer.currentTime())", player_content)
 
-        models_file = self.repo_root / "Aurora" / "models.swift"
+        models_file = self.repo_root / "Sonivo" / "models.swift"
         models_content = models_file.read_text(encoding="utf-8")
         # Pure Equal-Power Cosine Crossfade for local files
         self.assertIn("let outVol = Float(cos(p * (.pi / 2)))", models_content)
         self.assertIn("let inVol = Float(sin(p * (.pi / 2)))", models_content)
 
     def test_my_wave_fresh_random_seed(self):
-        catalog_file = self.repo_root / "Aurora" / "sonivocatalog.swift"
+        catalog_file = self.repo_root / "Sonivo" / "sonivocatalog.swift"
         catalog_content = catalog_file.read_text(encoding="utf-8")
         # Wave supports forceFresh and seeds from last liked track
         self.assertIn("forceFresh: Bool = false", catalog_content)
@@ -128,7 +128,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("ymTrackId: lastLikedYmId", catalog_content)
 
     def test_vocal_isolation_architecture_and_dsp(self):
-        processing_file = self.repo_root / "Aurora" / "VocalIsolation" / "VocalIsolationProcessing.swift"
+        processing_file = self.repo_root / "Sonivo" / "VocalIsolation" / "VocalIsolationProcessing.swift"
         self.assertTrue(processing_file.exists(), "VocalIsolationProcessing.swift must exist")
         content = processing_file.read_text(encoding="utf-8")
         # Protocol definition
@@ -143,7 +143,7 @@ class AntigravitySpecTests(unittest.TestCase):
         # ML future extension point
         self.assertIn("class MLVocalIsolator: VocalIsolationProcessing", content)
 
-        manager_file = self.repo_root / "Aurora" / "VocalIsolation" / "VocalIsolationManager.swift"
+        manager_file = self.repo_root / "Sonivo" / "VocalIsolation" / "VocalIsolationManager.swift"
         self.assertTrue(manager_file.exists(), "VocalIsolationManager.swift must exist")
         mgr_content = manager_file.read_text(encoding="utf-8")
         self.assertIn("class VocalIsolationManager", mgr_content)
@@ -152,18 +152,18 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("AudioUnitAddRenderNotify", mgr_content)
         self.assertIn("migrateStreamToAudioEngineIfNeeded", mgr_content)
 
-        player_file = self.repo_root / "Aurora" / "playercore.swift"
+        player_file = self.repo_root / "Sonivo" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
         # PlayerCore stream migration to AVAudioEngine
         self.assertIn("func migrateStreamToAudioEngineIfNeeded()", player_content)
         self.assertIn("VocalIsolationManager.shared.attach(to: vocalUnit)", player_content)
 
-        dual_deck_file = self.repo_root / "Aurora" / "Stage3DualDeckAudioEngine.swift"
+        dual_deck_file = self.repo_root / "Sonivo" / "Stage3DualDeckAudioEngine.swift"
         dual_content = dual_deck_file.read_text(encoding="utf-8")
         self.assertIn("VocalIsolationManager.shared.attach(to: userEQ)", dual_content)
 
     def test_vocal_isolation_ui_and_visibility(self):
-        control_file = self.repo_root / "Aurora" / "VocalIsolation" / "VocalIsolationControlView.swift"
+        control_file = self.repo_root / "Sonivo" / "VocalIsolation" / "VocalIsolationControlView.swift"
         self.assertTrue(control_file.exists(), "VocalIsolationControlView.swift must exist")
         ctrl_content = control_file.read_text(encoding="utf-8")
         # Vertical capsule slider matching reference design
@@ -173,7 +173,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("sparkle", ctrl_content)
         self.assertIn("VocalIsolationUIConfig", ctrl_content)
 
-        player_screen = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        player_screen = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         ps_content = player_screen.read_text(encoding="utf-8")
         # View mode enum and visibility logic: visible ONLY in lyrics and karaoke
         self.assertIn("enum PlayerViewMode", ps_content)
@@ -181,16 +181,16 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("playerViewMode == .lyrics || playerViewMode == .karaoke", ps_content)
         self.assertIn("VocalIsolationControlView()", ps_content)
 
-        lyrics_view = self.repo_root / "Aurora" / "lyricsview.swift"
+        lyrics_view = self.repo_root / "Sonivo" / "lyricsview.swift"
         lv_content = lyrics_view.read_text(encoding="utf-8")
         self.assertIn("VocalIsolationControlView()", lv_content)
 
     def test_dify_models_and_service(self):
-        dify_models = self.repo_root / "Aurora" / "Dify" / "DifyModels.swift"
-        dify_service = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
-        ai_playlist_service = self.repo_root / "Aurora" / "Dify" / "AIPlaylistGeneratorService.swift"
-        ai_assistant_view = self.repo_root / "Aurora" / "Dify" / "AIMusicAssistantView.swift"
-        dify_settings = self.repo_root / "Aurora" / "Dify" / "DifySettingsSheet.swift"
+        dify_models = self.repo_root / "Sonivo" / "Dify" / "DifyModels.swift"
+        dify_service = self.repo_root / "Sonivo" / "Dify" / "DifyService.swift"
+        ai_playlist_service = self.repo_root / "Sonivo" / "Dify" / "AIPlaylistGeneratorService.swift"
+        ai_assistant_view = self.repo_root / "Sonivo" / "Dify" / "AIMusicAssistantView.swift"
+        dify_settings = self.repo_root / "Sonivo" / "Dify" / "DifySettingsSheet.swift"
 
         self.assertTrue(dify_models.exists(), "DifyModels.swift must exist")
         self.assertTrue(dify_service.exists(), "DifyService.swift must exist")
@@ -212,25 +212,25 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("func playNow(", gen_content)
 
     def test_dify_ui_integration(self):
-        hero_view = self.repo_root / "Aurora" / "MyWaveHeroView.swift"
+        hero_view = self.repo_root / "Sonivo" / "MyWaveHeroView.swift"
         hero_content = hero_view.read_text(encoding="utf-8")
         self.assertIn("showAIAssistant", hero_content)
         self.assertIn("sparkles", hero_content)
 
-        home_view = self.repo_root / "Aurora" / "AuraHomeRedesignedView.swift"
+        home_view = self.repo_root / "Sonivo" / "SonivoHomeRedesignedView.swift"
         home_content = home_view.read_text(encoding="utf-8")
         self.assertIn("AIMusicAssistantView()", home_content)
         self.assertIn("showAIAssistant", home_content)
         self.assertIn("AI Куратор", home_content)
 
-        lib_view = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_view = self.repo_root / "Sonivo" / "libraryview.swift"
         lib_content = lib_view.read_text(encoding="utf-8")
         self.assertIn("AIMusicAssistantView()", lib_content)
         self.assertIn("AI Подборка", lib_content)
 
     def test_ai_dj_and_vibe_wave(self):
-        dj_service = self.repo_root / "Aurora" / "Dify" / "AIDJService.swift"
-        dj_badge = self.repo_root / "Aurora" / "Dify" / "AIDJTransitionBadgeView.swift"
+        dj_service = self.repo_root / "Sonivo" / "Dify" / "AIDJService.swift"
+        dj_badge = self.repo_root / "Sonivo" / "Dify" / "AIDJTransitionBadgeView.swift"
 
         self.assertTrue(dj_service.exists(), "AIDJService.swift must exist")
         self.assertTrue(dj_badge.exists(), "AIDJTransitionBadgeView.swift must exist")
@@ -241,19 +241,19 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("func commentary(", svc_content)
         self.assertIn("func prefetchCommentaryIfNeeded(", svc_content)
 
-        player_screen = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        player_screen = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         ps_content = player_screen.read_text(encoding="utf-8")
         self.assertIn("AIDJTransitionBadgeView(", ps_content)
         self.assertIn("startAIVibeWave()", ps_content)
         self.assertIn("prefetchCommentaryIfNeeded", ps_content)
 
-        lib_view = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_view = self.repo_root / "Sonivo" / "libraryview.swift"
         lib_content = lib_view.read_text(encoding="utf-8")
         self.assertIn("startAIVibeWave(for:", lib_content)
         self.assertIn("AI Вайб-волна", lib_content)
 
     def test_ai_videoshot_service(self):
-        service_file = self.repo_root / "Aurora" / "VideoShot" / "AIVideoShotGeneratorService.swift"
+        service_file = self.repo_root / "Sonivo" / "VideoShot" / "AIVideoShotGeneratorService.swift"
         self.assertTrue(service_file.exists(), "AIVideoShotGeneratorService.swift must exist")
 
         content = service_file.read_text(encoding="utf-8")
@@ -265,18 +265,18 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("X-Forwarded-For", content)
         self.assertIn("didGenerateAIVideoShot", content)
 
-        dify_file = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
+        dify_file = self.repo_root / "Sonivo" / "Dify" / "DifyService.swift"
         dify_content = dify_file.read_text(encoding="utf-8")
         self.assertIn("generateVideoShotPrompt", dify_content)
 
-        player_screen = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        player_screen = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         ps_content = player_screen.read_text(encoding="utf-8")
         self.assertIn("AIVideoShotGeneratorService.shared", ps_content)
         self.assertIn("generateAIVideoShot()", ps_content)
         self.assertIn("didGenerateAIVideoShot", ps_content)
 
     def test_ai_videoshot_vibe_artist_and_regeneration(self):
-        service_file = self.repo_root / "Aurora" / "VideoShot" / "AIVideoShotGeneratorService.swift"
+        service_file = self.repo_root / "Sonivo" / "VideoShot" / "AIVideoShotGeneratorService.swift"
         content = service_file.read_text(encoding="utf-8")
         self.assertIn("struct AudioVibeVisualProfile", content)
         self.assertIn("class AIVideoShotModelAgent", content)
@@ -286,13 +286,13 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("forceRegenerate: Bool", content)
         self.assertIn("durationSeconds = 12.0", content)
 
-        dify_file = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
+        dify_file = self.repo_root / "Sonivo" / "Dify" / "DifyService.swift"
         dify_content = dify_file.read_text(encoding="utf-8")
         self.assertIn("ABSOLUTELY NO KISSING", dify_content)
         self.assertIn("no kissing", dify_content)
         self.assertIn("proceduralArtistPrompt", dify_content)
 
-        player_screen = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        player_screen = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         ps_content = player_screen.read_text(encoding="utf-8")
         self.assertIn("Перегенерировать AI Видео-шот (новый вайб)", ps_content)
         self.assertIn("deleteCurrentVideoShot", ps_content)
@@ -300,7 +300,7 @@ class AntigravitySpecTests(unittest.TestCase):
 
 
     def test_playlist_detail_and_curator_50_tracks(self):
-        playlist_detail = self.repo_root / "Aurora" / "PlaylistDetailView.swift"
+        playlist_detail = self.repo_root / "Sonivo" / "PlaylistDetailView.swift"
         self.assertTrue(playlist_detail.exists(), "PlaylistDetailView.swift must exist")
 
         pd_content = playlist_detail.read_text(encoding="utf-8")
@@ -310,63 +310,63 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("extendPlaylistInLibrary", pd_content)
         self.assertIn("tracksListSection", pd_content)
 
-        lib_view = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_view = self.repo_root / "Sonivo" / "libraryview.swift"
         lib_content = lib_view.read_text(encoding="utf-8")
         self.assertIn("PlaylistDetailView(playlist:", lib_content)
         self.assertIn("NavigationLink(destination: PlaylistDetailView", lib_content)
         self.assertIn("playlistsShelfSection", lib_content)
 
-        dify_file = self.repo_root / "Aurora" / "Dify" / "DifyService.swift"
+        dify_file = self.repo_root / "Sonivo" / "Dify" / "DifyService.swift"
         dify_content = dify_file.read_text(encoding="utf-8")
         self.assertIn("МИНИМУМ 50", dify_content)
         self.assertIn("maxTokens: 4096", dify_content)
         self.assertIn("extendPlaylist", dify_content)
 
-        gen_file = self.repo_root / "Aurora" / "Dify" / "AIPlaylistGeneratorService.swift"
+        gen_file = self.repo_root / "Sonivo" / "Dify" / "AIPlaylistGeneratorService.swift"
         gen_content = gen_file.read_text(encoding="utf-8")
         self.assertIn("extendPlaylist(", gen_content)
         self.assertIn("extendPlaylistInLibrary(", gen_content)
         self.assertIn("addTracksToPlaylist", gen_content)
 
-        assistant_view = self.repo_root / "Aurora" / "Dify" / "AIMusicAssistantView.swift"
+        assistant_view = self.repo_root / "Sonivo" / "Dify" / "AIMusicAssistantView.swift"
         as_content = assistant_view.read_text(encoding="utf-8")
         self.assertIn("extendPlaylistBy50", as_content)
         self.assertIn("+50 ещё", as_content)
 
     def test_playlist_cover_art_and_collection_navigation(self):
-        models_file = self.repo_root / "Aurora" / "models.swift"
+        models_file = self.repo_root / "Sonivo" / "models.swift"
         models_content = models_file.read_text(encoding="utf-8")
         self.assertIn("var coverURL: String? = nil", models_content)
         self.assertIn("var cachedTracks: [Track] = []", models_content)
 
-        visuals_file = self.repo_root / "Aurora" / "visuals.swift"
+        visuals_file = self.repo_root / "Sonivo" / "visuals.swift"
         vis_content = visuals_file.read_text(encoding="utf-8")
         self.assertIn("struct PlaylistCoverArtView: View", vis_content)
         self.assertIn("resolvedCoverURL", vis_content)
 
-        lib_store_file = self.repo_root / "Aurora" / "librarystore.swift"
+        lib_store_file = self.repo_root / "Sonivo" / "librarystore.swift"
         store_content = lib_store_file.read_text(encoding="utf-8")
         self.assertIn("uniquingKeysWith: { a, _ in a }", store_content)
         self.assertIn("return playlist.cachedTracks", store_content)
 
-        lib_view_file = self.repo_root / "Aurora" / "libraryview.swift"
+        lib_view_file = self.repo_root / "Sonivo" / "libraryview.swift"
         lib_content = lib_view_file.read_text(encoding="utf-8")
         self.assertIn("PlaylistCoverArtView(", lib_content)
         self.assertIn(".contentShape(Rectangle())", lib_content)
 
-        gen_file = self.repo_root / "Aurora" / "Dify" / "AIPlaylistGeneratorService.swift"
+        gen_file = self.repo_root / "Sonivo" / "Dify" / "AIPlaylistGeneratorService.swift"
         gen_content = gen_file.read_text(encoding="utf-8")
         self.assertIn("YandexMusicService.shared.getChart()", gen_content)
         self.assertIn("coverURL = tracks.first(where:", gen_content)
 
-        as_file = self.repo_root / "Aurora" / "Dify" / "AIMusicAssistantView.swift"
+        as_file = self.repo_root / "Sonivo" / "Dify" / "AIMusicAssistantView.swift"
         as_content = as_file.read_text(encoding="utf-8")
         self.assertIn("VibeEqualizerWaveView", as_content)
         self.assertIn("vibePresets", as_content)
         self.assertIn("modernPlaylistShowcaseCard", as_content)
 
     def test_automix_transition_and_playback_resilience(self):
-        player_file = self.repo_root / "Aurora" / "playercore.swift"
+        player_file = self.repo_root / "Sonivo" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
 
         # 1. handleTrackFinish must safely complete transition or advance, not deadlock
@@ -388,12 +388,12 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("try? await self.next()", coord_content)
 
         # 6. PlaybackCommandRouter fallback to PlayerCore
-        bridge_file = self.repo_root / "Aurora" / "AutoMixV2AppBridge.swift"
+        bridge_file = self.repo_root / "Sonivo" / "AutoMixV2AppBridge.swift"
         bridge_content = bridge_file.read_text(encoding="utf-8")
         self.assertIn("Falling back to PlayerCore stream.", bridge_content)
 
     def test_dj_automix_engine_spec(self):
-        dj_dir = self.repo_root / "Aurora" / "DJAutoMixEngine"
+        dj_dir = self.repo_root / "Sonivo" / "DJAutoMixEngine"
         camelot_file = dj_dir / "CamelotKey.swift"
         models_file = dj_dir / "DJMixModels.swift"
         analyzer_file = dj_dir / "TrackAnalyzer.swift"
@@ -468,7 +468,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("YandexMusicService.shared.getStreamInfo", precache_content)
 
     def test_sleep_timer_spec(self):
-        core_file = self.repo_root / "Aurora" / "playercore.swift"
+        core_file = self.repo_root / "Sonivo" / "playercore.swift"
         self.assertTrue(core_file.exists(), "playercore.swift missing")
         core_content = core_file.read_text(encoding="utf-8")
 
@@ -487,19 +487,19 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("self.pause()", core_content)
 
         # 3. ActivePlayerPresentation delegation
-        pres_file = self.repo_root / "Aurora" / "ActivePlayerPresentation.swift"
+        pres_file = self.repo_root / "Sonivo" / "ActivePlayerPresentation.swift"
         pres_content = pres_file.read_text(encoding="utf-8")
         self.assertIn("sleepTimerFormatted", pres_content)
         self.assertIn("extendSleepTimer", pres_content)
 
         # 4. PlayerScreenV2 display in topHeader and moreMenuButton
-        player_file = self.repo_root / "Aurora" / "PlayerScreenV2.swift"
+        player_file = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         player_content = player_file.read_text(encoding="utf-8")
         self.assertIn("player.sleepTimerFormatted", player_content)
         self.assertIn("Таймер сна (\\(timerText))", player_content)
 
         # 5. SleepTimerSheetView active countdown and progress
-        chrome_file = self.repo_root / "Aurora" / "playerchrome.swift"
+        chrome_file = self.repo_root / "Sonivo" / "playerchrome.swift"
         chrome_content = chrome_file.read_text(encoding="utf-8")
         self.assertIn("SleepTimerSheetView", chrome_content)
         self.assertIn("player.sleepTimerFormatted", chrome_content)

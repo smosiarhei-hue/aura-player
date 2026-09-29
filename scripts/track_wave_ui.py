@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYER_SCREEN = ROOT / "Aurora" / "PlayerScreenV2.swift"
+PLAYER_SCREEN = ROOT / "Sonivo" / "PlayerScreenV2.swift"
 text = PLAYER_SCREEN.read_text(encoding="utf-8")
 
 # The player feature dock, inline karaoke and track-wave card now live in the

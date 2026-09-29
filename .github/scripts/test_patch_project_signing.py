@@ -32,7 +32,7 @@ targets:
     type: application
     platform: iOS
     sources:
-      - Aurora
+      - Sonivo
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo
@@ -43,7 +43,7 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
     info:
-      path: Aurora/Info.plist
+      path: Sonivo/Info.plist
       properties:
         CFBundleDisplayName: Sonivo
         CFBundleURLTypes:

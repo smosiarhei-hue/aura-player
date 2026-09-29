@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYER = ROOT / "Aurora" / "playercore.swift"
+PLAYER = ROOT / "Sonivo" / "playercore.swift"
 text = PLAYER.read_text(encoding="utf-8")
 
 state_anchor = '''    private let defaults = UserDefaults.standard

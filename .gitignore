@@ -12,11 +12,11 @@ __pycache__/
 scripts/__pycache__/
 
 agent_config.json
-Aurora/incoming/node_modules/
-Aurora/incoming/dist/
-Aurora/incoming/scratch/
-Aurora/incoming/public/*.mp3
-Aurora/incoming/public/*.bin
+Sonivo/incoming/node_modules/
+Sonivo/incoming/dist/
+Sonivo/incoming/scratch/
+Sonivo/incoming/public/*.mp3
+Sonivo/incoming/public/*.bin
 
 # VideoShot Studio
 tools/videoshot-studio/cache/

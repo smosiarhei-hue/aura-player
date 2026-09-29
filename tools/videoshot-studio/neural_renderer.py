@@ -7,7 +7,7 @@ Synthesizes professional, dynamic multi-shot cinematic music videos (1080x1920, 
 - Audio-reactive 808 bass punch and beat-synced strobe flashes
 - Smooth Ken Burns 3D camera motion (push-in, drift, whip transitions)
 - Color grading, anamorphic flares, and cinematic film atmosphere
-- Perfectly seamless loop for iPhone Aura Player
+- Perfectly seamless loop for iPhone Sonivo
 """
 
 import os

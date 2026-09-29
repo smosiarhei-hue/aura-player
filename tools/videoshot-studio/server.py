@@ -1,5 +1,5 @@
 """
-Aura VideoShot Neural Studio Server
+Sonivo VideoShot Neural Studio Server
 Local Web & REST API server for synthesizing vertical 9:16 video-shots
 with audio-reactive beat pulses, artist detection, and RTX 4060 NVENC GPU acceleration.
 """
@@ -60,7 +60,7 @@ def index():
 def health():
     return jsonify({
         "status": "online",
-        "engine": "Aura VideoShot Neural Studio v2.6",
+        "engine": "Sonivo VideoShot Neural Studio v2.6",
         "gpu": "NVIDIA GeForce RTX 4060",
         "nvenc_available": True
     })
@@ -461,12 +461,12 @@ def load_sample():
     
     samples_map = {
         "barskih": {
-            "path": r"C:\Users\Smoze\aura-player\Aurora\incoming\dist\MAX_BARSKIH.mp3",
+            "path": r"C:\Users\Smoze\aura-player\Sonivo\incoming\dist\MAX_BARSKIH.mp3",
             "artist": "Макс Барских",
             "title": "Берега"
         },
         "avariya": {
-            "path": r"C:\Users\Smoze\aura-player\Aurora\incoming\dist\Diskoteka_Avariya_-_KUKLA_Remix_2026.mp3",
+            "path": r"C:\Users\Smoze\aura-player\Sonivo\incoming\dist\Diskoteka_Avariya_-_KUKLA_Remix_2026.mp3",
             "artist": "Дискотека Авария",
             "title": "Кукла (Remix)"
         }
@@ -565,7 +565,7 @@ def manage_google_flow_config():
         return jsonify(get_google_flow_config())
 
 
-# Endpoint специально для мобильного приложения Aura iOS
+# Endpoint специально для мобильного приложения Sonivo iOS
 @app.route("/api/mobile/render-videoshot", methods=["POST"])
 def mobile_render():
     """
@@ -581,7 +581,7 @@ def mobile_render():
     audio_file.save(audio_path)
 
     artist_name = request.form.get("artist", "Featured Artist")
-    track_title = request.form.get("title", "Aura Sound")
+    track_title = request.form.get("title", "Sonivo Sound")
     vibe = request.form.get("vibe", "Neon Drive")
 
     analysis_data = analyze_audio_file(audio_path)
@@ -612,7 +612,7 @@ def mobile_render():
 
 if __name__ == "__main__":
     print("=" * 65)
-    print("🚀 AURA VIDEOSHOT NEURAL STUDIO SERVER")
+    print("🚀 SONIVO VIDEOSHOT NEURAL STUDIO SERVER")
     print("   Running on: http://localhost:5055")
     print("   GPU Accelerator: NVIDIA GeForce RTX 4060 (NVENC 30fps 1080x1920)")
     print("=" * 65)

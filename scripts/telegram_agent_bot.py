@@ -378,7 +378,7 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "path": {"type": "STRING", "description": "Относительный путь к папке (например: 'Aurora' или '')"}
+                "path": {"type": "STRING", "description": "Относительный путь к папке (например: 'Sonivo' или '')"}
             }
         }
     },
@@ -388,7 +388,7 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "file_path": {"type": "STRING", "description": "Относительный путь к файлу (например: 'Aurora/PlayerScreenV2.swift')"},
+                "file_path": {"type": "STRING", "description": "Относительный путь к файлу (например: 'Sonivo/PlayerScreenV2.swift')"},
                 "start_line": {"type": "INTEGER", "description": "Начальная строка (1-based, опционально)"},
                 "end_line": {"type": "INTEGER", "description": "Конечная строка (опционально)"}
             },
@@ -928,7 +928,7 @@ def tool_generate_ai_image(prompt, aspect_ratio="1:1", file_name=None):
                     img_bytes = base64.b64decode(b64_img)
                     
                     if file_name:
-                        out_p = REPO_DIR / "Aurora" / "Assets.xcassets" / file_name
+                        out_p = REPO_DIR / "Sonivo" / "Assets.xcassets" / file_name
                         out_p.parent.mkdir(parents=True, exist_ok=True)
                         out_p.write_bytes(img_bytes)
                     

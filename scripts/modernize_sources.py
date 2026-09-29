@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AURORA = ROOT / "Aurora"
+SONIVO = ROOT / "Sonivo"
 
 OBSERVABLE_FILES = {
     "playercore.swift": "PlayerCore",
@@ -12,7 +12,7 @@ OBSERVABLE_FILES = {
     "lyricsservice.swift": "LyricsService",
 }
 
-for path in AURORA.glob("*.swift"):
+for path in SONIVO.glob("*.swift"):
     text = path.read_text(encoding="utf-8")
     text = text.replace("@StateObject private var", "@State private var")
     text = text.replace("@ObservedObject private var", "@Bindable private var")
@@ -55,13 +55,13 @@ sendable_replacements = {
 }
 
 for filename in ("models.swift", "lyricsmodel.swift"):
-    path = AURORA / filename
+    path = SONIVO / filename
     text = path.read_text(encoding="utf-8")
     for old, new in sendable_replacements.items():
         text = text.replace(old, new)
     path.write_text(text, encoding="utf-8")
 
-models = AURORA / "models.swift"
+models = SONIVO / "models.swift"
 text = models.read_text(encoding="utf-8")
 for helper in (
     "documentsDirectoryURL",
@@ -73,7 +73,7 @@ for helper in (
 models.write_text(text, encoding="utf-8")
 
 for filename in ("searchviews.swift", "lyricsview.swift"):
-    path = AURORA / filename
+    path = SONIVO / filename
     text = path.read_text(encoding="utf-8")
     text = text.replace(
         ".onChange(of: searchText) { newValue in",
@@ -85,7 +85,7 @@ for filename in ("searchviews.swift", "lyricsview.swift"):
     )
     path.write_text(text, encoding="utf-8")
 
-player = AURORA / "playercore.swift"
+player = SONIVO / "playercore.swift"
 text = player.read_text(encoding="utf-8")
 text = text.replace("import AVFoundation\n", "@preconcurrency import AVFoundation\n", 1)
 text = text.replace("@preconcurrency @preconcurrency import AVFoundation", "@preconcurrency import AVFoundation")
@@ -148,7 +148,7 @@ text = text.replace(
 )
 player.write_text(text, encoding="utf-8")
 
-stream = AURORA / "streambeat.swift"
+stream = SONIVO / "streambeat.swift"
 text = stream.read_text(encoding="utf-8").replace(
     "SpectrumAnalyzer.shared.feedStreamLevel(acc / Float(count))",
     "SpectrumAnalyzer.ingestStreamLevel(acc / Float(count))",

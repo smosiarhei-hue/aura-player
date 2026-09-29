@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYER = ROOT / "Aurora" / "playercore.swift"
+PLAYER = ROOT / "Sonivo" / "playercore.swift"
 text = PLAYER.read_text(encoding="utf-8")
 
 # Temporary stability measure: MediaPlayer serializes MPMediaItemArtwork on its

@@ -1,9 +1,9 @@
 ﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AURORA = ROOT / "Aurora"
+SONIVO = ROOT / "Sonivo"
 
-player = AURORA / "playercore.swift"
+player = SONIVO / "playercore.swift"
 text = player.read_text(encoding="utf-8")
 
 old_state = "    private var progressTimer: Timer?\n"
@@ -37,7 +37,7 @@ if old_tap not in text and new_tap not in text:
 text = text.replace(old_tap, new_tap)
 player.write_text(text, encoding="utf-8")
 
-app = AURORA / "auroraapp.swift"
+app = SONIVO / "sonivoapp.swift"
 text = app.read_text(encoding="utf-8")
 old_order = '''        .onAppear {
             PlayerCore.shared.installSpectrumTap()

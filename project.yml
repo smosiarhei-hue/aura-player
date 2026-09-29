@@ -24,7 +24,7 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: Aurora
+      - path: Sonivo
         excludes:
           - "Info.plist"
           - "PlayerScreen.swift"
@@ -57,7 +57,7 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
     info:
-      path: Aurora/Info.plist
+      path: Sonivo/Info.plist
       properties:
         CFBundleDisplayName: Sonivo
         CFBundleDevelopmentRegion: ru
