@@ -105,10 +105,10 @@ struct SearchCatalogView: View {
                             .foregroundStyle(SN.ink)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
-                    .background(Capsule().fill(SN.card.opacity(0.82)))
-                            .overlay(Capsule().strokeBorder(SN.hairline, lineWidth: 0.8))
+                            .background(Capsule().fill(SN.card.opacity(0.82)))
+                            .overlay(Capsule().strokeBorder(SN.hairline, lineWidth: 0.5))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TactileButtonStyle(scale: 0.94))
                 }
             }
             .padding(.horizontal, 16)
@@ -130,6 +130,7 @@ struct SearchCatalogView: View {
                             VStack(spacing: 8) {
                                 RemoteArtwork(urlString: artist.coverUrlString, corner: 999)
                                     .frame(width: 96, height: 96)
+                                    .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
 
                                 Text(artist.name)
                                     .font(SN.text(.caption, .semibold))
@@ -139,7 +140,7 @@ struct SearchCatalogView: View {
                             }
                             .frame(width: 96)
                         }
-                        .buttonStyle(GlassPressStyle())
+                        .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
                     }
                 }
                 .padding(.horizontal, 16)
@@ -163,7 +164,7 @@ struct SearchCatalogView: View {
                                 RemoteArtwork(urlString: album.coverUrlString, corner: 14)
                             }
                         }
-                        .buttonStyle(GlassPressStyle())
+                        .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
                     }
                 }
                 .padding(.horizontal, 16)
@@ -200,6 +201,10 @@ struct SearchCatalogView: View {
                     HStack(spacing: 12) {
                         SmallArtwork(track: track, size: 46)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                            )
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(track.title)
@@ -217,7 +222,7 @@ struct SearchCatalogView: View {
                     .padding(.vertical, 5)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
             }
         }
         .riseIn(delay: 0.10)
@@ -258,10 +263,10 @@ struct SearchCatalogView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .strokeBorder(SN.hairline, lineWidth: 0.8)
+                                .strokeBorder(SN.hairline, lineWidth: 0.5)
                         )
                     }
-                    .buttonStyle(GlassPressStyle())
+                    .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
                 }
             }
             .padding(.horizontal, 16)
@@ -305,8 +310,9 @@ struct SearchCatalogView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
                             .background(Capsule().fill(SN.card.opacity(0.82)))
+                            .overlay(Capsule().strokeBorder(SN.hairline, lineWidth: 0.5))
                         }
-                        .buttonStyle(GlassPressStyle())
+                        .buttonStyle(TactileButtonStyle(scale: 0.95))
                     }
                 }
                 .padding(.horizontal, 16)

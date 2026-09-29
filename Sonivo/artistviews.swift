@@ -43,7 +43,7 @@ struct ArtistView: View {
         VStack(spacing: 16) {
             RemoteArtwork(urlString: artist.coverUrlString, corner: 999)
                 .frame(width: 132, height: 132)
-                .overlay(Circle().strokeBorder(SN.ink.opacity(0.12), lineWidth: 1))
+                .overlay(Circle().strokeBorder(SN.ink.opacity(0.12), lineWidth: 0.5))
                 .shadow(color: SN.bg.opacity(0.45), radius: 18, y: 8)
 
             VStack(spacing: 5) {
@@ -69,7 +69,7 @@ struct ArtistView: View {
                             .frame(maxWidth: .infinity, minHeight: 46)
                     }
                     .glassProminent()
-                    .buttonStyle(GlassPressStyle())
+                    .buttonStyle(TactileButtonStyle(scale: 0.96))
                 }
                 Button { playArtistWave(artist) } label: {
                     Label("Волна", systemImage: "dot.radiowaves.left.and.right")
@@ -78,7 +78,7 @@ struct ArtistView: View {
                         .frame(maxWidth: .infinity, minHeight: 46)
                 }
                 .glassCapsule(interactive: true)
-                .buttonStyle(GlassPressStyle())
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
             }
         }
         .padding(.horizontal, 20)
@@ -118,7 +118,7 @@ struct ArtistView: View {
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(.white.opacity(0.10), lineWidth: 0.7)
+                .stroke(.white.opacity(0.10), lineWidth: 0.5)
         }
     }
 
@@ -169,7 +169,7 @@ struct ArtistView: View {
                                         RemoteArtwork(urlString: album.coverUrlString, corner: 16)
                                     }
                                 }
-                                .buttonStyle(GlassPressStyle())
+                                .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
                             }
                         }
                         .padding(.horizontal, 16)
@@ -195,6 +195,10 @@ struct ArtistView: View {
                             HStack(spacing: 12) {
                                 RemoteArtwork(urlString: album.coverUrlString, corner: 12)
                                     .frame(width: 58, height: 58)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                                    )
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(album.displayTitle)
                                         .font(SN.text(.subheadline, .semibold))
@@ -214,7 +218,7 @@ struct ArtistView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 5)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
                     }
                 }
                 .riseIn(delay: 0.12)
@@ -243,6 +247,7 @@ struct ArtistView: View {
                                     VStack(spacing: 8) {
                                         RemoteArtwork(urlString: similar.coverUrlString, corner: 999)
                                             .frame(width: 96, height: 96)
+                                            .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
                                         Text(similar.name)
                                             .font(SN.text(.caption, .semibold))
                                             .foregroundStyle(SN.ink)
@@ -251,7 +256,7 @@ struct ArtistView: View {
                                     }
                                     .frame(width: 104)
                                 }
-                                .buttonStyle(GlassPressStyle())
+                                .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
                             }
                         }
                         .padding(.horizontal, 16)
@@ -313,6 +318,10 @@ struct AlbumView: View {
         VStack(spacing: 16) {
             RemoteArtwork(urlString: album.coverUrlString, corner: 22)
                 .frame(width: 232, height: 232)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                )
                 .shadow(color: .black.opacity(0.50), radius: 22, y: 12)
                 .padding(.top, 18)
                 .riseIn()
@@ -344,7 +353,7 @@ struct AlbumView: View {
                         .padding(.vertical, 13)
                         .glassProminent()
                 }
-                .buttonStyle(GlassPressStyle())
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
                 
             }
         }

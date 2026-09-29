@@ -432,7 +432,7 @@ struct LibraryView: View {
                             }
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CardPressStyle(scale: 0.97, haptic: true))
                         .contentShape(Rectangle())
                         .contextMenu {
                             Button(role: .destructive) {
@@ -490,7 +490,7 @@ struct LibraryView: View {
                             .frame(width: 130)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CardPressStyle(scale: 0.97, haptic: true))
                         .contentShape(Rectangle())
                     }
                 }
@@ -520,7 +520,7 @@ struct LibraryView: View {
                             }
                             .frame(width: 140)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CardPressStyle(scale: 0.97, haptic: true))
                     }
                 }
                 .padding(.horizontal, 16)
@@ -547,10 +547,14 @@ struct LibraryView: View {
                                     ? AnyShapeStyle(settings.accentGradient)
                                     : AnyShapeStyle(.primary.opacity(0.06)))
                             )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(Color.white.opacity(filter == f ? 0.20 : 0.08), lineWidth: 0.5)
+                            )
                             .foregroundStyle(filter == f ? .white : .primary)
                             .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TactileButtonStyle(scale: 0.94))
                 }
             }
             .padding(.horizontal, 16)
@@ -566,6 +570,10 @@ struct LibraryView: View {
             HStack(spacing: 14) {
                 SmallArtwork(track: track, size: 50)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                    )
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -609,7 +617,7 @@ struct LibraryView: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
         .contextMenu {
             Button {
                 library.toggleFavorite(track)

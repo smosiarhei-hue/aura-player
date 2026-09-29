@@ -95,7 +95,7 @@ struct RemoteArtwork: View {
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .strokeBorder(SN.hairline, lineWidth: 0.8)
+                    .strokeBorder(SN.hairline, lineWidth: 0.5)
             )
     }
 
