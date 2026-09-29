@@ -318,6 +318,93 @@ struct SonivoCompactTrackCard: View {
     }
 }
 
+// MARK: - Apple Design Badges & Iconography
+
+struct AppleRankBadge: View {
+    let rank: Int
+
+    private var rankColor: AnyShapeStyle {
+        switch rank {
+        case 1:
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [Color(red: 1.0, green: 0.85, blue: 0.25), Color(red: 0.98, green: 0.65, blue: 0.10)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        case 2:
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [Color(white: 0.95), Color(white: 0.72)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        case 3:
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [Color(red: 0.88, green: 0.58, blue: 0.35), Color(red: 0.70, green: 0.40, blue: 0.22)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        default:
+            return AnyShapeStyle(SN.inkMuted.opacity(0.80))
+        }
+    }
+
+    var body: some View {
+        Text(String(format: "%02d", rank))
+            .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
+            .foregroundStyle(rankColor)
+            .frame(width: 26, alignment: .leading)
+    }
+}
+
+struct ApplePremiereBadge: View {
+    var title: String = "ПРЕМЬЕРА"
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 10, weight: .bold))
+                .symbolEffect(.variableColor.iterative.reversing)
+            Text(title)
+                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                .tracking(0.6)
+        }
+        .foregroundStyle(SN.ember)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5))
+    }
+}
+
+struct AppleInteractiveHeart: View {
+    let isFavorite: Bool
+    var size: CGFloat = 22
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button {
+            Haptics.tap(.medium)
+            onToggle()
+        } label: {
+            Image(systemName: isFavorite ? "heart.fill" : "heart")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(isFavorite ? SN.heart : SN.inkMuted)
+                .symbolEffect(.bounce, value: isFavorite)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(TactileButtonStyle(scale: 0.90))
+        .accessibilityLabel(isFavorite ? "Убрать из избранного" : "В избранное")
+    }
+}
+
 struct SonivoCatalogTrackRow: View {
     let item: YandexMusicService.YMTrackItem
     var rank: Int?
@@ -334,14 +421,20 @@ struct SonivoCatalogTrackRow: View {
             Button(action: onPlay) {
                 HStack(spacing: 12) {
                     if let rank {
-                        Text(String(format: "%02d", rank))
-                            .font(SN.text(.caption, .bold).monospacedDigit())
-                            .foregroundStyle(rank <= 3 ? SN.amber : SN.inkMuted)
-                            .frame(width: 24, alignment: .leading)
+                        AppleRankBadge(rank: rank)
                     }
 
-                    RemoteArtwork(urlString: item.coverUrlString, corner: 10)
-                        .frame(width: 52, height: 52)
+                    ZStack {
+                        RemoteArtwork(urlString: item.coverUrlString, corner: 10)
+                            .frame(width: 52, height: 52)
+
+                        if isActive {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.black.opacity(0.42))
+                                .frame(width: 52, height: 52)
+                            LiveWaveEqualizer(isPlaying: presentation.isPlaying, color: SN.amber)
+                        }
+                    }
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
@@ -357,7 +450,7 @@ struct SonivoCatalogTrackRow: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
 
             Menu {
                 Button(action: onPlay) {
@@ -375,7 +468,7 @@ struct SonivoCatalogTrackRow: View {
             }
             .accessibilityLabel("Действия для \(item.title)")
         }
-            .padding(.vertical, 4)
+        .padding(.vertical, 4)
         .background(isActive ? SN.ink.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }

@@ -778,12 +778,15 @@ struct PlayerScreenV2: View {
         HStack(spacing: 0) {
             Button {
                 guard let current = track else { return }
+                Haptics.tap(.medium)
                 library.toggleFavorite(current)
             } label: {
                 let favorite = track.map(library.isTrackFavorite) ?? false
                 Image(systemName: favorite ? "heart.fill" : "heart")
                     .font(.system(size: 21, weight: .semibold))
                     .foregroundStyle(favorite ? SN.heart : SN.inkMuted)
+                    .symbolEffect(.bounce, value: favorite)
+                    .contentTransition(.symbolEffect(.replace))
                     .frame(width: 48, height: 48)
             }
             .frame(maxWidth: .infinity)
@@ -802,6 +805,7 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(SN.ink)
                     .frame(width: 66, height: 66)
                     .contentShape(Circle())
+                    .contentTransition(.symbolEffect(.replace.byLayer))
             }
             .glassCircle()
             .frame(maxWidth: .infinity)

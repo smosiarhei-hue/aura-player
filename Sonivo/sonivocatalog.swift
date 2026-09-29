@@ -332,7 +332,14 @@ struct Top100ChartView: View {
             SonivoBackdrop()
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    SonivoHeader(title: title)
+                    HStack(alignment: .firstTextBaseline) {
+                        SonivoHeader(title: title)
+                        Spacer()
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(SN.amber)
+                            .symbolEffect(.bounce, value: tracks.count)
+                    }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
 
@@ -373,11 +380,15 @@ struct PremiereTracksView: View {
             SonivoBackdrop()
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    SonivoHeader(
-                        title: title,
-                        accent: tracks.isEmpty ? nil : "\(tracks.count)",
-                        subtitle: "Ежедневный чарт новинок • Обновляется в 00:00"
-                    )
+                    HStack(alignment: .firstTextBaseline) {
+                        SonivoHeader(
+                            title: title,
+                            accent: tracks.isEmpty ? nil : "\(tracks.count)",
+                            subtitle: "Ежедневный чарт новинок • Обновляется в 00:00"
+                        )
+                        Spacer()
+                        ApplePremiereBadge(title: "ТОП-100")
+                    }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
 

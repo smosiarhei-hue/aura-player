@@ -219,7 +219,12 @@ struct SonivoHomeRedesignedView: View {
             } label: {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Чарт").font(SN.display(.title2, .bold)).foregroundStyle(.white)
+                        HStack(spacing: 6) {
+                            Text("Чарт").font(SN.display(.title2, .bold)).foregroundStyle(.white)
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(SN.amber)
+                        }
                         Text("Главные треки сегодня").font(SN.text(.caption)).foregroundStyle(.white.opacity(0.48))
                     }
                     Spacer()
@@ -255,9 +260,12 @@ struct SonivoHomeRedesignedView: View {
             } label: {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Премьера")
-                            .font(SN.display(.title2, .bold))
-                            .foregroundStyle(.white)
+                        HStack(spacing: 8) {
+                            Text("Премьера")
+                                .font(SN.display(.title2, .bold))
+                                .foregroundStyle(.white)
+                            ApplePremiereBadge(title: "ТОП-100")
+                        }
                         Text("Топ-100 премьер • Обновление в 00:00")
                             .font(SN.text(.caption))
                             .foregroundStyle(.white.opacity(0.48))

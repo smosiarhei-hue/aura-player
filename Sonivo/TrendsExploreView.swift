@@ -178,7 +178,7 @@ struct TrendsExploreView: View {
     }
 
     private func categoryItem(title: String, icon: String, gradient: [Color], hasDot: Bool = false) -> some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -187,10 +187,10 @@ struct TrendsExploreView: View {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
                     )
-                    .shadow(color: (gradient.first ?? .blue).opacity(0.40), radius: 10, x: 0, y: 5)
+                    .shadow(color: (gradient.first ?? .blue).opacity(0.25), radius: 8, x: 0, y: 4)
 
                 Image(systemName: icon)
-                    .font(SN.display(.title, .black))
+                    .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(SN.ink)
             }
 
@@ -341,16 +341,20 @@ struct TrendsExploreView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(SN.ember)
+                    .symbolEffect(.variableColor.iterative.reversing)
                     .frame(width: 48, height: 48)
                     .glassCircle(interactive: false)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Премьера")
-                        .font(SN.display(.title2, .bold))
-                        .foregroundStyle(SN.ink)
-                    Text("Топ-100 премьер • Обновление в 00:00")
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("Премьера")
+                            .font(SN.display(.title2, .bold))
+                            .foregroundStyle(SN.ink)
+                        ApplePremiereBadge(title: "ТОП-100")
+                    }
+                    Text("Ежедневный чарт новинок • Обновление в 00:00")
                         .font(SN.text(.subheadline))
                         .foregroundStyle(SN.inkMuted)
                 }
@@ -396,10 +400,10 @@ struct TrendsExploreView: View {
                     .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
                     )
                 }
-                .buttonStyle(GlassPressStyle())
+                .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
             }
