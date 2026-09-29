@@ -282,7 +282,7 @@ struct QueueSheetView: View {
                             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
                             player.play(track)
                         } label: { queueRow(track, isCurrent: player.currentTrack?.id == track.id) }
-                        .buttonStyle(.plain).listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .buttonStyle(CardPressStyle(scale: 0.98, haptic: true)).listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) { withAnimation { player.removeFromQueue(track) } }
                                 label: { Label("Удалить", systemImage: "trash") }
@@ -311,11 +311,16 @@ struct QueueSheetView: View {
             }
             ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { dismiss() }.foregroundStyle(SN.amber) }
         }
-        .presentationDetents([.medium, .large]).presentationDragIndicator(.visible).presentationContentInteraction(.scrolls)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationContentInteraction(.scrolls)
+        .presentationBackground(.ultraThinMaterial)
     }
     private func queueRow(_ track: Track, isCurrent: Bool) -> some View {
         HStack(spacing: 12) {
             SmallArtwork(track: track, size: 46)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title).font(.headline).foregroundStyle(isCurrent ? SN.amber : .primary).lineLimit(1).truncationMode(.tail)
                 Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
@@ -436,7 +441,7 @@ struct PlayerEQSheetView: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(SN.bg)
+        .presentationBackground(.ultraThinMaterial)
     }
 
     private func presetRow(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -455,7 +460,7 @@ struct PlayerEQSheetView: View {
             .frame(height: 50)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
     }
 }
 

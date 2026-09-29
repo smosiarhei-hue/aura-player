@@ -79,6 +79,9 @@ struct DifySettingsSheet: View {
                     .foregroundStyle(SN.accent)
                 }
             }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(.ultraThinMaterial)
             .onAppear {
                 selectedProvider = dify.provider
                 nvidiaKeyInput = dify.nvidiaApiKey
@@ -119,7 +122,7 @@ struct DifySettingsSheet: View {
                     )
                     .clipShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
             }
         }
         .padding(4)
@@ -211,10 +214,10 @@ struct DifySettingsSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(isSelected ? (Color(hex: "#76B900") ?? .green).opacity(0.6) : Color.white.opacity(0.06), lineWidth: 1)
+                                .stroke(isSelected ? (Color(hex: "#76B900") ?? .green).opacity(0.6) : Color.white.opacity(0.06), lineWidth: 0.5)
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TactileButtonStyle(scale: 0.97))
                 }
             }
         }
@@ -303,7 +306,7 @@ struct DifySettingsSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
             )
         }
     }
@@ -421,7 +424,7 @@ struct DifySettingsSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
             )
         }
     }
@@ -444,7 +447,7 @@ struct DifySettingsSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
             )
         }
     }
@@ -500,7 +503,7 @@ struct DifySettingsSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                 )
         }
     }

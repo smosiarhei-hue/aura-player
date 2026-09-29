@@ -64,7 +64,7 @@ struct VocalIsolationControlView: View {
                     .fill(Color(red: 0.16, green: 0.14, blue: 0.13).opacity(0.88))
                     .overlay(
                         Capsule()
-                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)
+                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
                     )
                     .shadow(color: .black.opacity(0.40), radius: 10, y: 5)
 
@@ -156,7 +156,7 @@ struct VocalIsolationControlView: View {
                                 manager.isolationLevel > 0.05
                                     ? Color.white.opacity(0.55)
                                     : Color.white.opacity(0.18),
-                                lineWidth: 0.8
+                                lineWidth: 0.5
                             )
                     )
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
@@ -165,7 +165,7 @@ struct VocalIsolationControlView: View {
             }
             .frame(width: VocalIsolationUIConfig.collapsedHeight, height: VocalIsolationUIConfig.collapsedHeight)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TactileButtonStyle(scale: 0.94))
     }
 
     // MARK: - Original Stylized Microphone + Sparkles Graphic

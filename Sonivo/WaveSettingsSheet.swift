@@ -53,9 +53,10 @@ struct WaveSettingsSheet: View {
                 }
             }
         }
-        .presentationDetents([.large])
+        .presentationDetents([.fraction(0.88), .large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(34)
+        .presentationBackground(.ultraThinMaterial)
         .preferredColorScheme(.dark)
     }
 
@@ -74,7 +75,7 @@ struct WaveSettingsSheet: View {
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
-                            lineWidth: 1
+                            lineWidth: 0.5
                         )
                 }
 
@@ -161,7 +162,7 @@ struct WaveSettingsSheet: View {
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .strokeBorder(isSelected ? Color.white.opacity(0.65) : Color.white.opacity(0.10), lineWidth: isSelected ? 1.4 : 0.8)
+                                .strokeBorder(isSelected ? Color.white.opacity(0.65) : Color.white.opacity(0.10), lineWidth: isSelected ? 1.0 : 0.5)
                         )
                     }
                     .buttonStyle(TactileButtonStyle(scale: 0.96))
@@ -201,7 +202,7 @@ struct WaveSettingsSheet: View {
                             )
                             .overlay(
                                 Capsule()
-                                    .strokeBorder(isSelected ? Color.white.opacity(0.70) : Color.white.opacity(0.12), lineWidth: isSelected ? 1.3 : 0.8)
+                                    .strokeBorder(isSelected ? Color.white.opacity(0.70) : Color.white.opacity(0.12), lineWidth: isSelected ? 1.0 : 0.5)
                             )
                         }
                         .buttonStyle(TactileButtonStyle(scale: 0.95))
@@ -243,7 +244,7 @@ struct WaveSettingsSheet: View {
                             )
                             .overlay(
                                 Capsule()
-                                    .strokeBorder(isSelected ? Color.white.opacity(0.70) : Color.white.opacity(0.12), lineWidth: isSelected ? 1.3 : 0.8)
+                                    .strokeBorder(isSelected ? Color.white.opacity(0.70) : Color.white.opacity(0.12), lineWidth: isSelected ? 1.0 : 0.5)
                             )
                         }
                         .buttonStyle(TactileButtonStyle(scale: 0.95))
@@ -299,7 +300,7 @@ struct WaveSettingsSheet: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
             )
         }
     }

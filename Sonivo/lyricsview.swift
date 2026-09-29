@@ -108,7 +108,7 @@ private struct SyncedLyrics: View {
                                     player.resume()
                                 }
                             }
-                            withAnimation(.easeInOut(duration: 0.42)) {
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
                                 proxy.scrollTo(idx, anchor: .center)
                             }
                         } label: {
@@ -195,7 +195,7 @@ private struct SyncedLyrics: View {
                         Haptics.tap(.light)
                         interactionResetTask?.cancel()
                         isUserInteracting = false
-                        withAnimation(.easeInOut(duration: 0.42)) {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
                             proxy.scrollTo(activeIndex, anchor: .center)
                         }
                     } label: {
@@ -209,7 +209,7 @@ private struct SyncedLyrics: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .background(Color.black.opacity(0.70), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8))
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.30), lineWidth: 0.5))
                         .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
                     }
                     .buttonStyle(TactileButtonStyle(scale: 0.95))
@@ -223,7 +223,7 @@ private struct SyncedLyrics: View {
                 if newIndex != activeIndex {
                     activeIndex = newIndex
                     if let newIndex, !isUserInteracting {
-                        withAnimation(.easeInOut(duration: 0.42)) {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
                             proxy.scrollTo(newIndex, anchor: .center)
                         }
                     }
@@ -245,11 +245,14 @@ private struct SyncedLyrics: View {
 private struct LyricsLineView: View {
     let line: LyricsLine
     let isActive: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Text(line.text)
             .font(.system(size: 32, weight: .heavy, design: .default))
             .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.35))
+            .blur(radius: (reduceMotion || isActive) ? 0 : 0.6)
+            .scaleEffect(reduceMotion ? 1.0 : (isActive ? 1.03 : 1.0), anchor: .center)
             .shadow(color: isActive ? Color.black.opacity(0.40) : Color.clear, radius: 4, y: 1.5)
             .multilineTextAlignment(.center)
             .lineLimit(nil)
@@ -258,16 +261,16 @@ private struct LyricsLineView: View {
             .lineSpacing(6)
             .frame(maxWidth: .infinity, alignment: .center)
             .contentShape(Rectangle())
-            .animation(.easeInOut(duration: 0.32), value: isActive)
+            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isActive)
     }
 }
 
 private struct LyricsLineButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(configuration.isPressed ? 0.65 : 1.0)
-            .scaleEffect(configuration.isPressed ? 0.985 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(configuration.isPressed ? 0.70 : 1.0)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(SN.fastSpring, value: configuration.isPressed)
     }
 }
 
