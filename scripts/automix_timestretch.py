@@ -3,7 +3,7 @@
 
 import sys
 from pathlib import Path
-PLAYER = Path("Aurora/playercore.swift")
+PLAYER = Path("Sonivo/playercore.swift")
 
 def patch(text, anchor, replacement, marker, label):
     if marker in text: return text

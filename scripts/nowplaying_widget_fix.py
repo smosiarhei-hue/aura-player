@@ -12,7 +12,7 @@ Two separate defects:
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYER = ROOT / "Aurora" / "playercore.swift"
+PLAYER = ROOT / "Sonivo" / "playercore.swift"
 
 
 def replace_required(text, old, new, label):

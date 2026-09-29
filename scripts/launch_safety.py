@@ -1,10 +1,10 @@
 ﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AURORA = ROOT / "Aurora"
+SONIVO = ROOT / "Sonivo"
 
 # 1. Cold start must not touch AVAudioSession / AVAudioEngine taps.
-app = AURORA / "auroraapp.swift"
+app = SONIVO / "sonivoapp.swift"
 text = app.read_text(encoding="utf-8")
 old_appear = '''        .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
@@ -14,10 +14,10 @@ old_appear = '''        .onAppear {
 if old_appear in text:
     text = text.replace(old_appear, "")
 else:
-    print("auroraapp.swift: onAppear audio block already removed")
+    print("sonivoapp.swift: onAppear audio block already removed")
 app.write_text(text, encoding="utf-8")
 
-player = AURORA / "playercore.swift"
+player = SONIVO / "playercore.swift"
 text = player.read_text(encoding="utf-8")
 
 # 2. Do not activate the audio session at launch; only set the category.

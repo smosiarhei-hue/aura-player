@@ -1,8 +1,8 @@
-# Aura Player — Design System and UI Plan
+# Sonivo — Design System and UI Plan
 
 ## 1. Product direction
 
-Aura Player is a cinematic iOS music player: artwork and sound create the atmosphere, while playback controls remain predictable and calm. The visual language is **Aurora Cinematic / Liquid Glass 2.0** — dark OLED surfaces, restrained glass, artwork-driven color, native iOS typography and meaningful motion.
+Sonivo is a cinematic iOS music player: artwork and sound create the atmosphere, while playback controls remain predictable and calm. The visual language is **Sonivo Cinematic / Liquid Glass 2.0** — dark OLED surfaces, restrained glass, artwork-driven color, native iOS typography and meaningful motion.
 
 The design must never hide the real playback state. The current track, active engine, AutoMix state, EQ state and loading state are always recoverable from the UI.
 
@@ -12,7 +12,7 @@ The design must never hide the real playback state. The current track, active en
 - SF Pro and Dynamic Type; no fixed text sizes in feature screens.
 - Minimum 44pt hit area for every control.
 - Respect safe areas, Dynamic Island, landscape and Reduce Motion.
-- Use semantic tokens from `Aurora/theme.swift`; views must not invent raw colors or random corner radii.
+- Use semantic tokens from `Sonivo/theme.swift`; views must not invent raw colors or random corner radii.
 - Use SF Symbols with one consistent weight family; no emoji as structural icons.
 - Use native sheets, navigation, menus, materials and haptics where they improve clarity.
 
@@ -127,8 +127,8 @@ The design must never hide the real playback state. The current track, active en
 ## 5. Artwork, backgrounds and animation
 
 - Prefer cached artwork as the source of the palette.
-- Render a blurred artwork layer, a low-opacity procedural Aurora layer and a dark scrim; never stack multiple competing video players.
-- Use `FluidAura.metal`/`FluidWaveView` only for the ambient layer; playback and visual animation remain separate concerns.
+- Render a blurred artwork layer, a low-opacity procedural Sonivo layer and a dark scrim; never stack multiple competing video players.
+- Use `FluidSonivo.metal`/`FluidWaveView` only for the ambient layer; playback and visual animation remain separate concerns.
 - Video shots are optional content, paused when the scene is inactive and disabled under Reduce Motion.
 - Cover changes crossfade/scale with the metadata rather than rebuilding the whole screen.
 - Keep one or two moving focal elements per screen; decorative motion must not compete with the current track.
@@ -160,7 +160,7 @@ Every async playback action must:
 2. Finish playback-state presentation: mini player, full player, loading and error states.
 3. Rebuild Home, Library, Search and Queue around stable cards and shared artwork components.
 4. Rebuild full player, lyrics, EQ and AutoMix sheets with the same tokens and motion.
-5. Add artwork palette extraction, Aurora background and shared-element transitions with Reduce Motion fallback.
+5. Add artwork palette extraction, Sonivo background and shared-element transitions with Reduce Motion fallback.
 6. Add accessibility labels, Dynamic Type, haptics gating and empty/loading/offline states.
 7. Run CI IPA build and verify on a real iPhone with cold launch, headphones and repeated transport commands.
 
@@ -285,15 +285,15 @@ This section is based on the current SwiftUI surface area, so no existing produc
 
 ## 11. Component map for the redesign
 
-- `AuraScreenBackground`: artwork palette, Aurora layer, scrim and Reduce Motion fallback.
-- `AuraArtworkCard`: remote/local artwork, placeholder, loading, failed image and shared transition source.
-- `AuraTrackRow`: artwork, metadata, duration, active/loading indicator, favorite and context actions.
-- `AuraSectionHeader`: title, optional subtitle and “See all” action.
-- `AuraGlassButton`: primary, secondary, destructive and loading variants.
-- `AuraStatusBadge`: AutoMix, EQ, download, offline and active playback states.
-- `AuraEmptyState`: illustration/gradient, explanation and one recovery action.
-- `AuraLoadingState`: skeleton for cards/rows and non-blocking progress for actions.
-- `AuraErrorState`: concise cause, retry action and optional diagnostics link.
-- `AuraArtistCard`, `AuraAlbumCard`, `AuraMoodCard`, `AuraChartRow`.
+- `SonivoScreenBackground`: artwork palette, Sonivo layer, scrim and Reduce Motion fallback.
+- `SonivoArtworkCard`: remote/local artwork, placeholder, loading, failed image and shared transition source.
+- `SonivoTrackRow`: artwork, metadata, duration, active/loading indicator, favorite and context actions.
+- `SonivoSectionHeader`: title, optional subtitle and “See all” action.
+- `SonivoGlassButton`: primary, secondary, destructive and loading variants.
+- `SonivoStatusBadge`: AutoMix, EQ, download, offline and active playback states.
+- `SonivoEmptyState`: illustration/gradient, explanation and one recovery action.
+- `SonivoLoadingState`: skeleton for cards/rows and non-blocking progress for actions.
+- `SonivoErrorState`: concise cause, retry action and optional diagnostics link.
+- `SonivoArtistCard`, `SonivoAlbumCard`, `SonivoMoodCard`, `SonivoChartRow`.
 
 Existing files should be migrated toward this map instead of creating another parallel visual language.

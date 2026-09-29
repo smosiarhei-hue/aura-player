@@ -1,0 +1,219 @@
+import Foundation
+import SwiftUI
+
+// MARK: - User Taste & AI Wave Intelligence Engine
+// Запоминает предпочтения пользователя: лайки (+5), прослушивания до конца (+3),
+// быстрые пропуски (-2) и дизлайки (-10, исключение из волны).
+// Позволяет 'Моей Волне' адаптироваться под индивидуальный вкус слушателя.
+
+@Observable
+final class UserTasteEngine: @unchecked Sendable {
+    static let shared = UserTasteEngine()
+
+    private let defaults = UserDefaults.standard
+    private let dislikesKey = "sonivo_disliked_tracks_v2"
+    private let artistScoresKey = "sonivo_artist_scores_v1"
+
+    private(set) var dislikedTrackIDs: Set<UUID> = []
+    private(set) var dislikedTrackKeys: Set<String> = []
+    private(set) var artistScores: [String: Double] = [:]
+
+    init() {
+        if let savedDislikes = defaults.stringArray(forKey: dislikesKey)
+            ?? defaults.stringArray(forKey: "sonivo_disliked_tracks_v1") {
+            dislikedTrackIDs = Set(savedDislikes.compactMap { UUID(uuidString: $0) })
+        }
+        if let savedKeys = defaults.stringArray(forKey: "sonivo_disliked_track_keys_v1") {
+            dislikedTrackKeys = Set(savedKeys)
+        }
+        if let savedScores = defaults.dictionary(forKey: artistScoresKey) as? [String: Double] {
+            artistScores = savedScores
+        }
+    }
+
+    // MARK: - Actions
+
+    func recordLike(track: Track) {
+        removeDislike(track: track)
+        let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !artist.isEmpty {
+            artistScores[artist, default: 0] += 5.0
+            save()
+        }
+    }
+
+    func recordDislike(track: Track) {
+        dislikedTrackIDs.insert(track.id)
+        dislikedTrackKeys.insert(stableKey(for: track))
+        let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !artist.isEmpty {
+            artistScores[artist, default: 0] -= 8.0
+        }
+        save()
+    }
+
+    func removeDislike(track: Track) {
+        dislikedTrackIDs.remove(track.id)
+        dislikedTrackKeys.remove(stableKey(for: track))
+        save()
+    }
+
+    func recordPlayback(track: Track, listenedSeconds: Double, totalDuration: Double) {
+        guard totalDuration > 0 else { return }
+        let ratio = listenedSeconds / totalDuration
+        let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artist.isEmpty else { return }
+
+        if ratio >= 0.75 {
+            artistScores[artist, default: 0] += 3.0
+        } else if ratio <= 0.15 && listenedSeconds < 20 {
+            artistScores[artist, default: 0] -= 1.5
+        }
+        save()
+    }
+
+    func isDisliked(track: Track) -> Bool {
+        dislikedTrackIDs.contains(track.id) || dislikedTrackKeys.contains(stableKey(for: track))
+    }
+
+    func toggleDislike(track: Track) {
+        if isDisliked(track: track) { removeDislike(track: track) }
+        else { recordDislike(track: track) }
+    }
+
+    private func stableKey(for track: Track) -> String {
+        if let stream = track.streamUrlString?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !stream.isEmpty, !stream.hasPrefix("http") {
+            return "ym:\(stream.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: ""))"
+        }
+        if track.fileName.hasPrefix("ym_"), track.fileName.hasSuffix(".mp3") {
+            let id = String(track.fileName.dropFirst(3).dropLast(4))
+            if !id.isEmpty { return "ym:\(id)" }
+        }
+        return "local:\(track.id.uuidString)"
+    }
+
+    /// Ranks a wave queue by taste but stays non-deterministic: equal-score
+    /// artists are shuffled each session, artists are spread out so the same
+    /// performer never stacks at the top, and tracks that already opened a
+    /// recent wave are demoted so two sessions never start identically.
+    func filterAndRankWave(tracks: [Track]) -> [Track] {
+        let waveSettings = WaveSettingsStore.shared
+
+        // 1. Фильтрация по языку и исключение дизлайков
+        var pool = tracks.filter { track in
+            guard !isDisliked(track: track) else { return false }
+            switch waveSettings.language {
+            case .any:
+                return true
+            case .russian:
+                let text = track.title + " " + track.artist
+                return text.range(of: "\\p{Cyrillic}", options: .regularExpression) != nil
+            case .foreign:
+                let text = track.title + " " + track.artist
+                return text.range(of: "\\p{Cyrillic}", options: .regularExpression) == nil
+            case .instrumental:
+                let lower = (track.title + " " + track.album).lowercased()
+                return lower.contains("instrumental") || lower.contains("инструментал") || lower.contains("karaoke") || lower.contains("минус")
+            }
+        }
+        // Если строгий фильтр языка отсеял слишком много треков, откатываемся к оригинальному пулу
+        if pool.isEmpty {
+            pool = tracks.filter { !isDisliked(track: $0) }
+        }
+        guard pool.count > 1 else { return pool }
+
+        // Fisher-Yates shuffle first: inside a taste tier the order rotates.
+        for index in stride(from: pool.count - 1, through: 1, by: -1) {
+            let swap = Int.random(in: 0...index)
+            pool.swapAt(index, swap)
+        }
+
+        let openerPenalty = Set(recentWaveOpeners.prefix(12))
+        let scored = pool.map { track -> (track: Track, score: Double) in
+            var score = artistScores[track.artist, default: 0]
+            if openerPenalty.contains(track.id.uuidString) { score -= 2.5 }
+
+            // 2. Модификаторы характера (diversity)
+            switch waveSettings.diversity {
+            case .favorite:
+                if score > 0 { score += 12.0 }
+                if LibraryStore.shared.isTrackFavorite(track) { score += 18.0 }
+            case .discover:
+                if score > 4.0 { score -= 10.0 }
+                if score == 0 { score += 12.0 }
+                if !LibraryStore.shared.isTrackFavorite(track) { score += 4.0 }
+            case .popular:
+                score += 3.0
+            case .defaultMode:
+                break
+            }
+
+            return (track, score)
+        }
+
+        // Stable sort by score: high taste wins, ties keep their fresh shuffle.
+        let sorted = scored.sorted { left, right in
+            if left.score != right.score { return left.score > right.score }
+            return false
+        }
+
+        // Spread artists: no back-to-back songs from the same performer.
+        var result: [Track] = []
+        var taken = Set<UUID>()
+        var streakArtist: String?
+        var streakCount = 0
+        var cursor = 0
+
+        while result.count < sorted.count {
+            guard cursor < sorted.count else { break }
+            let entry = sorted[cursor]
+            if taken.contains(entry.track.id) {
+                cursor += 1
+                continue
+            }
+            let artist = entry.track.artist
+            if artist == streakArtist, streakCount >= 1 {
+                // Find the next candidate from a different artist.
+                if let alternative = sorted.firstIndex(where: { !taken.contains($0.track.id) && $0.track.artist != artist }) {
+                    let pick = sorted[alternative]
+                    taken.insert(pick.track.id)
+                    result.append(pick.track)
+                    streakArtist = pick.track.artist
+                    streakCount = 1
+                    continue
+                }
+            }
+            taken.insert(entry.track.id)
+            result.append(entry.track)
+            streakCount = (artist == streakArtist) ? streakCount + 1 : 1
+            streakArtist = artist
+            cursor += 1
+        }
+
+        rememberWaveOpeners(result)
+        return result
+    }
+
+    // MARK: - Wave opener rotation
+
+    private let openersKey = "sonivo_wave_openers_v1"
+
+    private var recentWaveOpeners: [String] {
+        defaults.stringArray(forKey: openersKey) ?? []
+    }
+
+    private func rememberWaveOpeners(_ queue: [Track]) {
+        let ids = queue.prefix(4).map(\.id.uuidString)
+        var merged = ids + recentWaveOpeners
+        var seen = Set<String>()
+        merged = merged.filter { seen.insert($0).inserted }
+        defaults.set(Array(merged.prefix(24)), forKey: openersKey)
+    }
+
+    private func save() {
+        defaults.set(dislikedTrackIDs.map(\.uuidString), forKey: dislikesKey)
+        defaults.set(Array(dislikedTrackKeys), forKey: "sonivo_disliked_track_keys_v1")
+        defaults.set(artistScores, forKey: artistScoresKey)
+    }
+}

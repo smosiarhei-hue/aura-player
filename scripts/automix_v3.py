@@ -11,8 +11,8 @@ moment instead of buffering through the transition.
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYER = ROOT / "Aurora" / "playercore.swift"
-MODELS = ROOT / "Aurora" / "models.swift"
+PLAYER = ROOT / "Sonivo" / "playercore.swift"
+MODELS = ROOT / "Sonivo" / "models.swift"
 
 
 def replace_required(text, old, new, label):

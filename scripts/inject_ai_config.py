@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "Aurora" / "ai_config.swift"
+TARGET = ROOT / "Sonivo" / "ai_config.swift"
 
 endpoint = (os.environ.get("SONIVO_AI_ENDPOINT") or "").rstrip("/")
 token = os.environ.get("SONIVO_AI_TOKEN") or ""

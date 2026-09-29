@@ -1,9 +1,9 @@
 ﻿from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AURORA = ROOT / "Aurora"
+SONIVO = ROOT / "Sonivo"
 
-player_screen = AURORA / "PlayerScreenV2.swift"
+player_screen = SONIVO / "PlayerScreenV2.swift"
 text = player_screen.read_text(encoding="utf-8")
 old_opacity = ".opacity(1 - min(max(dragY, 0) / 650, 0.22))"
 new_opacity = ".opacity(1 - Double(min(max(dragY, CGFloat.zero) / CGFloat(650), CGFloat(0.22))))"
@@ -13,7 +13,7 @@ if old_opacity not in text and new_opacity not in text:
 text = text.replace(old_opacity, new_opacity)
 player_screen.write_text(text, encoding="utf-8")
 
-library = AURORA / "librarystore.swift"
+library = SONIVO / "librarystore.swift"
 text = library.read_text(encoding="utf-8")
 old_helper = r'''            func first(_ id: AVMetadataIdentifier) -> String? {
                 AVMetadataItem.metadataItems(from: meta, filteredByIdentifier: id).first?.stringValue
@@ -43,7 +43,7 @@ if old_helper not in text and new_helper not in text:
 text = text.replace(old_helper, new_helper)
 library.write_text(text, encoding="utf-8")
 
-player = AURORA / "playercore.swift"
+player = SONIVO / "playercore.swift"
 text = player.read_text(encoding="utf-8")
 old_finished_observer = r'''        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             Task { @MainActor [weak self] in

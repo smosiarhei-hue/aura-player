@@ -49,6 +49,21 @@ class IPADeliveryTests(unittest.TestCase):
         self.assertNotIn(token.encode(), body)
         self.assertEqual(parts["chat_id"].get_payload(decode=True), b"987654")
 
+    def test_success_signed_caption_has_ota_url(self):
+        self.env.update(IPA_IS_SIGNED="true", MARKETING_VERSION="1.2.3", BUILD_NUMBER="777")
+        self.assertEqual(self.invoke()[0], 0)
+        body = self.transport.call_args.args[1]
+        content_type = self.transport.call_args.args[2]
+        message = BytesParser(policy=policy.default).parsebytes(
+            f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode() + body)
+        parts = {p.get_param("name", header="content-disposition"): p
+                 for p in message.iter_parts()}
+        caption = parts["caption"].get_payload(decode=True).decode()
+        self.assertIn("ГОТОВА К УСТАНОВКЕ", caption)
+        self.assertIn("https://owner.github.io/repo/", caption)
+        self.assertIn("1.2.3", caption)
+        self.assertIn("#777", caption)
+
     def test_no_fallback_chat(self):
         del self.env["TELEGRAM_CHAT_ID"]
         status, output = self.invoke()

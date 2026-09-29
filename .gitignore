@@ -5,8 +5,24 @@ build/
 xcuserdata/
 *.ipa
 *.zip
+__pycache__/
+*.pyc
 .openclaw/
 
 scripts/__pycache__/
 
 agent_config.json
+Sonivo/incoming/node_modules/
+Sonivo/incoming/dist/
+Sonivo/incoming/scratch/
+Sonivo/incoming/public/*.mp3
+Sonivo/incoming/public/*.bin
+
+# VideoShot Studio
+tools/videoshot-studio/cache/
+tools/videoshot-studio/output/
+tools/videoshot-studio/google-flow-api/
+tools/videoshot-studio/__pycache__/
+tools/videoshot-studio/*.mp4
+
+

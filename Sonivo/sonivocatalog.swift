@@ -1,0 +1,406 @@
+import SwiftUI
+
+// MARK: - Общие компоненты каталога
+
+struct SonivoBackdrop: View {
+    var body: some View {
+        SonivoScreenBackground(colors: [SN.bgRaised, SN.bg, SN.card], showsMesh: false)
+    }
+}
+
+struct SonivoHeader: View {
+    let title: String
+    var accent: String? = nil
+    var subtitle: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(title)
+                    .font(SN.display(.title2, .heavy))
+                    .foregroundStyle(SN.ink)
+                if let accent {
+                    Text(accent)
+                        .font(SN.serifAccent(.title2))
+                        .foregroundStyle(SN.amber)
+                }
+                Spacer(minLength: 0)
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(SN.text(.caption))
+                    .foregroundStyle(SN.inkMuted)
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+struct SonivoChip: View {
+    let title: String
+    let icon: String
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(SN.text(.caption2, .bold))
+            Text(title)
+                .font(SN.text(.footnote, isActive ? .bold : .medium))
+        }
+        .foregroundStyle(isActive ? Color.black.opacity(0.86) : SN.ink.opacity(0.82))
+        .padding(.horizontal, 13)
+        .padding(.vertical, 8)
+        .glassEffect(isActive ? .regular.tint(SN.amber).interactive() : .regular.interactive(), in: .capsule)
+    }
+}
+
+struct SonivoMoreButton: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(SN.text(.caption, .bold))
+            Image(systemName: "chevron.right")
+                .font(SN.text(.caption2, .black))
+        }
+        .foregroundStyle(SN.amber)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .glassCapsule(interactive: true)
+    }
+}
+
+struct RemoteArtwork: View {
+    let urlString: String?
+    var corner: CGFloat = 12
+
+    var body: some View {
+        Color.clear
+            .overlay {
+                if let value = urlString, let url = URL(string: value) {
+                    AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
+                        if let image = phase.image {
+                            image.resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+                        } else {
+                            placeholder
+                        }
+                    }
+                } else {
+                    placeholder
+                }
+            }
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(SN.hairline, lineWidth: 0.8)
+            )
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(colors: [SN.coal, SN.card], startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(SN.text(.body, .semibold))
+                .foregroundStyle(SN.inkMuted)
+        }
+    }
+}
+
+struct RankedTrack: Identifiable {
+    let rank: Int
+    let item: YandexMusicService.YMTrackItem
+    var id: String { String(rank) + "-" + item.id }
+}
+
+struct ChartRowView: View {
+    let rank: Int?
+    let item: YandexMusicService.YMTrackItem
+    let onPlay: () -> Void
+
+    @State private var presentation = ActivePlayerPresentation()
+
+    private var isCurrentPlaying: Bool {
+        guard let current = presentation.displayTrack else { return false }
+        return current.title == item.title && current.artist == item.artistName
+    }
+
+    private var firstArtistId: String? {
+        guard let artist = item.artists?.first, let id = artist.id else { return nil }
+        return String(id)
+    }
+
+    var body: some View {
+        Button(action: onPlay) {
+            HStack(spacing: 12) {
+                if let rank {
+                    Text(String(format: "%02d", rank))
+                        .font(SN.text(.footnote, .bold).monospacedDigit())
+                        .foregroundStyle(rank <= 3 ? SN.amber : SN.inkMuted)
+                        .frame(width: 30, alignment: .leading)
+                }
+
+                ZStack {
+                    RemoteArtwork(urlString: item.coverUrlString, corner: 11)
+                        .frame(width: 56, height: 56)
+                    if isCurrentPlaying {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.black.opacity(0.45))
+                            .frame(width: 50, height: 50)
+                        LiveWaveEqualizer(isPlaying: presentation.isPlaying, color: SN.amber)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(SN.text(.body, .semibold))
+                        .foregroundStyle(isCurrentPlaying ? SN.amber : SN.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(item.artistName)
+                        .font(SN.text(.caption, .regular))
+                        .foregroundStyle(isCurrentPlaying ? SN.amber.opacity(0.75) : SN.inkMuted)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Spacer(minLength: 0)
+
+                Menu {
+                    Button { SonivoPlay.download(item) } label: {
+                        Label("Скачать на iPhone", systemImage: "arrow.down.circle")
+                    }
+                    if let artistId = firstArtistId {
+                        NavigationLink { ArtistView(artistId: artistId) } label: {
+                            Label("К артисту", systemImage: "person.crop.circle")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(SN.text(.subheadline, .bold))
+                        .foregroundStyle(SN.inkMuted)
+                        .frame(width: SN.tapTarget, height: SN.tapTarget)
+                        .contentShape(Rectangle())
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: SN.radiusSmall, style: .continuous)
+                    .fill(isCurrentPlaying ? SN.card.opacity(0.92) : Color.white.opacity(0.001))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(CardPressStyle())
+    }
+}
+
+// MARK: - Единая точка запуска воспроизведения
+
+@MainActor
+enum SonivoPlay {
+    private static let router = PlaybackCommandRouter.shared
+
+    static func track(_ item: YandexMusicService.YMTrackItem, in list: [YandexMusicService.YMTrackItem]) {
+        let service = YandexMusicService.shared
+        service.endStationSession()
+        let source = list.isEmpty ? [item] : list
+        let queue = source.map { service.convertToTrack($0) }
+        router.play(service.convertToTrack(item), queue: queue)
+    }
+
+    static func wave(_ station: YandexMusicService.StationOption, forceFresh: Bool = false) {
+        let service = YandexMusicService.shared
+
+        if station.stationId == "app:recap" {
+            service.endStationSession()
+            Task {
+                var tracks = await service.buildRecapQueue(target: 40)
+                if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
+                guard !tracks.isEmpty else { return }
+                let rankedQueue = UserTasteEngine.shared.filterAndRankWave(
+                    tracks: tracks.map { service.convertToTrack($0) }
+                )
+                guard let first = rankedQueue.first else { return }
+                router.play(first, queue: rankedQueue)
+            }
+            return
+        }
+
+        service.beginStationSession(station.stationId)
+        let active = PlayerCore.shared.currentTrack
+
+        let favorites = LibraryStore.shared.favorites
+        let lastLiked = favorites.first
+
+        // When launching "Моя волна", start a fresh random song based on user's taste
+        // and latest saved/liked track, preventing repeating the same track every time.
+        let immediate: Track? = {
+            if forceFresh || active == nil {
+                if favorites.count > 1 {
+                    return favorites.filter { $0.id != active?.id }.randomElement() ?? lastLiked
+                }
+                return lastLiked ?? service.chartCache.shuffled().first.map { service.convertToTrack($0) }
+            }
+            return active
+        }()
+
+        let startedImmediately = immediate != nil
+        if let immediate, (forceFresh || active == nil) {
+            router.play(immediate, queue: [immediate])
+        }
+
+        Task {
+            // Seed Yandex Music's recommendation rotor with the last liked track
+            if let lastLiked {
+                let lastLikedYmId = PlayerCore.yandexTrackID(from: lastLiked)
+                service.remember(
+                    key: lastLiked.id.uuidString,
+                    artist: lastLiked.artist,
+                    ymTrackId: lastLikedYmId.isEmpty ? nil : lastLikedYmId
+                )
+            }
+
+            let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
+            let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
+            let initial = unplayed.isEmpty ? firstBatch : unplayed
+            let candidates = initial.isEmpty ? (try? await service.getChart()) ?? [] : initial
+
+            if !candidates.isEmpty {
+                let available = candidates
+                    .map { service.convertToTrack($0) }
+                    .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
+                if active == nil && !startedImmediately, let first = available.first {
+                    router.play(first, queue: available)
+                }
+            }
+
+            var tracks = await service.buildWaveQueue(stationId: station.stationId, target: 45)
+            if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
+            guard !tracks.isEmpty else { return }
+
+            let filtered = tracks
+                .map { service.convertToTrack($0) }
+                .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
+
+            if let current = PlayerCore.shared.currentTrack {
+                var newQueue = filtered.filter { $0.id != current.id }
+                newQueue.insert(current, at: 0)
+                PlayerCore.shared.queue = newQueue
+            } else if !startedImmediately, let first = filtered.first {
+                router.play(first, queue: filtered)
+            }
+        }
+    }
+
+    static func album(_ album: YandexMusicService.YMAlbumItem) {
+        let service = YandexMusicService.shared
+        service.endStationSession()
+        Task {
+            let tracks = (try? await service.getAlbumTracks(albumId: album.id)) ?? []
+            guard let first = tracks.first else { return }
+            let queue = tracks.map { service.convertToTrack($0) }
+            router.play(service.convertToTrack(first), queue: queue)
+        }
+    }
+
+    static func download(_ item: YandexMusicService.YMTrackItem) {
+        let service = YandexMusicService.shared
+        Task {
+            guard let info = try? await service.getStreamInfo(for: item.id) else { return }
+            var track = service.convertToTrack(item)
+            track.streamUrlString = info.url.absoluteString
+            await LibraryStore.shared.saveOnlineTrackLocally(track: track)
+        }
+    }
+}
+
+// MARK: - Топ-100
+
+struct Top100ChartView: View {
+    let title: String
+    let tracks: [YandexMusicService.YMTrackItem]
+
+    private var ranked: [RankedTrack] {
+        tracks.enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
+    }
+
+    var body: some View {
+        ZStack {
+            SonivoBackdrop()
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    SonivoHeader(title: title)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                    ForEach(ranked) { row in
+                        SonivoCatalogTrackRow(item: row.item, rank: row.rank) {
+                            SonivoPlay.track(row.item, in: tracks)
+                        }
+                    }
+
+                    if tracks.isEmpty {
+                        SonivoEmptyState(
+                            systemImage: "chart.bar.xaxis",
+                            title: "Чарт пока недоступен",
+                            message: "Яндекс Музыка не вернула треки. Попробуйте открыть раздел позже."
+                        )
+                    }
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 28)
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+    }
+}
+
+struct PremiereTracksView: View {
+    let tracks: [YandexMusicService.YMTrackItem]
+    var title: String = "Топ-100 премьер"
+
+    private var ranked: [RankedTrack] {
+        tracks.enumerated().map { RankedTrack(rank: $0.offset + 1, item: $0.element) }
+    }
+
+    var body: some View {
+        ZStack {
+            SonivoBackdrop()
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    SonivoHeader(
+                        title: title,
+                        accent: tracks.isEmpty ? nil : "\(tracks.count)",
+                        subtitle: "Ежедневный чарт новинок • Обновляется в 00:00"
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                    ForEach(ranked) { row in
+                        SonivoCatalogTrackRow(item: row.item, rank: row.rank) {
+                            SonivoPlay.track(row.item, in: tracks)
+                        }
+                    }
+
+                    if tracks.isEmpty {
+                        SonivoEmptyState(
+                            systemImage: "sparkles",
+                            title: "Премьеры пока недоступны",
+                            message: "Яндекс Музыка не вернула свежие релизы. Попробуйте обновить раздел позже."
+                        )
+                    }
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 28)
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+    }
+}

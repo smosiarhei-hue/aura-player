@@ -60,9 +60,14 @@ public final class SystemPlaybackAudioSessionConfiguration: PlaybackAudioSession
 @MainActor
 public enum PlaybackAudioSessionSetup {
     /// Category and activation are mandatory; hardware preferences are best effort.
+    ///
+    /// - Parameter activateSession: `false` prepares the session (category + hardware
+    ///   preferences) without claiming audio focus. Lifecycle notifications must pass
+    ///   `false`, otherwise the app interrupts whatever else the user is listening to.
     public static func configure(
         session: any PlaybackAudioSessionConfiguring,
         usesV2: Bool,
+        activateSession: Bool = true,
         onError: (Error, AudioSessionSetupStep) -> Void
     ) -> AudioSessionSetupResult {
         var failedSteps: [AudioSessionSetupStep] = []
@@ -84,6 +89,9 @@ public enum PlaybackAudioSessionSetup {
 
         _ = attempt(.sampleRate) { try session.setPreferredSampleRate(48_000) }
         _ = attempt(.bufferDuration) { try session.setPreferredIOBufferDuration(0.005) }
+        guard activateSession else {
+            return AudioSessionSetupResult(isActive: false, failedSteps: failedSteps)
+        }
         let isActive = attempt(.activation) { try session.activate() }
         return AudioSessionSetupResult(isActive: isActive, failedSteps: failedSteps)
     }

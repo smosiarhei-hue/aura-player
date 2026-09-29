@@ -13,7 +13,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCREEN = ROOT / "Aurora" / "PlayerScreenV2.swift"
+SCREEN = ROOT / "Sonivo" / "PlayerScreenV2.swift"
 
 
 def replace_required(text, old, new, label):

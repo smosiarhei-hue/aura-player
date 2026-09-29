@@ -1,6 +1,6 @@
-# Aurora — Персональный музыкальный плеер для iOS
+# Sonivo — Персональный музыкальный плеер для iOS
 
-Aurora — это нативный плеер на SwiftUI с 10-полосным эквалайзером, живым спектром, анимированными обложками и стилистикой Liquid Glass.
+Sonivo — это нативный плеер на SwiftUI с 10-полосным эквалайзером, живым спектром, анимированными обложками и стилистикой Liquid Glass.
 
 ## Возможности
 
@@ -19,8 +19,8 @@ Aurora — это нативный плеер на SwiftUI с 10-полосны�
 aura-player/
 ├── .github/workflows/build-ipa.yml   # CI: macOS runner → unsigned IPA
 ├── project.yml                       # XcodeGen спецификация
-├── Aurora/
-│   ├── AuroraApp.swift               # @main, RootView, MiniPlayer
+├── Sonivo/
+│   ├── SonivoApp.swift               # @main, RootView, MiniPlayer
 │   ├── Theme.swift                   # Settings, GlassCard, BackdropView
 │   ├── Models.swift                  # Track, RepeatMode, EQPreset, Palette
 │   ├── PlayerCore.swift              # AVAudioEngine, EQ, transport
@@ -71,16 +71,16 @@ git push -u origin main
 
 ### 3. Скачай unsigned IPA
 
-GitHub → твой репо → Actions → последний успешный run → Artifacts → `Aurora-unsigned-ipa` → скачай `.ipa`.
+GitHub → твой репо → Actions → последний успешный run → Artifacts → `Sonivo-unsigned-ipa` → скачай `.ipa`.
 
 ## Установка через eSign
 
 1. Открой eSign на iPhone
 2. Нажми «Импорт IPA»
-3. Выбери скачанный `Aurora-unsigned.ipa`
+3. Выбери скачанный `Sonivo-unsigned.ipa`
 4. Перейди в «Подпись»
 5. Выбери свой сертификат (.p12) и provisioning profile
-6. При желании измени Bundle ID (по умолчанию `com.smoze.auroraplayer`)
+6. При желании измени Bundle ID (по умолчанию `com.smoze.sonivo`)
 7. Нажми «Подписать»
 8. Установи — при первом запуске зайди в **Настройки → Основные → VPN и управление устройством** и доверяй сертификату
 
@@ -95,13 +95,13 @@ GitHub → твой репо → Actions → последний успешный
 
 ### Из приложения «Файлы» (рекомендуется)
 1. Открой «Файлы» на iPhone
-2. Перейди в раздел «Обзор» → Aurora
+2. Перейди в раздел «Обзор» → Sonivo
 3. Скопируй или перетащи аудиофайлы
-4. В Aurora: вкладка «Импорт» → «Обновить медиатеку»
+4. В Sonivo: вкладка «Импорт» → «Обновить медиатеку»
 
 ### Через Finder (Mac)
 1. Подключи iPhone к Mac
-2. Finder → устройство → «Файлы» → Aurora
+2. Finder → устройство → «Файлы» → Sonivo
 3. Перетащи файлы
 4. Обнови медиатеку в приложении
 
@@ -112,7 +112,7 @@ GitHub → твой репо → Actions → последний успешный
 
 ### Почему нет стриминга из Spotify / Яндекс / VK?
 
-Эти сервисы не предоставляют API для полного скачивания треков сторонним приложениям — это защищено DRM и условиями использования. Aurora работает с вашими локальными файлами.
+Эти сервисы не предоставляют API для полного скачивания треков сторонним приложениям — это защищено DRM и условиями использования. Sonivo работает с вашими локальными файлами.
 
 ## Локальная сборка (опционально)
 
@@ -122,7 +122,7 @@ GitHub → твой репо → Actions → последний успешный
 brew install xcodegen
 cd aura-player
 xcodegen generate
-open Aurora.xcodeproj
+open Sonivo.xcodeproj
 ```
 
 Для симулятора: выбери iPhone Simulator как destination, запусти.

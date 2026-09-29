@@ -31,6 +31,8 @@ public final class PlaybackCoordinator {
     private var commandTask: Task<Void, Error>?
     private var prefetchTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
+    private var transitionStartedAt: Date?
+    private var transitionDurationSeconds: Double?
     private var monitorTask: Task<Void, Never>?
 
     public init(source: any TrackSource, engine: any PlaybackEngine,
@@ -42,6 +44,44 @@ public final class PlaybackCoordinator {
     }
     public func applyUserEQ(gains: [Float], enabled: Bool) {
         Task { await engine.applyUserEQ(gains: gains, enabled: enabled) }
+    }
+
+    /// How ready the next transition is.
+    ///
+    /// Displayed by the diagnostics screen. This used to live in the app-side
+    /// `Stage3PlaybackCoordinator` re-implementation, which shadowed this type by name.
+    public enum TransitionReadiness: String, Sendable {
+        case idle, waitingForDeckB, waitingForAnalysis, ready, transitioning, fallback, ended, failed
+    }
+
+    public var transitionReadiness: TransitionReadiness {
+        if transitionTask != nil { return .transitioning }
+        if let error = lastQueueError, !error.isEmpty { return .failed }
+        guard wantsPlayback else { return .idle }
+        guard !queue.isEmpty else { return .ended }
+        guard prepared == nil else { return .ready }
+        return waitingForNext ? .waitingForDeckB : .waitingForAnalysis
+    }
+
+    public var transitionReason: String {
+        switch transitionReadiness {
+        case .transitioning: return "Переход выполняется"
+        case .failed: return lastQueueError ?? "Ошибка очереди"
+        case .idle: return "Ожидание воспроизведения"
+        case .ended: return "Очередь завершена"
+        case .waitingForDeckB: return "Подготовка следующего трека"
+        case .waitingForAnalysis: return "Анализ следующего трека"
+        case .ready: return "Переход готов"
+        case .fallback: return "Fallback crossfade"
+        }
+    }
+
+    /// 0...1 progress of the in-flight transition, or nil when none is running.
+    /// Drives the transition timeline in the app's AutoMix V2 bridge.
+    public var transitionProgress: Double? {
+        guard transitionTask != nil, let started = transitionStartedAt,
+              let duration = transitionDurationSeconds, duration > 0 else { return nil }
+        return min(1, max(0, -started.timeIntervalSinceNow / duration))
     }
     deinit {
         commandTask?.cancel()
@@ -256,14 +296,22 @@ public final class PlaybackCoordinator {
                 beginTransition(next, duration: min(crossfadeSeconds, remaining, incomingDuration / 2), token: token)
             }
         } else if ended {
-            waitingForNext = prefetchTask != nil
-            if !waitingForNext {
+            if prefetchTask != nil {
+                waitingForNext = true
+                publish()
+            } else if let index = currentIndex, index + 1 < queue.count {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    try? await self.next()
+                }
+            } else {
+                waitingForNext = false
                 wantsPlayback = false
                 if let meta = activeMeta { phase = .ready(meta) }
                 monitorTask?.cancel()
                 monitorTask = nil
+                publish()
             }
-            publish()
         }
     }
     private var otherDeck: Deck { activeDeck == .a ? .b : .a }
@@ -285,6 +333,8 @@ public final class PlaybackCoordinator {
         monitorTask?.cancel()
         prefetchTask = nil
         transitionTask = nil
+        transitionStartedAt = nil
+        transitionDurationSeconds = nil
         monitorTask = nil
         // Cancelled fades may have advanced the prepared player's timeline; never reuse that position.
         if transition != nil { prepared = nil }
@@ -370,6 +420,10 @@ public final class PlaybackCoordinator {
                     await engine.setGain(0, for: deck)
                     try check(token)
                     prepared = item
+                    if self.waitingForNext {
+                        self.waitingForNext = false
+                        self.beginTransition(item, duration: nil, token: token)
+                    }
                     publish()
                     return
                 } catch {
@@ -386,17 +440,23 @@ public final class PlaybackCoordinator {
     }
     private func beginTransition(_ next: PreparedTrack, duration: Double?, token: UUID) {
         waitingForNext = false
+        transitionStartedAt = Date()
+        transitionDurationSeconds = duration ?? crossfadeSeconds
         transitionTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try await promote(next, fadeDuration: duration, token: token)
                 try check(token)
                 transitionTask = nil
+                transitionStartedAt = nil
+                transitionDurationSeconds = nil
                 publish()
                 startPrefetch()
             } catch {
                 guard token == generation, !Task.isCancelled else { return }
                 transitionTask = nil
+                transitionStartedAt = nil
+                transitionDurationSeconds = nil
                 prepared = nil
                 lastQueueError = String(describing: error)
                 wantsPlayback = false
