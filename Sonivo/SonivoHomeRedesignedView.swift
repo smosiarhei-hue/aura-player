@@ -192,7 +192,7 @@ struct SonivoHomeRedesignedView: View {
         }
         .padding(14).frame(width: 245, alignment: .leading)
         .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 0.5))
     }
 
     private var moodSection: some View {

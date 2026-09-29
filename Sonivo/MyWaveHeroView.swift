@@ -186,7 +186,7 @@ struct MyWaveHeroView: View {
                     .shadow(color: Color.black.opacity(0.85), radius: 18, y: 8)
                     .overlay(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 1.2)
+                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
                     )
                     .offset(y: artistImageUrl != nil ? 34 : 0)
             } else if let track = activeTrack {
@@ -195,12 +195,14 @@ struct MyWaveHeroView: View {
                     .shadow(color: Color.black.opacity(0.85), radius: 18, y: 8)
                     .overlay(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 1.2)
+                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
                     )
                     .offset(y: artistImageUrl != nil ? 34 : 0)
             }
         }
         .offset(x: dragOffset)
+        .rotationEffect(.degrees(Double(dragOffset / 200.0) * 3.5))
+        .scaleEffect(1.0 - min(0.04, abs(dragOffset / 300.0) * 0.04))
     }
 
     // MARK: - 2-Second Pending Grace Period Banner
@@ -263,7 +265,7 @@ struct MyWaveHeroView: View {
                     Circle()
                         .fill(Color(white: 0.14).opacity(0.92))
                         .frame(width: 60, height: 60)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
                         .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
 
                     Image(systemName: "waveform")
@@ -271,7 +273,7 @@ struct MyWaveHeroView: View {
                         .foregroundStyle(accentColor)
                 }
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.92))
+            .buttonStyle(TactileButtonStyle(scale: 0.95))
             .accessibilityLabel("Включить мою волну")
 
             // Center: Track Title & Info Pill (Tapping opens Full Player)
@@ -299,10 +301,10 @@ struct MyWaveHeroView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 60)
                 .background(Color(white: 0.14).opacity(0.92), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
                 .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.95))
+            .buttonStyle(TactileButtonStyle(scale: 0.96))
             .accessibilityLabel("Открыть плеер")
 
             // Right: Play/Pause Circular Capsule (место лайка)
@@ -326,7 +328,7 @@ struct MyWaveHeroView: View {
                     Circle()
                         .fill(Color(white: 0.14).opacity(0.92))
                         .frame(width: 60, height: 60)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
                         .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
 
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -334,7 +336,7 @@ struct MyWaveHeroView: View {
                         .foregroundStyle(accentColor)
                 }
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.92))
+            .buttonStyle(TactileButtonStyle(scale: 0.95))
             .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизведение")
         }
     }
@@ -493,23 +495,24 @@ struct MyWaveHeroView: View {
         }
     }
 
-    // MARK: - Swipe Gesture Handling with 2s Debounce
+    // MARK: - Swipe Gesture Handling with Velocity & Momentum
     private var swipeGesture: some Gesture {
         DragGesture(minimumDistance: 15)
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                dragOffset = value.translation.width / (1 + abs(value.translation.width) * 0.001)
+                dragOffset = value.translation.width
             }
             .onEnded { value in
-                let threshold: CGFloat = 55
-                if value.translation.width < -threshold {
+                let threshold: CGFloat = 50
+                let projected = value.predictedEndTranslation.width
+                if value.translation.width < -threshold || projected < -90 {
                     // Swiped Left -> Request Next Track with 2s buffer
                     initiateGracefulSkip(direction: 1)
-                } else if value.translation.width > threshold {
+                } else if value.translation.width > threshold || projected > 90 {
                     // Swiped Right -> Request Prev Track with 2s buffer
                     initiateGracefulSkip(direction: -1)
                 }
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
                     dragOffset = 0
                 }
             }

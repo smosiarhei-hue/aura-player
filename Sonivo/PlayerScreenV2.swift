@@ -19,6 +19,7 @@ struct PlayerScreenV2: View {
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
     @State private var coverDragX: CGFloat = 0
+    @State private var dismissOffsetY: CGFloat = 0
     @State private var isCoverSwitching = false
     @State private var waveLoading = false
     @State private var waveActive = false
@@ -75,6 +76,10 @@ struct PlayerScreenV2: View {
                 ? (totalHeight * 0.55)
                 : min(totalWidth - 40, totalHeight * 0.44)
 
+            let isPullingDown = dismissOffsetY > 0
+            let dismissScale = reduceMotion ? 1.0 : max(0.88, 1.0 - (dismissOffsetY / totalHeight) * 0.14)
+            let dismissCorner = max(0.0, min(42.0, (dismissOffsetY / 120.0) * 42.0))
+
             ZStack(alignment: .top) {
                 background
                     .frame(width: totalWidth, height: totalHeight)
@@ -118,12 +123,34 @@ struct PlayerScreenV2: View {
                 }
             }
             .frame(width: totalWidth, height: totalHeight, alignment: .top)
+            .offset(y: dismissOffsetY)
+            .scaleEffect(dismissScale, anchor: .bottom)
+            .clipShape(RoundedRectangle(cornerRadius: dismissCorner, style: .continuous))
+            .shadow(color: Color.black.opacity(isPullingDown ? 0.35 : 0.0), radius: 24, y: 12)
         }
         .ignoresSafeArea()
         .background(SN.bg.ignoresSafeArea())
-        .simultaneousGesture(DragGesture().onEnded { value in
-            if value.translation.height > 80 && value.predictedEndTranslation.height > 120 { close() }
-        })
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 15)
+                .onChanged { value in
+                    guard value.translation.height > 0,
+                          value.translation.height > abs(value.translation.width) * 1.25,
+                          !showLyricsMode else { return }
+                    dismissOffsetY = value.translation.height
+                }
+                .onEnded { value in
+                    guard dismissOffsetY > 0 else { return }
+                    let threshold: CGFloat = 110
+                    let projected = value.predictedEndTranslation.height
+                    if value.translation.height > threshold || projected > 240 {
+                        close()
+                    } else {
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                            dismissOffsetY = 0
+                        }
+                    }
+                }
+        )
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -353,6 +380,8 @@ struct PlayerScreenV2: View {
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
         let cardSide = min(width - 40, height)
+        let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 4.0
+        let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.06, abs(coverDragX / width) * 0.06))
         return ZStack {
             if isFullScreenVideoShot {
                 // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
@@ -364,7 +393,7 @@ struct PlayerScreenV2: View {
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.6)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
                     )
                     .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
                 AutoMixTransitionOverlay(player: player, width: width, height: height)
@@ -373,48 +402,42 @@ struct PlayerScreenV2: View {
             }
         }
         .frame(width: width, height: height)
-        .scaleEffect(player.isPlaying ? 1.0 : 0.96)
+        .scaleEffect((player.isPlaying ? 1.0 : 0.96) * dragScale)
         .offset(x: coverDragX)
+        .rotationEffect(.degrees(tiltAngle))
         .contentShape(Rectangle())
         .gesture(
             showLyricsMode ? nil : DragGesture(minimumDistance: 15)
                 .onChanged { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                coverDragX = value.translation.width / (1 + abs(value.translation.width) * 0.001)
-            }
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }; return
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    coverDragX = value.translation.width
                 }
-                let threshold: CGFloat = 65
-                if value.translation.width < -threshold, !isCoverSwitching {
-                    Haptics.tap(.light)
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        coverDragX = -width * 1.15
+                .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { coverDragX = 0 }
+                        return
                     }
-                    nextTrack()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                        coverDragX = width * 0.85
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    let threshold: CGFloat = 55
+                    let projected = value.predictedEndTranslation.width
+                    if (value.translation.width < -threshold || projected < -100), !isCoverSwitching {
+                        Haptics.tap(.light)
+                        nextTrack()
+                        coverDragX = width * 0.40
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
                             coverDragX = 0
                         }
-                    }
-                } else if value.translation.width > threshold, !isCoverSwitching {
-                    Haptics.tap(.light)
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        coverDragX = width * 1.15
-                    }
-                    previousTrack()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                        coverDragX = -width * 0.85
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    } else if (value.translation.width > threshold || projected > 100), !isCoverSwitching {
+                        Haptics.tap(.light)
+                        previousTrack()
+                        coverDragX = -width * 0.40
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
                             coverDragX = 0
                         }
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { coverDragX = 0 }
                     }
-                } else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { coverDragX = 0 }
                 }
-            })
+        )
         .animation(SN.slowSpring, value: player.isPlaying)
     }
 
@@ -496,7 +519,7 @@ struct PlayerScreenV2: View {
                     .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.88))
+            .buttonStyle(TactileButtonStyle(scale: 0.94))
             .padding(10)
             .accessibilityLabel("Развернуть текст песни на весь экран")
 
@@ -505,14 +528,14 @@ struct PlayerScreenV2: View {
                 VocalIsolationControlView()
                     .padding(VocalIsolationUIConfig.cornerPadding)
                     .frame(maxWidth: side, maxHeight: side, alignment: VocalIsolationUIConfig.cornerAlignment)
-                    .transition(.opacity.combined(with: .scale(scale: 0.88)))
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
             }
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.6)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
     }
@@ -794,7 +817,7 @@ struct PlayerScreenV2: View {
                 .frame(maxWidth: .infinity)
         }
         .foregroundStyle(SN.ink)
-        .buttonStyle(TactileButtonStyle(scale: 0.88))
+        .buttonStyle(TactileButtonStyle(scale: 0.94))
     }
 
     private var moreMenuButton: some View {
