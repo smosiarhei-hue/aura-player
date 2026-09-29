@@ -333,12 +333,11 @@ struct Top100ChartView: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
-                        SonivoHeader(title: title)
+                        HStack(spacing: 10) {
+                            SonivoHeader(title: title)
+                            AppleFlareIcon(name: "FlareChart", size: 28, glowColor: SN.amber)
+                        }
                         Spacer()
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(SN.amber)
-                            .symbolEffect(.bounce, value: tracks.count)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
@@ -381,11 +380,14 @@ struct PremiereTracksView: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
-                        SonivoHeader(
-                            title: title,
-                            accent: tracks.isEmpty ? nil : "\(tracks.count)",
-                            subtitle: "Ежедневный чарт новинок • Обновляется в 00:00"
-                        )
+                        HStack(spacing: 8) {
+                            SonivoHeader(
+                                title: title,
+                                accent: tracks.isEmpty ? nil : "\(tracks.count)",
+                                subtitle: "Ежедневный чарт новинок • Обновляется в 00:00"
+                            )
+                            AppleFlareIcon(name: "FlarePremiere", size: 30, glowColor: SN.ember)
+                        }
                         Spacer()
                         ApplePremiereBadge(title: "ТОП-100")
                     }

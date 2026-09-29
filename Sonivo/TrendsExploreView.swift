@@ -96,9 +96,12 @@ struct TrendsExploreView: View {
     private var headerView: some View {
         HStack {
             Spacer()
-            Text("Что послушать")
-                .font(SN.display(.title3, .bold))
-                .foregroundStyle(SN.ink)
+            HStack(spacing: 8) {
+                AppleFlareIcon(name: "FlareTrends", size: 26, glowColor: Color(red: 0.65, green: 0.45, blue: 1.0))
+                Text("Что послушать")
+                    .font(SN.display(.title3, .bold))
+                    .foregroundStyle(SN.ink)
+            }
             Spacer()
 
             NavigationLink {
@@ -340,10 +343,7 @@ struct TrendsExploreView: View {
     private var newReleasesSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(SN.ember)
-                    .symbolEffect(.variableColor.iterative.reversing)
+                AppleFlareIcon(name: "FlarePremiere", size: 38, glowColor: SN.ember)
                     .frame(width: 48, height: 48)
                     .glassCircle(interactive: false)
 
@@ -415,9 +415,12 @@ struct TrendsExploreView: View {
     private var moreDiscoveriesTop100Section: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center) {
-                Text("Больше открытий")
-                    .font(SN.display(.title2, .heavy))
-                    .foregroundStyle(SN.ink)
+                HStack(spacing: 8) {
+                    Text("Больше открытий")
+                        .font(SN.display(.title2, .heavy))
+                        .foregroundStyle(SN.ink)
+                    AppleFlareIcon(name: "FlareChart", size: 26, glowColor: SN.amber)
+                }
 
                 Spacer()
                 // Фильтры: [ТОП] и [ПО ЯЗЫКУ]

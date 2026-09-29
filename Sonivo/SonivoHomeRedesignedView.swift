@@ -219,11 +219,9 @@ struct SonivoHomeRedesignedView: View {
             } label: {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 8) {
                             Text("Чарт").font(SN.display(.title2, .bold)).foregroundStyle(.white)
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(SN.amber)
+                            AppleFlareIcon(name: "FlareChart", size: 26, glowColor: SN.amber)
                         }
                         Text("Главные треки сегодня").font(SN.text(.caption)).foregroundStyle(.white.opacity(0.48))
                     }
@@ -236,7 +234,7 @@ struct SonivoHomeRedesignedView: View {
                 .padding(.horizontal, 20)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
 
             if isLoading && chart.isEmpty { SonivoLoadingState(title: "Обновляем чарт…") }
             else if let loadError, chart.isEmpty { SonivoErrorState(message: loadError) { Task { await load() } } }
@@ -264,6 +262,7 @@ struct SonivoHomeRedesignedView: View {
                             Text("Премьера")
                                 .font(SN.display(.title2, .bold))
                                 .foregroundStyle(.white)
+                            AppleFlareIcon(name: "FlarePremiere", size: 26, glowColor: SN.ember)
                             ApplePremiereBadge(title: "ТОП-100")
                         }
                         Text("Топ-100 премьер • Обновление в 00:00")
@@ -279,7 +278,7 @@ struct SonivoHomeRedesignedView: View {
                 .padding(.horizontal, 20)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
 
             LazyVStack(spacing: 2) {
                 ForEach(Array(newTracks.prefix(5).enumerated()), id: \.element.id) { index, item in

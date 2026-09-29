@@ -405,6 +405,57 @@ struct AppleInteractiveHeart: View {
     }
 }
 
+// MARK: - Apple Flare Icon (GPT Image 2.0 Optical Flare with Native Motion)
+
+struct AppleFlareIcon: View {
+    let name: String
+    var size: CGFloat = 34
+    var glowColor: Color = SN.amber
+
+    @State private var isBreathing = false
+    @State private var isRotating = false
+    @State private var isShimmering = false
+
+    var body: some View {
+        ZStack {
+            // Ambient specular background glow
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [glowColor.opacity(0.38), glowColor.opacity(0.08), .clear],
+                        center: .center,
+                        startRadius: 2,
+                        endRadius: size * 0.85
+                    )
+                )
+                .frame(width: size * 1.5, height: size * 1.5)
+                .scaleEffect(isBreathing ? 1.15 : 0.85)
+                .opacity(isShimmering ? 0.90 : 0.50)
+
+            // Transparent flare asset
+            Image(name)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .scaleEffect(isBreathing ? 1.05 : 0.95)
+                .rotationEffect(.degrees(isRotating ? 5 : -5))
+                .brightness(isShimmering ? 0.08 : -0.02)
+        }
+        .frame(width: size, height: size)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true)) {
+                isBreathing = true
+            }
+            withAnimation(.easeInOut(duration: 4.8).repeatForever(autoreverses: true)) {
+                isRotating = true
+            }
+            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                isShimmering = true
+            }
+        }
+    }
+}
+
 struct SonivoCatalogTrackRow: View {
     let item: YandexMusicService.YMTrackItem
     var rank: Int?
