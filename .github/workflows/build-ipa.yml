@@ -6,9 +6,10 @@ on:
   push:
     branches:
       - main
+      - feature/modern-my-wave-home
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, feature/modern-my-wave-home ]
 
 permissions:
   contents: read
