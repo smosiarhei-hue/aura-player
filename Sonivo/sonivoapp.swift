@@ -126,7 +126,7 @@ struct NativeMiniPlayer: View {
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
                 .accessibilityLabel(track.map { "Открыть плеер: \($0.title)" } ?? "Открыть плеер")
                 Button(action: togglePlayback) {
                     Group {
@@ -134,12 +134,12 @@ struct NativeMiniPlayer: View {
                         else { Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(SN.glyph(.bold)).foregroundStyle(SN.ink)
                                 .contentTransition(.symbolEffect(.replace)) }
                     }.frame(width: tapSide, height: tapSide).contentShape(Circle())
-                }.buttonStyle(.plain).disabled(isLoading)
+                }.buttonStyle(TactileButtonStyle(scale: 0.92)).disabled(isLoading)
                     .accessibilityLabel(isLoading ? "Загрузка трека" : (isPlaying ? "Пауза" : "Воспроизвести"))
                 Button(action: nextTrack) {
                     Image(systemName: "forward.fill").font(SN.glyph(.bold)).foregroundStyle(SN.ink)
                         .frame(width: tapSide, height: tapSide).contentShape(Circle())
-                }.buttonStyle(.plain).disabled(isLoading).accessibilityLabel("Следующий трек")
+                }.buttonStyle(TactileButtonStyle(scale: 0.92)).disabled(isLoading).accessibilityLabel("Следующий трек")
             }
             ZStack(alignment: .leading) {
                 if let buffered = player.downloadProgress ?? player.nextDownloadProgress,
@@ -168,7 +168,9 @@ struct MiniArtworkPulse: View {
         SmallArtwork(track: track, size: side).frame(width: side, height: side)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(.white.opacity(isPlaying ? 0.35 : 0.15), lineWidth: 0.8) }
+                .strokeBorder(.white.opacity(isPlaying ? 0.35 : 0.15), lineWidth: 0.5) }
+            .scaleEffect(isPlaying ? 1.0 : 0.96)
+            .animation(SN.fastSpring, value: isPlaying)
             .frame(width: 44, height: 44).clipped().compositingGroup()
     }
 }

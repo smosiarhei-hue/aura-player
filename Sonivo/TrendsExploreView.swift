@@ -110,7 +110,7 @@ struct TrendsExploreView: View {
                     .frame(width: SN.tapTarget, height: SN.tapTarget)
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TactileButtonStyle(scale: 0.94))
             .glassCircle()
             .accessibilityLabel("Поиск")
         }
@@ -131,7 +131,7 @@ struct TrendsExploreView: View {
                     gradient: SN.Tile.pink
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TactileButtonStyle(scale: 0.94))
             .frame(maxWidth: .infinity)
 
             // 2. Книги (Синяя книга)
@@ -145,7 +145,7 @@ struct TrendsExploreView: View {
                     hasDot: true
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TactileButtonStyle(scale: 0.94))
             .frame(maxWidth: .infinity)
 
             // 3. Детям (Оранжевый)
@@ -158,7 +158,7 @@ struct TrendsExploreView: View {
                     gradient: SN.Tile.orange
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TactileButtonStyle(scale: 0.94))
             .frame(maxWidth: .infinity)
 
             // 4. Подкасты (Зеленый микрофон)
@@ -171,7 +171,7 @@ struct TrendsExploreView: View {
                     gradient: SN.Tile.green
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TactileButtonStyle(scale: 0.94))
             .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 12)
@@ -183,6 +183,10 @@ struct TrendsExploreView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
                     .frame(width: 58, height: 58)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
+                    )
                     .shadow(color: (gradient.first ?? .blue).opacity(0.40), radius: 10, x: 0, y: 5)
 
                 Image(systemName: icon)
@@ -234,6 +238,7 @@ struct TrendsExploreView: View {
                 }
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SN.card.opacity(0.82)))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5))
             }
             .buttonStyle(GlassPressStyle())
 
@@ -263,6 +268,7 @@ struct TrendsExploreView: View {
                 }
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SN.card.opacity(0.82)))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5))
             }
             .buttonStyle(GlassPressStyle())
         }

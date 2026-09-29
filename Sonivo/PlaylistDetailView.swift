@@ -163,7 +163,7 @@ struct PlaylistDetailView: View {
                     .padding(.vertical, 12)
                     .glassProminent(SN.amber)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
                 .disabled(tracks.isEmpty)
 
                 Button {
@@ -182,7 +182,7 @@ struct PlaylistDetailView: View {
                     .padding(.vertical, 12)
                     .glassCapsule(interactive: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(TactileButtonStyle(scale: 0.96))
                 .disabled(tracks.isEmpty)
             }
 
@@ -207,7 +207,7 @@ struct PlaylistDetailView: View {
                 .padding(.vertical, 11)
                 .glassCard(corner: 14)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TactileButtonStyle(scale: 0.97))
             .disabled(isExtending)
         }
         .padding(.horizontal, 16)
@@ -236,6 +236,10 @@ struct PlaylistDetailView: View {
 
                 SmallArtwork(track: track, size: 46)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                    )
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -273,7 +277,7 @@ struct PlaylistDetailView: View {
             .frame(minHeight: 48)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
         .contextMenu {
             Button {
                 library.toggleFavorite(track)
