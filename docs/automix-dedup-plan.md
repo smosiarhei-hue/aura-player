@@ -7,9 +7,9 @@
 
 | # | Где | Что это | Статус |
 |---|---|---|---|
-| 1 | `Packages/AutoMixV2` (30 файлов, 7 модулей) | Основной движок: `TrackSource`, `TrackAnalysis`, `MixPlanner`, `AudioEngineCore`, `PlaybackCoordinator`, `MixDiagnostics` | **выбран как целевой** |
+| 1 | `Packages/AutoMixV2` (30 файлов, 7 модулей) | Основной движок: `TrackSource`, `TrackAnalysis`, `MixPlanner`, `AudioEngineCore`, `PlaybackCoordinator`, `MixDiagnostics` | **единственный движок** |
 | 2 | `Packages/NeuroMix` | Нейро-планировщик переходов поверх (1) | оставить — не дубль |
-| 3 | `Sonivo/Stage3*` (4 файла) | Параллельная пере-реализация `DualDeckAudioEngine` + `PlaybackCoordinator` | **дубли → удалить** |
+| 3 | `Sonivo/Stage3*` (4 файла) | Параллельная пере-реализация `DualDeckAudioEngine` + `PlaybackCoordinator` + `MixDiagnosticsStore.textReport` | **удалены** ✅ |
 | 4 | `Sonivo/AutoMix/` (18 файлов) | Легаси-анализ: BPM / тональность / структура / планировщик переходов | см. «Не дубли» |
 | 5 | `Sonivo/DJAutoMixEngine/` (8 файлов) | Ещё одна DJ-реализация (coordinator / planner / renderer / sync) | см. «Не дубли» |
 
@@ -31,10 +31,10 @@
 Тестовый таргет (`SonivoUnitTests`) `Stage3*` не компилирует, поэтому тесты проверяют
 пакетные типы, а приложение играет через `Stage3*` — расхождение не ловится никаким тестом.
 
-## 3. Блокеры: почему удаление сейчас сломает сборку
+## 3. Блокеры: почему удаление нельзя было сделать «просто так»
 
 Проверено механически (сверка всех вызовов `coordinator.*` / `engine.*` в app-target с
-публичным API пакета). Всё, что зовёт мост, в пакете есть, **кроме**:
+публичным API пакета). Всё, что зовёт мост, в пакете было, **кроме** пяти мест:
 
 ### Блокер 1 — три FX-метода движка
 `Sonivo/NeuroMixRealtimeAudioAdapter.swift` (класс `NeuroMixRealtimeTransitionRunner`
@@ -58,35 +58,37 @@
 Итого удаление `Sonivo/Stage3*` = перенос **3 методов движка + 2 свойств координатора**
 в `Packages/AutoMixV2`, затем удаление 4 файлов и правка 2 файлов-потребителей.
 
-## 4. План миграции (конечный, ~1 PR)
+## 4. План миграции — **ВЫПОЛНЕНО**
 
-1. **`Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine`**
-   добавить `setRate(_:for:)`, `applyEffect(...)`, `resetEffects(_:)`.
-   Граф деки уже содержит нужные узлы
-   (`AVAudioPlayerNode → AVAudioUnitTimePitch → AVAudioUnitEQ → AVAudioUnitDelay → mixer`),
-   так что это локальные сеттеры параметров, а не новая архитектура.
-   Обязательно: поведение `resetEffects` — возврат в нейтральное состояние
-   (rate 1.0, EQ 0, delay 0), как того требует `docs/automix-stage4-acceptance.md`
-   («Previous, stop и interruption возвращают нейтральные EQ, delay и rate»).
-2. **`Packages/AutoMixV2/Sources/PlaybackCoordinator/PlaybackCoordinator`**
-   добавить `transitionReadiness: TransitionReadiness` + `transitionReason: String`
-   с той же семантикой, что в `Sonivo/Stage3PlaybackCoordinator.swift:43-44, 677-679`.
-3. **`Sonivo/NeuroMixRealtimeAudioAdapter.swift`** — типы-параметры перевести на
-   пакетный `DualDeckAudioEngine` (имя станет однозначным само после шага 5).
-4. **`Sonivo/Stage3DiagnosticsBridge.swift`** — `textReport(coordinator:)` перевести на
-   пакетный `PlaybackCoordinator`.
-5. **Удалить**: `Sonivo/Stage3DualDeckAudioEngine.swift`,
+Важное уточнение к исходной оценке: граф пакетного движка был `player → gainMixer` и
+**не содержал** FX-цепочки (это была особенность `Stage3*`). Поэтому перенос — это
+добавление узлов в `DeckSlot`, а не просто сеттеры. Сделано так:
+
+1. **`Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine`** — в `DeckSlot`
+   добавлена цепочка деки ровно как в `docs/automix-stage4-acceptance.md`:
+   `player → timePitch → fxEQ(4) → fxDelay → dryMixer → fxMixer → gainMixer`.
+   Реализованы `setRate(_:for:)`, `applyEffect(_:value:param:bpm:to:)` и
+   `resetEffects(_:preservingRate:)` со **взятым дословно** поведением стадии 4
+   (dynamic Q на high-pass, bass kill −40 dB, echo-out 60/BPM*0.75, rate clamp 0.70…1.30,
+   tape-stop, stutter, reverb wash, volume в dB, vocal ducking).
+   `DeckSlot.resetFX()` возвращает деку в нейтральное состояние и вызывается из
+   `stopLocked`, поэтому «застрявший фильтр/echo» невозможен — это критерий приёмки стадии 4.
+2. **`Packages/AutoMixV2/Sources/PlaybackCoordinator/PlaybackCoordinator`** — добавлены
+   `TransitionReadiness`, `transitionReadiness`, `transitionReason`, выведенные из
+   собственного состояния координатора.
+3. **`Sonivo/NeuroMixRealtimeAudioAdapter.swift`** — переведён на пакетный движок.
+4. **`Sonivo/Stage3DiagnosticsBridge.swift`** — **удалён**: в пакете уже был свой
+   `MixDiagnosticsStore.textReport(coordinator:)`, и мост-дубль его затенял.
+5. **Удалены**: `Sonivo/Stage3DualDeckAudioEngine.swift`,
    `Sonivo/Stage3PlaybackCoordinator.swift`, `Sonivo/Stage3DiagnosticsBridge.swift`.
-   После этого `DualDeckAudioEngine` / `PlaybackCoordinator` в app-target однозначно
-   указывают на пакет — затенение исчезает.
-6. **Переименовать** `Sonivo/Stage3ProfileEnricher.swift` → `TrackProfileEnricher`
-   (это **не** дубль, а живой мост между пакетным `TrackAnalysis` и легаси-анализаторами;
-   используется из `Sonivo/AutoMixV2AnalysisRuntime.swift:89, 98`). Убираем протухшее
-   имя этапа, файл оставляем.
-7. Пересобрать IPA и пройти ручную приёмку из `docs/automix-stage4-acceptance.md`
-   (15 пар треков, pause/resume/seek во время перехода, смена аудиомаршрута).
+   Затенение имён исчезло: `DualDeckAudioEngine` / `PlaybackCoordinator` теперь
+   однозначно указывают на `Packages/AutoMixV2`.
+6. **Переименован** `Sonivo/Stage3ProfileEnricher.swift` → `Sonivo/TrackProfileEnricher.swift`
+   (это **не** дубль, а живой мост между пакетным `TrackAnalysis` и легаси-анализаторами).
 
-После этого в проекте останется **один** движок воспроизведения — `Packages/AutoMixV2`.
+В проекте остался **один** движок воспроизведения — `Packages/AutoMixV2`.
+Осталось: пересобрать IPA и пройти ручную приёмку из `docs/automix-stage4-acceptance.md`
+(15 пар треков, pause/resume/seek во время перехода, смена аудиомаршрута).
 
 ## 5. Не дубли — что оставляем
 

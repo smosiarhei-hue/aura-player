@@ -86,7 +86,7 @@ final class AutoMixV2AnalysisRuntime {
             do {
                 let currentFile = try await localFile(for: current, id: currentID)
                 let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)
-                let a = await Stage3ProfileEnricher.enrich(rawA, fileURL: currentFile)
+                let a = await TrackProfileEnricher.enrich(rawA, fileURL: currentFile)
                 guard !Task.isCancelled, observedPair == key else { return }
                 currentProfile = a
                 guard let next, let nextID else {
@@ -95,7 +95,7 @@ final class AutoMixV2AnalysisRuntime {
                 pipelineStatus = "Анализ следующего трека"
                 let nextFile = try await localFile(for: next, id: nextID)
                 let rawB = try await analyzer.profile(for: nextID, fileURL: nextFile)
-                let b = await Stage3ProfileEnricher.enrich(rawB, fileURL: nextFile)
+                let b = await TrackProfileEnricher.enrich(rawB, fileURL: nextFile)
                 guard !Task.isCancelled, observedPair == key else { return }
                 nextProfile = b
                 let settings = MixSettings(mode: .automix,

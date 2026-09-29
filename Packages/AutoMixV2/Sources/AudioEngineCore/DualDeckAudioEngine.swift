@@ -34,9 +34,20 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let userEQ = AVAudioUnitEQ(numberOfBands: 10)
             for slot in [a, b] {
                 engine.attach(slot.player)
+                engine.attach(slot.timePitch)
+                engine.attach(slot.fxEQ)
+                engine.attach(slot.fxDelay)
+                engine.attach(slot.dryMixer)
+                engine.attach(slot.fxMixer)
                 engine.attach(slot.gainMixer)
-                engine.connect(slot.player, to: slot.gainMixer, format: format)
+                engine.connect(slot.player, to: slot.timePitch, format: format)
+                engine.connect(slot.timePitch, to: slot.fxEQ, format: format)
+                engine.connect(slot.fxEQ, to: slot.fxDelay, format: format)
+                engine.connect(slot.fxDelay, to: slot.dryMixer, format: format)
+                engine.connect(slot.dryMixer, to: slot.fxMixer, format: format)
+                engine.connect(slot.fxMixer, to: slot.gainMixer, format: format)
                 engine.connect(slot.gainMixer, to: engine.mainMixerNode, format: format)
+                slot.resetFX()
             }
             engine.attach(userEQ)
             let frequencies: [Float] = [20, 40, 60, 90, 160, 400, 1_000, 2_500, 6_000, 16_000]
@@ -135,6 +146,72 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             for (index, band) in owner.userEQ.bands.enumerated() {
                 band.gain = enabled && index < gains.count && gains[index].isFinite ? gains[index] : 0
             }
+        }
+    }
+
+    /// Pitch-preserving playback rate for one deck. Range matches the legacy engine.
+    public func setRate(_ rate: Float, for deck: Deck) async {
+        await inspect { owner in
+            let slot = owner.slot(for: deck)
+            slot.rate = min(1.30, max(0.70, rate.isFinite ? rate : 1))
+            slot.timePitch.rate = slot.rate
+        }
+    }
+
+    /// Applies one DJ FX event to a deck.
+    ///
+    /// Semantics are taken verbatim from the stage-4 implementation so that moving the FX
+    /// chain into the engine does not change what the transition sounds like.
+    public func applyEffect(_ kind: FxKind, value: Float, param: Float?, bpm: Float, to deck: Deck) async {
+        await inspect { owner in
+            let slot = owner.slot(for: deck)
+            guard value.isFinite else { return }
+            switch kind {
+            case .highPass:
+                let band = slot.fxEQ.bands[1]
+                band.frequency = min(18000, max(20, value))
+                band.bypass = value <= 21
+                // Resonance climbs as the sweep opens (bandwidth 0.8 -> 0.18).
+                band.bandwidth = value > 500 ? Float(0.8 - min(1, max(0, (value - 500) / 4000)) * 0.62) : 0.8
+            case .lowPass:
+                let band = slot.fxEQ.bands[2]
+                band.frequency = min(20000, max(100, value))
+                band.bypass = value >= 19900
+            case .bassKill, .bassOn:
+                slot.fxEQ.bands[0].gain = min(0, max(-40, -40 * min(1, max(0, value))))
+            case .echoOut:
+                slot.fxDelay.wetDryMix = min(75, max(0, value))
+                slot.fxDelay.feedback = min(60, max(0, param ?? 30))
+                slot.fxDelay.delayTime = bpm > 0 ? min(2, max(0.05, 60 / Double(bpm) * 0.75)) : 0.375
+            case .rateRamp:
+                slot.rate = min(1.30, max(0.70, value))
+                slot.timePitch.rate = slot.rate
+            case .tapeStop:
+                slot.rate = max(0.015, min(1.0, value))
+                slot.timePitch.rate = slot.rate
+            case .stutter:
+                slot.dryMixer.outputVolume = max(0, min(1, value))
+            case .reverbWash:
+                slot.fxDelay.wetDryMix = min(90, max(0, value))
+                slot.fxDelay.feedback = min(80, max(0, param ?? 60))
+                slot.fxDelay.delayTime = bpm > 0 ? min(2, max(0.05, 60 / Double(bpm) * 0.375)) : 0.25
+            case .volume:
+                // value is a gain in dB, 0 dB down to -60 dB.
+                let gain: Float = value <= -55 ? 0.0 : pow(10.0, value / 20.0)
+                slot.dryMixer.outputVolume = min(1, max(0, gain))
+            case .vocalDucking:
+                let band = slot.fxEQ.bands[3]
+                band.bypass = abs(value) < 0.1
+                let gainDB: Float = value > 0 ? -abs(value) : value
+                band.gain = max(-24, min(0, gainDB))
+            }
+        }
+    }
+
+    /// Returns a deck to neutral EQ, delay and rate.
+    public func resetEffects(_ deck: Deck, preservingRate: Bool = false) async {
+        await inspect { owner in
+            owner.slot(for: deck).resetFX(preservingRate: preservingRate)
         }
     }
     public func crossfade(from outgoing: Deck, to incoming: Deck, durationSeconds: Double) async throws {
@@ -272,6 +349,8 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         slot.lastError = nil
         slot.durationSeconds = nil
         slot.startTimeSeconds = 0
+        // A stopped deck must never keep a stuck filter, echo or pitch rate.
+        slot.resetFX()
     }
     private func scheduleLocked(_ chunk: DecodedPCMChunk, slot: DeckSlot) {
         guard let ticket = slot.ledger.schedule() else { return }
@@ -388,7 +467,16 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
 private final class DeckSlot {
     let deck: Deck
     let player = AVAudioPlayerNode()
+    // Per-deck DJ FX chain (docs/automix-stage4-acceptance.md):
+    // player -> timePitch -> fxEQ -> fxDelay -> dryMixer -> fxMixer -> gainMixer -> mainMixerNode
+    let timePitch = AVAudioUnitTimePitch()
+    let fxEQ = AVAudioUnitEQ(numberOfBands: 4)
+    let fxDelay = AVAudioUnitDelay()
+    let dryMixer = AVAudioMixerNode()
+    let fxMixer = AVAudioMixerNode()
     let gainMixer = AVAudioMixerNode()
+    /// Last commanded playback rate, kept so `resetFX(preservingRate:)` can restore it.
+    var rate: Float = 1
     var ledger: PCMBufferLedger
     var worker: PCMDecodeWorker?
     var fileURL: URL?
@@ -400,6 +488,48 @@ private final class DeckSlot {
     var durationSeconds: Double?
     var startTimeSeconds: Double = 0
     init(deck: Deck, capacity: Int) { self.deck = deck; ledger = PCMBufferLedger(capacity: capacity) }
+
+    /// Neutral DJ FX state. `docs/automix-stage4-acceptance.md` requires that previous,
+    /// stop and interruption "возвращают нейтральные EQ, delay и rate", and that no filter
+    /// or echo can stay stuck.
+    func resetFX(preservingRate: Bool = false) {
+        let keptRate = rate
+        let keptPitch = timePitch.pitch
+        dryMixer.outputVolume = 1
+        let bass = fxEQ.bands[0]
+        bass.filterType = .lowShelf
+        bass.frequency = 180
+        bass.gain = 0
+        bass.bypass = false
+        let hp = fxEQ.bands[1]
+        hp.filterType = .highPass
+        hp.frequency = 20
+        hp.bandwidth = 0.8
+        hp.bypass = true
+        let lp = fxEQ.bands[2]
+        lp.filterType = .lowPass
+        lp.frequency = 20000
+        lp.bandwidth = 0.8
+        lp.bypass = true
+        let vocal = fxEQ.bands[3]
+        vocal.filterType = .parametric
+        vocal.frequency = 1500
+        vocal.bandwidth = 1.0
+        vocal.gain = 0
+        vocal.bypass = true
+        fxDelay.wetDryMix = 0
+        fxDelay.feedback = 0
+        fxDelay.delayTime = 0.375
+        rate = 1
+        timePitch.rate = 1
+        timePitch.pitch = 0
+        timePitch.overlap = 8
+        if preservingRate {
+            rate = keptRate
+            timePitch.rate = keptRate
+            timePitch.pitch = keptPitch
+        }
+    }
 }
 private struct FadeState {
     let token = UUID()

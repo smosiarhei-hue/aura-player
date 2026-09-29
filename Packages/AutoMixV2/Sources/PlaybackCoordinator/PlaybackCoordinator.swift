@@ -43,6 +43,36 @@ public final class PlaybackCoordinator {
     public func applyUserEQ(gains: [Float], enabled: Bool) {
         Task { await engine.applyUserEQ(gains: gains, enabled: enabled) }
     }
+
+    /// How ready the next transition is.
+    ///
+    /// Displayed by the diagnostics screen. This used to live in the app-side
+    /// `Stage3PlaybackCoordinator` re-implementation, which shadowed this type by name.
+    public enum TransitionReadiness: String, Sendable {
+        case idle, waitingForDeckB, waitingForAnalysis, ready, transitioning, fallback, ended, failed
+    }
+
+    public var transitionReadiness: TransitionReadiness {
+        if transitionTask != nil { return .transitioning }
+        if let error = lastQueueError, !error.isEmpty { return .failed }
+        guard wantsPlayback else { return .idle }
+        guard !queue.isEmpty else { return .ended }
+        guard prepared == nil else { return .ready }
+        return waitingForNext ? .waitingForDeckB : .waitingForAnalysis
+    }
+
+    public var transitionReason: String {
+        switch transitionReadiness {
+        case .transitioning: return "Переход выполняется"
+        case .failed: return lastQueueError ?? "Ошибка очереди"
+        case .idle: return "Ожидание воспроизведения"
+        case .ended: return "Очередь завершена"
+        case .waitingForDeckB: return "Подготовка следующего трека"
+        case .waitingForAnalysis: return "Анализ следующего трека"
+        case .ready: return "Переход готов"
+        case .fallback: return "Fallback crossfade"
+        }
+    }
     deinit {
         commandTask?.cancel()
         prefetchTask?.cancel()

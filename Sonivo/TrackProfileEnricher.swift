@@ -3,7 +3,7 @@ import Foundation
 import MixModels
 import TrackAnalysis
 
-nonisolated enum Stage3ProfileEnricher {
+nonisolated enum TrackProfileEnricher {
     static func enrich(_ profile: TrackProfile, fileURL: URL) async -> TrackProfile {
         let key = await Task.detached(priority: .utility) {
             (try? chroma(fileURL: fileURL)).map(HarmonicKeyDetector.estimate)
