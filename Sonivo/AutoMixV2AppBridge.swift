@@ -17,6 +17,19 @@ enum PlaybackOwner: String, Sendable {
     case neuroMix
 }
 
+/// Wires the app's DSP onto an AutoMix V2 engine.
+///
+/// `AudioEngineCore` deliberately does not depend on app types, so the vocal-isolation
+/// render notify and the spectrum tap are attached from here rather than from inside the
+/// engine. The tap callback runs on the audio render thread and only does sample DSP.
+private func attachAppDSP(to engine: DualDeckAudioEngine) {
+    VocalIsolationManager.shared.attach(to: engine.userEQUnit)
+    engine.installMasterTap { buffer, _ in
+        VocalIsolationManager.processBuffer(buffer)
+        SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
+    }
+}
+
 @Observable
 @MainActor
 final class AutoMixEngineSelectionStore {
@@ -97,6 +110,7 @@ final class NeuroMixRuntime {
             activeDeck = .a
             let audio = try DualDeckAudioEngine()
             engine = audio
+            attachAppDSP(to: audio)
             await audio.applyUserEQ(gains: PlayerCore.shared.eqGains, enabled: PlayerCore.shared.eqEnabled)
             try await audio.prepare(.a, fileURL: firstURL)
             await audio.setGain(1, for: .a)
@@ -448,6 +462,7 @@ final class AutoMixV2Runtime {
         }
         do {
             let engine = try DualDeckAudioEngine()
+            attachAppDSP(to: engine)
             let builtCoordinator = PlaybackCoordinator(source: compositeSource, engine: engine)
             builtCoordinator.applyUserEQ(
                 gains: PlayerCore.shared.eqGains,

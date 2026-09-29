@@ -158,9 +158,20 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("func migrateStreamToAudioEngineIfNeeded()", player_content)
         self.assertIn("VocalIsolationManager.shared.attach(to: vocalUnit)", player_content)
 
-        dual_deck_file = self.repo_root / "Sonivo" / "Stage3DualDeckAudioEngine.swift"
+        # The dual-deck engine lives in Packages/AutoMixV2. It cannot depend on app types,
+        # so it exposes the user-EQ node and a master tap, and the app wires its own DSP on.
+        dual_deck_file = (self.repo_root / "Packages" / "AutoMixV2" / "Sources"
+                          / "AudioEngineCore" / "DualDeckAudioEngine.swift")
+        self.assertTrue(dual_deck_file.exists(), "DualDeckAudioEngine.swift missing")
         dual_content = dual_deck_file.read_text(encoding="utf-8")
-        self.assertIn("VocalIsolationManager.shared.attach(to: userEQ)", dual_content)
+        self.assertIn("let userEQ = AVAudioUnitEQ(numberOfBands: 10)", dual_content)
+        self.assertIn("public var userEQUnit", dual_content)
+        self.assertIn("public func installMasterTap", dual_content)
+
+        bridge_file = self.repo_root / "Sonivo" / "AutoMixV2AppBridge.swift"
+        bridge_content = bridge_file.read_text(encoding="utf-8")
+        self.assertIn("VocalIsolationManager.shared.attach(to: engine.userEQUnit)", bridge_content)
+        self.assertIn("SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)", bridge_content)
 
     def test_vocal_isolation_ui_and_visibility(self):
         control_file = self.repo_root / "Sonivo" / "VocalIsolation" / "VocalIsolationControlView.swift"
@@ -477,9 +488,16 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("setSleepTimer(minutes: Int?)", core_content)
         self.assertIn("extendSleepTimer(byMinutes: Int)", core_content)
         self.assertIn("cancelSleepTimer()", core_content)
-        self.assertIn("sleepDispatchTimer", core_content)
-        self.assertIn("sleepExactTimer", core_content)
+        # Exactly one watchdog. There used to be two DispatchSourceTimers plus an endless
+        # Task, and tickProgress() (60 Hz) and the AVPlayer time observer (120 Hz) called
+        # tickSleepTimer() on top of that - writing @Observable state on every frame until
+        # the watchdog killed the app. The spec now pins that regression down.
+        self.assertIn("sleepWatchdog", core_content)
         self.assertIn("sleepTimerQueue", core_content)
+        self.assertIn("startSleepTimerWatchdog", core_content)
+        self.assertIn("stopSleepTimerWatchdog", core_content)
+        self.assertNotIn("sleepExactTimer", core_content)
+        self.assertNotIn("sleepTimerTask", core_content)
         self.assertIn("triggerSleepTimerExpiry", core_content)
 
         # 2. Fade out logic on expiry

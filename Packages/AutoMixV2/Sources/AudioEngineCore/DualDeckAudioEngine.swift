@@ -149,6 +149,31 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         }
     }
 
+    /// The user-EQ node on the master bus.
+    ///
+    /// `AudioEngineCore` cannot depend on the app's DSP types, so instead of the engine
+    /// wiring vocal isolation itself the app attaches its own render notify here.
+    public var userEQUnit: AVAudioUnitEQ { userEQ }
+
+    /// Spectrum / DSP tap on the master mixer.
+    ///
+    /// The callback runs on the **audio render thread**: it must be real-time safe and must
+    /// never touch audio unit parameters. `AVAudioNode` keeps one tap per bus, so a second
+    /// call replaces the previous one.
+    public func installMasterTap(
+        bufferSize: AVAudioFrameCount = 2048,
+        _ block: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) {
+        controlQueue.async { [self] in
+            engine.mainMixerNode.removeTap(onBus: 0)
+            engine.mainMixerNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil, block: block)
+        }
+    }
+
+    public func removeMasterTap() {
+        controlQueue.async { [self] in engine.mainMixerNode.removeTap(onBus: 0) }
+    }
+
     /// Pitch-preserving playback rate for one deck. Range matches the legacy engine.
     public func setRate(_ rate: Float, for deck: Deck) async {
         await inspect { owner in
