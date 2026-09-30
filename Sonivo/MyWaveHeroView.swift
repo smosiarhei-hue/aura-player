@@ -1,6 +1,6 @@
 // Path: Sonivo/MyWaveHeroView.swift
-// Премиальная витрина «Моя волна» (Apple Design & Skiper UI Fluid Harmonics)
-// Живая органическая сцена Aura Wave Stage, концентрические дыхающие ореолы и тактильные контролы.
+// Премиальная нативная витрина «Моя волна» (Apple Design & Emil Kowalski Design Engineering)
+// Чистая пространственная сцена, нативное размытие без лишних рамок, кругов и квадратов.
 
 import SwiftUI
 
@@ -53,34 +53,33 @@ struct MyWaveHeroView: View {
             // 1. Top Header: "Моя волна" + Настройки
             headerBar
 
-            // 2. Bold Artist Name(s)
-            artistTitleSection
-                .padding(.top, 8)
-                .padding(.bottom, 14)
-
-            // 3. Central Stage: Живая органическая сцена Aura Wave Stage (Skiper UI + Apple Design)
+            // 2. Central Stage: Чистая обложка с нативным пространственным размытием (без рамок и линий)
             centralVisualStage
-                .frame(height: 290)
+                .frame(height: 270)
                 .scaleEffect(isWaveShaking ? 1.08 : 1.0)
                 .animation(.spring(response: 0.38, dampingFraction: 0.65), value: isWaveShaking)
                 .contentShape(Rectangle())
                 .gesture(swipeGesture)
+                .padding(.top, 10)
 
-            // 4. Pending 2-Second Grace Period Banner (if swiped)
+            // 3. Pending 2-Second Grace Period Banner (if swiped)
             if pendingTrack != nil {
                 pendingGraceBanner
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            // 5. Floating Dark Glass Capsule Controls Row
-            capsuleControlsRow
-                .padding(.top, pendingTrack != nil ? 10 : 16)
-                .padding(.horizontal, 20)
-
-            // 6. Sparkles Icon & Mood Diversity Pills
-            bottomSparklesAndChips
+            // 4. Название трека и артист (стандартно, чисто)
+            trackMetadataSection
                 .padding(.top, 14)
+
+            // 5. Стандартная нативная панель управления (Apple Music Style)
+            standardControlsRow
+                .padding(.top, 14)
+
+            // 6. Настроение и язык (аккуратные капсулы без жестких рамок)
+            bottomSparklesAndChips
+                .padding(.top, 18)
         }
         .padding(.vertical, 12)
         .background {
@@ -116,11 +115,10 @@ struct MyWaveHeroView: View {
                 showSettings = true
             } label: {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: 42, height: 42)
-                    .background(Color.white.opacity(0.12), in: Circle())
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8))
+                    .frame(width: 40, height: 40)
+                    .background(.ultraThinMaterial.opacity(0.70), in: Circle())
             }
             .buttonStyle(TactileButtonStyle(scale: 0.92))
             .accessibilityLabel("Настройки")
@@ -136,81 +134,43 @@ struct MyWaveHeroView: View {
         }
     }
 
-    // MARK: - Artist Title Section
-    private var artistTitleSection: some View {
-        VStack(spacing: 4) {
-            if let artist = activeTrack?.artist, !artist.isEmpty {
-                Text(artist)
-                    .font(.system(size: 28, weight: .black, design: .default))
-                    .foregroundStyle(Color.white)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .padding(.horizontal, 24)
-                    .shadow(color: .black.opacity(0.45), radius: 8, y: 2)
-                    .scaleEffect(antigravity.phase == .antigravity ? antigravity.typographyExitScale : (antigravity.phase == .settling ? antigravity.typographyEnterScale : 1.0))
-                    .opacity(antigravity.phase == .antigravity ? antigravity.typographyExitOpacity : (antigravity.phase == .settling ? antigravity.typographyEnterOpacity : 1.0))
-            }
-        }
-    }
-
-    // MARK: - Central Living Spatial Aura Stage (Apple Spatial Blur & Apple Design)
+    // MARK: - Central Living Spatial Stage (Apple Spatial Blur - No Lines, No Frames)
     private var centralVisualStage: some View {
         ZStack {
-            // 1. Внешнее глубокое пространственное рассеяние (Deep Spatial Atmosphere Blur)
+            // Нативное пространственное световое размытие за обложкой (Spatial Blur Atmosphere)
             Group {
                 if let cover = activeTrack?.coverURL {
                     RemoteArtwork(urlString: cover, corner: 60)
                 } else if let track = activeTrack {
-                    SmallArtwork(track: track, size: 310)
+                    SmallArtwork(track: track, size: 280)
                 } else {
                     Circle().fill(accentColor)
                 }
             }
-            .frame(width: 310, height: 310)
-            .blur(radius: 60)
+            .frame(width: 280, height: 280)
+            .blur(radius: 55)
             .saturation(1.4)
             .opacity(player.isPlaying ? 0.65 : 0.40)
-            .scaleEffect(isWaveShaking ? 1.25 : (player.isPlaying ? 1.06 : 1.0))
+            .scaleEffect(isWaveShaking ? 1.25 : (player.isPlaying ? 1.05 : 1.0))
             .animation(.spring(response: 0.60, dampingFraction: 0.8), value: isWaveShaking)
             .animation(.easeInOut(duration: 3.5).repeatForever(autoreverses: true), value: player.isPlaying)
 
-            // 2. Фокусированный ореол пространственной глубины (Mid Spatial Halo Blur)
-            Group {
-                if let artistImageUrl {
-                    RemoteArtwork(urlString: artistImageUrl, corner: 999)
-                } else if let cover = activeTrack?.coverURL {
-                    RemoteArtwork(urlString: cover, corner: 40)
-                } else if let track = activeTrack {
-                    SmallArtwork(track: track, size: 245)
-                } else {
-                    Circle().fill(accentColor)
-                }
-            }
-            .frame(width: 245, height: 245)
-            .clipShape(Circle())
-            .blur(radius: 28)
-            .opacity(player.isPlaying ? 0.70 : 0.45)
-            .scaleEffect(isWaveShaking ? 1.15 : (player.isPlaying ? 1.03 : 1.0))
-            .animation(.spring(response: 0.50, dampingFraction: 0.8), value: isWaveShaking)
-            .animation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true), value: player.isPlaying)
-
-            // 3. Главная суперэллиптическая карточка обложки (Hero Superellipse Card 210x210 - No Lines, Pure Spatial Apple Design)
+            // Главная нативная суперэллиптическая карточка обложки 220x220 (чистый Apple Design)
             Button {
                 Haptics.tap(.light)
                 showPlayer = true
             } label: {
                 ZStack {
                     if let cover = activeTrack?.coverURL {
-                        RemoteArtwork(urlString: cover, corner: 28)
-                            .frame(width: 210, height: 210)
+                        RemoteArtwork(urlString: cover, corner: 26)
+                            .frame(width: 220, height: 220)
                     } else if let track = activeTrack {
-                        SmallArtwork(track: track, size: 210)
-                            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        SmallArtwork(track: track, size: 220)
+                            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
                     } else {
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
                             .fill(Color(white: 0.15))
-                            .frame(width: 210, height: 210)
+                            .frame(width: 220, height: 220)
                             .overlay(
                                 Image(systemName: "waveform")
                                     .font(.system(size: 48, weight: .bold))
@@ -218,8 +178,8 @@ struct MyWaveHeroView: View {
                             )
                     }
                 }
-                .shadow(color: Color.black.opacity(0.65), radius: 28, y: 12)
-                .shadow(color: accentColor.opacity(0.40), radius: 22, y: 6)
+                .shadow(color: Color.black.opacity(0.60), radius: 26, y: 12)
+                .shadow(color: accentColor.opacity(0.35), radius: 20, y: 6)
             }
             .buttonStyle(TactileButtonStyle(scale: 0.97))
             .accessibilityLabel("Открыть плеер")
@@ -227,6 +187,102 @@ struct MyWaveHeroView: View {
         .offset(x: dragOffset)
         .rotationEffect(.degrees(Double(dragOffset / 200.0) * 3.5))
         .scaleEffect(1.0 - min(0.04, abs(dragOffset / 300.0) * 0.04))
+    }
+
+    // MARK: - Track Metadata Section (Standard, Clean, Apple Style)
+    private var trackMetadataSection: some View {
+        Button {
+            Haptics.tap(.light)
+            if pendingTrack != nil {
+                commitPendingSkipNow()
+            }
+            showPlayer = true
+        } label: {
+            VStack(spacing: 3) {
+                Text(activeTrack?.title ?? "Включить волну")
+                    .font(.system(size: 20, weight: .bold, design: .default))
+                    .foregroundStyle(Color.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .scaleEffect(antigravity.phase == .antigravity ? antigravity.typographyExitScale : (antigravity.phase == .settling ? antigravity.typographyEnterScale : 1.0))
+                    .opacity(antigravity.phase == .antigravity ? antigravity.typographyExitOpacity : (antigravity.phase == .settling ? antigravity.typographyEnterOpacity : 1.0))
+
+                Text(activeTrack?.artist ?? "Персональный музыкальный поток")
+                    .font(.system(size: 15, weight: .medium, design: .default))
+                    .foregroundStyle(Color.white.opacity(0.65))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 24)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Standard Native Controls Row (Apple Music Transport)
+    private var standardControlsRow: some View {
+        HStack(spacing: 28) {
+            // Кнопка «Назад»
+            Button {
+                Haptics.tap(.light)
+                if pendingTrack != nil {
+                    commitPendingSkipNow()
+                }
+                player.previous()
+            } label: {
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.90))
+            .accessibilityLabel("Предыдущий трек")
+
+            // Главная Hero-кнопка Play / Pause
+            Button {
+                Haptics.tap(.medium)
+                if pendingTrack != nil {
+                    commitPendingSkipNow()
+                }
+                if player.isPlaying {
+                    player.pause()
+                } else {
+                    if player.displayTrack != nil {
+                        player.resume()
+                    } else {
+                        onToggleWave()
+                    }
+                    showPlayer = true
+                }
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(accentColor)
+                        .frame(width: 64, height: 64)
+                        .shadow(color: accentColor.opacity(0.50), radius: 16, y: 4)
+
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 26, weight: .black))
+                        .foregroundStyle(Color.black)
+                }
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.93))
+            .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизведение")
+
+            // Кнопка «Вперед»
+            Button {
+                Haptics.tap(.light)
+                if pendingTrack != nil {
+                    commitPendingSkipNow()
+                }
+                player.next()
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.90))
+            .accessibilityLabel("Следующий трек")
+        }
     }
 
     // MARK: - 2-Second Pending Grace Period Banner
@@ -268,108 +324,13 @@ struct MyWaveHeroView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color(white: 0.15).opacity(0.85), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.2), lineWidth: 0.8))
+        .background(.ultraThinMaterial.opacity(0.90), in: Capsule())
         .padding(.horizontal, 24)
     }
 
-    // MARK: - Floating Dark Glass Capsule Controls Row
-    private var capsuleControlsRow: some View {
-        HStack(spacing: 14) {
-            // Left: "Включить мою волну"
-            Button {
-                Haptics.tap(.medium)
-                if pendingTrack != nil {
-                    commitPendingSkipNow()
-                }
-                onToggleWave()
-                showPlayer = true
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color(white: 0.14).opacity(0.92))
-                        .frame(width: 60, height: 60)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8))
-                        .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
-
-                    Image(systemName: "waveform")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(accentColor)
-                        .scaleEffect(player.isPlaying ? 1.06 : 1.0)
-                        .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: player.isPlaying)
-                }
-            }
-            .buttonStyle(TactileButtonStyle(scale: 0.95))
-            .accessibilityLabel("Включить мою волну")
-
-            // Center: Track Title & Info Pill (Tapping opens Full Player)
-            Button {
-                Haptics.tap(.light)
-                if pendingTrack != nil {
-                    commitPendingSkipNow()
-                }
-                showPlayer = true
-            } label: {
-                HStack(spacing: 8) {
-                    Text(activeTrack?.title ?? "Включить волну")
-                        .font(.system(size: 16, weight: .heavy, design: .default))
-                        .foregroundStyle(Color.white)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .scaleEffect(antigravity.phase == .antigravity ? antigravity.typographyExitScale : (antigravity.phase == .settling ? antigravity.typographyEnterScale : 1.0))
-                        .opacity(antigravity.phase == .antigravity ? antigravity.typographyExitOpacity : (antigravity.phase == .settling ? antigravity.typographyEnterOpacity : 1.0))
-
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(accentColor.opacity(0.9))
-                }
-                .padding(.horizontal, 20)
-                .frame(maxWidth: .infinity)
-                .frame(height: 60)
-                .background(Color(white: 0.14).opacity(0.92), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8))
-                .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
-            }
-            .buttonStyle(TactileButtonStyle(scale: 0.96))
-            .accessibilityLabel("Открыть плеер")
-
-            // Right: Play/Pause Circular Capsule
-            Button {
-                Haptics.tap(.medium)
-                if pendingTrack != nil {
-                    commitPendingSkipNow()
-                }
-                if player.isPlaying {
-                    player.pause()
-                } else {
-                    if player.displayTrack != nil {
-                        player.resume()
-                    } else {
-                        onToggleWave()
-                    }
-                    showPlayer = true
-                }
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color(white: 0.14).opacity(0.92))
-                        .frame(width: 60, height: 60)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8))
-                        .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
-
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 22, weight: .black))
-                        .foregroundStyle(accentColor)
-                }
-            }
-            .buttonStyle(TactileButtonStyle(scale: 0.95))
-            .accessibilityLabel(player.isPlaying ? "Пауза" : "Воспроизведение")
-        }
-    }
-
-    // MARK: - Bottom Wave Tuning Chips
+    // MARK: - Bottom Wave Tuning Chips (Чистые капсулы без жестких рамок)
     private var bottomSparklesAndChips: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             // 1. Музыкальный характер (diversity)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -394,12 +355,8 @@ struct MyWaveHeroView: View {
                             .padding(.horizontal, 13)
                             .padding(.vertical, 7)
                             .background(
-                                isSelected ? Color.white : Color.white.opacity(0.12),
+                                isSelected ? Color.white : Color.white.opacity(0.10),
                                 in: Capsule()
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(isSelected ? Color.white : Color.white.opacity(0.18), lineWidth: 1)
                             )
                         }
                         .buttonStyle(.plain)
@@ -446,10 +403,6 @@ struct MyWaveHeroView: View {
                             .background(
                                 isSelected ? Color.white : Color.white.opacity(0.08),
                                 in: Capsule()
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(isSelected ? Color.white : Color.white.opacity(0.14), lineWidth: 1)
                             )
                         }
                         .buttonStyle(.plain)
@@ -532,10 +485,8 @@ struct MyWaveHeroView: View {
                 let threshold: CGFloat = 50
                 let projected = value.predictedEndTranslation.width
                 if value.translation.width < -threshold || projected < -90 {
-                    // Swiped Left -> Request Next Track with 2s buffer
                     initiateGracefulSkip(direction: 1)
                 } else if value.translation.width > threshold || projected > 90 {
-                    // Swiped Right -> Request Prev Track with 2s buffer
                     initiateGracefulSkip(direction: -1)
                 }
                 withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
@@ -548,7 +499,6 @@ struct MyWaveHeroView: View {
         pendingTask?.cancel()
         Haptics.tap(.light)
 
-        // Find upcoming track in queue
         let queue = player.queue
         guard let current = player.displayTrack,
               let currentIndex = queue.firstIndex(where: { $0.id == current.id }) else {
@@ -565,7 +515,6 @@ struct MyWaveHeroView: View {
             pendingCountdown = 2.0
         }
 
-        // Start 2.0-second grace timer
         pendingTask = Task {
             for step in 1...20 {
                 try? await Task.sleep(for: .milliseconds(100))

@@ -89,18 +89,30 @@ struct PlayerScreenV2: View {
                     .frame(width: totalWidth, height: artworkStageHeight, alignment: .center)
                     .padding(.top, artworkTopOffset)
 
-                // Soft blurred top gradient fade under Dynamic Island
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.80),
-                        Color.black.opacity(0.35),
-                        Color.clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                // Native Apple Spatial Blur & Dark Vignette Scrim under Dynamic Island / Status Bar
+                ZStack {
+                    LinearGradient(
+                        colors: [
+                            Color.black.opacity(0.80),
+                            Color.black.opacity(0.40),
+                            Color.clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    Rectangle()
+                        .fill(.ultraThinMaterial.opacity(0.60))
+                        .mask(
+                            LinearGradient(
+                                colors: [.black, .black.opacity(0.8), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
                 .frame(height: max(geo.safeAreaInsets.top, 50) + 16)
                 .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
 
                 VStack(spacing: 0) {
                     topHeader
@@ -592,18 +604,19 @@ struct PlayerScreenV2: View {
         .background {
             ZStack {
                 Rectangle()
-                    .fill(.ultraThinMaterial.opacity(0.16))
+                    .fill(.ultraThinMaterial.opacity(0.50))
+                Color.black.opacity(0.35)
                 if let tint = palette.first {
-                    tint.opacity(0.12)
+                    tint.opacity(0.08)
                 }
             }
             .mask {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: .clear, location: 0.14),
-                        .init(color: .black.opacity(0.30), location: 0.38),
-                        .init(color: .black.opacity(0.68), location: 0.70),
+                        .init(color: .clear, location: 0.12),
+                        .init(color: .black.opacity(0.40), location: 0.35),
+                        .init(color: .black.opacity(0.80), location: 0.65),
                         .init(color: .black, location: 1.0)
                     ],
                     startPoint: .top,

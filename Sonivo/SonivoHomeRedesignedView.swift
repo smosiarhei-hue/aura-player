@@ -73,6 +73,64 @@ struct SonivoHomeRedesignedView: View {
                 }
                 .refreshable { await load(force: true) }
 
+                // Native Apple Spatial Blur & Dark Vignette Scrim at the top under Dynamic Island / Status Bar
+                VStack(spacing: 0) {
+                    ZStack {
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.80),
+                                Color.black.opacity(0.45),
+                                Color.clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        Rectangle()
+                            .fill(.ultraThinMaterial.opacity(0.60))
+                            .mask(
+                                LinearGradient(
+                                    colors: [.black, .black.opacity(0.8), .clear],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                    }
+                    .frame(height: 70)
+                    .ignoresSafeArea(edges: .top)
+
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+
+                // Native Apple Spatial Blur & Dark Vignette Scrim at the bottom over Dock / Mini Player
+                VStack(spacing: 0) {
+                    Spacer()
+
+                    ZStack {
+                        LinearGradient(
+                            colors: [
+                                Color.clear,
+                                Color.black.opacity(0.50),
+                                Color.black.opacity(0.85)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        Rectangle()
+                            .fill(.ultraThinMaterial.opacity(0.55))
+                            .mask(
+                                LinearGradient(
+                                    colors: [.clear, .black.opacity(0.8), .black],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                    }
+                    .frame(height: 90)
+                    .ignoresSafeArea(edges: .bottom)
+                }
+                .allowsHitTesting(false)
+
                 // Полноэкранная жидкостная анимация волны при встряхивании телефона
                 WaveShakeOverlayView(
                     isActive: showShakeOverlay,
@@ -191,8 +249,8 @@ struct SonivoHomeRedesignedView: View {
             }
         }
         .padding(14).frame(width: 245, alignment: .leading)
-        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 0.5))
+        .background(.ultraThinMaterial.opacity(0.60), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var moodSection: some View {
@@ -305,11 +363,8 @@ struct SonivoHomeRedesignedView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
-                    )
+                    .background(.ultraThinMaterial.opacity(0.60), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
                 .buttonStyle(GlassPressStyle())
                 .padding(.horizontal, 16)
