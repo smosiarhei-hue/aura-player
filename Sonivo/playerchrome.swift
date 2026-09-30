@@ -254,9 +254,9 @@ struct SleepTimerSheetView: View {
                     }
                 }
             }
+            .presentationDetents([.height(370)])
+            .presentationDragIndicator(.visible)
         }
-        .presentationDetents([.height(370)])
-        .presentationDragIndicator(.visible)
     }
 }
 
