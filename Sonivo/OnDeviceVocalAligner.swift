@@ -2,6 +2,34 @@ import Foundation
 import Speech
 import AVFoundation
 
+// MARK: - Dedicated Async-Safe Cache Actor for Apple Neural Engine Lyrics
+
+actor LyricsAlignmentCache {
+    private var cache: [String: Lyrics] = [:]
+    private var tasks: [String: Task<Lyrics?, Never>] = [:]
+
+    func get(_ key: String) -> Lyrics? {
+        cache[key]
+    }
+
+    func set(_ key: String, lyrics: Lyrics) {
+        cache[key] = lyrics
+    }
+
+    func getTask(_ key: String) -> Task<Lyrics?, Never>? {
+        tasks[key]
+    }
+
+    func setTask(_ key: String, task: Task<Lyrics?, Never>?) {
+        tasks[key] = task
+    }
+
+    func clear() {
+        cache.removeAll()
+        tasks.removeAll()
+    }
+}
+
 // MARK: - On-Device AI Vocal Alignment & Transcription Engine (Apple Neural Engine)
 
 /// High-performance on-device AI lyrics alignment & transcription engine.
@@ -19,9 +47,7 @@ import AVFoundation
 final class OnDeviceVocalAligner: @unchecked Sendable {
     static let shared = OnDeviceVocalAligner()
 
-    private let lock = NSLock()
-    private var lyricsCache: [String: Lyrics] = [:]
-    private var inFlightTasks: [String: Task<Lyrics?, Never>] = [:]
+    private let cache = LyricsAlignmentCache()
 
     private init() {}
 
@@ -52,19 +78,14 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
         return "track_\(track.id.uuidString)"
     }
 
-    /// Instant synchronous check for pre-analyzed lyrics
-    func cachedLyrics(for track: Track) -> Lyrics? {
-        lock.lock()
-        defer { lock.unlock() }
-        return lyricsCache[cacheKey(for: track)]
+    /// Instant asynchronous check for pre-analyzed lyrics
+    func cachedLyrics(for track: Track) async -> Lyrics? {
+        await cache.get(cacheKey(for: track))
     }
 
     /// Clears cached lyrics (e.g. for memory pressure or refresh)
-    func clearCache() {
-        lock.lock()
-        lyricsCache.removeAll()
-        inFlightTasks.removeAll()
-        lock.unlock()
+    func clearCache() async {
+        await cache.clear()
     }
 
     /// Proactively inspects the track ahead of time in the background.
@@ -72,14 +93,6 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
     /// If lyrics are plain text, it initiates Neural Engine forced alignment.
     /// If no lyrics exist, it transcribes the entire vocal track using Apple Neural Engine.
     func inspectAndPreanalyze(track: Track) {
-        let key = cacheKey(for: track)
-        lock.lock()
-        if lyricsCache[key] != nil || inFlightTasks[key] != nil {
-            lock.unlock()
-            return
-        }
-        lock.unlock()
-
         Task(priority: .utility) { [weak self] in
             _ = await self?.getOrAnalyzeLyrics(track: track)
         }
@@ -87,24 +100,22 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
 
     /// Fetches existing cached lyrics or runs/joins active Neural Engine analysis.
     func getOrAnalyzeLyrics(track: Track, plainLyrics: Lyrics? = nil) async -> Lyrics? {
+        guard await SettingsStore.shared.isNeuralEngineEnabled else { return nil }
         let key = cacheKey(for: track)
 
-        lock.lock()
-        if let cached = lyricsCache[key] {
-            lock.unlock()
+        if let cached = await cache.get(key) {
             return cached
         }
-        if let ongoing = inFlightTasks[key] {
-            lock.unlock()
+        if let ongoing = await cache.getTask(key) {
             return await ongoing.value
         }
 
         let task = Task<Lyrics?, Never> { [weak self] () -> Lyrics? in
             guard let self else { return nil }
             defer {
-                self.lock.lock()
-                self.inFlightTasks.removeValue(forKey: key)
-                self.lock.unlock()
+                Task { [weak self] in
+                    await self?.cache.setTask(key, task: nil)
+                }
             }
 
             // 1. If plain lyrics provided, check if already synchronized
@@ -114,45 +125,35 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
             }
 
             if let targetLyrics, targetLyrics.isSynchronized && targetLyrics.hasDynamicWordTimings {
-                self.lock.lock()
-                self.lyricsCache[key] = targetLyrics
-                self.lock.unlock()
+                await self.cache.set(key, lyrics: targetLyrics)
                 return targetLyrics
             }
 
             // 2. If unsynchronized plain lyrics are available, perform Neural Engine forced alignment
             if let targetLyrics, !targetLyrics.lines.isEmpty {
                 if let aligned = await self.align(lyrics: targetLyrics, track: track) {
-                    self.lock.lock()
-                    self.lyricsCache[key] = aligned
-                    self.lock.unlock()
+                    await self.cache.set(key, lyrics: aligned)
                     return aligned
                 }
             }
 
             // 3. If no lyrics exist online or alignment didn't meet confidence, transcribe entire song
             if let transcribed = await self.transcribe(track: track) {
-                self.lock.lock()
-                self.lyricsCache[key] = transcribed
-                self.lock.unlock()
+                await self.cache.set(key, lyrics: transcribed)
                 return transcribed
             }
 
             // 4. If plain lyrics existed but audio couldn't be transcribed, provide synthetic phonetic karaoke
             if let targetLyrics, !targetLyrics.lines.isEmpty {
                 let synthesized = self.synthesizeKaraokeTimings(for: targetLyrics, track: track)
-                self.lock.lock()
-                self.lyricsCache[key] = synthesized
-                self.lock.unlock()
+                await self.cache.set(key, lyrics: synthesized)
                 return synthesized
             }
 
             return nil
         }
 
-        inFlightTasks[key] = task
-        lock.unlock()
-
+        await cache.setTask(key, task: task)
         return await task.value
     }
 
@@ -328,16 +329,16 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
             request.shouldReportPartialResults = true
             request.addsPunctuation = false
 
-            let lock = NSLock()
+            let queue = DispatchQueue(label: "sonivo.vocalaligner.recognition")
             var hasResponded = false
             var latestTokens: [AcousticToken] = []
 
             func safeResume(with tokens: [AcousticToken]) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !hasResponded else { return }
-                hasResponded = true
-                continuation.resume(returning: tokens)
+                queue.sync {
+                    guard !hasResponded else { return }
+                    hasResponded = true
+                    continuation.resume(returning: tokens)
+                }
             }
 
             let task = recognizer.recognitionTask(with: request) { result, error in

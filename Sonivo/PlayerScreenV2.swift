@@ -1030,7 +1030,7 @@ struct PlayerScreenV2: View {
 
         // 1. Instant check for proactively analyzed Neural Engine lyrics
         if SettingsStore.shared.isNeuralEngineEnabled,
-           let preanalyzed = OnDeviceVocalAligner.shared.cachedLyrics(for: requested) {
+           let preanalyzed = await OnDeviceVocalAligner.shared.cachedLyrics(for: requested) {
             guard !Task.isCancelled, self.track?.id == requestedId else { return }
             withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
                 self.lyrics = preanalyzed

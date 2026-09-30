@@ -110,7 +110,7 @@ final class PlayerCore {
         didSet {
             guard let track = currentTrack, track.id != oldValue?.id else { return }
             OnDeviceVocalAligner.shared.inspectAndPreanalyze(track: track)
-            if let next = nextTrack {
+            if let next = peekNext(auto: true) {
                 OnDeviceVocalAligner.shared.inspectAndPreanalyze(track: next)
             }
         }
