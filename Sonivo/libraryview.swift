@@ -15,8 +15,6 @@ struct LibraryView: View {
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistTitle = ""
     @State private var showAIAssistant = false
-    @State private var isSendingAutoMixLogs = false
-    @State private var autoMixLogMessage: String? = nil
 
     enum LibraryFilter: String, CaseIterable, Identifiable {
         case all = "Все песни", favorites = "Избранное", playlists = "Плейлисты", recent = "Недавние"
@@ -128,14 +126,6 @@ struct LibraryView: View {
             } message: {
                 Text(library.lastImportMessage ?? "")
             }
-            .alert("Логи AutoMix", isPresented: Binding(
-                get: { autoMixLogMessage != nil },
-                set: { isPresented in if !isPresented { autoMixLogMessage = nil } }
-            )) {
-                Button("ОК", role: .cancel) { autoMixLogMessage = nil }
-            } message: {
-                Text(autoMixLogMessage ?? "")
-            }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
@@ -173,7 +163,6 @@ struct LibraryView: View {
                 .padding(.top, 8)
 
                 mediaScanActionCard
-                localAutoMixTestCard
                 filterChips
 
                 if filter == .playlists {
@@ -269,102 +258,6 @@ struct LibraryView: View {
         .buttonStyle(.borderedProminent)
         .tint(settings.accentColor)
         .disabled(library.isImportingFiles)
-    }
-
-    // MARK: - Local AutoMix Test
-
-    private var localAutoMixTestCard: some View {
-        let count = localAudioTracks.count
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Image(systemName: "waveform.path.ecg.rectangle")
-                    .font(.title2)
-                    .foregroundStyle(settings.accentColor)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Офлайн-переходы")
-                        .font(.subheadline.weight(.semibold))
-                    Text(count >= 2
-                         ? "Проверьте плавный переход между локальными треками без сети."
-                         : "Загрузите минимум 2 трека, чтобы проверить переход офлайн.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-            }
-
-            Button {
-                startLocalAutoMixTest()
-            } label: {
-                Label("Быстрый тест перехода", systemImage: "forward.end.circle.fill")
-                    .font(.caption.weight(.bold))
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(settings.accentColor)
-            .disabled(count < 2 || library.isImportingFiles)
-
-            HStack(spacing: 10) {
-                Button {
-                    sendAutoMixLogs()
-                } label: {
-                    if isSendingAutoMixLogs {
-                        ProgressView().controlSize(.mini)
-                    } else {
-                        Label("Отправить логи", systemImage: "paperplane.fill")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(isSendingAutoMixLogs)
-
-                Button {
-                    SonivoDiagnostics.shared.copyAutoMixReportToClipboard()
-                    autoMixLogMessage = "Подробные AutoMix-логи скопированы. Можно вставить их в чат."
-                } label: {
-                    Label("Скопировать", systemImage: "doc.on.doc")
-                }
-                .buttonStyle(.bordered)
-            }
-            .font(.caption.weight(.semibold))
-        }
-        .glassCard(corner: 16, padding: 12)
-        .padding(.horizontal, 16)
-    }
-
-    private func startLocalAutoMixTest() {
-        let local = localAudioTracks
-        guard let first = local.first, local.count >= 2 else { return }
-        player.transitionMode = .automix
-        PlaybackCommandRouter.shared.play(first, queue: local)
-
-        let previewStart = max(0, first.duration - 42)
-        SonivoDiagnostics.log(
-            "Started quick UI local AutoMix test with \(local.count) local tracks; seeking \(first.title) to \(String(format: "%.1f", previewStart))s / \(String(format: "%.1f", first.duration))s so the transition is heard immediately",
-            tag: "AUTOMIX"
-        )
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard player.currentTrack?.id == first.id else { return }
-            player.seek(to: previewStart)
-            SonivoDiagnostics.log("Quick UI local AutoMix test seek applied", tag: "AUTOMIX")
-        }
-    }
-
-    private func sendAutoMixLogs() {
-        guard !isSendingAutoMixLogs else { return }
-        isSendingAutoMixLogs = true
-        Task {
-            let sent = await SonivoDiagnostics.shared.sendAutoMixReportToTelegram()
-            await MainActor.run {
-                isSendingAutoMixLogs = false
-                autoMixLogMessage = sent
-                    ? "Подробные AutoMix-логи отправлены в Telegram."
-                    : "Не удалось отправить в Telegram. Нажмите «Скопировать» и вставьте логи сюда."
-            }
-        }
     }
 
     // MARK: - Playlists Section

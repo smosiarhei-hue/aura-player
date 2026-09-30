@@ -1537,63 +1537,6 @@ struct PlayerTimelineSection<Center: View>: View {
         }
     }
 }
-
-struct AutoMixBadge: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let title = "Mixing"
-    private let sweepCycle: TimeInterval = 2.4
-
-    var body: some View {
-        Group {
-            if reduceMotion {
-                mark(sweep: nil)
-            } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-                    let time = context.date.timeIntervalSinceReferenceDate
-                    let phase = time.truncatingRemainder(dividingBy: sweepCycle) / sweepCycle
-                    mark(sweep: CGFloat(phase))
-                }
-            }
-        }
-        .accessibilityLabel(Text(title))
-        .allowsHitTesting(false)
-    }
-
-    private func mark(sweep: CGFloat?) -> some View {
-        let label = Text(title)
-            .font(.system(size: 13, weight: .semibold, design: .default))
-
-        return label
-            .foregroundStyle(.white.opacity(0.85))
-            .overlay {
-                if let sweep {
-                    GeometryReader { geo in
-                        let width = max(geo.size.width, 1)
-                        let band = max(width * 0.55, 24)
-                        let travel = width + band * 2
-
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.40), .white, .white.opacity(0.40), .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: band)
-                        .offset(x: -band + sweep * travel)
-                        .frame(width: width, height: geo.size.height, alignment: .leading)
-                        .clipped()
-                        .blendMode(.plusLighter)
-                    }
-                    .mask(label)
-                    .allowsHitTesting(false)
-                }
-            }
-            .shadow(color: .white.opacity(0.40), radius: 6)
-            .shadow(color: .white.opacity(0.15), radius: 12)
-            .fixedSize()
-            .compositingGroup()
-    }
-}
-
 @MainActor
 @Observable
 final class SystemVolumeManager {
@@ -1987,4 +1930,4 @@ struct PlayerQualityModalView: View {
 }
 
 #Preview("Full player") { PlayerScreenV2(isPresented: .constant(true)) }
-#Preview("Timeline") { PlayerTimelineSection(player: ActivePlayerPresentation()) { AutoMixBadge() }.padding() }
+#Preview("Timeline") { PlayerTimelineSection(player: ActivePlayerPresentation()) { EmptyView() }.padding() }
