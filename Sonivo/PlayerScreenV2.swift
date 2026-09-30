@@ -295,9 +295,9 @@ struct PlayerScreenV2: View {
                             .resizable()
                             .scaledToFill()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .blur(radius: 46 + (beatPulse * 16))
+                            .blur(radius: 52 + (beatPulse * 6))
                             .scaleEffect(1.15)
-                            .opacity(0.80 + Double(beatPulse) * 0.16)
+                            .opacity(0.82 + Double(beatPulse) * 0.06)
                             .clipped()
                     } else {
                         gradientBackground
@@ -363,12 +363,12 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else if !showLyricsMode {
-                // Плавная 120 Гц HDR-световая аура сзади обложки (сама обложка строго на месте)
+                // Плавная 120 Гц мягкая HDR-аура сзади обложки (сама обложка строго на месте)
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(primaryGlow.opacity(0.18 + Double(beatPulse) * 0.38))
+                    .fill(primaryGlow.opacity(0.12 + Double(beatPulse) * 0.10))
                     .frame(width: cardSide, height: cardSide)
-                    .blur(radius: 22 + beatPulse * 24)
-                    .scaleEffect(1.0 + (beatPulse * 0.06))
+                    .blur(radius: 20 + beatPulse * 6)
+                    .scaleEffect(1.0 + (beatPulse * 0.02))
 
                 artwork
                     .frame(width: cardSide, height: cardSide)
@@ -1976,51 +1976,51 @@ struct PlayerAmbientCoverGlow: View {
                 let maxDim = max(w, h)
 
                 let clampedEnergy = Double(max(0.0, min(1.0, energy)))
-                let hdrPrimary = c1.exposureAdjust(1.4 + clampedEnergy * 1.2).headroom(2.5 + clampedEnergy * 2.0)
-                let hdrSecondary = c2.exposureAdjust(1.2 + clampedEnergy * 1.0).headroom(2.0 + clampedEnergy * 1.5)
-                let hdrLight = Color.white.exposureAdjust(1.6 + clampedEnergy * 1.5).headroom(3.0 + clampedEnergy * 2.5)
+                let hdrPrimary = c1.exposureAdjust(0.30 + clampedEnergy * 0.25).headroom(1.15 + clampedEnergy * 0.30)
+                let hdrSecondary = c2.exposureAdjust(0.20 + clampedEnergy * 0.20).headroom(1.10 + clampedEnergy * 0.20)
+                let hdrLight = Color.white.exposureAdjust(0.35 + clampedEnergy * 0.25).headroom(1.20 + clampedEnergy * 0.30)
 
                 ZStack {
-                    // Top-leading bright luminous HDR bloom (Apple Music Style)
+                    // Top-leading subtle luminous HDR bloom (Apple Music Style)
                     RadialGradient(
                         colors: [
-                            hdrPrimary.opacity(0.52 + clampedEnergy * 0.35),
-                            c1.opacity(0.22),
+                            hdrPrimary.opacity(0.18 + clampedEnergy * 0.10),
+                            c1.opacity(0.08),
                             Color.clear
                         ],
                         center: .topLeading,
                         startRadius: 20,
-                        endRadius: maxDim * (0.60 + clampedEnergy * 0.16)
+                        endRadius: maxDim * (0.55 + clampedEnergy * 0.08)
                     )
                     .blendMode(.plusLighter)
 
-                    // Trailing high-key light accent (светлые цвета, HDR glow)
+                    // Trailing soft light accent (светлые цвета, HDR glow)
                     RadialGradient(
                         colors: [
-                            hdrLight.opacity(0.28 + clampedEnergy * 0.36),
-                            hdrSecondary.opacity(0.32 + clampedEnergy * 0.26),
+                            hdrLight.opacity(0.10 + clampedEnergy * 0.08),
+                            hdrSecondary.opacity(0.12 + clampedEnergy * 0.08),
                             Color.clear
                         ],
                         center: UnitPoint(x: 0.85, y: 0.38),
                         startRadius: 15,
-                        endRadius: maxDim * (0.52 + clampedEnergy * 0.18)
+                        endRadius: maxDim * (0.48 + clampedEnergy * 0.08)
                     )
                     .blendMode(.plusLighter)
 
                     // Center-bottom ambient depth glow
                     RadialGradient(
                         colors: [
-                            c3.opacity(0.38 + clampedEnergy * 0.30),
+                            c3.opacity(0.14 + clampedEnergy * 0.08),
                             Color.clear
                         ],
                         center: UnitPoint(x: 0.30, y: 0.72),
                         startRadius: 30,
-                        endRadius: maxDim * (0.58 + clampedEnergy * 0.14)
+                        endRadius: maxDim * (0.52 + clampedEnergy * 0.08)
                     )
                     .blendMode(.screen)
                 }
                 .drawingGroup(opaque: false, colorMode: .extendedLinear)
-                .animation(.interactiveSpring(response: 0.16, dampingFraction: 0.86), value: energy)
+                .animation(.easeOut(duration: 0.06), value: energy)
             }
         }
         .allowsHitTesting(false)

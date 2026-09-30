@@ -831,14 +831,18 @@ final class PlayerCore {
         reportWaveSkipIfNeeded()
         if let q = newQueue, q != queue { queue = q }
         currentTrack = track
+        metadataTrack = nil
+        incomingTrack = nil
         playError = nil
         streamDuration = track.duration
         cancelTransition()
+        isPlaying = true
         start(at: 0)
         savePlaybackState()
     }
 
     func pause() {
+        generation += 1
         pausedProgress = isUsingStreamPlayer ? progress : liveProgress()
 
         // 1. Unconditionally pause ALL streaming AVPlayer instances
@@ -863,6 +867,7 @@ final class PlayerCore {
             transitionPausedAt = Date()
         }
         isPlaying = false
+        metadataTrack = nil
         MusicHapticsManager.shared.stop()
         updateNowPlayingInfo()
         savePlaybackState()
@@ -987,8 +992,14 @@ final class PlayerCore {
     func stopAndClear() {
         cancelSleepTimer()
         generation += 1
-        streamingPlayer.pause()
-        streamingPlayer.replaceCurrentItem(with: nil)
+        activeStreamingPlayer.pause()
+        activeStreamingPlayer.replaceCurrentItem(with: nil)
+        idleStreamingPlayer.pause()
+        idleStreamingPlayer.replaceCurrentItem(with: nil)
+        streamingPlayerA.pause()
+        streamingPlayerA.replaceCurrentItem(with: nil)
+        streamingPlayerB.pause()
+        streamingPlayerB.replaceCurrentItem(with: nil)
         playerA.stop()
         playerB.stop()
         stopBeatLoop()
@@ -996,6 +1007,7 @@ final class PlayerCore {
         incomingAudioFile = nil
         currentTrack = nil
         metadataTrack = nil
+        incomingTrack = nil
         metadataSwapped = false
         isPlaying = false
         progress = 0
@@ -1009,11 +1021,22 @@ final class PlayerCore {
 
     private func start(at seconds: Double) {
         cancelTransition()
+        metadataTrack = nil
+        incomingTrack = nil
         guard let track = currentTrack else { return }
         playError = nil
         plannedNextTrack = nil
         generation += 1
         let token = generation
+
+        // Immediately silence and stop any currently active audio sources
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
+        streamingPlayerA.pause()
+        streamingPlayerB.pause()
+        playerA.stop()
+        playerB.stop()
+        stopBeatLoop()
 
         if let cachedURL = findLocalOrCachedAudioFile(for: track) {
             var localTrack = track
@@ -1128,21 +1151,27 @@ final class PlayerCore {
         playerA.stop()
         playerB.stop()
         stopBeatLoop()
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
+        streamingPlayerA.pause()
+        streamingPlayerB.pause()
 
         let url = track.url
         if url.scheme == "http" || url.scheme == "https" {
+            guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
             currentBitrate = 128
             currentCodec = "mp3"
-            beginStream(url, at: seconds)
+            beginStream(url, at: seconds, token: token)
             return
         }
 
         if let streamStr = track.streamUrlString,
            let streamURL = URL(string: streamStr),
            streamURL.scheme == "http" || streamURL.scheme == "https" {
+            guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
             currentBitrate = 128
             currentCodec = "mp3"
-            beginStream(streamURL, at: seconds)
+            beginStream(streamURL, at: seconds, token: token)
             return
         }
 
@@ -1150,23 +1179,23 @@ final class PlayerCore {
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
                 self.currentTrack?.streamUrlString = info.url.absoluteString
                 self.activeStreamURL = info.url
-                self.beginStream(info.url, at: seconds)
+                self.beginStream(info.url, at: seconds, token: token)
             } catch {
                 // Secondary attempt with fallback quality (standard MP3 / HQ) if Lossless was unavailable
                 if self.audioQuality != .standard {
                     do {
                         let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 320)
-                        guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                        guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
                         self.currentBitrate = fallbackInfo.bitrate
                         self.currentCodec = fallbackInfo.codec
                         self.currentTrack?.streamUrlString = fallbackInfo.url.absoluteString
                         self.activeStreamURL = fallbackInfo.url
-                        self.beginStream(fallbackInfo.url, at: seconds)
+                        self.beginStream(fallbackInfo.url, at: seconds, token: token)
                         return
                     } catch { }
                 }
@@ -1213,17 +1242,18 @@ final class PlayerCore {
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
                 self.currentTrack?.streamUrlString = info.url.absoluteString
                 self.activeStreamURL = info.url
-                self.beginStream(info.url, at: pos)
+                self.beginStream(info.url, at: pos, token: token)
             } catch { }
         }
     }
 
-    private func beginStream(_ url: URL, at seconds: Double) {
+    private func beginStream(_ url: URL, at seconds: Double, token: Int) {
+        guard self.generation == token, self.isPlaying else { return }
         self.activeStreamURL = url
         self.currentTrack?.streamUrlString = url.absoluteString
         let item = AVPlayerItem(url: url)
@@ -1241,13 +1271,6 @@ final class PlayerCore {
         self.transitionScheduled = false
         self.lastNowPlayingSync = nil
         self.updateNowPlayingInfo()
-
-        // Background caching & seamless migration to AVAudioEngine so 10-band EQ and DSP work unconditionally
-        let token = self.generation
-        Task { [weak self] in
-            guard let self, self.generation == token else { return }
-            await self.migrateStreamToAudioEngineIfNeeded()
-        }
     }
 
     func findLocalOrCachedAudioFile(for track: Track) -> URL? {

@@ -19,24 +19,30 @@ final class SpectrumAnalyzer {
 
     // MARK: - iOS 27 Audio-Reactive Kick / Bass Pulse (30-120 Hz)
     var dynamicKick: Float {
-        if kick > 0.05 { return kick }
-        if streamLevel > 0.05 { return streamLevel }
-        // Smooth organic rhythmic kick pulse based on active playback tempo (BPM)
+        // Real-time audio FFT kick transient has first priority and zero lag
+        if level > 0.001 || kick > 0.005 {
+            return min(1.0, kick)
+        }
+        if streamLevel > 0.02 {
+            return min(1.0, streamLevel)
+        }
+        // Subtle, calm resting breath pulse for audio streams without PCM tap
         guard PlayerCore.shared.isPlaying else { return 0 }
-        let bpm = 124.0
-        let beatInterval = 60.0 / bpm
+        let tempo = PlayerCore.shared.currentTrack?.bpm ?? 120.0
+        let beatInterval = 60.0 / max(60.0, min(180.0, tempo))
         let phase = fmod(PlayerCore.shared.progress, beatInterval) / beatInterval
-        // Organic sinusoidal low-pass pulse curve without harsh edges
-        if phase < 0.28 {
-            let s = phase / 0.28
-            return Float(0.5 * (1.0 + cos(s * .pi)))
+        if phase < 0.24 {
+            let s = phase / 0.24
+            return Float(0.18 * (1.0 + cos(s * .pi)))
         }
         return 0.0
     }
 
     var dynamicBass: Float {
-        if bass > 0.05 { return bass }
-        return dynamicKick * 0.75
+        if level > 0.001 || bass > 0.005 {
+            return min(1.0, bass)
+        }
+        return dynamicKick * 0.65
     }
 
     nonisolated private static let processor = SpectrumDSP()
@@ -140,7 +146,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
             }
         }
         let now = Date()
-        guard now.timeIntervalSince(lastPublish) > 1 / 30 else { return nil }
+        guard now.timeIntervalSince(lastPublish) > 1 / 120 else { return nil }
         lastPublish = now
 
         // Logarithmic bands 0...7 cover approximately 30...120 Hz. The
@@ -154,13 +160,13 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         let level = displayValues.reduce(0, +) / Float(SpectrumAnalyzer.bandCount)
 
         let previousBaseline = bassBaseline
-        bassBaseline = bassBaseline * 0.95 + rawBass * 0.05
+        bassBaseline = bassBaseline * 0.92 + rawBass * 0.08
         let onset = max(0, rawBass - previousBaseline)
-        let gated: Float = rawBass > 0.055
-            ? min(1, onset * 12.5 + max(0, sub - 0.22) * 2.2 + max(0, punch - 0.28) * 1.1)
+        let gated: Float = rawBass > 0.045
+            ? min(1.0, onset * 8.5 + max(0, sub - 0.20) * 1.6 + max(0, punch - 0.24) * 1.0)
             : 0
-        kickEnvelope = max(gated, kickEnvelope * 0.72)
-        let alpha: Float = 0.22
+        kickEnvelope = max(gated, kickEnvelope * 0.82)
+        let alpha: Float = 0.28
         smoothedBass = smoothedBass * (1 - alpha) + rawBass * alpha
         smoothedMids = smoothedMids * (1 - alpha) + rawMids * alpha
         smoothedHighs = smoothedHighs * (1 - alpha) + rawHighs * alpha
