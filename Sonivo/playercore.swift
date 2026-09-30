@@ -1964,6 +1964,11 @@ final class PlayerCore {
         progressTimer = timer
     }
 
+    private func stopTimer() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+    }
+
     private func tickProgress() {
         guard isPlaying, !isUsingStreamPlayer else { return }
         progress = liveProgress()

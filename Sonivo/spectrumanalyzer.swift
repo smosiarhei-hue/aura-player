@@ -28,8 +28,8 @@ final class SpectrumAnalyzer {
         }
         // Subtle, calm resting breath pulse for audio streams without PCM tap
         guard PlayerCore.shared.isPlaying else { return 0 }
-        let tempo = PlayerCore.shared.currentTrack?.bpm ?? 120.0
-        let beatInterval = 60.0 / max(60.0, min(180.0, tempo))
+        let tempo: Double = 120.0
+        let beatInterval = 60.0 / tempo
         let phase = fmod(PlayerCore.shared.progress, beatInterval) / beatInterval
         if phase < 0.24 {
             let s = phase / 0.24
