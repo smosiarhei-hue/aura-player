@@ -143,7 +143,7 @@ final class PlayerCore {
         }
     }
 
-    var transitionMode: TransitionMode = .gapless { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
+    var transitionMode: TransitionMode = .off { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
     var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
 
     private(set) var currentBitrate: Int?
@@ -237,7 +237,7 @@ final class PlayerCore {
     private var failedPrebufferTrackId: UUID?
     private var lastPrebufferAttempt: Date?
 
-    var displayTrack: Track? { metadataTrack ?? currentTrack }
+    var displayTrack: Track? { currentTrack }
 
     var duration: Double {
         if isUsingStreamPlayer {
@@ -1029,11 +1029,15 @@ final class PlayerCore {
         generation += 1
         let token = generation
 
-        // Immediately silence and stop any currently active audio sources
+        // Immediately silence and detach any currently active audio sources
         activeStreamingPlayer.pause()
+        activeStreamingPlayer.replaceCurrentItem(with: nil)
         idleStreamingPlayer.pause()
+        idleStreamingPlayer.replaceCurrentItem(with: nil)
         streamingPlayerA.pause()
+        streamingPlayerA.replaceCurrentItem(with: nil)
         streamingPlayerB.pause()
+        streamingPlayerB.replaceCurrentItem(with: nil)
         playerA.stop()
         playerB.stop()
         stopBeatLoop()
@@ -1355,16 +1359,9 @@ final class PlayerCore {
     }
 
     private func scheduleTransitionIfNeeded() {
-        guard transitionMode != .off, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
+        guard transitionMode == .crossfade, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
 
-        if transitionMode == .crossfade {
-            scheduleSimpleTransition(current: current, blendDuration: max(1, crossfadeDuration))
-            return
-        }
-        if transitionMode == .gapless || transitionMode == .automix {
-            scheduleSimpleTransition(current: current, blendDuration: 0.1)
-            return
-        }
+        scheduleSimpleTransition(current: current, blendDuration: max(1, crossfadeDuration))
     }
 
     private func scheduleSimpleTransition(current: Track, blendDuration: Double) {
@@ -1706,6 +1703,12 @@ final class PlayerCore {
 
     private func cancelTransition() {
         transitionScheduled = false
+        isTransitioning = false
+        transitionTimer?.invalidate()
+        transitionTimer = nil
+        transitionStartTime = nil
+        transitionPausedAt = nil
+        transitionScheduledAt = nil
         rateReleaseTimer?.invalidate()
         rateReleaseTimer = nil
         timePitchA.rate = 1.0
@@ -1718,34 +1721,28 @@ final class PlayerCore {
         metadataSwapped = false
         incomingIsStream = false
         incomingLaneReady = false
-        transitionPausedAt = nil
-        transitionScheduledAt = nil
         failedPrebufferTrackId = nil
         lastPrebufferAttempt = nil
-        // FX offsets have to be dropped too, otherwise an aborted transition leaves the user
-        // EQ stuck with riser / underwater-LPF cuts baked into the bands.
-        resetTransitionEQOffsets()
-        guard isTransitioning else { return }
-        transitionTimer?.invalidate()
-        transitionTimer = nil
-        transitionStartTime = nil
         stopBeatLoop()
+
+        // Unconditionally silence and reset idle deck
+        idleStreamingPlayer.pause()
+        idleStreamingPlayer.replaceCurrentItem(with: nil)
+        idleStreamingPlayer.volume = 0
+        idleStreamingPlayer.rate = 0.0
         idlePlayer.stop()
         idlePlayer.volume = 0
         activePlayer.volume = volume
         activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
         activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
-        idleStreamingPlayer.pause()
-        idleStreamingPlayer.volume = 0
-        idleStreamingPlayer.rate = 1.0
         reverbA.wetDryMix = 0
         reverbB.wetDryMix = 0
         incomingAudioFile = nil
-        isTransitioning = false
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
         AutoMixDJEngine.shared.resetDrop()
         AutoMixDJEngine.shared.isPostMixActive = false
+        resetTransitionEQOffsets()
         applyEQ()
     }
 

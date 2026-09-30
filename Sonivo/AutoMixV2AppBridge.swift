@@ -843,34 +843,20 @@ final class PlaybackCommandRouter {
         owner = .legacy
         transportTask?.cancel()
         requestID += 1
-        let request = requestID
-        isBusy = true
-        transportTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.stopOtherEngines()
-            guard request == self.requestID, !Task.isCancelled else { return }
-            PlayerCore.shared.play(track, newQueue: queue)
-            SonivoDiagnostics.log("[Router] Playing \(track.title) via PlayerCore stream. Falling back to PlayerCore stream.", tag: "ROUTER")
-            if request == self.requestID {
-                self.isBusy = false
-                self.transportTask = nil
-            }
+        isBusy = false
+        PlayerCore.shared.play(track, newQueue: queue)
+        SonivoDiagnostics.log("[Router] Playing \(track.title) via PlayerCore stream. Falling back to PlayerCore stream.", tag: "ROUTER")
+        Task { @MainActor in
+            await AutoMixV2Runtime.shared.stop()
+            await NeuroMixRuntime.shared.stop()
         }
     }
 
     func play() {
         transportTask?.cancel()
         requestID += 1
-        let request = requestID
-        isBusy = true
-        transportTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            PlayerCore.shared.resume()
-            if request == self.requestID {
-                self.isBusy = false
-                self.transportTask = nil
-            }
-        }
+        isBusy = false
+        PlayerCore.shared.resume()
     }
 
     func pause() {
@@ -897,28 +883,18 @@ final class PlaybackCommandRouter {
     }
 
     func next() {
-        enqueueTransport { _ in
-            PlayerCore.shared.next()
-        }
+        transportTask?.cancel(); requestID += 1
+        PlayerCore.shared.next()
     }
 
     func previous() {
-        enqueueTransport { _ in
-            PlayerCore.shared.previous()
-        }
+        transportTask?.cancel(); requestID += 1
+        PlayerCore.shared.previous()
     }
 
     func seek(to seconds: Double) {
         seekTask?.cancel()
-        seekRequestID += 1
-        let request = seekRequestID
-        seekTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(nanoseconds: 35_000_000)
-            guard !Task.isCancelled, request == self.seekRequestID else { return }
-            PlayerCore.shared.seek(to: seconds)
-            if request == self.seekRequestID { self.seekTask = nil }
-        }
+        PlayerCore.shared.seek(to: seconds)
     }
 
     private func enqueueTransport(_ operation: @escaping @MainActor (PlaybackOwner) async -> Void) {

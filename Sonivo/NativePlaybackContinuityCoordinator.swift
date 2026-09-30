@@ -29,26 +29,8 @@ final class NativePlaybackContinuityCoordinator {
     func install() {
         guard !installed else { return }
         installed = true
-        observedOwner = PlaybackCommandRouter.shared.owner
-        monitorTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                await self?.monitor()
-                do { try await ContinuousClock().sleep(for: .milliseconds(250)) }
-                catch { return }
-            }
-        }
-
-        let center = NotificationCenter.default
-        for name in [UIApplication.didEnterBackgroundNotification,
-                     UIApplication.protectedDataWillBecomeUnavailableNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                Task { @MainActor [weak self] in
-                    PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-                    try? await ContinuousClock().sleep(for: .milliseconds(180))
-                    await self?.ensureSelectedEngineIsAudible()
-                }
-            })
-        }
+        // Disabled: Unified single-player engine (PlayerCore.shared) directly owns playback.
+        // Prevents dual-engine audio collisions, background stalls, and unwanted snapshot restores.
     }
 
     private func monitor() async {
