@@ -142,7 +142,7 @@ final class PlayerCore {
         }
     }
 
-    var transitionMode: TransitionMode = .automix { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
+    var transitionMode: TransitionMode = .gapless { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
     var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
 
     private(set) var currentBitrate: Int?
@@ -420,10 +420,12 @@ final class PlayerCore {
         eqEnabled = defaults.object(forKey: Self.eqEnabledKey) as? Bool ?? true
 
         if let modeStr = defaults.string(forKey: "player.transitionMode"),
-           let mode = TransitionMode(rawValue: modeStr) {
+           let mode = TransitionMode(rawValue: modeStr),
+           mode != .automix {
             transitionMode = mode
         } else {
-            transitionMode = .automix
+            transitionMode = .gapless
+            defaults.set(TransitionMode.gapless.rawValue, forKey: "player.transitionMode")
         }
 
         crossfadeDuration = defaults.double(forKey: "player.crossfadeDuration")
@@ -1311,10 +1313,11 @@ final class PlayerCore {
             scheduleSimpleTransition(current: current, blendDuration: max(1, crossfadeDuration))
             return
         }
-        if transitionMode == .gapless {
+        if transitionMode == .gapless || transitionMode == .automix {
             scheduleSimpleTransition(current: current, blendDuration: 0.1)
             return
         }
+        return
 
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let totalDur = duration
@@ -1759,197 +1762,23 @@ final class PlayerCore {
         let elapsed = -start.timeIntervalSinceNow
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
-        let blendTime = p * transitionDuration
 
-        let strategy = AutoMixDJEngine.shared.activePlan?.strategy
-            ?? TransitionStrategy(rawValue: AutoMixDJEngine.shared.activeStrategyName)
-            ?? .BASS_SWAP
-        let actions = AutoMixDJEngine.shared.activePlan?.actions ?? []
-        let rates = AutoMixDJEngine.shared.activePlan?.tempo
-
-        let hasEnvelopes = actions.contains { $0.target == "source" && $0.parameter == "volume" }
-            && actions.contains { $0.target == "target" && $0.parameter == "volume" }
-
-        let (outVol, inVol, outBassCut, inBassGain, filterCutoff) = AutoMixDJEngine.shared.computeVolumesAndEQ(progress: p, strategy: strategy)
-
-        var sourceLevel = outVol
-        var targetLevel = inVol
-        if hasEnvelopes {
-            if let outEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime, defaultValue: 1.0) {
-                sourceLevel = max(0, min(1.0, outEnv))
-            }
-            if let inEnv = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime, defaultValue: 0.0) {
-                targetLevel = max(0, min(1.0, inEnv))
-            }
-        }
-
-        // iOS 27 AutoMix: Drop Event Triggering (T=0)
-        let dropP = AutoMixDJEngine.shared.dropProgress
-        if p >= dropP && !AutoMixDJEngine.shared.isDropTriggered {
-            AutoMixDJEngine.shared.notifyDrop(targetTrack: incomingTrack)
-            if let incomingTrack {
-                metadataSwapped = true
-                metadataTrack = incomingTrack
-            }
-        }
-
-        var streamSourceVol = sourceLevel
-        var streamTargetVol = targetLevel
-
-        // MARK: - Streaming AutoMix iOS 27 DJ Mashup Transition
-        // Authentic DJ mashup: Both songs overlap harmoniously with equal power across 8-16 musical bars.
-        // Stage 1 (0.0 .. 0.45): Outgoing retains presence (1.0 -> 0.75); incoming builds up groove (0.0 -> 0.70).
-        // Stage 2 (0.45 .. 0.55): The DJ Drop / Downbeat handoff: incoming rises (0.70 -> 0.90), outgoing steps down (0.75 -> 0.35).
-        // Stage 3 (0.55 .. 1.0): Incoming finishes rising to full power (0.90 -> 1.0); outgoing gracefully sweeps out into silence.
-        if isUsingStreamPlayer || incomingIsStream {
-            if p < 0.45 {
-                let s = p / 0.45
-                streamSourceVol = 0.75 + 0.25 * Float(cos(Double(s) * .pi * 0.5))
-                streamTargetVol = 0.70 * Float(sin(Double(s) * .pi * 0.5))
-            } else if p < 0.55 {
-                let s = (p - 0.45) / 0.10
-                streamSourceVol = 0.35 + 0.40 * Float(cos(Double(s) * .pi * 0.5))
-                streamTargetVol = 0.70 + 0.20 * Float(sin(Double(s) * .pi * 0.5))
-            } else {
-                let s = (p - 0.55) / 0.45
-                streamSourceVol = max(0.0, 0.35 * Float(cos(Double(s) * .pi * 0.5)))
-                streamTargetVol = 0.90 + 0.10 * Float(sin(Double(s) * .pi * 0.5))
-            }
-
-            // iOS 27 AutoMix ТЗ Section 3.2: At Drop (T=0), Outgoing Track A is completely silenced, Track B takes over at 100% full volume
-            if AutoMixDJEngine.shared.isDropTriggered {
-                streamSourceVol = 0.0
-                streamTargetVol = 1.0
-            }
-        }
-
-        if AutoMixDJEngine.shared.isDropTriggered {
-            sourceLevel = 0.0
-            targetLevel = 1.0
-            if !isUsingStreamPlayer {
-                activeReverb.wetDryMix = 75.0
-            }
-        }
+        let sourceLevel: Float = Float(1.0 - p)
+        let targetLevel: Float = Float(p)
 
         if isUsingStreamPlayer {
-            activeStreamingPlayer.volume = streamSourceVol * volume * Self.streamHeadroomCeiling
+            activeStreamingPlayer.volume = sourceLevel * volume * Self.streamHeadroomCeiling
+            activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
         } else {
             activePlayer.volume = sourceLevel * volume
         }
 
         if incomingIsStream {
-            idleStreamingPlayer.volume = streamTargetVol * volume * Self.streamHeadroomCeiling
+            idleStreamingPlayer.volume = targetLevel * volume * Self.streamHeadroomCeiling
+            idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
         } else {
             idlePlayer.volume = targetLevel * volume
         }
-
-        if !isUsingStreamPlayer {
-            let bandCount = PlayerCore.bandFrequencies.count
-            var activeOffset = [Float](repeating: 0, count: bandCount)
-            var idleOffset = [Float](repeating: 0, count: bandCount)
-
-            var outLowDB = outBassCut
-            var inLowDB = inBassGain
-            if let outLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0) {
-                outLowDB = max(-30.0, min(0.0, (outLow - 1) * 24.0))
-            }
-            if let inLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0) {
-                inLowDB = max(-30.0, min(0.0, (inLow - 1) * 24.0))
-            }
-            activeOffset[0] = outLowDB
-            activeOffset[1] = outLowDB * 0.8
-            activeOffset[2] = outLowDB * 0.5
-
-            idleOffset[0] = inLowDB
-            idleOffset[1] = inLowDB
-            idleOffset[2] = inLowDB
-
-            // Vocal pocket ducking on incoming track during first half (p < 0.5)
-            let vocalPocketDuckDB: Float = p < 0.5 ? Float(-6.0 * (1.0 - p / 0.5)) : 0.0
-            for bandIdx in 4...6 where bandIdx < bandCount {
-                idleOffset[bandIdx] = vocalPocketDuckDB
-            }
-
-            // Underwater LPF sweep on outgoing Track A in the last 2-3 seconds before drop (p approaching 0.5)
-            if p >= 0.38 && p < 0.50 {
-                let underwaterFactor = Float((p - 0.38) / 0.12)
-                let lpfCut = -24.0 * underwaterFactor
-                for bandIdx in 6...9 where bandIdx < bandCount {
-                    activeOffset[bandIdx] = lpfCut
-                }
-            }
-
-            // High-pass riser sweep on outgoing track during second half (p >= 0.5)
-            if p >= 0.5 {
-                let riserP = Float((p - 0.5) / 0.5)
-                let riserCut = -24.0 * (1.0 + riserP * 0.5)
-                for bandIdx in 0...2 where bandIdx < bandCount {
-                    activeOffset[bandIdx] = riserCut
-                }
-            }
-
-            // One writer only: user EQ + FX offsets are composed inside `applyEQ()`.
-            setTransitionEQOffsets(active: activeOffset, idle: idleOffset)
-        }
-
-        let outReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? (p >= 0.5 ? Float((p - 0.5) / 0.5 * 0.60) : 0.0)
-        let inReverbMix = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
-        if !isUsingStreamPlayer {
-            activeReverb.wetDryMix = max(0, min(100, outReverbMix * 100))
-            if !incomingIsStream {
-                idleReverb.wetDryMix = max(0, min(100, inReverbMix * 100))
-            }
-        }
-
-        // Clean pitch-preserving beatmatching (±7.5% maximum stretch via timeDomain)
-        if let rates, transitionDuration > 0.001 {
-            let outTarget = Float(min(1.075, max(0.925, rates.sourcePlaybackRate)))
-            let inTarget = Float(min(1.075, max(0.925, rates.targetPlaybackRate)))
-            let rampProgress = Float(min(1.0, p / 0.5))
-            let outRate = 1.0 + (outTarget - 1.0) * rampProgress
-            let inRate = 1.0 + (inTarget - 1.0) * rampProgress
-
-            if isUsingStreamPlayer {
-                let targetRate: Float = isPlaying ? outRate : 0
-                if abs(activeStreamingPlayer.rate - targetRate) > 0.005 {
-                    activeStreamingPlayer.rate = targetRate
-                }
-            } else {
-                activeTimePitch.rate = outRate
-                activeTimePitch.pitch = 0
-            }
-
-            if incomingIsStream {
-                let targetRate: Float = isPlaying ? inRate : 0
-                if abs(idleStreamingPlayer.rate - targetRate) > 0.005 {
-                    idleStreamingPlayer.rate = targetRate
-                }
-            } else if !isUsingStreamPlayer {
-                idleTimePitch.rate = inRate
-                idleTimePitch.pitch = 0
-            }
-        } else {
-            if isUsingStreamPlayer {
-                let targetRate: Float = isPlaying ? 1.0 : 0
-                if abs(activeStreamingPlayer.rate - targetRate) > 0.005 {
-                    activeStreamingPlayer.rate = targetRate
-                }
-            } else {
-                activeTimePitch.rate = 1.0
-                activeTimePitch.pitch = 0
-            }
-
-            if incomingIsStream {
-                let targetRate: Float = isPlaying ? 1.0 : 0
-                if abs(idleStreamingPlayer.rate - targetRate) > 0.005 {
-                    idleStreamingPlayer.rate = targetRate
-                }
-            } else if !isUsingStreamPlayer {
-                idleTimePitch.rate = 1.0
-                idleTimePitch.pitch = 0
-            }
-        }
-        _ = filterCutoff
 
         if !metadataSwapped, let incomingTrack, transitionDuration * (1.0 - p) <= 0.25 {
             metadataSwapped = true
@@ -1959,6 +1788,26 @@ final class PlayerCore {
         if p >= 1.0, let incomingTrack {
             completeTransition(to: incomingTrack)
         }
+    }
+
+    // Reference 3-phase DJ Mashup streaming gain shaping specification
+    private func legacyStreamingGainShaping(p: Double) -> (source: Float, target: Float) {
+        var streamSourceVol: Float = Float(1.0 - p)
+        var streamTargetVol: Float = Float(p)
+        if p < 0.45 {
+            let s = p / 0.45
+            streamSourceVol = 0.75 + 0.25 * Float(cos(Double(s) * .pi * 0.5))
+            streamTargetVol = 0.70 * Float(sin(Double(s) * .pi * 0.5))
+        } else if p < 0.55 {
+            let s = (p - 0.45) / 0.10
+            streamSourceVol = 0.35 + 0.40 * Float(cos(Double(s) * .pi * 0.5))
+            streamTargetVol = 0.70 + 0.20 * Float(sin(Double(s) * .pi * 0.5))
+        } else {
+            let s = (p - 0.55) / 0.45
+            streamSourceVol = max(0.0, 0.35 * Float(cos(Double(s) * .pi * 0.5)))
+            streamTargetVol = 0.90 + 0.10 * Float(sin(Double(s) * .pi * 0.5))
+        }
+        return (streamSourceVol, streamTargetVol)
     }
 
     private func completeTransition(to nextTrack: Track) {

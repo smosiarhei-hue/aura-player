@@ -100,7 +100,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    ForEach([TransitionMode.automix, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
+                    ForEach([TransitionMode.gapless, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
                         Button { player.transitionMode = mode } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -109,8 +109,10 @@ struct SettingsView: View {
                                 }
                                 Spacer()
                                 if player.transitionMode == mode { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
-                            }.contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                     if player.transitionMode == .crossfade {
                         VStack(alignment: .leading, spacing: 6) {
@@ -121,7 +123,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Переходы между треками")
                 } footer: {
-                    Text("AutoMix (iOS 27 DJ Engine) выполняет гармоническое сведение (Camelot Wheel), фазовое выравнивание битов (Beat Sync), срез басов (Bass Swap) и 3-фазный мэшап треков.")
+                    Text("Gapless воспроизводит треки непрерывно в оригинальном качестве без искажений. Кроссфейд обеспечивает плавное затухание звука.")
                 }
 
                 Section {

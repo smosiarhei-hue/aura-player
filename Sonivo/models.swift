@@ -4,23 +4,23 @@ import UniformTypeIdentifiers
 // MARK: - Transition Mode
 
 enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
-    case automix = "AutoMix (DJ-сведение)"
-    case crossfade = "Кроссфейд"
     case gapless = "Gapless (Без пауз)"
+    case crossfade = "Кроссфейд"
     case off = "Выключено"
+    case automix = "AutoMix (Отключено)"
 
     var id: String { rawValue }
 
     var description: String {
         switch self {
-        case .automix:
-            return "Умный анализ концовки, срез басов уходящего трека (Bass-Swap), обрезка тишины и адаптивный тайминг как в Apple Music."
+        case .gapless:
+            return "Мгновенное переключение следующего трека без пауз в оригинальном чистом качестве."
         case .crossfade:
             return "Классическое плавное наложение звука по фиксированному времени."
-        case .gapless:
-            return "Мгновенное переключение следующего трека без пауз и задержек."
         case .off:
             return "Стандартное раздельное воспроизведение треков."
+        case .automix:
+            return "Отключено для сохранения оригинального звучания."
         }
     }
 }
@@ -38,10 +38,8 @@ final class AutoMixDJEngine {
     static let shared = AutoMixDJEngine()
 
     var isTransitionActive: Bool = false
-    var transitionProgress: Double = 0.0 {
-        didSet { logTransitionSnapshotIfNeeded() }
-    }
-    var activeStrategyName: String = "BASS_SWAP"
+    var transitionProgress: Double = 0.0
+    var activeStrategyName: String = "GAPLESS"
     var activePlan: TransitionPlan? = nil
     var statusBadge: String? = nil
     var currentBPM: Double = 0
@@ -53,15 +51,7 @@ final class AutoMixDJEngine {
     private init() {}
 
     func notifyDrop(targetTrack: Track?) {
-        guard !isDropTriggered else { return }
-        isDropTriggered = true
-        isPostMixActive = true
-        Haptics.tap(.rigid)
-        NotificationCenter.default.post(
-            name: .didTriggerAutoMixDrop,
-            object: targetTrack
-        )
-        SonivoDiagnostics.log("[AutoMix iOS 27] DROP TRIGGER FIRED -> Hard cut to: \(targetTrack?.title ?? "Unknown")", tag: "AUTOMIX")
+        // AutoMix Drop Hard Cut completely disabled to prevent audio disruption
     }
 
     func resetDrop() {
@@ -166,48 +156,10 @@ final class AutoMixDJEngine {
         strategy: TransitionStrategy
     ) -> (outgoingVol: Float, incomingVol: Float, outgoingBassCutDB: Float, incomingBassGainDB: Float, filterCutoff: Float) {
         let p = max(0.0, min(1.0, progress))
-
-        // 1. Pure Equal-Power Cosine Crossfade Curve (Constant acoustic energy: V_out^2 + V_in^2 = 1.0)
+        // Pure Equal-Power Cosine Crossfade for local files (zero bass cut, zero filtering)
         let outVol = Float(cos(p * (.pi / 2)))
         let inVol = Float(sin(p * (.pi / 2)))
-
-        var outBassCut: Float = 0
-        var inBassGain: Float = 0
-        let filterCutoff: Float = 1.0
-
-        switch strategy {
-        case .BASS_SWAP, .BEAT_MATCH, .BEAT_MATCH_EQ, .BUILDUP_TO_DROP:
-            if p < 0.50 {
-                // First half (0.0 .. 0.50):
-                // Outgoing bass is 100% full (0dB).
-                // Incoming bass is ducked (-24dB) so basslines never clash.
-                outBassCut = 0.0
-                inBassGain = -24.0
-            } else {
-                // Second half (0.50 .. 1.0): Bass swap on the downbeat!
-                // Outgoing bass cuts sharply to make room for incoming bass.
-                // Incoming bass returns to full power (0dB).
-                let secondHalfP = Float((p - 0.50) / 0.50)
-                outBassCut = -24.0 - (8.0 * secondHalfP)
-                inBassGain = 0.0
-            }
-
-        case .ENERGY_BLEND:
-            let pFloat = Float(p)
-            outBassCut = -18.0 * pFloat
-            inBassGain = -18.0 * (1.0 - pFloat)
-
-        default:
-            if p < 0.50 {
-                outBassCut = 0.0
-                inBassGain = -24.0
-            } else {
-                outBassCut = -24.0
-                inBassGain = 0.0
-            }
-        }
-
-        return (outVol, inVol, outBassCut, inBassGain, filterCutoff)
+        return (outVol, inVol, 0.0, 0.0, 1.0)
     }
 }
 

@@ -218,32 +218,6 @@ struct PlayerScreenV2: View {
                 }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .didTriggerAutoMixDrop)) { note in
-            // iOS 27 AutoMix ТЗ Section 2.2: Instant HARD CUT to Track B (no fade/dissolve allowed)
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                if let next = (note.object as? Track) ?? player.incomingTrack {
-                    artworkTrackId = next.id
-                    paletteTrackId = next.id
-                    if let cached = LibraryStore.cachedArtworkImage(for: next) {
-                        currentArtworkImage = cached
-                    }
-                    if !next.palette.isEmpty {
-                        artworkPaletteColors = next.palette
-                    }
-                }
-            }
-        }
-        .onChange(of: player.isTransitionActive) { _, isActive in
-            if isActive, let outgoing = player.currentTrack, let incoming = player.incomingTrack {
-                Task {
-                    _ = await AIDJService.shared.commentary(outgoing: outgoing, incoming: incoming)
-                }
-            } else if !isActive {
-                AIDJService.shared.clearActiveCommentary()
-            }
-        }
         .onChange(of: player.incomingTrack?.id) { _, _ in
             if let outgoing = player.currentTrack, let incoming = player.incomingTrack {
                 AIDJService.shared.prefetchCommentaryIfNeeded(outgoing: outgoing, incoming: incoming)
@@ -371,12 +345,7 @@ struct PlayerScreenV2: View {
                 artwork
                     .frame(width: cardSide, height: cardSide)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
-                    )
                     .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
-                AutoMixTransitionOverlay(player: player, width: width, height: height)
             } else {
                 lyricsCoverCard(side: cardSide)
             }
@@ -976,13 +945,7 @@ struct PlayerScreenV2: View {
     private func updatePalette(from image: UIImage) async {
         let hexes = await Task.detached(priority: .utility) { LibraryStore.artworkPalette(from: image) }.value
         let colors = hexes.compactMap(Color.init(hex:)); guard !colors.isEmpty else { return }
-        if AutoMixDJEngine.shared.isDropTriggered {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { artworkPaletteColors = colors }
-        } else {
-            withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
-        }
+        withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
     }
     private func refreshPalette() async {
         guard let track, paletteTrackId != track.id else { return }
