@@ -155,7 +155,7 @@ final class PlayerCore {
 
     private var sleepWatchdog: DispatchSourceTimer?
     private var lastPublishedSleepRemaining: Double = 0
-    private let sleepTimerQueue = DispatchQueue(label: "com.sonivo.sleeptimer", qos: .utility)
+    private let sleepTimerQueue = DispatchQueue.main
 
     private let defaults = UserDefaults.standard
 
@@ -1989,9 +1989,7 @@ final class PlayerCore {
         let source = DispatchSource.makeTimerSource(queue: sleepTimerQueue)
         source.schedule(deadline: .now() + 1.0, repeating: 1.0, leeway: .milliseconds(250))
         source.setEventHandler { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.tickSleepTimer()
-            }
+            self?.tickSleepTimer()
         }
         source.resume()
         sleepWatchdog = source

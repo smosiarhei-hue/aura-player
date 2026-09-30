@@ -51,221 +51,259 @@ struct MarqueeText: View {
 }
 
 struct SleepTimerSheetView: View {
-    private var player = PlayerCore.shared
+    @Bindable private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var minutes = 30
-    @State private var pendingMinutes: Int? = nil
-    @State private var pendingCancel: Bool = false
-    private let options = [5, 10, 15, 20, 30, 45, 60, 90, 120]
+
+    private struct PresetItem: Identifiable {
+        let id: Int
+        let title: String
+        let minutes: Int
+        let icon: String
+    }
+
+    private let presets: [PresetItem] = [
+        PresetItem(id: 15, title: "15 минут", minutes: 15, icon: "timer"),
+        PresetItem(id: 30, title: "30 минут", minutes: 30, icon: "timer"),
+        PresetItem(id: 45, title: "45 минут", minutes: 45, icon: "timer"),
+        PresetItem(id: 60, title: "1 час", minutes: 60, icon: "timer"),
+        PresetItem(id: 90, title: "1.5 часа", minutes: 90, icon: "timer"),
+        PresetItem(id: 120, title: "2 часа", minutes: 120, icon: "timer")
+    ]
+
+    private var endOfTrackMinutes: Int? {
+        guard player.isPlaying, player.duration > player.progress else { return nil }
+        let remaining = player.duration - player.progress
+        return max(1, Int(ceil(remaining / 60.0)))
+    }
 
     var body: some View {
         ZStack {
             SonivoScreenBackground(colors: [SN.ember, SN.bgRaised], showsMesh: false)
 
-            VStack(spacing: 16) {
-                if let remaining = player.sleepTimerRemaining, remaining > 0, !pendingCancel {
-                    // Active Timer State Card
-                    VStack(spacing: 14) {
-                        HStack {
-                            HStack(spacing: 6) {
-                                Image(systemName: "timer")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundStyle(Color.orange)
-                                Text("Таймер активен")
-                                    .font(SN.text(.headline, .bold))
-                                    .foregroundStyle(SN.ink)
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 16) {
+                    // 1. Active Timer Header Card (if running)
+                    if let remaining = player.sleepTimerRemaining, remaining > 0 {
+                        activeTimerCard(remaining: remaining)
+                            .padding(.top, 10)
+                    }
+
+                    // 2. Presets List (Native Apple Style)
+                    VStack(spacing: 0) {
+                        if let eot = endOfTrackMinutes {
+                            presetRow(
+                                title: "По окончании трека",
+                                detail: "\(eot) мин",
+                                icon: "forward.end.fill",
+                                isSelected: false
+                            ) {
+                                selectPreset(minutes: eot)
                             }
-                            Spacer()
-                            if let totalMins = player.sleepTimerMinutes {
-                                Text("на \(totalMins) мин")
-                                    .font(SN.text(.subheadline, .medium))
-                                    .foregroundStyle(SN.inkMuted)
-                            }
+
+                            Divider().background(Color.white.opacity(0.08))
                         }
 
-                        HStack(alignment: .lastTextBaseline, spacing: 8) {
-                            Text(player.sleepTimerFormatted ?? "0:00")
-                                .font(.system(size: 40, weight: .heavy, design: .rounded))
-                                .foregroundStyle(Color.orange)
-                            Text("до отключения")
-                                .font(SN.text(.subheadline, .medium))
-                                .foregroundStyle(SN.inkMuted)
-                            Spacer()
-                        }
-
-                        // Dynamic Progress Bar
-                        if let totalMinutes = player.sleepTimerMinutes, totalMinutes > 0 {
-                            let totalSec = Double(totalMinutes * 60)
-                            let progress = max(0.0, min(1.0, remaining / totalSec))
-                            GeometryReader { geo in
-                                let barW = max(0.0, min(geo.size.width, geo.size.width * progress))
-                                ZStack(alignment: .leading) {
-                                    Capsule()
-                                        .fill(Color.white.opacity(0.12))
-                                        .frame(height: 6)
-                                    Capsule()
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [Color.orange, Color.yellow],
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
-                                        )
-                                        .frame(width: barW, height: 6)
-                                }
+                        ForEach(presets) { preset in
+                            let isSelected = (player.sleepTimerMinutes == preset.minutes)
+                            presetRow(
+                                title: preset.title,
+                                detail: nil,
+                                icon: preset.icon,
+                                isSelected: isSelected
+                            ) {
+                                selectPreset(minutes: preset.minutes)
                             }
-                            .frame(height: 6)
-                        }
 
-                        Text("Воспроизведение плавно затихнет и плеер отключится.")
-                            .font(SN.text(.caption, .regular))
-                            .foregroundStyle(SN.inkFaint)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        // Quick extend buttons
-                        HStack(spacing: 8) {
-                            ForEach([5, 15, 30], id: \.self) { ext in
-                                Button {
-                                    Haptics.tap(.light)
-                                    player.extendSleepTimer(byMinutes: ext)
-                                } label: {
-                                    Text("+\(ext) мин")
-                                        .font(SN.text(.caption, .semibold))
-                                        .foregroundStyle(SN.ink)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 7)
-                                        .background(Color.white.opacity(0.12), in: Capsule())
-                                }
+                            if preset.id != presets.last?.id {
+                                Divider().background(Color.white.opacity(0.08))
                             }
-                            Spacer()
                         }
-                        .padding(.top, 2)
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(SN.card.opacity(0.70))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                            )
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, player.sleepTimerRemaining != nil ? 4 : 12)
 
-                        Divider().background(Color.white.opacity(0.12)).padding(.vertical, 2)
-
+                    // 3. Turn off timer button (if active)
+                    if player.sleepTimerRemaining != nil {
                         Button(role: .destructive) {
-                            Haptics.tap(.medium)
-                            pendingCancel = true
+                            Haptics.tap(.light)
+                            player.cancelSleepTimer()
                             dismiss()
                         } label: {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 8) {
                                 Image(systemName: "xmark.circle.fill")
                                 Text("Выключить таймер сна")
                             }
                             .font(SN.text(.body, .semibold))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                            .background(Color.red.opacity(0.16))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundStyle(Color.red)
-                        }
-                    }
-                    .padding(18)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(SN.card.opacity(0.85))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .strokeBorder(Color.orange.opacity(0.32), lineWidth: 1)
-                            )
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-
-                    Spacer()
-                } else {
-                    // Set Timer Form
-                    VStack(spacing: 12) {
-                        // Preset buttons
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach([15, 30, 45, 60, 90], id: \.self) { opt in
-                                    Button {
-                                        Haptics.tap(.light)
-                                        minutes = opt
-                                    } label: {
-                                        Text("\(opt) мин")
-                                            .font(SN.text(.subheadline, minutes == opt ? .bold : .medium))
-                                            .foregroundStyle(minutes == opt ? Color.black : SN.ink)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
-                                            .background(
-                                                Capsule()
-                                                    .fill(minutes == opt ? Color.orange : Color.white.opacity(0.12))
-                                            )
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                        }
-                        .padding(.top, 10)
-
-                        Picker("Время", selection: $minutes) {
-                            ForEach(options, id: \.self) { opt in
-                                Text("\(opt) мин").tag(opt)
-                            }
-                        }
-                        .pickerStyle(.wheel)
-                        .frame(height: 130)
-
-                        Button {
-                            Haptics.tap(.medium)
-                            pendingMinutes = minutes
-                            dismiss()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "timer")
-                                    .font(.system(size: 16, weight: .bold))
-                                    Text("Запустить на \(minutes) мин")
-                                        .font(SN.text(.headline, .bold))
-                            }
                             .frame(maxWidth: .infinity)
-                            .frame(height: 48)
+                            .frame(height: 50)
                             .background(
-                                LinearGradient(
-                                    colors: [Color.orange, Color.red.opacity(0.85)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(Color.red.opacity(0.12))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .strokeBorder(Color.red.opacity(0.25), lineWidth: 0.5)
+                                    )
                             )
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .foregroundStyle(Color.white)
-                            .shadow(color: Color.orange.opacity(0.3), radius: 8, y: 4)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 4)
-
-                        Spacer()
+                        .buttonStyle(CardPressStyle(scale: 0.98, haptic: false))
+                        .padding(.horizontal, 16)
                     }
+
+                    Spacer(minLength: 24)
                 }
+                .padding(.bottom, 20)
             }
         }
         .navigationTitle("Таймер сна")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Отмена") { dismiss() }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Готово") { dismiss() }
+                    .font(SN.text(.body, .bold))
+                    .foregroundStyle(SN.amber)
             }
-            ToolbarItem(placement: .confirmationAction) {
-                if player.sleepTimerRemaining == nil && !pendingCancel {
-                    Button("Готово") {
-                        Haptics.tap(.light)
-                        pendingMinutes = minutes
-                        dismiss()
-                    }
-                    .fontWeight(.bold)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(.ultraThinMaterial)
+    }
+
+    private func selectPreset(minutes: Int) {
+        Haptics.tap(.medium)
+        withAnimation(SN.spring) {
+            player.setSleepTimer(minutes: minutes)
+        }
+        dismiss()
+    }
+
+    private func activeTimerCard(remaining: Double) -> some View {
+        VStack(spacing: 12) {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.orange)
+                    Text("Таймер активен")
+                        .font(SN.text(.headline, .bold))
+                        .foregroundStyle(SN.ink)
+                }
+                Spacer()
+                if let totalMins = player.sleepTimerMinutes {
+                    Text("на \(totalMins) мин")
+                        .font(SN.text(.subheadline, .medium))
+                        .foregroundStyle(SN.inkMuted)
                 }
             }
-        }
-        .presentationDetents([.height(370)])
-        .presentationDragIndicator(.visible)
-        .onDisappear {
-            if let chosen = pendingMinutes {
-                player.setSleepTimer(minutes: chosen)
-            } else if pendingCancel {
-                player.cancelSleepTimer()
+
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text(player.sleepTimerFormatted ?? "0:00")
+                    .font(.system(size: 40, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.orange)
+                Text("до отключения")
+                    .font(SN.text(.subheadline, .medium))
+                    .foregroundStyle(SN.inkMuted)
+                Spacer()
             }
+
+            // Progress bar
+            if let totalMinutes = player.sleepTimerMinutes, totalMinutes > 0 {
+                let totalSec = Double(totalMinutes * 60)
+                let progress = max(0.0, min(1.0, remaining / totalSec))
+                GeometryReader { geo in
+                    let barW = max(0.0, min(geo.size.width, geo.size.width * progress))
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(height: 6)
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.orange, Color.yellow],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: barW, height: 6)
+                    }
+                }
+                .frame(height: 6)
+            }
+
+            // Quick extend buttons
+            HStack(spacing: 8) {
+                ForEach([5, 15, 30], id: \.self) { ext in
+                    Button {
+                        Haptics.tap(.light)
+                        withAnimation(SN.spring) {
+                            player.extendSleepTimer(byMinutes: ext)
+                        }
+                    } label: {
+                        Text("+\(ext) мин")
+                            .font(SN.text(.caption, .semibold))
+                            .foregroundStyle(SN.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.white.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+            .padding(.top, 2)
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(SN.card.opacity(0.85))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 16)
+    }
+
+    private func presetRow(title: String, detail: String?, icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.orange : SN.inkMuted)
+                    .frame(width: 24)
+
+                Text(title)
+                    .font(SN.text(.body, isSelected ? .bold : .regular))
+                    .foregroundStyle(SN.ink)
+
+                Spacer()
+
+                if let detail {
+                    Text(detail)
+                        .font(SN.text(.subheadline, .regular))
+                        .foregroundStyle(SN.inkMuted)
+                }
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.orange)
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(CardPressStyle(scale: 0.98, haptic: false))
     }
 }
 
