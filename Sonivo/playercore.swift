@@ -839,22 +839,26 @@ final class PlayerCore {
     }
 
     func pause() {
-        guard isPlaying else { return }
-        if isUsingStreamPlayer {
-            activeStreamingPlayer.pause()
-            idleStreamingPlayer.pause()
-        } else {
-            pausedProgress = liveProgress()
-            activePlayer.pause()
-            if isLoopActive { looperPlayer.pause() }
-            if incomingIsStream {
-                idleStreamingPlayer.pause()
-            } else {
-                idlePlayer.pause()
-            }
-            anchorDate = nil
-            progress = pausedProgress
-        }
+        pausedProgress = isUsingStreamPlayer ? progress : liveProgress()
+
+        // 1. Unconditionally pause ALL streaming AVPlayer instances
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
+        streamingPlayerA.pause()
+        streamingPlayerB.pause()
+
+        // 2. Unconditionally pause ALL AVAudioEngine player nodes
+        activePlayer.pause()
+        idlePlayer.pause()
+        playerA.pause()
+        playerB.pause()
+        if isLoopActive { looperPlayer.pause() }
+
+        // 3. Invalidate live timers and clear anchors
+        stopTimer()
+        anchorDate = nil
+        progress = pausedProgress
+
         if isTransitioning, transitionStartTime != nil {
             transitionPausedAt = Date()
         }
@@ -1091,12 +1095,15 @@ final class PlayerCore {
                     }
                 }
 
+                guard self.generation == token, self.isPlaying else { return }
+
+                self.isUsingStreamPlayer = false
+                self.activeStreamingPlayer.pause()
+                self.idleStreamingPlayer.pause()
+                self.streamingPlayerA.pause()
+                self.streamingPlayerB.pause()
+
                 self.playerA.play()
-                if isMigration || wasStreaming {
-                    self.isUsingStreamPlayer = false
-                    self.activeStreamingPlayer.pause()
-                    self.idleStreamingPlayer.pause()
-                }
                 self.isPlaying = true
                 self.anchorDate = Date()
                 self.anchorOffset = seconds
@@ -1266,12 +1273,13 @@ final class PlayerCore {
 
     /// Migrates streaming playback from AVPlayer to AVAudioEngine so raw PCM samples can be processed in real time
     func migrateStreamToAudioEngineIfNeeded() async {
-        guard isUsingStreamPlayer, let track = currentTrack else { return }
+        guard isUsingStreamPlayer, isPlaying, let track = currentTrack else { return }
         let currentPos = progress
         let token = generation
 
         // 1. Instant zero-latency switch if already in local cache
         if let cachedURL = findLocalOrCachedAudioFile(for: track) {
+            guard self.isPlaying, self.generation == token, self.currentTrack?.id == track.id else { return }
             var localTrack = track
             localTrack.fileName = cachedURL.lastPathComponent
             localTrack.relativePath = ""
@@ -1283,6 +1291,7 @@ final class PlayerCore {
 
         // 2. Resolve stream URL reliably
         let streamURL: URL? = try? await {
+            guard self.isPlaying, self.generation == token else { return nil }
             if let active = activeStreamURL { return active }
             if let str = track.streamUrlString, let u = URL(string: str) { return u }
             if let asset = activeStreamingPlayer.currentItem?.asset as? AVURLAsset { return asset.url }
@@ -1297,6 +1306,8 @@ final class PlayerCore {
             return nil
         }()
 
+        guard self.isPlaying, self.generation == token else { return }
+
         if let streamURL {
             do {
                 let ext = streamURL.pathExtension.isEmpty ? "mp3" : streamURL.pathExtension
@@ -1307,7 +1318,7 @@ final class PlayerCore {
                     try? FileManager.default.removeItem(at: localDest)
                     try FileManager.default.moveItem(at: tempLocation, to: localDest)
                 }
-                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
                 var localTrack = track
                 localTrack.fileName = fileName
                 localTrack.relativePath = ""

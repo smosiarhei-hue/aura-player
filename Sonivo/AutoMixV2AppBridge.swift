@@ -876,6 +876,10 @@ final class PlaybackCommandRouter {
     func pause() {
         transportTask?.cancel(); requestID += 1; isBusy = false
         PlayerCore.shared.pause()
+        Task { @MainActor in
+            await AutoMixV2Runtime.shared.pause()
+            await NeuroMixRuntime.shared.pause()
+        }
     }
 
     func stopAndClear() {
