@@ -89,28 +89,17 @@ struct PlayerScreenV2: View {
                     .frame(width: totalWidth, height: artworkStageHeight, alignment: .center)
                     .padding(.top, artworkTopOffset)
 
-                // Native Apple Spatial Blur & Dark Vignette Scrim under Dynamic Island / Status Bar
-                ZStack {
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.80),
-                            Color.black.opacity(0.40),
-                            Color.clear
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    Rectangle()
-                        .fill(.ultraThinMaterial.opacity(0.60))
-                        .mask(
-                            LinearGradient(
-                                colors: [.black, .black.opacity(0.8), .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                }
-                .frame(height: max(geo.safeAreaInsets.top, 50) + 16)
+                // Native Apple Smooth Ambient Vignette under Dynamic Island / Status Bar
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.85),
+                        Color.black.opacity(0.40),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: max(geo.safeAreaInsets.top, 50) + 40)
                 .ignoresSafeArea(edges: .top)
                 .allowsHitTesting(false)
 

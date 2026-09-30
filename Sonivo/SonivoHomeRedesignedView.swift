@@ -65,7 +65,6 @@ struct SonivoHomeRedesignedView: View {
                     VStack(spacing: 24) {
                         waveHero
                         quickDestinations
-                        moodSection
                         chartSection
                         newTracksSection
                     }
@@ -73,60 +72,38 @@ struct SonivoHomeRedesignedView: View {
                 }
                 .refreshable { await load(force: true) }
 
-                // Native Apple Spatial Blur & Dark Vignette Scrim at the top under Dynamic Island / Status Bar
+                // Native Apple Smooth Ambient Vignette under Dynamic Island / Status Bar
                 VStack(spacing: 0) {
-                    ZStack {
-                        LinearGradient(
-                            colors: [
-                                Color.black.opacity(0.80),
-                                Color.black.opacity(0.45),
-                                Color.clear
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        Rectangle()
-                            .fill(.ultraThinMaterial.opacity(0.60))
-                            .mask(
-                                LinearGradient(
-                                    colors: [.black, .black.opacity(0.8), .clear],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                    }
-                    .frame(height: 70)
+                    LinearGradient(
+                        colors: [
+                            Color.black.opacity(0.85),
+                            Color.black.opacity(0.40),
+                            Color.clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 140)
                     .ignoresSafeArea(edges: .top)
 
                     Spacer()
                 }
                 .allowsHitTesting(false)
 
-                // Native Apple Spatial Blur & Dark Vignette Scrim at the bottom over Dock / Mini Player
+                // Native Apple Smooth Ambient Vignette at the bottom over Dock / Mini Player
                 VStack(spacing: 0) {
                     Spacer()
 
-                    ZStack {
-                        LinearGradient(
-                            colors: [
-                                Color.clear,
-                                Color.black.opacity(0.50),
-                                Color.black.opacity(0.85)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        Rectangle()
-                            .fill(.ultraThinMaterial.opacity(0.55))
-                            .mask(
-                                LinearGradient(
-                                    colors: [.clear, .black.opacity(0.8), .black],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                    }
-                    .frame(height: 90)
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            Color.black.opacity(0.50),
+                            Color.black.opacity(0.88)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 120)
                     .ignoresSafeArea(edges: .bottom)
                 }
                 .allowsHitTesting(false)

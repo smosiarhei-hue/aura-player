@@ -138,7 +138,7 @@ final class PlayerCore {
                 return
             }
             applyEQ()
-            saveEQ()
+            scheduleSaveEQ()
         }
     }
 
@@ -475,8 +475,22 @@ final class PlayerCore {
         updateNowPlayingInfo()
     }
 
-    private func saveEQ() {
-        if let data = try? JSONEncoder().encode(eqGains) {
+    private var saveEQTask: Task<Void, Never>?
+
+    private func scheduleSaveEQ() {
+        saveEQTask?.cancel()
+        saveEQTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.saveEQ()
+        }
+    }
+
+    func saveEQ() {
+        saveEQTask?.cancel()
+        saveEQTask = nil
+        let clean = normalizedUserGains
+        if let data = try? JSONEncoder().encode(clean) {
             defaults.set(data, forKey: Self.eqGainsKey)
         }
     }
@@ -500,7 +514,7 @@ final class PlayerCore {
     /// Always exactly `bandFrequencies.count` elements — the only safe basis for indexing.
     nonisolated static func normalized(_ gains: [Float]) -> [Float] {
         let count = bandFrequencies.count
-        var out = Array(gains.prefix(count))
+        var out = Array(gains.prefix(count)).map { $0.isFinite ? max(-24.0, min(24.0, $0)) : 0.0 }
         if out.count < count { out.append(contentsOf: Array(repeating: 0, count: count - out.count)) }
         return out
     }
@@ -541,6 +555,7 @@ final class PlayerCore {
     private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float]) {
         let bands = node.bands
         for i in 0..<min(bands.count, gains.count) where bands[i].gain != gains[i] {
+            guard gains[i].isFinite else { continue }
             bands[i].gain = gains[i]
         }
     }
@@ -1985,7 +2000,6 @@ final class PlayerCore {
     private func stopSleepTimerWatchdog() {
         guard let source = sleepWatchdog else { return }
         sleepWatchdog = nil
-        source.setEventHandler {}
         source.cancel()
     }
 

@@ -20,6 +20,7 @@ struct MyWaveHeroView: View {
     @State private var library = LibraryStore.shared
     @State private var artistImageUrl: String? = nil
     @State private var artistLookupTrackId: UUID? = nil
+    @State private var isFilterExpanded: Bool = false
 
     // MARK: - 2-Second Swipe Grace Period / Debounce State
     @State private var dragOffset: CGFloat = 0
@@ -110,18 +111,33 @@ struct MyWaveHeroView: View {
 
             Spacer()
 
-            Button {
-                Haptics.tap(.light)
-                showSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial.opacity(0.70), in: Circle())
+            HStack(spacing: 10) {
+                Button {
+                    Haptics.tap(.light)
+                    showWaveSettings = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 40, height: 40)
+                        .background(.ultraThinMaterial.opacity(0.70), in: Circle())
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.92))
+                .accessibilityLabel("Настроить волну")
+
+                Button {
+                    Haptics.tap(.light)
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 40, height: 40)
+                        .background(.ultraThinMaterial.opacity(0.70), in: Circle())
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.92))
+                .accessibilityLabel("Настройки")
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.92))
-            .accessibilityLabel("Настройки")
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
@@ -330,97 +346,126 @@ struct MyWaveHeroView: View {
 
     // MARK: - Bottom Wave Tuning Chips (Чистые капсулы без жестких рамок)
     private var bottomSparklesAndChips: some View {
-        VStack(spacing: 10) {
-            // 1. Музыкальный характер (diversity)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Array(WaveDiversity.allCases.enumerated()), id: \.element.id) { index, item in
-                        let isSelected = waveStore.diversity == item
-                        Button {
-                            Haptics.tap(.light)
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                waveStore.diversity = item
-                            }
-                            if player.isPlaying {
-                                Task { _ = await waveStore.reseedActiveWaveQueue() }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: item.icon)
-                                    .font(.system(size: 11, weight: .bold))
-                                Text(item.title)
-                                    .font(SN.text(.footnote, .semibold))
-                            }
-                            .foregroundStyle(isSelected ? Color.black : Color.white)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 7)
-                            .background(
-                                isSelected ? Color.white : Color.white.opacity(0.10),
-                                in: Capsule()
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
-                        .rotation3DEffect(
-                            .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
-                            axis: (x: 1, y: 0, z: 0)
-                        )
-                        .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
-                        .animation(
-                            reduceMotion
-                                ? .easeInOut(duration: 0.30)
-                                : .easeInOut(duration: 0.40).delay(Double(index) * 0.040),
-                            value: antigravity.isCardsFlipped
-                        )
-                    }
+        VStack(spacing: 8) {
+            // Компактная нативная плашка-фильтр «Моей волны»
+            Button {
+                Haptics.tap(.light)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    isFilterExpanded.toggle()
                 }
-                .padding(.horizontal, 20)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: waveStore.diversity.icon)
+                        .font(.system(size: 11, weight: .bold))
+                    Text("\(waveStore.diversity.title) • \(waveStore.language.title)")
+                        .font(SN.text(.footnote, .semibold))
+                    Image(systemName: isFilterExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.45))
+                }
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(.ultraThinMaterial.opacity(0.40), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
             }
+            .buttonStyle(TactileButtonStyle(scale: 0.96))
 
-            // 2. Язык звучания
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    ForEach(Array(WaveLanguage.allCases.enumerated()), id: \.element.id) { index, item in
-                        let isSelected = waveStore.language == item
-                        Button {
-                            Haptics.tap(.light)
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                waveStore.language = item
+            if isFilterExpanded {
+                VStack(spacing: 10) {
+                    // 1. Музыкальный характер (diversity)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(WaveDiversity.allCases.enumerated()), id: \.element.id) { index, item in
+                                let isSelected = waveStore.diversity == item
+                                Button {
+                                    Haptics.tap(.light)
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                        waveStore.diversity = item
+                                    }
+                                    if player.isPlaying {
+                                        Task { _ = await waveStore.reseedActiveWaveQueue() }
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: item.icon)
+                                            .font(.system(size: 11, weight: .bold))
+                                        Text(item.title)
+                                            .font(SN.text(.footnote, .semibold))
+                                    }
+                                    .foregroundStyle(isSelected ? Color.black : Color.white)
+                                    .padding(.horizontal, 13)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        isSelected ? Color.white : Color.white.opacity(0.10),
+                                        in: Capsule()
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
+                                .rotation3DEffect(
+                                    .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
+                                    axis: (x: 1, y: 0, z: 0)
+                                )
+                                .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
+                                .animation(
+                                    reduceMotion
+                                        ? .easeInOut(duration: 0.30)
+                                        : .easeInOut(duration: 0.40).delay(Double(index) * 0.040),
+                                    value: antigravity.isCardsFlipped
+                                )
                             }
-                            if player.isPlaying {
-                                Task { _ = await waveStore.reseedActiveWaveQueue() }
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: item.icon)
-                                    .font(.system(size: 11, weight: .bold))
-                                Text(item.title)
-                                    .font(SN.text(.caption, .semibold))
-                            }
-                            .foregroundStyle(isSelected ? Color.black : Color.white.opacity(0.85))
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 6)
-                            .background(
-                                isSelected ? Color.white : Color.white.opacity(0.08),
-                                in: Capsule()
-                            )
                         }
-                        .buttonStyle(.plain)
-                        .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
-                        .rotation3DEffect(
-                            .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
-                            axis: (x: 1, y: 0, z: 0)
-                        )
-                        .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
-                        .animation(
-                            reduceMotion
-                                ? .easeInOut(duration: 0.30)
-                                : .easeInOut(duration: 0.40).delay(Double(index + 3) * 0.040),
-                            value: antigravity.isCardsFlipped
-                        )
+                        .padding(.horizontal, 20)
+                    }
+
+                    // 2. Язык звучания
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 7) {
+                            ForEach(Array(WaveLanguage.allCases.enumerated()), id: \.element.id) { index, item in
+                                let isSelected = waveStore.language == item
+                                Button {
+                                    Haptics.tap(.light)
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                        waveStore.language = item
+                                    }
+                                    if player.isPlaying {
+                                        Task { _ = await waveStore.reseedActiveWaveQueue() }
+                                    }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: item.icon)
+                                            .font(.system(size: 11, weight: .bold))
+                                        Text(item.title)
+                                            .font(SN.text(.caption, .semibold))
+                                    }
+                                    .foregroundStyle(isSelected ? Color.black : Color.white.opacity(0.85))
+                                    .padding(.horizontal, 11)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        isSelected ? Color.white : Color.white.opacity(0.08),
+                                        in: Capsule()
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
+                                .rotation3DEffect(
+                                    .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
+                                    axis: (x: 1, y: 0, z: 0)
+                                )
+                                .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
+                                .animation(
+                                    reduceMotion
+                                        ? .easeInOut(duration: 0.30)
+                                        : .easeInOut(duration: 0.40).delay(Double(index + 3) * 0.040),
+                                    value: antigravity.isCardsFlipped
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 20)
                     }
                 }
-                .padding(.horizontal, 20)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -428,8 +473,6 @@ struct MyWaveHeroView: View {
     // MARK: - Native iOS Atmospheric Backdrop
     private var atmosphericAuraBackdrop: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-
             // Deep fluid radial aura glows tailored to the track
             RadialGradient(
                 colors: [
