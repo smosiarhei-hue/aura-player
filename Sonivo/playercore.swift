@@ -132,6 +132,7 @@ final class PlayerCore {
     /// this via `normalizedUserGains`, so a short or long array can never index-crash.
     var eqGains: [Float] = EQPresets.flat.gains {
         didSet {
+            guard eqGains != oldValue else { return }
             let normalized = Self.normalized(eqGains)
             if normalized != eqGains {
                 eqGains = normalized
@@ -554,9 +555,15 @@ final class PlayerCore {
 
     private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float]) {
         let bands = node.bands
-        for i in 0..<min(bands.count, gains.count) where bands[i].gain != gains[i] {
-            guard gains[i].isFinite else { continue }
-            bands[i].gain = gains[i]
+        let count = min(bands.count, gains.count)
+        guard count > 0 else { return }
+        for i in 0..<count {
+            let targetGain = gains[i]
+            guard targetGain.isFinite else { continue }
+            let clamped = max(-24.0, min(24.0, targetGain))
+            if abs(bands[i].gain - clamped) > 0.01 {
+                bands[i].gain = clamped
+            }
         }
     }
 

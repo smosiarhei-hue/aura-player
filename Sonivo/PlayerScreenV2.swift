@@ -35,7 +35,30 @@ struct PlayerScreenV2: View {
     @State private var artworkTrackId: UUID?
     @State private var currentArtworkImage: UIImage?
     @State private var cachedPhrases: [LyricPhrase] = []
+    @State private var spectrum = SpectrumAnalyzer.shared
     private let tapSide: CGFloat = SN.tapTarget
+
+    private var kickEnergy: CGFloat {
+        guard player.isPlaying, !reduceMotion else { return 0 }
+        return CGFloat(spectrum.dynamicKick)
+    }
+
+    private var bassEnergy: CGFloat {
+        guard player.isPlaying, !reduceMotion else { return 0 }
+        return CGFloat(spectrum.dynamicBass)
+    }
+
+    private var beatPulse: CGFloat {
+        max(kickEnergy, bassEnergy * 0.85)
+    }
+
+    private var shakeOffset: CGSize {
+        guard beatPulse > 0.08, !reduceMotion else { return .zero }
+        let t = Date().timeIntervalSinceReferenceDate
+        let dx = sin(t * 36.0) * (beatPulse * 3.5)
+        let dy = cos(t * 44.0) * (beatPulse * 2.5)
+        return CGSize(width: dx, height: dy)
+    }
 
     enum ActivePlayerModal: String, Identifiable {
         case queue, equalizer, sleepTimer, settings, quality, artistSelection, lyrics
@@ -280,19 +303,36 @@ struct PlayerScreenV2: View {
                             .resizable()
                             .scaledToFill()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .blur(radius: 20)
-                            .scaleEffect(1.10)
-                            .opacity(0.30)
+                            .blur(radius: 46)
+                            .scaleEffect(1.18 + (beatPulse * 0.05))
+                            .offset(x: shakeOffset.width * 0.5, y: shakeOffset.height * 0.5)
+                            .opacity(0.85)
                             .clipped()
                     } else {
                         gradientBackground
                     }
-                    AnimatedMeshBackground(palette: Array(backgroundColors.prefix(3)))
-                        .opacity(0.32)
-                    LinearGradient(stops: [.init(color: .black.opacity(0.10), location: 0),
-                                            .init(color: .black.opacity(0.35), location: 0.50),
-                                            .init(color: .black.opacity(0.85), location: 1.0)],
-                                    startPoint: .top, endPoint: .bottom)
+
+                    // Dynamic Luminous Light Orbs & Vibrant Cover Color Accents
+                    PlayerAmbientCoverGlow(
+                        palette: backgroundColors,
+                        energy: beatPulse,
+                        reduceMotion: reduceMotion
+                    )
+                    .scaleEffect(1.0 + (beatPulse * 0.06))
+                    .offset(x: -shakeOffset.width * 0.35, y: -shakeOffset.height * 0.35)
+
+                    // Apple Music Subtle Ambient Contrast Vignette
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black.opacity(0.20), location: 0.0),
+                            .init(color: .clear, location: 0.22),
+                            .init(color: .clear, location: 0.65),
+                            .init(color: .black.opacity(0.38), location: 0.85),
+                            .init(color: .black.opacity(0.72), location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 }
             }
         }.allowsHitTesting(false)
@@ -325,6 +365,9 @@ struct PlayerScreenV2: View {
         let cardSide = min(width - 40, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 4.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.06, abs(coverDragX / width) * 0.06))
+        let bassScale = 1.0 + (beatPulse * 0.038)
+        let primaryGlow = palette.first ?? SN.amber
+
         return ZStack {
             if isFullScreenVideoShot {
                 // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
@@ -334,14 +377,19 @@ struct PlayerScreenV2: View {
                 artwork
                     .frame(width: cardSide, height: cardSide)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
+                    .shadow(
+                        color: primaryGlow.opacity(0.35 + Double(beatPulse) * 0.45),
+                        radius: 18 + beatPulse * 24,
+                        y: 8 + beatPulse * 6
+                    )
+                    .shadow(color: .black.opacity(0.40), radius: 16, y: 8)
             } else {
                 lyricsCoverCard(side: cardSide)
             }
         }
         .frame(width: width, height: height)
-        .scaleEffect((player.isPlaying ? 1.0 : 0.96) * dragScale)
-        .offset(x: coverDragX)
+        .scaleEffect((player.isPlaying ? 1.0 : 0.96) * dragScale * bassScale)
+        .offset(x: coverDragX + shakeOffset.width, y: shakeOffset.height)
         .rotationEffect(.degrees(tiltAngle))
         .contentShape(Rectangle())
         .gesture(
@@ -1915,6 +1963,66 @@ struct PlayerQualityModalView: View {
             return "Формат: \(codec) • \(brText)"
         }
         return nil
+    }
+}
+
+// MARK: - Vibrant Cover Ambient Glow with Light Luminous Accents
+struct PlayerAmbientCoverGlow: View {
+    let palette: [Color]
+    let energy: CGFloat
+    let reduceMotion: Bool
+
+    private var c1: Color { palette.first ?? SN.amber }
+    private var c2: Color { palette.dropFirst().first ?? SN.ember }
+    private var c3: Color { palette.dropFirst(2).first ?? Color.white }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+
+            ZStack {
+                // Top-leading bright luminous bloom
+                RadialGradient(
+                    colors: [
+                        c1.opacity(0.55 + Double(energy) * 0.35),
+                        c1.opacity(0.20),
+                        Color.clear
+                    ],
+                    center: .topLeading,
+                    startRadius: 20,
+                    endRadius: max(w, h) * (0.65 + energy * 0.15)
+                )
+                .blendMode(.plusLighter)
+
+                // Trailing light accent (светлые цвета)
+                RadialGradient(
+                    colors: [
+                        Color.white.opacity(0.28 + Double(energy) * 0.32),
+                        c2.opacity(0.35 + Double(energy) * 0.25),
+                        Color.clear
+                    ],
+                    center: UnitPoint(x: 0.85, y: 0.40),
+                    startRadius: 10,
+                    endRadius: max(w, h) * (0.50 + energy * 0.18)
+                )
+                .blendMode(.plusLighter)
+
+                // Center-bottom depth glow
+                RadialGradient(
+                    colors: [
+                        c3.opacity(0.40 + Double(energy) * 0.30),
+                        Color.clear
+                    ],
+                    center: UnitPoint(x: 0.30, y: 0.75),
+                    startRadius: 30,
+                    endRadius: max(w, h) * (0.55 + energy * 0.12)
+                )
+                .blendMode(.screen)
+            }
+        }
+        .allowsHitTesting(false)
+        .ignoresSafeArea()
     }
 }
 

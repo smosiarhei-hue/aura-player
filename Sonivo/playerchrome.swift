@@ -384,6 +384,7 @@ struct PlayerEQSheetView: View {
     @Environment(\.dismiss) private var dismiss
 
     private let frequencies = ["20", "40", "60", "90", "160", "400", "1k", "2.5k", "6k", "16k"]
+    @State private var activeBandIndex: Int? = nil
 
     private var activePresetName: String {
         for preset in EQPresets.all {
@@ -394,94 +395,199 @@ struct PlayerEQSheetView: View {
         return "Своя настройка"
     }
 
+    private var isFlat: Bool {
+        isMatching(EQPresets.flat.gains, player.eqGains)
+    }
+
     private func isMatching(_ a: [Float], _ b: [Float]) -> Bool {
         guard a.count == b.count else { return false }
         for i in 0..<a.count {
-            if abs(a[i] - b[i]) > 0.1 { return false }
+            if abs(a[i] - b[i]) > 0.2 { return false }
         }
         return true
     }
 
     var body: some View {
-        ZStack {
-            SonivoScreenBackground(colors: [SN.ember, SN.bgRaised], showsMesh: false)
+        NavigationStack {
+            ZStack {
+                SonivoScreenBackground(colors: [SN.ember, SN.bgRaised], showsMesh: false)
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Top Bar with Close button
-                    HStack {
-                        Spacer()
-                        Button {
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(SN.ink)
-                                .frame(width: 32, height: 32)
-                                .background(SN.ink.opacity(0.12), in: Circle())
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 20) {
+                        // Master Toggle Card
+                        masterToggleCard
+
+                        // Live Response Curve Visualizer
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("АЧХ ФИЛЬТРА")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .tracking(0.8)
+                                    .foregroundStyle(SN.inkFaint)
+                                Spacer()
+                                Text(activePresetName)
+                                    .font(SN.text(.caption, .semibold))
+                                    .foregroundStyle(SN.amber)
+                            }
+                            .padding(.horizontal, 4)
+
+                            EQResponseCurveView(
+                                frequencies: frequencies,
+                                gains: player.eqGains,
+                                enabled: player.eqEnabled,
+                                activeBandIndex: activeBandIndex
+                            )
+                            .frame(height: 120)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                            )
                         }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
+                        .padding(.horizontal, 16)
 
-                    // Title
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Эквалайзер")
-                            .font(SN.display(.largeTitle, .heavy))
-                            .foregroundStyle(SN.ink)
-                        Text(player.eqEnabled ? "Включен" : "Выключен")
-                            .font(SN.text(.subheadline, .medium))
-                            .foregroundStyle(player.eqEnabled ? SN.positive : SN.inkMuted)
-                    }
-                    .padding(.horizontal, 20)
+                        // 10-Band Vertical Faders
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("ПОЛОСЫ ЭКВАЛАЙЗЕРА")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .tracking(0.8)
+                                    .foregroundStyle(SN.inkFaint)
+                                Spacer()
+                                Text("±12 дБ")
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(SN.inkMuted)
+                            }
+                            .padding(.horizontal, 20)
 
-                    // Interactive EQ Graph with dB values and Frequencies
-                    InteractiveEQGraph(
-                        frequencies: frequencies,
-                        gains: Binding(
-                            get: {
-                                if player.eqGains.count == 10 { return player.eqGains }
-                                return EQPresets.flat.gains
-                            },
-                            set: { player.eqGains = $0 }
-                        ),
-                        enabled: player.eqEnabled
-                    )
-                    .frame(height: 190)
-                    .padding(.horizontal, 16)
-
-                    // Toggle row
-                    HStack {
-                        Text("Эквалайзер")
-                            .font(SN.text(.body, .semibold))
-                            .foregroundStyle(SN.ink)
-                        Spacer()
-                        Toggle("", isOn: $player.eqEnabled)
-                            .labelsHidden()
-                            .tint(SN.amber)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 10)
-
-                    Divider().background(SN.ink.opacity(0.12)).padding(.horizontal, 20)
-
-                    // Presets List
-                    VStack(spacing: 0) {
-                        presetRow(title: "Своя настройка", isSelected: activePresetName == "Своя настройка") {
-                            // Keep current custom gains
+                            EQFadersDeckView(
+                                frequencies: frequencies,
+                                gains: Binding(
+                                    get: {
+                                        if player.eqGains.count == 10 { return player.eqGains }
+                                        return PlayerCore.normalized(player.eqGains)
+                                    },
+                                    set: { player.eqGains = $0 }
+                                ),
+                                enabled: player.eqEnabled,
+                                activeBandIndex: $activeBandIndex
+                            )
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .fill(SN.card.opacity(0.85))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                            )
+                            .padding(.horizontal, 16)
                         }
 
-                        ForEach(EQPresets.all) { preset in
-                            presetRow(title: preset.name, isSelected: activePresetName == preset.name) {
-                                Haptics.tap(.light)
-                                withAnimation(SN.spring) {
-                                    player.eqGains = preset.gains
+                        // Quick Presets Horizontal Carousel
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("ПРЕСЕТЫ")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .tracking(0.8)
+                                .foregroundStyle(SN.inkFaint)
+                                .padding(.horizontal, 20)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(EQPresets.all) { preset in
+                                        let isSel = activePresetName == preset.name
+                                        Button {
+                                            applyPreset(preset)
+                                        } label: {
+                                            HStack(spacing: 6) {
+                                                if isSel {
+                                                    Image(systemName: "checkmark")
+                                                        .font(.system(size: 11, weight: .bold))
+                                                }
+                                                Text(preset.name)
+                                                    .font(SN.text(.subheadline, isSel ? .bold : .medium))
+                                            }
+                                            .foregroundStyle(isSel ? Color.black : SN.ink)
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                Capsule()
+                                                    .fill(isSel ? SN.amber : Color.white.opacity(0.10))
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                            }
+                        }
+
+                        // Presets List
+                        VStack(spacing: 0) {
+                            ForEach(EQPresets.all) { preset in
+                                let isSel = activePresetName == preset.name
+                                Button {
+                                    applyPreset(preset)
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: isSel ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundStyle(isSel ? SN.amber : SN.inkMuted)
+
+                                        Text(preset.name)
+                                            .font(SN.text(.body, isSel ? .bold : .regular))
+                                            .foregroundStyle(SN.ink)
+
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .frame(height: 50)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(CardPressStyle(scale: 0.98, haptic: false))
+
+                                if preset.id != EQPresets.all.last?.id {
+                                    Divider()
+                                        .background(Color.white.opacity(0.06))
+                                        .padding(.leading, 46)
                                 }
                             }
                         }
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(SN.card.opacity(0.85))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                                )
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 24)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 30)
+                    .padding(.top, 12)
+                }
+            }
+            .navigationTitle("Эквалайзер")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !isFlat {
+                        Button("Сбросить") {
+                            Haptics.tap(.medium)
+                            withAnimation(SN.spring) {
+                                player.eqGains = EQPresets.flat.gains
+                            }
+                        }
+                        .font(SN.text(.subheadline, .medium))
+                        .foregroundStyle(SN.inkMuted)
+                    }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Готово") { dismiss() }
+                        .font(SN.text(.body, .bold))
+                        .foregroundStyle(SN.amber)
                 }
             }
         }
@@ -490,243 +596,323 @@ struct PlayerEQSheetView: View {
         .presentationBackground(.ultraThinMaterial)
     }
 
-    private func presetRow(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 17, weight: .regular))
-                    .foregroundStyle(SN.ink)
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(SN.ink)
-                }
-            }
-            .frame(height: 50)
-            .contentShape(Rectangle())
+    private func applyPreset(_ preset: EQPreset) {
+        Haptics.tap(.light)
+        withAnimation(SN.spring) {
+            player.eqGains = preset.gains
         }
-        .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
+    }
+
+    private var masterToggleCard: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(player.eqEnabled ? SN.amber.opacity(0.20) : Color.white.opacity(0.08))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "slider.vertical.3")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(player.eqEnabled ? SN.amber : SN.inkMuted)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Эквалайзер")
+                    .font(SN.text(.body, .bold))
+                    .foregroundStyle(SN.ink)
+                Text(player.eqEnabled ? "10-полосная обработка звука" : "Выключен (исходный звук)")
+                    .font(SN.text(.caption, .regular))
+                    .foregroundStyle(player.eqEnabled ? SN.positive : SN.inkMuted)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $player.eqEnabled)
+                .labelsHidden()
+                .tint(SN.amber)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(SN.card.opacity(0.85))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 16)
     }
 }
 
-struct InteractiveEQGraph: View {
+// MARK: - Live EQ Frequency Response Curve Visualizer
+struct EQResponseCurveView: View {
     let frequencies: [String]
-    @Binding var gains: [Float]
+    let gains: [Float]
     let enabled: Bool
-
-    @State private var activeBandIndex: Int? = nil
-
-    private let yellow = Color(red: 0.90, green: 0.98, blue: 0.12)
-    private let nodeCount = 10
-    private let maxGain: CGFloat = 20.0
+    let activeBandIndex: Int?
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let topLabelH: CGFloat = 24
-            let bottomLabelH: CGFloat = 26
-            let graphH = max(80, geo.size.height - topLabelH - bottomLabelH)
-            let midY = topLabelH + graphH / 2
-            let sidePad: CGFloat = 16
-            let stepX = (w - 2 * sidePad) / CGFloat(max(1, nodeCount - 1))
+            let h = geo.size.height
 
-            ZStack {
-                // Vertical accent guide for active band
-                if let active = activeBandIndex {
-                    let activeX = sidePad + CGFloat(active) * stepX
+            if w > 40 && h > 40 {
+                let sidePad: CGFloat = 16
+                let count = 10
+                let stepX = (w - 2 * sidePad) / CGFloat(count - 1)
+                let midY = h / 2
+                let maxGain: CGFloat = 12.0
+
+                ZStack {
+                    Color.black.opacity(0.35)
+
+                    // Reference Grid Lines (+12, 0, -12)
                     Path { path in
-                        path.move(to: CGPoint(x: activeX, y: topLabelH - 2))
-                        path.addLine(to: CGPoint(x: activeX, y: geo.size.height - bottomLabelH + 2))
+                        path.move(to: CGPoint(x: sidePad, y: midY))
+                        path.addLine(to: CGPoint(x: w - sidePad, y: midY))
                     }
-                    .stroke(yellow.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                    .animation(.spring(response: 0.25, dampingFraction: 0.75), value: active)
-                }
+                    .stroke(Color.white.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
-                // Top dB Labels
-                HStack(spacing: 0) {
-                    ForEach(0..<nodeCount, id: \.self) { i in
-                        let g = i < gains.count ? gains[i] : 0
-                        let isActive = (activeBandIndex == i)
-                        Text(formatDB(g))
-                            .font(.system(size: isActive ? 12 : 10, weight: isActive ? .heavy : .bold).monospacedDigit())
-                            .foregroundStyle(isActive ? yellow : (enabled ? yellow.opacity(0.8) : yellow.opacity(0.35)))
-                            .scaleEffect(isActive ? 1.35 : 1.0)
-                            .padding(.horizontal, isActive ? 4 : 0)
-                            .padding(.vertical, isActive ? 2 : 0)
-                            .background(
-                                Capsule()
-                                    .fill(Color.black.opacity(isActive ? 0.70 : 0.0))
-                                    .overlay(
-                                        Capsule().stroke(yellow.opacity(isActive ? 0.45 : 0.0), lineWidth: 1)
-                                    )
+                    Path { path in
+                        path.move(to: CGPoint(x: sidePad, y: midY - (h / 2 - 12)))
+                        path.addLine(to: CGPoint(x: w - sidePad, y: midY - (h / 2 - 12)))
+                    }
+                    .stroke(Color.white.opacity(0.06), style: StrokeStyle(lineWidth: 0.8))
+
+                    Path { path in
+                        path.move(to: CGPoint(x: sidePad, y: midY + (h / 2 - 12)))
+                        path.addLine(to: CGPoint(x: w - sidePad, y: midY + (h / 2 - 12)))
+                    }
+                    .stroke(Color.white.opacity(0.06), style: StrokeStyle(lineWidth: 0.8))
+
+                    // Gradient Area Fill under Curve
+                    curvePath(w: w, h: h, sidePad: sidePad, stepX: stepX, midY: midY, maxGain: maxGain, isClosed: true)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    (enabled ? SN.amber : SN.inkMuted).opacity(enabled ? 0.30 : 0.08),
+                                    Color.clear
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
                             )
-                            .frame(width: stepX, alignment: .center)
-                            .zIndex(isActive ? 5 : 1)
-                            .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isActive)
-                    }
-                }
-                .padding(.horizontal, sidePad - stepX / 2)
-                .position(x: w / 2, y: topLabelH / 2)
+                        )
 
-                // 0 dB Guide Line
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: midY))
-                    path.addLine(to: CGPoint(x: w, y: midY))
-                }
-                .stroke(enabled ? yellow.opacity(0.65) : yellow.opacity(0.2), lineWidth: 1.5)
+                    // Curve Stroke
+                    curvePath(w: w, h: h, sidePad: sidePad, stepX: stepX, midY: midY, maxGain: maxGain, isClosed: false)
+                        .stroke(
+                            enabled ? SN.amber : SN.inkMuted.opacity(0.4),
+                            style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round)
+                        )
 
-                // Continuous Spline Curve connecting nodes
-                splinePath(width: w, midY: midY, graphH: graphH, sidePad: sidePad, stepX: stepX)
-                    .stroke(enabled ? yellow : yellow.opacity(0.4), lineWidth: 2)
+                    // Active Node highlights
+                    ForEach(0..<count, id: \.self) { i in
+                        let x = sidePad + CGFloat(i) * stepX
+                        let g = CGFloat(i < gains.count ? gains[i] : 0)
+                        let clamped = min(maxGain, max(-maxGain, g))
+                        let y = midY - (clamped / maxGain) * (h / 2 - 14)
+                        let isActive = (activeBandIndex == i)
 
-                // 10 Draggable Circular Nodes with native scaling on selection
-                ForEach(0..<nodeCount, id: \.self) { i in
-                    let x = sidePad + CGFloat(i) * stepX
-                    let gain = CGFloat(i < gains.count ? gains[i] : 0)
-                    let y = midY - (gain / maxGain) * (graphH / 2 - 12)
-                    let isActive = (activeBandIndex == i)
-
-                    ZStack {
-                        // Luminous halo around active node
-                        if isActive {
-                            Circle()
-                                .stroke(yellow.opacity(0.35), lineWidth: 2.0)
-                                .frame(width: 36, height: 36)
-                                .scaleEffect(1.2)
-                        }
-
-                        // Core node circle
                         Circle()
-                            .fill(isActive ? yellow : SN.bg)
-                            .overlay(
-                                Circle().stroke(enabled ? yellow : yellow.opacity(0.4), lineWidth: isActive ? 3.0 : 2.5)
-                            )
-                            .overlay(
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 5, height: 5)
-                                    .opacity(isActive ? 1.0 : 0.0)
-                            )
-                            .frame(width: 18, height: 18)
-                            .scaleEffect(isActive ? 1.65 : 1.0)
-                            .shadow(color: yellow.opacity(isActive ? 0.95 : 0.0), radius: isActive ? 12 : 0)
-                    }
-                    .position(x: x, y: y)
-                    .zIndex(isActive ? 10 : 1)
-                    .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isActive)
-                }
-
-                // Bottom Frequency Labels with native enlargement when selected
-                HStack(spacing: 0) {
-                    ForEach(0..<nodeCount, id: \.self) { i in
-                        let isActive = (activeBandIndex == i)
-                        Button {
-                            guard enabled else { return }
-                            Haptics.tap(.light)
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
-                                activeBandIndex = i
-                            }
-                        } label: {
-                            Text(frequencies[i])
-                                .font(.system(size: isActive ? 13 : 10, weight: isActive ? .heavy : .semibold))
-                                .foregroundStyle(isActive ? yellow : Color(white: enabled ? 0.70 : 0.35))
-                                .scaleEffect(isActive ? 1.35 : 1.0)
-                                .padding(.horizontal, isActive ? 6 : 0)
-                                .padding(.vertical, isActive ? 2 : 0)
-                                .background(
-                                    Capsule()
-                                        .fill(yellow.opacity(isActive ? 0.22 : 0.0))
-                                        .overlay(
-                                            Capsule().stroke(yellow.opacity(isActive ? 0.45 : 0.0), lineWidth: 1)
-                                        )
-                                )
-                                .frame(width: stepX, alignment: .center)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .zIndex(isActive ? 5 : 1)
-                        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isActive)
+                            .fill(isActive ? SN.amber : Color.white)
+                            .frame(width: isActive ? 8 : 4, height: isActive ? 8 : 4)
+                            .shadow(color: SN.amber.opacity(isActive ? 0.9 : 0.0), radius: 6)
+                            .position(x: x, y: y)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isActive)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: y)
                     }
                 }
-                .padding(.horizontal, sidePad - stepX / 2)
-                .position(x: w / 2, y: geo.size.height - bottomLabelH / 2)
             }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { val in
-                        guard enabled else { return }
-                        let touchedIndex = min(nodeCount - 1, max(0, Int(round((val.location.x - sidePad) / stepX))))
-                        if activeBandIndex != touchedIndex {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                                activeBandIndex = touchedIndex
-                            }
-                            Haptics.tap(.light)
-                        }
+        }
+    }
 
-                        guard touchedIndex < gains.count else { return }
-                        let maxRange = graphH / 2 - 12
-                        guard maxRange > 1, val.location.y.isFinite else { return }
-                        let deltaY = midY - val.location.y
-                        let rawGain = Float((deltaY / maxRange) * maxGain)
-                        guard rawGain.isFinite else { return }
-                        let clamped = min(Float(maxGain), max(-Float(maxGain), rawGain))
-                        let newGain: Float = abs(clamped) < 0.4 ? 0 : round(clamped)
-                        guard newGain.isFinite else { return }
+    private func curvePath(w: CGFloat, h: CGFloat, sidePad: CGFloat, stepX: CGFloat, midY: CGFloat, maxGain: CGFloat, isClosed: Bool) -> Path {
+        var points: [CGPoint] = []
+        let count = 10
+        for i in 0..<count {
+            let x = sidePad + CGFloat(i) * stepX
+            let g = CGFloat(i < gains.count ? gains[i] : 0)
+            let clamped = min(maxGain, max(-maxGain, g))
+            let y = midY - (clamped / maxGain) * (h / 2 - 14)
+            points.append(CGPoint(x: x, y: y))
+        }
 
-                        if gains[touchedIndex] != newGain {
-                            if (gains[touchedIndex] > 0 && newGain <= 0) || (gains[touchedIndex] < 0 && newGain >= 0) {
-                                Haptics.tap(.light)
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+
+        for i in 0..<(points.count - 1) {
+            let p0 = points[i]
+            let p1 = points[i + 1]
+            let midX = (p0.x + p1.x) / 2
+            path.addCurve(to: p1, control1: CGPoint(x: midX, y: p0.y), control2: CGPoint(x: midX, y: p1.y))
+        }
+
+        if isClosed {
+            path.addLine(to: CGPoint(x: w - sidePad, y: h))
+            path.addLine(to: CGPoint(x: sidePad, y: h))
+            path.closeSubpath()
+        }
+
+        return path
+    }
+}
+
+// MARK: - 10-Band Vertical Faders Deck
+struct EQFadersDeckView: View {
+    let frequencies: [String]
+    @Binding var gains: [Float]
+    let enabled: Bool
+    @Binding var activeBandIndex: Int?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<min(frequencies.count, 10), id: \.self) { i in
+                EQVerticalFader(
+                    frequency: frequencies[i],
+                    gain: Binding(
+                        get: { i < gains.count ? gains[i] : 0 },
+                        set: { val in
+                            if i < gains.count {
+                                gains[i] = val
                             }
-                            gains[touchedIndex] = newGain
                         }
-                    }
-                    .onEnded { _ in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                            activeBandIndex = nil
-                        }
+                    ),
+                    enabled: enabled,
+                    isActive: activeBandIndex == i,
+                    onDragStart: { activeBandIndex = i },
+                    onDragEnd: {
+                        activeBandIndex = nil
                         PlayerCore.shared.saveEQ()
                     }
-            )
+                )
+                .frame(maxWidth: .infinity)
+            }
         }
+        .frame(height: 200)
+    }
+}
+
+// MARK: - Single Vertical Fader Column
+struct EQVerticalFader: View {
+    let frequency: String
+    @Binding var gain: Float
+    let enabled: Bool
+    let isActive: Bool
+    let onDragStart: () -> Void
+    let onDragEnd: () -> Void
+
+    private let maxGain: Float = 12.0
+    private let trackHeight: CGFloat = 130
+
+    var body: some View {
+        VStack(spacing: 6) {
+            // Gain Text Readout
+            Text(formatDB(gain))
+                .font(.system(size: 10, weight: (isActive || abs(gain) > 0.5) ? .bold : .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(textColor)
+                .frame(height: 14)
+
+            // Vertical Track and Thumb
+            GeometryReader { geo in
+                let h = max(40, geo.size.height)
+                let midY = h / 2
+                let ratio = CGFloat(gain / maxGain)
+                let thumbY = midY - ratio * (h / 2 - 8)
+
+                ZStack {
+                    // Track background capsule
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 6)
+
+                    // Center 0 dB Notch
+                    Capsule()
+                        .fill(Color.white.opacity(0.25))
+                        .frame(width: 12, height: 2)
+                        .position(x: geo.size.width / 2, y: midY)
+
+                    // Bipolar Fill bar from center (up or down)
+                    if abs(gain) > 0.1 {
+                        let fillH = abs(ratio) * (h / 2 - 8)
+                        let fillY = ratio > 0 ? (midY - fillH / 2) : (midY + fillH / 2)
+                        Capsule()
+                            .fill(enabled ? SN.amber : SN.inkMuted)
+                            .frame(width: 5, height: fillH)
+                            .position(x: geo.size.width / 2, y: fillY)
+                    }
+
+                    // Tactile Thumb Pill
+                    ZStack {
+                        Capsule()
+                            .fill(thumbFillColor)
+                            .frame(width: 26, height: 16)
+                            .shadow(color: Color.black.opacity(0.4), radius: 3, y: 1.5)
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(isActive ? SN.amber : Color.white.opacity(0.3), lineWidth: 1.2)
+                            )
+
+                        // Center grip notch
+                        Capsule()
+                            .fill(isActive ? Color.black.opacity(0.7) : Color.white.opacity(0.5))
+                            .frame(width: 10, height: 2)
+                    }
+                    .position(x: geo.size.width / 2, y: thumbY)
+                    .scaleEffect(isActive ? 1.15 : 1.0)
+                    .animation(.spring(response: 0.22, dampingFraction: 0.75), value: isActive)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { val in
+                            guard enabled else { return }
+                            onDragStart()
+                            let deltaY = midY - val.location.y
+                            let raw = Float((deltaY / (h / 2 - 8)) * CGFloat(maxGain))
+                            guard raw.isFinite else { return }
+                            let clamped = min(maxGain, max(-maxGain, raw))
+                            // Snap to 0 when near center
+                            let newGain: Float = abs(clamped) < 0.6 ? 0.0 : round(clamped)
+
+                            if gain != newGain {
+                                if (gain > 0 && newGain <= 0) || (gain < 0 && newGain >= 0) {
+                                    Haptics.tap(.light)
+                                }
+                                gain = newGain
+                            }
+                        }
+                        .onEnded { _ in
+                            onDragEnd()
+                        }
+                )
+            }
+            .frame(height: trackHeight)
+
+            // Frequency Label Badge
+            Text(frequency)
+                .font(.system(size: 10, weight: isActive ? .bold : .medium, design: .rounded))
+                .foregroundStyle(isActive ? SN.amber : SN.inkMuted)
+                .frame(height: 14)
+        }
+    }
+
+    private var textColor: Color {
+        guard enabled else { return SN.inkMuted.opacity(0.4) }
+        if isActive { return SN.amber }
+        if abs(gain) > 0.5 { return SN.ink }
+        return SN.inkMuted
+    }
+
+    private var thumbFillColor: Color {
+        guard enabled else { return SN.card }
+        if isActive { return SN.amber }
+        return Color(white: 0.95)
     }
 
     private func formatDB(_ value: Float) -> String {
         let rounded = Int(round(value))
         if rounded > 0 { return "+\(rounded)" }
         return "\(rounded)"
-    }
-
-    private func splinePath(width: CGFloat, midY: CGFloat, graphH: CGFloat, sidePad: CGFloat, stepX: CGFloat) -> Path {
-        var points: [CGPoint] = []
-        for i in 0..<nodeCount {
-            let x = sidePad + CGFloat(i) * stepX
-            let gain = CGFloat(i < gains.count ? gains[i] : 0)
-            let y = midY - (gain / maxGain) * (graphH / 2 - 10)
-            points.append(CGPoint(x: x, y: y))
-        }
-
-        var path = Path()
-        guard let first = points.first else { return path }
-        path.move(to: CGPoint(x: 0, y: first.y))
-        path.addLine(to: first)
-
-        for i in 0..<(points.count - 1) {
-            let p0 = points[i]
-            let p1 = points[i + 1]
-            let midX = (p0.x + p1.x) / 2
-            path.addCurve(
-                to: p1,
-                control1: CGPoint(x: midX, y: p0.y),
-                control2: CGPoint(x: midX, y: p1.y)
-            )
-        }
-
-        if let last = points.last {
-            path.addLine(to: CGPoint(x: width, y: last.y))
-        }
-        return path
     }
 }
 struct TactileButtonStyle: ButtonStyle {
