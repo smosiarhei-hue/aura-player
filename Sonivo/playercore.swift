@@ -153,12 +153,8 @@ final class PlayerCore {
     private(set) var sleepTimerRemaining: Double? = nil
     private var sleepDeadline: Date?
 
-    /// Single watchdog. This used to be two `DispatchSourceTimer`s plus an endless `Task`,
-    /// all publishing `@Observable` state from several queues while `tickProgress()` called
-    /// `tickSleepTimer()` 60x/s on top — re-rendering the player screen until the app died.
-    private var sleepWatchdog: DispatchSourceTimer?
+    private var sleepTimerTask: Task<Void, Never>?
     private var lastPublishedSleepRemaining: Double = 0
-    private let sleepTimerQueue = DispatchQueue(label: "com.sonivo.sleeptimer", qos: .utility)
 
     private let defaults = UserDefaults.standard
 
@@ -2475,26 +2471,21 @@ final class PlayerCore {
         lastPublishedSleepRemaining = 0
     }
 
-    /// One watchdog only, firing once per second with generous leeway. It runs on a private
-    /// queue purely so it survives backgrounding; every state mutation hops to the main actor.
+    /// Safe watchdog task firing once per second on MainActor.
     private func startSleepTimerWatchdog() {
         stopSleepTimerWatchdog()
-        let source = DispatchSource.makeTimerSource(queue: sleepTimerQueue)
-        source.schedule(deadline: .now() + 1.0, repeating: 1.0, leeway: .milliseconds(250))
-        source.setEventHandler { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.tickSleepTimer()
+        sleepTimerTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, let self else { break }
+                self.tickSleepTimer()
             }
         }
-        source.resume()
-        sleepWatchdog = source
     }
 
     private func stopSleepTimerWatchdog() {
-        guard let source = sleepWatchdog else { return }
-        sleepWatchdog = nil
-        source.setEventHandler {}
-        source.cancel()
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
     }
 
     func tickSleepTimer() {

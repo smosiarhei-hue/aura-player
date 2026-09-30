@@ -330,48 +330,16 @@ struct PlayerScreenV2: View {
     }
 
     private var topHeader: some View {
-        ZStack {
-            VStack(spacing: 5) {
-                Capsule()
-                    .fill(Color.white.opacity(0.32))
-                    .frame(width: 36, height: 4.5)
-                    .padding(.top, 4)
+        VStack(spacing: 5) {
+            Capsule()
+                .fill(Color.white.opacity(0.32))
+                .frame(width: 36, height: 4.5)
+                .padding(.top, 4)
 
-                Text("СЕЙЧАС ИГРАЕТ")
-                    .font(.system(size: 10, weight: .bold, design: .default))
-                    .tracking(1.0)
-                    .foregroundStyle(SN.inkFaint)
-            }
-
-            if let timerText = player.sleepTimerFormatted {
-                HStack {
-                    Spacer()
-                    Button {
-                        Haptics.tap(.light)
-                        openModal(.sleepTimer)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "timer")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text(timerText)
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        }
-                        .foregroundStyle(Color.orange)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4.5)
-                        .background(
-                            Capsule()
-                                .fill(Color.orange.opacity(0.18))
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(Color.orange.opacity(0.42), lineWidth: 0.8)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                }
-            }
+            Text("СЕЙЧАС ИГРАЕТ")
+                .font(.system(size: 10, weight: .bold, design: .default))
+                .tracking(1.0)
+                .foregroundStyle(SN.inkFaint)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 36)
@@ -571,21 +539,51 @@ struct PlayerScreenV2: View {
     }
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             metadataRow
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
             FluidVolumeSlider()
-            .accessibilityElement(children: .contain)
-            HStack {
-                GlassIconButton(systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble", tint: showLyricsMode ? SN.amber : SN.inkMuted, accessibilityLabel: "Текст песни") { withAnimation(SN.spring) { showLyricsMode.toggle() } }
-                Spacer()
-                GlassIconButton(systemImage: "slider.vertical.3", tint: player.eqEnabled ? SN.amber : SN.inkMuted, accessibilityLabel: "Эквалайзер") { openModal(.equalizer) }
-                Spacer()
-                AirPlayButtonView().frame(width: tapSide, height: tapSide).glassCircle()
-                Spacer()
-                GlassIconButton(systemImage: "list.bullet", tint: SN.inkMuted, accessibilityLabel: "Очередь") { openModal(.queue) }
-            }.padding(.horizontal, 16)
+                .accessibilityElement(children: .contain)
+
+            // Apple Design Bottom Action Bar: Lyrics | AirPlay | Sleep Timer | EQ | Queue
+            HStack(spacing: 0) {
+                GlassIconButton(
+                    systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble",
+                    tint: showLyricsMode ? SN.amber : SN.inkMuted,
+                    accessibilityLabel: "Текст песни"
+                ) {
+                    withAnimation(SN.spring) { showLyricsMode.toggle() }
+                }
+                .frame(maxWidth: .infinity)
+
+                AirPlayButtonView()
+                    .frame(width: tapSide, height: tapSide)
+                    .glassCircle()
+                    .frame(maxWidth: .infinity)
+
+                sleepTimerBottomButton
+                    .frame(maxWidth: .infinity)
+
+                GlassIconButton(
+                    systemImage: "slider.vertical.3",
+                    tint: player.eqEnabled ? SN.amber : SN.inkMuted,
+                    accessibilityLabel: "Эквалайзер"
+                ) {
+                    openModal(.equalizer)
+                }
+                .frame(maxWidth: .infinity)
+
+                GlassIconButton(
+                    systemImage: "list.bullet",
+                    tint: SN.inkMuted,
+                    accessibilityLabel: "Очередь"
+                ) {
+                    openModal(.queue)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, 4)
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)
@@ -615,123 +613,88 @@ struct PlayerScreenV2: View {
             .ignoresSafeArea(edges: .bottom)
         }
     }
+
+    private var sleepTimerBottomButton: some View {
+        Button {
+            Haptics.tap(.light)
+            openModal(.sleepTimer)
+        } label: {
+            if let timerText = player.sleepTimerFormatted {
+                HStack(spacing: 5) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .symbolEffect(.pulse, options: .repeating)
+                    Text(timerText)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                }
+                .foregroundStyle(Color.orange)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule()
+                        .fill(Color.orange.opacity(0.18))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.orange.opacity(0.50), lineWidth: 1)
+                        )
+                        .shadow(color: Color.orange.opacity(0.28), radius: 8, y: 0)
+                )
+            } else {
+                Image(systemName: "moon.zzz")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(SN.inkMuted)
+                    .frame(width: tapSide, height: tapSide)
+                    .glassCircle()
+            }
+        }
+        .buttonStyle(TactileButtonStyle(scale: 0.92))
+        .accessibilityLabel(player.sleepTimerRemaining > 0 ? "Таймер сна активен: \(player.sleepTimerFormatted ?? "")" : "Таймер сна")
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.sleepTimerRemaining > 0)
+    }
+
     private var metadataRow: some View {
         let current = track
-        return HStack(spacing: 12) {
+        return HStack(alignment: .center, spacing: 14) {
             Button(action: openArtist) {
-                VStack(alignment: .leading, spacing: 2) {
-                    MarqueeText(text: current?.title ?? "Не играет", font: SN.rounded(.title2, .bold), color: SN.ink, height: 28)
-                    MarqueeText(text: current?.artist ?? "", font: SN.rounded(.body, .medium), color: SN.inkMuted, height: 22)
-                }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 3) {
+                    MarqueeText(
+                        text: current?.title ?? "Не играет",
+                        font: SN.rounded(.title2, .bold),
+                        color: SN.ink,
+                        height: 28
+                    )
+                    MarqueeText(
+                        text: current?.artist ?? "",
+                        font: SN.rounded(.body, .medium),
+                        color: SN.inkMuted,
+                        height: 22
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
             .disabled(current == nil || resolvingArtist)
 
-            HStack(spacing: 10) {
-                if videoShotURL != nil {
-                    Menu {
-                        Button {
-                            toggleVideoShot()
-                        } label: {
-                            Label(
-                                isVideoShotEnabled ? "Скрыть видео-шот" : "Показать видео-шот",
-                                systemImage: isVideoShotEnabled ? "eye.slash" : "eye"
-                            )
-                        }
-
-                        Button {
-                            generateAIVideoShot(forceRegenerate: true)
-                        } label: {
-                            Label("Перегенерировать AI Видео-шот (новый вайб)", systemImage: "arrow.triangle.2.circlepath")
-                        }
-
-                        Divider()
-
-                        Button(role: .destructive) {
-                            deleteCurrentVideoShot()
-                        } label: {
-                            Label("Удалить видео-шот", systemImage: "trash")
-                        }
-                    } label: {
-                        Image(systemName: isVideoShotEnabled ? "video.fill" : "video.slash.fill")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(isVideoShotEnabled ? SN.positive : SN.inkMuted)
-                            .frame(width: tapSide, height: tapSide)
-                            .glassCircle()
-                    }
-                    .accessibilityLabel("Меню видео-шота")
-                } else if current != nil {
-                    if aiVideoShotService.isGenerating && aiVideoShotService.currentTrackId == current?.id.uuidString {
-                        Button {
-                            waveMessage = aiVideoShotService.statusMessage
-                        } label: {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: SN.accent))
-                                .frame(width: tapSide, height: tapSide)
-                        }
+            HStack(spacing: 8) {
+                Button {
+                    guard let current else { return }
+                    Haptics.tap(.medium)
+                    library.toggleFavorite(current)
+                } label: {
+                    let favorite = current.map(library.isTrackFavorite) ?? false
+                    Image(systemName: favorite ? "heart.fill" : "heart")
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundStyle(favorite ? SN.heart : SN.inkMuted)
+                        .symbolEffect(.bounce, value: favorite)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: tapSide, height: tapSide)
                         .glassCircle()
-                        .accessibilityLabel("Создание AI Видео-шота")
-                    } else {
-                        GlassIconButton(
-                            systemImage: "sparkles.tv",
-                            tint: SN.inkMuted,
-                            accessibilityLabel: "Создать AI Видео-шот",
-                            action: { generateAIVideoShot() }
-                        )
-                    }
                 }
+                .buttonStyle(TactileButtonStyle(scale: 0.90))
+                .disabled(current == nil)
+                .accessibilityLabel(current.map(library.isTrackFavorite) == true ? "Убрать из избранного" : "В избранное")
 
-                if current != nil {
-                    Menu {
-                        Button {
-                            startAIVibeWave()
-                        } label: {
-                            Label("AI Вайб-волна (умный подбор)", systemImage: "sparkles")
-                        }
-
-                        Button {
-                            startTrackWave()
-                        } label: {
-                            Label("Обычная волна по треку", systemImage: "dot.radiowaves.left.and.right")
-                        }
-                    } label: {
-                        Image(systemName: "dot.radiowaves.left.and.right")
-                            .foregroundStyle(waveActive ? SN.amber : SN.inkMuted)
-                            .frame(width: tapSide, height: tapSide)
-                    }
-                    .glassCircle()
-                    .disabled(waveLoading || AIDJService.shared.isVibeWaveGenerating)
-                    .accessibilityLabel("Волна по треку")
-                }
-
-                if let current {
-                    let disliked = UserTasteEngine.shared.isDisliked(track: current)
-                    Menu {
-                        if disliked {
-                            Button {
-                                UserTasteEngine.shared.removeDislike(track: current)
-                                waveMessage = "Трек снова может появиться в волне"
-                            } label: {
-                                Label("Отменить дизлайк", systemImage: "arrow.uturn.backward")
-                            }
-                        } else {
-                            Button(role: .destructive) {
-                                UserTasteEngine.shared.recordDislike(track: current)
-                                MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
-                                waveMessage = "Трек исключён из Моей волны"
-                                player.next()
-                            } label: {
-                                Label("Не рекомендовать", systemImage: "hand.thumbsdown")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                            .foregroundStyle(disliked ? SN.heart : SN.inkMuted)
-                            .frame(width: tapSide, height: tapSide)
-                    }
-                    .glassCircle()
-                    .accessibilityLabel(disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек")
-                }
+                moreMenuButton
             }
         }
     }
@@ -777,21 +740,17 @@ struct PlayerScreenV2: View {
     private var transportControls: some View {
         HStack(spacing: 0) {
             Button {
-                guard let current = track else { return }
-                Haptics.tap(.medium)
-                library.toggleFavorite(current)
+                Haptics.tap(.light)
+                player.shuffle.toggle()
             } label: {
-                let favorite = track.map(library.isTrackFavorite) ?? false
-                Image(systemName: favorite ? "heart.fill" : "heart")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(favorite ? SN.heart : SN.inkMuted)
-                    .symbolEffect(.bounce, value: favorite)
-                    .contentTransition(.symbolEffect(.replace))
+                Image(systemName: "shuffle")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(player.shuffle ? SN.amber : SN.inkMuted)
                     .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
-            .disabled(track == nil)
-            .accessibilityLabel(track.map(library.isTrackFavorite) == true ? "Убрать из избранного" : "В избранное")
+            .accessibilityLabel(player.shuffle ? "Перемешивание включено" : "Перемешать")
 
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
@@ -817,8 +776,22 @@ struct PlayerScreenV2: View {
                     .frame(maxWidth: .infinity, minHeight: 56)
             }
 
-            moreMenuButton
-                .frame(maxWidth: .infinity)
+            Button {
+                Haptics.tap(.light)
+                switch player.repeatMode {
+                case .off: player.repeatMode = .all
+                case .all: player.repeatMode = .one
+                case .one: player.repeatMode = .off
+                }
+            } label: {
+                Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(player.repeatMode != .off ? SN.amber : SN.inkMuted)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
+            }
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Повтор")
         }
         .foregroundStyle(SN.ink)
         .buttonStyle(TactileButtonStyle(scale: 0.94))
@@ -826,118 +799,159 @@ struct PlayerScreenV2: View {
 
     private var moreMenuButton: some View {
         Menu {
-            Button {
-                startAIVibeWave()
-            } label: {
-                Label("AI Вайб-волна (похожие по вайбу)", systemImage: "sparkles")
-            }
-            .disabled(track == nil || AIDJService.shared.isVibeWaveGenerating)
-
-            if videoShotURL != nil {
-                Button {
-                    generateAIVideoShot(forceRegenerate: true)
-                } label: {
-                    Label("Перегенерировать AI Видео-шот (новый вайб)", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(track == nil || aiVideoShotService.isGenerating)
-            } else {
-                Button {
-                    generateAIVideoShot()
-                } label: {
-                    Label("Создать AI Видео-шот (MiniMax H3)", systemImage: "sparkles.tv")
-                }
-                .disabled(track == nil || aiVideoShotService.isGenerating)
-            }
-
-            Button {
-                SettingsStore.shared.isNeuralEngineEnabled.toggle()
-                waveMessage = SettingsStore.shared.isNeuralEngineEnabled ? "🧠 Apple Neural Engine включён" : "🧠 Apple Neural Engine выключен"
-                Task {
-                    try? await Task.sleep(for: .seconds(2.0))
-                    waveMessage = nil
-                }
-                Task { await loadLyrics() }
-            } label: {
-                Label(
-                    SettingsStore.shared.isNeuralEngineEnabled ? "Neural Engine: Включён" : "Neural Engine: Выключен",
-                    systemImage: SettingsStore.shared.isNeuralEngineEnabled ? "brain.fill" : "brain"
-                )
-            }
-
-            Divider()
-
-            Button { withAnimation(SN.spring) { showLyricsMode.toggle() } } label: {
-                Label("Текст песни", systemImage: "quote.bubble")
-            }
-
-            Menu {
-                Button {
-                    SettingsStore.shared.lyricsOffset -= 0.25
-                    showOffsetMessage()
-                } label: {
-                    Label("Текст спешит (-0.25 с)", systemImage: "minus.circle")
-                }
-                Button {
-                    SettingsStore.shared.lyricsOffset += 0.25
-                    showOffsetMessage()
-                } label: {
-                    Label("Текст отстаёт (+0.25 с)", systemImage: "plus.circle")
-                }
-                Button {
-                    SettingsStore.shared.lyricsOffset = 0.0
-                    showOffsetMessage()
-                } label: {
-                    Label("Сброс на 0.0 с", systemImage: "arrow.uturn.backward")
-                }
-            } label: {
-                let ms = Int(SettingsStore.shared.lyricsOffset * 1000)
-                let sign = ms > 0 ? "+" : ""
-                Label("Синхронизация текста (\(sign)\(ms) мс)", systemImage: "clock.arrow.circlepath")
-            }
-
-            Button { openModal(.queue) } label: {
-                Label("Очередь", systemImage: "list.bullet")
-            }
-            Button { openModal(.equalizer) } label: {
-                Label("Эквалайзер", systemImage: "slider.vertical.3")
-            }
-            Button { openModal(.sleepTimer) } label: {
-                if let timerText = player.sleepTimerFormatted {
-                    Label("Таймер сна (\(timerText))", systemImage: "timer")
-                } else {
-                    Label("Таймер сна", systemImage: "timer")
-                }
-            }
-            Button { openModal(.settings) } label: {
-                Label("Настройки", systemImage: "gearshape")
-            }
-
-            Divider()
-
-            Button {
-                Task {
-                    if await SonivoDiagnostics.shared.sendReportToTelegram() {
-                        waveMessage = "✅ Диагностика отправлена"
-                        try? await Task.sleep(for: .seconds(2.5))
-                        waveMessage = nil
+            if let current = track {
+                Section {
+                    let disliked = UserTasteEngine.shared.isDisliked(track: current)
+                    Button(role: disliked ? nil : .destructive) {
+                        if disliked {
+                            UserTasteEngine.shared.removeDislike(track: current)
+                            waveMessage = "Трек снова может появиться в волне"
+                        } else {
+                            UserTasteEngine.shared.recordDislike(track: current)
+                            MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
+                            waveMessage = "Трек исключён из Моей волны"
+                            player.next()
+                        }
+                    } label: {
+                        Label(
+                            disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек",
+                            systemImage: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown"
+                        )
                     }
                 }
-            } label: {
-                Label("Отправить логи", systemImage: "paperplane")
             }
 
-            Button(role: .destructive) {
-                player.stopAndClear()
-                close()
-            } label: {
-                Label("Остановить и очистить", systemImage: "stop.fill")
+            Section {
+                Button {
+                    startAIVibeWave()
+                } label: {
+                    Label("AI Вайб-волна (похожие по вайбу)", systemImage: "sparkles")
+                }
+                .disabled(track == nil || AIDJService.shared.isVibeWaveGenerating)
+
+                if videoShotURL != nil {
+                    Button {
+                        toggleVideoShot()
+                    } label: {
+                        Label(
+                            isVideoShotEnabled ? "Скрыть видео-шот" : "Показать видео-шот",
+                            systemImage: isVideoShotEnabled ? "eye.slash" : "eye"
+                        )
+                    }
+
+                    Button {
+                        generateAIVideoShot(forceRegenerate: true)
+                    } label: {
+                        Label("Перегенерировать AI Видео-шот (новый вайб)", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(track == nil || aiVideoShotService.isGenerating)
+
+                    Button(role: .destructive) {
+                        deleteCurrentVideoShot()
+                    } label: {
+                        Label("Удалить видео-шот", systemImage: "trash")
+                    }
+                } else {
+                    Button {
+                        generateAIVideoShot()
+                    } label: {
+                        Label("Создать AI Видео-шот (MiniMax H3)", systemImage: "sparkles.tv")
+                    }
+                    .disabled(track == nil || aiVideoShotService.isGenerating)
+                }
+            }
+
+            Section {
+                Button {
+                    SettingsStore.shared.isNeuralEngineEnabled.toggle()
+                    waveMessage = SettingsStore.shared.isNeuralEngineEnabled ? "🧠 Apple Neural Engine включён" : "🧠 Apple Neural Engine выключен"
+                    Task {
+                        try? await Task.sleep(for: .seconds(2.0))
+                        waveMessage = nil
+                    }
+                    Task { await loadLyrics() }
+                } label: {
+                    Label(
+                        SettingsStore.shared.isNeuralEngineEnabled ? "Neural Engine: Включён" : "Neural Engine: Выключен",
+                        systemImage: SettingsStore.shared.isNeuralEngineEnabled ? "brain.fill" : "brain"
+                    )
+                }
+            }
+
+            Section {
+                Button { withAnimation(SN.spring) { showLyricsMode.toggle() } } label: {
+                    Label("Текст песни", systemImage: "quote.bubble")
+                }
+
+                Menu {
+                    Button {
+                        SettingsStore.shared.lyricsOffset -= 0.25
+                        showOffsetMessage()
+                    } label: {
+                        Label("Текст спешит (-0.25 с)", systemImage: "minus.circle")
+                    }
+                    Button {
+                        SettingsStore.shared.lyricsOffset += 0.25
+                        showOffsetMessage()
+                    } label: {
+                        Label("Текст отстаёт (+0.25 с)", systemImage: "plus.circle")
+                    }
+                    Button {
+                        SettingsStore.shared.lyricsOffset = 0.0
+                        showOffsetMessage()
+                    } label: {
+                        Label("Сброс на 0.0 с", systemImage: "arrow.uturn.backward")
+                    }
+                } label: {
+                    let ms = Int(SettingsStore.shared.lyricsOffset * 1000)
+                    let sign = ms > 0 ? "+" : ""
+                    Label("Синхронизация текста (\(sign)\(ms) мс)", systemImage: "clock.arrow.circlepath")
+                }
+
+                Button { openModal(.queue) } label: {
+                    Label("Очередь", systemImage: "list.bullet")
+                }
+                Button { openModal(.equalizer) } label: {
+                    Label("Эквалайзер", systemImage: "slider.vertical.3")
+                }
+                Button { openModal(.sleepTimer) } label: {
+                    if let timerText = player.sleepTimerFormatted {
+                        Label("Таймер сна (\(timerText))", systemImage: "moon.zzz.fill")
+                    } else {
+                        Label("Таймер сна", systemImage: "moon.zzz")
+                    }
+                }
+                Button { openModal(.settings) } label: {
+                    Label("Настройки", systemImage: "gearshape")
+                }
+            }
+
+            Section {
+                Button {
+                    Task {
+                        if await SonivoDiagnostics.shared.sendReportToTelegram() {
+                            waveMessage = "✅ Диагностика отправлена"
+                            try? await Task.sleep(for: .seconds(2.5))
+                            waveMessage = nil
+                        }
+                    }
+                } label: {
+                    Label("Отправить логи", systemImage: "paperplane")
+                }
+
+                Button(role: .destructive) {
+                    player.stopAndClear()
+                    close()
+                } label: {
+                    Label("Остановить и очистить", systemImage: "stop.fill")
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 21, weight: .bold))
+                .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(SN.inkMuted)
-                .frame(width: 48, height: 48)
-                .contentShape(Circle())
+                .frame(width: tapSide, height: tapSide)
+                .glassCircle()
         }
         .accessibilityLabel("Ещё")
     }

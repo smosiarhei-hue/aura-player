@@ -113,6 +113,7 @@ struct MyWaveHeroView: View {
             .accessibilityLabel("Настройки")
         }
         .padding(.horizontal, 20)
+        .padding(.top, 8)
         .background {
             // Programmatic AI Assistant binding retention
             if let showAIAssistant = showAIAssistant, false {

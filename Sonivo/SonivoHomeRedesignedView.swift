@@ -231,7 +231,7 @@ struct SonivoHomeRedesignedView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .frame(width: SN.tapTarget, height: SN.tapTarget)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .contentShape(Rectangle())
             }
             .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
@@ -246,7 +246,7 @@ struct SonivoHomeRedesignedView: View {
                             showPlayer = true
                         }
                     }
-                }.padding(.horizontal, 12)
+                }.padding(.horizontal, 16)
             }
         }
     }
@@ -275,7 +275,7 @@ struct SonivoHomeRedesignedView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .frame(width: SN.tapTarget, height: SN.tapTarget)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .contentShape(Rectangle())
             }
             .buttonStyle(CardPressStyle(scale: 0.98, haptic: true))
@@ -288,7 +288,7 @@ struct SonivoHomeRedesignedView: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
 
             if !newTracks.isEmpty {
                 NavigationLink {
@@ -322,7 +322,7 @@ struct SonivoHomeRedesignedView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(SN.display(.title2, .bold)).foregroundStyle(.white)
             Text(subtitle).font(SN.text(.caption)).foregroundStyle(.white.opacity(0.48))
-        }.padding(.horizontal, 20)
+        }.padding(.horizontal, 16)
     }
 
     private func toggleWave() {

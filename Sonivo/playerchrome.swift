@@ -57,9 +57,8 @@ struct SleepTimerSheetView: View {
     private let options = [5, 10, 15, 20, 30, 45, 60, 90, 120]
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                SonivoScreenBackground(colors: [SN.ember, SN.bgRaised], showsMesh: false)
+        ZStack {
+            SonivoScreenBackground(colors: [SN.ember, SN.bgRaised], showsMesh: false)
 
                 VStack(spacing: 16) {
                     if let remaining = player.sleepTimerRemaining, remaining > 0 {
