@@ -118,6 +118,15 @@ final class ActivePlayerPresentation {
     func extendSleepTimer(byMinutes: Int) { legacy.extendSleepTimer(byMinutes: byMinutes) }
     func cancelSleepTimer() { legacy.cancelSleepTimer() }
 
+    var shuffle: Bool {
+        get { legacy.shuffle }
+        set { legacy.shuffle = newValue }
+    }
+    var repeatMode: RepeatMode {
+        get { legacy.repeatMode }
+        set { legacy.repeatMode = newValue }
+    }
+
     var eqEnabled: Bool {
         get { legacy.eqEnabled }
         set { legacy.eqEnabled = newValue }

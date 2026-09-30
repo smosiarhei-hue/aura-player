@@ -648,8 +648,8 @@ struct PlayerScreenV2: View {
             }
         }
         .buttonStyle(TactileButtonStyle(scale: 0.92))
-        .accessibilityLabel(player.sleepTimerRemaining > 0 ? "Таймер сна активен: \(player.sleepTimerFormatted ?? "")" : "Таймер сна")
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.sleepTimerRemaining > 0)
+        .accessibilityLabel((player.sleepTimerRemaining ?? 0) > 0 ? "Таймер сна активен: \(player.sleepTimerFormatted ?? "")" : "Таймер сна")
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: (player.sleepTimerRemaining ?? 0) > 0)
     }
 
     private var metadataRow: some View {
