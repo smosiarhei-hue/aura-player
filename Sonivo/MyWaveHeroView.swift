@@ -1,3 +1,7 @@
+// Path: Sonivo/MyWaveHeroView.swift
+// Премиальная витрина «Моя волна» (Apple Design & Skiper UI Fluid Harmonics)
+// Живая органическая сцена Aura Wave Stage, концентрические дыхающие ореолы и тактильные контролы.
+
 import SwiftUI
 
 struct MyWaveHeroView: View {
@@ -46,18 +50,18 @@ struct MyWaveHeroView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 1. Top Header: Centered "Моя волна" + Top Right Search
+            // 1. Top Header: "Моя волна" + Настройки
             headerBar
 
-            // 2. Bold Vibrant Artist Name(s)
+            // 2. Bold Artist Name(s)
             artistTitleSection
                 .padding(.top, 8)
-                .padding(.bottom, 12)
+                .padding(.bottom, 14)
 
-            // 3. Central Stage: Artist Cutout + Overlaid Track Artwork Sleeve
+            // 3. Central Stage: Живая органическая сцена Aura Wave Stage (Skiper UI + Apple Design)
             centralVisualStage
                 .frame(height: 290)
-                .scaleEffect(isWaveShaking ? 1.07 : 1.0)
+                .scaleEffect(isWaveShaking ? 1.08 : 1.0)
                 .animation(.spring(response: 0.38, dampingFraction: 0.65), value: isWaveShaking)
                 .contentShape(Rectangle())
                 .gesture(swipeGesture)
@@ -80,7 +84,7 @@ struct MyWaveHeroView: View {
         }
         .padding(.vertical, 12)
         .background {
-            // Native iOS 26/27 Liquid Aura Glow (No heavy video loop!)
+            // Native iOS Liquid Aura Glow
             atmosphericAuraBackdrop
         }
         .task(id: activeTrack?.id) {
@@ -91,10 +95,19 @@ struct MyWaveHeroView: View {
     // MARK: - Header Bar
     private var headerBar: some View {
         HStack {
-            Text("Моя волна")
-                .font(.system(size: 26, weight: .black, design: .default))
-                .foregroundStyle(Color.white)
-                .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
+            HStack(spacing: 8) {
+                Text("Моя волна")
+                    .font(.system(size: 26, weight: .black, design: .default))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
+
+                if player.isPlaying {
+                    Circle()
+                        .fill(accentColor)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: accentColor.opacity(0.8), radius: 4)
+                }
+            }
 
             Spacer()
 
@@ -141,65 +154,114 @@ struct MyWaveHeroView: View {
         }
     }
 
-    // MARK: - Central Visual Stage
+    // MARK: - Central Living Aura Wave Stage (Skiper UI & Apple Living Art)
     private var centralVisualStage: some View {
         ZStack {
-            // Soft atmospheric glow behind the artwork
+            // 1. Внешний рассеянный световой ореол трека (Outer Ambient Halo)
             RadialGradient(
                 colors: [
-                    accentColor.opacity(0.35),
-                    Color(red: 0.15, green: 0.25, blue: 0.50).opacity(0.20),
+                    accentColor.opacity(player.isPlaying ? 0.45 : 0.28),
+                    Color(red: 0.20, green: 0.28, blue: 0.60).opacity(0.20),
                     Color.clear
                 ],
                 center: .center,
                 startRadius: 20,
-                endRadius: 180
+                endRadius: 200
             )
-            .blur(radius: 40)
+            .frame(width: 320, height: 320)
+            .blur(radius: 45)
 
-            // Behind: Artist cutout/photo if available
+            // 2. Атмосферное фото артиста в виде мягкого панорамного диска (без кривых наложений)
             if let artistImageUrl {
                 RemoteArtwork(urlString: artistImageUrl, corner: 999)
-                    .frame(width: 210, height: 210)
+                    .frame(width: 250, height: 250)
                     .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.15), lineWidth: 1.5))
-                    .shadow(color: Color.black.opacity(0.60), radius: 24, y: 8)
-                    .offset(y: -24)
-            } else {
-                // Subtle glowing silhouette aura when no separate photo
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [accentColor.opacity(0.25), Color.blue.opacity(0.15)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 190, height: 190)
-                    .blur(radius: 20)
-                    .offset(y: -20)
+                    .blur(radius: 28)
+                    .opacity(0.50)
+                    .scaleEffect(player.isPlaying ? 1.04 : 1.0)
+                    .animation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true), value: player.isPlaying)
             }
 
-            // In Front: The square track cover sleeve pinned over the lower half
-            if let cover = activeTrack?.coverURL {
-                RemoteArtwork(urlString: cover, corner: 18)
-                    .frame(width: 146, height: 146)
-                    .shadow(color: Color.black.opacity(0.85), radius: 18, y: 8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
-                    )
-                    .offset(y: artistImageUrl != nil ? 34 : 0)
-            } else if let track = activeTrack {
-                SmallArtwork(track: track, size: 146)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .shadow(color: Color.black.opacity(0.85), radius: 18, y: 8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
-                    )
-                    .offset(y: artistImageUrl != nil ? 34 : 0)
+            // 3. Концентрические дышащие кольца волны (Skiper UI Resonance Rings)
+            // Внешнее пульсирующее кольцо 264x264
+            Circle()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            accentColor.opacity(0.45),
+                            Color(red: 0.0, green: 0.95, blue: 0.99).opacity(0.35),
+                            accentColor.opacity(0.15)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+                .frame(width: 264, height: 264)
+                .scaleEffect(isWaveShaking ? 1.15 : (player.isPlaying ? 1.03 : 1.0))
+                .opacity(player.isPlaying ? 0.85 : 0.45)
+                .animation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true), value: player.isPlaying)
+
+            // Среднее кольцо ряби 234x234
+            RoundedRectangle(cornerRadius: 38, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.30),
+                            accentColor.opacity(0.55),
+                            Color.white.opacity(0.10)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1.2
+                )
+                .frame(width: 234, height: 234)
+                .scaleEffect(isWaveShaking ? 1.10 : 1.0)
+
+            // 4. Главная суперэллиптическая карточка обложки (Hero Superellipse Card 206x206)
+            Button {
+                Haptics.tap(.light)
+                showPlayer = true
+            } label: {
+                ZStack {
+                    if let cover = activeTrack?.coverURL {
+                        RemoteArtwork(urlString: cover, corner: 26)
+                            .frame(width: 206, height: 206)
+                    } else if let track = activeTrack {
+                        SmallArtwork(track: track, size: 206)
+                            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    } else {
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(Color(white: 0.15))
+                            .frame(width: 206, height: 206)
+                            .overlay(
+                                Image(systemName: "waveform")
+                                    .font(.system(size: 44, weight: .bold))
+                                    .foregroundStyle(accentColor)
+                            )
+                    }
+
+                    // Тончайшая стеклянная кромка Apple Glass Highlight
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.35),
+                                    Color.white.opacity(0.10),
+                                    Color.clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.8
+                        )
+                }
+                .shadow(color: Color.black.opacity(0.70), radius: 24, y: 10)
+                .shadow(color: accentColor.opacity(0.35), radius: 18, y: 4)
             }
+            .buttonStyle(TactileButtonStyle(scale: 0.97))
+            .accessibilityLabel("Открыть плеер")
         }
         .offset(x: dragOffset)
         .rotationEffect(.degrees(Double(dragOffset / 200.0) * 3.5))
@@ -266,12 +328,14 @@ struct MyWaveHeroView: View {
                     Circle()
                         .fill(Color(white: 0.14).opacity(0.92))
                         .frame(width: 60, height: 60)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8))
                         .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
 
                     Image(systemName: "waveform")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(accentColor)
+                        .scaleEffect(player.isPlaying ? 1.06 : 1.0)
+                        .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: player.isPlaying)
                 }
             }
             .buttonStyle(TactileButtonStyle(scale: 0.95))
@@ -302,13 +366,13 @@ struct MyWaveHeroView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 60)
                 .background(Color(white: 0.14).opacity(0.92), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8))
                 .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
             }
             .buttonStyle(TactileButtonStyle(scale: 0.96))
             .accessibilityLabel("Открыть плеер")
 
-            // Right: Play/Pause Circular Capsule (место лайка)
+            // Right: Play/Pause Circular Capsule
             Button {
                 Haptics.tap(.medium)
                 if pendingTrack != nil {
@@ -329,7 +393,7 @@ struct MyWaveHeroView: View {
                     Circle()
                         .fill(Color(white: 0.14).opacity(0.92))
                         .frame(width: 60, height: 60)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8))
                         .shadow(color: Color.black.opacity(0.4), radius: 10, y: 4)
 
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -447,7 +511,7 @@ struct MyWaveHeroView: View {
         }
     }
 
-    // MARK: - Native iOS 26/27 Atmospheric Backdrop
+    // MARK: - Native iOS Atmospheric Backdrop
     private var atmosphericAuraBackdrop: some View {
         ZStack {
             Color.black.ignoresSafeArea()
