@@ -2,7 +2,7 @@ name: Verify AutoMix V2
 
 on:
   push:
-    branches: [ feature/automix-engine-v2, feature/modern-my-wave-home ]
+    branches: [ feature/automix-engine-v2 ]
   workflow_dispatch:
 
 permissions:
