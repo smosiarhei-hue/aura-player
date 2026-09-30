@@ -51,7 +51,7 @@ struct MarqueeText: View {
 }
 
 struct SleepTimerSheetView: View {
-    @Bindable private var player = PlayerCore.shared
+    private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var minutes = 30
     private let options = [5, 10, 15, 20, 30, 45, 60, 90, 120]
@@ -207,8 +207,9 @@ struct SleepTimerSheetView: View {
 
                             Button {
                                 Haptics.tap(.medium)
-                                player.setSleepTimer(minutes: minutes)
+                                let chosen = minutes
                                 dismiss()
+                                player.setSleepTimer(minutes: chosen)
                             } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: "timer")
@@ -243,12 +244,13 @@ struct SleepTimerSheetView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { dismiss() }
                 }
-                if player.sleepTimerRemaining == nil {
-                    ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .confirmationAction) {
+                    if player.sleepTimerRemaining == nil {
                         Button("Готово") {
                             Haptics.tap(.light)
-                            player.setSleepTimer(minutes: minutes)
+                            let chosen = minutes
                             dismiss()
+                            player.setSleepTimer(minutes: chosen)
                         }
                         .fontWeight(.bold)
                     }

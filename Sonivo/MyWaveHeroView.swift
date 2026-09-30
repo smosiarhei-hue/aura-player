@@ -154,111 +154,72 @@ struct MyWaveHeroView: View {
         }
     }
 
-    // MARK: - Central Living Aura Wave Stage (Skiper UI & Apple Living Art)
+    // MARK: - Central Living Spatial Aura Stage (Apple Spatial Blur & Apple Design)
     private var centralVisualStage: some View {
         ZStack {
-            // 1. Внешний рассеянный световой ореол трека (Outer Ambient Halo)
-            RadialGradient(
-                colors: [
-                    accentColor.opacity(player.isPlaying ? 0.45 : 0.28),
-                    Color(red: 0.20, green: 0.28, blue: 0.60).opacity(0.20),
-                    Color.clear
-                ],
-                center: .center,
-                startRadius: 20,
-                endRadius: 200
-            )
-            .frame(width: 320, height: 320)
-            .blur(radius: 45)
-
-            // 2. Атмосферное фото артиста в виде мягкого панорамного диска (без кривых наложений)
-            if let artistImageUrl {
-                RemoteArtwork(urlString: artistImageUrl, corner: 999)
-                    .frame(width: 250, height: 250)
-                    .clipShape(Circle())
-                    .blur(radius: 28)
-                    .opacity(0.50)
-                    .scaleEffect(player.isPlaying ? 1.04 : 1.0)
-                    .animation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true), value: player.isPlaying)
+            // 1. Внешнее глубокое пространственное рассеяние (Deep Spatial Atmosphere Blur)
+            Group {
+                if let cover = activeTrack?.coverURL {
+                    RemoteArtwork(urlString: cover, corner: 60)
+                } else if let track = activeTrack {
+                    SmallArtwork(track: track, size: 310)
+                } else {
+                    Circle().fill(accentColor)
+                }
             }
+            .frame(width: 310, height: 310)
+            .blur(radius: 60)
+            .saturation(1.4)
+            .opacity(player.isPlaying ? 0.65 : 0.40)
+            .scaleEffect(isWaveShaking ? 1.25 : (player.isPlaying ? 1.06 : 1.0))
+            .animation(.spring(response: 0.60, dampingFraction: 0.8), value: isWaveShaking)
+            .animation(.easeInOut(duration: 3.5).repeatForever(autoreverses: true), value: player.isPlaying)
 
-            // 3. Концентрические дышащие кольца волны (Skiper UI Resonance Rings)
-            // Внешнее пульсирующее кольцо 264x264
-            Circle()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            accentColor.opacity(0.45),
-                            Color(red: 0.0, green: 0.95, blue: 0.99).opacity(0.35),
-                            accentColor.opacity(0.15)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.5
-                )
-                .frame(width: 264, height: 264)
-                .scaleEffect(isWaveShaking ? 1.15 : (player.isPlaying ? 1.03 : 1.0))
-                .opacity(player.isPlaying ? 0.85 : 0.45)
-                .animation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true), value: player.isPlaying)
+            // 2. Фокусированный ореол пространственной глубины (Mid Spatial Halo Blur)
+            Group {
+                if let artistImageUrl {
+                    RemoteArtwork(urlString: artistImageUrl, corner: 999)
+                } else if let cover = activeTrack?.coverURL {
+                    RemoteArtwork(urlString: cover, corner: 40)
+                } else if let track = activeTrack {
+                    SmallArtwork(track: track, size: 245)
+                } else {
+                    Circle().fill(accentColor)
+                }
+            }
+            .frame(width: 245, height: 245)
+            .clipShape(Circle())
+            .blur(radius: 28)
+            .opacity(player.isPlaying ? 0.70 : 0.45)
+            .scaleEffect(isWaveShaking ? 1.15 : (player.isPlaying ? 1.03 : 1.0))
+            .animation(.spring(response: 0.50, dampingFraction: 0.8), value: isWaveShaking)
+            .animation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true), value: player.isPlaying)
 
-            // Среднее кольцо ряби 234x234
-            RoundedRectangle(cornerRadius: 38, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.30),
-                            accentColor.opacity(0.55),
-                            Color.white.opacity(0.10)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1.2
-                )
-                .frame(width: 234, height: 234)
-                .scaleEffect(isWaveShaking ? 1.10 : 1.0)
-
-            // 4. Главная суперэллиптическая карточка обложки (Hero Superellipse Card 206x206)
+            // 3. Главная суперэллиптическая карточка обложки (Hero Superellipse Card 210x210 - No Lines, Pure Spatial Apple Design)
             Button {
                 Haptics.tap(.light)
                 showPlayer = true
             } label: {
                 ZStack {
                     if let cover = activeTrack?.coverURL {
-                        RemoteArtwork(urlString: cover, corner: 26)
-                            .frame(width: 206, height: 206)
+                        RemoteArtwork(urlString: cover, corner: 28)
+                            .frame(width: 210, height: 210)
                     } else if let track = activeTrack {
-                        SmallArtwork(track: track, size: 206)
-                            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        SmallArtwork(track: track, size: 210)
+                            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                     } else {
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
                             .fill(Color(white: 0.15))
-                            .frame(width: 206, height: 206)
+                            .frame(width: 210, height: 210)
                             .overlay(
                                 Image(systemName: "waveform")
-                                    .font(.system(size: 44, weight: .bold))
+                                    .font(.system(size: 48, weight: .bold))
                                     .foregroundStyle(accentColor)
                             )
                     }
-
-                    // Тончайшая стеклянная кромка Apple Glass Highlight
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.35),
-                                    Color.white.opacity(0.10),
-                                    Color.clear
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.8
-                        )
                 }
-                .shadow(color: Color.black.opacity(0.70), radius: 24, y: 10)
-                .shadow(color: accentColor.opacity(0.35), radius: 18, y: 4)
+                .shadow(color: Color.black.opacity(0.65), radius: 28, y: 12)
+                .shadow(color: accentColor.opacity(0.40), radius: 22, y: 6)
             }
             .buttonStyle(TactileButtonStyle(scale: 0.97))
             .accessibilityLabel("Открыть плеер")

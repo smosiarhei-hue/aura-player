@@ -623,7 +623,6 @@ struct PlayerScreenV2: View {
                 HStack(spacing: 5) {
                     Image(systemName: "moon.zzz.fill")
                         .font(.system(size: 13, weight: .bold))
-                        .symbolEffect(.pulse, options: .repeating)
                     Text(timerText)
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                 }

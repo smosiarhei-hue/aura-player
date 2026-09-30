@@ -780,7 +780,6 @@ final class PlayerCore {
     }
 
     private func syncNowPlayingElapsedIfNeeded() {
-        tickSleepTimer()
         guard !applicationIsActive else { return }
         guard currentTrack != nil else { return }
         let now = Date()
