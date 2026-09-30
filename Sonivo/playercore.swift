@@ -153,8 +153,9 @@ final class PlayerCore {
     private(set) var sleepTimerRemaining: Double? = nil
     private var sleepDeadline: Date?
 
-    private var sleepTimerTask: Task<Void, Never>?
+    private var sleepWatchdog: DispatchSourceTimer?
     private var lastPublishedSleepRemaining: Double = 0
+    private let sleepTimerQueue = DispatchQueue(label: "com.sonivo.sleeptimer", qos: .utility)
 
     private let defaults = UserDefaults.standard
 
@@ -2471,21 +2472,26 @@ final class PlayerCore {
         lastPublishedSleepRemaining = 0
     }
 
-    /// Safe watchdog task firing once per second on MainActor.
+    /// One watchdog only, firing once per second with generous leeway. It runs on a private
+    /// queue purely so it survives backgrounding; every state mutation hops to the main actor.
     private func startSleepTimerWatchdog() {
         stopSleepTimerWatchdog()
-        sleepTimerTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                guard !Task.isCancelled, let self else { break }
-                self.tickSleepTimer()
+        let source = DispatchSource.makeTimerSource(queue: sleepTimerQueue)
+        source.schedule(deadline: .now() + 1.0, repeating: 1.0, leeway: .milliseconds(250))
+        source.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.tickSleepTimer()
             }
         }
+        source.resume()
+        sleepWatchdog = source
     }
 
     private func stopSleepTimerWatchdog() {
-        sleepTimerTask?.cancel()
-        sleepTimerTask = nil
+        guard let source = sleepWatchdog else { return }
+        sleepWatchdog = nil
+        source.setEventHandler {}
+        source.cancel()
     }
 
     func tickSleepTimer() {
