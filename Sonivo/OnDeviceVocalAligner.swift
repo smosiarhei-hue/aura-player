@@ -135,19 +135,17 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
                     await self.cache.set(key, lyrics: aligned)
                     return aligned
                 }
-            }
-
-            // 3. If no lyrics exist online or alignment didn't meet confidence, transcribe entire song
-            if let transcribed = await self.transcribe(track: track) {
-                await self.cache.set(key, lyrics: transcribed)
-                return transcribed
-            }
-
-            // 4. If plain lyrics existed but audio couldn't be transcribed, provide synthetic phonetic karaoke
-            if let targetLyrics, !targetLyrics.lines.isEmpty {
+                // When official lyrics exist, NEVER fall through to speech transcription!
+                // Synthesize smooth karaoke timings using 100% of the official lyrics text!
                 let synthesized = self.synthesizeKaraokeTimings(for: targetLyrics, track: track)
                 await self.cache.set(key, lyrics: synthesized)
                 return synthesized
+            }
+
+            // 3. ONLY if NO lyrics exist anywhere online, attempt whole-song vocal transcription
+            if let transcribed = await self.transcribe(track: track) {
+                await self.cache.set(key, lyrics: transcribed)
+                return transcribed
             }
 
             return nil
@@ -281,7 +279,8 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
             }
         }
 
-        guard !lines.isEmpty else { return nil }
+        let totalWordCount = lines.reduce(0) { $0 + ($1.words?.count ?? 0) }
+        guard lines.count >= 3 && totalWordCount >= 15 else { return nil }
 
         return Lyrics(
             title: track.title,
@@ -620,6 +619,10 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
     }
 
     // MARK: - Phonetic Temporal Fallback Synthesizer
+
+    func synthesizeKaraoke(for lyrics: Lyrics, track: Track) -> Lyrics {
+        synthesizeKaraokeTimings(for: lyrics, track: track)
+    }
 
     private func synthesizeKaraokeTimings(for lyrics: Lyrics, track: Track) -> Lyrics {
         var lines: [LyricsLine] = []

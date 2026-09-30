@@ -1028,57 +1028,50 @@ struct PlayerScreenV2: View {
             }
         }
 
-        // 1. Instant check for proactively analyzed Neural Engine lyrics
-        if SettingsStore.shared.isNeuralEngineEnabled,
-           let preanalyzed = await OnDeviceVocalAligner.shared.cachedLyrics(for: requested) {
-            guard !Task.isCancelled, self.track?.id == requestedId else { return }
-            withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
-                self.lyrics = preanalyzed
-                if !preanalyzed.lines.isEmpty {
-                    self.cachedPhrases = LyricPhrase.from(lines: preanalyzed.lines)
-                }
-            }
-            return
-        }
-
-        var result = try? await LyricsService.shared.fetchLyrics(for: requested)
+        // 1. Fetch official lyrics from all verified sources (Yandex Music, LRCLIB, Genius, ID3)
+        let result = try? await LyricsService.shared.fetchLyrics(for: requested)
         guard !Task.isCancelled, self.track?.id == requestedId else { return }
 
-        // If Neural Engine is disabled by user, use genuine online lyrics without AI transcription/alignment
-        guard SettingsStore.shared.isNeuralEngineEnabled else {
-            lyrics = result
-            if let result, result.isSynchronized, !result.lines.isEmpty {
-                cachedPhrases = LyricPhrase.from(lines: result.lines)
-            }
-            return
-        }
-
-        // If online lyrics already have dynamic word timings, display immediately
-        if let result, result.isSynchronized, result.hasDynamicWordTimings {
-            lyrics = result
-            cachedPhrases = LyricPhrase.from(lines: result.lines)
-            return
-        }
-
-        // If online lyrics are already line-synchronized, show them immediately while Neural Engine enriches
-        if let result, result.isSynchronized, !result.lines.isEmpty {
-            lyrics = result
-            cachedPhrases = LyricPhrase.from(lines: result.lines)
-        }
-
-        // Proactive Neural Engine AI analysis (forced alignment with millisecond precision or full vocal transcription)
-        if let aiLyrics = await OnDeviceVocalAligner.shared.getOrAnalyzeLyrics(track: requested, plainLyrics: result) {
-            guard !Task.isCancelled, self.track?.id == requestedId else { return }
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                self.lyrics = aiLyrics
-                self.cachedPhrases = LyricPhrase.from(lines: aiLyrics.lines)
-            }
-        } else if self.lyrics == nil {
-            self.lyrics = result
-            if let result, result.isSynchronized, !result.lines.isEmpty {
-                self.cachedPhrases = LyricPhrase.from(lines: result.lines)
+        // 2. If verified lyrics were found online:
+        if let found = result, !found.lines.isEmpty {
+            if found.isSynchronized {
+                // Fully synchronized official lyrics (Yandex / LRCLIB)
+                withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
+                    self.lyrics = found
+                    self.cachedPhrases = LyricPhrase.from(lines: found.lines)
+                }
+                return
+            } else {
+                // Official full text exists (Genius / Yandex plain text).
+                // Synthesize smooth millisecond karaoke timing across the full song.
+                // NEVER discard official text for speech recognition!
+                let synchronized = OnDeviceVocalAligner.shared.synthesizeKaraoke(for: found, track: requested)
+                withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
+                    self.lyrics = synchronized
+                    self.cachedPhrases = LyricPhrase.from(lines: synchronized.lines)
+                }
+                return
             }
         }
+
+        // 3. Fallback: Only if NO text exists from any online source AND user enabled Neural Engine,
+        // attempt on-device Apple Neural Engine offline vocal transcription for the whole song.
+        if SettingsStore.shared.isNeuralEngineEnabled {
+            if let aiLyrics = await OnDeviceVocalAligner.shared.transcribe(track: requested),
+               aiLyrics.lines.count >= 3 {
+                guard !Task.isCancelled, self.track?.id == requestedId else { return }
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                    self.lyrics = aiLyrics
+                    self.cachedPhrases = LyricPhrase.from(lines: aiLyrics.lines)
+                }
+                return
+            }
+        }
+
+        // 4. No lyrics available anywhere
+        guard !Task.isCancelled, self.track?.id == requestedId else { return }
+        self.lyrics = nil
+        self.cachedPhrases = []
     }
     private func loadVideoShot() async {
         videoShotURL = nil

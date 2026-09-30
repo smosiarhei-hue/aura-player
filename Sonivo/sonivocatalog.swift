@@ -272,7 +272,13 @@ enum SonivoPlay {
                 let available = candidates
                     .map { service.convertToTrack($0) }
                     .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
-                if active == nil && !startedImmediately, let first = available.first {
+                if let current = PlayerCore.shared.currentTrack {
+                    var immediateQueue = [current]
+                    for t in available where t.id != current.id {
+                        immediateQueue.append(t)
+                    }
+                    PlayerCore.shared.queue = immediateQueue
+                } else if !startedImmediately, let first = available.first {
                     router.play(first, queue: available)
                 }
             }
