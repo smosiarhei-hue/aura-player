@@ -60,8 +60,11 @@ struct Lyrics: Equatable, Sendable {
 extension LyricsLine {
     /// True only if genuine word-by-word/syllable timestamps are present from source.
     var hasRealWordTimings: Bool {
-        guard let words, words.count > 1 else { return false }
-        return words[1].startTime > words[0].startTime
+        guard let words, !words.isEmpty else { return false }
+        if words.count == 1 {
+            return words[0].endTime > words[0].startTime
+        }
+        return words[1].startTime >= words[0].startTime || words[words.count - 1].endTime > words[0].startTime
     }
 
     /// Returns explicit words if present from source.

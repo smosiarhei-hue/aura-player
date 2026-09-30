@@ -105,8 +105,16 @@ final class PlayerCore {
     private static let streamHeadroomCeiling: Float = 0.89
 
     private(set) var isPlaying = false
-    private(set) var currentTrack: Track?
     private(set) var progress: Double = 0
+    private(set) var currentTrack: Track? {
+        didSet {
+            guard let track = currentTrack, track.id != oldValue?.id else { return }
+            OnDeviceVocalAligner.shared.inspectAndPreanalyze(track: track)
+            if let next = nextTrack {
+                OnDeviceVocalAligner.shared.inspectAndPreanalyze(track: next)
+            }
+        }
+    }
     private(set) var streamDuration: Double = 0
     private(set) var playError: String?
     var volume: Float = 1.0 {

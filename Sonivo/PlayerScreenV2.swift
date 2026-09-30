@@ -1027,6 +1027,20 @@ struct PlayerScreenV2: View {
                 self.lyricsLoading = false
             }
         }
+
+        // 1. Instant check for proactively analyzed Neural Engine lyrics
+        if SettingsStore.shared.isNeuralEngineEnabled,
+           let preanalyzed = OnDeviceVocalAligner.shared.cachedLyrics(for: requested) {
+            guard !Task.isCancelled, self.track?.id == requestedId else { return }
+            withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
+                self.lyrics = preanalyzed
+                if !preanalyzed.lines.isEmpty {
+                    self.cachedPhrases = LyricPhrase.from(lines: preanalyzed.lines)
+                }
+            }
+            return
+        }
+
         var result = try? await LyricsService.shared.fetchLyrics(for: requested)
         guard !Task.isCancelled, self.track?.id == requestedId else { return }
 
@@ -1039,32 +1053,30 @@ struct PlayerScreenV2: View {
             return
         }
 
-        // If no online lyrics found, attempt on-device Apple Neural Engine offline vocal transcription
-        if result == nil || result?.lines.isEmpty == true {
-            if let aiLyrics = await OnDeviceVocalAligner.shared.transcribe(track: requested) {
-                result = aiLyrics
-            }
+        // If online lyrics already have dynamic word timings, display immediately
+        if let result, result.isSynchronized, result.hasDynamicWordTimings {
+            lyrics = result
+            cachedPhrases = LyricPhrase.from(lines: result.lines)
+            return
         }
 
-        guard !Task.isCancelled, self.track?.id == requestedId else { return }
-        lyrics = result
+        // If online lyrics are already line-synchronized, show them immediately while Neural Engine enriches
+        if let result, result.isSynchronized, !result.lines.isEmpty {
+            lyrics = result
+            cachedPhrases = LyricPhrase.from(lines: result.lines)
+        }
 
-        if let result {
-            if result.isSynchronized, !result.lines.isEmpty {
-                cachedPhrases = LyricPhrase.from(lines: result.lines)
-            } else if !result.lines.isEmpty {
-                // Background On-Device AI Alignment (Apple Neural Engine) for unsynchronized lyrics
-                Task.detached(priority: .userInitiated) {
-                    if let aligned = await OnDeviceVocalAligner.shared.align(lyrics: result, track: requested) {
-                        await MainActor.run {
-                            guard self.track?.id == requestedId else { return }
-                            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                self.lyrics = aligned
-                                self.cachedPhrases = LyricPhrase.from(lines: aligned.lines)
-                            }
-                        }
-                    }
-                }
+        // Proactive Neural Engine AI analysis (forced alignment with millisecond precision or full vocal transcription)
+        if let aiLyrics = await OnDeviceVocalAligner.shared.getOrAnalyzeLyrics(track: requested, plainLyrics: result) {
+            guard !Task.isCancelled, self.track?.id == requestedId else { return }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                self.lyrics = aiLyrics
+                self.cachedPhrases = LyricPhrase.from(lines: aiLyrics.lines)
+            }
+        } else if self.lyrics == nil {
+            self.lyrics = result
+            if let result, result.isSynchronized, !result.lines.isEmpty {
+                self.cachedPhrases = LyricPhrase.from(lines: result.lines)
             }
         }
     }
