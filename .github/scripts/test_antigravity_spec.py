@@ -92,12 +92,15 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("isOnMain", content)
 
     def test_automix_clean_equal_power_and_timing(self):
-        timing_file = self.repo_root / "Sonivo" / "AutoMix" / "AutoMixTransitionTiming.swift"
-        timing_content = timing_file.read_text(encoding="utf-8")
-        # Incoming track starts at 0.0 (natural musical intro)
-        self.assertIn("return 0.0", timing_content)
-        # Real DJ Mashup transition duration across 8 to 16 musical bars (12.0s - 20.0s)
-        self.assertIn("min(20.0, max(12.0", timing_content)
+        automix_dir = self.repo_root / "Sonivo" / "AutoMix"
+        self.assertFalse(automix_dir.exists(), "Sonivo/AutoMix directory must be deleted")
+
+        mood_file = self.repo_root / "Sonivo" / "MoodRadioEngine.swift"
+        self.assertTrue(mood_file.exists(), "MoodRadioEngine.swift must be preserved at Sonivo root")
+        mood_content = mood_file.read_text(encoding="utf-8")
+        self.assertIn("class MoodRadioEngine", mood_content)
+        self.assertIn("func start(mood: MoodPreset)", mood_content)
+        self.assertIn("func extractVector(for track: Track)", mood_content)
 
         player_file = self.repo_root / "Sonivo" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
@@ -113,9 +116,10 @@ class AntigravitySpecTests(unittest.TestCase):
 
         models_file = self.repo_root / "Sonivo" / "models.swift"
         models_content = models_file.read_text(encoding="utf-8")
-        # Pure Equal-Power Cosine Crossfade for local files
+        # Pure Equal-Power Cosine Crossfade for local files (zero bass cut)
         self.assertIn("let outVol = Float(cos(p * (.pi / 2)))", models_content)
         self.assertIn("let inVol = Float(sin(p * (.pi / 2)))", models_content)
+        self.assertIn("return (outVol, inVol, 0.0, 0.0, 1.0)", models_content)
 
     def test_my_wave_fresh_random_seed(self):
         catalog_file = self.repo_root / "Sonivo" / "sonivocatalog.swift"
@@ -405,78 +409,19 @@ class AntigravitySpecTests(unittest.TestCase):
 
     def test_dj_automix_engine_spec(self):
         dj_dir = self.repo_root / "Sonivo" / "DJAutoMixEngine"
-        camelot_file = dj_dir / "CamelotKey.swift"
-        models_file = dj_dir / "DJMixModels.swift"
-        analyzer_file = dj_dir / "TrackAnalyzer.swift"
-        planner_file = dj_dir / "DJTransitionPlanner.swift"
-        sync_file = dj_dir / "SyncEngine.swift"
-        renderer_file = dj_dir / "MixRenderer.swift"
-        coord_file = dj_dir / "DJAutoMixCoordinator.swift"
+        self.assertFalse(dj_dir.exists(), "Sonivo/DJAutoMixEngine must be deleted")
 
-        self.assertTrue(camelot_file.exists(), "CamelotKey.swift missing")
-        self.assertTrue(models_file.exists(), "DJMixModels.swift missing")
-        self.assertTrue(analyzer_file.exists(), "TrackAnalyzer.swift missing")
-        self.assertTrue(planner_file.exists(), "DJTransitionPlanner.swift missing")
-        self.assertTrue(sync_file.exists(), "SyncEngine.swift missing")
-        self.assertTrue(renderer_file.exists(), "MixRenderer.swift missing")
-        self.assertTrue(coord_file.exists(), "DJAutoMixCoordinator.swift missing")
+        overlay_file = self.repo_root / "Sonivo" / "AutoMixTransitionOverlay.swift"
+        self.assertFalse(overlay_file.exists(), "AutoMixTransitionOverlay.swift must be deleted")
 
-        # 1. CamelotKey Wheel rules
-        camelot_content = camelot_file.read_text(encoding="utf-8")
-        self.assertIn("isHarmonicallyCompatible", camelot_content)
-        self.assertIn("diff == 1 || diff == 11", camelot_content)
-
-        # 2. Models and protocol definitions
+        models_file = self.repo_root / "Sonivo" / "models.swift"
         models_content = models_file.read_text(encoding="utf-8")
-        self.assertIn("struct StructureSegment", models_content)
-        self.assertIn("struct DJTrackAnalysis", models_content)
-        self.assertIn("struct DJMixPlan", models_content)
-        self.assertIn("enum DJTransitionType", models_content)
+        self.assertIn("case gapless =", models_content)
+        self.assertIn("case crossfade =", models_content)
+        self.assertIn("case off =", models_content)
 
-        # 3. TrackAnalyzer protocol, Mock and AudioTrackAnalyzer
-        analyzer_content = analyzer_file.read_text(encoding="utf-8")
-        self.assertIn("protocol DJTrackAnalyzer", analyzer_content)
-        self.assertIn("MockTrackAnalyzer", analyzer_content)
-        self.assertIn("AudioTrackAnalyzer", analyzer_content)
-        self.assertIn("actor DJTrackAnalysisCache", analyzer_content)
-        self.assertIn("AutoMixDSP.features(for: url)", analyzer_content)
-        self.assertIn("KeyDetector.detect", analyzer_content)
-        self.assertIn("BeatAnalyzer.analyze", analyzer_content)
-
-        # 4. TransitionPlanner with 6% BPM threshold, double/half time, and fallbacks
-        planner_content = planner_file.read_text(encoding="utf-8")
-        self.assertIn("protocol DJTransitionPlanner", planner_content)
-        self.assertIn("maxTempoDiffPct: Double = 0.06", planner_content)
-        self.assertIn("minSilenceForCrossfade: TimeInterval = 0.30", planner_content)
-        self.assertIn("candidates = [incomingBPM, incomingBPM * 2.0, incomingBPM / 2.0]", planner_content)
-
-        # 5. SyncEngine beat alignment and time pitch
-        sync_content = sync_file.read_text(encoding="utf-8")
-        self.assertIn("protocol DJSyncEngine", sync_content)
-        self.assertIn("AVAudioUnitTimePitch", sync_content)
-        self.assertIn("nearestBeat - entryPoint", sync_content)
-
-        # 6. MixRenderer offline rendering mode and EQ automation
-        renderer_content = renderer_file.read_text(encoding="utf-8")
-        self.assertIn("protocol DJMixRenderer", renderer_content)
-        self.assertIn("enableManualRenderingMode", renderer_content)
-        self.assertIn("AVAudioUnitEQ", renderer_content)
-        self.assertIn("lowShelfOut.gain = -24.0", renderer_content)
-
-        # 7. Pipeline coordinator
-        coord_content = coord_file.read_text(encoding="utf-8")
-        self.assertIn("DJAutoMixCoordinator", coord_content)
-        self.assertIn("prepareTransition", coord_content)
-
-        # 8. Pre-cache worker & Yandex Music streaming pipeline
-        precache_file = dj_dir / "DJPreCacheWorker.swift"
-        self.assertTrue(precache_file.exists(), "DJPreCacheWorker.swift missing")
-        precache_content = precache_file.read_text(encoding="utf-8")
-        self.assertIn("class DJPreCacheWorker", precache_content)
-        self.assertIn("resolveLocalURL", precache_content)
-        self.assertIn("extractBuffer", precache_content)
-        self.assertIn("prepareTransition", precache_content)
-        self.assertIn("YandexMusicService.shared.getStreamInfo", precache_content)
+        # Audio purity: no -24.0dB bass cuts or frequency degradation
+        self.assertNotIn("lowShelfOut.gain = -24.0", models_content)
 
     def test_sleep_timer_spec(self):
         core_file = self.repo_root / "Sonivo" / "playercore.swift"

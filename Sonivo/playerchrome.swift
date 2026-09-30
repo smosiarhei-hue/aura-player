@@ -383,7 +383,7 @@ struct PlayerEQSheetView: View {
                         Text("Эквалайзер")
                             .font(SN.display(.largeTitle, .heavy))
                             .foregroundStyle(SN.ink)
-                        Text(player.eqEnabled ? "Работает независимо от AutoMix" : "Выключен")
+                        Text(player.eqEnabled ? "Включен" : "Выключен")
                             .font(SN.text(.subheadline, .medium))
                             .foregroundStyle(player.eqEnabled ? SN.positive : SN.inkMuted)
                     }

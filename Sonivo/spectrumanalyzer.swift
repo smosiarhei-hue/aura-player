@@ -23,7 +23,7 @@ final class SpectrumAnalyzer {
         if streamLevel > 0.05 { return streamLevel }
         // Smooth organic rhythmic kick pulse based on active playback tempo (BPM)
         guard PlayerCore.shared.isPlaying else { return 0 }
-        let bpm = AutoMixDJEngine.shared.currentBPM > 40 ? AutoMixDJEngine.shared.currentBPM : 124.0
+        let bpm = 124.0
         let beatInterval = 60.0 / bpm
         let phase = fmod(PlayerCore.shared.progress, beatInterval) / beatInterval
         // Organic sinusoidal low-pass pulse curve without harsh edges

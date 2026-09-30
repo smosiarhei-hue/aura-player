@@ -40,18 +40,16 @@ final class AutoMixDJEngine {
     var isTransitionActive: Bool = false
     var transitionProgress: Double = 0.0
     var activeStrategyName: String = "GAPLESS"
-    var activePlan: TransitionPlan? = nil
     var statusBadge: String? = nil
     var currentBPM: Double = 0
     var isDropTriggered: Bool = false
     var dropProgress: Double = 0.50
     var isPostMixActive: Bool = false
-    private var lastTransitionLogBucket: Int = -1
 
     private init() {}
 
     func notifyDrop(targetTrack: Track?) {
-        // AutoMix Drop Hard Cut completely disabled to prevent audio disruption
+        // AutoMix Drop Hard Cut completely disabled to preserve audio continuity
     }
 
     func resetDrop() {
@@ -59,101 +57,9 @@ final class AutoMixDJEngine {
         isPostMixActive = false
     }
 
-    /// Execute the plan's action envelopes (TZ Section 15): piecewise ramps
-    /// over the plan's keyframes for one lane/parameter. A keyframe
-    /// (time, value, duration) means "starting at `time`, ramp to `value`
-    /// over `duration` seconds". `defaultValue` is the level before the first
-    /// keyframe begins - the source plays at full level until told otherwise,
-    /// the target starts silent - which keeps half-specified envelopes from
-    /// jumping to their final value on the very first tick. Returns nil when
-    /// the plan carries no keyframes for that pair, so the caller keeps its
-    /// own fallback curves.
-    nonisolated static func sampleEnvelope(
-        _ actions: [TransitionAction],
-        target: String,
-        parameter: String,
-        at time: Double,
-        defaultValue: Float? = nil
-    ) -> Float? {
-        let frames = actions
-            .filter {
-                $0.target == target && $0.parameter == parameter
-                    && $0.time.isFinite && $0.value.isFinite && $0.duration.isFinite
-            }
-            .sorted { $0.time < $1.time }
-        guard let first = frames.first else { return nil }
-
-        var value = Double(defaultValue ?? Float(first.value))
-        for (index, frame) in frames.enumerated() where frame.time <= time {
-            let segment: Double = frame.duration > 0.001
-                ? min(1, max(0, (time - frame.time) / frame.duration))
-                : 1
-            let startValue: Double = value
-            var endValue: Double = frame.value
-
-            if target == "target",
-               parameter == "volume",
-               index + 1 < frames.count,
-               abs(endValue - startValue) < 0.0001,
-               frames[index + 1].time > frame.time {
-                endValue = Double(frames[index + 1].value)
-            }
-
-            if target == "target",
-               parameter == "volume",
-               index == frames.count - 1,
-               endValue < 0.999 {
-                endValue = 1.0
-            }
-
-            let delta: Double = endValue - startValue
-            value = startValue + delta * segment
-        }
-
-        value = min(1.0, max(0.0, value))
-        return Float(value)
-    }
-
-    private func logTransitionSnapshotIfNeeded() {
-        guard isTransitionActive else {
-            lastTransitionLogBucket = -1
-            return
-        }
-
-        let p = min(1.0, max(0.0, transitionProgress))
-        let bucket: Int
-        if p < 0.04 { bucket = 0 }
-        else if p < 0.30 { bucket = 25 }
-        else if p < 0.55 { bucket = 50 }
-        else if p < 0.82 { bucket = 75 }
-        else if p < 0.98 { bucket = 95 }
-        else { bucket = 100 }
-
-        guard bucket != lastTransitionLogBucket else { return }
-        lastTransitionLogBucket = bucket
-
-        let strategy = activePlan?.strategy ?? TransitionStrategy(rawValue: activeStrategyName) ?? .ENERGY_BLEND
-        let actions = activePlan?.actions ?? []
-        let blendTime = p * max(0.001, activePlan?.leadTime ?? 1.0)
-        let base = computeVolumesAndEQ(progress: p, strategy: strategy)
-
-        let sourceVol = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "volume", at: blendTime, defaultValue: 1.0) ?? base.outgoingVol
-        let targetVol = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "volume", at: blendTime, defaultValue: 0.0) ?? base.incomingVol
-        let sourceLow = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "lowEQ", at: blendTime, defaultValue: 1.0)
-        let targetLow = AutoMixDJEngine.sampleEnvelope(actions, target: "target", parameter: "lowEQ", at: blendTime, defaultValue: 0.0)
-        let reverb = AutoMixDJEngine.sampleEnvelope(actions, target: "source", parameter: "reverb", at: blendTime, defaultValue: 0.0) ?? 0
-        let sourceLowDB = sourceLow.map { max(-30.0, min(0.0, ($0 - 1) * 24.0)) } ?? base.outgoingBassCutDB
-        let targetLowDB = targetLow.map { max(-30.0, min(0.0, ($0 - 1) * 24.0)) } ?? base.incomingBassGainDB
-
-        SonivoDiagnostics.log(
-            "[AutoMix Tick] \(bucket)% strategy=\(strategy.rawValue) srcVol=\(String(format: "%.2f", sourceVol)) tgtVol=\(String(format: "%.2f", targetVol)) srcLow=\(String(format: "%.1f", sourceLowDB))dB tgtLow=\(String(format: "%.1f", targetLowDB))dB reverb=\(String(format: "%.2f", reverb)) targetStart=\(String(format: "%.2f", activePlan?.targetTrack.startPosition ?? 0))s",
-            tag: "AUTOMIX"
-        )
-    }
-
     func computeVolumesAndEQ(
         progress: Double,
-        strategy: TransitionStrategy
+        strategy: String = "GAPLESS"
     ) -> (outgoingVol: Float, incomingVol: Float, outgoingBassCutDB: Float, incomingBassGainDB: Float, filterCutoff: Float) {
         let p = max(0.0, min(1.0, progress))
         // Pure Equal-Power Cosine Crossfade for local files (zero bass cut, zero filtering)

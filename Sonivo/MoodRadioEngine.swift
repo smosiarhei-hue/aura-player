@@ -236,10 +236,6 @@ final class MoodRadioEngine {
                 !UserTasteEngine.shared.isDisliked(track: $0)
             }
 
-            // Сначала подтягиваем уже измеренный анализ (BPM/тональность/энергия) из кэша,
-            // чтобы ранжировать по реальным числам, а не по словам в названии трека.
-            await AutoMixAnalysisSnapshot.shared.refreshFromCache(converted)
-
             let freshSequenced = self.sequenceCandidates(converted, targetVector: self.sessionVector, count: 25)
             guard !freshSequenced.isEmpty else { return }
 
@@ -617,9 +613,6 @@ final class MoodRadioEngine {
             !UserTasteEngine.shared.isDisliked(track: $0)
         }
 
-        // Подтягиваем измеренный анализ из кэша перед ранжированием новой волны
-        await AutoMixAnalysisSnapshot.shared.refreshFromCache(converted)
-
         let sequenced = sequenceCandidates(converted, targetVector: sessionVector, count: 24)
         if !sequenced.isEmpty {
             queue.append(contentsOf: sequenced)
@@ -641,21 +634,8 @@ final class MoodRadioEngine {
 
     // MARK: - Извлечение вектора трека (Feature Extractor)
 
-    /// Вектор трека для ранжирования. Главный источник - РЕАЛЬНЫЙ измеренный
-    /// анализ AutoMix (BPM, тональность, энергия, уверенность бита, кривая
-    /// энергии); эвристика по названию остаётся только резервом для треков,
-    /// которые ещё ни разу не анализировались.
     func extractVector(for track: Track) -> TrackVector {
-        let heuristic = heuristicVector(for: track)
-
-        if let analysis = AutoMixAnalysisSnapshot.shared.analysis(for: track) {
-            return TrackVector.measured(analysis, fallback: heuristic)
-        }
-
-        // Анализа ещё нет в зеркале: без блокировки спрашиваем кэш на будущее
-        // и возвращаем эвристику сейчас.
-        AutoMixAnalysisSnapshot.shared.requestCacheRefresh(for: track)
-        return heuristic
+        heuristicVector(for: track)
     }
 
     /// Резервная оценка по названию и длительности - используется только пока

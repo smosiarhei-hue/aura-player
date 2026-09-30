@@ -173,11 +173,7 @@ final class PlayerCore {
     private var isUsingStreamPlayer = false
     private var isPrebufferingNextStream = false
     private var prebufferedTrackId: UUID? = nil
-    private var activeTransitionPlan: TransitionPlan? = nil
-    private var isPlanningTransition: Bool = false
-    private var planningStartedAt: Date? = nil
     private var plannedNextTrack: Track? = nil
-    private var isSelectingNextTrack: Bool = false
     private var incomingIsStream: Bool = false
     private var incomingLaneReady: Bool = false
     private var transitionScheduledAt: Date? = nil
@@ -989,13 +985,9 @@ final class PlayerCore {
         cancelTransition()
         guard let track = currentTrack else { return }
         playError = nil
-        activeTransitionPlan = nil
         plannedNextTrack = nil
-        isSelectingNextTrack = false
         generation += 1
         let token = generation
-        isPlanningTransition = false
-        planningStartedAt = nil
 
         if let cachedURL = findLocalOrCachedAudioFile(for: track) {
             var localTrack = track
@@ -1317,342 +1309,6 @@ final class PlayerCore {
             scheduleSimpleTransition(current: current, blendDuration: 0.1)
             return
         }
-        return
-
-        let currentPos = isUsingStreamPlayer ? progress : liveProgress()
-        let totalDur = duration
-        guard totalDur >= 30.0 else { return }
-
-        guard currentPos >= min(35.0, totalDur * 0.50) else { return }
-
-        let nextTrack: Track
-        if let planned = plannedNextTrack, planned.id != current.id {
-            nextTrack = planned
-        } else if let peeked = peekNext(auto: true) {
-            plannedNextTrack = peeked
-            nextTrack = peeked
-            if transitionMode == .automix, !shuffle, !isSelectingNextTrack {
-                isSelectingNextTrack = true
-                let upcoming = effectiveQueue()
-                let fallbackId = peeked.id
-                Task {
-                    let better = await SmartNextTrackSelector.betterCandidate(current: current, fallback: peeked, upcoming: upcoming)
-                    await MainActor.run {
-                        self.isSelectingNextTrack = false
-                        guard let better,
-                              self.currentTrack?.id == current.id,
-                              self.plannedNextTrack?.id == fallbackId,
-                              self.activeTransitionPlan == nil,
-                              !self.isPlanningTransition,
-                              self.prebufferedTrackId == nil,
-                              !self.isTransitioning else { return }
-                        self.plannedNextTrack = better
-                        SonivoDiagnostics.log("[AutoMix] Smart-pick upgraded next track to \(better.title)", tag: "AUTOMIX")
-                    }
-                }
-            }
-        } else {
-            return
-        }
-
-        let remaining = totalDur - currentPos
-        guard remaining <= 65.0 else { return }
-
-        if let queued = queue.firstIndex(where: { $0.id == nextTrack.id }), !nextTrack.isStream, !FileManager.default.fileExists(atPath: nextTrack.url.path) {
-            _ = queued
-            plannedNextTrack = nil
-            return
-        }
-
-        if remaining <= 65.0, activeTransitionPlan == nil, !isPlanningTransition {
-            isPlanningTransition = true
-            planningStartedAt = Date()
-            Task {
-                let srcAnalysis = await TrackAnalysisService.shared.analysis(for: current)
-                    ?? TrackAnalysis.minimal(trackID: current.id.uuidString, duration: totalDur)
-                let tgtAnalysis = await TrackAnalysisService.shared.analysis(for: nextTrack)
-                    ?? TrackAnalysis.minimal(trackID: nextTrack.id.uuidString, duration: nextTrack.duration)
-
-                let plan = await GeminiAutoMixPlanner.shared.planTransition(
-                    sourceTrack: current,
-                    sourceAnalysis: srcAnalysis,
-                    targetTrack: nextTrack,
-                    targetAnalysis: tgtAnalysis,
-                    currentPosition: currentPos
-                )
-
-                await MainActor.run {
-                    guard self.currentTrack?.id == current.id, !self.isTransitioning else { return }
-                    self.activeTransitionPlan = plan
-                    self.isPlanningTransition = false
-                    self.planningStartedAt = nil
-                    AutoMixDJEngine.shared.currentBPM = plan.tempo.targetBPM
-                    DJPreCacheWorker.shared.preCacheTrackIfNeeded(nextTrack)
-                    Task {
-                        _ = await DJPreCacheWorker.shared.prepareTransition(
-                            outgoing: current,
-                            incoming: nextTrack,
-                            outgoingPosition: currentPos,
-                            totalDuration: totalDur
-                        )
-                    }
-                }
-            }
-        }
-
-        let cueRemaining = max(totalDur - (activeTransitionPlan?.cueTime ?? (totalDur - 22.0)), activeTransitionPlan?.leadTime ?? 16.0)
-        let prebufferThreshold = cueRemaining + 36.0
-        let shouldThrottlePrebuffer = (failedPrebufferTrackId == nextTrack.id) && (lastPrebufferAttempt.map { Date().timeIntervalSince($0) < 6.0 } ?? false)
-        if nextTrack.isStream, remaining <= prebufferThreshold, prebufferedTrackId != nextTrack.id, !isPrebufferingNextStream, !shouldThrottlePrebuffer {
-            isPrebufferingNextStream = true
-            lastPrebufferAttempt = Date()
-            let ymID = Self.yandexTrackID(from: nextTrack)
-            DJPreCacheWorker.shared.preCacheTrackIfNeeded(nextTrack)
-            Task {
-                do {
-                    let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                    let nextItem = AVPlayerItem(url: info.url)
-                    nextItem.audioTimePitchAlgorithm = .timeDomain
-                    nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
-                    StreamBeatTap.shared.attach(to: nextItem)
-                    self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
-                    self.idleStreamingPlayer.volume = 0
-                    self.idleStreamingPlayer.pause()
-                    self.prebufferedTrackId = nextTrack.id
-                    self.failedPrebufferTrackId = nil
-                    self.isPrebufferingNextStream = false
-                    SonivoDiagnostics.log("[AutoMix] Pre-buffered upcoming stream: \(nextTrack.title)", tag: "AUTOMIX")
-                } catch {
-                    self.failedPrebufferTrackId = nextTrack.id
-                    self.isPrebufferingNextStream = false
-                }
-            }
-        }
-
-        let plan: TransitionPlan
-        if let active = activeTransitionPlan {
-            plan = active
-        } else if remaining <= 5.0 {
-            let fallbackPlan = TransitionPlanner.planLocalFallback(
-                sourceTrackID: current.id,
-                sourceAnalysis: TrackAnalysis.minimal(trackID: current.id.uuidString, duration: totalDur),
-                targetTrackID: nextTrack.id,
-                targetAnalysis: TrackAnalysis.minimal(trackID: nextTrack.id.uuidString, duration: nextTrack.duration)
-            )
-            self.activeTransitionPlan = fallbackPlan
-            plan = fallbackPlan
-        } else {
-            return
-        }
-
-        let isStreamMix = isUsingStreamPlayer || nextTrack.isStream
-        let maxTail: Double = isStreamMix ? 12.0 : 24.0
-        let effectiveCueTime = max(plan.cueTime, totalDur - maxTail)
-        guard currentPos >= effectiveCueTime, (totalDur - currentPos) > 0.05 else { return }
-
-        transitionScheduled = true
-        isTransitioning = true
-        incomingLaneReady = false
-        transitionDuration = isStreamMix ? min(plan.leadTime, 10.0) : min(plan.leadTime, 20.0)
-        incomingTrack = nextTrack
-        metadataSwapped = false
-        metadataTrack = nil
-        incomingIsStream = nextTrack.isStream
-        incomingStartPosition = 0.0
-        AutoMixDJEngine.shared.resetDrop()
-        AutoMixDJEngine.shared.isTransitionActive = true
-        AutoMixDJEngine.shared.activeStrategyName = plan.decision.transitionType
-        AutoMixDJEngine.shared.activePlan = plan
-        AutoMixDJEngine.shared.currentBPM = plan.tempo.targetBPM
-        let targetDrop = plan.targetTrack.dropTime ?? 5.0
-        let calculatedDropP: Double = (targetDrop > 0.5 && targetDrop < transitionDuration) ? (targetDrop / transitionDuration) : 0.50
-        AutoMixDJEngine.shared.dropProgress = min(0.65, max(0.40, calculatedDropP))
-        applyReverbPreset(plan.effects.resolvedReverbPreset)
-
-        SonivoDiagnostics.log("[AutoMix] Transition: \(currentTrack?.title ?? "?") -> \(nextTrack.title) [\(plan.strategy.rawValue), \(String(format: "%.1f", transitionDuration))s, rate in \(String(format: "%.3f", plan.tempo.targetPlaybackRate)), dropProgress=\(String(format: "%.2f", AutoMixDJEngine.shared.dropProgress)), \(plan.decision.reason)]", tag: "AUTOMIX")
-
-        if isUsingStreamPlayer || nextTrack.isStream {
-            let startStreamTransition: @MainActor () -> Void = { [weak self] in
-                guard let self, self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
-                self.idleStreamingPlayer.volume = 0.001
-                self.idleStreamingPlayer.playImmediately(atRate: 1.0)
-                self.transitionStartTime = Date()
-                self.incomingLaneReady = true
-                self.startTransitionTimer()
-            }
-
-            let itemIsValid = idleStreamingPlayer.currentItem != nil
-                && idleStreamingPlayer.currentItem?.status != .failed
-                && prebufferedTrackId == nextTrack.id
-
-            if itemIsValid {
-                if idleStreamingPlayer.currentItem?.status == .readyToPlay {
-                    startStreamTransition()
-                } else {
-                    var obs: NSKeyValueObservation?
-                    obs = idleStreamingPlayer.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
-                        if item.status == .readyToPlay {
-                            obs?.invalidate()
-                            obs = nil
-                            Task { @MainActor in
-                                guard let self, self.isTransitioning else { return }
-                                startStreamTransition()
-                            }
-                        }
-                    }
-                    Task {
-                        try? await Task.sleep(nanoseconds: 800_000_000)
-                        await MainActor.run {
-                            if obs != nil {
-                                obs?.invalidate()
-                                obs = nil
-                                startStreamTransition()
-                            }
-                        }
-                    }
-                }
-            } else {
-                let ymID = Self.yandexTrackID(from: nextTrack)
-                Task {
-                    do {
-                        let info = try await YandexMusicService.shared.getStreamInfo(
-                            for: ymID,
-                            preferredQuality: self.audioQuality,
-                            preferredBitrate: self.audioQuality.targetBitrate
-                        )
-                        await MainActor.run {
-                            guard self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
-                            let nextItem = AVPlayerItem(url: info.url)
-                            nextItem.audioTimePitchAlgorithm = .timeDomain
-                            nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
-                            StreamBeatTap.shared.attach(to: nextItem)
-                            self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
-                            self.idleStreamingPlayer.volume = 0.001
-                            self.prebufferedTrackId = nextTrack.id
-                            self.isPrebufferingNextStream = false
-                            startStreamTransition()
-                        }
-                    } catch {
-                        await MainActor.run {
-                            self.isTransitioning = false
-                            self.transitionScheduled = false
-                            self.AutoMixDJEngineCleanup()
-                            if self.duration - self.progress <= 1.5 || self.progress >= self.duration - 0.5 {
-                                self.handleTrackFinish()
-                            }
-                        }
-                    }
-                }
-            }
-            return
-        }
-
-        activeTimePitch.bypass = false
-        idleTimePitch.bypass = false
-        let targetIdlePlayer = idlePlayer
-        let targetIsPlayerA = targetIdlePlayer === playerA
-        let targetStart = max(0, plan.targetTrack.startPosition)
-
-        let outgoingURL = currentTrack?.url
-        Task { [weak self] in
-            guard let self, let outgoingURL, outgoingURL.isFileURL, !nextTrack.isStream, !self.isUsingStreamPlayer else { return }
-            let outgoingAnalysis = await TrackAnalysisService.shared.analysis(for: current)
-                ?? TrackAnalysis.minimal(trackID: current.id.uuidString, duration: totalDur)
-            await MainActor.run {
-                guard self.isTransitioning, self.incomingTrack?.id == nextTrack.id else { return }
-                let tailSilence = outgoingAnalysis.trailingSilence?.duration ?? 0
-                let musicRunway = totalDur - tailSilence - plan.cueTime
-                let runsOutOfMusic = musicRunway < transitionDuration * 0.9
-                let wantsLoop = plan.strategy == .LOOP_TRANSITION || plan.strategy == .ECHO_OUT || runsOutOfMusic
-                if wantsLoop {
-                    self.startBeatLoop(url: outgoingURL, analysis: outgoingAnalysis, cueTime: plan.cueTime, blend: transitionDuration)
-                }
-            }
-        }
-
-        Task {
-            do {
-                let nextFile = try AVAudioFile(forReading: nextTrack.url)
-                self.incomingAudioFile = nextFile
-
-                let sampleRate = nextFile.processingFormat.sampleRate
-                let requestedFrame: AVAudioFramePosition = AVAudioFramePosition(max(0, targetStart) * sampleRate)
-                let lastFrame: AVAudioFramePosition = max(0, nextFile.length - 1)
-                let startFrame = min(requestedFrame, lastFrame)
-                let frameCount = AVAudioFrameCount(max(0, nextFile.length - startFrame))
-                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: startFrame, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                    Task { @MainActor in
-                        guard let self,
-                              self.activePlayer === (targetIsPlayerA ? self.playerA : self.playerB) else { return }
-                        self.handleTrackFinish()
-                    }
-                }
-
-                targetIdlePlayer.volume = 0
-                if !self.engine.isRunning { try? self.engine.start() }
-                targetIdlePlayer.play()
-
-                self.transitionStartTime = Date()
-                self.startTransitionTimer()
-            } catch {
-                self.isTransitioning = false
-                self.transitionScheduled = false
-                AutoMixDJEngine.shared.isTransitionActive = false
-                SonivoDiagnostics.log("[AutoMix] Local lane setup failed: \(error.localizedDescription)", tag: "AUTOMIX")
-            }
-        }
-    }
-
-    private func startBeatLoop(url: URL, analysis: TrackAnalysis, cueTime: Double, blend: Double) {
-        guard analysis.hasSteadyBeat else { return }
-        guard let bar = analysis.barDuration, bar.isFinite, bar > 0.3, bar < 8 else { return }
-
-        var bars: Double = 2
-        if bar * bars > blend { bars = 1 }
-        let loopLength = bar * bars
-        let rawStart = cueTime - loopLength
-        guard rawStart > 0.5 else { return }
-        let loopStart = analysis.nearestDownbeat(to: rawStart, tolerance: bar * 0.6) ?? rawStart
-        guard loopStart > 0.2 else { return }
-
-        Task {
-            do {
-                let file = try AVAudioFile(forReading: url)
-                let format = file.processingFormat
-                let sr = format.sampleRate
-                guard sr > 0 else { return }
-
-                let startFrame = AVAudioFramePosition(loopStart * sr)
-                guard startFrame >= 0, startFrame < file.length else { return }
-                let available = file.length - startFrame
-                let wanted = AVAudioFramePosition(loopLength * sr)
-                let frames = AVAudioFrameCount(max(0, min(wanted, available)))
-                guard frames > 2048 else { return }
-                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return }
-
-                file.framePosition = startFrame
-                try file.read(into: buffer, frameCount: frames)
-
-                guard self.isTransitioning, !self.isUsingStreamPlayer else { return }
-
-                self.loopBuffer = buffer
-                self.looperPlayer.stop()
-                self.looperPlayer.volume = self.volume
-                self.looperTimePitch.rate = 1.0
-                self.looperReverb.wetDryMix = 0
-                // Restores the looper chain to the user curve through the single writer
-                // instead of indexing `eqGains` by band position.
-                self.applyEQ()
-                if !self.engine.isRunning { try? self.engine.start() }
-                self.looperPlayer.scheduleBuffer(buffer, at: nil, options: [.loops])
-                self.looperPlayer.play()
-                self.isLoopActive = true
-
-                SonivoDiagnostics.log("[AutoMix] Outro beat-loop from \(String(format: "%.2f", loopStart))s, \(Int(bars)) bar(s) = \(String(format: "%.2f", loopLength))s", tag: "AUTOMIX")
-            } catch {
-                SonivoDiagnostics.log("[AutoMix] Beat-loop failed: \(error.localizedDescription)", tag: "AUTOMIX")
-            }
-        }
     }
 
     private func scheduleSimpleTransition(current: Track, blendDuration: Double) {
@@ -1671,7 +1327,6 @@ final class PlayerCore {
         incomingStartPosition = 0
         AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade
         AutoMixDJEngine.shared.activeStrategyName = transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS"
-        AutoMixDJEngine.shared.activePlan = nil
         AutoMixDJEngine.shared.transitionProgress = 0
 
         if isUsingStreamPlayer || nextTrack.isStream {
@@ -1815,9 +1470,6 @@ final class PlayerCore {
         transitionTimer = nil
         transitionStartTime = nil
         transitionScheduledAt = nil
-        activeTransitionPlan = nil
-        isPlanningTransition = false
-        planningStartedAt = nil
         flushListeningStats()
         reportWaveFinishedIfNeeded()
 
@@ -2004,11 +1656,7 @@ final class PlayerCore {
         timePitchA.bypass = true
         timePitchB.rate = 1.0
         timePitchB.bypass = true
-        activeTransitionPlan = nil
-        isPlanningTransition = false
-        planningStartedAt = nil
         plannedNextTrack = nil
-        isSelectingNextTrack = false
         incomingTrack = nil
         metadataTrack = nil
         metadataSwapped = false
@@ -2095,7 +1743,6 @@ final class PlayerCore {
         progress = duration
         anchorDate = nil
         isPlaying = false
-        activeTransitionPlan = nil
         plannedNextTrack = nil
         if repeatMode == .one {
             start(at: 0)
