@@ -444,7 +444,7 @@ struct ArtistView: View {
 
     private func startTrackWave(_ item: YandexMusicService.YMTrackItem) {
         let track = YandexMusicService.shared.convertToTrack(item)
-        TrackWaveEngine.shared.startWave(from: track)
+        playTrackWave(from: track)
     }
 
     // MARK: - Albums Section
@@ -629,21 +629,10 @@ struct AppleTrackRowView: View {
 
                 // Метаданные трека
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(item.title)
-                            .font(SN.text(.subheadline, .semibold))
-                            .foregroundStyle(isPlaying ? SN.amber : SN.ink)
-                            .lineLimit(1)
-
-                        if item.contentWarning == "explicit" {
-                            Text("E")
-                                .font(.system(size: 9, weight: .bold))
-                                .padding(.horizontal, 3)
-                                .padding(.vertical, 1)
-                                .background(Color.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 3))
-                                .foregroundStyle(Color.white.opacity(0.85))
-                        }
-                    }
+                    Text(item.title)
+                        .font(SN.text(.subheadline, .semibold))
+                        .foregroundStyle(isPlaying ? SN.amber : SN.ink)
+                        .lineLimit(1)
 
                     Text(itemSubtitle)
                         .font(SN.text(.caption, .regular))
@@ -1056,21 +1045,10 @@ struct AppleAlbumTrackRow: View {
 
                 // Название
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(item.title)
-                            .font(SN.text(.subheadline, .semibold))
-                            .foregroundStyle(isPlaying ? SN.amber : SN.ink)
-                            .lineLimit(1)
-
-                        if item.contentWarning == "explicit" {
-                            Text("E")
-                                .font(.system(size: 9, weight: .bold))
-                                .padding(.horizontal, 3)
-                                .padding(.vertical, 1)
-                                .background(Color.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 3))
-                                .foregroundStyle(Color.white.opacity(0.85))
-                        }
-                    }
+                    Text(item.title)
+                        .font(SN.text(.subheadline, .semibold))
+                        .foregroundStyle(isPlaying ? SN.amber : SN.ink)
+                        .lineLimit(1)
 
                     if let artistName = item.artists?.first?.name, !artistName.isEmpty {
                         Text(artistName)
@@ -1102,7 +1080,7 @@ struct AppleAlbumTrackRow: View {
 
                     Button {
                         let track = YandexMusicService.shared.convertToTrack(item)
-                        TrackWaveEngine.shared.startWave(from: track)
+                        playTrackWave(from: track)
                     } label: {
                         Label("Волна по треку", systemImage: "dot.radiowaves.left.and.right")
                     }
@@ -1123,3 +1101,17 @@ struct AppleAlbumTrackRow: View {
         .buttonStyle(CardPressStyle(scale: 0.98, haptic: false))
     }
 }
+
+// MARK: - Play Track Wave Helper
+
+@MainActor
+private func playTrackWave(from track: Track) {
+    Haptics.tap(.medium)
+    Task {
+        let tracks = await YandexMusicService.shared.buildTrackWave(from: track, target: 45)
+        guard let first = tracks.first else { return }
+        PlaybackCommandRouter.shared.play(first, queue: tracks)
+        MoodRadioEngine.shared.startTrackWave(seed: track, initialTracks: tracks)
+    }
+}
+
