@@ -1061,8 +1061,8 @@ struct AppleAlbumTrackRow: View {
                 Spacer(minLength: 4)
 
                 // Длительность
-                if let durationMs = item.durationMs {
-                    let totalSeconds = durationMs / 1000
+                if item.durationMs > 0 {
+                    let totalSeconds = item.durationMs / 1000
                     let min = totalSeconds / 60
                     let sec = totalSeconds % 60
                     Text(String(format: "%d:%02d", min, sec))
