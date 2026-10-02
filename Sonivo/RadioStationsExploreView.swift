@@ -173,10 +173,6 @@ struct RadioStationsExploreView: View {
 
     private func playStation(_ station: YandexMusicService.StationOption) {
         Haptics.tap(.medium)
-        Task {
-            let tracks = await ym.buildWaveQueue(stationId: station.stationId, target: 45)
-            guard let first = tracks.first else { return }
-            PlaybackCommandRouter.shared.play(first, queue: tracks)
-        }
+        SonivoPlay.wave(station, forceFresh: true)
     }
 }
