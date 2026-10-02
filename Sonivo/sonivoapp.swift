@@ -18,17 +18,33 @@ struct SonivoApp: App {
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case wave = "Wave", trends = "Trends", library = "Library", search = "Search"
+    case home = "Home", browse = "Browse", radio = "Radio", library = "Library", search = "Search"
     var id: String { rawValue }
-    var label: String { switch self { case .wave: "Моя волна"; case .trends: "Тренды"; case .library: "Коллекция"; case .search: "Поиск" } }
-    var icon: String { switch self { case .wave: "sparkles"; case .trends: "chart.line.uptrend.xyaxis"; case .library: "books.vertical.fill"; case .search: "magnifyingglass" } }
+    var label: String {
+        switch self {
+        case .home: "Главная"
+        case .browse: "Новое"
+        case .radio: "Радио"
+        case .library: "Медиатека"
+        case .search: "Поиск"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .home: "house.fill"
+        case .browse: "square.grid.2x2.fill"
+        case .radio: "dot.radiowaves.left.and.right"
+        case .library: "square.stack.fill"
+        case .search: "magnifyingglass"
+        }
+    }
 }
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
     @State private var router = PlaybackCommandRouter.shared
-    @State private var tab: AppTab = .wave
+    @State private var tab: AppTab = .home
     @State private var showPlayer = false
     @Namespace private var playerTransition
     static let playerZoomID = "now-playing-artwork"
@@ -46,12 +62,13 @@ struct RootView: View {
     }
     var body: some View {
         TabView(selection: $tab) {
-            Tab(AppTab.wave.label, systemImage: AppTab.wave.icon, value: .wave) { SonivoHomeRedesignedView() }
-            Tab(AppTab.trends.label, systemImage: AppTab.trends.icon, value: .trends) { TrendsExploreView() }
+            Tab(AppTab.home.label, systemImage: AppTab.home.icon, value: .home) { SonivoHomeRedesignedView() }
+            Tab(AppTab.browse.label, systemImage: AppTab.browse.icon, value: .browse) { TrendsExploreView() }
+            Tab(AppTab.radio.label, systemImage: AppTab.radio.icon, value: .radio) { RadioStationsExploreView() }
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
             Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) { SearchCatalogView() }
         }
-        .tint(SN.accent).tabBarMinimizeBehavior(.onScrollDown)
+        .tint(Color(hex: "#FF2D55") ?? SN.heart).tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
             if miniVisible { NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition) }
         }

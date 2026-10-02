@@ -395,11 +395,9 @@ struct ArtistView: View {
         Group {
             if !artist.popularTracks.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    // Заголовок Top Songs >
-                    Button {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                            showAllTopTracks.toggle()
-                        }
+                    // Заголовок Top Songs > ведет на выделенный экран TopSongsView
+                    NavigationLink {
+                        TopSongsView(artist: artist)
                     } label: {
                         HStack(spacing: 6) {
                             Text("Top Songs")
@@ -408,17 +406,15 @@ struct ArtistView: View {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(SN.inkMuted)
-                                .rotationEffect(.degrees(showAllTopTracks ? 90 : 0))
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 4)
                     }
                     .buttonStyle(.plain)
 
-                    // Список треков
-                    let visibleTracks = showAllTopTracks ? artist.popularTracks : Array(artist.popularTracks.prefix(5))
+                    // Список первых 5 треков
                     LazyVStack(spacing: 2) {
-                        ForEach(Array(visibleTracks.enumerated()), id: \.element.id) { index, item in
+                        ForEach(Array(artist.popularTracks.prefix(5).enumerated()), id: \.element.id) { index, item in
                             AppleTrackRowView(
                                 item: item,
                                 isPlaying: isItemPlaying(item),
@@ -802,6 +798,7 @@ struct AlbumView: View {
     @State private var ym = YandexMusicService.shared
     @State private var album: YandexMusicService.YMAlbumItem?
     @State private var tracks: [YandexMusicService.YMTrackItem] = []
+    @State private var similarArtists: [YandexMusicService.YMArtistItem.YMArtistBrief] = []
     @State private var isLoading = true
     @State private var presentation = ActivePlayerPresentation.shared
 
@@ -817,10 +814,14 @@ struct AlbumView: View {
                     } else if let album {
                         heroSection(album)
                         tracksSection
+                        metaAndCopyrightSection(album)
+                        if !similarArtists.isEmpty {
+                            similarArtistsSection
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.bottom, 120)
+                .padding(.bottom, 130)
             }
 
             // Навигационная панель альбома
@@ -869,7 +870,7 @@ struct AlbumView: View {
         VStack(spacing: 16) {
             // Обложка с отражением и глубокой тенью
             RemoteArtwork(urlString: album.coverUrlString, corner: 22)
-                .frame(width: 240, height: 240)
+                .frame(width: 230, height: 230)
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5)
@@ -887,25 +888,19 @@ struct AlbumView: View {
 
                 artistLinks(album)
 
-                HStack(spacing: 6) {
-                    if let genre = album.genre, !genre.isEmpty {
-                        Text(genre.capitalized)
-                    }
-                    if let year = album.year {
-                        Text("· \(year)")
-                    }
-                }
-                .font(SN.text(.caption, .medium))
-                .foregroundStyle(SN.inkMuted)
+                // Подпись: "Сингл · 2026 · 1 песня"
+                Text(albumTypeSubtitle(album))
+                    .font(SN.text(.caption, .medium))
+                    .foregroundStyle(SN.inkMuted)
             }
 
-            // Кнопки воспроизведения и перемешивания
+            // Кнопки "Воспроизвести" и "Перемешать" (Apple Music 2026 style)
             if let first = tracks.first {
                 HStack(spacing: 12) {
                     Button {
                         SonivoPlay.track(first, in: tracks)
                     } label: {
-                        Label("Слушать", systemImage: "play.fill")
+                        Label("Воспроизвести", systemImage: "play.fill")
                             .font(SN.text(.subheadline, .bold))
                             .foregroundStyle(.black)
                             .frame(maxWidth: .infinity, minHeight: 46)
@@ -928,11 +923,28 @@ struct AlbumView: View {
                     }
                     .buttonStyle(TactileButtonStyle(scale: 0.96))
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 20)
                 .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func albumTypeSubtitle(_ album: YandexMusicService.YMAlbumItem) -> String {
+        var parts: [String] = []
+        let count = tracks.count
+        if count == 1 {
+            parts.append("Сингл")
+        } else {
+            parts.append("Альбом")
+        }
+        if let year = album.year {
+            parts.append(String(year))
+        }
+        if count > 0 {
+            parts.append(count == 1 ? "1 песня" : "\(count) песен")
+        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -981,13 +993,7 @@ struct AlbumView: View {
     private var tracksSection: some View {
         Group {
             if !tracks.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("\(tracks.count) треков")
-                        .font(SN.text(.caption, .semibold))
-                        .foregroundStyle(SN.inkMuted)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-
+                VStack(alignment: .leading, spacing: 2) {
                     LazyVStack(spacing: 2) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, item in
                             AppleAlbumTrackRow(
@@ -1006,6 +1012,64 @@ struct AlbumView: View {
         }
     }
 
+    private func metaAndCopyrightSection(_ album: YandexMusicService.YMAlbumItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            let year = album.year ?? 2026
+            let totalSec = tracks.reduce(0) { $0 + $1.durationMs } / 1000
+            let minutes = totalSec / 60
+            Text("\(year) г. · \(tracks.count) \(tracks.count == 1 ? "песня" : "песен"), \(minutes) мин.")
+                .font(SN.text(.footnote, .semibold))
+                .foregroundStyle(SN.inkMuted)
+
+            Text("℗ \(year) \(album.artistName)")
+                .font(SN.text(.caption2, .regular))
+                .foregroundStyle(SN.inkMuted.opacity(0.8))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+    }
+
+    private var similarArtistsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("Похожие исполнители")
+                    .font(SN.display(.title3, .bold))
+                    .foregroundStyle(SN.ink)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(SN.inkMuted)
+            }
+            .padding(.horizontal, 20)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(similarArtists.prefix(8)) { similar in
+                        NavigationLink {
+                            ArtistView(artistId: similar.id)
+                        } label: {
+                            VStack(spacing: 8) {
+                                RemoteArtwork(urlString: similar.coverUrlString, corner: 999)
+                                    .frame(width: 86, height: 86)
+                                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+
+                                Text(similar.name)
+                                    .font(SN.text(.caption, .semibold))
+                                    .foregroundStyle(SN.ink)
+                                    .lineLimit(1)
+                            }
+                            .frame(width: 90)
+                        }
+                        .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+        .padding(.top, 16)
+    }
+
     private func isItemPlaying(_ item: YandexMusicService.YMTrackItem) -> Bool {
         guard let current = presentation.displayTrack else { return false }
         return current.title == item.title && current.artist == item.artistName
@@ -1016,7 +1080,84 @@ struct AlbumView: View {
         let id = Int(albumId) ?? 0
         album = ((try? await ym.fetchAlbums(ids: [id])) ?? []).first
         tracks = (try? await ym.getAlbumTracks(albumId: id)) ?? []
+        if let artistId = album?.artists?.first?.id {
+            if let artistObj = try? await ym.getArtistFixed(artistId: String(artistId)) {
+                similarArtists = artistObj.similarArtists
+            }
+        }
         isLoading = false
+    }
+}
+
+// MARK: - Выделенный экран Top Songs (Apple Music 2026 Style)
+
+struct TopSongsView: View {
+    let artist: YandexMusicService.YMArtistItem
+    @Environment(\.dismiss) private var dismiss
+    @State private var presentation = ActivePlayerPresentation.shared
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            SN.bg.ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(artist.popularTracks.enumerated()), id: \.element.id) { index, item in
+                        AppleTrackRowView(
+                            item: item,
+                            isPlaying: isItemPlaying(item),
+                            onPlay: {
+                                SonivoPlay.track(item, in: artist.popularTracks)
+                            },
+                            onWave: {
+                                let track = YandexMusicService.shared.convertToTrack(item)
+                                playTrackWave(from: track)
+                            }
+                        )
+                    }
+                }
+                .padding(.top, 64)
+                .padding(.bottom, 130)
+            }
+
+            // Навигационный бар с заголовком Top Songs
+            HStack(spacing: 12) {
+                Button {
+                    Haptics.tap(.light)
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.92))
+
+                Text("Top Songs")
+                    .font(SN.display(.headline, .bold))
+                    .foregroundStyle(SN.ink)
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .background {
+                Rectangle()
+                    .fill(SN.bg.opacity(0.85))
+                    .background(.ultraThinMaterial)
+                    .ignoresSafeArea(edges: .top)
+            }
+        }
+        .navigationBarBackButtonHidden(true)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private func isItemPlaying(_ item: YandexMusicService.YMTrackItem) -> Bool {
+        guard let current = presentation.displayTrack else { return false }
+        return current.title == item.title && current.artist == item.artistName
     }
 }
 

@@ -335,20 +335,31 @@ struct PlayerScreenV2: View {
     }
 
     private var topHeader: some View {
-        VStack(spacing: 5) {
-            Capsule()
-                .fill(Color.white.opacity(0.32))
-                .frame(width: 36, height: 4.5)
-                .padding(.top, 4)
+        HStack {
+            Button {
+                Haptics.tap(.light)
+                close()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(0.12), in: Circle())
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.90))
 
-            Text("СЕЙЧАС ИГРАЕТ")
-                .font(.system(size: 10, weight: .bold, design: .default))
-                .tracking(1.0)
-                .foregroundStyle(SN.inkFaint)
+            Spacer()
+
+            Capsule()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 36, height: 5)
+
+            Spacer()
+
+            moreMenuButton
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 36)
-        .contentShape(Rectangle())
+        .frame(height: 40)
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
@@ -691,9 +702,9 @@ struct PlayerScreenV2: View {
                     library.toggleFavorite(current)
                 } label: {
                     let favorite = current.map(library.isTrackFavorite) ?? false
-                    Image(systemName: favorite ? "heart.fill" : "heart")
+                    Image(systemName: favorite ? "star.fill" : "star")
                         .font(.system(size: 21, weight: .semibold))
-                        .foregroundStyle(favorite ? SN.heart : SN.inkMuted)
+                        .foregroundStyle(favorite ? SN.amber : SN.inkMuted)
                         .symbolEffect(.bounce, value: favorite)
                         .contentTransition(.symbolEffect(.replace))
                         .frame(width: tapSide, height: tapSide)
@@ -768,14 +779,20 @@ struct PlayerScreenV2: View {
             }
 
             Button(action: togglePlayback) {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 32, weight: .black))
-                    .foregroundStyle(SN.ink)
-                    .frame(width: 66, height: 66)
-                    .contentShape(Circle())
-                    .contentTransition(.symbolEffect(.replace.byLayer))
+                ZStack {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 70, height: 70)
+                        .shadow(color: .white.opacity(0.20), radius: 14, y: 4)
+                        .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 30, weight: .black))
+                        .foregroundStyle(Color.black.opacity(0.92))
+                        .offset(x: player.isPlaying ? 0 : 2)
+                        .contentTransition(.symbolEffect(.replace.byLayer))
+                }
             }
-            .glassCircle()
             .frame(maxWidth: .infinity)
             .disabled(player.isLoading)
 
