@@ -124,7 +124,9 @@ final class PlayerCore {
             guard eqEnabled != oldValue else { return }
             applyEQ()
             defaults.set(eqEnabled, forKey: Self.eqEnabledKey)
-            scheduleStreamMigrationIfNeeded()
+            if eqEnabled && isUsingStreamPlayer {
+                scheduleStreamMigrationIfNeeded(immediate: true)
+            }
         }
     }
 
@@ -140,6 +142,9 @@ final class PlayerCore {
             }
             applyEQ()
             scheduleSaveEQ()
+            if eqEnabled && isUsingStreamPlayer {
+                scheduleStreamMigrationIfNeeded(immediate: false)
+            }
         }
     }
 
@@ -275,8 +280,39 @@ final class PlayerCore {
     /// Hands audio focus back so other apps can play again.
     /// Internal (not private) so `PlaybackAudioSessionCoordinator` can call it on backgrounding.
     func releaseAudioSessionIfIdle() {
-        guard !isPlaying, !isTransitioning else { return }
+        guard !isPlaying, !isTransitioning, !transitionScheduled, currentTrack == nil else { return }
         PlaybackAudioSessionCoordinator.shared.deactivateWhenIdle()
+    }
+
+    private var activePrecacheTask: Task<Void, Never>?
+    private var precachedTrackId: UUID?
+
+    func precacheStream(_ track: Track, url: URL) {
+        guard precachedTrackId != track.id else { return }
+        precachedTrackId = track.id
+        activePrecacheTask?.cancel()
+        activePrecacheTask = Task.detached(priority: .utility) { [weak self] in
+            let ext = (url.pathExtension.isEmpty ? "mp3" : url.pathExtension)
+            let fileName = "vocal_\(track.id.uuidString).\(ext)"
+            let localDest = documentsDirectoryURL().appendingPathComponent(fileName)
+            if !FileManager.default.fileExists(atPath: localDest.path) {
+                do {
+                    let (tempLocation, _) = try await URLSession.shared.download(from: url)
+                    try? FileManager.default.removeItem(at: localDest)
+                    try FileManager.default.moveItem(at: tempLocation, to: localDest)
+                    SonivoDiagnostics.log("[PlayerCore] Stream precached to local: \(fileName)", tag: "AUDIO")
+                } catch {
+                    return
+                }
+            }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if self.eqEnabled && self.isUsingStreamPlayer && self.currentTrack?.id == track.id && self.isPlaying {
+                    self.scheduleStreamMigrationIfNeeded(immediate: true)
+                }
+            }
+        }
     }
 
     private func setupStreamingPlayer() {
@@ -570,10 +606,11 @@ final class PlayerCore {
     /// Migrating a stream onto `AVAudioEngine` downloads the asset and rebuilds the audio
     /// graph. It used to be kicked off from `applyEQ()` — i.e. once per EQ slider tick —
     /// which re-entered `startLocal(...)` in the middle of a drag and crashed the app.
-    /// Now single-flight and rate limited.
-    private func scheduleStreamMigrationIfNeeded() {
+    /// Now single-flight, fast debounced (0.6s) and immediate on toggle.
+    func scheduleStreamMigrationIfNeeded(immediate: Bool = false) {
         guard isUsingStreamPlayer, isPlaying, !streamMigrationInFlight else { return }
-        guard Date().timeIntervalSince(lastStreamMigrationAttempt) > 5 else { return }
+        let elapsed = Date().timeIntervalSince(lastStreamMigrationAttempt)
+        if !immediate && elapsed < 0.6 { return }
         streamMigrationInFlight = true
         lastStreamMigrationAttempt = Date()
         Task { @MainActor [weak self] in
@@ -875,6 +912,7 @@ final class PlayerCore {
 
     func resume() {
         guard !isPlaying, let track = currentTrack else { return }
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         if track.isStream || track.streamUrlString != nil {
             if activeStreamingPlayer.currentItem == nil {
                 start(at: progress)
@@ -1029,6 +1067,10 @@ final class PlayerCore {
         generation += 1
         let token = generation
 
+        // Guaranteed audio session activation and playback intent
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        isPlaying = true
+
         // Immediately silence and detach any currently active audio sources
         activeStreamingPlayer.pause()
         activeStreamingPlayer.replaceCurrentItem(with: nil)
@@ -1122,8 +1164,9 @@ final class PlayerCore {
                     }
                 }
 
-                guard self.generation == token, self.isPlaying else { return }
+                guard self.generation == token else { return }
 
+                PlaybackAudioSessionCoordinator.shared.activateForPlayback()
                 self.isUsingStreamPlayer = false
                 self.activeStreamingPlayer.pause()
                 self.idleStreamingPlayer.pause()
@@ -1162,7 +1205,7 @@ final class PlayerCore {
 
         let url = track.url
         if url.scheme == "http" || url.scheme == "https" {
-            guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
+            guard self.generation == token, self.currentTrack?.id == track.id else { return }
             currentBitrate = 128
             currentCodec = "mp3"
             beginStream(url, at: seconds, token: token)
@@ -1172,7 +1215,7 @@ final class PlayerCore {
         if let streamStr = track.streamUrlString,
            let streamURL = URL(string: streamStr),
            streamURL.scheme == "http" || streamURL.scheme == "https" {
-            guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
+            guard self.generation == token, self.currentTrack?.id == track.id else { return }
             currentBitrate = 128
             currentCodec = "mp3"
             beginStream(streamURL, at: seconds, token: token)
@@ -1183,7 +1226,7 @@ final class PlayerCore {
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
+                guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
                 self.currentTrack?.streamUrlString = info.url.absoluteString
@@ -1194,7 +1237,7 @@ final class PlayerCore {
                 if self.audioQuality != .standard {
                     do {
                         let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 320)
-                        guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
+                        guard self.generation == token, self.currentTrack?.id == track.id else { return }
                         self.currentBitrate = fallbackInfo.bitrate
                         self.currentCodec = fallbackInfo.codec
                         self.currentTrack?.streamUrlString = fallbackInfo.url.absoluteString
@@ -1246,7 +1289,7 @@ final class PlayerCore {
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                guard self.generation == token, self.isPlaying, self.currentTrack?.id == track.id else { return }
+                guard self.generation == token, self.currentTrack?.id == track.id else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
                 self.currentTrack?.streamUrlString = info.url.absoluteString
@@ -1257,7 +1300,8 @@ final class PlayerCore {
     }
 
     private func beginStream(_ url: URL, at seconds: Double, token: Int) {
-        guard self.generation == token, self.isPlaying else { return }
+        guard self.generation == token else { return }
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         self.activeStreamURL = url
         self.currentTrack?.streamUrlString = url.absoluteString
         let item = AVPlayerItem(url: url)
@@ -1275,6 +1319,11 @@ final class PlayerCore {
         self.transitionScheduled = false
         self.lastNowPlayingSync = nil
         self.updateNowPlayingInfo()
+
+        // Proactive background caching for instant zero-latency EQ cutover
+        if let current = currentTrack {
+            precacheStream(current, url: url)
+        }
     }
 
     func findLocalOrCachedAudioFile(for track: Track) -> URL? {
@@ -1795,18 +1844,36 @@ final class PlayerCore {
         reportWaveFinishedIfNeeded()
         progress = duration
         anchorDate = nil
-        isPlaying = false
         plannedNextTrack = nil
+
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "Sonivo.handleTrackFinish") {
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
+        }
+
+        func finishBgTask() {
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
+        }
+
         if repeatMode == .one {
             start(at: 0)
+            finishBgTask()
             return
         }
         if let nextTrack = peekNext(auto: true) {
             currentTrack = nextTrack
             start(at: 0)
             refillQueueIfNeeded()
+            finishBgTask()
         } else if let current = currentTrack, repeatMode != .one {
             Task { @MainActor in
+                defer { finishBgTask() }
                 let wave: [Track]
                 if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
                     wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
@@ -1817,6 +1884,7 @@ final class PlayerCore {
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id }
                 guard !fresh.isEmpty else {
+                    self.isPlaying = false
                     self.updateNowPlayingInfo()
                     return
                 }
@@ -1827,7 +1895,9 @@ final class PlayerCore {
                 self.refillQueueIfNeeded()
             }
         } else {
+            isPlaying = false
             updateNowPlayingInfo()
+            finishBgTask()
         }
     }
 
