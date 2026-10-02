@@ -219,8 +219,12 @@ final class PlayerCore {
 
     func applySpatialAudioConfiguration() {
         let formats: AVAudioSpatializationFormats = spatialAudioEnabled ? .monoStereoAndMultichannel : []
-        streamingPlayerA.currentItem?.allowedAudioSpatializationFormats = formats
-        streamingPlayerB.currentItem?.allowedAudioSpatializationFormats = formats
+        if let itemA = streamingPlayerA.currentItem, itemA.allowedAudioSpatializationFormats != formats {
+            itemA.allowedAudioSpatializationFormats = formats
+        }
+        if let itemB = streamingPlayerB.currentItem, itemB.allowedAudioSpatializationFormats != formats {
+            itemB.allowedAudioSpatializationFormats = formats
+        }
     }
 
     var transitionMode: TransitionMode = .off { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }

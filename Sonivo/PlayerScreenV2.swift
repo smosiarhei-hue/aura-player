@@ -737,37 +737,45 @@ struct PlayerScreenV2: View {
             AIDJTransitionBadgeView(incomingTrack: player.incomingTrack)
                 .transition(.opacity)
         } else {
-            HStack(spacing: 6) {
-                qualityBadgeButton
-                if player.isDolbyAtmosAvailable {
-                    dolbyAtmosBadgeButton
-                }
-            }
-            .transition(.opacity)
+            qualityBadgeButton
+                .transition(.opacity)
         }
     }
     private var qualityBadgeButton: some View {
-        Button { openModal(.quality) } label: {
-            HStack(spacing: 4) { Image(systemName: "waveform"); Text(qualityBadgeLabel) }
-                .font(SN.text(.caption2, .semibold)).foregroundStyle(SN.ink.opacity(0.85)).padding(.horizontal, 10).padding(.vertical, 6)
-        }.buttonStyle(.plain).glassCapsule(interactive: true)
-    }
-    private var dolbyAtmosBadgeButton: some View {
-        Button { openModal(.quality) } label: {
+        Button {
+            Haptics.tap(.light)
+            openModal(.quality)
+        } label: {
             HStack(spacing: 4) {
-                Image(systemName: "dot.radiowaves.left.and.right")
-                Text("Dolby Atmos")
+                Image(systemName: qualityBadgeIcon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(qualityBadgeLabel)
+                    .font(SN.text(.caption2, .semibold))
             }
-            .font(SN.text(.caption2, .semibold))
-            .foregroundStyle(SN.ink.opacity(0.85))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-        }.buttonStyle(.plain).glassCapsule(interactive: true)
+            .foregroundStyle(SN.ink.opacity(0.50))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.06))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+    private var qualityBadgeIcon: String {
+        let codec = player.currentCodec?.lowercased() ?? ""
+        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+            return "dot.radiowaves.left.and.right"
+        }
+        return "waveform"
     }
     private var qualityBadgeLabel: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
-        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
+        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+            return "Dolby Atmos"
+        }
+        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") || bitrate >= 1000 {
             return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
         }
         if bitrate >= 320 { return "HQ \(bitrate) kbps" }
@@ -1855,7 +1863,7 @@ struct PlayerQualityModalView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                if player.isDolbyAtmosAvailable {
+                if isTrueDolbyAtmos || (player.isDolbyAtmosActive && player.spatialAudioEnabled) {
                     HStack(spacing: 6) {
                         Image(systemName: "dot.radiowaves.left.and.right")
                             .font(.system(size: 12, weight: .bold))
@@ -1917,6 +1925,11 @@ struct PlayerQualityModalView: View {
         .presentationDetents([.height(410), .medium])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(28)
+    }
+
+    private var isTrueDolbyAtmos: Bool {
+        let codec = player.currentCodec?.lowercased() ?? ""
+        return codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial")
     }
 
     private var qualitySettingsList: some View {
@@ -1985,6 +1998,9 @@ struct PlayerQualityModalView: View {
     private var currentQualityTitle: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
+        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+            return "Dolby Atmos"
+        }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
             return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
         }
@@ -1996,11 +2012,14 @@ struct PlayerQualityModalView: View {
     private var currentQualityDescription: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
+        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+            return "Аудио с объёмным пространственным звучанием Dolby Atmos воспроизводит трёхмерную звуковую сцену с эффектом полного присутствия."
+        }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
             return "Аудио без потерь (Lossless) воспроизводится с оригинальным студийным качеством записи без потери деталей звука."
         }
         if bitrate >= 320 || codec.contains("mp3") || codec.contains("aac") {
-            return "Аудио высокого качества воспроизводится с оптимизированным сжатием данных для быстрого и стабильного воспроизведения."
+            return "Аудио высокого качества (HQ 320 кбит/с) обеспечивает кристальную чистоту звучания с оптимизированным битрейтом."
         }
         return "Качество звука настраивается автоматически или в соответствии с вашими предпочтениями."
     }
