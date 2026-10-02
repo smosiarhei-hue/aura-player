@@ -50,6 +50,7 @@ final class PlaybackAudioSessionCoordinator {
                     PlaybackCommandRouter.shared.pause()
                 }
                 PlaybackAudioSessionCoordinator.shared.prepare()
+                PlayerCore.shared.handleAudioRouteChange()
             }
         })
 
@@ -60,6 +61,7 @@ final class PlaybackAudioSessionCoordinator {
         ) { _ in
             Task { @MainActor in
                 PlaybackAudioSessionCoordinator.shared.prepare()
+                PlayerCore.shared.handleSpatialPlaybackCapabilitiesChanged()
             }
         })
 

@@ -737,13 +737,31 @@ struct PlayerScreenV2: View {
             AIDJTransitionBadgeView(incomingTrack: player.incomingTrack)
                 .transition(.opacity)
         } else {
-            qualityBadgeButton.transition(.opacity)
+            HStack(spacing: 6) {
+                qualityBadgeButton
+                if player.isDolbyAtmosAvailable {
+                    dolbyAtmosBadgeButton
+                }
+            }
+            .transition(.opacity)
         }
     }
     private var qualityBadgeButton: some View {
         Button { openModal(.quality) } label: {
             HStack(spacing: 4) { Image(systemName: "waveform"); Text(qualityBadgeLabel) }
                 .font(SN.text(.caption2, .semibold)).foregroundStyle(SN.ink.opacity(0.85)).padding(.horizontal, 10).padding(.vertical, 6)
+        }.buttonStyle(.plain).glassCapsule(interactive: true)
+    }
+    private var dolbyAtmosBadgeButton: some View {
+        Button { openModal(.quality) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                Text("Dolby Atmos")
+            }
+            .font(SN.text(.caption2, .semibold))
+            .foregroundStyle(SN.ink.opacity(0.85))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
         }.buttonStyle(.plain).glassCapsule(interactive: true)
     }
     private var qualityBadgeLabel: String {
@@ -1836,6 +1854,21 @@ struct PlayerQualityModalView: View {
                         .foregroundStyle(.white.opacity(0.60))
                         .multilineTextAlignment(.center)
                 }
+
+                if player.isDolbyAtmosAvailable {
+                    HStack(spacing: 6) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 12, weight: .bold))
+                        Text(player.isDolbyAtmosActive ? "Dolby Atmos активен (AirPods)" : "Dolby Atmos (Пространственное аудио)")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(SN.amber)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(SN.amber.opacity(0.12))
+                    .clipShape(Capsule())
+                    .padding(.top, 4)
+                }
             }
 
             Spacer(minLength: 12)
@@ -1881,13 +1914,21 @@ struct PlayerQualityModalView: View {
             .padding(.bottom, 20)
         }
         .padding(.top, 8)
-        .presentationDetents([.height(370), .medium])
+        .presentationDetents([.height(410), .medium])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(28)
     }
 
     private var qualitySettingsList: some View {
         List {
+            Section {
+                Toggle("Dolby Atmos (Пространственное аудио)", isOn: $player.spatialAudioEnabled)
+            } header: {
+                Text("Пространственное аудио")
+            } footer: {
+                Text("Воспроизводит многоканальное аудио и пространственный стерео-звук для наушников AirPods и совместимой акустики.")
+            }
+
             Section {
                 ForEach(AudioQuality.allCases) { quality in
                     Button {

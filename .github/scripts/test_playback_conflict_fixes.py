@@ -36,6 +36,48 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("scheduleStreamMigrationIfNeeded(immediate: true)", content)
         self.assertIn("func scheduleStreamMigrationIfNeeded(immediate: Bool = false)", content)
 
+    def test_smart_headphone_eq(self):
+        content = self.playercore.read_text(encoding="utf-8")
+        self.assertIn("var eqHeadphonesOnly: Bool", content)
+        self.assertIn("var isHeadphonesConnected: Bool", content)
+        self.assertIn("var isEQEffectivelyActive: Bool", content)
+        self.assertIn("func handleAudioRouteChange()", content)
+        # Check that applyEQ respects effective EQ active state
+        self.assertIn("let on = isEQEffectivelyActive", content)
+
+    def test_smart_headphone_eq_ui(self):
+        chrome_content = (self.repo_root / "Sonivo" / "playerchrome.swift").read_text(encoding="utf-8")
+        self.assertIn("Только в наушниках", chrome_content)
+        self.assertIn("$player.eqHeadphonesOnly", chrome_content)
+        self.assertIn("Наушники подключены • Эквалайзер активен", chrome_content)
+
+        settings_content = (self.repo_root / "Sonivo" / "settingsview.swift").read_text(encoding="utf-8")
+        self.assertIn("Только для наушников", settings_content)
+        self.assertIn("$player.eqHeadphonesOnly", settings_content)
+
+    def test_dolby_atmos_and_lossless_support(self):
+        content = self.playercore.read_text(encoding="utf-8")
+        self.assertIn("var spatialAudioEnabled: Bool", content)
+        self.assertIn("var isDolbyAtmosAvailable: Bool", content)
+        self.assertIn("var isDolbyAtmosActive: Bool", content)
+        self.assertIn("func applySpatialAudioConfiguration()", content)
+        self.assertIn("func handleSpatialPlaybackCapabilitiesChanged()", content)
+        # Check stream beat tap spatialization
+        streambeat_content = (self.repo_root / "Sonivo" / "streambeat.swift").read_text(encoding="utf-8")
+        self.assertIn("item.allowedAudioSpatializationFormats = PlayerCore.shared.spatialAudioEnabled ? .monoStereoAndMultichannel : []", streambeat_content)
+
+    def test_dolby_atmos_and_lossless_ui(self):
+        player_v2_content = (self.repo_root / "Sonivo" / "PlayerScreenV2.swift").read_text(encoding="utf-8")
+        self.assertIn("dolbyAtmosBadgeButton", player_v2_content)
+        self.assertIn('Text("Dolby Atmos")', player_v2_content)
+        self.assertIn("player.isDolbyAtmosAvailable", player_v2_content)
+        self.assertIn("$player.spatialAudioEnabled", player_v2_content)
+
+        settings_content = (self.repo_root / "Sonivo" / "settingsview.swift").read_text(encoding="utf-8")
+        self.assertIn("Dolby Atmos (Пространственное аудио)", settings_content)
+        self.assertIn("$player.spatialAudioEnabled", settings_content)
+
 
 if __name__ == "__main__":
     unittest.main()
+

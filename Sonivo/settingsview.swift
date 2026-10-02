@@ -206,7 +206,7 @@ struct SettingsView: View {
                     Text(l10n.isRussian ? "Кинетика и пролистывание" : "Scroll Kinetics")
                 }
 
-                Section("Звук") {
+                Section {
                     Button {
                         showEqualizerSheet = true
                     } label: {
@@ -214,16 +214,35 @@ struct SettingsView: View {
                             Label("Эквалайзер", systemImage: "slider.vertical.3")
                                 .foregroundStyle(.primary)
                             Spacer()
-                            Text(player.eqEnabled ? "Включён" : "Выключен")
+                            Text(player.eqEnabled ? (player.isEQEffectivelyActive ? "Включён" : "В наушниках") : "Выключен")
                                 .foregroundStyle(.secondary)
                             Image(systemName: "chevron.right")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(.tertiary)
                         }
                     }
+
+                    Toggle("Только для наушников", isOn: $player.eqHeadphonesOnly)
+                        .tint(settings.accentColor)
+
+                    HStack {
+                        Label("Текущий вывод", systemImage: player.isHeadphonesConnected ? "headphones" : "iphone")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(player.isHeadphonesConnected ? "Наушники (EQ активен)" : "Динамик (EQ отключен)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Звук")
+                } footer: {
+                    Text("При воспроизведении через динамик телефона эквалайзер автоматически выключается (Flat), предотвращая хрипы и искажения.")
                 }
 
-                Section("Качество звука") {
+                Section {
+                    Toggle("Dolby Atmos (Пространственное аудио)", isOn: $player.spatialAudioEnabled)
+                        .tint(settings.accentColor)
+
                     ForEach(AudioQuality.allCases) { quality in
                         Button { player.selectQuality(quality) } label: {
                             HStack(alignment: .top, spacing: 12) {
@@ -236,6 +255,10 @@ struct SettingsView: View {
                             }.contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }
+                } header: {
+                    Text("Качество звука и Dolby Atmos")
+                } footer: {
+                    Text("Lossless воспроизводит оригинальный звук студийной записи (FLAC). Dolby Atmos воспроизводит объёмную пространственную панораму для AirPods и внешней акустики.")
                 }
 
                 Section {

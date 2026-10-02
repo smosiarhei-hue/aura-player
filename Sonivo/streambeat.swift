@@ -19,7 +19,7 @@ final class StreamBeatTap {
 
     func attach(to item: AVPlayerItem) {
         // Spatial playback allows mono, stereo, and multichannel spatialization
-        item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+        item.allowedAudioSpatializationFormats = PlayerCore.shared.spatialAudioEnabled ? .monoStereoAndMultichannel : []
         SpectrumAnalyzer.ingestStreamLevel(0)
     }
 }

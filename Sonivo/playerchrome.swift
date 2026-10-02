@@ -604,33 +604,93 @@ struct PlayerEQSheetView: View {
     }
 
     private var masterToggleCard: some View {
-        HStack(spacing: 14) {
-            ZStack {
+        VStack(spacing: 12) {
+            // Master EQ Switch
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(player.eqEnabled ? SN.amber.opacity(0.20) : Color.white.opacity(0.08))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "slider.vertical.3")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(player.eqEnabled ? SN.amber : SN.inkMuted)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Эквалайзер")
+                        .font(SN.text(.body, .bold))
+                        .foregroundStyle(SN.ink)
+                    Text(player.eqEnabled ? (player.isEQEffectivelyActive ? "10-полосная обработка активна" : "Приостановлен (динамик)") : "Выключен (исходный звук)")
+                        .font(SN.text(.caption, .regular))
+                        .foregroundStyle(player.isEQEffectivelyActive ? SN.positive : (player.eqEnabled ? SN.amber : SN.inkMuted))
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $player.eqEnabled)
+                    .labelsHidden()
+                    .tint(SN.amber)
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+
+            // Smart Headphone EQ Toggle
+            HStack(spacing: 12) {
+                Image(systemName: "headphones")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(player.eqHeadphonesOnly ? SN.amber : SN.inkMuted)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Только в наушниках")
+                        .font(SN.text(.subheadline, .medium))
+                        .foregroundStyle(SN.ink)
+                    Text("Отключает эквалайзер на динамике телефона для защиты от искажений")
+                        .font(SN.text(.caption2, .regular))
+                        .foregroundStyle(SN.inkMuted)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $player.eqHeadphonesOnly)
+                    .labelsHidden()
+                    .tint(SN.amber)
+            }
+
+            // Route Status Pill
+            HStack(spacing: 8) {
                 Circle()
-                    .fill(player.eqEnabled ? SN.amber.opacity(0.20) : Color.white.opacity(0.08))
-                    .frame(width: 44, height: 44)
-                Image(systemName: "slider.vertical.3")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(player.eqEnabled ? SN.amber : SN.inkMuted)
+                    .fill(player.isEQEffectivelyActive ? Color.green : (player.eqEnabled ? Color.orange : Color.gray))
+                    .frame(width: 7, height: 7)
+
+                if !player.eqEnabled {
+                    Text("Эквалайзер отключен")
+                        .font(SN.text(.caption, .medium))
+                        .foregroundStyle(SN.inkMuted)
+                } else if player.isHeadphonesConnected {
+                    Text("🎧 Наушники подключены • Эквалайзер активен")
+                        .font(SN.text(.caption, .medium))
+                        .foregroundStyle(SN.ink)
+                } else if player.eqHeadphonesOnly {
+                    Text("📱 Динамик телефона • Эквалайзер отключен (Flat)")
+                        .font(SN.text(.caption, .medium))
+                        .foregroundStyle(SN.inkMuted)
+                } else {
+                    Text("📱 Динамик телефона • Эквалайзер активен")
+                        .font(SN.text(.caption, .medium))
+                        .foregroundStyle(SN.ink)
+                }
+
+                Spacer()
             }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Эквалайзер")
-                    .font(SN.text(.body, .bold))
-                    .foregroundStyle(SN.ink)
-                Text(player.eqEnabled ? "10-полосная обработка звука" : "Выключен (исходный звук)")
-                    .font(SN.text(.caption, .regular))
-                    .foregroundStyle(player.eqEnabled ? SN.positive : SN.inkMuted)
-            }
-
-            Spacer()
-
-            Toggle("", isOn: $player.eqEnabled)
-                .labelsHidden()
-                .tint(SN.amber)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.white.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(SN.card.opacity(0.85))

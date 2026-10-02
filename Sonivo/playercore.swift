@@ -148,6 +148,81 @@ final class PlayerCore {
         }
     }
 
+    /// Smart Headphone EQ: when enabled, EQ curve only applies to headphones/external outputs.
+    /// Built-in phone speakers stay flat to prevent rattle and distortion.
+    var eqHeadphonesOnly: Bool = true {
+        didSet {
+            guard eqHeadphonesOnly != oldValue else { return }
+            defaults.set(eqHeadphonesOnly, forKey: "eq.headphonesOnly")
+            applyEQ()
+        }
+    }
+
+    private(set) var isHeadphonesConnected: Bool = false
+    private(set) var isSpatialPlaybackActive: Bool = false
+
+    /// Spatial Audio / Dolby Atmos engine toggle (matching Apple Music spatialization)
+    var spatialAudioEnabled: Bool = true {
+        didSet {
+            guard spatialAudioEnabled != oldValue else { return }
+            defaults.set(spatialAudioEnabled, forKey: "player.spatialAudioEnabled")
+            applySpatialAudioConfiguration()
+        }
+    }
+
+    /// Whether Dolby Atmos spatial audio processing is available for current track/output
+    var isDolbyAtmosAvailable: Bool {
+        spatialAudioEnabled && (isSpatialPlaybackActive || isHeadphonesConnected)
+    }
+
+    /// Whether Dolby Atmos spatial audio processing is actively playing to supported hardware
+    var isDolbyAtmosActive: Bool {
+        spatialAudioEnabled && isSpatialPlaybackActive
+    }
+
+    var isEQEffectivelyActive: Bool {
+        guard eqEnabled else { return false }
+        if eqHeadphonesOnly {
+            return isHeadphonesConnected
+        }
+        return true
+    }
+
+    func updateAudioRouteState() {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        var hpConnected = false
+        var spatialActive = false
+        for output in route.outputs {
+            switch output.portType {
+            case .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .usbAudio:
+                hpConnected = true
+            default:
+                break
+            }
+            if output.isSpatialAudioEnabled {
+                spatialActive = true
+            }
+        }
+        self.isHeadphonesConnected = hpConnected
+        self.isSpatialPlaybackActive = spatialActive
+        applyEQ()
+        applySpatialAudioConfiguration()
+    }
+
+    func handleAudioRouteChange() {
+        updateAudioRouteState()
+    }
+
+    func handleSpatialPlaybackCapabilitiesChanged() {
+        updateAudioRouteState()
+    }
+
+    func applySpatialAudioConfiguration() {
+        let formats: AVAudioSpatializationFormats = spatialAudioEnabled ? .monoStereoAndMultichannel : []
+        streamingPlayerA.currentItem?.allowedAudioSpatializationFormats = formats
+        streamingPlayerB.currentItem?.allowedAudioSpatializationFormats = formats
+    }
+
     var transitionMode: TransitionMode = .off { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
     var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
 
@@ -451,6 +526,8 @@ final class PlayerCore {
         shuffle = defaults.bool(forKey: "player.shuffle")
         repeatMode = RepeatMode(rawValue: defaults.integer(forKey: "player.repeat")) ?? .off
         eqEnabled = defaults.object(forKey: Self.eqEnabledKey) as? Bool ?? true
+        eqHeadphonesOnly = defaults.object(forKey: "eq.headphonesOnly") as? Bool ?? true
+        spatialAudioEnabled = defaults.object(forKey: "player.spatialAudioEnabled") as? Bool ?? true
 
         if let modeStr = defaults.string(forKey: "player.transitionMode"),
            let mode = TransitionMode(rawValue: modeStr),
@@ -476,7 +553,7 @@ final class PlayerCore {
            gains.count == PlayerCore.bandFrequencies.count {
             eqGains = gains
         }
-        applyEQ()
+        updateAudioRouteState()
     }
 
     func savePlaybackState() {
@@ -580,7 +657,7 @@ final class PlayerCore {
 
     private func applyEQ() {
         let user = normalizedUserGains
-        let on = eqEnabled
+        let on = isEQEffectivelyActive
         func compose(_ offset: [Float]) -> [Float] {
             (0..<PlayerCore.bandFrequencies.count).map { on ? (user[$0] + offset[$0]) : offset[$0] }
         }
@@ -1306,7 +1383,7 @@ final class PlayerCore {
         self.currentTrack?.streamUrlString = url.absoluteString
         let item = AVPlayerItem(url: url)
         item.audioTimePitchAlgorithm = .timeDomain
-        item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+        item.allowedAudioSpatializationFormats = spatialAudioEnabled ? .monoStereoAndMultichannel : []
         StreamBeatTap.shared.attach(to: item)
         activeStreamingPlayer.replaceCurrentItem(with: item)
         activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
@@ -1439,7 +1516,7 @@ final class PlayerCore {
                         let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                         let nextItem = AVPlayerItem(url: info.url)
                         nextItem.audioTimePitchAlgorithm = .timeDomain
-                        nextItem.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
+                        nextItem.allowedAudioSpatializationFormats = self.spatialAudioEnabled ? .monoStereoAndMultichannel : []
                         StreamBeatTap.shared.attach(to: nextItem)
                         self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
                         self.idleStreamingPlayer.volume = 0.001

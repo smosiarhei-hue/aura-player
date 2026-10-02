@@ -135,6 +135,18 @@ final class ActivePlayerPresentation {
         get { legacy.eqGains }
         set { legacy.eqGains = newValue }
     }
+    var eqHeadphonesOnly: Bool {
+        get { legacy.eqHeadphonesOnly }
+        set { legacy.eqHeadphonesOnly = newValue }
+    }
+    var isHeadphonesConnected: Bool { legacy.isHeadphonesConnected }
+    var isEQEffectivelyActive: Bool { legacy.isEQEffectivelyActive }
+    var spatialAudioEnabled: Bool {
+        get { legacy.spatialAudioEnabled }
+        set { legacy.spatialAudioEnabled = newValue }
+    }
+    var isDolbyAtmosAvailable: Bool { legacy.isDolbyAtmosAvailable }
+    var isDolbyAtmosActive: Bool { legacy.isDolbyAtmosActive }
 
     func togglePlay() { router.toggle() }
     func pause() { router.pause() }
