@@ -39,26 +39,28 @@ enum SN {
     static let inkMuted  = Color(uiColor: .secondaryLabel)
     static let inkFaint  = Color(uiColor: .tertiaryLabel)
 
-    // MARK: Accent — a cool system-aware accent; artwork supplies atmosphere.
-    static let accent = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.68, green: 0.73, blue: 1.0, alpha: 1)
-            : UIColor(red: 0.19, green: 0.27, blue: 0.78, alpha: 1)
-    })
-    static let amber    = accent
-    static let ember    = accent
-    static let flame    = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.38, green: 0.43, blue: 0.75, alpha: 1)
-            : UIColor(red: 0.28, green: 0.35, blue: 0.86, alpha: 1)
-    })
+    // MARK: Accent — dynamic user-selected theme color
+    static var accent: Color {
+        ThemeFontManager.shared.accentColor
+    }
+    static var amber: Color {
+        ThemeFontManager.shared.accentColor
+    }
+    static var ember: Color {
+        ThemeFontManager.shared.accentColor
+    }
+    static var flame: Color {
+        ThemeFontManager.shared.flameColor
+    }
     /// Favourite / like state, matches the system Music red.
-    static let heart    = Color(hex: "#FF2D55") ?? .pink
+    static var heart: Color {
+        ThemeFontManager.shared.heartColor
+    }
     /// Positive status (AI online, video-shot on).
     static let positive = Color(hex: "#30D158") ?? .green
 
     static var emberGradient: LinearGradient {
-        LinearGradient(colors: [accent, flame], startPoint: .topLeading, endPoint: .bottomTrailing)
+        ThemeFontManager.shared.emberGradient
     }
 
     /// Fixed palette for category and genre tiles. Tiles are the one place
@@ -84,19 +86,17 @@ enum SN {
                        endPoint: .bottomTrailing)
     }
 
-    // MARK: Typography — every font is a Dynamic Type text style, so sizes
-    // follow the user's accessibility setting. Weight and design are the
-    // only knobs views may turn.
+    // MARK: Typography — dynamic user-selected font (Neue Montreal, Satoshi, General Sans, Instrument Sans, PP Neue Machina)
     static func display(_ style: Font.TextStyle = .title2, _ weight: Font.Weight = .bold) -> Font {
-        .system(style, design: .default, weight: weight)
+        ThemeFontManager.shared.displayFont(style: style, weight: weight)
     }
 
     static func text(_ style: Font.TextStyle = .body, _ weight: Font.Weight = .regular) -> Font {
-        .system(style, design: .default, weight: weight)
+        ThemeFontManager.shared.font(style: style, weight: weight)
     }
 
     static func rounded(_ style: Font.TextStyle = .body, _ weight: Font.Weight = .medium) -> Font {
-        .system(style, design: .default, weight: weight)
+        ThemeFontManager.shared.roundedFont(style: style, weight: weight)
     }
 
     static func serifAccent(_ style: Font.TextStyle = .title2) -> Font {

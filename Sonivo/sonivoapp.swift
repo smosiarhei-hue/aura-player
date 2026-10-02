@@ -13,6 +13,10 @@ struct SonivoApp: App {
         appearance.compactInlineLayoutAppearance = appearance.stackedLayoutAppearance
         let tabBar = UITabBar.appearance(); tabBar.standardAppearance = appearance; tabBar.scrollEdgeAppearance = appearance
         tabBar.tintColor = .label; tabBar.unselectedItemTintColor = .secondaryLabel
+        
+        // Smooth ProMotion deceleration (120/220Hz feel) — long buttery kinetic coasting
+        UIScrollView.appearance().decelerationRate = UIScrollView.DecelerationRate.normal
+        UIScrollView.appearance().bounces = true
     }
     var body: some Scene { WindowGroup { RootView().tint(SN.accent) } }
 }
@@ -44,6 +48,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
     @State private var router = PlaybackCommandRouter.shared
+    @State private var themeManager = ThemeFontManager.shared
     @State private var tab: AppTab = .home
     @State private var showPlayer = false
     @Namespace private var playerTransition
@@ -68,7 +73,7 @@ struct RootView: View {
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
             Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) { SearchCatalogView() }
         }
-        .tint(Color(hex: "#FF2D55") ?? SN.heart).tabBarMinimizeBehavior(.onScrollDown)
+        .tint(themeManager.accentColor).tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
             if miniVisible { NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition) }
         }

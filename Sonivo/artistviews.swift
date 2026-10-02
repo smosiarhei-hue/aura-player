@@ -12,10 +12,8 @@ struct ArtistView: View {
     @State private var showingInfoSheet = false
     @State private var isFavorite = false
     @State private var showAllTopTracks = false
-    @State private var scrollOffsetY: CGFloat = 0
-    @State private var presentation = ActivePlayerPresentation.shared
-
-    private let heroHeight: CGFloat = 380
+    @State private var l10n = SonivoL10n.shared
+    private let heroHeaderHeight: CGFloat = 300
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -106,13 +104,13 @@ struct ArtistView: View {
                         Button {
                             playArtistWave(artist)
                         } label: {
-                            Label("Волна артиста", systemImage: "dot.radiowaves.left.and.right")
+                            Label(l10n.artistWave, systemImage: "dot.radiowaves.left.and.right")
                         }
 
                         Button {
                             toggleFavorite()
                         } label: {
-                            Label(isFavorite ? "Удалить из избранного" : "Добавить в избранное",
+                            Label(isFavorite ? l10n.removeFromFavorites : l10n.addToFavorites,
                                   systemImage: isFavorite ? "star.slash" : "star")
                         }
 
@@ -120,14 +118,22 @@ struct ArtistView: View {
                             Button {
                                 SonivoPlay.track(first, in: artist.popularTracks)
                             } label: {
-                                Label("Слушать популярное", systemImage: "play.fill")
+                                Label(l10n.play, systemImage: "play.fill")
                             }
                         }
 
                         Button {
                             showingInfoSheet = true
                         } label: {
-                            Label("Об артисте", systemImage: "info.circle")
+                            Label(l10n.aboutArtist, systemImage: "info.circle")
+                        }
+
+                        Button {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                l10n.toggleLanguage()
+                            }
+                        } label: {
+                            Label(l10n.languageSwitchLabel, systemImage: "globe")
                         }
                     }
                 } label: {
@@ -154,7 +160,7 @@ struct ArtistView: View {
         }
     }
 
-    // MARK: - Main Scrollable Content
+    // MARK: - Main Scrollable Content (Smooth 120/220Hz Scroll Physics)
 
     private func mainContentView(_ artist: YandexMusicService.YMArtistItem) -> some View {
         ScrollView(showsIndicators: false) {
@@ -167,17 +173,20 @@ struct ArtistView: View {
                 }
                 .frame(height: 0)
 
-                // Hero-баннер артиста во всю ширину
-                heroSection(artist)
+                // 1. Hero Artwork Background во всю ширину
+                heroParallaxHeader(artist)
 
-                // Стек содержимого
+                // 2. Имя артиста, сабтайтл и Трио действий (естественный поток, никакого наложения!)
+                artistHeaderContent(artist)
+
+                // 3. Стек содержимого (всегда строго НИЖЕ кнопок!)
                 VStack(spacing: 24) {
                     // Карточка свежего / главного релиза
                     if let latest = sortedAlbums(artist.albums).first {
                         latestReleaseCard(latest)
                     }
 
-                    // Секция популярных треков (Top Songs)
+                    // Секция популярных треков (Популярные треки >)
                     topSongsSection(artist)
 
                     // Секция альбомов
@@ -195,19 +204,22 @@ struct ArtistView: View {
             }
         }
         .coordinateSpace(name: "ArtistScrollSpace")
+        .scrollBounceBehavior(.basedOnSize)
         .onPreferenceChange(ArtistScrollOffsetKey.self) { value in
             scrollOffsetY = value
         }
         .ignoresSafeArea(edges: .top)
     }
 
-    // MARK: - Hero Section (Apple Music 2026 Style)
+    // MARK: - Hero Parallax Artwork Header (Apple Music 2026 Style)
 
-    private func heroSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
+    private func heroParallaxHeader(_ artist: YandexMusicService.YMArtistItem) -> some View {
         GeometryReader { proxy in
             let minY = proxy.frame(in: .global).minY
             let isPullingDown = minY > 0
-            let effectiveHeight = heroHeight + (isPullingDown ? minY : 0)
+            // Плавное демпфирование под ProMotion / 220 Гц: без рывков
+            let pullOffset = isPullingDown ? (minY * 0.45) : (minY * 0.35)
+            let effectiveHeight = heroHeaderHeight + (isPullingDown ? minY : 0)
 
             ZStack(alignment: .bottom) {
                 // Фото артиста во всю ширину
@@ -215,7 +227,7 @@ struct ArtistView: View {
                     .scaledToFill()
                     .frame(width: proxy.size.width, height: effectiveHeight)
                     .clipped()
-                    .offset(y: isPullingDown ? -minY : 0)
+                    .offset(y: isPullingDown ? -minY : pullOffset)
 
                 // Многоступенчатый градиент растворения в темный фон
                 LinearGradient(
@@ -230,88 +242,93 @@ struct ArtistView: View {
                     endPoint: .bottom
                 )
                 .frame(width: proxy.size.width, height: effectiveHeight)
-                .offset(y: isPullingDown ? -minY : 0)
-
-                // Имя артиста и панель действий
-                VStack(spacing: 16) {
-                    // Имя артиста (массивный жирный шрифт в верхнем регистре)
-                    VStack(spacing: 6) {
-                        Text(artist.name.uppercased())
-                            .font(.system(size: 34, weight: .black, design: .rounded))
-                            .foregroundStyle(Color.white)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .shadow(color: .black.opacity(0.65), radius: 12, y: 4)
-
-                        if !artist.subtitle.isEmpty {
-                            Text(artist.subtitle)
-                                .font(SN.text(.footnote, .semibold))
-                                .foregroundStyle(Color.white.opacity(0.82))
-                                .shadow(color: .black.opacity(0.50), radius: 6, y: 2)
-                        }
-                    }
-                    .padding(.horizontal, 24)
-
-                    // Фирменное трио действий (Info, Central Play, Star)
-                    HStack(spacing: 24) {
-                        // Кнопка (i) слева
-                        Button {
-                            Haptics.tap(.light)
-                            showingInfoSheet = true
-                        } label: {
-                            Image(systemName: "info")
-                                .font(.system(size: 19, weight: .bold))
-                                .foregroundStyle(Color.white.opacity(0.92))
-                                .frame(width: 52, height: 52)
-                                .background(.ultraThinMaterial, in: Circle())
-                                .overlay(Circle().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.5))
-                                .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
-                        }
-                        .buttonStyle(TactileButtonStyle(scale: 0.94))
-
-                        // Большая белая круглая кнопка Play по центру
-                        Button {
-                            Haptics.tap(.heavy)
-                            if let first = artist.popularTracks.first {
-                                SonivoPlay.track(first, in: artist.popularTracks)
-                            }
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 72, height: 72)
-                                    .shadow(color: .white.opacity(0.25), radius: 18, y: 6)
-                                    .shadow(color: .black.opacity(0.40), radius: 10, y: 4)
-
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 28, weight: .black))
-                                    .foregroundStyle(Color.black.opacity(0.92))
-                                    .offset(x: 2)
-                            }
-                        }
-                        .buttonStyle(TactileButtonStyle(scale: 0.94))
-
-                        // Кнопка Star (Избранное) справа
-                        Button {
-                            toggleFavorite()
-                        } label: {
-                            Image(systemName: isFavorite ? "star.fill" : "star")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(isFavorite ? SN.amber : Color.white.opacity(0.92))
-                                .frame(width: 52, height: 52)
-                                .background(.ultraThinMaterial, in: Circle())
-                                .overlay(Circle().strokeBorder(isFavorite ? SN.amber.opacity(0.4) : Color.white.opacity(0.20), lineWidth: 0.5))
-                                .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
-                                .scaleEffect(isFavorite ? 1.08 : 1.0)
-                        }
-                        .buttonStyle(TactileButtonStyle(scale: 0.94))
-                    }
-                    .padding(.bottom, 8)
-                }
-                .frame(maxWidth: .infinity)
+                .offset(y: isPullingDown ? -minY : pullOffset)
             }
         }
-        .frame(height: heroHeight)
+        .frame(height: heroHeaderHeight)
+    }
+
+    // MARK: - Artist Header Content (Name, Subtitle & Action Trio)
+
+    private func artistHeaderContent(_ artist: YandexMusicService.YMArtistItem) -> some View {
+        VStack(spacing: 16) {
+            // Имя артиста (массивный жирный шрифт в верхнем регистре)
+            VStack(spacing: 6) {
+                Text(artist.name.uppercased())
+                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .shadow(color: .black.opacity(0.65), radius: 12, y: 4)
+
+                if !artist.subtitle.isEmpty {
+                    Text(artist.subtitle)
+                        .font(SN.text(.footnote, .semibold))
+                        .foregroundStyle(Color.white.opacity(0.82))
+                        .shadow(color: .black.opacity(0.50), radius: 6, y: 2)
+                }
+            }
+            .padding(.horizontal, 24)
+
+            // Фирменное трио действий (Info, Central Play, Star)
+            HStack(spacing: 24) {
+                // Кнопка (i) слева
+                Button {
+                    Haptics.tap(.light)
+                    showingInfoSheet = true
+                } label: {
+                    Image(systemName: "info")
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 52, height: 52)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
+
+                // Большая белая круглая кнопка Play по центру
+                Button {
+                    Haptics.tap(.heavy)
+                    if let first = artist.popularTracks.first {
+                        SonivoPlay.track(first, in: artist.popularTracks)
+                    }
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 72, height: 72)
+                            .shadow(color: .white.opacity(0.25), radius: 18, y: 6)
+                            .shadow(color: .black.opacity(0.40), radius: 10, y: 4)
+
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 28, weight: .black))
+                            .foregroundStyle(Color.black.opacity(0.92))
+                            .offset(x: 2)
+                    }
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
+
+                // Кнопка Star (Избранное) справа
+                Button {
+                    toggleFavorite()
+                } label: {
+                    Image(systemName: isFavorite ? "star.fill" : "star")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(isFavorite ? SN.amber : Color.white.opacity(0.92))
+                        .frame(width: 52, height: 52)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(isFavorite ? SN.amber.opacity(0.4) : Color.white.opacity(0.20), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+                        .scaleEffect(isFavorite ? 1.08 : 1.0)
+                }
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
+            }
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .offset(y: -44)
+        .padding(.bottom, -20)
     }
 
     // MARK: - Featured / Latest Release Card
@@ -331,12 +348,12 @@ struct ArtistView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     if let year = album.year {
-                        Text("\(year) · Релиз")
+                        Text("\(String(format: "%d", year)) · \(l10n.releaseBadge)")
                             .font(SN.text(.caption2, .bold))
                             .foregroundStyle(SN.inkMuted)
                             .textCase(.uppercase)
                     } else {
-                        Text("Свежий релиз")
+                        Text(l10n.latestRelease)
                             .font(SN.text(.caption2, .bold))
                             .foregroundStyle(SN.inkMuted)
                             .textCase(.uppercase)
@@ -395,12 +412,12 @@ struct ArtistView: View {
         Group {
             if !artist.popularTracks.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    // Заголовок Top Songs > ведет на выделенный экран TopSongsView
+                    // Заголовок Популярные треки > ведет на выделенный экран TopSongsView
                     NavigationLink {
                         TopSongsView(artist: artist)
                     } label: {
                         HStack(spacing: 6) {
-                            Text("Top Songs")
+                            Text(l10n.topSongs)
                                 .font(SN.display(.title3, .bold))
                                 .foregroundStyle(SN.ink)
                             Image(systemName: "chevron.right")
@@ -801,6 +818,7 @@ struct AlbumView: View {
     @State private var similarArtists: [YandexMusicService.YMArtistItem.YMArtistBrief] = []
     @State private var isLoading = true
     @State private var presentation = ActivePlayerPresentation.shared
+    @State private var l10n = SonivoL10n.shared
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -809,7 +827,7 @@ struct AlbumView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
                     if isLoading {
-                        SonivoLoadingState(title: "Загружаем альбом…")
+                        SonivoLoadingState(title: l10n.isRussian ? "Загружаем альбом…" : "Loading album…")
                             .frame(minHeight: 400)
                     } else if let album {
                         heroSection(album)
@@ -823,6 +841,7 @@ struct AlbumView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 130)
             }
+            .scrollBounceBehavior(.basedOnSize)
 
             // Навигационная панель альбома
             albumNavBar
@@ -900,7 +919,7 @@ struct AlbumView: View {
                     Button {
                         SonivoPlay.track(first, in: tracks)
                     } label: {
-                        Label("Воспроизвести", systemImage: "play.fill")
+                        Label(l10n.play, systemImage: "play.fill")
                             .font(SN.text(.subheadline, .bold))
                             .foregroundStyle(.black)
                             .frame(maxWidth: .infinity, minHeight: 46)
@@ -914,7 +933,7 @@ struct AlbumView: View {
                             SonivoPlay.track(randomFirst, in: shuffled)
                         }
                     } label: {
-                        Label("Перемешать", systemImage: "shuffle")
+                        Label(l10n.shuffle, systemImage: "shuffle")
                             .font(SN.text(.subheadline, .semibold))
                             .foregroundStyle(SN.ink)
                             .frame(maxWidth: .infinity, minHeight: 46)
@@ -934,15 +953,15 @@ struct AlbumView: View {
         var parts: [String] = []
         let count = tracks.count
         if count == 1 {
-            parts.append("Сингл")
+            parts.append(l10n.single)
         } else {
-            parts.append("Альбом")
+            parts.append(l10n.album)
         }
         if let year = album.year {
-            parts.append(String(year))
+            parts.append(String(format: "%d", year))
         }
         if count > 0 {
-            parts.append(count == 1 ? "1 песня" : "\(count) песен")
+            parts.append(l10n.songsCount(count))
         }
         return parts.joined(separator: " · ")
     }
@@ -1017,11 +1036,11 @@ struct AlbumView: View {
             let year = album.year ?? 2026
             let totalSec = tracks.reduce(0) { $0 + $1.durationMs } / 1000
             let minutes = totalSec / 60
-            Text("\(year) г. · \(tracks.count) \(tracks.count == 1 ? "песня" : "песен"), \(minutes) мин.")
+            Text("\(String(format: "%d", year)) · \(l10n.songsCount(tracks.count)), \(l10n.minutesText(minutes))")
                 .font(SN.text(.footnote, .semibold))
                 .foregroundStyle(SN.inkMuted)
 
-            Text("℗ \(year) \(album.artistName)")
+            Text("℗ \(String(format: "%d", year)) \(album.artistName)")
                 .font(SN.text(.caption2, .regular))
                 .foregroundStyle(SN.inkMuted.opacity(0.8))
         }
@@ -1033,7 +1052,7 @@ struct AlbumView: View {
     private var similarArtistsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                Text("Похожие исполнители")
+                Text(l10n.similarArtists)
                     .font(SN.display(.title3, .bold))
                     .foregroundStyle(SN.ink)
                 Image(systemName: "chevron.right")
@@ -1095,6 +1114,7 @@ struct TopSongsView: View {
     let artist: YandexMusicService.YMArtistItem
     @Environment(\.dismiss) private var dismiss
     @State private var presentation = ActivePlayerPresentation.shared
+    @State private var l10n = SonivoL10n.shared
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -1119,8 +1139,9 @@ struct TopSongsView: View {
                 .padding(.top, 64)
                 .padding(.bottom, 130)
             }
+            .scrollBounceBehavior(.basedOnSize)
 
-            // Навигационный бар с заголовком Top Songs
+            // Навигационный бар с заголовком
             HStack(spacing: 12) {
                 Button {
                     Haptics.tap(.light)
@@ -1135,7 +1156,7 @@ struct TopSongsView: View {
                 }
                 .buttonStyle(TactileButtonStyle(scale: 0.92))
 
-                Text("Top Songs")
+                Text(l10n.topSongs)
                     .font(SN.display(.headline, .bold))
                     .foregroundStyle(SN.ink)
 

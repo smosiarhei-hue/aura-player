@@ -6,6 +6,8 @@ struct SettingsView: View {
     @State private var player = PlayerCore.shared
     @State private var ym = YandexMusicService.shared
     @State private var socialAuth = SocialAuthStore.shared
+    @State private var themeManager = ThemeFontManager.shared
+    @State private var l10n = SonivoL10n.shared
     @State private var showYandexAuthSheet = false
     @State private var showEqualizerSheet = false
     @State private var isSyncingLikes = false
@@ -65,6 +67,143 @@ struct SettingsView: View {
                     } else {
                         SignInWithAppleView { userID, name in socialAuth.handleSuccess(userID: userID, name: name) }
                     }
+                }
+
+                Section {
+                    // Цветовая тема (Apple Crimson, Amber Sunset, Electric Violet, Neon Cyan, Emerald Glow, Cobalt Blue)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(l10n.isRussian ? "Цветовая тема" : "Accent Theme")
+                            .font(SN.text(.subheadline, .medium))
+                            .foregroundStyle(.primary)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 14) {
+                                ForEach(AppThemeColor.allCases) { theme in
+                                    Button {
+                                        Haptics.tap(.light)
+                                        themeManager.selectedTheme = theme
+                                    } label: {
+                                        VStack(spacing: 6) {
+                                            ZStack {
+                                                Circle()
+                                                    .fill(theme.color)
+                                                    .frame(width: 36, height: 36)
+                                                    .shadow(color: theme.color.opacity(0.35), radius: 4, y: 2)
+
+                                                if themeManager.selectedTheme == theme {
+                                                    Image(systemName: "checkmark")
+                                                        .font(.system(size: 14, weight: .bold))
+                                                        .foregroundStyle(.white)
+                                                }
+                                            }
+                                            .overlay(
+                                                Circle()
+                                                    .strokeBorder(
+                                                        themeManager.selectedTheme == theme ? Color.white : Color.clear,
+                                                        lineWidth: 2
+                                                    )
+                                            )
+
+                                            Text(theme.displayName)
+                                                .font(SN.text(.caption2, themeManager.selectedTheme == theme ? .bold : .regular))
+                                                .foregroundStyle(themeManager.selectedTheme == theme ? .primary : .secondary)
+                                                .lineLimit(1)
+                                        }
+                                        .frame(width: 76)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .padding(.vertical, 4)
+
+                    // 5 Шрифтов: Neue Montreal, Satoshi, General Sans, Instrument Sans, PP Neue Machina
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(l10n.isRussian ? "Шрифт приложения (5 вариантов)" : "Typography (5 Fonts)")
+                            .font(SN.text(.subheadline, .medium))
+                            .foregroundStyle(.primary)
+                            .padding(.top, 4)
+
+                        ForEach(AppCustomFont.allCases) { font in
+                            Button {
+                                Haptics.tap(.light)
+                                themeManager.selectedFont = font
+                            } label: {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text(font.displayName)
+                                                .font(themeManager.font(style: .body, weight: themeManager.selectedFont == font ? .bold : .regular))
+                                                .foregroundStyle(.primary)
+
+                                            if themeManager.selectedFont == font {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundStyle(themeManager.accentColor)
+                                                    .font(.caption)
+                                            }
+                                        }
+
+                                        Text(font.subtitle)
+                                            .font(SN.text(.caption2))
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Text(font.sampleText)
+                                        .font(SN.text(.footnote, .medium))
+                                        .foregroundStyle(themeManager.selectedFont == font ? themeManager.accentColor : .secondary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill(themeManager.selectedFont == font ? themeManager.accentColor.opacity(0.14) : Color.white.opacity(0.06))
+                                        )
+                                }
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Text(l10n.isRussian ? "Оформление и шрифты" : "Theme & Typography")
+                } footer: {
+                    Text(l10n.isRussian ? "Выбранный шрифт и тема мгновенно применяются ко всем экранам, карточкам и элементам управления Sonivo." : "The selected font and theme color dynamically apply across all views and controls in Sonivo.")
+                }
+
+                Section {
+                    Picker(l10n.isRussian ? "Язык" : "Language", selection: $l10n.language) {
+                        ForEach(AppLanguage.allCases) { lang in
+                            Text(lang.displayName).tag(lang)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text(l10n.isRussian ? "Язык интерфейса" : "Interface Language")
+                } footer: {
+                    Text(l10n.isRussian ? "Sonivo работает на русском языке по умолчанию. Доступно быстрое переключение на английский." : "Sonivo defaults to Russian with fast switching to English.")
+                }
+
+                Section {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(l10n.isRussian ? "Плавность ProMotion (120/220 Гц)" : "ProMotion High Refresh Rate")
+                                .font(SN.text(.subheadline, .medium))
+                            Text(l10n.isRussian ? "Мягкая инерция пролистывания и плавная кинетика скролла без резких остановок" : "Smooth weighted scroll inertia and buttery deceleration")
+                                .font(SN.text(.caption2))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "waveform.path.badge.plus")
+                            .font(.title3)
+                            .foregroundStyle(themeManager.accentColor)
+                    }
+                } header: {
+                    Text(l10n.isRussian ? "Кинетика и пролистывание" : "Scroll Kinetics")
                 }
 
                 Section("Звук") {
