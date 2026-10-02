@@ -13,6 +13,8 @@ struct ArtistView: View {
     @State private var isFavorite = false
     @State private var showAllTopTracks = false
     @State private var l10n = SonivoL10n.shared
+    @State private var presentation = ActivePlayerPresentation.shared
+    @State private var scrollOffsetY: CGFloat = 0
     private let heroHeaderHeight: CGFloat = 300
 
     var body: some View {
@@ -54,7 +56,7 @@ struct ArtistView: View {
         // Мягкое проявление заголовка при скролле вверх
         let threshold: CGFloat = 160
         guard scrollOffsetY < -40 else { return 0 }
-        let progress = min(1.0, max(0.0, (-scrollOffsetY - 40) / threshold))
+        let progress = min(CGFloat(1.0), max(CGFloat(0.0), (-scrollOffsetY - 40) / threshold))
         return Double(progress)
     }
 
@@ -533,7 +535,7 @@ struct ArtistView: View {
             // Skeleton Hero
             Rectangle()
                 .fill(Color.white.opacity(0.06))
-                .frame(height: heroHeight)
+                .frame(height: heroHeaderHeight)
                 .overlay(
                     VStack {
                         Spacer()
