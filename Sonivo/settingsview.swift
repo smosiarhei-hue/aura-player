@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var socialAuth = SocialAuthStore.shared
     @State private var themeManager = ThemeFontManager.shared
     @State private var l10n = SonivoL10n.shared
+    @State private var mediaCache = MediaCacheManager.shared
     @State private var showYandexAuthSheet = false
     @State private var showEqualizerSheet = false
     @State private var isSyncingLikes = false
@@ -352,6 +353,26 @@ struct SettingsView: View {
                     Button("Сбросить индекс медиатеки", role: .destructive) { library.resetIndex() }
                 }
 
+                Section {
+                    LabeledContent("Кэш аудио, обложек и видео", value: mediaCache.formattedSize)
+                    Button(role: .destructive) {
+                        Task { await mediaCache.clearGeneratedCache() }
+                    } label: {
+                        HStack {
+                            Text(mediaCache.isClearing ? "Очистка…" : "Очистить сгенерированный кэш")
+                            if mediaCache.isClearing {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(mediaCache.isClearing)
+                } header: {
+                    Text("Хранилище")
+                } footer: {
+                    Text("Личные импортированные треки не удаляются. Очищаются только повторно загружаемые аудиофайлы, обложки и AI-видео.")
+                }
+
                 Section("О приложении") {
                     LabeledContent("Название", value: "Sonivo")
                     LabeledContent("Версия", value: appVersion)
@@ -367,6 +388,7 @@ struct SettingsView: View {
             .tint(settings.accentColor)
             .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
             .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
+            .task { await mediaCache.refresh() }
         }
     }
 
