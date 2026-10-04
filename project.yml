@@ -111,6 +111,23 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
+  SonivoUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Tests/UITests
+    dependencies:
+      - target: Sonivo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo.UITests
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
 schemes:
   Sonivo:
     build:
@@ -122,6 +139,7 @@ schemes:
       gatherCoverageData: true
       targets:
         - SonivoUnitTests
+        - SonivoUITests
     run:
       config: Debug
     archive:

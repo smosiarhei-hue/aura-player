@@ -100,6 +100,7 @@ struct MyWaveHeroView: View {
                     .font(SN.display(.title, .black))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
+                    .accessibilityIdentifier("sonivo.my-wave.title")
 
                 if player.isPlaying {
                     Circle()
