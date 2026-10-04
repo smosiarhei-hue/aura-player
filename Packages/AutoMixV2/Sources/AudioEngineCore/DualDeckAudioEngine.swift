@@ -143,8 +143,12 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
     public func applyUserEQ(gains: [Float], enabled: Bool) async {
         await inspect { owner in
             owner.userEQ.bypass = !enabled
+            let normalized = Array(gains.prefix(owner.userEQ.bands.count)).map {
+                $0.isFinite ? max(-12, min(12, $0)) : 0
+            }
+            owner.userEQ.globalGain = enabled ? -max(0, normalized.max() ?? 0) : 0
             for (index, band) in owner.userEQ.bands.enumerated() {
-                band.gain = enabled && index < gains.count && gains[index].isFinite ? gains[index] : 0
+                band.gain = enabled && index < normalized.count ? normalized[index] : 0
             }
         }
     }

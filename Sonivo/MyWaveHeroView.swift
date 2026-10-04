@@ -97,7 +97,7 @@ struct MyWaveHeroView: View {
         HStack {
             HStack(spacing: 8) {
                 Text("Моя волна")
-                    .font(.system(size: 26, weight: .black, design: .default))
+                    .font(SN.display(.title, .black))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
 
@@ -119,11 +119,28 @@ struct MyWaveHeroView: View {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.9))
-                        .frame(width: 40, height: 40)
+                        .frame(width: SN.tapTarget, height: SN.tapTarget)
                         .background(.ultraThinMaterial.opacity(0.70), in: Circle())
                 }
                 .buttonStyle(TactileButtonStyle(scale: 0.92))
                 .accessibilityLabel("Настроить волну")
+                .accessibilityHint("Открывает характер, язык и настроение потока")
+
+                if let showAIAssistant {
+                    Button {
+                        Haptics.tap(.light)
+                        showAIAssistant.wrappedValue = true
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: SN.tapTarget, height: SN.tapTarget)
+                            .background(.ultraThinMaterial.opacity(0.70), in: Circle())
+                    }
+                    .buttonStyle(TactileButtonStyle(scale: 0.92))
+                    .accessibilityLabel("AI-куратор")
+                    .accessibilityHint("Открывает музыкального помощника")
+                }
 
                 Button {
                     Haptics.tap(.light)
@@ -132,22 +149,16 @@ struct MyWaveHeroView: View {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.9))
-                        .frame(width: 40, height: 40)
+                        .frame(width: SN.tapTarget, height: SN.tapTarget)
                         .background(.ultraThinMaterial.opacity(0.70), in: Circle())
                 }
                 .buttonStyle(TactileButtonStyle(scale: 0.92))
                 .accessibilityLabel("Настройки")
+                .accessibilityHint("Открывает оформление, звук и параметры приложения")
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
-        .background {
-            // Programmatic AI Assistant binding retention
-            if let showAIAssistant = showAIAssistant, false {
-                Image(systemName: "sparkles")
-                    .onTapGesture { showAIAssistant.wrappedValue = true }
-            }
-        }
     }
 
     // MARK: - Central Living Spatial Stage (Apple Spatial Blur - No Lines, No Frames)

@@ -191,7 +191,7 @@ struct SettingsView: View {
                 Section {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(l10n.isRussian ? "Плавность ProMotion (120/220 Гц)" : "ProMotion High Refresh Rate")
+                            Text(l10n.isRussian ? "Плавность ProMotion (до 120 Гц)" : "ProMotion High Refresh Rate")
                                 .font(SN.text(.subheadline, .medium))
                             Text(l10n.isRussian ? "Мягкая инерция пролистывания и плавная кинетика скролла без резких остановок" : "Smooth weighted scroll inertia and buttery deceleration")
                                 .font(SN.text(.caption2))
@@ -214,7 +214,7 @@ struct SettingsView: View {
                             Label("Эквалайзер", systemImage: "slider.vertical.3")
                                 .foregroundStyle(.primary)
                             Spacer()
-                            Text(player.eqEnabled ? (player.isEQEffectivelyActive ? "Включён" : "В наушниках") : "Выключен")
+                            Text(eqSummary)
                                 .foregroundStyle(.secondary)
                             Image(systemName: "chevron.right")
                                 .font(.footnote.weight(.semibold))
@@ -229,14 +229,14 @@ struct SettingsView: View {
                         Label("Текущий вывод", systemImage: player.isHeadphonesConnected ? "headphones" : "iphone")
                             .foregroundStyle(.primary)
                         Spacer()
-                        Text(player.isHeadphonesConnected ? "Наушники (EQ активен)" : "Динамик (EQ отключен)")
+                        Text(eqRouteSummary)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 } header: {
                     Text("Звук")
                 } footer: {
-                    Text("При воспроизведении через динамик телефона эквалайзер автоматически выключается (Flat), предотвращая хрипы и искажения.")
+                    Text("Нативный 10-полосный EQ работает локально. Режим «Только для наушников» при необходимости оставляет динамик телефона в Flat.")
                 }
 
                 Section {
@@ -368,6 +368,20 @@ struct SettingsView: View {
             .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
             .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
         }
+    }
+
+    private var eqSummary: String {
+        if !player.eqEnabled { return "Выключен" }
+        if player.isEQPreparingNativeStream { return "Подготовка" }
+        if player.eqHeadphonesOnly && !player.isHeadphonesConnected { return "В наушниках" }
+        return "Включён"
+    }
+
+    private var eqRouteSummary: String {
+        if player.isEQPreparingNativeStream { return "Поток кэшируется для нативного EQ" }
+        if player.isHeadphonesConnected { return "Наушники • EQ активен" }
+        if player.eqHeadphonesOnly { return "Динамик • Flat" }
+        return "Динамик • EQ активен"
     }
 
     private var appVersion: String {

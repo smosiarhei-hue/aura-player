@@ -82,6 +82,7 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
 final class PlayerCore {
     static let shared = PlayerCore()
     nonisolated static let bandFrequencies: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
+    nonisolated static let maximumEQGain: Float = 12
     nonisolated static let eqEnabledKey = "eq.enabled"
     nonisolated static let eqGainsKey = "eq.gains"
 
@@ -634,7 +635,9 @@ final class PlayerCore {
     /// Always exactly `bandFrequencies.count` elements — the only safe basis for indexing.
     nonisolated static func normalized(_ gains: [Float]) -> [Float] {
         let count = bandFrequencies.count
-        var out = Array(gains.prefix(count)).map { $0.isFinite ? max(-24.0, min(24.0, $0)) : 0.0 }
+        var out = Array(gains.prefix(count)).map {
+            $0.isFinite ? max(-maximumEQGain, min(maximumEQGain, $0)) : 0.0
+        }
         if out.count < count { out.append(contentsOf: Array(repeating: 0, count: count - out.count)) }
         return out
     }
@@ -664,22 +667,24 @@ final class PlayerCore {
     private func applyEQ() {
         let user = normalizedUserGains
         let on = isEQEffectivelyActive
+        let automaticPreamp = on ? -max(0, user.max() ?? 0) : 0
         func compose(_ offset: [Float]) -> [Float] {
             (0..<PlayerCore.bandFrequencies.count).map { on ? (user[$0] + offset[$0]) : offset[$0] }
         }
-        writeBands(eqNodeA, compose(eqOffsetA))
-        writeBands(eqNodeB, compose(eqOffsetB))
-        writeBands(looperEQ, compose(eqOffsetLooper))
+        writeBands(eqNodeA, compose(eqOffsetA), globalGain: automaticPreamp)
+        writeBands(eqNodeB, compose(eqOffsetB), globalGain: automaticPreamp)
+        writeBands(looperEQ, compose(eqOffsetLooper), globalGain: automaticPreamp)
     }
 
-    private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float]) {
+    private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float], globalGain: Float) {
+        node.globalGain = max(-PlayerCore.maximumEQGain, min(0, globalGain))
         let bands = node.bands
         let count = min(bands.count, gains.count)
         guard count > 0 else { return }
         for i in 0..<count {
             let targetGain = gains[i]
             guard targetGain.isFinite else { continue }
-            let clamped = max(-24.0, min(24.0, targetGain))
+            let clamped = max(-PlayerCore.maximumEQGain, min(PlayerCore.maximumEQGain, targetGain))
             if abs(bands[i].gain - clamped) > 0.01 {
                 bands[i].gain = clamped
             }

@@ -929,6 +929,21 @@ struct EQVerticalFader: View {
                             onDragEnd()
                         }
                 )
+                .accessibilityElement()
+                .accessibilityLabel("Полоса \(frequency) герц")
+                .accessibilityValue(formatDB(gain))
+                .accessibilityAdjustableAction { direction in
+                    guard enabled else { return }
+                    switch direction {
+                    case .increment:
+                        gain = min(maxGain, gain + 1)
+                    case .decrement:
+                        gain = max(-maxGain, gain - 1)
+                    @unknown default:
+                        break
+                    }
+                    onDragEnd()
+                }
             }
             .frame(height: trackHeight)
 

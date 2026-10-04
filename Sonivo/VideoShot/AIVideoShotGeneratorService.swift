@@ -159,9 +159,6 @@ final class AIVideoShotGeneratorService: ObservableObject {
             if let bundleBassok = Bundle.main.url(forResource: "platina_voskresenskii_bassok_cinematic", withExtension: "mp4") {
                 return bundleBassok
             }
-            if let bundle77 = Bundle.main.url(forResource: "77691072", withExtension: "mp4") {
-                return bundle77
-            }
             let docBassok = storageDirectory.appendingPathComponent("platina_voskresenskii_bassok_cinematic.mp4")
             if FileManager.default.fileExists(atPath: docBassok.path),
                let attrs = try? FileManager.default.attributesOfItem(atPath: docBassok.path),
