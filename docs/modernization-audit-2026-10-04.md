@@ -8,13 +8,9 @@ Scope: SwiftUI app, audio packages, tests, CI, scripts, repository hygiene, acce
 
 The project has a strong product direction, a real design system, strict Swift 6 concurrency enabled, a meaningful audio-engine test suite, and a polished My Wave concept. It is not ready to call “fully clean” yet. The largest risks are exposed credentials, oversized and tightly coupled source files, security-sensitive data stored in `UserDefaults`, incomplete localization/accessibility coverage, and repository bloat.
 
-The first security remediation is included on this branch:
-
-- remove embedded NVIDIA, Dify, and Yandex credentials from current source;
-- migrate AI and Yandex credentials from `UserDefaults` to Keychain;
-- require explicit user authorization instead of shipping a shared Yandex token.
-
-The credentials previously committed must still be revoked and rotated. Removing them from the latest tree does not remove them from Git history.
+Credential behavior was intentionally left unchanged because it is outside the requested
+My Wave and equalizer redesign. The security observations below remain recommendations,
+not changes included in this branch.
 
 ## Validation boundary
 
@@ -51,7 +47,6 @@ Risk:
 
 Remediation:
 
-- implemented current-tree removal and Keychain migration on this branch;
 - revoke and rotate all affected credentials immediately;
 - purge sensitive blobs from Git history if the repository’s exposure model requires it;
 - add secret scanning in CI (for example, Gitleaks) because GitHub Advanced Security scanning is unavailable.
@@ -62,8 +57,8 @@ AI provider keys and the Yandex token were stored as plain preferences. `UserDef
 
 Remediation:
 
-- implemented `SecureCredentialStore` backed by Keychain;
-- migrate legacy values once, then remove them from `UserDefaults`;
+- migrate sensitive values to Keychain in a dedicated, separately reviewed change;
+- remove migrated values from `UserDefaults`;
 - keep provider choice, endpoint, and model name in `UserDefaults`.
 
 ### P1 — correctness and maintainability
@@ -226,7 +221,7 @@ Do not make formatting changes across the whole repository in the same PR as beh
 
 ## Recommended execution order
 
-1. Revoke exposed credentials and merge the Keychain/current-tree cleanup.
+1. Handle credential rotation and Keychain migration in a dedicated security change.
 2. Add secret and repository-hygiene CI checks.
 3. Run branch CI and fix any Swift 6/Xcode failures.
 4. Add My Wave UI smoke tests and accessibility checks.

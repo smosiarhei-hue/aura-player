@@ -15,6 +15,7 @@ struct SonivoHomeRedesignedView: View {
     @State private var showPlayer = false
     @State private var showAIAssistant = false
     @State private var waveStore = WaveSettingsStore.shared
+    @State private var themeManager = ThemeFontManager.shared
     @State private var showShakeOverlay = false
     @State private var shakeTriggerCount = 0
     @State private var isWaveShaking = false
@@ -35,11 +36,8 @@ struct SonivoHomeRedesignedView: View {
         return station.isEmpty ? reference : Array((station + reference).prefix(5))
     }
 
-    private var trackPalette: [Color] {
-        if let palette = player.displayTrack?.palette, !palette.isEmpty {
-            return palette
-        }
-        return waveColors
+    private var shakeWavePalette: [Color] {
+        [themeManager.accentColor, themeManager.flameColor]
     }
 
     var body: some View {
@@ -50,8 +48,8 @@ struct SonivoHomeRedesignedView: View {
                 // Soft ambient blurred backdrop that adds depth and glow behind the whole screen
                 RadialGradient(
                     colors: [
-                        Color.cyan.opacity(0.18),
-                        Color.purple.opacity(0.10),
+                        themeManager.accentColor.opacity(0.18),
+                        themeManager.flameColor.opacity(0.10),
                         Color.black
                     ],
                     center: .top,
@@ -112,7 +110,7 @@ struct SonivoHomeRedesignedView: View {
                 WaveShakeOverlayView(
                     isActive: showShakeOverlay,
                     triggerCount: shakeTriggerCount,
-                    palette: trackPalette,
+                    palette: shakeWavePalette,
                     title: shakeHUDMessage,
                     subtitle: shakeHUDDetail,
                     onDismiss: {

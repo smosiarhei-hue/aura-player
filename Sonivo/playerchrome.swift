@@ -523,46 +523,6 @@ struct PlayerEQSheetView: View {
                             }
                         }
 
-                        // Presets List
-                        VStack(spacing: 0) {
-                            ForEach(EQPresets.all) { preset in
-                                let isSel = activePresetName == preset.name
-                                Button {
-                                    applyPreset(preset)
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: isSel ? "checkmark.circle.fill" : "circle")
-                                            .font(.system(size: 18, weight: .semibold))
-                                            .foregroundStyle(isSel ? SN.amber : SN.inkMuted)
-
-                                        Text(preset.name)
-                                            .font(SN.text(.body, isSel ? .bold : .regular))
-                                            .foregroundStyle(SN.ink)
-
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .frame(height: 50)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(CardPressStyle(scale: 0.98, haptic: false))
-
-                                if preset.id != EQPresets.all.last?.id {
-                                    Divider()
-                                        .background(Color.white.opacity(0.06))
-                                        .padding(.leading, 46)
-                                }
-                            }
-                        }
-                        .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(SN.card.opacity(0.85))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                                )
-                        )
-                        .padding(.horizontal, 16)
                         .padding(.bottom, 24)
                     }
                     .padding(.top, 12)
@@ -620,9 +580,9 @@ struct PlayerEQSheetView: View {
                     Text("Эквалайзер")
                         .font(SN.text(.body, .bold))
                         .foregroundStyle(SN.ink)
-                    Text(player.eqEnabled ? (player.isEQEffectivelyActive ? "10-полосная обработка активна" : "Приостановлен (динамик)") : "Выключен (исходный звук)")
+                    Text(eqStatusText)
                         .font(SN.text(.caption, .regular))
-                        .foregroundStyle(player.isEQEffectivelyActive ? SN.positive : (player.eqEnabled ? SN.amber : SN.inkMuted))
+                        .foregroundStyle(eqStatusColor)
                 }
 
                 Spacer()
@@ -661,23 +621,27 @@ struct PlayerEQSheetView: View {
             // Route Status Pill
             HStack(spacing: 8) {
                 Circle()
-                    .fill(player.isEQEffectivelyActive ? Color.green : (player.eqEnabled ? Color.orange : Color.gray))
+                    .fill(eqStatusColor)
                     .frame(width: 7, height: 7)
 
                 if !player.eqEnabled {
                     Text("Эквалайзер отключен")
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.inkMuted)
+                } else if player.isEQPreparingNativeStream {
+                    Text("Поток кэшируется • затем включится нативный EQ")
+                        .font(SN.text(.caption, .medium))
+                        .foregroundStyle(SN.amber)
                 } else if player.isHeadphonesConnected {
-                    Text("🎧 Наушники подключены • Эквалайзер активен")
+                    Text("Наушники • нативный EQ активен")
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.ink)
                 } else if player.eqHeadphonesOnly {
-                    Text("📱 Динамик телефона • Эквалайзер отключен (Flat)")
+                    Text("Динамик телефона • режим Flat")
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.inkMuted)
                 } else {
-                    Text("📱 Динамик телефона • Эквалайзер активен")
+                    Text("Нативный EQ • работает локально без сети")
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.ink)
                 }
@@ -700,6 +664,26 @@ struct PlayerEQSheetView: View {
                 )
         )
         .padding(.horizontal, 16)
+    }
+
+    private var eqStatusText: String {
+        if !player.eqEnabled {
+            return "Выключен • исходный звук"
+        }
+        if player.isEQPreparingNativeStream {
+            return "Подготовка нативной обработки потока"
+        }
+        if player.eqHeadphonesOnly && !player.isHeadphonesConnected {
+            return "Приостановлен для динамика телефона"
+        }
+        return "10 полос • нативная обработка"
+    }
+
+    private var eqStatusColor: Color {
+        if player.isEQEffectivelyActive {
+            return SN.positive
+        }
+        return player.eqEnabled ? SN.amber : SN.inkMuted
     }
 }
 

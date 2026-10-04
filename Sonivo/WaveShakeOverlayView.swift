@@ -1,13 +1,8 @@
-// Path: Sonivo/WaveShakeOverlayView.swift
-// Полноэкранная 120 Гц жидкостная вертикальная волна перехода «Антигравити» (Apple ProMotion 120 FPS)
-// Вдохновлено физикой Skiper UI 40 и Apple Human Interface Guidelines: кинетическая гидродинамика,
-// расширяющиеся радиальные ударные волны и каустический гребень по всему экрану.
-
 import SwiftUI
 import UIKit
 
-// MARK: - Полноэкранная 120 Гц вертикальная волна при встряхивании
-
+/// Full-screen liquid sweep for “Shake the Wave”. The crest travels vertically across
+/// the display and uses the accent selected in Settings.
 struct WaveShakeOverlayView: View {
     let isActive: Bool
     let triggerCount: Int
@@ -16,362 +11,283 @@ struct WaveShakeOverlayView: View {
     let subtitle: String
     let onDismiss: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animationStartTime: TimeInterval = 0
-    @State private var hudVisible: Bool = false
-    @State private var sparkleRotation: Double = 0.0
+    @State private var hudVisible = false
+    @State private var dismissalTask: Task<Void, Never>?
 
-    // Длительность прохождения вертикальной волны через весь экран (кинематографичная глубина)
-    private let waveDuration: TimeInterval = 1.25
-
-    // Цвета приложения (строго без жёлтого)
-    private var cleanPalette: (primary: Color, secondary: Color, accent: Color) {
-        let defaultPrimary = Color(red: 0.0, green: 0.95, blue: 0.99)       // #00F2FE Electric Cyan
-        let defaultSecondary = Color(red: 0.42, green: 0.49, blue: 1.0)     // #6B7CFF Royal Periwinkle / SN.accent
-        let defaultAccent = Color(red: 0.62, green: 0.31, blue: 0.98)       // #9D4EDD Neon Aura Violet
-
-        // Фильтрация палитры трека: категорически исключаем жёлтые и золотые оттенки
-        let nonYellow = palette.filter { c in
-            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            UIColor(c).getRed(&r, green: &g, blue: &b, alpha: &a)
-            // Желто-золотые тона (высокий R и G, низкий B)
-            if r > 0.68 && g > 0.58 && b < 0.42 {
-                return false
-            }
-            return true
-        }
-
-        let p = nonYellow.indices.contains(0) ? nonYellow[0] : defaultPrimary
-        let s = nonYellow.indices.contains(1) ? nonYellow[1] : defaultSecondary
-        let a = nonYellow.indices.contains(2) ? nonYellow[2] : defaultAccent
-        return (p, s, a)
-    }
+    private let sweepDuration: TimeInterval = 1.65
+    private var primary: Color { palette.first ?? SN.accent }
+    private var secondary: Color { palette.dropFirst().first ?? SN.flame }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             if isActive {
-                // Аппаратный 120 Гц рендер волны через TimelineView
-                TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: !isActive)) { timeline in
-                    GeometryReader { geo in
-                        let w = geo.size.width
-                        let h = geo.size.height
-                        let now = timeline.date.timeIntervalSinceReferenceDate
-                        let elapsed = animationStartTime > 0 ? (now - animationStartTime) : 0
-                        let rawProgress = min(1.0, max(0.0, elapsed / waveDuration))
-                        let progress = smoothStep(rawProgress)
-
-                        // Текущая вертикальная позиция гребня волны:
-                        // от -22% высоты экрана (сверху) до +135% высоты экрана (внизу) — полное омовение экрана
-                        let yCrest = -0.22 * h + progress * 1.57 * h
-                        let colors = cleanPalette
-
-                        ZStack {
-                            // 0. Эпический радиальный гидродинамический импульс (Skiper UI Shockwave Pulse)
-                            if rawProgress < 0.85 {
-                                let shockProgress = min(1.0, rawProgress / 0.85)
-                                let shockScale = 0.2 + shockProgress * 2.6
-                                let shockOpacity = (1.0 - shockProgress) * 0.75
-
-                                ZStack {
-                                    Circle()
-                                        .strokeBorder(
-                                            LinearGradient(
-                                                colors: [colors.primary, colors.secondary.opacity(0.8), colors.accent.opacity(0.4)],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            ),
-                                            lineWidth: max(1.5, 4.0 * (1.0 - shockProgress))
-                                        )
-                                        .scaleEffect(shockScale)
-                                        .opacity(shockOpacity)
-                                        .blur(radius: 2.0)
-
-                                    Circle()
-                                        .strokeBorder(Color.white.opacity(0.9), lineWidth: 2.0)
-                                        .scaleEffect(shockScale * 0.92)
-                                        .opacity(shockOpacity * 0.6)
-                                        .blur(radius: 1.0)
-                                }
-                                .position(x: w / 2, y: h * 0.42)
-                                .blendMode(.plusLighter)
-                            }
-
-                            // 1. Полноэкранное атмосферное омовение (Full-Viewport Liquid Wash)
-                            if rawProgress < 0.99 {
-                                let washHeight: CGFloat = 650
-                                Rectangle()
-                                    .fill(
-                                        LinearGradient(
-                                            stops: [
-                                                .init(color: .clear, location: 0.0),
-                                                .init(color: colors.primary.opacity(0.42 * (1.0 - rawProgress * 0.65)), location: 0.25),
-                                                .init(color: colors.secondary.opacity(0.38 * (1.0 - rawProgress * 0.65)), location: 0.58),
-                                                .init(color: colors.accent.opacity(0.28 * (1.0 - rawProgress * 0.65)), location: 0.88),
-                                                .init(color: .clear, location: 1.0)
-                                            ],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .frame(width: w, height: washHeight)
-                                    .position(x: w / 2, y: yCrest - washHeight * 0.28)
-                                    .blur(radius: 45)
-                            }
-
-                            // 2. Вторичная запаздывающая жидкостная рябь (Trailing Liquid Wake)
-                            if rawProgress > 0.03 && rawProgress < 0.96 {
-                                Path { path in
-                                    let yTrail = yCrest - 54.0
-                                    drawWavePath(in: &path, width: w, yBase: yTrail, progress: progress + 0.16, amplitude: 26.0)
-                                }
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [
-                                            colors.accent.opacity(0.55 * (1.0 - rawProgress)),
-                                            colors.primary.opacity(0.85 * (1.0 - rawProgress)),
-                                            colors.secondary.opacity(0.50 * (1.0 - rawProgress))
-                                        ],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    ),
-                                    lineWidth: 2.8
-                                )
-                                .blur(radius: 3.0)
-                            }
-
-                            // 3. Основное плотное тело вертикальной волны (Primary Fluid Wavefront)
-                            if rawProgress < 0.99 {
-                                Path { path in
-                                    path.move(to: CGPoint(x: 0, y: 0))
-                                    path.addLine(to: CGPoint(x: w, y: 0))
-                                    path.addLine(to: CGPoint(x: w, y: calculateWaveY(x: w, width: w, yBase: yCrest, progress: progress, amplitude: 50.0)))
-
-                                    // Отрисовка динамического волнистого гребня с высокой детализацией
-                                    var x: CGFloat = w
-                                    let step: CGFloat = 3.0
-                                    while x >= 0 {
-                                        let y = calculateWaveY(x: x, width: w, yBase: yCrest, progress: progress, amplitude: 50.0)
-                                        path.addLine(to: CGPoint(x: x, y: y))
-                                        x -= step
-                                    }
-                                    path.closeSubpath()
-                                }
-                                .fill(
-                                    LinearGradient(
-                                        stops: [
-                                            .init(color: .clear, location: 0.0),
-                                            .init(color: colors.primary.opacity(0.22 * (1.0 - rawProgress * 0.45)), location: 0.45),
-                                            .init(color: colors.secondary.opacity(0.36 * (1.0 - rawProgress * 0.45)), location: 0.78),
-                                            .init(color: colors.accent.opacity(0.60 * (1.0 - rawProgress * 0.45)), location: 1.0)
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                                .blur(radius: 14)
-                            }
-
-                            // 4. Ведущий каустический гребень волны (Specular Liquid Crest Ribbon)
-                            if rawProgress < 0.98 {
-                                // Нижний рассеянный нектарный ореол
-                                Path { path in
-                                    drawWavePath(in: &path, width: w, yBase: yCrest, progress: progress, amplitude: 50.0)
-                                }
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [
-                                            colors.primary.opacity(0.95),
-                                            colors.secondary.opacity(0.95),
-                                            colors.accent.opacity(0.95)
-                                        ],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    ),
-                                    style: StrokeStyle(lineWidth: 7.0, lineCap: .round, lineJoin: .round)
-                                )
-                                .blur(radius: 8.0)
-                                .blendMode(.plusLighter)
-
-                                // Верхняя ультра-яркая каустическая нить
-                                Path { path in
-                                    drawWavePath(in: &path, width: w, yBase: yCrest, progress: progress, amplitude: 50.0)
-                                }
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [
-                                            colors.primary.opacity(0.95),
-                                            Color.white.opacity(0.98),
-                                            colors.secondary.opacity(0.95),
-                                            Color.white.opacity(0.98),
-                                            colors.accent.opacity(0.95)
-                                        ],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    ),
-                                    style: StrokeStyle(lineWidth: 3.5, lineCap: .round, lineJoin: .round)
-                                )
-                                .shadow(color: Color.white.opacity(0.90), radius: 8, y: 0)
-                                .shadow(color: colors.primary.opacity(0.95), radius: 18, y: 2)
-                                .blendMode(.plusLighter)
-                            }
-
-                            // 5. Вспышка на краях дисплея в момент кульминации (Vignette Edge Flash)
-                            if rawProgress > 0.12 && rawProgress < 0.65 {
-                                let edgeOpacity = sin((rawProgress - 0.12) / 0.53 * .pi) * 0.38
-                                RoundedRectangle(cornerRadius: 48, style: .continuous)
-                                    .strokeBorder(
-                                        LinearGradient(
-                                            colors: [colors.primary.opacity(edgeOpacity), colors.secondary.opacity(edgeOpacity * 0.7)],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        ),
-                                        lineWidth: 4
-                                    )
-                                    .blur(radius: 6)
-                                    .blendMode(.plusLighter)
-                            }
-                        }
-                    }
-                    .ignoresSafeArea()
+                if reduceMotion { reducedMotionWash } else { liquidSweep }
+                if hudVisible {
+                    statusPill
+                        .padding(.top, 14)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                .drawingGroup(opaque: false, colorMode: .extendedLinear)
-                .ignoresSafeArea()
-
-                // Парящий Liquid Glass HUD
-                VStack {
-                    if hudVisible {
-                        hudCard
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                            .padding(.top, 14)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .ignoresSafeArea(edges: .bottom)
             }
         }
+        .ignoresSafeArea()
         .allowsHitTesting(false)
-        .onChange(of: triggerCount) { _, _ in
-            startWaveAnimation()
+        .accessibilityHidden(true)
+        .onAppear { if isActive { startWaveAnimation() } }
+        .onChange(of: triggerCount) { _, _ in if isActive { startWaveAnimation() } }
+        .onChange(of: isActive) { _, active in
+            if active { startWaveAnimation() } else { dismissalTask?.cancel() }
         }
-        .onAppear {
-            if isActive {
-                startWaveAnimation()
+        .onDisappear { dismissalTask?.cancel() }
+    }
+
+    private var liquidSweep: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: !isActive)) { timeline in
+            Canvas(rendersAsynchronously: true) { context, size in
+                let elapsed = max(0, timeline.date.timeIntervalSinceReferenceDate - animationStartTime)
+                let rawProgress = min(1, elapsed / sweepDuration)
+                let progress = fluidProgress(rawProgress)
+                let fade = fadeEnvelope(rawProgress)
+
+                // Enters below the display and rises past the Dynamic Island.
+                let yCrest = size.height * 1.16 - progress * size.height * 1.38
+                drawAtmosphere(in: &context, size: size, progress: progress, opacity: fade)
+                drawBackwash(in: &context, size: size, yCrest: yCrest, time: elapsed, opacity: fade)
+                drawLiquidBody(in: &context, size: size, yCrest: yCrest, time: elapsed, opacity: fade)
+                drawCausticCrest(in: &context, size: size, yCrest: yCrest, time: elapsed, opacity: fade)
+                drawDroplets(in: &context, size: size, yCrest: yCrest, progress: progress, opacity: fade)
             }
+            .drawingGroup(opaque: false, colorMode: .linear)
         }
     }
 
-    // MARK: - Математика жидкостной синусоидальной волны (Skiper Fluid Harmonics)
-
-    private func calculateWaveY(x: CGFloat, width: CGFloat, yBase: CGFloat, progress: Double, amplitude: CGFloat) -> CGFloat {
-        let normX = x / max(width, 1.0)
-        // Композиция трех гармонических волн с бегущей фазой для естественной органики
-        let wave1 = sin(normX * .pi * 2.6 + progress * 7.8) * amplitude
-        let wave2 = cos(normX * .pi * 4.8 - progress * 5.8) * (amplitude * 0.44)
-        let wave3 = sin(normX * .pi * 7.4 + progress * 9.6) * (amplitude * 0.22)
-        return yBase + wave1 + wave2 + wave3
-    }
-
-    private func drawWavePath(in path: inout Path, width: CGFloat, yBase: CGFloat, progress: Double, amplitude: CGFloat) {
-        let startY = calculateWaveY(x: 0, width: width, yBase: yBase, progress: progress, amplitude: amplitude)
-        path.move(to: CGPoint(x: 0, y: startY))
-
-        var currentX: CGFloat = 0
-        let step: CGFloat = 3.0
-        while currentX <= width {
-            let y = calculateWaveY(x: currentX, width: width, yBase: yBase, progress: progress, amplitude: amplitude)
-            path.addLine(to: CGPoint(x: currentX, y: y))
-            currentX += step
-        }
-    }
-
-    private func smoothStep(_ t: Double) -> Double {
-        // Кубическая интерполяция гладкого ускорения и замедления (Smoothstep)
-        let clamped = max(0.0, min(1.0, t))
-        return clamped * clamped * (3.0 - 2.0 * clamped)
-    }
-
-    // MARK: - Парящий Glass HUD в фирменных цветах Sonivo
-
-    private var hudCard: some View {
-        let colors = cleanPalette
-        return HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [colors.primary, colors.secondary],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 40, height: 40)
-                    .shadow(color: colors.primary.opacity(0.70), radius: 10, y: 2)
-
-                Image(systemName: "waveform.badge.sparkles")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .rotationEffect(.degrees(sparkleRotation))
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 15, weight: .heavy, design: .default))
-                    .foregroundStyle(.white)
-                Text(subtitle)
-                    .font(.system(size: 12, weight: .semibold, design: .default))
-                    .foregroundStyle(.white.opacity(0.88))
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(
-            Capsule()
-                .fill(.ultraThinMaterial.opacity(0.94))
+    private var reducedMotionWash: some View {
+        LinearGradient(
+            colors: [primary.opacity(0.42), secondary.opacity(0.24), Color.black.opacity(0.08)],
+            startPoint: .bottomLeading,
+            endPoint: .topTrailing
         )
-        .overlay(
-            Capsule()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            .white.opacity(0.75),
-                            colors.primary.opacity(0.65),
-                            colors.accent.opacity(0.40)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.2
-                )
-        )
-        .shadow(color: .black.opacity(0.55), radius: 20, y: 6)
-        .shadow(color: colors.primary.opacity(0.40), radius: 14, y: 2)
+        .transition(.opacity)
     }
 
-    // MARK: - Запуск вертикальной волны
+    private var statusPill: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "water.waves")
+                .font(.system(.body, design: .rounded, weight: .bold))
+                .foregroundStyle(primary)
+                .frame(width: 34, height: 34)
+                .background(primary.opacity(0.14), in: Circle())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(SN.text(.subheadline, .bold)).foregroundStyle(.white).lineLimit(1)
+                Text(subtitle).font(SN.text(.caption2)).foregroundStyle(.white.opacity(0.66)).lineLimit(1)
+            }
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 14)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(
+                LinearGradient(
+                    colors: [primary.opacity(0.72), Color.white.opacity(0.14)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                lineWidth: 0.8
+            )
+        }
+        .shadow(color: primary.opacity(0.26), radius: 18, y: 8)
+    }
+
+    private func drawAtmosphere(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        progress: Double,
+        opacity: Double
+    ) {
+        context.fill(
+            Path(CGRect(origin: .zero, size: size)),
+            with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: secondary.opacity(0.04 * opacity), location: 0),
+                    .init(color: primary.opacity(0.18 * opacity), location: max(0.1, 1 - progress)),
+                    .init(color: Color.black.opacity(0.03 * opacity), location: 1)
+                ]),
+                startPoint: CGPoint(x: size.width * 0.15, y: size.height),
+                endPoint: CGPoint(x: size.width * 0.85, y: 0)
+            )
+        )
+    }
+
+    private func drawBackwash(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        yCrest: CGFloat,
+        time: TimeInterval,
+        opacity: Double
+    ) {
+        let path = liquidPath(size: size, yCrest: yCrest + 52, amplitude: 26, wavelength: 1.55, phase: time * 2.4)
+        context.fill(
+            path,
+            with: .linearGradient(
+                Gradient(colors: [
+                    secondary.opacity(0.04 * opacity),
+                    secondary.opacity(0.25 * opacity),
+                    primary.opacity(0.08 * opacity)
+                ]),
+                startPoint: CGPoint(x: size.width * 0.5, y: yCrest - 20),
+                endPoint: CGPoint(x: size.width * 0.5, y: size.height)
+            )
+        )
+    }
+
+    private func drawLiquidBody(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        yCrest: CGFloat,
+        time: TimeInterval,
+        opacity: Double
+    ) {
+        let path = liquidPath(size: size, yCrest: yCrest, amplitude: 42, wavelength: 1.22, phase: time * 3.1)
+        context.fill(
+            path,
+            with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: Color.white.opacity(0.10 * opacity), location: 0),
+                    .init(color: primary.opacity(0.52 * opacity), location: 0.08),
+                    .init(color: primary.opacity(0.24 * opacity), location: 0.42),
+                    .init(color: secondary.opacity(0.14 * opacity), location: 1)
+                ]),
+                startPoint: CGPoint(x: size.width * 0.5, y: yCrest - 28),
+                endPoint: CGPoint(x: size.width * 0.5, y: size.height)
+            )
+        )
+    }
+
+    private func drawCausticCrest(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        yCrest: CGFloat,
+        time: TimeInterval,
+        opacity: Double
+    ) {
+        let crest = crestPath(width: size.width, yCrest: yCrest, amplitude: 42, wavelength: 1.22, phase: time * 3.1)
+        context.drawLayer { glow in
+            glow.addFilter(.blur(radius: 12))
+            glow.stroke(
+                crest,
+                with: .color(primary.opacity(0.72 * opacity)),
+                style: StrokeStyle(lineWidth: 15, lineCap: .round, lineJoin: .round)
+            )
+        }
+        context.stroke(
+            crest,
+            with: .linearGradient(
+                Gradient(colors: [
+                    primary.opacity(0.78 * opacity),
+                    Color.white.opacity(0.96 * opacity),
+                    secondary.opacity(0.82 * opacity)
+                ]),
+                startPoint: .zero,
+                endPoint: CGPoint(x: size.width, y: 0)
+            ),
+            style: StrokeStyle(lineWidth: 3.2, lineCap: .round, lineJoin: .round)
+        )
+    }
+
+    private func drawDroplets(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        yCrest: CGFloat,
+        progress: Double,
+        opacity: Double
+    ) {
+        guard progress > 0.08 && progress < 0.92 else { return }
+        for index in 0..<18 {
+            let seed = Double(index)
+            let x = CGFloat((seed * 83.17).truncatingRemainder(dividingBy: Double(size.width)))
+            let lift = CGFloat(16 + (seed * 19).truncatingRemainder(dividingBy: 72))
+            let radius = CGFloat(1.5 + (seed * 0.73).truncatingRemainder(dividingBy: 3.4))
+            let waveOffset = sin((x / max(1, size.width)) * .pi * 2.4 + seed) * 18
+            let rect = CGRect(x: x - radius, y: yCrest - lift + waveOffset - radius, width: radius * 2, height: radius * 2)
+            context.fill(
+                Path(ellipseIn: rect),
+                with: .color(Color.white.opacity((0.22 + seed.truncatingRemainder(dividingBy: 3) * 0.08) * opacity))
+            )
+        }
+    }
+
+    private func liquidPath(
+        size: CGSize,
+        yCrest: CGFloat,
+        amplitude: CGFloat,
+        wavelength: CGFloat,
+        phase: Double
+    ) -> Path {
+        var path = crestPath(width: size.width, yCrest: yCrest, amplitude: amplitude, wavelength: wavelength, phase: phase)
+        path.addLine(to: CGPoint(x: size.width, y: size.height + 2))
+        path.addLine(to: CGPoint(x: 0, y: size.height + 2))
+        path.closeSubpath()
+        return path
+    }
+
+    private func crestPath(
+        width: CGFloat,
+        yCrest: CGFloat,
+        amplitude: CGFloat,
+        wavelength: CGFloat,
+        phase: Double
+    ) -> Path {
+        var path = Path()
+        let step = max(2, width / 150)
+        var x: CGFloat = 0
+        path.move(to: CGPoint(x: 0, y: waveY(x: 0, width: width, yCrest: yCrest, amplitude: amplitude, wavelength: wavelength, phase: phase)))
+        while x <= width {
+            path.addLine(to: CGPoint(x: x, y: waveY(x: x, width: width, yCrest: yCrest, amplitude: amplitude, wavelength: wavelength, phase: phase)))
+            x += step
+        }
+        return path
+    }
+
+    private func waveY(
+        x: CGFloat,
+        width: CGFloat,
+        yCrest: CGFloat,
+        amplitude: CGFloat,
+        wavelength: CGFloat,
+        phase: Double
+    ) -> CGFloat {
+        let normalizedX = x / max(1, width)
+        let primaryWave = sin(normalizedX * .pi * 2 * wavelength + phase) * amplitude
+        let detailWave = sin(normalizedX * .pi * 5.2 - phase * 0.68) * amplitude * 0.23
+        return yCrest + primaryWave + detailWave
+    }
+
+    private func fluidProgress(_ value: Double) -> Double {
+        let clamped = max(0, min(1, value))
+        return 1 - pow(1 - clamped, 3.2)
+    }
+
+    private func fadeEnvelope(_ value: Double) -> Double {
+        if value < 0.08 { return value / 0.08 }
+        if value > 0.80 { return max(0, (1 - value) / 0.20) }
+        return 1
+    }
 
     private func startWaveAnimation() {
-        animationStartTime = CACurrentMediaTime()
-        sparkleRotation = -35.0
+        dismissalTask?.cancel()
+        animationStartTime = Date().timeIntervalSinceReferenceDate
+        withAnimation(SN.fastSpring) { hudVisible = true }
 
-        withAnimation(.easeOut(duration: 0.22)) {
-            hudVisible = true
-            sparkleRotation = 18.0
-        }
-
-        withAnimation(.easeOut(duration: 0.65)) {
-            sparkleRotation = 0.0
-        }
-
-        // Автозакрытие HUD через 2.4 секунды
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-            withAnimation(.easeInOut(duration: 0.35)) {
-                hudVisible = false
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                onDismiss()
-            }
+        dismissalTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: reduceMotion ? 700_000_000 : 1_420_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.18)) { hudVisible = false }
+            try? await Task.sleep(nanoseconds: reduceMotion ? 180_000_000 : 420_000_000)
+            guard !Task.isCancelled else { return }
+            onDismiss()
         }
     }
 }

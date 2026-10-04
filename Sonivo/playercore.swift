@@ -124,9 +124,6 @@ final class PlayerCore {
             guard eqEnabled != oldValue else { return }
             applyEQ()
             defaults.set(eqEnabled, forKey: Self.eqEnabledKey)
-            if eqEnabled && isUsingStreamPlayer {
-                scheduleStreamMigrationIfNeeded(immediate: true)
-            }
         }
     }
 
@@ -142,15 +139,12 @@ final class PlayerCore {
             }
             applyEQ()
             scheduleSaveEQ()
-            if eqEnabled && isUsingStreamPlayer {
-                scheduleStreamMigrationIfNeeded(immediate: false)
-            }
         }
     }
 
     /// Smart Headphone EQ: when enabled, EQ curve only applies to headphones/external outputs.
     /// Built-in phone speakers stay flat to prevent rattle and distortion.
-    var eqHeadphonesOnly: Bool = true {
+    var eqHeadphonesOnly: Bool = false {
         didSet {
             guard eqHeadphonesOnly != oldValue else { return }
             defaults.set(eqHeadphonesOnly, forKey: "eq.headphonesOnly")
@@ -182,10 +176,18 @@ final class PlayerCore {
 
     var isEQEffectivelyActive: Bool {
         guard eqEnabled else { return false }
+        guard !isUsingStreamPlayer else { return false }
         if eqHeadphonesOnly {
             return isHeadphonesConnected
         }
         return true
+    }
+
+    /// Online playback begins in AVPlayer. The existing background cache moves it to
+    /// the native AVAudioEngine graph once the local asset is ready. EQ controls never
+    /// start a second network request.
+    var isEQPreparingNativeStream: Bool {
+        eqEnabled && isUsingStreamPlayer
     }
 
     func updateAudioRouteState() {
@@ -530,7 +532,7 @@ final class PlayerCore {
         shuffle = defaults.bool(forKey: "player.shuffle")
         repeatMode = RepeatMode(rawValue: defaults.integer(forKey: "player.repeat")) ?? .off
         eqEnabled = defaults.object(forKey: Self.eqEnabledKey) as? Bool ?? true
-        eqHeadphonesOnly = defaults.object(forKey: "eq.headphonesOnly") as? Bool ?? true
+        eqHeadphonesOnly = defaults.object(forKey: "eq.headphonesOnly") as? Bool ?? false
         spatialAudioEnabled = defaults.object(forKey: "player.spatialAudioEnabled") as? Bool ?? true
 
         if let modeStr = defaults.string(forKey: "player.transitionMode"),

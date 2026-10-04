@@ -49,7 +49,9 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         chrome_content = (self.repo_root / "Sonivo" / "playerchrome.swift").read_text(encoding="utf-8")
         self.assertIn("Только в наушниках", chrome_content)
         self.assertIn("$player.eqHeadphonesOnly", chrome_content)
-        self.assertIn("Наушники подключены • Эквалайзер активен", chrome_content)
+        self.assertIn("Наушники • нативный EQ активен", chrome_content)
+        self.assertIn("Нативный EQ • работает локально без сети", chrome_content)
+        self.assertIn("isEQPreparingNativeStream", chrome_content)
 
         settings_content = (self.repo_root / "Sonivo" / "settingsview.swift").read_text(encoding="utf-8")
         self.assertIn("Только для наушников", settings_content)

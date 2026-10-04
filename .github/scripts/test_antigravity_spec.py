@@ -82,8 +82,10 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("yCrest", content)
         # No signature yellow
         self.assertNotIn("#FBE029", content)
-        # Clean app colors
-        self.assertIn("Electric Cyan", content)
+        # The sweep follows the accent selected in Settings and respects Reduce Motion.
+        self.assertIn("palette.first ?? SN.accent", content)
+        self.assertIn("palette.dropFirst().first ?? SN.flame", content)
+        self.assertIn("accessibilityReduceMotion", content)
 
     def test_home_view_guards(self):
         content = self.home_view.read_text(encoding="utf-8")
