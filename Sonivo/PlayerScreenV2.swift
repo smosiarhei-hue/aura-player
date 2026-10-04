@@ -1546,60 +1546,102 @@ struct PlayerTimelineSection<Center: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             GeometryReader { geo in
                 let duration = max(player.duration, 0.01)
                 let fraction = min(1, max(0, effectiveProgress / duration))
                 let width = geo.size.width * fraction
-                let height: CGFloat = isScrubbing ? 11 : 6
-                let cornerRadius: CGFloat = 3.0
+                let trackHeight: CGFloat = isScrubbing ? 7 : 2.5
+                let thumbSize: CGFloat = 15
+
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.white.opacity(0.18))
-                        .frame(height: height)
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(isScrubbing ? 0.20 : 0.14))
+                        .frame(height: trackHeight)
+
                     if let bufferFraction = player.downloadProgress, bufferFraction > 0.005 {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(.white.opacity(0.38))
-                            .frame(width: max(height, geo.size.width * min(1.0, CGFloat(bufferFraction))), height: height)
-                            .animation(.easeInOut(duration: 0.25), value: bufferFraction)
+                        Capsule(style: .continuous)
+                            .fill(.white.opacity(isScrubbing ? 0.38 : 0.28))
+                            .frame(
+                                width: max(trackHeight, geo.size.width * min(1.0, CGFloat(bufferFraction))),
+                                height: trackHeight
+                            )
+                            .animation(.easeInOut(duration: 0.2), value: bufferFraction)
                     }
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.white)
-                        .frame(width: max(height, width), height: height)
+
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.96))
+                        .frame(width: max(0, width), height: trackHeight)
+
                     if isScrubbing {
-                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                        Circle()
                             .fill(.white)
-                            .frame(width: 12, height: 24)
-                            .offset(x: max(0, min(width - 6, geo.size.width - 12)))
-                            .shadow(color: .black.opacity(0.40), radius: 4, y: 1)
+                            .frame(width: thumbSize, height: thumbSize)
+                            .offset(x: max(0, min(width - thumbSize / 2, geo.size.width - thumbSize)))
+                            .shadow(color: .black.opacity(0.26), radius: 3, y: 1)
                     }
                 }
-                .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isScrubbing)
-                .frame(maxHeight: .infinity).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !isScrubbing { isScrubbing = true; feedback.prepare() }
-                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
-                        scrubProgress = f * duration
-                        if abs(f - lastFeedbackProgress) > 0.04 { Haptics.scrubTick(feedback); lastFeedbackProgress = f }
-                    }
-                    .onEnded { value in
-                        let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
-                        let target = f * duration
-                        pendingSeekProgress = target
-                        player.seek(to: target)
-                        withAnimation(SN.spring) { isScrubbing = false }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                            if pendingSeekProgress == target {
-                                pendingSeekProgress = nil
+                .animation(.smooth(duration: 0.18), value: isScrubbing)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            if !isScrubbing {
+                                isScrubbing = true
+                                feedback.prepare()
+                            }
+                            let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
+                            scrubProgress = f * duration
+                            if abs(f - lastFeedbackProgress) > 0.04 {
+                                Haptics.scrubTick(feedback)
+                                lastFeedbackProgress = f
                             }
                         }
-                    })
-            }.frame(height: 28)
+                        .onEnded { value in
+                            let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
+                            let target = f * duration
+                            pendingSeekProgress = target
+                            player.seek(to: target)
+                            withAnimation(.smooth(duration: 0.18)) {
+                                isScrubbing = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                                if pendingSeekProgress == target {
+                                    pendingSeekProgress = nil
+                                }
+                            }
+                        }
+                )
+            }
+            .frame(height: 44)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Позиция воспроизведения")
+            .accessibilityValue(
+                "\(player.formatted(effectiveProgress)) из \(player.formatted(player.duration))"
+            )
+            .accessibilityAdjustableAction { direction in
+                let step = max(5, player.duration * 0.02)
+                switch direction {
+                case .increment:
+                    player.seek(to: min(effectiveProgress + step, player.duration))
+                case .decrement:
+                    player.seek(to: max(effectiveProgress - step, 0))
+                @unknown default:
+                    break
+                }
+            }
+
             HStack {
-                Text(player.formatted(effectiveProgress)).font(SN.text(.caption, .semibold).monospacedDigit()).foregroundStyle(SN.inkMuted)
-                Spacer(); center; Spacer()
-                Text("-" + player.formatted(max(0, player.duration - effectiveProgress))).font(SN.text(.caption, .semibold).monospacedDigit()).foregroundStyle(SN.inkMuted)
+                Text(player.formatted(effectiveProgress))
+                    .font(SN.text(.caption2, .medium).monospacedDigit())
+                    .foregroundStyle(SN.inkMuted)
+                Spacer()
+                center
+                Spacer()
+                Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
+                    .font(SN.text(.caption2, .medium).monospacedDigit())
+                    .foregroundStyle(SN.inkMuted)
             }
         }
         .onChange(of: player.currentTrack?.id) { _, _ in
@@ -1713,9 +1755,9 @@ struct FluidVolumeSlider: View {
     @State private var dragVolume: Float = 0.5
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 10) {
             Image(systemName: "speaker.fill")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(SN.inkMuted)
                 .frame(width: 16, height: 16, alignment: .center)
 
@@ -1723,27 +1765,30 @@ struct FluidVolumeSlider: View {
                 let width = geo.size.width
                 let currentVol = isDragging ? dragVolume : volumeManager.volume
                 let progress = CGFloat(max(0.0, min(1.0, currentVol)))
-                let filledWidth = max(6, width * progress)
-                let trackHeight: CGFloat = isDragging ? 11 : 7
-                let cornerRadius: CGFloat = 3.0
-                let thumbWidth: CGFloat = isDragging ? 10 : 6
-                let thumbHeight: CGFloat = isDragging ? 22 : 16
+                let filledWidth = width * progress
+                let trackHeight: CGFloat = isDragging ? 7 : 2.5
+                let thumbSize: CGFloat = isDragging ? 15 : 6
 
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color.white.opacity(0.18))
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(isDragging ? 0.20 : 0.14))
                         .frame(height: trackHeight)
 
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color.white)
-                        .frame(width: filledWidth, height: trackHeight)
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.94))
+                        .frame(width: max(0, filledWidth), height: trackHeight)
 
-                    RoundedRectangle(cornerRadius: isDragging ? 3.0 : 2.0, style: .continuous)
+                    Circle()
                         .fill(Color.white)
-                        .frame(width: thumbWidth, height: thumbHeight)
-                        .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-                        .offset(x: max(0, min(filledWidth - (thumbWidth / 2), width - thumbWidth)))
+                        .frame(width: thumbSize, height: thumbSize)
+                        .shadow(
+                            color: .black.opacity(isDragging ? 0.26 : 0.16),
+                            radius: isDragging ? 3 : 1,
+                            y: 1
+                        )
+                        .offset(x: max(0, min(filledWidth - thumbSize / 2, width - thumbSize)))
                 }
+                .animation(.smooth(duration: 0.18), value: isDragging)
                 .frame(maxHeight: .infinity, alignment: .center)
                 .contentShape(Rectangle())
                 .gesture(
@@ -1760,24 +1805,35 @@ struct FluidVolumeSlider: View {
                         .onEnded { value in
                             let fraction = Float(max(0.0, min(1.0, value.location.x / max(width, 1))))
                             volumeManager.setVolume(fraction)
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            withAnimation(.smooth(duration: 0.18)) {
                                 isDragging = false
                             }
                         }
                 )
             }
-            .frame(height: 28)
+            .frame(height: 36)
             .background(InvisibleVolumeView().frame(width: 60, height: 20).opacity(0.001).allowsHitTesting(false))
 
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(SN.inkMuted)
                 .frame(width: 16, height: 16, alignment: .center)
         }
-        .frame(height: 34)
+        .frame(height: 44)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Громкость")
         .accessibilityValue("\(Int(volumeManager.volume * 100))%")
+        .accessibilityAdjustableAction { direction in
+            let step: Float = 0.05
+            switch direction {
+            case .increment:
+                volumeManager.setVolume(volumeManager.volume + step)
+            case .decrement:
+                volumeManager.setVolume(volumeManager.volume - step)
+            @unknown default:
+                break
+            }
+        }
     }
 }
 
