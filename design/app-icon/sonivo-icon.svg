@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="82%">
+      <stop offset="0" stop-color="#20122A"/>
+      <stop offset="0.5" stop-color="#0D0A12"/>
+      <stop offset="1" stop-color="#050507"/>
+    </radialGradient>
+    <radialGradient id="ember" cx="52%" cy="78%" r="52%">
+      <stop offset="0" stop-color="#FF2D55" stop-opacity="0.34"/>
+      <stop offset="0.46" stop-color="#FF453A" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#FF453A" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wave" x1="260" y1="220" x2="790" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF5A72"/>
+      <stop offset="0.34" stop-color="#FF2D55"/>
+      <stop offset="0.7" stop-color="#9A4DFF"/>
+      <stop offset="1" stop-color="#5E9FFF"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="310" y1="215" x2="690" y2="735" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.04"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#ember)"/>
+  <circle cx="512" cy="510" r="308" fill="none" stroke="#FFFFFF" stroke-opacity="0.035" stroke-width="2"/>
+  <circle cx="512" cy="510" r="244" fill="none" stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="2"/>
+  <path d="M748 300 C650 202 402 190 292 308 C198 409 286 498 452 504 C630 511 791 548 746 688 C700 834 432 854 286 720"
+        fill="none" stroke="#FF2D55" stroke-opacity="0.58" stroke-width="154" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <path d="M748 300 C650 202 402 190 292 308 C198 409 286 498 452 504 C630 511 791 548 746 688 C700 834 432 854 286 720"
+        fill="none" stroke="#000000" stroke-opacity="0.42" stroke-width="132" stroke-linecap="round" stroke-linejoin="round" filter="url(#soft)"/>
+  <path d="M748 300 C650 202 402 190 292 308 C198 409 286 498 452 504 C630 511 791 548 746 688 C700 834 432 854 286 720"
+        fill="none" stroke="url(#wave)" stroke-width="112" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M708 285 C610 220 421 219 324 311 C292 342 277 374 288 405"
+        fill="none" stroke="url(#shine)" stroke-width="15" stroke-linecap="round"/>
+  <path d="M704 690 C644 789 436 815 324 726"
+        fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+  <g fill="#FFFFFF">
+    <rect x="453" y="459" width="18" height="106" rx="9" opacity="0.88"/>
+    <rect x="486" y="432" width="18" height="160" rx="9" opacity="0.98"/>
+    <rect x="519" y="475" width="18" height="74" rx="9" opacity="0.72"/>
+    <rect x="552" y="444" width="18" height="136" rx="9" opacity="0.92"/>
+  </g>
+</svg>
