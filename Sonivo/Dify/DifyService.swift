@@ -7,19 +7,17 @@ final class DifyService: ObservableObject {
 
     // MARK: - Storage Keys
     private let providerStorageKey = "ai_active_provider"
-    private let nvidiaApiKeyStorageKey = "nvidia_api_key"
+    private static let nvidiaApiKeyStorageKey = "nvidia_api_key"
     private let nvidiaBaseURLStorageKey = "nvidia_base_url"
     private let nvidiaModelStorageKey = "nvidia_selected_model"
 
-    private let difyApiKeyStorageKey = "dify_api_key"
+    private static let difyApiKeyStorageKey = "dify_api_key"
     private let difyBaseURLStorageKey = "dify_base_url"
 
     // MARK: - Defaults (Сентябрь 2026)
-    private let defaultNvidiaApiKey = "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"
     private let defaultNvidiaBaseURL = "https://integrate.api.nvidia.com/v1"
     private let defaultNvidiaModel = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 
-    private let defaultDifyApiKey = "app-58WNo9d5oTTMdQgDTeohiwu9"
     private let defaultDifyBaseURL = "https://api.dify.ai/v1"
 
     // MARK: - Published Properties
@@ -32,7 +30,7 @@ final class DifyService: ObservableObject {
 
     @Published var nvidiaApiKey: String {
         didSet {
-            UserDefaults.standard.set(nvidiaApiKey, forKey: nvidiaApiKeyStorageKey)
+            SecureCredentialStore.write(nvidiaApiKey, account: Self.nvidiaApiKeyStorageKey)
         }
     }
 
@@ -50,7 +48,7 @@ final class DifyService: ObservableObject {
 
     @Published var apiKey: String {
         didSet {
-            UserDefaults.standard.set(apiKey, forKey: difyApiKeyStorageKey)
+            SecureCredentialStore.write(apiKey, account: Self.difyApiKeyStorageKey)
         }
     }
 
@@ -87,16 +85,22 @@ final class DifyService: ObservableObject {
         let storedProviderRaw = UserDefaults.standard.string(forKey: providerStorageKey) ?? AIProvider.nvidia.rawValue
         self.provider = AIProvider(rawValue: storedProviderRaw) ?? .nvidia
 
-        let storedNvidiaKey = UserDefaults.standard.string(forKey: nvidiaApiKeyStorageKey) ?? ""
+        let storedNvidiaKey = SecureCredentialStore.migrateFromUserDefaults(
+            account: Self.nvidiaApiKeyStorageKey,
+            legacyKey: Self.nvidiaApiKeyStorageKey
+        )
         let storedNvidiaURL = UserDefaults.standard.string(forKey: nvidiaBaseURLStorageKey) ?? defaultNvidiaBaseURL
         let storedNvidiaModel = UserDefaults.standard.string(forKey: nvidiaModelStorageKey) ?? defaultNvidiaModel
-        self.nvidiaApiKey = storedNvidiaKey.isEmpty ? defaultNvidiaApiKey : storedNvidiaKey
+        self.nvidiaApiKey = storedNvidiaKey
         self.nvidiaBaseURL = storedNvidiaURL.isEmpty ? defaultNvidiaBaseURL : storedNvidiaURL
         self.nvidiaSelectedModel = storedNvidiaModel.isEmpty ? defaultNvidiaModel : storedNvidiaModel
 
-        let storedDifyKey = UserDefaults.standard.string(forKey: difyApiKeyStorageKey) ?? ""
+        let storedDifyKey = SecureCredentialStore.migrateFromUserDefaults(
+            account: Self.difyApiKeyStorageKey,
+            legacyKey: Self.difyApiKeyStorageKey
+        )
         let storedDifyURL = UserDefaults.standard.string(forKey: difyBaseURLStorageKey) ?? defaultDifyBaseURL
-        self.apiKey = storedDifyKey.isEmpty ? defaultDifyApiKey : storedDifyKey
+        self.apiKey = storedDifyKey
         self.baseURL = storedDifyURL.isEmpty ? defaultDifyBaseURL : storedDifyURL
     }
 
