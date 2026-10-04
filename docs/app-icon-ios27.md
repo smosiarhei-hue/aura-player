@@ -37,7 +37,7 @@ All files use the same `0 0 1024 1024` view box, so layers remain aligned when i
 | Dark | `AppIcon1024-dark.png` |
 | Tinted | `AppIcon1024-tinted.png` |
 
-The PNGs are opaque 1024×1024 RGB files. The default and dark appearances intentionally share the approved chromatic artwork. The tinted appearance uses the matching white/light-gray monochrome geometry.
+The PNGs are opaque 1024×1024 RGB files. Their reviewable base64 payloads live in `design/app-icon/generated/` and a pre-build step materializes them before asset compilation. The default and dark appearances intentionally share the approved chromatic artwork. The tinted appearance uses the matching white/light-gray monochrome geometry.
 
 ## Icon Composer
 

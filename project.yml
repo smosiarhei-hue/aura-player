@@ -23,6 +23,11 @@ targets:
   Sonivo:
     type: application
     platform: iOS
+    preBuildScripts:
+      - name: Materialize App Icon Variants
+        script: |
+          python3 "$SRCROOT/scripts/materialize_app_icons.py"
+        basedOnDependencyAnalysis: false
     sources:
       - path: Sonivo
         excludes:
