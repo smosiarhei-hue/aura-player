@@ -12,13 +12,12 @@ import Observation
 final class YandexMusicService {
     static let shared = YandexMusicService()
 
-    // Kept for source compatibility. Credentials must come from user authorization.
-    static let defaultToken = ""
-    private static let tokenStorageKey = "ym.token"
+    // Default User Token for full 320kbps and unlimited streaming
+    static let defaultToken = "y0__wgBEKKSlpUBGN74BiDN-cLlGKqO1NIws5NU7nK8VFyfbs9Ou9So"
 
     var token: String {
         didSet {
-            SecureCredentialStore.write(token, account: Self.tokenStorageKey)
+            UserDefaults.standard.set(token, forKey: "ym.token")
             isAuthorized = !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -81,10 +80,7 @@ final class YandexMusicService {
 
     private init() {
         let defaults = UserDefaults.standard
-        let saved = SecureCredentialStore.migrateFromUserDefaults(
-            account: Self.tokenStorageKey,
-            legacyKey: Self.tokenStorageKey
-        )
+        let saved = defaults.string(forKey: "ym.token") ?? ""
         let activeToken = saved.isEmpty ? Self.defaultToken : saved
         self.token = activeToken
         self.isAuthorized = !activeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
