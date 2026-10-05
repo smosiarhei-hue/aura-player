@@ -12,7 +12,6 @@ struct MyWaveHeroView: View {
     var showAIAssistant: Binding<Bool>? = nil
     var onToggleWave: () -> Void
     var onShakeWave: (() -> Void)? = nil
-    var isWaveShaking: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var antigravity = AntigravityTransitionManager.shared
@@ -57,8 +56,6 @@ struct MyWaveHeroView: View {
             // 2. Central Stage: Чистая обложка с нативным пространственным размытием (без рамок и линий)
             centralVisualStage
                 .frame(height: 270)
-                .scaleEffect(isWaveShaking ? 1.08 : 1.0)
-                .animation(.spring(response: 0.38, dampingFraction: 0.65), value: isWaveShaking)
                 .contentShape(Rectangle())
                 .gesture(swipeGesture)
                 .padding(.top, 10)
@@ -179,8 +176,7 @@ struct MyWaveHeroView: View {
             .blur(radius: 55)
             .saturation(1.4)
             .opacity(player.isPlaying ? 0.65 : 0.40)
-            .scaleEffect(isWaveShaking ? 1.25 : (player.isPlaying ? 1.05 : 1.0))
-            .animation(.spring(response: 0.60, dampingFraction: 0.8), value: isWaveShaking)
+            .scaleEffect(player.isPlaying ? 1.05 : 1.0)
             .animation(.easeInOut(duration: 3.5).repeatForever(autoreverses: true), value: player.isPlaying)
 
             // Главная нативная суперэллиптическая карточка обложки 220x220 (чистый Apple Design)

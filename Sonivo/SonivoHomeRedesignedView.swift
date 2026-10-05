@@ -18,7 +18,6 @@ struct SonivoHomeRedesignedView: View {
     @State private var themeManager = ThemeFontManager.shared
     @State private var showShakeOverlay = false
     @State private var shakeTriggerCount = 0
-    @State private var isWaveShaking = false
     @State private var shakeHUDMessage = "Волна встряхнута!"
     @State private var shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
     @State private var lastShakeTimestamp: TimeInterval = 0
@@ -115,7 +114,6 @@ struct SonivoHomeRedesignedView: View {
                     subtitle: shakeHUDDetail,
                     onDismiss: {
                         showShakeOverlay = false
-                        isWaveShaking = false
                     }
                 )
             }
@@ -159,8 +157,7 @@ struct SonivoHomeRedesignedView: View {
             showWaveSettings: $showWaveSettings,
             showAIAssistant: $showAIAssistant,
             onToggleWave: toggleWave,
-            onShakeWave: { triggerShakeWave() },
-            isWaveShaking: isWaveShaking
+            onShakeWave: { triggerShakeWave() }
         )
     }
 
@@ -376,8 +373,7 @@ struct SonivoHomeRedesignedView: View {
         // 1. Запуск кинетического перехода «Антигравити» (CoreHaptics, вихрь, 3D-кувырок, аудио-кроссфейд)
         antigravity.triggerShift(forceDiscover: forceDiscover)
 
-        // 2. Запуск полноэкранной жидкостной анимации и пульсации обложки
-        isWaveShaking = true
+        // 2. Запуск только полноэкранной вертикальной жидкостной анимации
         shakeTriggerCount += 1
         showShakeOverlay = true
 
