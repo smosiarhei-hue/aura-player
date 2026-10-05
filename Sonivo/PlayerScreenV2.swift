@@ -47,7 +47,7 @@ struct PlayerScreenV2: View {
 
     private var bassEnergy: CGFloat {
         guard player.isPlaying, !reduceMotion else { return 0 }
-        return CGFloat(spectrum.dynamicBass)
+        return boostedVisualEnergy(spectrum.dynamicBass, gain: 1.18)
     }
 
     private var beatPulse: CGFloat {
@@ -56,17 +56,23 @@ struct PlayerScreenV2: View {
 
     private var midEnergy: CGFloat {
         guard player.isPlaying, !reduceMotion else { return 0 }
-        return CGFloat(spectrum.dynamicMids)
+        return boostedVisualEnergy(spectrum.dynamicMids, gain: 1.22)
     }
 
     private var highEnergy: CGFloat {
         guard player.isPlaying, !reduceMotion else { return 0 }
-        return CGFloat(spectrum.dynamicHighs)
+        return boostedVisualEnergy(spectrum.dynamicHighs, gain: 1.28)
     }
 
     private var fullSpectrumEnergy: CGFloat {
         guard player.isPlaying, !reduceMotion else { return 0 }
-        return CGFloat(spectrum.dynamicLevel)
+        return boostedVisualEnergy(spectrum.dynamicLevel, gain: 1.16)
+    }
+
+    private func boostedVisualEnergy(_ raw: Float, gain: Double) -> CGFloat {
+        let normalized = max(0, min(1, Double(raw)))
+        // Lift quiet musical detail without crushing louder transients.
+        return CGFloat(min(1, pow(normalized, 0.62) * gain))
     }
 
     enum ActivePlayerModal: String, Identifiable {
@@ -2384,9 +2390,10 @@ struct PlayerMusicReactiveBackdrop: View {
                                 paused: !isPlaying || reduceMotion)) { timeline in
             GeometryReader { geo in
                 let time = timeline.date.timeIntervalSinceReferenceDate
-                let midDrift = 0.35 + Double(mids) * 0.65
-                let x = CGFloat(sin(time * 0.16) * 7.0 * midDrift)
-                let y = CGFloat(cos(time * 0.13) * 6.0 * midDrift)
+                let midDrift = 0.55 + Double(mids) * 0.85
+                let x = CGFloat(sin(time * 0.21) * 15.0 * midDrift)
+                let y = CGFloat(cos(time * 0.17) * 12.0 * midDrift)
+                let tilt = sin(time * 0.10) * (0.35 + Double(mids) * 0.55)
 
                 ZStack {
                     if let artwork {
@@ -2394,12 +2401,13 @@ struct PlayerMusicReactiveBackdrop: View {
                             .resizable()
                             .scaledToFill()
                             .frame(width: geo.size.width, height: geo.size.height)
-                            .blur(radius: 48 + level * 8)
-                            .scaleEffect(1.14 + bass * 0.028 + level * 0.010)
+                            .blur(radius: 38 + level * 8)
+                            .scaleEffect(1.13 + bass * 0.060 + level * 0.018)
                             .offset(x: x, y: y)
-                            .saturation(1.06 + Double(mids) * 0.12)
-                            .contrast(1.02 + Double(highs) * 0.04)
-                            .opacity(0.76 + Double(level) * 0.08)
+                            .rotationEffect(.degrees(tilt))
+                            .saturation(1.12 + Double(mids) * 0.20)
+                            .contrast(1.04 + Double(highs) * 0.06)
+                            .opacity(0.84 + Double(level) * 0.10)
                             .clipped()
                     } else {
                         LinearGradient(
@@ -2424,11 +2432,11 @@ struct PlayerMusicReactiveBackdrop: View {
 
                     LinearGradient(
                         stops: [
-                            .init(color: .black.opacity(0.18), location: 0.0),
+                            .init(color: .black.opacity(0.14), location: 0.0),
                             .init(color: .clear, location: 0.22),
                             .init(color: .clear, location: 0.63),
-                            .init(color: .black.opacity(0.40), location: 0.84),
-                            .init(color: .black.opacity(0.74), location: 1.0)
+                            .init(color: .black.opacity(0.34), location: 0.84),
+                            .init(color: .black.opacity(0.68), location: 1.0)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -2462,57 +2470,57 @@ struct PlayerAmbientCoverGlow: View {
             let h = Double(max(0, min(1, highs)))
             let l = Double(max(0, min(1, level)))
             let bassCenter = UnitPoint(
-                x: 0.48 + CGFloat(sin(time * 0.11)) * 0.05,
-                y: 0.68 + CGFloat(cos(time * 0.09)) * 0.035
+                x: 0.48 + CGFloat(sin(time * 0.15)) * 0.09,
+                y: 0.68 + CGFloat(cos(time * 0.12)) * 0.065
             )
             let midCenter = UnitPoint(
-                x: 0.50 + CGFloat(sin(time * 0.19 + 1.2)) * CGFloat(0.11 + m * 0.035),
-                y: 0.42 + CGFloat(cos(time * 0.15)) * CGFloat(0.08 + m * 0.025)
+                x: 0.50 + CGFloat(sin(time * 0.23 + 1.2)) * CGFloat(0.16 + m * 0.055),
+                y: 0.42 + CGFloat(cos(time * 0.19)) * CGFloat(0.12 + m * 0.040)
             )
             let highCenter = UnitPoint(
-                x: 0.70 + CGFloat(sin(time * 0.31)) * 0.10,
-                y: 0.28 + CGFloat(cos(time * 0.27)) * 0.07
+                x: 0.70 + CGFloat(sin(time * 0.38)) * 0.15,
+                y: 0.28 + CGFloat(cos(time * 0.33)) * 0.11
             )
 
             ZStack {
                 RadialGradient(
                     colors: [
-                        c1.exposureAdjust(0.22 + b * 0.18)
-                            .headroom(1.12 + b * 0.28)
-                            .opacity(0.15 + b * 0.12),
-                        c1.opacity(0.055 + l * 0.035),
+                        c1.exposureAdjust(0.28 + b * 0.24)
+                            .headroom(1.20 + b * 0.38)
+                            .opacity(0.24 + b * 0.20),
+                        c1.opacity(0.09 + l * 0.08),
                         .clear
                     ],
                     center: bassCenter,
                     startRadius: 18,
-                    endRadius: maxDim * (0.54 + b * 0.10)
+                    endRadius: maxDim * (0.50 + b * 0.14)
                 )
 
                 RadialGradient(
                     colors: [
-                        c2.exposureAdjust(0.18 + m * 0.16)
-                            .headroom(1.10 + m * 0.20)
-                            .opacity(0.13 + m * 0.12),
-                        c3.opacity(0.045 + m * 0.045),
+                        c2.exposureAdjust(0.24 + m * 0.22)
+                            .headroom(1.16 + m * 0.30)
+                            .opacity(0.20 + m * 0.22),
+                        c3.opacity(0.075 + m * 0.085),
                         .clear
                     ],
                     center: midCenter,
                     startRadius: 12,
-                    endRadius: maxDim * (0.42 + m * 0.08)
+                    endRadius: maxDim * (0.36 + m * 0.12)
                 )
                 .blendMode(.screen)
 
                 RadialGradient(
                     colors: [
-                        Color.white.exposureAdjust(0.28 + h * 0.20)
-                            .headroom(1.15 + h * 0.28)
-                            .opacity(0.045 + h * 0.11),
-                        c3.opacity(0.035 + h * 0.055),
+                        Color.white.exposureAdjust(0.34 + h * 0.26)
+                            .headroom(1.22 + h * 0.38)
+                            .opacity(0.075 + h * 0.18),
+                        c3.opacity(0.055 + h * 0.10),
                         .clear
                     ],
                     center: highCenter,
                     startRadius: 5,
-                    endRadius: maxDim * (0.20 + h * 0.045)
+                    endRadius: maxDim * (0.16 + h * 0.075)
                 )
                 .blendMode(.plusLighter)
             }
@@ -2545,39 +2553,57 @@ struct PlayerArtworkSpectrumAura: View {
             let primary = palette.first ?? SN.amber
             let secondary = palette.dropFirst().first ?? SN.ember
             let tertiary = palette.dropFirst(2).first ?? primary
-            let midX = CGFloat(sin(time * 0.24)) * (3 + mids * 7)
-            let highY = CGFloat(cos(time * 0.37)) * (1.5 + highs * 4)
+            let midX = CGFloat(sin(time * 0.30)) * (7 + mids * 15)
+            let highY = CGFloat(cos(time * 0.46)) * (3 + highs * 8)
 
             ZStack {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(primary.opacity(0.10 + Double(bass) * 0.10))
-                    .frame(width: size, height: size)
-                    .scaleEffect(1.035 + bass * 0.045)
-                    .blur(radius: 20 + bass * 12)
+                    .fill(primary.opacity(0.20 + Double(bass) * 0.22))
+                    .frame(width: size * 1.08, height: size * 1.08)
+                    .scaleEffect(1.04 + bass * 0.075)
+                    .blur(radius: 16 + bass * 12)
 
                 RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .fill(secondary.opacity(0.07 + Double(mids) * 0.10))
-                    .frame(width: size * 0.96, height: size * 0.96)
+                    .fill(secondary.opacity(0.16 + Double(mids) * 0.20))
+                    .frame(width: size * 1.05, height: size * 1.05)
                     .offset(x: midX, y: -midX * 0.45)
-                    .blur(radius: 28 + mids * 10)
+                    .blur(radius: 21 + mids * 11)
                     .blendMode(.screen)
 
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.10 + Double(highs) * 0.22),
-                                tertiary.opacity(0.07 + Double(level) * 0.10),
+                                Color.white.opacity(0.18 + Double(highs) * 0.30),
+                                tertiary.opacity(0.13 + Double(level) * 0.18),
                                 .clear
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1 + highs * 1.4
+                        lineWidth: 1.6 + highs * 2.4
                     )
-                    .frame(width: size + 2, height: size + 2)
+                    .frame(width: size + 16, height: size + 16)
                     .offset(y: highY)
-                    .blur(radius: 1.5 + highs * 3.5)
+                    .blur(radius: 1.0 + highs * 2.8)
+                    .blendMode(.plusLighter)
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                tertiary.opacity(0.12 + Double(highs) * 0.22),
+                                .clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: size * 0.17
+                        )
+                    )
+                    .frame(width: size * 0.34, height: size * 0.34)
+                    .offset(x: size * 0.42 - midX * 0.4,
+                            y: -size * 0.36 + highY)
+                    .blur(radius: 5 + highs * 5)
                     .blendMode(.plusLighter)
             }
             .drawingGroup(opaque: false, colorMode: .extendedLinear)

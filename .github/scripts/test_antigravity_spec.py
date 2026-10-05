@@ -97,6 +97,8 @@ class AntigravitySpecTests(unittest.TestCase):
             self.assertIn(envelope, spectrum)
         self.assertIn("PlayerMusicReactiveBackdrop", player)
         self.assertIn("PlayerArtworkSpectrumAura", player)
+        self.assertIn("boostedVisualEnergy", player)
+        self.assertIn("pow(normalized, 0.62)", player)
         self.assertIn("UIScreen.main.maximumFramesPerSecond", player)
         self.assertIn("minimumInterval: interval", player)
         self.assertIn("paused: !isPlaying || reduceMotion", player)
