@@ -62,13 +62,14 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("colorShift", content)
         self.assertIn("neonAccent", content)
 
-    def test_hero_view_3d_flip_and_no_yellow(self):
+    def test_hero_view_has_no_local_shake_animation_or_yellow(self):
         content = self.hero_view.read_text(encoding="utf-8")
-        self.assertIn("rotation3DEffect", content)
-        self.assertIn("axis: (x: 1, y: 0, z: 0)", content)
-        self.assertIn("reduceMotion", content)
-        self.assertIn("antigravityVortex", content)
-        self.assertIn("delay(Double(index) * 0.040)", content)  # 40ms stagger
+        # Shake feedback is rendered only by WaveShakeOverlayView. The hero,
+        # artwork, metadata and tuning controls must remain visually stable.
+        self.assertNotIn("rotation3DEffect", content)
+        self.assertNotIn("antigravityVortex", content)
+        self.assertNotIn("repeatForever(autoreverses: true)", content)
+        self.assertNotIn("showWaveSettings", content)
         # Yellow signature should be eliminated from hero view
         self.assertNotIn("#FBE029", content)
         self.assertNotIn("Color(red: 0.98, green: 0.88, blue: 0.16)", content)
