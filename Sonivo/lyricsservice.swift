@@ -110,7 +110,17 @@ final class LyricsService {
     }
 
     private func fetchMusixmatchLyrics(for track: Track) async -> Lyrics? {
-        let apiKey = MusixmatchSettings.shared.apiKey
+        let settings = MusixmatchSettings.shared
+
+        // Preferred path: the app sends only artist/title to our HTTPS proxy.
+        // The Musixmatch partner key never leaves the server.
+        if let proxyURL = settings.proxyBaseURL,
+           let lyrics = await MusixmatchProxyClient(baseURL: proxyURL).fetchLyrics(for: track) {
+            return lyrics
+        }
+
+        // Backward-compatible fallback for existing direct partner-key setups.
+        let apiKey = settings.apiKey
         guard !apiKey.isEmpty else { return nil }
         return await MusixmatchClient(apiKey: apiKey).fetchLyrics(for: track)
     }

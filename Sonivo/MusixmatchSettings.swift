@@ -10,11 +10,33 @@ final class MusixmatchSettings {
 
     private static let service = Bundle.main.bundleIdentifier ?? "com.smoze.sonivo"
     private static let account = "musixmatch.partner-api-key"
+    private static let proxyDefaultsKey = "musixmatch.proxy-base-url"
 
     private(set) var hasAPIKey = false
+    private(set) var proxyBaseURLString = ""
 
     private init() {
         hasAPIKey = !(Self.readKey() ?? "").isEmpty || Self.bundleKey != nil
+        proxyBaseURLString = Self.storedProxyURL ?? Self.bundleProxyURL?.absoluteString ?? ""
+    }
+
+    var hasProxyURL: Bool { proxyBaseURL != nil }
+
+    var proxyBaseURL: URL? {
+        Self.validatedProxyURL(proxyBaseURLString)
+    }
+
+    func saveProxyURL(_ rawValue: String) -> Bool {
+        guard let url = Self.validatedProxyURL(rawValue) else { return false }
+        let normalized = url.absoluteString
+        UserDefaults.standard.set(normalized, forKey: Self.proxyDefaultsKey)
+        proxyBaseURLString = normalized
+        return true
+    }
+
+    func removeProxyURL() {
+        UserDefaults.standard.removeObject(forKey: Self.proxyDefaultsKey)
+        proxyBaseURLString = Self.bundleProxyURL?.absoluteString ?? ""
     }
 
     var apiKey: String {
@@ -67,6 +89,34 @@ final class MusixmatchSettings {
             return nil
         }
         return value
+    }
+
+    private static var storedProxyURL: String? {
+        guard let value = UserDefaults.standard.string(forKey: proxyDefaultsKey),
+              let url = validatedProxyURL(value) else { return nil }
+        return url.absoluteString
+    }
+
+    private static var bundleProxyURL: URL? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "MUSIXMATCH_PROXY_BASE_URL") as? String else {
+            return nil
+        }
+        return validatedProxyURL(value)
+    }
+
+    private static func validatedProxyURL(_ rawValue: String) -> URL? {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.hasSuffix("/") { value.removeLast() }
+        guard let url = URL(string: value),
+              url.scheme?.lowercased() == "https",
+              url.host?.isEmpty == false,
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil else {
+            return nil
+        }
+        return url
     }
 
     /// Optional CI/development fallback. Production builds should use Keychain.

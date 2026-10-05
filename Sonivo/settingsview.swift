@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var l10n = SonivoL10n.shared
     @State private var mediaCache = MediaCacheManager.shared
     @State private var musixmatch = MusixmatchSettings.shared
+    @State private var musixmatchProxyInput = ""
     @State private var musixmatchKeyInput = ""
     @State private var musixmatchKeyMessage = ""
     @State private var showYandexAuthSheet = false
@@ -337,14 +338,56 @@ struct SettingsView: View {
                         .tint(settings.accentColor)
 
                     LabeledContent {
-                        Text(musixmatch.hasAPIKey ? "Подключён" : "Не настроен")
-                            .foregroundStyle(musixmatch.hasAPIKey ? Color.green : Color.secondary)
+                        Text(musixmatch.hasProxyURL ? "Прокси подключён" : (musixmatch.hasAPIKey ? "Прямой API" : "Не настроен"))
+                            .foregroundStyle((musixmatch.hasProxyURL || musixmatch.hasAPIKey) ? Color.green : Color.secondary)
                     } label: {
                         Label("Musixmatch RichSync", systemImage: "text.badge.checkmark")
                     }
 
+                    TextField("https://api.example.com", text: $musixmatchProxyInput)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onAppear {
+                            if musixmatchProxyInput.isEmpty {
+                                musixmatchProxyInput = musixmatch.proxyBaseURLString
+                            }
+                        }
+
+                    HStack {
+                        Button("Сохранить прокси") {
+                            if musixmatch.saveProxyURL(musixmatchProxyInput) {
+                                musixmatchProxyInput = musixmatch.proxyBaseURLString
+                                musixmatchKeyMessage = "Прокси подключён. Ключ остаётся на сервере"
+                                LyricsService.shared.invalidateCache()
+                                NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
+                            } else {
+                                musixmatchKeyMessage = "Введите корректный HTTPS URL без query-параметров"
+                            }
+                        }
+                        .disabled(musixmatchProxyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Spacer()
+
+                        if musixmatch.hasProxyURL {
+                            Button("Удалить прокси", role: .destructive) {
+                                musixmatch.removeProxyURL()
+                                musixmatchProxyInput = musixmatch.proxyBaseURLString
+                                musixmatchKeyMessage = "Прокси удалён"
+                                LyricsService.shared.invalidateCache()
+                                NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Text("Резервный прямой доступ")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     SecureField(
-                        musixmatch.hasAPIKey ? "Musixmatch API Key сохранён" : "Musixmatch partner API Key",
+                        musixmatch.hasAPIKey ? "Partner API Key сохранён" : "Необязательный Musixmatch API Key",
                         text: $musixmatchKeyInput
                     )
                     .textInputAutocapitalization(.never)
@@ -354,7 +397,7 @@ struct SettingsView: View {
                         Button("Сохранить ключ") {
                             if musixmatch.saveAPIKey(musixmatchKeyInput) {
                                 musixmatchKeyInput = ""
-                                musixmatchKeyMessage = "Ключ сохранён в Keychain"
+                                musixmatchKeyMessage = "Резервный ключ сохранён в Keychain"
                                 LyricsService.shared.invalidateCache()
                                 NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
                             } else {
@@ -366,10 +409,10 @@ struct SettingsView: View {
                         Spacer()
 
                         if musixmatch.hasAPIKey {
-                            Button("Удалить", role: .destructive) {
+                            Button("Удалить ключ", role: .destructive) {
                                 musixmatch.removeAPIKey()
                                 musixmatchKeyInput = ""
-                                musixmatchKeyMessage = "Ключ удалён"
+                                musixmatchKeyMessage = "Резервный ключ удалён"
                                 LyricsService.shared.invalidateCache()
                                 NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
                             }

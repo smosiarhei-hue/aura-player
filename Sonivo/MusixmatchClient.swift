@@ -234,6 +234,10 @@ enum RichSyncParser {
 
     static func parse(_ body: String) throws -> [LyricsLine] {
         guard let data = body.data(using: .utf8) else { return [] }
+        return try parse(data: data)
+    }
+
+    static func parse(data: Data) throws -> [LyricsLine] {
         let rawLines = try JSONDecoder().decode([RawLine].self, from: data)
             .sorted { $0.startTime < $1.startTime }
 
