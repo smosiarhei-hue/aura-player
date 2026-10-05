@@ -336,6 +336,13 @@ struct SettingsView: View {
                     Toggle("Apple Neural Engine", isOn: $settings.isNeuralEngineEnabled)
                         .tint(settings.accentColor)
 
+                    LabeledContent {
+                        Text(musixmatch.hasAPIKey ? "Подключён" : "Не настроен")
+                            .foregroundStyle(musixmatch.hasAPIKey ? Color.green : Color.secondary)
+                    } label: {
+                        Label("Musixmatch RichSync", systemImage: "text.badge.checkmark")
+                    }
+
                     SecureField(
                         musixmatch.hasAPIKey ? "Musixmatch API Key сохранён" : "Musixmatch partner API Key",
                         text: $musixmatchKeyInput

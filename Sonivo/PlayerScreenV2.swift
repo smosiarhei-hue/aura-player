@@ -16,6 +16,8 @@ struct PlayerScreenV2: View {
     @State private var selectedArtist: PlayerArtistLink?
     @State private var resolvingArtist = false
     @State private var showLyricsMode = false
+    @State private var lyricsControlsVisible = false
+    @State private var lyricsControlsHideTask: Task<Void, Never>?
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
     @State private var coverDragX: CGFloat = 0
@@ -102,9 +104,14 @@ struct PlayerScreenV2: View {
             let totalWidth = geo.size.width
             let topInset = max(geo.safeAreaInsets.top, 50)
             let artworkTopOffset = topInset + 44
-            let artworkStageHeight = isFullScreenVideoShot
+            let standardArtworkStageHeight = isFullScreenVideoShot
                 ? (totalHeight * 0.55)
                 : min(totalWidth - 40, totalHeight * 0.44)
+            let artworkStageHeight = showLyricsMode
+                ? min(totalWidth * 0.48, totalHeight * 0.24)
+                : standardArtworkStageHeight
+            let lyricsStageTop = artworkTopOffset + artworkStageHeight + 12
+            let lyricsStageHeight = max(240, totalHeight - lyricsStageTop - max(geo.safeAreaInsets.bottom, 18))
 
             let isPullingDown = dismissOffsetY > 0
             let dismissScale = reduceMotion ? 1.0 : max(0.88, 1.0 - (dismissOffsetY / totalHeight) * 0.14)
@@ -118,6 +125,18 @@ struct PlayerScreenV2: View {
                 artworkStage(width: totalWidth, height: artworkStageHeight)
                     .frame(width: totalWidth, height: artworkStageHeight, alignment: .center)
                     .padding(.top, artworkTopOffset)
+                    .animation(SN.slowSpring, value: showLyricsMode)
+
+                if showLyricsMode {
+                    inlineLyricsStage(
+                        width: totalWidth,
+                        height: lyricsStageHeight
+                    )
+                    .frame(width: totalWidth, height: lyricsStageHeight, alignment: .top)
+                    .padding(.top, lyricsStageTop)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2)
+                }
 
                 // Native Apple Smooth Ambient Vignette under Dynamic Island / Status Bar
                 LinearGradient(
@@ -150,8 +169,12 @@ struct PlayerScreenV2: View {
                             .padding(.bottom, 6)
                     }
 
-                    lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
+                    if !showLyricsMode || lyricsControlsVisible {
+                        lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
+                .animation(SN.spring, value: lyricsControlsVisible)
             }
             .frame(width: totalWidth, height: totalHeight, alignment: .top)
             .offset(y: dismissOffsetY)
@@ -182,6 +205,10 @@ struct PlayerScreenV2: View {
                     }
                 }
         )
+        .onTapGesture {
+            guard showLyricsMode else { return }
+            toggleLyricsControls()
+        }
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -223,6 +250,13 @@ struct PlayerScreenV2: View {
             videoShotURL = nil
             videoShotTrackID = nil
             teardownVideoLooper()
+        }
+        .onChange(of: showLyricsMode) { _, isEnabled in
+            lyricsControlsHideTask?.cancel()
+            lyricsControlsVisible = false
+            if isEnabled {
+                coverDragX = 0
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .didUpdateCustomLyrics)) { _ in
             Task { await loadLyrics() }
@@ -361,7 +395,7 @@ struct PlayerScreenV2: View {
                 // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
                 Color.clear
                     .frame(width: width, height: height)
-            } else if !showLyricsMode {
+            } else {
                 // Физичная полноспектральная аура. Обложка остаётся строго на месте:
                 // бас задаёт дыхание, середина — текучее смещение, верх — чистое мерцание.
                 PlayerArtworkSpectrumAura(
@@ -379,8 +413,6 @@ struct PlayerScreenV2: View {
                     .frame(width: cardSide, height: cardSide)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
-            } else {
-                lyricsCoverCard(side: cardSide)
             }
         }
         .frame(width: width, height: height)
@@ -421,6 +453,96 @@ struct PlayerScreenV2: View {
                 }
         )
         .animation(SN.slowSpring, value: player.isPlaying)
+        .animation(SN.slowSpring, value: showLyricsMode)
+    }
+
+    @ViewBuilder
+    private func inlineLyricsStage(width: CGFloat, height: CGFloat) -> some View {
+        let settings = SettingsStore.shared
+        let latency = AVAudioSession.sharedInstance().outputLatency
+        let playbackTime = max(0, player.progress - latency + settings.lyricsOffset)
+
+        VStack(spacing: 10) {
+            if let lyrics, !lyrics.sourceName.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: lyrics.hasDynamicWordTimings ? "waveform.badge.mic" : "music.note")
+                    Text(lyrics.sourceName)
+                    if lyrics.hasDynamicWordTimings {
+                        Text("• RichSync")
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.72))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .glassCapsule()
+                .transition(.opacity)
+            }
+
+            if lyricsLoading {
+                Spacer()
+                ProgressView()
+                    .tint(.white)
+                Text("Загрузка текста…")
+                    .font(SN.text(.subheadline, .medium))
+                    .foregroundStyle(.white.opacity(0.70))
+                Spacer()
+            } else if let lyrics, !lyrics.lines.isEmpty {
+                if lyrics.hasDynamicWordTimings {
+                    KineticLyricsView(
+                        phrases: cachedPhrases.isEmpty ? LyricPhrase.from(lines: lyrics.lines) : cachedPhrases,
+                        currentTime: .constant(playbackTime),
+                        isPlaying: player.isPlaying,
+                        fontSize: max(30, settings.lyricsFontSize * 0.82)
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 22)
+                } else {
+                    CoverLyricsScrollView(
+                        lyrics: lyrics,
+                        player: player,
+                        side: min(width - 24, height - 20)
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                Spacer()
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 30, weight: .light))
+                    .foregroundStyle(.white.opacity(0.40))
+                Text("Текст песни отсутствует")
+                    .font(.system(size: 25, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.82))
+                Spacer()
+            }
+        }
+        .frame(width: width, height: height)
+        .contentShape(Rectangle())
+    }
+
+    private func toggleLyricsControls() {
+        lyricsControlsHideTask?.cancel()
+
+        if lyricsControlsVisible {
+            withAnimation(SN.spring) {
+                lyricsControlsVisible = false
+            }
+            return
+        }
+
+        withAnimation(SN.spring) {
+            lyricsControlsVisible = true
+        }
+        lyricsControlsHideTask = Task {
+            try? await Task.sleep(for: .seconds(3.5))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(SN.spring) {
+                    lyricsControlsVisible = false
+                }
+            }
+        }
     }
 
     private func lyricsCoverCard(side: CGFloat) -> some View {
