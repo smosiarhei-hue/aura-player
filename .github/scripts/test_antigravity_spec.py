@@ -98,6 +98,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("PlayerMusicReactiveBackdrop", player)
         self.assertIn("PlayerArtworkSpectrumAura", player)
         self.assertIn("UIScreen.main.maximumFramesPerSecond", player)
+        self.assertIn("minimumInterval: interval", player)
         self.assertIn("paused: !isPlaying || reduceMotion", player)
 
     def test_vertical_wave_120hz_and_app_colors(self):
