@@ -9,16 +9,10 @@ struct WaveSettingsSheet: View {
     @State private var isApplying = false
     @State private var applyStatusMessage: String?
 
-    @AppStorage("visuals.hdr.enabled") private var hdrEnabled = true
-    @AppStorage("visuals.waveBeat.enabled") private var beatEnabled = true
-
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
-                    // Preview Card
-                    previewCard
-
                     // 1. Характер звучания (Diversity)
                     diversitySection
 
@@ -27,9 +21,6 @@ struct WaveSettingsSheet: View {
 
                     // 3. Настроение и энергия (Mood)
                     moodSection
-
-                    // 4. Визуальные эффекты волны
-                    visualEffectsSection
 
                     // Кнопка быстрого применения к текущей очереди
                     if player.isPlaying {
@@ -58,63 +49,6 @@ struct WaveSettingsSheet: View {
         .presentationCornerRadius(34)
         .presentationBackground(.ultraThinMaterial)
         .preferredColorScheme(.dark)
-    }
-
-    // MARK: - Предпросмотр живой волны
-
-    private var previewCard: some View {
-        ZStack(alignment: .bottom) {
-            MyWaveBackgroundVideoView(isPlaying: true, tintColors: settings.moodEnergy.colors)
-                .frame(height: 170)
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [.white.opacity(0.35), .clear, .white.opacity(0.12)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.5
-                        )
-                }
-
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("ПОТОК В РЕАЛЬНОМ ВРЕМЕНИ")
-                        .font(.system(size: 10, weight: .bold, design: .default))
-                        .tracking(1.4)
-                        .foregroundStyle(.white.opacity(0.70))
-                    Text("\(settings.diversity.title) • \(settings.language.title)")
-                        .font(SN.text(.subheadline, .bold))
-                        .foregroundStyle(.white)
-                }
-                Spacer()
-                Image(systemName: settings.diversity.icon)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(10)
-                    .glassCircle()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                Rectangle()
-                    .fill(.ultraThinMaterial.opacity(0.45))
-                    .mask {
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.0),
-                                .init(color: .black, location: 0.40),
-                                .init(color: .black, location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    }
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        }
     }
 
     // MARK: - 1. Характер звучания
@@ -252,56 +186,6 @@ struct WaveSettingsSheet: View {
                 }
                 .padding(.horizontal, 2)
             }
-        }
-    }
-
-    // MARK: - 4. Визуальные эффекты
-
-    private var visualEffectsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(title: "Визуализация", subtitle: "Свечение и реакция анимации на звук")
-
-            VStack(spacing: 0) {
-                Toggle(isOn: $hdrEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("HDR-свечение")
-                            .font(SN.text(.body, .semibold))
-                            .foregroundStyle(.white)
-                        Text("Яркие световые акценты на дисплеях с поддержкой EDR/HDR")
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
-                }
-                .tint(Color.cyan)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-
-                Divider()
-                    .background(Color.white.opacity(0.10))
-                    .padding(.horizontal, 16)
-
-                Toggle(isOn: $beatEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Реакция на бас и бочку")
-                            .font(SN.text(.body, .semibold))
-                            .foregroundStyle(.white)
-                        Text("Пульсация волны в такт низким частотам (30–120 Гц)")
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
-                }
-                .tint(Color.cyan)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
-            )
         }
     }
 

@@ -11,7 +11,6 @@ struct SonivoHomeRedesignedView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var showSettings = false
-    @State private var showWaveSettings = false
     @State private var showPlayer = false
     @State private var showAIAssistant = false
     @State private var waveStore = WaveSettingsStore.shared
@@ -119,7 +118,6 @@ struct SonivoHomeRedesignedView: View {
             }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showWaveSettings) { WaveSettingsSheet() }
             .fullScreenCover(isPresented: $showAIAssistant) { AIMusicAssistantView() }
             .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
             .task { await player.observeTimeline() }
@@ -128,11 +126,10 @@ struct SonivoHomeRedesignedView: View {
             .onDisappear { updateAntigravityLifecycle(isOnMain: false) }
             .onChange(of: scenePhase) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onChange(of: showSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
-            .onChange(of: showWaveSettings) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onChange(of: showAIAssistant) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
-                guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings && !showAIAssistant else { return }
+                guard scenePhase == .active && !showPlayer && !showSettings && !showAIAssistant else { return }
                 antigravity.handleSystemShakeNotification()
                 triggerShakeWave()
             }
@@ -154,7 +151,6 @@ struct SonivoHomeRedesignedView: View {
             player: player,
             showPlayer: $showPlayer,
             showSettings: $showSettings,
-            showWaveSettings: $showWaveSettings,
             showAIAssistant: $showAIAssistant,
             onToggleWave: toggleWave,
             onShakeWave: { triggerShakeWave() }
@@ -364,7 +360,7 @@ struct SonivoHomeRedesignedView: View {
 
     /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
     private func triggerShakeWave(forceDiscover: Bool = true) {
-        guard scenePhase == .active && !showPlayer && !showSettings && !showWaveSettings else { return }
+        guard scenePhase == .active && !showPlayer && !showSettings else { return }
 
         let now = Date().timeIntervalSince1970
         guard now - lastShakeTimestamp > 1.2 else { return }
@@ -393,7 +389,7 @@ struct SonivoHomeRedesignedView: View {
     private func updateAntigravityLifecycle(isOnMain: Bool = true) {
         antigravity.updateLifecycle(
             isAppActive: scenePhase == .active,
-            isModalActive: showSettings || showWaveSettings || showPlayer,
+            isModalActive: showSettings || showPlayer,
             isOnMainScreen: isOnMain
         )
     }

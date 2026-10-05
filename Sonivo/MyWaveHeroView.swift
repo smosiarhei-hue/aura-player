@@ -8,13 +8,10 @@ struct MyWaveHeroView: View {
     var player: ActivePlayerPresentation
     @Binding var showPlayer: Bool
     @Binding var showSettings: Bool
-    @Binding var showWaveSettings: Bool
     var showAIAssistant: Binding<Bool>? = nil
     var onToggleWave: () -> Void
     var onShakeWave: (() -> Void)? = nil
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var antigravity = AntigravityTransitionManager.shared
     @State private var waveStore = WaveSettingsStore.shared
     @State private var library = LibraryStore.shared
     @State private var artistImageUrl: String? = nil
@@ -110,20 +107,6 @@ struct MyWaveHeroView: View {
             Spacer()
 
             HStack(spacing: 10) {
-                Button {
-                    Haptics.tap(.light)
-                    showWaveSettings = true
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .frame(width: SN.tapTarget, height: SN.tapTarget)
-                        .background(.ultraThinMaterial.opacity(0.70), in: Circle())
-                }
-                .buttonStyle(TactileButtonStyle(scale: 0.92))
-                .accessibilityLabel("Настроить волну")
-                .accessibilityHint("Открывает характер, язык и настроение потока")
-
                 if let showAIAssistant {
                     Button {
                         Haptics.tap(.light)
@@ -162,23 +145,6 @@ struct MyWaveHeroView: View {
     // MARK: - Central Living Spatial Stage (Apple Spatial Blur - No Lines, No Frames)
     private var centralVisualStage: some View {
         ZStack {
-            // Нативное пространственное световое размытие за обложкой (Spatial Blur Atmosphere)
-            Group {
-                if let cover = activeTrack?.coverURL {
-                    RemoteArtwork(urlString: cover, corner: 60)
-                } else if let track = activeTrack {
-                    SmallArtwork(track: track, size: 280)
-                } else {
-                    Circle().fill(accentColor)
-                }
-            }
-            .frame(width: 280, height: 280)
-            .blur(radius: 55)
-            .saturation(1.4)
-            .opacity(player.isPlaying ? 0.65 : 0.40)
-            .scaleEffect(player.isPlaying ? 1.05 : 1.0)
-            .animation(.easeInOut(duration: 3.5).repeatForever(autoreverses: true), value: player.isPlaying)
-
             // Главная нативная суперэллиптическая карточка обложки 220x220 (чистый Apple Design)
             Button {
                 Haptics.tap(.light)
@@ -228,8 +194,6 @@ struct MyWaveHeroView: View {
                     .foregroundStyle(Color.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .scaleEffect(antigravity.phase == .antigravity ? antigravity.typographyExitScale : (antigravity.phase == .settling ? antigravity.typographyEnterScale : 1.0))
-                    .opacity(antigravity.phase == .antigravity ? antigravity.typographyExitOpacity : (antigravity.phase == .settling ? antigravity.typographyEnterOpacity : 1.0))
 
                 Text(activeTrack?.artist ?? "Персональный музыкальный поток")
                     .font(.system(size: 15, weight: .medium, design: .default))
@@ -384,7 +348,7 @@ struct MyWaveHeroView: View {
                     // 1. Музыкальный характер (diversity)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            ForEach(Array(WaveDiversity.allCases.enumerated()), id: \.element.id) { index, item in
+                            ForEach(Array(WaveDiversity.allCases.enumerated()), id: \.element.id) { _, item in
                                 let isSelected = waveStore.diversity == item
                                 Button {
                                     Haptics.tap(.light)
@@ -410,18 +374,6 @@ struct MyWaveHeroView: View {
                                     )
                                 }
                                 .buttonStyle(.plain)
-                                .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
-                                .rotation3DEffect(
-                                    .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
-                                    axis: (x: 1, y: 0, z: 0)
-                                )
-                                .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
-                                .animation(
-                                    reduceMotion
-                                        ? .easeInOut(duration: 0.30)
-                                        : .easeInOut(duration: 0.40).delay(Double(index) * 0.040),
-                                    value: antigravity.isCardsFlipped
-                                )
                             }
                         }
                         .padding(.horizontal, 20)
@@ -430,7 +382,7 @@ struct MyWaveHeroView: View {
                     // 2. Язык звучания
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 7) {
-                            ForEach(Array(WaveLanguage.allCases.enumerated()), id: \.element.id) { index, item in
+                            ForEach(Array(WaveLanguage.allCases.enumerated()), id: \.element.id) { _, item in
                                 let isSelected = waveStore.language == item
                                 Button {
                                     Haptics.tap(.light)
@@ -456,18 +408,6 @@ struct MyWaveHeroView: View {
                                     )
                                 }
                                 .buttonStyle(.plain)
-                                .offset(y: reduceMotion ? 0 : (antigravity.isCardsFlipped ? antigravity.cardsYOffset : 0))
-                                .rotation3DEffect(
-                                    .degrees(reduceMotion ? 0 : (antigravity.isCardsFlipped ? 180 : 0)),
-                                    axis: (x: 1, y: 0, z: 0)
-                                )
-                                .opacity(reduceMotion && antigravity.phase != .idle ? 0.35 : 1.0)
-                                .animation(
-                                    reduceMotion
-                                        ? .easeInOut(duration: 0.30)
-                                        : .easeInOut(duration: 0.40).delay(Double(index + 3) * 0.040),
-                                    value: antigravity.isCardsFlipped
-                                )
                             }
                         }
                         .padding(.horizontal, 20)
@@ -493,24 +433,6 @@ struct MyWaveHeroView: View {
                 endRadius: 450
             )
             .blur(radius: 65)
-
-            // Кинетический вихрь «Антигравити» (Metal Shader)
-            if antigravity.distortionStrength > 0.01 {
-                GeometryReader { geo in
-                    Rectangle()
-                        .colorEffect(
-                            ShaderLibrary.antigravityVortex(
-                                .float4(0, 0, Float(geo.size.width), Float(geo.size.height)),
-                                .float(antigravity.distortionStrength),
-                                .float(antigravity.vortexAngle),
-                                .float(antigravity.colorShift),
-                                .color(accentColor)
-                            )
-                        )
-                        .ignoresSafeArea()
-                        .opacity(Double(min(1.0, antigravity.distortionStrength * 2.0)))
-                }
-            }
 
             LinearGradient(
                 stops: [
