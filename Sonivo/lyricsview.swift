@@ -25,7 +25,11 @@ struct LyricsView: View {
                         // Title mismatch guard during track transition
                         SonivoLoadingState(title: "Загрузка текста…")
                     } else if lyrics.isSynchronized {
-                        SyncedLyrics(lyrics: lyrics, player: player, onEditLyrics: { showAddCustomLyrics = true })
+                        if lyrics.hasDynamicWordTimings {
+                            DynamicWordLyrics(lyrics: lyrics, player: player)
+                        } else {
+                            SyncedLyrics(lyrics: lyrics, player: player, onEditLyrics: { showAddCustomLyrics = true })
+                        }
                     } else {
                         StaticLyricsList(lyrics: lyrics, onEditLyrics: { showAddCustomLyrics = true })
                     }
@@ -62,6 +66,45 @@ struct LyricsView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .task { await player.observeTimeline() }
+    }
+}
+
+// MARK: - RichSync / Enhanced LRC word sweep
+
+/// Connects genuine source word timings to the existing 120 Hz kinetic lyric renderer.
+/// Line-only lyrics continue through SyncedLyrics unchanged.
+private struct DynamicWordLyrics: View {
+    let lyrics: Lyrics
+    let player: ActivePlayerPresentation
+    @State private var settings = SettingsStore.shared
+
+    private var playbackTime: TimeInterval {
+        let latency = AVAudioSession.sharedInstance().outputLatency
+        return max(0, player.progress - latency + settings.lyricsOffset)
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            KineticLyricsView(
+                phrases: LyricPhrase.from(lines: lyrics.lines),
+                currentTime: .constant(playbackTime),
+                isPlaying: player.isPlaying,
+                fontSize: max(30, settings.lyricsFontSize * 0.82)
+            )
+            .padding(.horizontal, 24)
+            .padding(.vertical, 96)
+
+            if !lyrics.sourceName.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.badge.mic")
+                    Text("Источник: \(lyrics.sourceName)")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.45))
+                .padding(.bottom, 42)
+            }
+        }
         .task { await player.observeTimeline() }
     }
 }

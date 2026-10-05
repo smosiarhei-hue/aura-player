@@ -9,6 +9,9 @@ struct SettingsView: View {
     @State private var themeManager = ThemeFontManager.shared
     @State private var l10n = SonivoL10n.shared
     @State private var mediaCache = MediaCacheManager.shared
+    @State private var musixmatch = MusixmatchSettings.shared
+    @State private var musixmatchKeyInput = ""
+    @State private var musixmatchKeyMessage = ""
     @State private var showYandexAuthSheet = false
     @State private var showEqualizerSheet = false
     @State private var isSyncingLikes = false
@@ -333,6 +336,45 @@ struct SettingsView: View {
                     Toggle("Apple Neural Engine", isOn: $settings.isNeuralEngineEnabled)
                         .tint(settings.accentColor)
 
+                    SecureField(
+                        musixmatch.hasAPIKey ? "Musixmatch API Key сохранён" : "Musixmatch partner API Key",
+                        text: $musixmatchKeyInput
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                    HStack {
+                        Button("Сохранить ключ") {
+                            if musixmatch.saveAPIKey(musixmatchKeyInput) {
+                                musixmatchKeyInput = ""
+                                musixmatchKeyMessage = "Ключ сохранён в Keychain"
+                                LyricsService.shared.invalidateCache()
+                                NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
+                            } else {
+                                musixmatchKeyMessage = "Введите действующий ключ"
+                            }
+                        }
+                        .disabled(musixmatchKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Spacer()
+
+                        if musixmatch.hasAPIKey {
+                            Button("Удалить", role: .destructive) {
+                                musixmatch.removeAPIKey()
+                                musixmatchKeyInput = ""
+                                musixmatchKeyMessage = "Ключ удалён"
+                                LyricsService.shared.invalidateCache()
+                                NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
+                            }
+                        }
+                    }
+
+                    if !musixmatchKeyMessage.isEmpty {
+                        Text(musixmatchKeyMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     VStack(alignment: .leading, spacing: 6) {
                         HStack { Text("Размер шрифта"); Spacer(); Text("\(Int(settings.lyricsFontSize)) pt").foregroundStyle(.secondary) }
                         Slider(value: $settings.lyricsFontSize, in: 36...60, step: 1).tint(settings.accentColor)
@@ -344,7 +386,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Караоке (текст песни)")
                 } footer: {
-                    Text("Apple Neural Engine автономно синхронизирует и выравнивает текст песен по вокалу. При отключении отображается оригинальный чистый текст без искусственного подгона.")
+                    Text("Musixmatch RichSync включает настоящую пословную и посимвольную подсветку. Ключ хранится только в Keychain. Apple Neural Engine остаётся резервным автономным выравниванием.")
                 }
 
                 Section("Медиатека") {
