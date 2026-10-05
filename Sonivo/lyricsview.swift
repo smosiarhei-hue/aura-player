@@ -85,26 +85,15 @@ private struct DynamicWordLyrics: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            KineticLyricsView(
-                phrases: LyricPhrase.from(lines: lyrics.lines),
-                currentTime: .constant(playbackTime),
-                isPlaying: player.isPlaying,
-                fontSize: max(30, settings.lyricsFontSize * 0.82)
-            )
-            .padding(.horizontal, 24)
-            .padding(.vertical, 96)
-
-            if !lyrics.sourceName.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "waveform.badge.mic")
-                    Text("Источник: \(lyrics.sourceName)")
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.bottom, 42)
-            }
-        }
+        KineticLyricsView(
+            phrases: LyricPhrase.from(lines: lyrics.lines),
+            currentTime: .constant(playbackTime),
+            isPlaying: player.isPlaying,
+            fontSize: max(30, settings.lyricsFontSize * 0.82)
+        )
+        .padding(.horizontal, 24)
+        .padding(.top, 56)
+        .padding(.bottom, 108)
         .task { await player.observeTimeline() }
     }
 }

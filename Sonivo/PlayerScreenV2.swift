@@ -42,7 +42,7 @@ struct PlayerScreenV2: View {
 
     private var kickEnergy: CGFloat {
         guard player.isPlaying, !reduceMotion else { return 0 }
-        return CGFloat(spectrum.dynamicKick)
+        return boostedVisualEnergy(spectrum.dynamicKick, gain: 1.32)
     }
 
     private var bassEnergy: CGFloat {
@@ -337,6 +337,7 @@ struct PlayerScreenV2: View {
                 PlayerMusicReactiveBackdrop(
                     artwork: currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) },
                     palette: backgroundColors,
+                    kick: kickEnergy,
                     bass: bassEnergy,
                     mids: midEnergy,
                     highs: highEnergy,
@@ -395,8 +396,8 @@ struct PlayerScreenV2: View {
 
             compactLyricsMetadata
                 .padding(.horizontal, 24)
-                .padding(.top, 28)
-                .padding(.bottom, 18)
+                .padding(.top, 18)
+                .padding(.bottom, 6)
 
             inlineLyricsStage(width: width, height: height)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -555,19 +556,6 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else {
-                // Физичная полноспектральная аура. Обложка остаётся строго на месте:
-                // бас задаёт дыхание, середина — текучее смещение, верх — чистое мерцание.
-                PlayerArtworkSpectrumAura(
-                    size: cardSide,
-                    palette: backgroundColors,
-                    bass: bassEnergy,
-                    mids: midEnergy,
-                    highs: highEnergy,
-                    level: fullSpectrumEnergy,
-                    isPlaying: player.isPlaying,
-                    reduceMotion: reduceMotion
-                )
-
                 artwork
                     .frame(width: cardSide, height: cardSide)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -620,25 +608,9 @@ struct PlayerScreenV2: View {
         let settings = SettingsStore.shared
         let latency = AVAudioSession.sharedInstance().outputLatency
         let playbackTime = max(0, player.progress - latency + settings.lyricsOffset)
+        let textLift = min(72, height * 0.09)
 
-        VStack(spacing: 10) {
-            if let lyrics, !lyrics.sourceName.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: lyrics.hasDynamicWordTimings ? "waveform.badge.mic" : "music.note")
-                    Text(lyrics.sourceName)
-                    if lyrics.hasDynamicWordTimings {
-                        Text("• RichSync")
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
-                }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .glassCapsule()
-                .transition(.opacity)
-            }
-
+        VStack(spacing: 0) {
             if lyricsLoading {
                 Spacer()
                 ProgressView()
@@ -657,6 +629,7 @@ struct PlayerScreenV2: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 22)
+                    .offset(y: -textLift)
                 } else {
                     CoverLyricsScrollView(
                         lyrics: lyrics,
@@ -664,6 +637,7 @@ struct PlayerScreenV2: View {
                         side: min(width - 24, height - 20)
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: -textLift)
                 }
             } else {
                 Spacer()
@@ -2374,6 +2348,7 @@ struct PlayerQualityModalView: View {
 struct PlayerMusicReactiveBackdrop: View {
     let artwork: UIImage?
     let palette: [Color]
+    let kick: CGFloat
     let bass: CGFloat
     let mids: CGFloat
     let highs: CGFloat
@@ -2394,6 +2369,13 @@ struct PlayerMusicReactiveBackdrop: View {
                 let x = CGFloat(sin(time * 0.21) * 15.0 * midDrift)
                 let y = CGFloat(cos(time * 0.17) * 12.0 * midDrift)
                 let tilt = sin(time * 0.10) * (0.35 + Double(mids) * 0.55)
+                let impact = max(kick, bass * 0.72)
+                let primary = palette.first ?? SN.amber
+                let secondary = palette.dropFirst().first ?? SN.ember
+                let flashCenter = UnitPoint(
+                    x: 0.50 + CGFloat(sin(time * 0.16)) * 0.12,
+                    y: 0.54 + CGFloat(cos(time * 0.13)) * 0.10
+                )
 
                 ZStack {
                     if let artwork {
@@ -2401,12 +2383,13 @@ struct PlayerMusicReactiveBackdrop: View {
                             .resizable()
                             .scaledToFill()
                             .frame(width: geo.size.width, height: geo.size.height)
-                            .blur(radius: 38 + level * 8)
-                            .scaleEffect(1.13 + bass * 0.060 + level * 0.018)
+                            .blur(radius: 36 + level * 8 - impact * 3)
+                            .scaleEffect(1.13 + bass * 0.060 + level * 0.018 + impact * 0.035)
                             .offset(x: x, y: y)
                             .rotationEffect(.degrees(tilt))
                             .saturation(1.12 + Double(mids) * 0.20)
-                            .contrast(1.04 + Double(highs) * 0.06)
+                            .contrast(1.04 + Double(highs) * 0.06 + Double(impact) * 0.08)
+                            .brightness(Double(impact) * 0.075)
                             .opacity(0.84 + Double(level) * 0.10)
                             .clipped()
                     } else {
@@ -2429,6 +2412,21 @@ struct PlayerMusicReactiveBackdrop: View {
                         level: level,
                         time: time
                     )
+
+                    // Full-screen musical impact: a broad light wave, never an artwork outline.
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(Double(impact) * 0.12),
+                            primary.opacity(Double(impact) * 0.24),
+                            secondary.opacity(Double(impact) * 0.10),
+                            .clear
+                        ],
+                        center: flashCenter,
+                        startRadius: 8,
+                        endRadius: max(geo.size.width, geo.size.height) * (0.58 + impact * 0.16)
+                    )
+                    .scaleEffect(1 + impact * 0.07)
+                    .blendMode(.screen)
 
                     LinearGradient(
                         stops: [
@@ -2528,84 +2526,6 @@ struct PlayerAmbientCoverGlow: View {
         }
         .allowsHitTesting(false)
         .ignoresSafeArea()
-    }
-}
-
-// Local aura sits behind the artwork without moving or scaling the artwork.
-struct PlayerArtworkSpectrumAura: View {
-    let size: CGFloat
-    let palette: [Color]
-    let bass: CGFloat
-    let mids: CGFloat
-    let highs: CGFloat
-    let level: CGFloat
-    let isPlaying: Bool
-    let reduceMotion: Bool
-
-    private var interval: TimeInterval {
-        1 / Double(max(UIScreen.main.maximumFramesPerSecond, 60))
-    }
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: interval,
-                                paused: !isPlaying || reduceMotion)) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate
-            let primary = palette.first ?? SN.amber
-            let secondary = palette.dropFirst().first ?? SN.ember
-            let tertiary = palette.dropFirst(2).first ?? primary
-            let flowX = CGFloat(sin(time * 0.24)) * (8 + mids * 16)
-            let flowY = CGFloat(cos(time * 0.19)) * (6 + mids * 12)
-            let shimmerX = 0.5 + CGFloat(sin(time * 0.34)) * 0.22
-            let shimmerY = 0.32 + CGFloat(cos(time * 0.29)) * 0.16
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(primary.opacity(0.18 + Double(bass) * 0.20))
-                    .frame(width: size * 1.12, height: size * 1.12)
-                    .scaleEffect(1.04 + bass * 0.085)
-                    .blur(radius: 22 + bass * 12)
-
-                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                secondary.opacity(0.20 + Double(mids) * 0.22),
-                                secondary.opacity(0.08 + Double(level) * 0.08),
-                                .clear
-                            ],
-                            center: UnitPoint(x: 0.44, y: 0.56),
-                            startRadius: 0,
-                            endRadius: size * 0.72
-                        )
-                    )
-                    .frame(width: size * 1.18, height: size * 1.15)
-                    .offset(x: flowX, y: flowY)
-                    .rotationEffect(.degrees(Double(flowX / 18)))
-                    .blur(radius: 20 + mids * 12)
-                    .blendMode(.screen)
-
-                RoundedRectangle(cornerRadius: 38, style: .continuous)
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color.white.opacity(0.07 + Double(highs) * 0.18),
-                                tertiary.opacity(0.10 + Double(highs) * 0.15),
-                                .clear
-                            ],
-                            center: UnitPoint(x: shimmerX, y: shimmerY),
-                            startRadius: 0,
-                            endRadius: size * (0.52 + highs * 0.10)
-                        )
-                    )
-                    .frame(width: size * 1.20, height: size * 1.18)
-                    .offset(x: -flowX * 0.35, y: -flowY * 0.30)
-                    .blur(radius: 14 + highs * 9)
-                    .blendMode(.screen)
-            }
-            .drawingGroup(opaque: false, colorMode: .extendedLinear)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
 

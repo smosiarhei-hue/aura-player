@@ -16,6 +16,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.shake_overlay = self.repo_root / "Sonivo" / "WaveShakeOverlayView.swift"
         self.player_view = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         self.spectrum = self.repo_root / "Sonivo" / "spectrumanalyzer.swift"
+        self.lyrics_view = self.repo_root / "Sonivo" / "lyricsview.swift"
 
     def test_files_exist(self):
         self.assertTrue(self.swift_manager.exists(), "AntigravityTransitionManager.swift missing")
@@ -26,6 +27,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertTrue(self.shake_overlay.exists(), "WaveShakeOverlayView.swift missing")
         self.assertTrue(self.player_view.exists(), "PlayerScreenV2.swift missing")
         self.assertTrue(self.spectrum.exists(), "spectrumanalyzer.swift missing")
+        self.assertTrue(self.lyrics_view.exists(), "lyricsview.swift missing")
 
     def test_anti_pocket_and_motion_detector(self):
         content = self.swift_manager.read_text(encoding="utf-8")
@@ -96,15 +98,28 @@ class AntigravitySpecTests(unittest.TestCase):
         for envelope in ("bassAlpha", "midsAlpha", "highsAlpha"):
             self.assertIn(envelope, spectrum)
         self.assertIn("PlayerMusicReactiveBackdrop", player)
-        self.assertIn("PlayerArtworkSpectrumAura", player)
+        self.assertNotIn("PlayerArtworkSpectrumAura", player)
         self.assertIn("boostedVisualEnergy", player)
         self.assertIn("pow(normalized, 0.62)", player)
+        self.assertIn("let impact = max(kick, bass * 0.72)", player)
+        self.assertIn("Full-screen musical impact", player)
         self.assertIn("UIScreen.main.maximumFramesPerSecond", player)
         self.assertIn("minimumInterval: interval", player)
         self.assertIn("paused: !isPlaying || reduceMotion", player)
-        artwork_aura = player.split("struct PlayerArtworkSpectrumAura", 1)[1].split("#Preview", 1)[0]
-        self.assertNotIn(".strokeBorder", artwork_aura)
-        self.assertNotIn(".blendMode(.plusLighter)", artwork_aura)
+
+    def test_fullscreen_lyrics_are_lifted_without_source_badge(self):
+        player = self.player_view.read_text(encoding="utf-8")
+        lyrics = self.lyrics_view.read_text(encoding="utf-8")
+        inline_stage = player.split("private func inlineLyricsStage", 1)[1].split(
+            "private func toggleLyricsControls", 1
+        )[0]
+        dynamic_stage = lyrics.split("private struct DynamicWordLyrics", 1)[1].split(
+            "// MARK: - Synchronized Scrolling Lyrics", 1
+        )[0]
+        self.assertIn("let textLift = min(72, height * 0.09)", inline_stage)
+        self.assertNotIn("RichSync", inline_stage)
+        self.assertNotIn("sourceName", inline_stage)
+        self.assertNotIn("Источник:", dynamic_stage)
 
     def test_vertical_wave_120hz_and_app_colors(self):
         content = self.shake_overlay.read_text(encoding="utf-8")
