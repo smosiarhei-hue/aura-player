@@ -107,11 +107,6 @@ struct PlayerScreenV2: View {
             let standardArtworkStageHeight = isFullScreenVideoShot
                 ? (totalHeight * 0.55)
                 : min(totalWidth - 40, totalHeight * 0.44)
-            let artworkStageHeight = showLyricsMode
-                ? min(totalWidth * 0.48, totalHeight * 0.24)
-                : standardArtworkStageHeight
-            let lyricsStageTop = artworkTopOffset + artworkStageHeight + 12
-            let lyricsStageHeight = max(240, totalHeight - lyricsStageTop - max(geo.safeAreaInsets.bottom, 18))
 
             let isPullingDown = dismissOffsetY > 0
             let dismissScale = reduceMotion ? 1.0 : max(0.88, 1.0 - (dismissOffsetY / totalHeight) * 0.14)
@@ -122,20 +117,41 @@ struct PlayerScreenV2: View {
                     .frame(width: totalWidth, height: totalHeight)
                     .clipped()
 
-                artworkStage(width: totalWidth, height: artworkStageHeight)
-                    .frame(width: totalWidth, height: artworkStageHeight, alignment: .center)
-                    .padding(.top, artworkTopOffset)
-                    .animation(SN.slowSpring, value: showLyricsMode)
-
                 if showLyricsMode {
-                    inlineLyricsStage(
+                    lyricsPlayerLayout(
                         width: totalWidth,
-                        height: lyricsStageHeight
+                        height: totalHeight,
+                        topInset: topInset,
+                        safeAreaBottom: geo.safeAreaInsets.bottom
                     )
-                    .frame(width: totalWidth, height: lyricsStageHeight, alignment: .top)
-                    .padding(.top, lyricsStageTop)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(.opacity)
                     .zIndex(2)
+                } else {
+                    artworkStage(width: totalWidth, height: standardArtworkStageHeight)
+                        .frame(width: totalWidth, height: standardArtworkStageHeight, alignment: .center)
+                        .padding(.top, artworkTopOffset)
+                        .transition(.scale(scale: 0.92, anchor: .top).combined(with: .opacity))
+
+                    VStack(spacing: 0) {
+                        topHeader
+                            .padding(.top, topInset)
+                            .padding(.horizontal, 20)
+
+                        Spacer(minLength: 0)
+
+                        if let waveMessage {
+                            Text(waveMessage)
+                                .font(SN.text(.caption, .semibold))
+                                .foregroundStyle(SN.ink)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .glassCapsule()
+                                .padding(.bottom, 6)
+                        }
+
+                        lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
+                    }
+                    .transition(.opacity)
                 }
 
                 // Native Apple Smooth Ambient Vignette under Dynamic Island / Status Bar
@@ -148,35 +164,12 @@ struct PlayerScreenV2: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: max(geo.safeAreaInsets.top, 50) + 40)
+                .frame(height: topInset + 40)
                 .ignoresSafeArea(edges: .top)
                 .allowsHitTesting(false)
-
-                VStack(spacing: 0) {
-                    topHeader
-                        .padding(.top, max(geo.safeAreaInsets.top, 50))
-                        .padding(.horizontal, 20)
-
-                    Spacer(minLength: 0)
-
-                    if let waveMessage {
-                        Text(waveMessage)
-                            .font(SN.text(.caption, .semibold))
-                            .foregroundStyle(SN.ink)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
-                            .glassCapsule()
-                            .padding(.bottom, 6)
-                    }
-
-                    if !showLyricsMode || lyricsControlsVisible {
-                        lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-                .animation(SN.spring, value: lyricsControlsVisible)
             }
             .frame(width: totalWidth, height: totalHeight, alignment: .top)
+            .animation(SN.slowSpring, value: showLyricsMode)
             .offset(y: dismissOffsetY)
             .scaleEffect(dismissScale, anchor: .bottom)
             .clipShape(RoundedRectangle(cornerRadius: dismissCorner, style: .continuous))
@@ -205,10 +198,6 @@ struct PlayerScreenV2: View {
                     }
                 }
         )
-        .onTapGesture {
-            guard showLyricsMode else { return }
-            toggleLyricsControls()
-        }
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -254,8 +243,10 @@ struct PlayerScreenV2: View {
         .onChange(of: showLyricsMode) { _, isEnabled in
             lyricsControlsHideTask?.cancel()
             lyricsControlsVisible = false
-            if isEnabled {
-                coverDragX = 0
+            coverDragX = 0
+            dismissOffsetY = 0
+            if !isEnabled {
+                activeModal = nil
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .didUpdateCustomLyrics)) { _ in
@@ -383,6 +374,168 @@ struct PlayerScreenV2: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 40)
+    }
+
+    private func lyricsPlayerLayout(
+        width: CGFloat,
+        height: CGFloat,
+        topInset: CGFloat,
+        safeAreaBottom: CGFloat
+    ) -> some View {
+        VStack(spacing: 0) {
+            lyricsTopHeader
+                .padding(.top, topInset)
+                .padding(.horizontal, 20)
+
+            compactLyricsMetadata
+                .padding(.horizontal, 24)
+                .padding(.top, 28)
+                .padding(.bottom, 18)
+
+            inlineLyricsStage(width: width, height: height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    toggleLyricsControls()
+                }
+
+            if lyricsControlsVisible {
+                lyricsControlsDeck(safeAreaBottom: safeAreaBottom)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                Color.clear
+                    .frame(height: max(safeAreaBottom, 12))
+            }
+        }
+        .frame(width: width, height: height, alignment: .top)
+        .animation(SN.spring, value: lyricsControlsVisible)
+    }
+
+    private var lyricsTopHeader: some View {
+        HStack {
+            Button {
+                Haptics.tap(.light)
+                close()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(0.12), in: Circle())
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.90))
+
+            Spacer()
+
+            Capsule()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 36, height: 5)
+
+            Spacer()
+
+            Color.clear.frame(width: 36, height: 36)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 40)
+    }
+
+    private var compactLyricsMetadata: some View {
+        let current = track
+        return HStack(spacing: 16) {
+            artwork
+                .frame(width: 104, height: 104)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: .black.opacity(0.30), radius: 12, y: 6)
+
+            Button(action: openArtist) {
+                VStack(alignment: .leading, spacing: 4) {
+                    MarqueeText(
+                        text: current?.title ?? "Не играет",
+                        font: SN.rounded(.title2, .bold),
+                        color: SN.ink,
+                        height: 30
+                    )
+                    MarqueeText(
+                        text: current?.artist ?? "",
+                        font: SN.rounded(.body, .medium),
+                        color: SN.inkMuted,
+                        height: 24
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .disabled(current == nil || resolvingArtist)
+
+            Button {
+                guard let current else { return }
+                Haptics.tap(.medium)
+                library.toggleFavorite(current)
+            } label: {
+                let favorite = current.map(library.isTrackFavorite) ?? false
+                Image(systemName: favorite ? "star.fill" : "star")
+                    .font(.system(size: 25, weight: .semibold))
+                    .foregroundStyle(favorite ? SN.amber : SN.ink)
+                    .frame(width: tapSide, height: tapSide)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.90))
+            .disabled(current == nil)
+
+            moreMenuButton
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func lyricsControlsDeck(safeAreaBottom: CGFloat) -> some View {
+        VStack(spacing: 16) {
+            PlayerTimelineSection(player: player) { centerStatusLabel }
+            transportControls
+            FluidVolumeSlider()
+                .accessibilityElement(children: .contain)
+
+            HStack(spacing: 0) {
+                GlassIconButton(
+                    systemImage: "quote.bubble.fill",
+                    tint: SN.amber,
+                    accessibilityLabel: "Вернуться к обычному плееру"
+                ) {
+                    Haptics.tap(.light)
+                    withAnimation(SN.slowSpring) {
+                        showLyricsMode = false
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                AirPlayButtonView()
+                    .frame(width: tapSide, height: tapSide)
+                    .glassCircle()
+                    .frame(maxWidth: .infinity)
+
+                GlassIconButton(
+                    systemImage: "list.bullet",
+                    tint: SN.inkMuted,
+                    accessibilityLabel: "Очередь"
+                ) {
+                    openModal(.queue)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, 24)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 18)
+        .padding(.bottom, max(safeAreaBottom, 16))
+        .frame(maxWidth: .infinity)
+        .background {
+            LinearGradient(
+                colors: [Color.clear, Color.black.opacity(0.48), Color.black.opacity(0.76)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea(edges: .bottom)
+        }
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
@@ -517,7 +670,7 @@ struct PlayerScreenV2: View {
                 Spacer()
             }
         }
-        .frame(width: width, height: height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
     }
 
