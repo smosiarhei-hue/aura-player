@@ -17,9 +17,6 @@ struct PlayerScreenV2: View {
     @State private var showLyricsMode = false
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
-    @State private var coverDragX: CGFloat = 0
-    @State private var coverDragDirection: CGFloat = 0
-    @State private var isCoverSwitching = false
     @State private var waveLoading = false
     @State private var waveActive = false
     @State private var waveMessage: String?
@@ -92,19 +89,6 @@ struct PlayerScreenV2: View {
             async let l: () = loadLyrics()
             async let v: () = loadVideoShot()
             _ = await (p, l, v)
-        }
-        .onChange(of: player.currentTrack?.id) { _, _ in
-            if isCoverSwitching {
-                coverDragX = -coverDragDirection * 240
-                withAnimation(AG.spring) {
-                    coverDragX = 0
-                }
-                isCoverSwitching = false
-            } else {
-                withAnimation(AG.spring) {
-                    coverDragX = 0
-                }
-            }
         }
         .onChange(of: player.isPlaying) { _, playing in
             if playing {
@@ -262,55 +246,7 @@ struct PlayerScreenV2: View {
             radius: player.isPlaying ? 24 : 8,
             y: player.isPlaying ? 12 : 4
         )
-        .scaleEffect(player.isPlaying ? (1.0 - min(0.04, abs(coverDragX) / (side * 5))) : 0.88)
-        .rotationEffect(.degrees(Double(coverDragX / side) * 3.5))
-        .offset(x: coverDragX)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 12)
-                .onChanged { value in
-                    guard !isCoverSwitching else { return }
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    let translation = value.translation.width
-                    let resistance: CGFloat = 1.0 / (1.0 + abs(translation) / (side * 1.5))
-                    coverDragX = translation * resistance
-                }
-                .onEnded { value in
-                    guard !isCoverSwitching else { return }
-                    guard abs(value.translation.width) > abs(value.translation.height) else {
-                        withAnimation(AG.fastSpring) { coverDragX = 0 }
-                        return
-                    }
-                    let velocityX = value.predictedEndTranslation.width - value.translation.width
-                    let threshold: CGFloat = side * 0.22
-                    let velocityThreshold: CGFloat = 240
-
-                    let isNext = value.translation.width < -threshold || velocityX < -velocityThreshold
-                    let isPrev = value.translation.width > threshold || velocityX > velocityThreshold
-
-                    if isNext {
-                        coverDragDirection = -1
-                        isCoverSwitching = true
-                        Haptics.tap(.light)
-                        withAnimation(AG.fastSpring) {
-                            coverDragX = -side * 1.08
-                        }
-                        nextTrack()
-                    } else if isPrev {
-                        coverDragDirection = 1
-                        isCoverSwitching = true
-                        Haptics.tap(.light)
-                        withAnimation(AG.fastSpring) {
-                            coverDragX = side * 1.08
-                        }
-                        previousTrack()
-                    } else {
-                        withAnimation(AG.spring) {
-                            coverDragX = 0
-                        }
-                    }
-                }
-        )
+        .scaleEffect(player.isPlaying ? 1.0 : 0.88)
         .animation(.easeInOut(duration: 0.35), value: player.isTransitionActive)
         .animation(AG.slowSpring, value: player.isPlaying)
     }
@@ -584,38 +520,14 @@ struct PlayerScreenV2: View {
     private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }
     private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
     private func previousTrack() {
-        guard !isCoverSwitching else { return }
-        isCoverSwitching = true
-        coverDragDirection = 1
         Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.previous()
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
-            if isCoverSwitching {
-                withAnimation(AG.spring) {
-                    coverDragX = 0
-                    isCoverSwitching = false
-                }
-            }
-        }
     }
     private func nextTrack() {
-        guard !isCoverSwitching else { return }
-        isCoverSwitching = true
-        coverDragDirection = -1
         Haptics.tap(.light)
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         player.next()
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
-            if isCoverSwitching {
-                withAnimation(AG.spring) {
-                    coverDragX = 0
-                    isCoverSwitching = false
-                }
-            }
-        }
     }
     private func close() { Haptics.tap(.light); isPresented = false }
     private func openArtist() {
