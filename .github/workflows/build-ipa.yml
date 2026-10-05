@@ -20,7 +20,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    # macos-26 jobs can remain unassigned and are cancelled after 15 minutes.
+    # Use the generally available hosted image so release validation actually runs.
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
