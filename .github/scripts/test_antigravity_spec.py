@@ -12,6 +12,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.metal_shader = self.repo_root / "Sonivo" / "AntigravityVortex.metal"
         self.hero_view = self.repo_root / "Sonivo" / "MyWaveHeroView.swift"
         self.home_view = self.repo_root / "Sonivo" / "SonivoHomeRedesignedView.swift"
+        self.wave_settings = self.repo_root / "Sonivo" / "WaveSettingsSheet.swift"
         self.shake_overlay = self.repo_root / "Sonivo" / "WaveShakeOverlayView.swift"
 
     def test_files_exist(self):
@@ -19,6 +20,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertTrue(self.metal_shader.exists(), "AntigravityVortex.metal missing")
         self.assertTrue(self.hero_view.exists(), "MyWaveHeroView.swift missing")
         self.assertTrue(self.home_view.exists(), "SonivoHomeRedesignedView.swift missing")
+        self.assertTrue(self.wave_settings.exists(), "WaveSettingsSheet.swift missing")
         self.assertTrue(self.shake_overlay.exists(), "WaveShakeOverlayView.swift missing")
 
     def test_anti_pocket_and_motion_detector(self):
@@ -73,6 +75,14 @@ class AntigravitySpecTests(unittest.TestCase):
         # Yellow signature should be eliminated from hero view
         self.assertNotIn("#FBE029", content)
         self.assertNotIn("Color(red: 0.98, green: 0.88, blue: 0.16)", content)
+
+    def test_wave_settings_has_no_video_or_animation_controls(self):
+        content = self.wave_settings.read_text(encoding="utf-8")
+        self.assertNotIn("MyWaveBackgroundVideoView", content)
+        self.assertNotIn("ПОТОК В РЕАЛЬНОМ ВРЕМЕНИ", content)
+        self.assertNotIn("visualEffectsSection", content)
+        self.assertNotIn('AppStorage("visuals.hdr.enabled")', content)
+        self.assertNotIn('AppStorage("visuals.waveBeat.enabled")', content)
 
     def test_vertical_wave_120hz_and_app_colors(self):
         content = self.shake_overlay.read_text(encoding="utf-8")
