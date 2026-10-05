@@ -93,6 +93,8 @@ class AntigravitySpecTests(unittest.TestCase):
         spectrum = self.spectrum.read_text(encoding="utf-8")
         for symbol in ("dynamicBass", "dynamicMids", "dynamicHighs", "dynamicLevel"):
             self.assertIn(symbol, spectrum)
+        for envelope in ("bassAlpha", "midsAlpha", "highsAlpha"):
+            self.assertIn(envelope, spectrum)
         self.assertIn("PlayerMusicReactiveBackdrop", player)
         self.assertIn("PlayerArtworkSpectrumAura", player)
         self.assertIn("UIScreen.main.maximumFramesPerSecond", player)
