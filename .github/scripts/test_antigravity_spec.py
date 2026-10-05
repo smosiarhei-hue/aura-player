@@ -102,6 +102,9 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("UIScreen.main.maximumFramesPerSecond", player)
         self.assertIn("minimumInterval: interval", player)
         self.assertIn("paused: !isPlaying || reduceMotion", player)
+        artwork_aura = player.split("struct PlayerArtworkSpectrumAura", 1)[1].split("#Preview", 1)[0]
+        self.assertNotIn(".strokeBorder", artwork_aura)
+        self.assertNotIn(".blendMode(.plusLighter)", artwork_aura)
 
     def test_vertical_wave_120hz_and_app_colors(self):
         content = self.shake_overlay.read_text(encoding="utf-8")

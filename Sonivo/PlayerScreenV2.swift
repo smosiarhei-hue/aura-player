@@ -2553,58 +2553,54 @@ struct PlayerArtworkSpectrumAura: View {
             let primary = palette.first ?? SN.amber
             let secondary = palette.dropFirst().first ?? SN.ember
             let tertiary = palette.dropFirst(2).first ?? primary
-            let midX = CGFloat(sin(time * 0.30)) * (7 + mids * 15)
-            let highY = CGFloat(cos(time * 0.46)) * (3 + highs * 8)
+            let flowX = CGFloat(sin(time * 0.24)) * (8 + mids * 16)
+            let flowY = CGFloat(cos(time * 0.19)) * (6 + mids * 12)
+            let shimmerX = 0.5 + CGFloat(sin(time * 0.34)) * 0.22
+            let shimmerY = 0.32 + CGFloat(cos(time * 0.29)) * 0.16
 
             ZStack {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(primary.opacity(0.20 + Double(bass) * 0.22))
-                    .frame(width: size * 1.08, height: size * 1.08)
-                    .scaleEffect(1.04 + bass * 0.075)
-                    .blur(radius: 16 + bass * 12)
+                    .fill(primary.opacity(0.18 + Double(bass) * 0.20))
+                    .frame(width: size * 1.12, height: size * 1.12)
+                    .scaleEffect(1.04 + bass * 0.085)
+                    .blur(radius: 22 + bass * 12)
 
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .fill(secondary.opacity(0.16 + Double(mids) * 0.20))
-                    .frame(width: size * 1.05, height: size * 1.05)
-                    .offset(x: midX, y: -midX * 0.45)
-                    .blur(radius: 21 + mids * 11)
-                    .blendMode(.screen)
-
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.18 + Double(highs) * 0.30),
-                                tertiary.opacity(0.13 + Double(level) * 0.18),
-                                .clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.6 + highs * 2.4
-                    )
-                    .frame(width: size + 16, height: size + 16)
-                    .offset(y: highY)
-                    .blur(radius: 1.0 + highs * 2.8)
-                    .blendMode(.plusLighter)
-
-                Circle()
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
                     .fill(
                         RadialGradient(
                             colors: [
-                                tertiary.opacity(0.12 + Double(highs) * 0.22),
+                                secondary.opacity(0.20 + Double(mids) * 0.22),
+                                secondary.opacity(0.08 + Double(level) * 0.08),
                                 .clear
                             ],
-                            center: .center,
+                            center: UnitPoint(x: 0.44, y: 0.56),
                             startRadius: 0,
-                            endRadius: size * 0.17
+                            endRadius: size * 0.72
                         )
                     )
-                    .frame(width: size * 0.34, height: size * 0.34)
-                    .offset(x: size * 0.42 - midX * 0.4,
-                            y: -size * 0.36 + highY)
-                    .blur(radius: 5 + highs * 5)
-                    .blendMode(.plusLighter)
+                    .frame(width: size * 1.18, height: size * 1.15)
+                    .offset(x: flowX, y: flowY)
+                    .rotationEffect(.degrees(Double(flowX / 18)))
+                    .blur(radius: 20 + mids * 12)
+                    .blendMode(.screen)
+
+                RoundedRectangle(cornerRadius: 38, style: .continuous)
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.07 + Double(highs) * 0.18),
+                                tertiary.opacity(0.10 + Double(highs) * 0.15),
+                                .clear
+                            ],
+                            center: UnitPoint(x: shimmerX, y: shimmerY),
+                            startRadius: 0,
+                            endRadius: size * (0.52 + highs * 0.10)
+                        )
+                    )
+                    .frame(width: size * 1.20, height: size * 1.18)
+                    .offset(x: -flowX * 0.35, y: -flowY * 0.30)
+                    .blur(radius: 14 + highs * 9)
+                    .blendMode(.screen)
             }
             .drawingGroup(opaque: false, colorMode: .extendedLinear)
         }
