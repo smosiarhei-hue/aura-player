@@ -14,6 +14,10 @@ final class LyricsService {
 
     private var cache: [String: Lyrics] = [:]
 
+    func invalidateCache() {
+        cache.removeAll()
+    }
+
     private struct TrackDetail: Codable {
         let id: Int?
         let trackName: String?
@@ -24,10 +28,11 @@ final class LyricsService {
 
     /// Hybrid parallel priority:
     /// 0. User custom lyrics (plain or dynamic LRC)
-    /// 1. Synchronized LRC (Yandex or LRCLIB) -> dynamic karaoke display
-    /// 2. Authoritative full text (Yandex Music official)
-    /// 3. LRCLIB plain text
-    /// 4. Embedded static lyrics
+    /// 1. Musixmatch RichSync (real word/character timing)
+    /// 2. Synchronized LRC (Yandex, Musixmatch or LRCLIB)
+    /// 3. Authoritative full text (Yandex Music official)
+    /// 4. LRCLIB plain text
+    /// 5. Embedded static lyrics
     func fetchLyrics(for track: Track) async throws -> Lyrics {
         let key = cacheKey(for: track)
 
@@ -42,45 +47,59 @@ final class LyricsService {
         }
 
         // Fetch sources concurrently for optimal speed, reliability, and coverage
+        async let musixmatchTask = fetchMusixmatchLyrics(for: track)
         async let yandexTask = fetchYandexLyrics(for: track)
         async let lrcTask = fetchLRCLib(for: track)
         async let geniusTask = fetchGeniusLyrics(for: track)
 
+        let musixmatchLyrics = await musixmatchTask
         let yandexLyrics = await yandexTask
         let lrcLyrics = await lrcTask
         let geniusLyrics = await geniusTask
 
-        // 1. If Yandex has synchronized lyrics, prioritize it
+        // 1. Genuine Musixmatch RichSync drives the existing per-character vocal sweep.
+        if let musixmatchLyrics, musixmatchLyrics.hasDynamicWordTimings {
+            cache[key] = musixmatchLyrics
+            return musixmatchLyrics
+        }
+
+        // 2. If Yandex has synchronized lyrics, prioritize it
         if let yandexLyrics, yandexLyrics.isSynchronized {
             cache[key] = yandexLyrics
             return yandexLyrics
         }
 
-        // 2. If LRCLIB has synchronized lyrics, prioritize it for dynamic karaoke animation
+        // 3. Musixmatch line-synchronized subtitle fallback.
+        if let musixmatchLyrics, musixmatchLyrics.isSynchronized {
+            cache[key] = musixmatchLyrics
+            return musixmatchLyrics
+        }
+
+        // 4. If LRCLIB has synchronized lyrics, prioritize it for dynamic karaoke animation
         if let lrcLyrics, lrcLyrics.isSynchronized {
             cache[key] = lrcLyrics
             return lrcLyrics
         }
 
-        // 3. Official Yandex full text lyrics (authoritative and complete)
+        // 5. Official Yandex full text lyrics (authoritative and complete)
         if let yandexLyrics, !yandexLyrics.lines.isEmpty {
             cache[key] = yandexLyrics
             return yandexLyrics
         }
 
-        // 4. Genius full text lyrics (instant 100% day-one coverage for new releases)
+        // 6. Genius full text lyrics
         if let geniusLyrics, !geniusLyrics.lines.isEmpty {
             cache[key] = geniusLyrics
             return geniusLyrics
         }
 
-        // 5. LRCLIB plain lyrics
+        // 7. LRCLIB plain lyrics
         if let lrcLyrics, !lrcLyrics.lines.isEmpty {
             cache[key] = lrcLyrics
             return lrcLyrics
         }
 
-        // 6. Embedded ID3 static lyrics
+        // 8. Embedded ID3 static lyrics
         if let staticText = track.lyricsText, !staticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let lyrics = staticLyrics(from: staticText, track: track)
             cache[key] = lyrics
@@ -88,6 +107,12 @@ final class LyricsService {
         }
 
         throw URLError(.resourceUnavailable)
+    }
+
+    private func fetchMusixmatchLyrics(for track: Track) async -> Lyrics? {
+        let apiKey = MusixmatchSettings.shared.apiKey
+        guard !apiKey.isEmpty else { return nil }
+        return await MusixmatchClient(apiKey: apiKey).fetchLyrics(for: track)
     }
 
     private func fetchYandexLyrics(for track: Track) async -> Lyrics? {
