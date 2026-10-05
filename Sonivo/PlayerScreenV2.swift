@@ -52,6 +52,21 @@ struct PlayerScreenV2: View {
         max(kickEnergy, bassEnergy * 0.85)
     }
 
+    private var midEnergy: CGFloat {
+        guard player.isPlaying, !reduceMotion else { return 0 }
+        return CGFloat(spectrum.dynamicMids)
+    }
+
+    private var highEnergy: CGFloat {
+        guard player.isPlaying, !reduceMotion else { return 0 }
+        return CGFloat(spectrum.dynamicHighs)
+    }
+
+    private var fullSpectrumEnergy: CGFloat {
+        guard player.isPlaying, !reduceMotion else { return 0 }
+        return CGFloat(spectrum.dynamicLevel)
+    }
+
     enum ActivePlayerModal: String, Identifiable {
         case queue, equalizer, sleepTimer, settings, quality, artistSelection, lyrics
         var id: String { rawValue }
@@ -288,42 +303,16 @@ struct PlayerScreenV2: View {
                                         .init(color: .black.opacity(0.75), location: 1)],
                                 startPoint: .top, endPoint: .bottom)
             } else {
-                let bgImg = currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
-                ZStack {
-                    if let bgImg {
-                        Image(uiImage: bgImg)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .blur(radius: 52 + (beatPulse * 6))
-                            .scaleEffect(1.15)
-                            .opacity(0.82 + Double(beatPulse) * 0.06)
-                            .clipped()
-                    } else {
-                        gradientBackground
-                    }
-
-                    // 120 Hz ProMotion Dynamic HDR Ambient Glow & Light Accents
-                    PlayerAmbientCoverGlow(
-                        palette: backgroundColors,
-                        energy: beatPulse,
-                        isPlaying: player.isPlaying,
-                        reduceMotion: reduceMotion
-                    )
-
-                    // Apple Music Subtle Ambient Contrast Vignette
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black.opacity(0.20), location: 0.0),
-                            .init(color: .clear, location: 0.22),
-                            .init(color: .clear, location: 0.65),
-                            .init(color: .black.opacity(0.38), location: 0.85),
-                            .init(color: .black.opacity(0.72), location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
+                PlayerMusicReactiveBackdrop(
+                    artwork: currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) },
+                    palette: backgroundColors,
+                    bass: bassEnergy,
+                    mids: midEnergy,
+                    highs: highEnergy,
+                    level: fullSpectrumEnergy,
+                    isPlaying: player.isPlaying,
+                    reduceMotion: reduceMotion
+                )
             }
         }.allowsHitTesting(false)
     }
@@ -366,7 +355,6 @@ struct PlayerScreenV2: View {
         let cardSide = min(width - 40, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 4.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.06, abs(coverDragX / width) * 0.06))
-        let primaryGlow = palette.first ?? SN.amber
 
         return ZStack {
             if isFullScreenVideoShot {
@@ -374,12 +362,18 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else if !showLyricsMode {
-                // Плавная 120 Гц мягкая HDR-аура сзади обложки (сама обложка строго на месте)
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(primaryGlow.opacity(0.12 + Double(beatPulse) * 0.10))
-                    .frame(width: cardSide, height: cardSide)
-                    .blur(radius: 20 + beatPulse * 6)
-                    .scaleEffect(1.0 + (beatPulse * 0.02))
+                // Физичная полноспектральная аура. Обложка остаётся строго на месте:
+                // бас задаёт дыхание, середина — текучее смещение, верх — чистое мерцание.
+                PlayerArtworkSpectrumAura(
+                    size: cardSide,
+                    palette: backgroundColors,
+                    bass: bassEnergy,
+                    mids: midEnergy,
+                    highs: highEnergy,
+                    level: fullSpectrumEnergy,
+                    isPlaying: player.isPlaying,
+                    reduceMotion: reduceMotion
+                )
 
                 artwork
                     .frame(width: cardSide, height: cardSide)
@@ -2095,74 +2089,226 @@ struct PlayerQualityModalView: View {
     }
 }
 
-// MARK: - Vibrant Cover Ambient Glow with 120 Hz ProMotion HDR Pulsation
-struct PlayerAmbientCoverGlow: View {
+// MARK: - Full-spectrum, physically damped player background
+struct PlayerMusicReactiveBackdrop: View {
+    let artwork: UIImage?
     let palette: [Color]
-    let energy: CGFloat
+    let bass: CGFloat
+    let mids: CGFloat
+    let highs: CGFloat
+    let level: CGFloat
     let isPlaying: Bool
     let reduceMotion: Bool
+
+    private var interval: TimeInterval {
+        1 / Double(max(UIScreen.main.maximumFramesPerSecond, 60))
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: interval,
+                                paused: !isPlaying || reduceMotion)) { timeline in
+            GeometryReader { geo in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                let midDrift = 0.35 + Double(mids) * 0.65
+                let x = CGFloat(sin(time * 0.16) * 7.0 * midDrift)
+                let y = CGFloat(cos(time * 0.13) * 6.0 * midDrift)
+
+                ZStack {
+                    if let artwork {
+                        Image(uiImage: artwork)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .blur(radius: 48 + level * 8)
+                            .scaleEffect(1.14 + bass * 0.028 + level * 0.010)
+                            .offset(x: x, y: y)
+                            .saturation(1.06 + Double(mids) * 0.12)
+                            .contrast(1.02 + Double(highs) * 0.04)
+                            .opacity(0.76 + Double(level) * 0.08)
+                            .clipped()
+                    } else {
+                        LinearGradient(
+                            colors: [
+                                (palette.first ?? SN.amber).opacity(0.66),
+                                (palette.dropFirst().first ?? SN.ember).opacity(0.38),
+                                .black
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    }
+
+                    PlayerAmbientCoverGlow(
+                        palette: palette,
+                        bass: bass,
+                        mids: mids,
+                        highs: highs,
+                        level: level,
+                        time: time
+                    )
+
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black.opacity(0.18), location: 0.0),
+                            .init(color: .clear, location: 0.22),
+                            .init(color: .clear, location: 0.63),
+                            .init(color: .black.opacity(0.40), location: 0.84),
+                            .init(color: .black.opacity(0.74), location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .ignoresSafeArea()
+    }
+}
+
+// Bass controls mass, mids control flow, and highs control short clean glints.
+struct PlayerAmbientCoverGlow: View {
+    let palette: [Color]
+    let bass: CGFloat
+    let mids: CGFloat
+    let highs: CGFloat
+    let level: CGFloat
+    let time: TimeInterval
 
     private var c1: Color { palette.first ?? SN.amber }
     private var c2: Color { palette.dropFirst().first ?? SN.ember }
     private var c3: Color { palette.dropFirst(2).first ?? Color.white }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: !isPlaying || reduceMotion)) { _ in
-            GeometryReader { geo in
-                let w = geo.size.width
-                let h = geo.size.height
-                let maxDim = max(w, h)
+        GeometryReader { geo in
+            let maxDim = max(geo.size.width, geo.size.height)
+            let b = Double(max(0, min(1, bass)))
+            let m = Double(max(0, min(1, mids)))
+            let h = Double(max(0, min(1, highs)))
+            let l = Double(max(0, min(1, level)))
+            let bassCenter = UnitPoint(
+                x: 0.48 + CGFloat(sin(time * 0.11)) * 0.05,
+                y: 0.68 + CGFloat(cos(time * 0.09)) * 0.035
+            )
+            let midCenter = UnitPoint(
+                x: 0.50 + CGFloat(sin(time * 0.19 + 1.2)) * CGFloat(0.11 + m * 0.035),
+                y: 0.42 + CGFloat(cos(time * 0.15)) * CGFloat(0.08 + m * 0.025)
+            )
+            let highCenter = UnitPoint(
+                x: 0.70 + CGFloat(sin(time * 0.31)) * 0.10,
+                y: 0.28 + CGFloat(cos(time * 0.27)) * 0.07
+            )
 
-                let clampedEnergy = Double(max(0.0, min(1.0, energy)))
-                let hdrPrimary = c1.exposureAdjust(0.30 + clampedEnergy * 0.25).headroom(1.15 + clampedEnergy * 0.30)
-                let hdrSecondary = c2.exposureAdjust(0.20 + clampedEnergy * 0.20).headroom(1.10 + clampedEnergy * 0.20)
-                let hdrLight = Color.white.exposureAdjust(0.35 + clampedEnergy * 0.25).headroom(1.20 + clampedEnergy * 0.30)
+            ZStack {
+                RadialGradient(
+                    colors: [
+                        c1.exposureAdjust(0.22 + b * 0.18)
+                            .headroom(1.12 + b * 0.28)
+                            .opacity(0.15 + b * 0.12),
+                        c1.opacity(0.055 + l * 0.035),
+                        .clear
+                    ],
+                    center: bassCenter,
+                    startRadius: 18,
+                    endRadius: maxDim * (0.54 + b * 0.10)
+                )
 
-                ZStack {
-                    // Top-leading subtle luminous HDR bloom (Apple Music Style)
-                    RadialGradient(
-                        colors: [
-                            hdrPrimary.opacity(0.18 + clampedEnergy * 0.10),
-                            c1.opacity(0.08),
-                            Color.clear
-                        ],
-                        center: .topLeading,
-                        startRadius: 20,
-                        endRadius: maxDim * (0.55 + clampedEnergy * 0.08)
-                    )
-                    .blendMode(.plusLighter)
+                RadialGradient(
+                    colors: [
+                        c2.exposureAdjust(0.18 + m * 0.16)
+                            .headroom(1.10 + m * 0.20)
+                            .opacity(0.13 + m * 0.12),
+                        c3.opacity(0.045 + m * 0.045),
+                        .clear
+                    ],
+                    center: midCenter,
+                    startRadius: 12,
+                    endRadius: maxDim * (0.42 + m * 0.08)
+                )
+                .blendMode(.screen)
 
-                    // Trailing soft light accent (светлые цвета, HDR glow)
-                    RadialGradient(
-                        colors: [
-                            hdrLight.opacity(0.10 + clampedEnergy * 0.08),
-                            hdrSecondary.opacity(0.12 + clampedEnergy * 0.08),
-                            Color.clear
-                        ],
-                        center: UnitPoint(x: 0.85, y: 0.38),
-                        startRadius: 15,
-                        endRadius: maxDim * (0.48 + clampedEnergy * 0.08)
-                    )
-                    .blendMode(.plusLighter)
-
-                    // Center-bottom ambient depth glow
-                    RadialGradient(
-                        colors: [
-                            c3.opacity(0.14 + clampedEnergy * 0.08),
-                            Color.clear
-                        ],
-                        center: UnitPoint(x: 0.30, y: 0.72),
-                        startRadius: 30,
-                        endRadius: maxDim * (0.52 + clampedEnergy * 0.08)
-                    )
-                    .blendMode(.screen)
-                }
-                .drawingGroup(opaque: false, colorMode: .extendedLinear)
-                .animation(.easeOut(duration: 0.06), value: energy)
+                RadialGradient(
+                    colors: [
+                        Color.white.exposureAdjust(0.28 + h * 0.20)
+                            .headroom(1.15 + h * 0.28)
+                            .opacity(0.045 + h * 0.11),
+                        c3.opacity(0.035 + h * 0.055),
+                        .clear
+                    ],
+                    center: highCenter,
+                    startRadius: 5,
+                    endRadius: maxDim * (0.20 + h * 0.045)
+                )
+                .blendMode(.plusLighter)
             }
+            .drawingGroup(opaque: false, colorMode: .extendedLinear)
         }
         .allowsHitTesting(false)
         .ignoresSafeArea()
+    }
+}
+
+// Local aura sits behind the artwork without moving or scaling the artwork.
+struct PlayerArtworkSpectrumAura: View {
+    let size: CGFloat
+    let palette: [Color]
+    let bass: CGFloat
+    let mids: CGFloat
+    let highs: CGFloat
+    let level: CGFloat
+    let isPlaying: Bool
+    let reduceMotion: Bool
+
+    private var interval: TimeInterval {
+        1 / Double(max(UIScreen.main.maximumFramesPerSecond, 60))
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: interval,
+                                paused: !isPlaying || reduceMotion)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            let primary = palette.first ?? SN.amber
+            let secondary = palette.dropFirst().first ?? SN.ember
+            let tertiary = palette.dropFirst(2).first ?? primary
+            let midX = CGFloat(sin(time * 0.24)) * (3 + mids * 7)
+            let highY = CGFloat(cos(time * 0.37)) * (1.5 + highs * 4)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(primary.opacity(0.10 + Double(bass) * 0.10))
+                    .frame(width: size, height: size)
+                    .scaleEffect(1.035 + bass * 0.045)
+                    .blur(radius: 20 + bass * 12)
+
+                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    .fill(secondary.opacity(0.07 + Double(mids) * 0.10))
+                    .frame(width: size * 0.96, height: size * 0.96)
+                    .offset(x: midX, y: -midX * 0.45)
+                    .blur(radius: 28 + mids * 10)
+                    .blendMode(.screen)
+
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.10 + Double(highs) * 0.22),
+                                tertiary.opacity(0.07 + Double(level) * 0.10),
+                                .clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1 + highs * 1.4
+                    )
+                    .frame(width: size + 2, height: size + 2)
+                    .offset(y: highY)
+                    .blur(radius: 1.5 + highs * 3.5)
+                    .blendMode(.plusLighter)
+            }
+            .drawingGroup(opaque: false, colorMode: .extendedLinear)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

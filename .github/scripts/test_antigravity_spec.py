@@ -14,6 +14,8 @@ class AntigravitySpecTests(unittest.TestCase):
         self.home_view = self.repo_root / "Sonivo" / "SonivoHomeRedesignedView.swift"
         self.wave_settings = self.repo_root / "Sonivo" / "WaveSettingsSheet.swift"
         self.shake_overlay = self.repo_root / "Sonivo" / "WaveShakeOverlayView.swift"
+        self.player_view = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
+        self.spectrum = self.repo_root / "Sonivo" / "spectrumanalyzer.swift"
 
     def test_files_exist(self):
         self.assertTrue(self.swift_manager.exists(), "AntigravityTransitionManager.swift missing")
@@ -22,6 +24,8 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertTrue(self.home_view.exists(), "SonivoHomeRedesignedView.swift missing")
         self.assertTrue(self.wave_settings.exists(), "WaveSettingsSheet.swift missing")
         self.assertTrue(self.shake_overlay.exists(), "WaveShakeOverlayView.swift missing")
+        self.assertTrue(self.player_view.exists(), "PlayerScreenV2.swift missing")
+        self.assertTrue(self.spectrum.exists(), "spectrumanalyzer.swift missing")
 
     def test_anti_pocket_and_motion_detector(self):
         content = self.swift_manager.read_text(encoding="utf-8")
@@ -83,6 +87,16 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertNotIn("visualEffectsSection", content)
         self.assertNotIn('AppStorage("visuals.hdr.enabled")', content)
         self.assertNotIn('AppStorage("visuals.waveBeat.enabled")', content)
+
+    def test_player_background_uses_clean_full_spectrum_motion(self):
+        player = self.player_view.read_text(encoding="utf-8")
+        spectrum = self.spectrum.read_text(encoding="utf-8")
+        for symbol in ("dynamicBass", "dynamicMids", "dynamicHighs", "dynamicLevel"):
+            self.assertIn(symbol, spectrum)
+        self.assertIn("PlayerMusicReactiveBackdrop", player)
+        self.assertIn("PlayerArtworkSpectrumAura", player)
+        self.assertIn("UIScreen.main.maximumFramesPerSecond", player)
+        self.assertIn("paused: !isPlaying || reduceMotion", player)
 
     def test_vertical_wave_120hz_and_app_colors(self):
         content = self.shake_overlay.read_text(encoding="utf-8")

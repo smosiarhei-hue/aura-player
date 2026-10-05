@@ -45,6 +45,36 @@ final class SpectrumAnalyzer {
         return dynamicKick * 0.65
     }
 
+    var dynamicMids: Float {
+        if level > 0.001 || mids > 0.005 {
+            return min(1.0, mids * 1.12)
+        }
+        if streamLevel > 0.02 {
+            return min(1.0, streamLevel * 0.82)
+        }
+        return dynamicBass * 0.48
+    }
+
+    var dynamicHighs: Float {
+        if level > 0.001 || highs > 0.005 {
+            return min(1.0, highs * 1.18)
+        }
+        if streamLevel > 0.02 {
+            return min(1.0, streamLevel * 0.62)
+        }
+        return dynamicBass * 0.28
+    }
+
+    var dynamicLevel: Float {
+        if level > 0.001 {
+            return min(1.0, level * 1.35)
+        }
+        if streamLevel > 0.02 {
+            return min(1.0, streamLevel)
+        }
+        return min(1.0, dynamicBass * 0.72 + dynamicMids * 0.28)
+    }
+
     nonisolated private static let processor = SpectrumDSP()
     private init() {}
 
@@ -166,10 +196,14 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
             ? min(1.0, onset * 8.5 + max(0, sub - 0.20) * 1.6 + max(0, punch - 0.24) * 1.0)
             : 0
         kickEnvelope = max(gated, kickEnvelope * 0.82)
-        let alpha: Float = 0.28
-        smoothedBass = smoothedBass * (1 - alpha) + rawBass * alpha
-        smoothedMids = smoothedMids * (1 - alpha) + rawMids * alpha
-        smoothedHighs = smoothedHighs * (1 - alpha) + rawHighs * alpha
+        // Asymmetric envelopes make the visual response feel physical:
+        // transients arrive immediately, while energy dissipates with inertia.
+        let bassAlpha: Float = rawBass > smoothedBass ? 0.34 : 0.105
+        let midsAlpha: Float = rawMids > smoothedMids ? 0.27 : 0.082
+        let highsAlpha: Float = rawHighs > smoothedHighs ? 0.22 : 0.060
+        smoothedBass += (rawBass - smoothedBass) * bassAlpha
+        smoothedMids += (rawMids - smoothedMids) * midsAlpha
+        smoothedHighs += (rawHighs - smoothedHighs) * highsAlpha
         return SpectrumSnapshot(bands: displayValues, bass: smoothedBass,
                                 kick: kickEnvelope, mids: smoothedMids,
                                 highs: smoothedHighs, level: level)
