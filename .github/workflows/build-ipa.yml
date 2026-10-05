@@ -16,7 +16,9 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep the active validation alive when another commit arrives. Cancelling
+  # in-flight macOS jobs left otherwise valid commits without a final result.
+  cancel-in-progress: false
 
 jobs:
   build:
