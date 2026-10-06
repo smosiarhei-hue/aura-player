@@ -1,0 +1,6 @@
+name = "sonivo-musixmatch-proxy"
+main = "src/index.js"
+compatibility_date = "2026-10-05"
+
+# Configure the key only as an encrypted Cloudflare secret:
+# wrangler secret put MUSIXMATCH_API_KEY

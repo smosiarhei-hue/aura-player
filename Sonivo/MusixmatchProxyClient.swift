@@ -43,7 +43,125 @@ struct MusixmatchProxyClient {
             return richSync
         }
 
+        if let plain = try? await plainLyrics(
+            trackID: match.trackID,
+            title: resolvedTitle,
+            artist: resolvedArtist
+        ), !plain.lines.isEmpty {
+            return plain
+        }
+
         return nil
+    }
+
+    // MARK: - Full read-only proxy stack
+
+    func matcherLyrics(artist: String, title: String) async throws -> Data {
+        try await endpoint("matcher/lyrics", queryItems: [
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "title", value: title)
+        ])
+    }
+
+    func matcherSubtitle(
+        artist: String,
+        title: String,
+        format: String = "lrc"
+    ) async throws -> Data {
+        try await endpoint("matcher/subtitle", queryItems: [
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "title", value: title),
+            URLQueryItem(name: "format", value: format)
+        ])
+    }
+
+    func trackSearch(
+        query: String? = nil,
+        title: String? = nil,
+        artist: String? = nil,
+        lyrics: String? = nil,
+        page: Int = 1,
+        pageSize: Int = 10
+    ) async throws -> Data {
+        try await endpoint("track/search", queryItems: [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "title", value: title),
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "lyrics", value: lyrics),
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "page_size", value: String(pageSize))
+        ])
+    }
+
+    func trackMetadata(
+        trackID: Int? = nil,
+        commonTrackID: Int? = nil,
+        isrc: String? = nil,
+        spotifyID: String? = nil
+    ) async throws -> Data {
+        try await endpoint("track/get", queryItems: [
+            URLQueryItem(name: "track_id", value: trackID.map { String($0) }),
+            URLQueryItem(name: "commontrack_id", value: commonTrackID.map { String($0) }),
+            URLQueryItem(name: "isrc", value: isrc),
+            URLQueryItem(name: "spotify_id", value: spotifyID)
+        ])
+    }
+
+    func trackLyrics(trackID: Int) async throws -> Data {
+        try await endpoint("lyrics/\(trackID)")
+    }
+
+    func trackLyricsTranslation(trackID: Int, language: String) async throws -> Data {
+        try await endpoint("lyrics/\(trackID)/translation", queryItems: [
+            URLQueryItem(name: "language", value: language)
+        ])
+    }
+
+    func trackSnippet(trackID: Int) async throws -> Data {
+        try await endpoint("snippet/\(trackID)")
+    }
+
+    func trackSubtitleTranslation(
+        trackID: Int,
+        language: String,
+        format: String = "lrc"
+    ) async throws -> Data {
+        try await endpoint("subtitle/\(trackID)/translation", queryItems: [
+            URLQueryItem(name: "language", value: language),
+            URLQueryItem(name: "format", value: format)
+        ])
+    }
+
+    func chartTracks(
+        country: String = "us",
+        page: Int = 1,
+        pageSize: Int = 10
+    ) async throws -> Data {
+        try await endpoint("chart/tracks", queryItems: [
+            URLQueryItem(name: "country", value: country),
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "page_size", value: String(pageSize))
+        ])
+    }
+
+    func artistSearch(
+        artist: String,
+        page: Int = 1,
+        pageSize: Int = 10
+    ) async throws -> Data {
+        try await endpoint("artist/search", queryItems: [
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "page_size", value: String(pageSize))
+        ])
+    }
+
+    func artistMetadata(artistID: Int) async throws -> Data {
+        try await endpoint("artist/\(artistID)")
+    }
+
+    func albumMetadata(albumID: Int) async throws -> Data {
+        try await endpoint("album/\(albumID)")
     }
 
     private func search(artist: String, title: String) async throws -> TrackInfo {
@@ -95,6 +213,23 @@ struct MusixmatchProxyClient {
         )
     }
 
+    private func plainLyrics(trackID: Int, title: String, artist: String) async throws -> Lyrics {
+        let data = try await endpoint("lyrics/\(trackID)")
+        let payload = try JSONDecoder().decode(ProxyLyricsPayload.self, from: data)
+        let lines = (payload.lyrics?.body ?? "")
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("*******") }
+            .map { LyricsLine(text: $0, startTime: 0, endTime: nil) }
+        return Lyrics(
+            title: title,
+            artist: artist,
+            lines: lines,
+            isSyllable: false,
+            sourceName: "Musixmatch Proxy"
+        )
+    }
+
     private func request(_ url: URL) async throws -> Data {
         var request = URLRequest(url: url)
         request.timeoutInterval = 12
@@ -109,6 +244,22 @@ struct MusixmatchProxyClient {
         }
         guard !data.isEmpty else { throw MusixmatchProxyError.emptyResponse }
         return data
+    }
+
+    private func endpoint(
+        _ path: String,
+        queryItems: [URLQueryItem] = []
+    ) async throws -> Data {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent(path),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = queryItems.filter { item in
+            guard let value = item.value else { return false }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard let url = components.url else { throw MusixmatchProxyError.invalidURL }
+        return try await request(url)
     }
 }
 
@@ -144,4 +295,16 @@ private struct TrackInfo: Decodable {
             hasRichsync = 0
         }
     }
+}
+
+private struct ProxyLyricsPayload: Decodable {
+    struct Item: Decodable {
+        let body: String
+
+        enum CodingKeys: String, CodingKey {
+            case body = "lyrics_body"
+        }
+    }
+
+    let lyrics: Item?
 }
