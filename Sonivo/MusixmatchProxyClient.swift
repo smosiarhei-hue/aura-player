@@ -13,34 +13,45 @@ struct MusixmatchProxyClient {
             return nil
         }
 
-        let resolvedTitle = match.name.isEmpty ? track.title : match.name
-        let resolvedArtist = match.artist.isEmpty ? track.artist : match.artist
+        guard LyricsMatchPolicy.matches(title: track.title, artist: track.artist,
+            candidateTitle: match.name, candidateArtist: match.artist) else { return nil }
+        let resolvedTitle = match.name
+        let resolvedArtist = match.artist
+        // Older proxy deployments may not include track_length. Resolve metadata
+        // through the existing endpoint; unknown duration never enables guessed sync.
+        var matchedDuration = match.trackLength
+        if matchedDuration == nil, let data = try? await trackMetadata(trackID: match.trackID),
+           let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let metadata = payload["track"] as? [String: Any] {
+            matchedDuration = (metadata["track_length"] as? NSNumber)?.doubleValue
+        }
+        let timingMatches = LyricsMatchPolicy.durationMatches(track.duration, matchedDuration)
 
-        if match.hasRichsync != 0,
+        if timingMatches, match.hasRichsync != 0,
            let richSync = try? await richsync(
                 trackID: match.trackID,
                 title: resolvedTitle,
                 artist: resolvedArtist
            ), !richSync.lines.isEmpty {
-            return richSync
+            return LyricsMatchPolicy.validatedTimings(richSync, duration: track.duration)
         }
 
-        if let synced = try? await subtitle(
+        if timingMatches, let synced = try? await subtitle(
             trackID: match.trackID,
             title: resolvedTitle,
             artist: resolvedArtist
         ), !synced.lines.isEmpty {
-            return synced
+            return LyricsMatchPolicy.validatedTimings(synced, duration: track.duration)
         }
 
         // Some proxy backends omit has_richsync even when the endpoint is available.
-        if match.hasRichsync == 0,
+        if timingMatches, match.hasRichsync == 0,
            let richSync = try? await richsync(
                 trackID: match.trackID,
                 title: resolvedTitle,
                 artist: resolvedArtist
            ), !richSync.lines.isEmpty {
-            return richSync
+            return LyricsMatchPolicy.validatedTimings(richSync, duration: track.duration)
         }
 
         if let plain = try? await plainLyrics(
@@ -274,17 +285,20 @@ private struct TrackInfo: Decodable {
     let name: String
     let artist: String
     let hasRichsync: Int
+    let trackLength: Double?
 
     enum CodingKeys: String, CodingKey {
         case trackID = "track_id"
         case name
         case artist
         case hasRichsync = "has_richsync"
+        case trackLength = "track_length"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         trackID = try container.decode(Int.self, forKey: .trackID)
+        trackLength = try container.decodeIfPresent(Double.self, forKey: .trackLength)
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         artist = try container.decodeIfPresent(String.self, forKey: .artist) ?? ""
         if let value = try? container.decode(Int.self, forKey: .hasRichsync) {

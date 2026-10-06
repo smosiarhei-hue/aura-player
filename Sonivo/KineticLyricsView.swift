@@ -65,13 +65,13 @@ struct LyricPhrase: Identifiable, Sendable, Equatable {
         for (index, line) in lines.enumerated() {
             let phraseId = "p_\(index)_\(Int(line.startTime * 1000))"
             let nextStart = (index + 1 < lines.count) ? lines[index + 1].startTime : (line.startTime + 4.0)
-            let duration = max(1.2, line.endTime.map { $0 - line.startTime } ?? (nextStart - line.startTime))
-            let end = line.startTime + duration
+            let sourceEnd = line.endTime ?? nextStart
+            let end = max(line.startTime + 0.02, min(sourceEnd, nextStart))
 
             let hasWords = line.hasRealWordTimings
             let effective = hasWords ? (line.words ?? []) : []
             let words: [LyricWord] = effective.enumerated().map { wordIdx, w in
-                let wDur = max(0.08, w.endTime - w.startTime)
+                let wDur = max(0.02, w.endTime - w.startTime)
                 let isImp = w.text.count > 6 || w.text.contains("!")
                 return LyricWord(
                     id: "\(phraseId)_w\(wordIdx)",

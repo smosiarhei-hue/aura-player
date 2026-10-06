@@ -139,7 +139,7 @@ final class YandexMusicService {
         let albums: [YMAlbum]?
 
         enum CodingKeys: String, CodingKey {
-            case id, title, available, durationMs, coverUri, artists, albums
+            case id, title, version, available, durationMs, coverUri, artists, albums
         }
 
         init(from decoder: Decoder) throws {
@@ -151,7 +151,9 @@ final class YandexMusicService {
             } else {
                 id = UUID().uuidString
             }
-            title = (try? c.decode(String.self, forKey: .title)) ?? "Без названия"
+            let baseTitle = (try? c.decode(String.self, forKey: .title)) ?? "Без названия"
+            let version = try? c.decode(String.self, forKey: .version)
+            title = LyricsMatchPolicy.recordingTitle(baseTitle, version: version)
             available = try? c.decode(Bool.self, forKey: .available)
             durationMs = (try? c.decode(Int.self, forKey: .durationMs)) ?? 0
             coverUri = try? c.decode(String.self, forKey: .coverUri)

@@ -11,16 +11,17 @@ struct MusixmatchClient {
 
     func fetchLyrics(for track: Track) async -> Lyrics? {
         guard !apiKey.isEmpty,
-              let match = try? await searchTrack(artist: track.artist, title: track.title) else {
+              let match = try? await searchTrack(for: track) else {
             return nil
         }
 
+        guard LyricsMatchPolicy.durationMatches(track.duration, match.duration) else { return nil }
         if let richSync = try? await getRichSyncLyrics(
             trackID: match.id,
             title: match.title ?? track.title,
             artist: match.artist ?? track.artist
         ), !richSync.lines.isEmpty {
-            return richSync
+            return LyricsMatchPolicy.validatedTimings(richSync, duration: track.duration)
         }
 
         if let synced = try? await getSyncedLyrics(
@@ -28,7 +29,7 @@ struct MusixmatchClient {
             title: match.title ?? track.title,
             artist: match.artist ?? track.artist
         ), !synced.lines.isEmpty {
-            return synced
+            return LyricsMatchPolicy.validatedTimings(synced, duration: track.duration)
         }
 
         return nil
@@ -38,9 +39,12 @@ struct MusixmatchClient {
         let id: Int
         let title: String?
         let artist: String?
+        let duration: Double?
     }
 
-    private func searchTrack(artist: String, title: String) async throws -> TrackMatch? {
+    private func searchTrack(for track: Track) async throws -> TrackMatch? {
+        let artist = track.artist
+        let title = track.title
         let response: TrackSearchResponse = try await request(
             method: "track.search",
             queryItems: [
@@ -51,22 +55,16 @@ struct MusixmatchClient {
             ]
         )
 
-        let targetTitle = normalize(title)
-        let targetArtist = normalize(artist)
         let tracks = response.message.body.trackList.map(\.track)
-
-        let best = tracks.first { candidate in
-            let candidateTitle = normalize(candidate.trackName ?? "")
-            let candidateArtist = normalize(candidate.artistName ?? "")
-            let titleMatches = candidateTitle.contains(targetTitle) || targetTitle.contains(candidateTitle)
-            let artistMatches = targetArtist.isEmpty ||
-                candidateArtist.contains(targetArtist) ||
-                targetArtist.contains(candidateArtist)
-            return titleMatches && artistMatches
-        } ?? tracks.first
-
-        guard let best else { return nil }
-        return TrackMatch(id: best.trackID, title: best.trackName, artist: best.artistName)
+        let matching = tracks.filter {
+            LyricsMatchPolicy.matches(title: title, artist: artist,
+                candidateTitle: $0.trackName, candidateArtist: $0.artistName)
+        }
+        guard let best = matching.min(by: {
+            abs(($0.trackLength ?? .greatestFiniteMagnitude) - track.duration)
+                < abs(($1.trackLength ?? .greatestFiniteMagnitude) - track.duration)
+        }) else { return nil }
+        return TrackMatch(id: best.trackID, title: best.trackName, artist: best.artistName, duration: best.trackLength)
     }
 
     private func getSyncedLyrics(trackID: Int, title: String, artist: String) async throws -> Lyrics {
@@ -153,11 +151,13 @@ private struct TrackSearchResponse: Decodable {
                     let trackID: Int
                     let trackName: String?
                     let artistName: String?
+                    let trackLength: Double?
 
                     enum CodingKeys: String, CodingKey {
                         case trackID = "track_id"
                         case trackName = "track_name"
                         case artistName = "artist_name"
+                        case trackLength = "track_length"
                     }
                 }
                 let track: TrackPayload
@@ -273,8 +273,34 @@ enum RichSyncParser {
                 text: text,
                 startTime: raw.startTime,
                 endTime: resolvedEnd,
-                words: words.isEmpty ? nil : words
+                words: wordsMatchingText(words, text: text)
             )
         }
     }
+
+    /// RichSync may contain characters or syllables, not whole words. Merge
+    /// only when their complete content matches the displayed source line.
+    private static func wordsMatchingText(_ fragments: [LyricsWord], text: String) -> [LyricsWord]? {
+        let expected = LyricsMatchPolicy.normalized(text).filter { !$0.isWhitespace }
+        let actual = fragments.map { LyricsMatchPolicy.normalized($0.text).filter { !$0.isWhitespace } }.joined()
+        guard !expected.isEmpty, expected == actual else { return nil }
+        let characterTimes = fragments.flatMap { fragment in
+            LyricsMatchPolicy.normalized(fragment.text).filter { !$0.isWhitespace }.map { _ in
+                (start: fragment.startTime, end: fragment.endTime)
+            }
+        }
+        var cursor = 0
+        var words: [LyricsWord] = []
+        for word in text.split(whereSeparator: \.isWhitespace).map(String.init) {
+            let count = LyricsMatchPolicy.normalized(word).filter { !$0.isWhitespace }.count
+            guard count > 0, cursor + count <= characterTimes.count else { return nil }
+            let start = characterTimes[cursor].start
+            let end = characterTimes[cursor + count - 1].end
+            words.append(LyricsWord(text: word, startTime: start, endTime: end))
+            cursor += count
+        }
+        guard cursor == characterTimes.count else { return nil }
+        return words.isEmpty ? nil : words
+    }
+
 }

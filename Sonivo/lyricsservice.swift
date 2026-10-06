@@ -24,6 +24,7 @@ final class LyricsService {
         let artistName: String?
         let plainLyrics: String?
         let syncedLyrics: String?
+        let duration: Double?
     }
 
     /// Hybrid parallel priority:
@@ -52,10 +53,19 @@ final class LyricsService {
         async let lrcTask = fetchLRCLib(for: track)
         async let geniusTask = fetchGeniusLyrics(for: track)
 
-        let musixmatchLyrics = await musixmatchTask
         let yandexLyrics = await yandexTask
-        let lrcLyrics = await lrcTask
-        let geniusLyrics = await geniusTask
+        let musixmatchResult = await musixmatchTask
+        let lrcResult = await lrcTask
+        let geniusResult = await geniusTask
+        let musixmatchLyrics = musixmatchResult.flatMap {
+            LyricsMatchPolicy.agreesWithOfficialText($0, official: yandexLyrics) ? $0 : nil
+        }
+        let lrcLyrics = lrcResult.flatMap {
+            LyricsMatchPolicy.agreesWithOfficialText($0, official: yandexLyrics) ? $0 : nil
+        }
+        let geniusLyrics = geniusResult.flatMap {
+            LyricsMatchPolicy.agreesWithOfficialText($0, official: yandexLyrics) ? $0 : nil
+        }
 
         // 1. Genuine Musixmatch RichSync drives the existing per-character vocal sweep.
         if let musixmatchLyrics, musixmatchLyrics.hasDynamicWordTimings {
@@ -126,13 +136,13 @@ final class LyricsService {
     }
 
     private func fetchYandexLyrics(for track: Track) async -> Lyrics? {
-        var ymId = PlayerCore.yandexTrackID(from: track)
+        var ymId = LyricsMatchPolicy.yandexID(fileName: track.fileName) ?? ""
         if ymId.isEmpty {
-            ymId = await searchYandexTrackId(title: track.title, artist: track.artist) ?? ""
+            ymId = await searchYandexTrackId(for: track) ?? ""
         }
         guard !ymId.isEmpty else { return nil }
 
-        let cleanId = ymId.contains(":") ? (ymId.components(separatedBy: ":").last ?? ymId) : ymId
+        let cleanId = ymId.contains(":") ? (ymId.components(separatedBy: ":").first ?? ymId) : ymId
         guard let url = URL(string: YandexMusicService.apiBase + "/tracks/\(cleanId)/supplement") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -172,7 +182,7 @@ final class LyricsService {
         if let lrcText = lyricsData.lrcLyrics ?? lyricsData.lrc, !lrcText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let parsed = LRCParser.parse(lrcText, sourceName: "Яндекс Музыка")
             if !parsed.lines.isEmpty {
-                return Lyrics(title: track.title, artist: track.artist, lines: parsed.lines, isSyllable: parsed.isSyllable, sourceName: "Яндекс Музыка")
+                return LyricsMatchPolicy.validatedTimings(Lyrics(title: track.title, artist: track.artist, lines: parsed.lines, isSyllable: parsed.isSyllable, offset: parsed.offset, sourceName: "Яндекс Музыка"), duration: track.duration)
             }
         }
 
@@ -184,47 +194,14 @@ final class LyricsService {
         return nil
     }
 
-    private func searchYandexTrackId(title: String, artist: String) async -> String? {
-        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanTitle.isEmpty else { return nil }
-
-        let query = (cleanArtist.isEmpty || cleanArtist == "Неизвестный исполнитель")
-            ? cleanTitle
-            : "\(cleanArtist) \(cleanTitle)"
-
-        let results = await YandexMusicService.shared.searchAll(query: query)
-        let targetTitle = cleanTitle.lowercased()
-        let targetArtist = cleanArtist.lowercased()
-
-        // Validate hit: ensure title and artist match
-        for item in results.tracks {
-            guard !item.id.isEmpty else { continue }
-            let itemTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let titleMatches = itemTitle.contains(targetTitle) || targetTitle.contains(itemTitle)
-            let itemArtist = item.artistName.lowercased()
-            let artistMatches = targetArtist.isEmpty || itemArtist.contains(targetArtist) || targetArtist.contains(itemArtist)
-            if titleMatches && (artistMatches || targetArtist == "неизвестный исполнитель") {
-                return item.id
-            }
-        }
-
-        // Secondary fallback if combined query yielded 0 tracks
-        if !cleanArtist.isEmpty && cleanArtist != "Неизвестный исполнитель" {
-            let fallbackResults = await YandexMusicService.shared.searchAll(query: cleanTitle)
-            for item in fallbackResults.tracks {
-                guard !item.id.isEmpty else { continue }
-                let itemTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                let titleMatches = itemTitle.contains(targetTitle) || targetTitle.contains(itemTitle)
-                let itemArtist = item.artistName.lowercased()
-                let artistMatches = itemArtist.contains(targetArtist) || targetArtist.contains(itemArtist)
-                if titleMatches && artistMatches {
-                    return item.id
-                }
-            }
-        }
-
-        return nil
+    private func searchYandexTrackId(for track: Track) async -> String? {
+        guard LyricsMatchPolicy.knownArtist(track.artist), !track.title.isEmpty else { return nil }
+        let results = await YandexMusicService.shared.searchAll(query: "\(track.artist) \(track.title)")
+        return results.tracks.first { item in
+            !item.id.isEmpty && LyricsMatchPolicy.matches(title: track.title, artist: track.artist,
+                candidateTitle: item.title, candidateArtist: item.artistName)
+                && LyricsMatchPolicy.durationMatches(track.duration, item.duration)
+        }?.id
     }
 
     private func fetchLRCLib(for track: Track) async -> Lyrics? {
@@ -232,34 +209,25 @@ final class LyricsService {
         let title = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artist.isEmpty, !title.isEmpty else { return nil }
 
-        // 1. Try exact match with duration
-        if let detail = await requestLRCLibGet(artist: artist, title: title, duration: track.duration > 0 ? Int(track.duration) : nil) {
-            if let lyrics = convertLRCLibDetail(detail, track: track) {
-                return lyrics
-            }
+        var plainFallback: Lyrics?
+        // First prefer the exact recording/duration. Keep a plain fallback while
+        // continuing the search for genuine matching timing, not the first hit.
+        if let detail = await requestLRCLibGet(artist: artist, title: title, duration: track.duration > 0 ? Int(track.duration) : nil),
+           let lyrics = convertLRCLibDetail(detail, track: track) {
+            if lyrics.isSynchronized { return lyrics }
+            plainFallback = lyrics
         }
-
-        // 2. Try exact match without duration (in case track length differs slightly between mastering releases)
         if track.duration > 0,
-           let detail = await requestLRCLibGet(artist: artist, title: title, duration: nil) {
-            if let lyrics = convertLRCLibDetail(detail, track: track) {
-                return lyrics
-            }
+           let detail = await requestLRCLibGet(artist: artist, title: title, duration: nil),
+           let lyrics = convertLRCLibDetail(detail, track: track) {
+            if lyrics.isSynchronized { return lyrics }
+            plainFallback = plainFallback ?? lyrics
         }
-
-        // 3. Fallback: Search endpoint (deals with subtle title differences like "Song (feat. X)", "Remastered", etc.)
-        let cleanTitle = title
-            .replacingOccurrences(of: #"\s*\(.*?\)"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\s*\[.*?\]"#, with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let detail = await searchLRCLibFirst(title: cleanTitle.isEmpty ? title : cleanTitle, artist: artist) {
-            if let lyrics = convertLRCLibDetail(detail, track: track) {
-                return lyrics
-            }
+        if let detail = await searchLRCLibBest(for: track), let lyrics = convertLRCLibDetail(detail, track: track) {
+            if lyrics.isSynchronized { return lyrics }
+            plainFallback = plainFallback ?? lyrics
         }
-
-        return nil
+        return plainFallback
     }
 
     private func requestLRCLibGet(artist: String, title: String, duration: Int?) async -> TrackDetail? {
@@ -285,7 +253,9 @@ final class LyricsService {
         return detail
     }
 
-    private func searchLRCLibFirst(title: String, artist: String) async -> TrackDetail? {
+    private func searchLRCLibBest(for track: Track) async -> TrackDetail? {
+        let title = track.title
+        let artist = track.artist
         var components = URLComponents(string: "https://lrclib.net/api/search")
         components?.queryItems = [
             URLQueryItem(name: "track_name", value: title),
@@ -302,38 +272,35 @@ final class LyricsService {
             return nil
         }
 
-        let targetTitle = title.lowercased()
-        let targetArtist = artist.lowercased()
-
-        // Filter list to candidates that actually match the requested track name & artist
-        let matchingList = list.filter { item in
-            guard let name = item.trackName?.lowercased() else { return false }
-            let titleOk = name.contains(targetTitle) || targetTitle.contains(name)
-            if !titleOk { return false }
-            if let art = item.artistName?.lowercased(), !targetArtist.isEmpty {
-                return art.contains(targetArtist) || targetArtist.contains(art)
-            }
-            return true
+        let matching = list.filter {
+            LyricsMatchPolicy.matches(title: title, artist: artist, candidateTitle: $0.trackName, candidateArtist: $0.artistName)
         }
-
-        // Prioritize results that have synchronized lyrics
-        if let syncedItem = matchingList.first(where: { ($0.syncedLyrics?.count ?? 0) > 20 }) {
-            return syncedItem
-        }
-        return matchingList.first
+        return matching.sorted { lhs, rhs in
+            let leftTimed = LyricsMatchPolicy.durationMatches(track.duration, lhs.duration) && !(lhs.syncedLyrics ?? "").isEmpty
+            let rightTimed = LyricsMatchPolicy.durationMatches(track.duration, rhs.duration) && !(rhs.syncedLyrics ?? "").isEmpty
+            if leftTimed != rightTimed { return leftTimed }
+            return abs((lhs.duration ?? .greatestFiniteMagnitude) - track.duration)
+                < abs((rhs.duration ?? .greatestFiniteMagnitude) - track.duration)
+        }.first
     }
 
     private func convertLRCLibDetail(_ detail: TrackDetail, track: Track) -> Lyrics? {
+        guard LyricsMatchPolicy.matches(title: track.title, artist: track.artist,
+            candidateTitle: detail.trackName, candidateArtist: detail.artistName) else { return nil }
         if let synced = detail.syncedLyrics, !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let parsed = LRCParser.parse(synced, sourceName: "LRCLIB")
             if !parsed.lines.isEmpty {
-                return Lyrics(
+                let result = Lyrics(
                     title: detail.trackName ?? track.title,
                     artist: detail.artistName ?? track.artist,
                     lines: parsed.lines,
                     isSyllable: parsed.isSyllable,
+                    offset: parsed.offset,
                     sourceName: "LRCLIB"
                 )
+                return LyricsMatchPolicy.durationMatches(track.duration, detail.duration)
+                    ? LyricsMatchPolicy.validatedTimings(result, duration: track.duration)
+                    : LyricsMatchPolicy.plain(result)
             }
         }
         if let plain = detail.plainLyrics, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -373,6 +340,8 @@ final class LyricsService {
                         struct Result: Decodable {
                             let path: String?
                             let title: String?
+                            struct Artist: Decodable { let name: String? }
+                            let primary_artist: Artist?
                         }
                         let result: Result?
                     }
@@ -388,21 +357,14 @@ final class LyricsService {
             return nil
         }
 
-        let targetTitle = title.lowercased()
         var songPath: String?
         for section in sections where section.type == "song" || section.type == "top_hit" {
             for hit in section.hits ?? [] {
-                if let res = hit.result, let path = res.path, !path.isEmpty {
-                    if let resTitle = res.title?.lowercased() {
-                        if resTitle.contains(targetTitle) || targetTitle.contains(resTitle) {
-                            songPath = path
-                            break
-                        }
-                    } else {
-                        songPath = path
-                        break
-                    }
-                }
+                guard let result = hit.result, let path = result.path, path.hasPrefix("/"),
+                      LyricsMatchPolicy.matches(title: title, artist: artist,
+                        candidateTitle: result.title, candidateArtist: result.primary_artist?.name) else { continue }
+                songPath = path
+                break
             }
             if songPath != nil { break }
         }
@@ -473,7 +435,7 @@ final class LyricsService {
         var raw = containers.joined(separator: "\n")
         // Strip data-exclude-from-selection blocks (header titles, ads, comments)
         raw = raw.replacingOccurrences(
-            of: #"<div[^>]*data-exclude-from-selection="true"[^>]*>.*?</div>"#,
+            of: #"(?s)<div[^>]*data-exclude-from-selection="true"[^>]*>.*?</div>"#,
             with: "",
             options: .regularExpression
         )
@@ -500,6 +462,12 @@ final class LyricsService {
     }
 
     private func cacheKey(for track: Track) -> String {
+        let identity = LyricsMatchPolicy.yandexID(fileName: track.fileName) ?? track.id.uuidString
+        let seconds = track.duration.isFinite ? Int(max(0, track.duration).rounded()) : 0
+        return "lyrics_v3|\(identity)|\(LyricsMatchPolicy.normalized(track.title))|\(LyricsMatchPolicy.normalized(track.artist))|\(seconds)"
+    }
+
+    private func legacyCacheKey(for track: Track) -> String {
         let ymId = PlayerCore.yandexTrackID(from: track)
         if !ymId.isEmpty {
             return "ym_\(ymId)"
@@ -525,6 +493,10 @@ final class LyricsService {
             return parseCustomLyrics(fallbackText, track: track)
         }
 
+        let legacyKey = "custom_lyrics_\(legacyCacheKey(for: track))"
+        if let text = UserDefaults.standard.string(forKey: legacyKey), !text.isEmpty {
+            return parseCustomLyrics(text, track: track)
+        }
         return nil
     }
 
@@ -535,28 +507,16 @@ final class LyricsService {
         if trimmed.contains("[") && trimmed.contains("]") {
             let parsed = LRCParser.parse(trimmed, sourceName: "Пользовательский (LRC)")
             if parsed.isSynchronized {
-                return parsed
+                let legacyDynamic = UserDefaults.standard.bool(forKey: "custom_lyrics_dynamic_\(track.id.uuidString)")
+                if legacyDynamic && LyricsMatchPolicy.isLegacyEstimatedLRC(parsed, duration: track.duration) {
+                    return LyricsMatchPolicy.plain(parsed)
+                }
+                return LyricsMatchPolicy.validatedTimings(parsed, duration: track.duration)
             }
         }
 
-        // 2. Проверяем флаг динамического распределения по длительности
-        let isDynamic = UserDefaults.standard.bool(forKey: "custom_lyrics_dynamic_\(track.id.uuidString)")
-        if isDynamic {
-            let rawLines = trimmed.components(separatedBy: .newlines)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-            guard !rawLines.isEmpty else { return .empty }
-            let totalDur = track.duration > 10 ? track.duration : 180.0
-            let interval = max(1.8, (totalDur - 5.0) / Double(rawLines.count))
-            var lines: [LyricsLine] = []
-            for (idx, line) in rawLines.enumerated() {
-                let start = Double(idx) * interval
-                let end = start + interval
-                lines.append(LyricsLine(text: line, startTime: start, endTime: end))
-            }
-            return Lyrics(title: track.title, artist: track.artist, lines: lines, isSyllable: false, sourceName: "Пользовательский (Синхронный)")
-        }
-
+        // Plain text is never assigned guessed song timestamps, even if an old
+        // 'dynamic' preference was saved. Only explicit LRC tags enable karaoke.
         return staticLyrics(from: trimmed, track: track, sourceName: "Пользовательский текст")
     }
 
@@ -581,6 +541,7 @@ final class LyricsService {
 
         UserDefaults.standard.removeObject(forKey: key)
         UserDefaults.standard.removeObject(forKey: fallbackKey)
+        UserDefaults.standard.removeObject(forKey: "custom_lyrics_\(legacyCacheKey(for: track))")
         UserDefaults.standard.removeObject(forKey: dynamicKey)
         cache.removeValue(forKey: cacheKey(for: track))
         NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: track.id)

@@ -31,9 +31,10 @@ async function route(url, apiKey, ctx) {
     if (!track) throw withStatus(404);
     return {
       track_id: track.track_id,
-      name: track.track_name || title,
-      artist: track.artist_name || artist,
+      name: track.track_name || "",
+      artist: track.artist_name || "",
       has_richsync: track.has_richsync || 0,
+      track_length: track.track_length || null,
       has_subtitles: track.has_subtitles || 0,
       commontrack_id: track.commontrack_id || null,
     };

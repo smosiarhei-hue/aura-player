@@ -61,8 +61,18 @@ nonisolated struct StaggeredLyricsRenderer: TextRenderer {
         for line in layout {
             for run in line {
                 let attribute = run[StaggeredWordAttribute.self]
-                let progress = reduceMotion || !isActive ? 1 : StaggeredLyricsMath.reveal(
-                    elapsed: elapsed, index: attribute?.index ?? 0, duration: duration, delay: delay)
+                let progress: Double
+                if reduceMotion || !isActive {
+                    progress = 1
+                } else if let time = currentTime, let start = attribute?.startTime, let end = attribute?.endTime {
+                    // Real vocals drive each entrance. Never add index*80ms delay
+                    // on top of a provider's genuine word timing.
+                    progress = StaggeredLyricsMath.reveal(elapsed: time - start, index: 0,
+                        duration: min(0.14, max(0.04, (end - start) * 0.40)), delay: 0)
+                } else {
+                    progress = StaggeredLyricsMath.reveal(elapsed: elapsed,
+                        index: attribute?.index ?? 0, duration: duration, delay: delay)
+                }
                 var copy = context
                 copy.opacity *= isActive ? (0.22 + 0.78 * progress) : inactiveOpacity
                 if isActive && !reduceMotion {
@@ -164,7 +174,7 @@ struct StaggeredLyricsView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private var playbackTime: Double {
-        max(0, player.progress - AVAudioSession.sharedInstance().outputLatency + settings.lyricsOffset)
+        LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
     }
     private var resolvedFontSize: CGFloat { fontSize ?? max(30, settings.lyricsFontSize * 0.82) }
 
@@ -189,9 +199,8 @@ struct StaggeredLyricsView: View {
                                 Haptics.tap(.medium)
                                 interactionResetTask?.cancel()
                                 isUserInteracting = false
-                                // Display applies +offset and subtracts route latency;
-                                // inverse compensation lands on the selected line.
-                                player.seek(to: max(0, line.startTime - settings.lyricsOffset + AVAudioSession.sharedInstance().outputLatency))
+                                player.seek(to: LyricsPlaybackClock.seekTime(
+                                    lineStart: line.startTime, player: player, offset: settings.lyricsOffset))
                                 if !player.isPlaying { player.resume() }
                             } label: {
                                 StaggeredLyricText(text: line.text, words: line.hasRealWordTimings ? line.words : nil,

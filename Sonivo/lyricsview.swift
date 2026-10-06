@@ -20,8 +20,9 @@ struct LyricsView: View {
                        let lyricsTitle = lyrics.title,
                        !currentTrack.title.isEmpty,
                        !lyricsTitle.isEmpty,
-                       !currentTrack.title.localizedCaseInsensitiveContains(lyricsTitle) &&
-                       !lyricsTitle.localizedCaseInsensitiveContains(currentTrack.title) {
+                       LyricsMatchPolicy.knownArtist(currentTrack.artist),
+                       !LyricsMatchPolicy.matches(title: currentTrack.title, artist: currentTrack.artist,
+                           candidateTitle: lyricsTitle, candidateArtist: lyrics.artist) {
                         // Title mismatch guard during track transition
                         SonivoLoadingState(title: "Загрузка текста…")
                     } else if settings.lyricsDesign == .staggered {
@@ -83,8 +84,7 @@ private struct DynamicWordLyrics: View {
     @State private var settings = SettingsStore.shared
 
     private var playbackTime: TimeInterval {
-        let latency = AVAudioSession.sharedInstance().outputLatency
-        return max(0, player.progress - latency + settings.lyricsOffset)
+        LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
     }
 
     var body: some View {
@@ -114,8 +114,7 @@ private struct SyncedLyrics: View {
 
     private func computeActiveIndex(at time: Double) -> Int? {
         guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
-        let latency = AVAudioSession.sharedInstance().outputLatency
-        let currentTime = max(0, time - latency + settings.lyricsOffset)
+        let currentTime = max(0, time - LyricsPlaybackClock.routeLatency(for: player) + settings.lyricsOffset)
         if let first = lyrics.lines.first, currentTime < first.startTime {
             return nil
         }
@@ -138,7 +137,7 @@ private struct SyncedLyrics: View {
                             interactionResetTask?.cancel()
                             isUserInteracting = false
                             if lyrics.isSynchronized {
-                                player.seek(to: max(0, line.startTime))
+                                player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime, player: player, offset: settings.lyricsOffset))
                                 if !player.isPlaying {
                                     player.resume()
                                 }
@@ -480,29 +479,10 @@ struct AddCustomLyricsSheet: View {
                     .padding(.horizontal, 20)
 
                     if isDynamic {
-                        HStack {
-                            Text("Поддерживает таймкоды [mm:ss.xx] или авто-разметку")
-                                .font(SN.text(.caption2))
-                                .foregroundStyle(.white.opacity(0.5))
-
-                            Spacer()
-
-                            Button {
-                                generateAutoTimings()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "sparkles")
-                                    Text("Авто-тайминг")
-                                }
-                                .font(SN.text(.caption2, .bold))
-                                .foregroundStyle(SN.amber)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .glassCapsule(interactive: true)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 22)
+                        Text("Для караоке нужны настоящие LRC-таймкоды. Без них текст останется обычным — авторазметка по длительности отключена.")
+                            .font(SN.text(.caption2))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .padding(.horizontal, 22)
                     }
 
                     // Text Editor
@@ -587,32 +567,6 @@ struct AddCustomLyricsSheet: View {
             hasExistingCustomLyrics = true
             isDynamic = UserDefaults.standard.bool(forKey: "custom_lyrics_dynamic_\(track.id.uuidString)") || saved.contains("[")
         }
-    }
-
-    private func generateAutoTimings() {
-        let rawLines = lyricsInput.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("[offset:") }
-        guard !rawLines.isEmpty else { return }
-
-        Haptics.tap(.light)
-        let total = track.duration > 10 ? track.duration : 180.0
-        let interval = max(1.8, (total - 6.0) / Double(rawLines.count))
-
-        var timedLines: [String] = []
-        for (idx, line) in rawLines.enumerated() {
-            // Remove existing timestamps if any
-            let cleanLine = line.replacingOccurrences(of: #"^\[\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?\]"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
-            let seconds = Double(idx) * interval + 1.0
-            let mins = Int(seconds) / 60
-            let secs = Int(seconds) % 60
-            let hundredths = Int((seconds.truncatingRemainder(dividingBy: 1)) * 100)
-            let tag = String(format: "[%02d:%02d.%02d]", mins, secs, hundredths)
-            timedLines.append("\(tag) \(cleanLine)")
-        }
-
-        lyricsInput = timedLines.joined(separator: "\n")
-        isDynamic = true
     }
 
     private func saveLyrics() {

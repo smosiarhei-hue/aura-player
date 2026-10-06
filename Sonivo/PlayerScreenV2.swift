@@ -606,8 +606,7 @@ struct PlayerScreenV2: View {
     @ViewBuilder
     private func inlineLyricsStage(width: CGFloat, height: CGFloat) -> some View {
         let settings = SettingsStore.shared
-        let latency = AVAudioSession.sharedInstance().outputLatency
-        let playbackTime = max(0, player.progress - latency + settings.lyricsOffset)
+        let playbackTime = LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
         let textLift = min(72, height * 0.09)
 
         VStack(spacing: 0) {
@@ -783,7 +782,7 @@ struct PlayerScreenV2: View {
 
     private var currentLyricsPair: (current: String, next: String?) {
         guard let lines = lyrics?.lines, !lines.isEmpty else { return ("Слова песни", nil) }
-        let targetTime = max(0, player.progress + SettingsStore.shared.lyricsOffset)
+        let targetTime = LyricsPlaybackClock.time(for: player, offset: SettingsStore.shared.lyricsOffset)
         var lineIndex = 0
         for (i, line) in lines.enumerated() { if line.startTime <= targetTime { lineIndex = i } else { break } }
         return (lines[lineIndex].text, lineIndex + 1 < lines.count ? lines[lineIndex + 1].text : nil)
@@ -1328,40 +1327,15 @@ struct PlayerScreenV2: View {
         let result = try? await LyricsService.shared.fetchLyrics(for: requested)
         guard !Task.isCancelled, self.track?.id == requestedId else { return }
 
-        // 2. If verified lyrics were found online:
+        // Keep source timing exactly as returned. Plain text stays plain; no
+        // duration-based karaoke and no automatically generated speech transcript.
         if let found = result, !found.lines.isEmpty {
-            if found.isSynchronized {
-                // Fully synchronized official lyrics (Yandex / LRCLIB)
-                withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
-                    self.lyrics = found
-                    self.cachedPhrases = LyricPhrase.from(lines: found.lines)
-                }
-                return
-            } else {
-                // Official full text exists (Genius / Yandex plain text).
-                // Synthesize smooth millisecond karaoke timing across the full song.
-                // NEVER discard official text for speech recognition!
-                let synchronized = OnDeviceVocalAligner.shared.synthesizeKaraoke(for: found, track: requested)
-                withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
-                    self.lyrics = synchronized
-                    self.cachedPhrases = LyricPhrase.from(lines: synchronized.lines)
-                }
-                return
+            let verified = LyricsMatchPolicy.validatedTimings(found, duration: requested.duration)
+            withAnimation(.spring(response: 0.40, dampingFraction: 0.85)) {
+                self.lyrics = verified
+                self.cachedPhrases = verified.isSynchronized ? LyricPhrase.from(lines: verified.lines) : []
             }
-        }
-
-        // 3. Fallback: Only if NO text exists from any online source AND user enabled Neural Engine,
-        // attempt on-device Apple Neural Engine offline vocal transcription for the whole song.
-        if SettingsStore.shared.isNeuralEngineEnabled {
-            if let aiLyrics = await OnDeviceVocalAligner.shared.transcribe(track: requested),
-               aiLyrics.lines.count >= 3 {
-                guard !Task.isCancelled, self.track?.id == requestedId else { return }
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                    self.lyrics = aiLyrics
-                    self.cachedPhrases = LyricPhrase.from(lines: aiLyrics.lines)
-                }
-                return
-            }
+            return
         }
 
         // 4. No lyrics available anywhere
@@ -1594,8 +1568,7 @@ struct CoverLyricsScrollView: View {
 
     private func computeActiveIndex(at time: Double) -> Int? {
         guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
-        let latency = AVAudioSession.sharedInstance().outputLatency
-        let currentTime = max(0, time - latency + settings.lyricsOffset)
+        let currentTime = max(0, time - LyricsPlaybackClock.routeLatency(for: player) + settings.lyricsOffset)
         if let first = lyrics.lines.first, currentTime < first.startTime {
             return nil
         }
@@ -1633,7 +1606,7 @@ struct CoverLyricsScrollView: View {
                                 interactionResetTask?.cancel()
                                 isUserInteracting = false
                                 if lyrics.isSynchronized {
-                                    player.seek(to: max(0, line.startTime))
+                                    player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime, player: player, offset: settings.lyricsOffset))
                                     if !player.isPlaying {
                                         player.resume()
                                     }

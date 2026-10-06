@@ -59,7 +59,7 @@ class StaggeredLyricsDesignTests(unittest.TestCase):
         self.assertIn('copy.translateBy', text)
         self.assertIn('.blur(radius:', text)
         self.assertIn('accessibilityReduceMotion', text)
-        self.assertIn('reduceMotion || !isActive ? 1', text)
+        self.assertIn('if reduceMotion || !isActive', text)
         self.assertIn('.accessibilityLabel(text)', text)
         self.assertNotIn('WKWebView', text)
         self.assertNotIn('URLSession', text)
@@ -70,8 +70,8 @@ class StaggeredLyricsDesignTests(unittest.TestCase):
         self.assertIn('let timingsMatch', text)
         self.assertIn('(time - start) / (end - start)', text)
         self.assertIn('run.typographicBounds.rect', text)
-        self.assertIn('AVAudioSession.sharedInstance().outputLatency + settings.lyricsOffset', text)
-        self.assertIn('line.startTime - settings.lyricsOffset + AVAudioSession.sharedInstance().outputLatency', text)
+        self.assertIn('LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)', text)
+        self.assertIn('LyricsPlaybackClock.seekTime(', text)
 
     def test_long_short_and_empty_lines_have_bounded_timing(self):
         for count in [0, 1, 2, 10, 100, 1000]:

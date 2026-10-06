@@ -2,13 +2,13 @@ import Foundation
 
 // MARK: - Synchronized Lyrics Model (Karaoke)
 
-struct LyricsWord: Equatable, Sendable {
+nonisolated struct LyricsWord: Equatable, Sendable {
     let text: String
     let startTime: TimeInterval
     let endTime: TimeInterval
 }
 
-struct LyricsLine: Equatable, Identifiable, Sendable {
+nonisolated struct LyricsLine: Equatable, Identifiable, Sendable {
     let id = UUID()
     let text: String
     let startTime: TimeInterval
@@ -23,7 +23,7 @@ struct LyricsLine: Equatable, Identifiable, Sendable {
     }
 }
 
-struct Lyrics: Equatable, Sendable {
+nonisolated struct Lyrics: Equatable, Sendable {
     let title: String?
     let artist: String?
     let lines: [LyricsLine]
@@ -51,7 +51,7 @@ struct Lyrics: Equatable, Sendable {
 
     /// True when lines carry real timestamps (line- or word-sync); false for plain/static text.
     var isSynchronized: Bool {
-        lines.count > 1 && lines.contains { $0.startTime > 0 }
+        !lines.isEmpty && lines.contains { ($0.startTime.isFinite && $0.startTime > 0) || $0.hasRealWordTimings }
     }
 }
 
@@ -61,10 +61,9 @@ extension LyricsLine {
     /// True only if genuine word-by-word/syllable timestamps are present from source.
     var hasRealWordTimings: Bool {
         guard let words, !words.isEmpty else { return false }
-        if words.count == 1 {
-            return words[0].endTime > words[0].startTime
-        }
-        return words[1].startTime >= words[0].startTime || words[words.count - 1].endTime > words[0].startTime
+        guard words.allSatisfy({ $0.startTime.isFinite && $0.endTime.isFinite
+            && $0.startTime >= 0 && $0.endTime > $0.startTime }) else { return false }
+        return zip(words, words.dropFirst()).allSatisfy { pair in pair.1.startTime > pair.0.startTime }
     }
 
     /// Returns explicit words if present from source.
@@ -167,7 +166,7 @@ enum LRCParser {
             }
         }
 
-        let isSyllable = lines.contains { ($0.words?.count ?? 0) > 1 }
+        let isSyllable = lines.contains { $0.hasRealWordTimings }
         return Lyrics(title: nil, artist: nil, lines: lines, isSyllable: isSyllable, offset: globalOffsetSeconds, sourceName: sourceName)
     }
 

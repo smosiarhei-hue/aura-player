@@ -135,19 +135,11 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
                     await self.cache.set(key, lyrics: aligned)
                     return aligned
                 }
-                // When official lyrics exist, NEVER fall through to speech transcription!
-                // Synthesize smooth karaoke timings using 100% of the official lyrics text!
-                let synthesized = self.synthesizeKaraokeTimings(for: targetLyrics, track: track)
-                await self.cache.set(key, lyrics: synthesized)
-                return synthesized
+                // Failed acoustic alignment must not manufacture timestamps.
+                await self.cache.set(key, lyrics: targetLyrics)
+                return targetLyrics
             }
-
-            // 3. ONLY if NO lyrics exist anywhere online, attempt whole-song vocal transcription
-            if let transcribed = await self.transcribe(track: track) {
-                await self.cache.set(key, lyrics: transcribed)
-                return transcribed
-            }
-
+            // A speech transcript is not verified song text; never auto-publish it.
             return nil
         }
 
@@ -160,7 +152,7 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
     /// Aligns plain or unsynchronized lyrics with the audio track using the Apple Neural Engine.
     func align(lyrics: Lyrics, track: Track) async -> Lyrics? {
         guard await SettingsStore.shared.isNeuralEngineEnabled else { return nil }
-        if lyrics.isSynchronized && lyrics.hasDynamicWordTimings { return lyrics }
+        if lyrics.isSynchronized { return lyrics }
         guard !lyrics.lines.isEmpty else { return nil }
 
         // Speech recognition authorization check
@@ -176,7 +168,7 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
         }
 
         // Resolve audio source (local file or stream cache)
-        guard let localURL = await resolveLocalAudioURL(for: track) else {
+        guard let localURL = await PlayerCore.shared.findLocalOrCachedAudioFile(for: track) else {
             return nil
         }
         defer { removeGeneratedTemporaryAudioIfNeeded(localURL) }
@@ -408,7 +400,7 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
                 let searchLimit = min(tokens.count, searchCursor + 35)
                 for i in searchCursor..<searchLimit {
                     let candidate = tokens[i]
-                    if isAcousticMatch(word, candidate.text) {
+                    if candidate.confidence >= 0.65 && isAcousticMatch(word, candidate.text) {
                         matchedWordMap[wordIdx] = candidate
                         if lineStartTime == nil { lineStartTime = candidate.startTime }
                         lineEndTime = candidate.endTime
@@ -420,7 +412,7 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
             }
 
             // Accept anchor if at least 1 key word matched (or 2 for lines with 4+ words)
-            let minMatches = rawWords.count >= 4 ? 2 : 1
+            let minMatches = rawWords.count
             if matchedWordMap.count >= minMatches,
                let start = lineStartTime,
                let end = lineEndTime {
@@ -438,7 +430,7 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
         }
 
         // Only accept alignment if at least 20% of lines were acoustically anchored
-        guard anchors.count >= max(2, lines.count / 5) else {
+        guard anchors.count == lines.count else {
             return []
         }
 
@@ -618,52 +610,6 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
             currentStart = wordEnd
         }
         return result
-    }
-
-    // MARK: - Phonetic Temporal Fallback Synthesizer
-
-    func synthesizeKaraoke(for lyrics: Lyrics, track: Track) -> Lyrics {
-        synthesizeKaraokeTimings(for: lyrics, track: track)
-    }
-
-    private func synthesizeKaraokeTimings(for lyrics: Lyrics, track: Track) -> Lyrics {
-        var lines: [LyricsLine] = []
-        let totalDuration = track.duration > 10 ? track.duration : 180.0
-
-        let introLead: TimeInterval = min(1.8, max(0.8, totalDuration * 0.008))
-        let outroMargin: TimeInterval = 3.0
-        let availableDuration = max(10.0, totalDuration - introLead - outroMargin)
-        let totalChars = lyrics.lines.reduce(0) { $0 + max(5, $1.text.count) }
-
-        var currentStart = introLead
-
-        for (i, line) in lyrics.lines.enumerated() {
-            let weight = Double(max(5, line.text.count)) / Double(max(1, totalChars))
-            let lineDuration = max(1.8, availableDuration * weight)
-            let end = (i == lyrics.lines.count - 1) ? (totalDuration - outroMargin) : (currentStart + lineDuration)
-
-            let rawWords = line.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-            let words = interpolateWords(rawWords: rawWords, startTime: currentStart, endTime: end)
-
-            lines.append(LyricsLine(
-                text: line.text,
-                startTime: Self.ms(currentStart),
-                endTime: Self.ms(end),
-                words: words
-            ))
-
-            currentStart = end + 0.20
-        }
-
-        let baseSource = lyrics.sourceName.isEmpty ? "Lyrics" : lyrics.sourceName
-        return Lyrics(
-            title: lyrics.title,
-            artist: lyrics.artist,
-            lines: lines,
-            isSyllable: true,
-            offset: lyrics.offset,
-            sourceName: "\(baseSource) (Apple Neural Engine)"
-        )
     }
 
     // MARK: - Audio Source & Language Helpers
