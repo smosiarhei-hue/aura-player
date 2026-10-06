@@ -26,16 +26,18 @@ struct PrismaticBurstBackground: View {
                 let kick = fresh ? analyzer.kick : 0
                 let bass = fresh ? analyzer.bass : 0
                 let mids = fresh ? analyzer.mids : 0
+                let shaderTime: Float = reduceMotion ? 3 : time
+                let shaderColors = palette
                 // Lower-resolution GPU rendering avoids 44-step ray marching at full
                 // Retina resolution; upscaling keeps this background smooth and bounded.
                 Color.white
                     .frame(width: max(1, proxy.size.width * 0.5), height: max(1, proxy.size.height * 0.5))
                     .visualEffect { content, _ in
                         content.colorEffect(ShaderLibrary.prismaticBurst(
-                            .boundingRect, .float(reduceMotion ? 3 : time),
+                            .boundingRect, .float(shaderTime),
                             .float(kick), .float(bass), .float(mids),
-                            .color(palette[0]), .color(palette[min(1, palette.count - 1)]),
-                            .color(palette[min(2, palette.count - 1)])
+                            .color(shaderColors[0]), .color(shaderColors[min(1, shaderColors.count - 1)]),
+                            .color(shaderColors[min(2, shaderColors.count - 1)])
                         ))
                     }
                     .drawingGroup(opaque: true)

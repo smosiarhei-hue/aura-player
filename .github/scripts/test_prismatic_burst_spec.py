@@ -16,6 +16,16 @@ class PrismaticBurstTests(unittest.TestCase):
         self.assertIn('Commons Clause', text)
         self.assertIn('col = clamp(col, 0.0f, 1.0f)', text)
 
+    def test_callbacks_are_constructed_without_packed_pointer_relocations(self):
+        c = (ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe/StreamAudioProbe.c').read_text()
+        self.assertIn('volatile MTAudioProcessingTapCallbacks callbacks;', c)
+        self.assertNotIn('MTAudioProcessingTapCallbacks callbacks = {', c)
+        for callback in ('init', 'finalize', 'prepare', 'unprepare', 'process'):
+            self.assertIn(f'callbacks.{callback} = probe', c)
+        workflow = (ROOT / '.github/workflows/build-ipa.yml').read_text()
+        report = workflow.split('name: Expose compiler errors', 1)[1].split('name: Package IPA', 1)[0]
+        self.assertGreaterEqual(report.count('|| true'), 2)
+
     def test_background_reads_real_audio_not_a_fake_bpm(self):
         text = (ROOT / 'Sonivo/PrismaticBurstBackground.swift').read_text()
         self.assertIn('analyzer.kick', text)
@@ -44,7 +54,7 @@ class PrismaticBurstTests(unittest.TestCase):
     def test_audio_callbacks_are_c_and_never_download_files(self):
         c = (ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe/StreamAudioProbe.c').read_text()
         swift = (ROOT / 'Sonivo/streambeat.swift').read_text()
-        self.assertIn('.process = probeProcess', c)
+        self.assertIn('callbacks.process = probeProcess', c)
         self.assertIn('MTAudioProcessingTapGetSourceAudio', c)
         self.assertIn('import StreamAudioProbe', swift)
         for token in ('URLSession', 'download(', 'FileManager', 'documentsDirectoryURL'):

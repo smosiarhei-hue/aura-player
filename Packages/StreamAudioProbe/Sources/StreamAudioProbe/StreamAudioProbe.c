@@ -60,13 +60,19 @@ static void probeProcess(MTAudioProcessingTapRef tap, CMItemCount frames, MTAudi
     atomic_flag_clear_explicit(&p->busy, memory_order_release);
 }
 MTAudioProcessingTapRef SonivoStreamProbeCreate(void) {
-    MTAudioProcessingTapCallbacks callbacks = {
-        .version = kMTAudioProcessingTapCallbacksVersion_0,
-        .clientInfo = NULL, .init = probeInit, .finalize = probeFinalize,
-        .prepare = probePrepare, .unprepare = probeUnprepare, .process = probeProcess
-    };
+    // Apple's callback struct is packed to four-byte alignment. A constant aggregate
+    // with function-pointer relocations can fail arm64 chained-fixup linking.
+    // Volatile scalar stores construct it on the stack, not in a packed const table.
+    volatile MTAudioProcessingTapCallbacks callbacks;
+    callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
+    callbacks.clientInfo = NULL;
+    callbacks.init = probeInit;
+    callbacks.finalize = probeFinalize;
+    callbacks.prepare = probePrepare;
+    callbacks.unprepare = probeUnprepare;
+    callbacks.process = probeProcess;
     MTAudioProcessingTapRef tap = NULL;
-    OSStatus result = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks,
+    OSStatus result = MTAudioProcessingTapCreate(kCFAllocatorDefault, (const MTAudioProcessingTapCallbacks *)&callbacks,
         kMTAudioProcessingTapCreationFlag_PostEffects, &tap);
     return result == noErr ? tap : NULL;
 }

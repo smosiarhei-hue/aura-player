@@ -189,8 +189,8 @@ jobs:
         if: failure() && hashFiles('build.log') != ''
         shell: bash
         run: |
-          ERRORS=$(grep -E "(^|[[:space:]])[^[:space:]]+\.swift:[0-9]+:[0-9]+: error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n')
-          if [ -z "$ERRORS" ]; then ERRORS=$(grep -E "error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n'); fi
+          ERRORS=$(grep -E "(^|[[:space:]])[^[:space:]]+\.swift:[0-9]+:[0-9]+: error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n' || true)
+          if [ -z "$ERRORS" ]; then ERRORS=$(grep -E "error:" build.log | tail -n 12 | sed 's/%/%25/g; s/$/%0A/' | tr -d '\n' || true); fi
           echo "::error title=Swift compiler errors::$ERRORS"
           exit 1
 
