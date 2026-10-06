@@ -16,6 +16,7 @@ final class SpectrumAnalyzer {
     private(set) var highs: Float = 0
     private(set) var level: Float = 0
     private(set) var streamLevel: Float = 0
+    private(set) var lastAudioSampleTime: TimeInterval = 0
 
     // MARK: - iOS 27 Audio-Reactive Kick / Bass Pulse (30-120 Hz)
     var dynamicKick: Float {
@@ -82,6 +83,7 @@ final class SpectrumAnalyzer {
         guard let snapshot = processor.process(buffer: buffer, sampleRate: sampleRate) else { return }
         Task { @MainActor in
             let analyzer = SpectrumAnalyzer.shared
+            analyzer.lastAudioSampleTime = Date.timeIntervalSinceReferenceDate
             analyzer.bands = snapshot.bands
             analyzer.bass = snapshot.bass
             analyzer.kick = snapshot.kick
@@ -101,6 +103,7 @@ final class SpectrumAnalyzer {
         MusicHapticsManager.shared.reset()
         bands = Array(repeating: 0, count: Self.bandCount)
         bass = 0; kick = 0; mids = 0; highs = 0; level = 0; streamLevel = 0
+        lastAudioSampleTime = 0
     }
 }
 
@@ -192,8 +195,8 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         let previousBaseline = bassBaseline
         bassBaseline = bassBaseline * 0.92 + rawBass * 0.08
         let onset = max(0, rawBass - previousBaseline)
-        let gated: Float = rawBass > 0.045
-            ? min(1.0, onset * 8.5 + max(0, sub - 0.20) * 1.6 + max(0, punch - 0.24) * 1.0)
+        let gated: Float = rawBass > 0.045 && onset > max(0.015, previousBaseline * 0.08)
+            ? min(1.0, onset * 8.5)
             : 0
         kickEnvelope = max(gated, kickEnvelope * 0.82)
         // Asymmetric envelopes make the visual response feel physical:

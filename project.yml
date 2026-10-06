@@ -5,6 +5,8 @@ options:
     iOS: "26.0"
   createIntermediateGroups: true
 packages:
+  StreamAudioProbe:
+    path: Packages/StreamAudioProbe
   AutoMixV2:
     path: Packages/AutoMixV2
   NeuroMix:
@@ -34,6 +36,8 @@ targets:
           - "Info.plist"
           - "PlayerScreen.swift"
     dependencies:
+      - package: StreamAudioProbe
+        product: StreamAudioProbe
       - package: AutoMixV2
         product: MixModels
       - package: AutoMixV2

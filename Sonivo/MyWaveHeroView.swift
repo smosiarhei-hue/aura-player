@@ -77,10 +77,6 @@ struct MyWaveHeroView: View {
                 .padding(.top, 18)
         }
         .padding(.vertical, 12)
-        .background {
-            // Native iOS Liquid Aura Glow
-            atmosphericAuraBackdrop
-        }
         .task(id: activeTrack?.id) {
             await resolveArtistPhoto()
         }
@@ -415,35 +411,6 @@ struct MyWaveHeroView: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
-        }
-    }
-
-    // MARK: - Native iOS Atmospheric Backdrop
-    private var atmosphericAuraBackdrop: some View {
-        ZStack {
-            // Deep fluid radial aura glows tailored to the track
-            RadialGradient(
-                colors: [
-                    Color(red: 0.12, green: 0.22, blue: 0.45).opacity(0.40),
-                    accentColor.opacity(0.18),
-                    Color.black
-                ],
-                center: .center,
-                startRadius: 40,
-                endRadius: 450
-            )
-            .blur(radius: 65)
-
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.45), location: 0.0),
-                    .init(color: .clear, location: 0.2),
-                    .init(color: .clear, location: 0.8),
-                    .init(color: .black, location: 1.0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
         }
     }
 

@@ -43,19 +43,11 @@ struct SonivoHomeRedesignedView: View {
             ZStack(alignment: .top) {
                 Color.black.ignoresSafeArea()
 
-                // Soft ambient blurred backdrop that adds depth and glow behind the whole screen
-                RadialGradient(
-                    colors: [
-                        themeManager.accentColor.opacity(0.18),
-                        themeManager.flameColor.opacity(0.10),
-                        Color.black
-                    ],
-                    center: .top,
-                    startRadius: 40,
-                    endRadius: 550
+                PrismaticBurstBackground(
+                    colors: player.displayTrack?.palette ?? waveColors,
+                    isPlaying: player.isPlaying,
+                    isVisible: !showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay
                 )
-                .blur(radius: 60)
-                .ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 24) {
@@ -72,8 +64,8 @@ struct SonivoHomeRedesignedView: View {
                 VStack(spacing: 0) {
                     LinearGradient(
                         colors: [
-                            Color.black.opacity(0.85),
-                            Color.black.opacity(0.40),
+                            Color.black.opacity(0.35),
+                            Color.black.opacity(0.12),
                             Color.clear
                         ],
                         startPoint: .top,
@@ -93,8 +85,8 @@ struct SonivoHomeRedesignedView: View {
                     LinearGradient(
                         colors: [
                             Color.clear,
-                            Color.black.opacity(0.50),
-                            Color.black.opacity(0.88)
+                            Color.black.opacity(0.18),
+                            Color.black.opacity(0.42)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
