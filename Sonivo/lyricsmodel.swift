@@ -59,7 +59,7 @@ nonisolated struct Lyrics: Equatable, Sendable {
 
 extension LyricsLine {
     /// True only if genuine word-by-word/syllable timestamps are present from source.
-    var hasRealWordTimings: Bool {
+    nonisolated var hasRealWordTimings: Bool {
         guard let words, !words.isEmpty else { return false }
         guard words.allSatisfy({ $0.startTime.isFinite && $0.endTime.isFinite
             && $0.startTime >= 0 && $0.endTime > $0.startTime }) else { return false }
@@ -68,7 +68,7 @@ extension LyricsLine {
 
     /// Returns explicit words if present from source.
     /// Does NOT synthesize fake word timings for standard line-synced lyrics.
-    func effectiveWords() -> [LyricsWord] {
+    nonisolated func effectiveWords() -> [LyricsWord] {
         if hasRealWordTimings, let words {
             return words
         }
@@ -78,7 +78,7 @@ extension LyricsLine {
 
 extension Lyrics {
     /// True only if actual syllable/word-level timestamps exist.
-    var hasDynamicWordTimings: Bool {
+    nonisolated var hasDynamicWordTimings: Bool {
         isSyllable && lines.contains { $0.hasRealWordTimings }
     }
 }

@@ -25,6 +25,19 @@ def matches(title, artist, candidate_title, candidate_artist):
 
 
 class LyricsMatchSafetyTests(unittest.TestCase):
+    def test_pure_word_timing_helpers_are_explicitly_nonisolated(self):
+        model = (ROOT / 'Sonivo/lyricsmodel.swift').read_text()
+        self.assertIn('nonisolated var hasRealWordTimings', model)
+        self.assertIn('nonisolated var hasDynamicWordTimings', model)
+        self.assertIn('nonisolated func effectiveWords', model)
+
+    def test_yandex_version_key_has_an_encodable_stored_property(self):
+        model = (ROOT / 'Sonivo/yandexmusicservice.swift').read_text()
+        item = model.split('struct YMTrackItem:', 1)[1].split('struct YMAlbumItem:', 1)[0]
+        self.assertIn('let version: String?', item)
+        self.assertIn('version = try? c.decode(String.self, forKey: .version)', item)
+        self.assertNotIn('let version = try?', item)
+
     def test_title_substrings_and_first_hit_fallback_are_rejected(self):
         self.assertFalse(matches('Love', 'Artist', 'Love Story', 'Artist'))
         self.assertFalse(matches('Song', 'Artist', 'Song', 'Other artist'))

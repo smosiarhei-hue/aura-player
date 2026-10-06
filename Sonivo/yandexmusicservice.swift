@@ -132,6 +132,7 @@ final class YandexMusicService {
     struct YMTrackItem: Identifiable, Codable, Equatable, Sendable {
         let id: String
         let title: String
+        let version: String?
         let available: Bool?
         let durationMs: Int
         let coverUri: String?
@@ -152,7 +153,7 @@ final class YandexMusicService {
                 id = UUID().uuidString
             }
             let baseTitle = (try? c.decode(String.self, forKey: .title)) ?? "Без названия"
-            let version = try? c.decode(String.self, forKey: .version)
+            version = try? c.decode(String.self, forKey: .version)
             title = LyricsMatchPolicy.recordingTitle(baseTitle, version: version)
             available = try? c.decode(Bool.self, forKey: .available)
             durationMs = (try? c.decode(Int.self, forKey: .durationMs)) ?? 0
