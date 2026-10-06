@@ -7,6 +7,7 @@ import UIKit
 nonisolated final class MusicHapticsCore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.sonivo.musichaptics", qos: .userInteractive)
     private let stateLock = NSLock()
+    private var visualOverride = false
     private var engine: CHHapticEngine?
     private var isEngineRunning = false
 
@@ -31,6 +32,19 @@ nonisolated final class MusicHapticsCore: @unchecked Sendable {
         queue.async { [weak self] in
             self?.prepareEngine()
         }
+    }
+
+    /// Avoid two competing haptic patterns during the fullscreen shader transition.
+    func setVisualOverride(_ active: Bool) {
+        stateLock.lock()
+        visualOverride = active
+        stateLock.unlock()
+    }
+
+    private var isVisualOverrideActive: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return visualOverride
     }
 
     /// Prepares low-latency CoreHaptics engine
@@ -87,7 +101,7 @@ nonisolated final class MusicHapticsCore: @unchecked Sendable {
     /// Runs synchronously on the audio thread with minimal CPU cycles (pure arithmetic),
     /// and dispatches haptic triggers to the interactive queue.
     func processRawBands(_ values: [Float]) {
-        guard values.count >= 32 else { return }
+        guard values.count >= 32, !isVisualOverrideActive else { return }
         guard UserDefaults.standard.bool(forKey: "settings.musicHaptics") else { return }
 
         // 1. Compute instantaneous band energies (normalized 0...1)
@@ -173,7 +187,7 @@ nonisolated final class MusicHapticsCore: @unchecked Sendable {
 
     /// Triggers distinct, physically separated Taptic Engine waveforms
     private func fireEvents(kick: Float?, hiHat: Float?, bass: Float?) {
-        guard ensureEngineStarted(), let engine else { return }
+        guard !isVisualOverrideActive, ensureEngineStarted(), let engine else { return }
         var events = [CHHapticEvent]()
 
         // A. Kick Drum Hit (Deep, Solid Mechanical Thump in the center of the palm)

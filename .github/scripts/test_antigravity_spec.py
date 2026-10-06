@@ -45,15 +45,17 @@ class AntigravitySpecTests(unittest.TestCase):
         # Main screen lifecycle check
         self.assertIn("isOnMainScreen", content)
 
-    def test_core_haptics_two_phase_pattern(self):
-        content = self.swift_manager.read_text(encoding="utf-8")
-        # Continuous ramp 0..120ms with 0.2 to 0.8
-        self.assertIn("CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.2)", content)
-        self.assertIn("CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)", content)
-        self.assertIn("value: 0.8", content)
-        # Transient click at 120ms with 1.0 and 0.9 sharpness
-        self.assertIn("CHHapticEventParameter(parameterID: .hapticIntensity, value: 1.0)", content)
-        self.assertIn("CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.9)", content)
+    def test_shader_haptics_share_physical_envelope(self):
+        content = self.shake_overlay.read_text(encoding="utf-8")
+        manager = self.swift_manager.read_text(encoding="utf-8")
+        self.assertIn("ShaderImpulseTimeline.envelope(at: elapsed)", content)
+        self.assertIn("ShaderImpulseTimeline.pulse(age) * strength * scale", content)
+        self.assertIn("CHHapticParameterCurve", content)
+        self.assertIn("engine.currentTime + 0.035", content)
+        self.assertIn("CACurrentMediaTime() + 0.035", content)
+        self.assertNotIn("playAntigravityImpulse", manager)
+        self.assertNotIn("withAnimation", manager)
+        self.assertNotIn("isCardsFlipped", manager)
 
     def test_audio_crossfade_timing(self):
         content = self.swift_manager.read_text(encoding="utf-8")
@@ -64,11 +66,13 @@ class AntigravitySpecTests(unittest.TestCase):
 
     def test_metal_shader_signature_and_logic(self):
         content = self.metal_shader.read_text(encoding="utf-8")
-        self.assertIn("[[ stitchable ]] half4 antigravityVortex", content)
-        self.assertIn("vortexAngle", content)
-        self.assertIn("distortionStrength", content)
-        self.assertIn("colorShift", content)
-        self.assertIn("neonAccent", content)
+        self.assertIn("[[ stitchable ]] half4 radialShaderAnimation", content)
+        self.assertIn("fract(t - 0.01f * float(j)", content)
+        self.assertIn("lineWidth * float(i * i)", content)
+        self.assertIn("floor(diagonal / 0.2f)", content)
+        self.assertIn("max(pixelWidth, distance)", content)
+        self.assertIn("color / (1.0f + color)", content)
+        self.assertNotIn("half4 antigravityVortex", content)
 
     def test_hero_view_has_no_local_shake_animation_or_yellow(self):
         content = self.hero_view.read_text(encoding="utf-8")
@@ -121,19 +125,18 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertNotIn("sourceName", inline_stage)
         self.assertNotIn("Источник:", dynamic_stage)
 
-    def test_vertical_wave_120hz_and_app_colors(self):
+    def test_fullscreen_shader_replaces_all_old_shake_visuals(self):
         content = self.shake_overlay.read_text(encoding="utf-8")
-        # 120 Hz ProMotion timeline
-        self.assertIn("1.0 / 120.0", content)
-        self.assertIn("TimelineView", content)
-        # Vertical sweep calculations
-        self.assertIn("yCrest", content)
-        # No signature yellow
-        self.assertNotIn("#FBE029", content)
-        # The sweep follows the accent selected in Settings and respects Reduce Motion.
-        self.assertIn("palette.first ?? SN.accent", content)
-        self.assertIn("palette.dropFirst().first ?? SN.flame", content)
+        home = self.home_view.read_text(encoding="utf-8")
+        self.assertIn("ShaderShakeOverlayView(", home)
+        self.assertNotIn("WaveShakeOverlayView(", home)
+        self.assertNotIn("handleSystemShakeNotification()", home)
+        for old in ("yCrest", "liquidSweep", "drawDroplets", "drawCausticCrest", "water.waves"):
+            self.assertNotIn(old, content)
+        self.assertIn("ShaderLibrary.radialShaderAnimation", content)
+        self.assertIn("UIScreen.main.maximumFramesPerSecond", content)
         self.assertIn("accessibilityReduceMotion", content)
+        self.assertIn("ignoresSafeArea", content)
 
     def test_home_view_guards(self):
         content = self.home_view.read_text(encoding="utf-8")

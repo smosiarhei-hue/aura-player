@@ -104,8 +104,8 @@ struct SonivoHomeRedesignedView: View {
                 }
                 .allowsHitTesting(false)
 
-                // Полноэкранная жидкостная анимация волны при встряхивании телефона
-                WaveShakeOverlayView(
+                // Fullscreen native port of the supplied ShaderAnimation; no liquid sweep.
+                ShaderShakeOverlayView(
                     isActive: showShakeOverlay,
                     triggerCount: shakeTriggerCount,
                     palette: shakeWavePalette,
@@ -130,7 +130,6 @@ struct SonivoHomeRedesignedView: View {
             .onChange(of: showPlayer) { _, _ in updateAntigravityLifecycle(isOnMain: true) }
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShakeNotification)) { _ in
                 guard scenePhase == .active && !showPlayer && !showSettings && !showAIAssistant else { return }
-                antigravity.handleSystemShakeNotification()
                 triggerShakeWave()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
@@ -360,22 +359,23 @@ struct SonivoHomeRedesignedView: View {
 
     /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
     private func triggerShakeWave(forceDiscover: Bool = true) {
-        guard scenePhase == .active && !showPlayer && !showSettings else { return }
+        guard scenePhase == .active && !showPlayer && !showSettings && !showAIAssistant,
+              antigravity.phase == .idle, !showShakeOverlay else { return }
 
         let now = Date().timeIntervalSince1970
-        guard now - lastShakeTimestamp > 1.2 else { return }
+        guard now - lastShakeTimestamp > ShaderImpulseTimeline.duration else { return }
         lastShakeTimestamp = now
 
-        // 1. Запуск кинетического перехода «Антигравити» (CoreHaptics, вихрь, 3D-кувырок, аудио-кроссфейд)
+        // Queue refresh only; visual feedback is owned by the shader overlay.
         antigravity.triggerShift(forceDiscover: forceDiscover)
 
-        // 2. Запуск только полноэкранной вертикальной жидкостной анимации
+        // Start one shader timeline shared with CoreHaptics.
         shakeTriggerCount += 1
         showShakeOverlay = true
 
         // 3. Логика HUD
         if forceDiscover || waveStore.diversity != .discover {
-            shakeHUDMessage = "Антигравити!"
+            shakeHUDMessage = "Новый поток"
             shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
         } else {
             shakeHUDMessage = "Поток обновлен!"
@@ -389,7 +389,7 @@ struct SonivoHomeRedesignedView: View {
     private func updateAntigravityLifecycle(isOnMain: Bool = true) {
         antigravity.updateLifecycle(
             isAppActive: scenePhase == .active,
-            isModalActive: showSettings || showPlayer,
+            isModalActive: showSettings || showPlayer || showAIAssistant,
             isOnMainScreen: isOnMain
         )
     }

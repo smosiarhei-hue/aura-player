@@ -1,45 +1,35 @@
-// Path: Sonivo/AntigravityVortex.metal
-// Шейдер кинетического вихря «Антигравити» для экрана «Моя волна» (iOS 26+)
-
+// Native Metal port of the user's Three.js ShaderAnimation fragment shader.
+// Legacy filename retained; the old antigravity vortex implementation is removed.
 #include <metal_stdlib>
 #include <SwiftUI/SwiftUI_Metal.h>
 using namespace metal;
 
-[[ stitchable ]] half4 antigravityVortex(
-    float2 position,
-    half4 currentColor,
-    float4 boundingRect,
-    float distortionStrength,
-    float vortexAngle,
-    float colorShift,
-    half4 neonAccent
+[[ stitchable ]] half4 radialShaderAnimation(
+    float2 position, half4 currentColor, float4 bounds, float elapsed, float impulse
 ) {
-    float minDim = min(boundingRect.z, boundingRect.w);
-    if (minDim <= 0.0) { return currentColor; }
-
-    // Нормализованные координаты [-1, 1] относительно центра экрана
-    float2 center = boundingRect.xy + 0.5 * boundingRect.zw;
-    float2 uv = (position - center) / (minDim * 0.5);
-    float r = length(uv);
-    float angle = atan2(uv.y, uv.x);
-
-    // Спиральное закручивание вихря (Swirl vortex)
-    float swirl = (1.0 - smoothstep(0.0, 1.8, r)) * vortexAngle * distortionStrength;
-    float twistedAngle = angle + swirl;
-
-    // Световые неоновые всполохи в вихре
-    float tendrils = sin(twistedAngle * 5.0) * cos(twistedAngle * 3.0 + r * 4.0);
-    tendrils = pow(max(0.0, tendrils * 0.5 + 0.5), 2.5) * distortionStrength;
-
-    // Спектральный переход: дымчато-серый -> угольно-черный
-    half4 smokyGray = half4(0.24, 0.25, 0.28, 1.0);
-    half4 charcoalBlack = half4(0.04, 0.04, 0.06, 1.0);
-    half4 baseBackground = mix(smokyGray, charcoalBlack, half(clamp(colorShift, 0.0f, 1.0f)));
-
-    // Всполохи неона в цветах текущего трека
-    half4 neonBursts = neonAccent * half(tendrils * 1.5);
-    half4 finalColor = baseBackground + neonBursts;
-    finalColor.a = 1.0;
-
-    return finalColor;
+    float minDim = max(1.0f, min(bounds.z, bounds.w));
+    // Match WebGL's bottom-up gl_FragCoord and normalize for every screen aspect.
+    float2 pixel = position - bounds.xy;
+    pixel.y = bounds.w - pixel.y;
+    float2 uv = (pixel * 2.0f - bounds.zw) / minDim;
+    // Compression/release affects the whole field, not the artwork's contour.
+    uv /= (1.0f + clamp(impulse, 0.0f, 1.0f) * 0.20f);
+    float t = elapsed * 0.30f;
+    float lineWidth = 0.002f;
+    float3 color = float3(0.0f);
+    for (int j = 0; j < 3; j++) {
+        for (int i = 0; i < 5; i++) {
+            // GLSL mod is floor-based (Metal fmod differs for negative values).
+            float diagonal = uv.x + uv.y;
+            float grid = diagonal - 0.2f * floor(diagonal / 0.2f);
+            float distance = abs(fract(t - 0.01f * float(j) + float(i) * 0.01f)
+                                 * 5.0f - length(uv) + grid);
+            // Finite denominator prevents white singularities/NaNs in the reference.
+            float pixelWidth = 1.2f / minDim;
+            color[j] += lineWidth * float(i * i) / max(pixelWidth, distance);
+        }
+    }
+    color *= 0.32f + clamp(impulse, 0.0f, 1.0f) * 0.22f;
+    color = color / (1.0f + color); // bounded radiance; no full-screen strobe
+    return half4(half3(color), 1.0h);
 }
