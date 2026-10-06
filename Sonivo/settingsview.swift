@@ -333,6 +333,16 @@ struct SettingsView: View {
                     Toggle("Вибрация при перемотке", isOn: $settings.scrubHapticsEnabled).tint(settings.accentColor)
                 }
 
+                Section("Дизайн текста песен") {
+                    Picker("Оформление", selection: $settings.lyricsDesign) {
+                        ForEach(LyricsDesign.allCases) { design in
+                            Text(design.title).tag(design)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    LyricsDesignPreview(design: settings.lyricsDesign)
+                }
+
                 Section {
                     Toggle("Apple Neural Engine", isOn: $settings.isNeuralEngineEnabled)
                         .tint(settings.accentColor)

@@ -620,7 +620,11 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(.white.opacity(0.70))
                 Spacer()
             } else if let lyrics, !lyrics.lines.isEmpty {
-                if lyrics.hasDynamicWordTimings {
+                if settings.lyricsDesign == .staggered {
+                    StaggeredLyricsView(lyrics: lyrics, player: player, showsSource: false)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .offset(y: -textLift)
+                } else if lyrics.hasDynamicWordTimings {
                     KineticLyricsView(
                         phrases: cachedPhrases.isEmpty ? LyricPhrase.from(lines: lyrics.lines) : cachedPhrases,
                         currentTime: .constant(playbackTime),
@@ -1605,6 +1609,17 @@ struct CoverLyricsScrollView: View {
     }
 
     var body: some View {
+        Group {
+            if settings.lyricsDesign == .staggered {
+                StaggeredLyricsView(lyrics: lyrics, player: player, fontSize: 28)
+                    .frame(maxWidth: side, maxHeight: side)
+            } else {
+                classicBody
+            }
+        }
+    }
+
+    private var classicBody: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .center, spacing: 26) {

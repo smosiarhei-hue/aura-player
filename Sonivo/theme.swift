@@ -138,6 +138,18 @@ enum MusicHapticsIntensity: String, CaseIterable, Identifiable, Codable, Sendabl
     }
 }
 
+enum LyricsDesign: String, CaseIterable, Identifiable {
+    case classic
+    case staggered
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .classic: "Классический"
+        case .staggered: "Staggered — по словам"
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class SettingsStore {
@@ -149,6 +161,10 @@ final class SettingsStore {
     var musicHapticsEnabled: Bool { didSet { defaults.set(musicHapticsEnabled, forKey: "settings.musicHaptics") } }
     var musicHapticsIntensity: MusicHapticsIntensity {
         didSet { defaults.set(musicHapticsIntensity.rawValue, forKey: "settings.musicHapticsIntensity") }
+    }
+
+    var lyricsDesign: LyricsDesign {
+        didSet { defaults.set(lyricsDesign.rawValue, forKey: "lyrics.design") }
     }
 
     // Karaoke lyrics & AI alignment
@@ -166,6 +182,7 @@ final class SettingsStore {
         musicHapticsIntensity = MusicHapticsIntensity(
             rawValue: defaults.string(forKey: "settings.musicHapticsIntensity") ?? ""
         ) ?? .strong
+        lyricsDesign = LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design") ?? "") ?? .classic
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
         // Full-track on-device transcription downloads the stream first.

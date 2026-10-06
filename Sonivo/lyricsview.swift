@@ -24,6 +24,9 @@ struct LyricsView: View {
                        !lyricsTitle.localizedCaseInsensitiveContains(currentTrack.title) {
                         // Title mismatch guard during track transition
                         SonivoLoadingState(title: "Загрузка текста…")
+                    } else if settings.lyricsDesign == .staggered {
+                        StaggeredLyricsView(lyrics: lyrics, player: player,
+                            onEditLyrics: { showAddCustomLyrics = true })
                     } else if lyrics.isSynchronized {
                         if lyrics.hasDynamicWordTimings {
                             DynamicWordLyrics(lyrics: lyrics, player: player)
