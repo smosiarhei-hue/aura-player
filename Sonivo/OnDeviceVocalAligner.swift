@@ -179,6 +179,7 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
         guard let localURL = await resolveLocalAudioURL(for: track) else {
             return nil
         }
+        defer { removeGeneratedTemporaryAudioIfNeeded(localURL) }
 
         let audioDuration = max(track.duration, (try? await AVURLAsset(url: localURL).load(.duration).seconds) ?? 180.0)
 
@@ -218,6 +219,7 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
         guard await SettingsStore.shared.isNeuralEngineEnabled else { return nil }
         guard await ensureAuthorization() else { return nil }
         guard let localURL = await resolveLocalAudioURL(for: track) else { return nil }
+        defer { removeGeneratedTemporaryAudioIfNeeded(localURL) }
 
         let lang = detectLanguage(from: "\(track.title) \(track.artist)")
         let locale = Locale(identifier: lang)
@@ -729,6 +731,15 @@ final class OnDeviceVocalAligner: @unchecked Sendable {
         }
 
         return nil
+    }
+
+    private func removeGeneratedTemporaryAudioIfNeeded(_ url: URL) {
+        let temp = FileManager.default.temporaryDirectory.standardizedFileURL.path
+        let candidate = url.standardizedFileURL
+        let name = candidate.lastPathComponent
+        guard candidate.path.hasPrefix(temp),
+              name.hasPrefix("ym_") || name.hasPrefix("stream_") else { return }
+        try? FileManager.default.removeItem(at: candidate)
     }
 
     private func normalize(_ text: String) -> String {

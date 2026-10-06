@@ -168,7 +168,9 @@ final class SettingsStore {
         ) ?? .strong
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
-        isNeuralEngineEnabled = defaults.object(forKey: "lyrics.neuralEngineEnabled") as? Bool ?? true
+        // Full-track on-device transcription downloads the stream first.
+        // Keep it opt-in so ordinary playback never consumes storage silently.
+        isNeuralEngineEnabled = defaults.object(forKey: "lyrics.neuralEngineEnabled") as? Bool ?? false
     }
 }
 

@@ -28,11 +28,12 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         # Do not deactivate audio session if queue is active
         self.assertIn("currentTrack == nil", content)
 
-    def test_instant_eq_stream_precaching_and_migration(self):
+    def test_eq_stream_migration_is_explicit_and_never_precached(self):
         content = self.playercore.read_text(encoding="utf-8")
-        # Precache function exists
-        self.assertIn("func precacheStream(", content)
-        # Immediate migration option
+        # Ordinary listening must not download every complete track.
+        self.assertNotIn("func precacheStream(", content)
+        self.assertIn("Ordinary playback stays streaming-only", content)
+        # Native migration remains available after an explicit EQ action.
         self.assertIn("scheduleStreamMigrationIfNeeded(immediate: true)", content)
         self.assertIn("func scheduleStreamMigrationIfNeeded(immediate: Bool = false)", content)
 

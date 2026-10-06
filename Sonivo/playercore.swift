@@ -125,6 +125,11 @@ final class PlayerCore {
             guard eqEnabled != oldValue else { return }
             applyEQ()
             defaults.set(eqEnabled, forKey: Self.eqEnabledKey)
+            // A complete stream may be downloaded only after the user
+            // explicitly enables processing that requires AVAudioEngine.
+            if eqEnabled {
+                scheduleStreamMigrationIfNeeded(immediate: true)
+            }
         }
     }
 
@@ -140,6 +145,9 @@ final class PlayerCore {
             }
             applyEQ()
             scheduleSaveEQ()
+            if eqEnabled {
+                scheduleStreamMigrationIfNeeded()
+            }
         }
     }
 
@@ -342,6 +350,7 @@ final class PlayerCore {
         activePlayer = playerA
         activeStreamingPlayer = streamingPlayerA
         idleStreamingPlayer = streamingPlayerB
+        removeLegacyUnboundedStreamCacheIfNeeded()
         configureSession()
         setupAudioEngine()
         setupStreamingPlayer()
@@ -349,6 +358,38 @@ final class PlayerCore {
         loadSettings()
         setupRemoteCommandCenter()
         UIApplication.shared.beginReceivingRemoteControlEvents()
+    }
+
+    private func removeLegacyUnboundedStreamCacheIfNeeded() {
+        let migrationKey = "storage.removed-unbounded-stream-cache.v1"
+        guard !defaults.bool(forKey: migrationKey) else { return }
+
+        let manager = FileManager.default
+        let documents = documentsDirectoryURL()
+        if let files = try? manager.contentsOfDirectory(
+            at: documents,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for file in files where file.lastPathComponent.hasPrefix("vocal_") {
+                try? manager.removeItem(at: file)
+            }
+        }
+
+        if let temporaryFiles = try? manager.contentsOfDirectory(
+            at: manager.temporaryDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for file in temporaryFiles {
+                let name = file.lastPathComponent
+                if name.hasPrefix("ym_") || name.hasPrefix("stream_") {
+                    try? manager.removeItem(at: file)
+                }
+            }
+        }
+
+        defaults.set(true, forKey: migrationKey)
     }
 
     /// `AVAudioSession` category and activation are owned exclusively by
@@ -364,37 +405,6 @@ final class PlayerCore {
     func releaseAudioSessionIfIdle() {
         guard !isPlaying, !isTransitioning, !transitionScheduled, currentTrack == nil else { return }
         PlaybackAudioSessionCoordinator.shared.deactivateWhenIdle()
-    }
-
-    private var activePrecacheTask: Task<Void, Never>?
-    private var precachedTrackId: UUID?
-
-    func precacheStream(_ track: Track, url: URL) {
-        guard precachedTrackId != track.id else { return }
-        precachedTrackId = track.id
-        activePrecacheTask?.cancel()
-        activePrecacheTask = Task.detached(priority: .utility) { [weak self] in
-            let ext = (url.pathExtension.isEmpty ? "mp3" : url.pathExtension)
-            let fileName = "vocal_\(track.id.uuidString).\(ext)"
-            let localDest = documentsDirectoryURL().appendingPathComponent(fileName)
-            if !FileManager.default.fileExists(atPath: localDest.path) {
-                do {
-                    let (tempLocation, _) = try await URLSession.shared.download(from: url)
-                    try? FileManager.default.removeItem(at: localDest)
-                    try FileManager.default.moveItem(at: tempLocation, to: localDest)
-                    SonivoDiagnostics.log("[PlayerCore] Stream precached to local: \(fileName)", tag: "AUDIO")
-                } catch {
-                    return
-                }
-            }
-
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                if self.eqEnabled && self.isUsingStreamPlayer && self.currentTrack?.id == track.id && self.isPlaying {
-                    self.scheduleStreamMigrationIfNeeded(immediate: true)
-                }
-            }
-        }
     }
 
     private func setupStreamingPlayer() {
@@ -1408,10 +1418,8 @@ final class PlayerCore {
         self.lastNowPlayingSync = nil
         self.updateNowPlayingInfo()
 
-        // Proactive background caching for instant zero-latency EQ cutover
-        if let current = currentTrack {
-            precacheStream(current, url: url)
-        }
+        // Ordinary playback stays streaming-only. Full-file downloads happen
+        // only after an explicit EQ action that needs the native audio graph.
     }
 
     func findLocalOrCachedAudioFile(for track: Track) -> URL? {
