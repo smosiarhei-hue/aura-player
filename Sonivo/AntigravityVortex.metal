@@ -31,5 +31,7 @@ using namespace metal;
     }
     color *= 0.32f + clamp(impulse, 0.0f, 1.0f) * 0.22f;
     color = color / (1.0f + color); // bounded radiance; no full-screen strobe
-    return half4(half3(color), 1.0h);
+    // Transparent between the rings. SwiftUI colorEffect requires premultiplied RGB.
+    float glowAlpha = clamp(max(color.r, max(color.g, color.b)), 0.0f, 1.0f);
+    return half4(half3(color * glowAlpha), half(glowAlpha));
 }

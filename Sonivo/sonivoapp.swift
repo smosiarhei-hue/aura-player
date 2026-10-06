@@ -138,7 +138,7 @@ struct NativeMiniPlayer: View {
             HStack(spacing: 8) {
                 Button(action: open) {
                     HStack(spacing: 10) {
-                        MiniArtworkPulse(track: track, isPlaying: isPlaying).frame(width: 44, height: 44).clipped()
+                        MiniPlayerArtwork(track: track)
                             .matchedTransitionSource(id: RootView.playerZoomID, in: zoomNamespace)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(track?.title ?? "").font(SN.rounded(.headline, .semibold)).foregroundStyle(SN.ink)
@@ -172,7 +172,7 @@ struct NativeMiniPlayer: View {
                 ProgressView(value: playbackFraction).progressViewStyle(.linear).tint(SN.ink)
             }.scaleEffect(x: 1, y: 0.55)
         }
-        .frame(maxWidth: .infinity).padding(.leading, 10).padding(.trailing, 6).padding(.vertical, 3)
+        .frame(maxWidth: .infinity).padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 4)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1).contentShape(Rectangle())
         .simultaneousGesture(DragGesture(minimumDistance: 10).onEnded { if $0.translation.height < -20 { open() } })
         .task { await player.observeTimeline() }
@@ -182,19 +182,50 @@ struct NativeMiniPlayer: View {
     private func nextTrack() { Haptics.tap(.light); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.next() }
 }
 
-struct MiniArtworkPulse: View {
+/// A stable, full-cover thumbnail. It never pulses, shrinks, or crops the source image.
+struct MiniPlayerArtwork: View {
     let track: Track?
-    let isPlaying: Bool
-    @ScaledMetric(relativeTo: .body) private var artworkSide: CGFloat = 40
-    private var side: CGFloat { min(40, max(36, artworkSide)) }
+    private let side: CGFloat = 44
+
     var body: some View {
-        SmallArtwork(track: track, size: side).frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(.white.opacity(isPlaying ? 0.35 : 0.15), lineWidth: 0.5) }
-            .scaleEffect(isPlaying ? 1.0 : 0.96)
-            .animation(SN.fastSpring, value: isPlaying)
-            .frame(width: 44, height: 44).clipped().compositingGroup()
+        Group {
+            if let track, let image = LibraryStore.cachedArtworkImage(for: track) {
+                fittedArtwork(Image(uiImage: image))
+            } else if let cover = track?.coverURL, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        fittedArtwork(image)
+                    } else {
+                        placeholder
+                    }
+                }
+                .id(track?.id)
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: side, height: side)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .fixedSize()
+        .accessibilityHidden(true)
+    }
+
+    private func fittedArtwork(_ image: Image) -> some View {
+        image.resizable()
+            .scaledToFit()
+            .frame(width: side, height: side)
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(colors: track?.palette ?? [SN.accent, SN.flame],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .frame(width: side, height: side)
     }
 }
 

@@ -124,17 +124,19 @@ struct ShaderShakeOverlayView: View {
             if isActive && scenePhase == .active {
                 if reduceMotion {
                     // Static alternative: no flashing rings or vibration.
-                    Color.black.opacity(0.75)
+                    Color.clear
                 } else {
                     TimelineView(.animation(minimumInterval: interval, paused: !isActive)) { _ in
                         let elapsed = max(0, CACurrentMediaTime() - epoch)
                         let impulse = ShaderImpulseTimeline.envelope(at: elapsed)
-                        Color.black
+                        Color.white
                             .visualEffect { content, _ in
                                 content.colorEffect(ShaderLibrary.radialShaderAnimation(
                                     .boundingRect, .float(Float(elapsed)), .float(impulse)
                                 ))
                             }
+                            // Screen blending only adds light; it cannot darken content below.
+                            .blendMode(.screen)
                             .opacity(ShaderImpulseTimeline.visibility(at: elapsed) * 0.94)
                     }
                 }
