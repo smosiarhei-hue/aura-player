@@ -111,9 +111,10 @@ float4 evalNeuralFloat(float2 uvSample, constant BeatWaveUniforms &u, texture2d<
   // Edge feathering to blend seamlessly with UI container
   float fX = max(0.04, 0.14 * uEdgeFeather);
   float fYTop = 0.015; // Fill behind Dynamic Island; only the physical top edge fades.
-  float fYBot = max(0.05, 0.18 * uEdgeFeather);
+  float fYBot = max(0.03, 0.12 * uEdgeFeather); // Original physical LOWER fade.
   float featherX = smoothstep(0.0, fX, uvSample.x) * (1.0 - smoothstep(1.0 - fX, 1.0, uvSample.x));
-  float featherY = smoothstep(0.0, fYTop, uvSample.y) * (1.0 - smoothstep(1.0 - fYBot, 1.0, uvSample.y));
+  // Metal clip +Y is screen TOP: this vertex shader maps it to uv.y=1.
+  float featherY = smoothstep(0.0, fYBot, uvSample.y) * (1.0 - smoothstep(1.0 - fYTop, 1.0, uvSample.y));
 
   col = pow(max(col, 0.0), float3(0.92)) * 1.05;
   // Balanced baseline presence so deep sub-bass is always visibly clean and alluring

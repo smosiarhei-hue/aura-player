@@ -120,6 +120,14 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertEqual(wave.count('.clipped()'),1)
         self.assertNotIn('UIScreen.main',h)
 
+    def test_metal_top_uv_is_one_and_lower_feather_is_preserved(self):
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        self.assertIn('(p+1)*0.5',m)
+        self.assertIn('float fYTop = 0.015',m)
+        self.assertIn('float fYBot = max(0.03, 0.12 * uEdgeFeather)',m)
+        self.assertIn('smoothstep(0.0, fYBot, uvSample.y)',m)
+        self.assertIn('smoothstep(1.0 - fYTop, 1.0, uvSample.y)',m)
+
     def test_occupied_fft_bins_drive_all_five_features(self):
         s=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
         for name in ['subBass','bass','lowMids','mids','highs']:
