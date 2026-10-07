@@ -58,7 +58,9 @@ class PlaybackStabilityTests(unittest.TestCase):
     def test_completion_tokens_survive_pause_but_not_rescheduling(self):
         local = block('private func scheduleLocalSegment', 'private func startStream')
         self.assertIn('localSegmentTokens[key] == segmentToken', local)
-        self.assertIn('self.activePlayer === node', local)
+        self.assertIn('self.activePlayer === scheduledNode', local)
+        self.assertNotIn('weak node', local)
+        self.assertIn('ObjectIdentifier(scheduledNode) == key', local)
         self.assertNotIn('self.generation == token', local)
         pause = block('func pause()', 'func resume()')
         self.assertNotIn('localSegmentTokens.removeAll', pause)
@@ -113,6 +115,8 @@ class PlaybackStabilityTests(unittest.TestCase):
     def test_media_reset_rebuilds_objects_without_auto_resume(self):
         reset = block('func handleMediaServicesReset', 'func handleAudioRouteChange')
         self.assertIn('engine = AVAudioEngine()', reset)
+        self.assertIn('@ObservationIgnored private var playerA', CORE)
+        self.assertIn('@ObservationIgnored private var streamingPlayerA', CORE)
         self.assertIn('streamingPlayerA = AVPlayer()', reset)
         self.assertIn('player.removeTimeObserver(token)', reset)
         self.assertNotIn('resume()', reset)

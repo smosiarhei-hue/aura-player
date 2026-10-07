@@ -307,8 +307,8 @@ final class PlayerCore {
     private var lastRemoteCommand: (name: String, date: Date)?
     private var applicationIsActive = true
 
-    private var streamingPlayerA = AVPlayer()
-    private var streamingPlayerB = AVPlayer()
+    @ObservationIgnored private var streamingPlayerA = AVPlayer()
+    @ObservationIgnored private var streamingPlayerB = AVPlayer()
     private var activeStreamingPlayer: AVPlayer
     private var idleStreamingPlayer: AVPlayer
     var streamingPlayer: AVPlayer { activeStreamingPlayer }
@@ -325,25 +325,25 @@ final class PlayerCore {
     private var transitionScheduledAt: Date? = nil
     private var transitionPausedAt: Date? = nil
 
-    private var engine = AVAudioEngine()
-    private var playerA = AVAudioPlayerNode()
-    private var playerB = AVAudioPlayerNode()
+    @ObservationIgnored private var engine = AVAudioEngine()
+    @ObservationIgnored private var playerA = AVAudioPlayerNode()
+    @ObservationIgnored private var playerB = AVAudioPlayerNode()
     private var activePlayer: AVAudioPlayerNode
-    private var timePitchA = AVAudioUnitTimePitch()
-    private var timePitchB = AVAudioUnitTimePitch()
-    private var reverbA = AVAudioUnitReverb()
-    private var reverbB = AVAudioUnitReverb()
-    private var eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
-    private var eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    @ObservationIgnored private var timePitchA = AVAudioUnitTimePitch()
+    @ObservationIgnored private var timePitchB = AVAudioUnitTimePitch()
+    @ObservationIgnored private var reverbA = AVAudioUnitReverb()
+    @ObservationIgnored private var reverbB = AVAudioUnitReverb()
+    @ObservationIgnored private var eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    @ObservationIgnored private var eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
 
-    private var looperPlayer = AVAudioPlayerNode()
-    private var looperTimePitch = AVAudioUnitTimePitch()
-    private var looperEQ = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
-    private var looperReverb = AVAudioUnitReverb()
+    @ObservationIgnored private var looperPlayer = AVAudioPlayerNode()
+    @ObservationIgnored private var looperTimePitch = AVAudioUnitTimePitch()
+    @ObservationIgnored private var looperEQ = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    @ObservationIgnored private var looperReverb = AVAudioUnitReverb()
     private var loopBuffer: AVAudioPCMBuffer?
     private var isLoopActive = false
 
-    private var vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
+    @ObservationIgnored private var vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
     private var activeStreamURL: URL?
 
     private let outputLimiter = AVAudioUnitEffect(
@@ -1381,16 +1381,21 @@ final class PlayerCore {
     private func scheduleLocalSegment(_ file: AVAudioFile, on node: AVAudioPlayerNode, at seconds: Double) {
         guard file.length > 0 else { return }
         let key = ObjectIdentifier(node)
+        let isPlayerA = node === playerA
         let segmentToken = UUID()
         localSegmentTokens[key] = segmentToken
         let rate = file.processingFormat.sampleRate
         let offset = max(0, min(AVAudioFramePosition(seconds * rate), file.length - 1))
         let count = AVAudioFrameCount(min(file.length - offset, AVAudioFramePosition(UInt32.max)))
         node.scheduleSegment(file, startingFrame: offset, frameCount: count, at: nil,
-                             completionCallbackType: .dataPlayedBack) { [weak self, weak node] _ in
+                             completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let node, self.localSegmentTokens[key] == segmentToken,
-                      self.activePlayer === node, !self.isUsingStreamPlayer, self.isPlaying else { return }
+                guard let self else { return }
+                // Send only immutable IDs across the audio callback; resolve nodes on MainActor.
+                let scheduledNode = isPlayerA ? self.playerA : self.playerB
+                guard self.localSegmentTokens[key] == segmentToken,
+                      ObjectIdentifier(scheduledNode) == key, self.activePlayer === scheduledNode,
+                      !self.isUsingStreamPlayer, self.isPlaying else { return }
                 self.handleTrackFinish()
             }
         }
