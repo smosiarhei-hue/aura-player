@@ -44,7 +44,9 @@ class BeatWaveNativeTests(unittest.TestCase):
 
     def test_actual_capture_timestamp_and_single_event(self):
         a=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
-        self.assertIn('beatWaveDetector.process(beatFrame)',a)
+        self.assertIn('beatWaveDetector.process(detectorFrame)',a)
+        self.assertIn('detectorFrame.capturedAt=mediaTime ?? beatFrame.capturedAt',a)
+        self.assertIn('snapshot.observedAt > analyzer.lastResetAt',a)
         self.assertIn('snapshot.beatWaveFrame.capturedAt',a)
         self.assertIn('channel[i] * channel[i]',a)
         h=(ROOT/'Sonivo/MusicHapticsManager.swift').read_text()
@@ -85,7 +87,7 @@ class BeatWaveNativeTests(unittest.TestCase):
             self.assertNotIn(fake,s+r)
         m=(ROOT/'Sonivo/BeatWaveMotion.swift').read_text()
         self.assertIn('first.capturedAt<=cutoff',m)
-        self.assertIn('queue.count>90',m)
+        self.assertIn('queue.count>256',m)
         self.assertIn('let decay: Float = 8',m)
         self.assertIn('(x+coefficient*dt)*attenuation',m)
 
@@ -181,6 +183,42 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertEqual([line.split('var ')[1].split(':')[0] for line in cpu.splitlines() if 'var ' in line],names)
         self.assertEqual([line.split('float4 ')[1].split(';')[0] for line in gpu.splitlines() if 'float4 ' in line],names)
 
+    def test_stream_samples_retain_source_media_timing(self):
+        c=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/StreamAudioProbe.c').read_text()
+        self.assertIn('flagsOut, &sourceRange, framesOut',c)
+        self.assertIn('CMTimeRangeGetEnd(sourceRange)',c)
+        self.assertIn('p->mediaEnd-(PROBE_FRAMES*0.5)/(*sampleRate)',c)
+        self.assertIn('fabs(begin-p->mediaEnd)',c)
+        self.assertIn('SonivoStreamProbeReadTimed',c)
+        stream=(ROOT/'Sonivo/streambeat.swift').read_text()
+        self.assertIn('SonivoStreamProbeReadTimed',stream)
+        self.assertIn('mediaTime.isFinite ? mediaTime : nil',stream)
+        self.assertIn('item.currentTime().seconds',stream)
+        self.assertIn('activeItemID==ObjectIdentifier(item)',stream)
+        self.assertIn('player.timeControlStatus == .playing ? Double(player.rate) : 0',stream)
+        player=(ROOT/'Sonivo/playercore.swift').read_text()
+        self.assertIn('YandexMusicService.shared.getStreamInfo',player)
+        self.assertIn('self.beginStream(info.url, at: seconds, token: token)',player)
+        self.assertIn('isPlaying ? 8 : 200',stream)
+        self.assertNotIn('PlayerCore.shared.progress',stream)
+
+    def test_media_clock_uses_next_display_deadline_without_double_route_delay(self):
+        r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        self.assertIn('link.targetTimestamp-CACurrentMediaTime()',r)
+        self.assertIn('clock.time+displayLead*max(0,clock.rate)',r)
+        media=r.split('if capture.mediaTime != nil',1)[1].split('} else {',1)[0]
+        self.assertIn('presentation.sampleMedia(at: mediaDeadline)',media)
+        self.assertNotIn('estimatedOutputDelay:',media)
+        self.assertIn('clock.rate>0',media)
+        self.assertIn('frame=clock.rate>0 ? (presentation.sampleMedia',media)
+        self.assertIn('clock.time<previousMediaTime-0.02',media)
+        self.assertIn('displayLeadMs',r)
+        local=(ROOT/'Sonivo/playercore.swift').read_text()
+        self.assertIn('AVAudioTime.seconds(forHostTime: time.hostTime)',local)
+        self.assertIn('capturedAt: sampleTime',local)
+        seek=local.split('func seek(to seconds:',1)[1].split('func stopAndClear()',1)[0]
+        self.assertIn('SpectrumAnalyzer.shared.reset()',seek)
+
     def test_occupied_fft_bins_drive_all_five_features(self):
         s=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
         for name in ['subBass','bass','lowMids','mids','highs']:
@@ -254,7 +292,7 @@ check(BeatWaveBandEnergy.mean(values: [1],counts: [0],range: 0..<1)==0,"Empty sp
 var punch=MusicWaveMotion()
 let punchFrame=BeatWaveAudioFrame(subBass: 0.8,bass: 0.7,mids: 0.4,rms: 0.6,kickEnvelope: 1,kickEventID: 1,kickConfidence: 0.8)
 check(punch.advance(delta: 1/120,frame: punchFrame,hasFreshAudio: true),"Kick event missing")
-check(punch.impact>0.2 && punch.impact<0.8,"Kick must have soft, short attack")
+check(punch.impact>=0.8,"Kick must be visible on its first due frame, without a second attack delay")
 check(punch.springPosition>0,"Measured onset must deform immediately")
 for _ in 0..<5 { punch.advance(delta: 1/120,frame: punchFrame,hasFreshAudio: true) }
 check(punch.impact>0.65,"Soft attack must not obscure the kick")
@@ -324,6 +362,26 @@ for y in stride(from: 0,to: 512,by: 19) { for x in stride(from: 0,to: 512,by: 17
     check(abs(Float(packedNoise[i+1])/255-(a+b*0.5)/1.5)<=0.5/255+0.00001,"2 octave archive noise differs")
     check(packedNoise[i+2]==baseNoise[y*512+x] && packedNoise[i+3]==255,"Base noise changed")
 } }
+// Variable UI/poll arrival must not move a predecoded feature's MEDIA deadline.
+for arrival in [100.002,100.010,100.024] {
+    var timed=BeatWavePresentation()
+    timed.push(BeatWaveAudioFrame(capturedAt: arrival,rms: 0.5,kickEventID: 7,mediaTime: 4.500))
+    check(timed.sampleMedia(at: 4.499)==nil,"Future media onset leaked")
+    check(timed.sampleMedia(at: 4.500)?.kickEventID==7,"Arrival jitter shifted the media onset")
+}
+var decodeAhead=BeatWavePresentation()
+decodeAhead.push(BeatWaveAudioFrame(capturedAt: 100,rms: 0.5,kickEventID: 1,mediaTime: 8.0))
+decodeAhead.push(BeatWaveAudioFrame(capturedAt: 100.01,rms: 0.5,kickEventID: 2,mediaTime: 8.5))
+check(decodeAhead.sampleMedia(at: 7.9)==nil,"Decoded-ahead audio played early")
+check(decodeAhead.sampleMedia(at: 8.1)?.kickEventID==1,"Correct audible feature missing")
+check(decodeAhead.sampleMedia(at: 8.51)?.kickEventID==2,"Next audible feature missing")
+check(decodeAhead.sampleMedia(at: 0.1)==nil,"Backward seek replayed a future feature")
+decodeAhead.reset()
+check(decodeAhead.sampleMedia(at: 100)==nil,"Reset retained another track's beat")
+var invalidTime=BeatWavePresentation()
+invalidTime.push(BeatWaveAudioFrame(capturedAt: 1,mediaTime: .nan))
+invalidTime.push(BeatWaveAudioFrame(capturedAt: 2,kickEventID: 3,mediaTime: 1))
+check(invalidTime.sampleMedia(at: 1)?.kickEventID==3,"Invalid timing blocked valid media features")
 print("Beat Waves Swift physics and presentation checks passed")
 '''
         with tempfile.TemporaryDirectory() as d:

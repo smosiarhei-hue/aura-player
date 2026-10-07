@@ -15,6 +15,7 @@ typedef struct {
     size_t next, count;
     unsigned long generation, consumed;
     int supportsFloat;
+    double mediaEnd;
 } Probe;
 
 static void probeInit(MTAudioProcessingTapRef tap, void *info, void **storage) {
@@ -22,6 +23,7 @@ static void probeInit(MTAudioProcessingTapRef tap, void *info, void **storage) {
     Probe *p = calloc(1, sizeof(Probe));
     if (p) {
         atomic_flag_clear(&p->busy);
+        p->mediaEnd=NAN;
         atomic_init(&p->eqReady,0); atomic_init(&p->eqRate,48000);
         SonivoEQInit(&p->eq);
     }
@@ -41,7 +43,7 @@ static void probePrepare(MTAudioProcessingTapRef tap, CMItemCount maxFrames, con
     atomic_store_explicit(&p->eqRate,(unsigned)format->mSampleRate,memory_order_release);
     atomic_store_explicit(&p->eqReady,p->supportsFloat?1:-1,memory_order_release);
     if (atomic_flag_test_and_set_explicit(&p->busy,memory_order_acquire)) return;
-    p->next=p->count=0;
+    p->next=p->count=0; p->mediaEnd=NAN;
     atomic_flag_clear_explicit(&p->busy,memory_order_release);
 }
 static void probeUnprepare(MTAudioProcessingTapRef tap) {
@@ -64,7 +66,8 @@ static void probeProcess(MTAudioProcessingTapRef tap, CMItemCount frames, MTAudi
                          AudioBufferList *buffers, CMItemCount *framesOut, MTAudioProcessingTapFlags *flagsOut) {
     (void)flags;
     // Source decoded by Apple; apply EQ in-place only to supported PCM, preserving channels.
-    OSStatus status = MTAudioProcessingTapGetSourceAudio(tap, frames, buffers, flagsOut, NULL, framesOut);
+    CMTimeRange sourceRange=kCMTimeRangeInvalid;
+    OSStatus status = MTAudioProcessingTapGetSourceAudio(tap, frames, buffers, flagsOut, &sourceRange, framesOut);
     if (status != noErr) { *framesOut = 0; return; }
     Probe *p = MTAudioProcessingTapGetStorage(tap);
     if (!p) return;
@@ -72,6 +75,17 @@ static void probeProcess(MTAudioProcessingTapRef tap, CMItemCount frames, MTAudi
     // Spectrum capture may be skipped; DSP must never be skipped by a UI read lock.
     if (atomic_flag_test_and_set_explicit(&p->busy, memory_order_acquire)) return;
     if (!p->supportsFloat) { atomic_flag_clear_explicit(&p->busy, memory_order_release); return; }
+    double begin=NAN,end=NAN;
+    if(CMTIME_IS_NUMERIC(sourceRange.start) && CMTIME_IS_NUMERIC(sourceRange.duration)) {
+        begin=CMTimeGetSeconds(sourceRange.start);
+        end=CMTimeGetSeconds(CMTimeRangeGetEnd(sourceRange));
+    }
+    double rate=atomic_load_explicit(&p->eqRate,memory_order_acquire);
+    // Never mix pre-seek/gapped samples with a new PCM window.
+    if((flagsOut && (*flagsOut & kMTAudioProcessingTapFlag_StartOfStream)) ||
+       (isfinite(begin) && isfinite(p->mediaEnd) && fabs(begin-p->mediaEnd)>2.0/fmax(1.0,rate))) {
+        p->next=p->count=0;
+    }
     for (CMItemCount frame = 0; frame < *framesOut; frame++) {
         float mono = 0; unsigned channels = 0;
         for (UInt32 b = 0; b < buffers->mNumberBuffers; b++) {
@@ -88,6 +102,7 @@ static void probeProcess(MTAudioProcessingTapRef tap, CMItemCount frames, MTAudi
         p->next = (p->next + 1) % PROBE_FRAMES;
         if (p->count < PROBE_FRAMES) p->count++;
     }
+    p->mediaEnd=end;
     p->generation++;
     atomic_flag_clear_explicit(&p->busy, memory_order_release);
 }
@@ -108,18 +123,24 @@ MTAudioProcessingTapRef SonivoStreamProbeCreate(void) {
         kMTAudioProcessingTapCreationFlag_PostEffects, &tap);
     return result == noErr ? tap : NULL;
 }
-size_t SonivoStreamProbeRead(MTAudioProcessingTapRef tap, float *output, size_t capacity, double *sampleRate) {
+size_t SonivoStreamProbeReadTimed(MTAudioProcessingTapRef tap, float *output, size_t capacity, double *sampleRate, double *mediaTime) {
     Probe *p = MTAudioProcessingTapGetStorage(tap);
     if (!p || capacity < PROBE_FRAMES || atomic_flag_test_and_set_explicit(&p->busy, memory_order_acquire)) return 0;
     size_t count = 0;
     if (p->count == PROBE_FRAMES && p->generation != p->consumed) {
         for (size_t i = 0; i < PROBE_FRAMES; i++) output[i] = p->samples[(p->next + i) % PROBE_FRAMES];
         *sampleRate = atomic_load_explicit(&p->eqRate,memory_order_acquire);
+        if(mediaTime) *mediaTime=isfinite(p->mediaEnd) && *sampleRate>0
+            ? p->mediaEnd-(PROBE_FRAMES*0.5)/(*sampleRate) : NAN;
         p->consumed = p->generation;
         count = PROBE_FRAMES;
     }
     atomic_flag_clear_explicit(&p->busy, memory_order_release);
     return count;
+}
+
+size_t SonivoStreamProbeRead(MTAudioProcessingTapRef tap, float *output, size_t capacity, double *sampleRate) {
+    return SonivoStreamProbeReadTimed(tap,output,capacity,sampleRate,NULL);
 }
 
 void SonivoStreamProbeSetEQ(MTAudioProcessingTapRef tap,const float *gains,size_t count,int enabled) {

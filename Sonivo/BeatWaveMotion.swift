@@ -12,6 +12,7 @@ nonisolated struct BeatWaveAudioFrame: Sendable {
     var kickEnvelope: Float = 0
     var kickEventID: UInt64 = 0
     var kickConfidence: Float = 0
+    var mediaTime: TimeInterval? = nil // Asset/sample clock, independent of polling/UI arrival.
 }
 
 nonisolated struct BeatWaveKickDetector {
@@ -107,7 +108,7 @@ nonisolated struct MusicWaveMotion {
         impact += (targetImpact-impact)*(1-exp(-dt/(targetImpact>impact ? 0.025 : (hasFreshAudio ? 0.30 : 0.20))))
         detail += (targetDetail-detail)*(1-exp(-dt/(targetDetail>detail ? 0.08 : 0.26)))
         // One event, one soft impulse. Critically damped: no bouncing/secondary "ticks".
-        if newKick { springVelocity += 0.75*kickStrength }
+        if newKick { impact=max(impact,kickStrength); springVelocity += 0.75*kickStrength }
         consume(frame.kickEventID)
         // m=1, k=64, c=16. Exact critical solution is stable even after a frame hitch.
         let decay: Float = 8
@@ -138,14 +139,25 @@ nonisolated struct BeatWavePresentation {
     private var latestCapture: TimeInterval = -.infinity
     private var presented = BeatWaveAudioFrame()
     mutating func push(_ frame: BeatWaveAudioFrame) {
-        guard frame.capturedAt > latestCapture else { return }
+        guard frame.capturedAt.isFinite,frame.capturedAt > latestCapture else { return }
+        if let time=frame.mediaTime,!time.isFinite { return }
         latestCapture = frame.capturedAt
         queue.append(frame)
-        if queue.count>90 { queue.removeFirst(queue.count-90) }
+        if queue.count>256 { queue.removeFirst(queue.count-256) }
     }
     mutating func sample(now: TimeInterval, estimatedOutputDelay: TimeInterval) -> BeatWaveAudioFrame {
         let cutoff = now-max(0,min(0.5,estimatedOutputDelay))
         while let first=queue.first, first.capturedAt<=cutoff { presented=queue.removeFirst() }
+        return presented
+    }
+    mutating func sampleMedia(at mediaTime: TimeInterval) -> BeatWaveAudioFrame? {
+        guard mediaTime.isFinite else { return nil }
+        while let first=queue.first {
+            guard let sampleTime=first.mediaTime else { queue.removeFirst(); continue }
+            guard sampleTime<=mediaTime else { break }
+            presented=queue.removeFirst()
+        }
+        guard let sampleTime=presented.mediaTime,sampleTime<=mediaTime else { return nil }
         return presented
     }
     mutating func reset() { queue.removeAll(keepingCapacity: true); latestCapture = -.infinity; presented=BeatWaveAudioFrame() }

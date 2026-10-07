@@ -7,6 +7,11 @@ MTAudioProcessingTapRef _Nullable SonivoStreamProbeCreate(void) CF_RETURNS_RETAI
 size_t SonivoStreamProbeRead(MTAudioProcessingTapRef _Nonnull tap,
                             float * _Nonnull output, size_t capacity,
                             double * _Nonnull sampleRate);
+// Same nonblocking capture, plus the asset time of the 1024-sample Hann-window centre.
+// NAN means the source did not provide valid timing. No invented timestamp.
+size_t SonivoStreamProbeReadTimed(MTAudioProcessingTapRef _Nonnull tap,
+    float * _Nonnull output, size_t capacity, double * _Nonnull sampleRate,
+    double * _Nullable mediaTime);
 // Native-code EQ runs on the PCM that AVPlayer is already decoding; no file cache.
 void SonivoStreamProbeSetEQ(MTAudioProcessingTapRef _Nonnull tap, const float * _Nonnull gains,
                            size_t count, int enabled);

@@ -3,6 +3,7 @@ import AudioToolbox
 import CoreMedia
 import MediaPlayer
 import SwiftUI
+import Darwin
 import UIKit
 import Observation
 import StreamAudioProbe
@@ -1249,6 +1250,7 @@ final class PlayerCore {
         let d = duration
         let clamped = max(0, min(seconds, d))
         progress = clamped
+        SpectrumAnalyzer.shared.reset() // No pre-seek beat may reach the new timeline.
 
         if isUsingStreamPlayer {
             let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
@@ -2469,7 +2471,13 @@ final class PlayerCore {
     nonisolated private static func handleSpectrumTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
         // Spectrum observation must not process vocal DSP a second time.
         // Vocal processing belongs exclusively to the render notify on vocalUnit.
-        SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
+        // AVAudioTime dates the first sample; FFT uses the first 1024 samples of this buffer.
+        let rate=buffer.format.sampleRate
+        let now=Date.timeIntervalSinceReferenceDate
+        let sampleTime: TimeInterval? = time.isHostTimeValid && rate>0
+            ? now+AVAudioTime.seconds(forHostTime: time.hostTime)-AVAudioTime.seconds(forHostTime: mach_absolute_time())+512/rate
+            : nil
+        SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: rate,capturedAt: sampleTime)
     }
 
     func installSpectrumTap() {

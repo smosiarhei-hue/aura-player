@@ -94,3 +94,17 @@ Archive SHA256 9feea4f0f625fe5618a7fd66767a40e0c434d2d2643e1c9a3793fd2747489799.
 Octave noise is baked once into RGB (3/2/1 octaves) using the archive hash, Hermite texture and texel-centre-correct repeat/bilinear samples. Native shader reads it once per strand: per-strand curvature returns without 3 separate octave reads every frame. Grid-point regression tolerance is half one RGBA8 quantization step; off-grid filtered LUT is an approximation, not bit-identical filtering. Geometry/feather stays separate from adaptive pixel resolution.
 
 A bounded kick displacement and musical gain after tone compression keep the actual onset visible. Reduce the overlapping plasma core, keep palette/EDR, single-pass rendering, no blur postprocess and no playback/EQ/download changes. Route alignment is still an estimate, not a phone/AirPods measurement.
+
+## Sample/media-clock alignment revision
+
+Previously the C tap discarded MTAudioProcessingTapGetSourceAudio's timeRangeOut, the DSP stamped the window with polling time, the polling interval was 25 ms and renderer added a generic route delay. This is not sample-time synchronization.
+
+The C tap now retains asset time of the latest 1024-sample window CENTRE (Hann FFT), clears capture across seeks/gaps, and exposes an additive timed reader; the old reader API remains compatible. PCM/EQ processing and nonblocking capture locks are unchanged. Swift preserves source media time; kick detector intervals use media time. Renderer selects due features using the audible AVPlayerItem.currentTime() and rate, with CADisplayLink.targetTimestamp lead for the upcoming frame. It does not apply a second guessed output delay on this media-clock branch. Polling is 8 ms, but retained source timestamps—not polling timestamps—schedule media features. Paused/buffering clocks cannot manufacture an advancing beat.
+
+Local engine tap uses AVAudioTime.hostTime plus the centre of the first 1024 samples. Snapshot observedAt guards reset races independently of sample capturedAt. Seek/reset clears pending features; media queue is bounded to 256 items. First due kick bypasses visual attack smoothing; damped recoil/slow flow and all graphics/palette/EDR remain unchanged. Local clock fallback still uses an output-delay estimate. Logs distinguish clock=media/capture and record feature age and next-display lead.
+
+Remaining limitations: the C capture still exposes the latest window, not a lossless every-hop feature queue; unavailable timestamps fall back to capture timing. A finite FFT window, onset classification, frame duration, GPU presentation and physical Bluetooth/haptic latency prevent a zero-millisecond guarantee. Arrival-jitter tests validate predecoded media features arriving before their deadline, not acoustic timing on a real iPhone/AirPods. Device measurement is still required.
+
+Apple references: https://developer.apple.com/documentation/mediatoolbox/mtaudioprocessingtapgetsourceaudio(_:_:_:_:_:_:) ; https://developer.apple.com/documentation/quartzcore/cadisplaylink ; https://developer.apple.com/documentation/avfoundation/avplayeritem/currenttime()
+
+Yandex API resolves the stream URL into the existing AVPlayer deck; this same decoded-PCM/media-clock path applies to Yandex streaming tracks. Waiting/paused AVPlayer states report zero presentation rate, so future beat features are not consumed during buffering. No extra track download or second audio engine is introduced. Protected streams without accessible PCM retain the existing unavailable-analysis fallback.

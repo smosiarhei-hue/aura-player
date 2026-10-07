@@ -122,18 +122,29 @@ final class StreamBeatTap {
                 } else if !PlayerCore.shared.usesStreamingBackend {
                     self.activeEQState = .idle
                 }
-                do { try await Task.sleep(for: .milliseconds(PlayerCore.shared.isPlaying ? 25 : 200)) }
+                do { try await Task.sleep(for: .milliseconds(PlayerCore.shared.isPlaying ? 8 : 200)) }
                 catch { return }
             }
         }
+    }
+
+    // The audible deck's native media clock, not the UI progress timer.
+    func currentMediaClock() -> (time: TimeInterval,rate: Double)? {
+        let player=PlayerCore.shared.streamingPlayer
+        guard PlayerCore.shared.usesStreamingBackend,let item=player.currentItem,
+              activeItemID==ObjectIdentifier(item) else { return nil }
+        let time=item.currentTime().seconds
+        guard time.isFinite,time>=0 else { return nil }
+        return (time,player.timeControlStatus == .playing ? Double(player.rate) : 0)
     }
 
     private func readSpectrum(from tap: MTAudioProcessingTap?) {
         guard let tap else { return }
         var samples = [Float](repeating: 0, count: 1024)
         var sampleRate = 0.0
+        var mediaTime=Double.nan
         let count = samples.withUnsafeMutableBufferPointer {
-            SonivoStreamProbeRead(tap, $0.baseAddress!, $0.count, &sampleRate)
+            SonivoStreamProbeReadTimed(tap, $0.baseAddress!, $0.count, &sampleRate, &mediaTime)
         }
         if count == 1024, sampleRate > 0,
            let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
@@ -141,7 +152,7 @@ final class StreamBeatTap {
            let channel = buffer.floatChannelData?[0] {
             buffer.frameLength = 1024
             samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: 1024) }
-            SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: sampleRate)
+            SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: sampleRate, mediaTime: mediaTime.isFinite ? mediaTime : nil)
             lastSignal = Date.timeIntervalSinceReferenceDate
             hadSignal = true
         } else if hadSignal && Date.timeIntervalSinceReferenceDate - lastSignal > 0.5 {

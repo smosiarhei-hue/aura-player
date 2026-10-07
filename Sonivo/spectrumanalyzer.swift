@@ -81,11 +81,11 @@ final class SpectrumAnalyzer {
     nonisolated private static let processor = SpectrumDSP()
     private init() {}
 
-    nonisolated static func ingest(buffer: AVAudioPCMBuffer, sampleRate: Double) {
-        guard let snapshot = processor.process(buffer: buffer, sampleRate: sampleRate) else { return }
+    nonisolated static func ingest(buffer: AVAudioPCMBuffer, sampleRate: Double, capturedAt: TimeInterval? = nil, mediaTime: TimeInterval? = nil) {
+        guard let snapshot = processor.process(buffer: buffer, sampleRate: sampleRate,capturedAt: capturedAt,mediaTime: mediaTime) else { return }
         Task { @MainActor in
             let analyzer = SpectrumAnalyzer.shared
-            guard snapshot.beatWaveFrame.capturedAt > analyzer.lastResetAt,
+            guard snapshot.observedAt > analyzer.lastResetAt,
                   snapshot.beatWaveFrame.capturedAt >= analyzer.beatWaveFrame.capturedAt else { return }
             analyzer.beatWaveFrame = snapshot.beatWaveFrame
             analyzer.lastAudioSampleTime = snapshot.beatWaveFrame.capturedAt
@@ -118,6 +118,7 @@ nonisolated private struct SpectrumSnapshot: Sendable {
     let bands: [Float]; let bass: Float; let kick: Float
     let mids: Float; let highs: Float; let level: Float
     let beatWaveFrame: BeatWaveAudioFrame
+    let observedAt: TimeInterval
 }
 
 nonisolated private final class SpectrumDSP: @unchecked Sendable {
@@ -133,6 +134,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
     private var bassBaseline: Float = 0
     private var kickEnvelope: Float = 0
     private var beatWaveDetector = BeatWaveKickDetector()
+    private var previousMediaTime: TimeInterval?
     private var lastPublish = Date.distantPast
     private var streamLastPublish = Date.distantPast
 
@@ -145,11 +147,19 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
     }
     deinit { if let fftSetup { vDSP_destroy_fftsetup(fftSetup) } }
 
-    func process(buffer: AVAudioPCMBuffer, sampleRate: Double) -> SpectrumSnapshot? {
+    func process(buffer: AVAudioPCMBuffer, sampleRate: Double,capturedAt: TimeInterval?,mediaTime: TimeInterval?) -> SpectrumSnapshot? {
         lock.lock(); defer { lock.unlock() }
         guard let setup = fftSetup, buffer.frameLength >= vDSP_Length(fftSize),
               let channel = buffer.floatChannelData?[0] else { return nil }
-        var beatFrame = BeatWaveAudioFrame(capturedAt: Date.timeIntervalSinceReferenceDate)
+        let observedAt=Date.timeIntervalSinceReferenceDate
+        var beatFrame = BeatWaveAudioFrame(capturedAt: capturedAt ?? observedAt)
+        beatFrame.mediaTime=mediaTime
+        if let mediaTime {
+            if let previousMediaTime,mediaTime<previousMediaTime || mediaTime-previousMediaTime>0.5 {
+                beatWaveDetector.reset()
+            }
+            previousMediaTime=mediaTime
+        } else { previousMediaTime=nil }
         var rmsSum: Float = 0
         for i in 0..<fftSize { rmsSum += channel[i] * channel[i] }
         beatFrame.rms = min(1, sqrt(rmsSum/Float(fftSize))*1.8)
@@ -194,7 +204,9 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
                 beatFrame.lowMids = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 9..<15)
                 beatFrame.mids = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 15..<25)
                 beatFrame.highs = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 25..<32)
-                beatWaveDetector.process(beatFrame)
+                var detectorFrame=beatFrame
+                detectorFrame.capturedAt=mediaTime ?? beatFrame.capturedAt
+                beatWaveDetector.process(detectorFrame)
                 beatFrame.kickEventID = beatWaveDetector.eventID
                 beatFrame.kickEnvelope = beatWaveDetector.envelope
                 beatFrame.kickConfidence = beatWaveDetector.confidence
@@ -232,7 +244,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         smoothedHighs += (rawHighs - smoothedHighs) * highsAlpha
         return SpectrumSnapshot(bands: displayValues, bass: smoothedBass,
                                 kick: kickEnvelope, mids: smoothedMids,
-                                highs: smoothedHighs, level: level, beatWaveFrame: beatFrame)
+                                highs: smoothedHighs, level: level, beatWaveFrame: beatFrame,observedAt: observedAt)
     }
 
     func processStreamLevel(_ rawLevel: Float) -> Float? {
@@ -247,7 +259,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         displayValues = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
         smoothedBass = 0; smoothedMids = 0; smoothedHighs = 0
         bassBaseline = 0; kickEnvelope = 0
-        beatWaveDetector.reset()
+        beatWaveDetector.reset(); previousMediaTime=nil
         lastPublish = .distantPast; streamLastPublish = .distantPast
         lock.unlock()
     }

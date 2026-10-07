@@ -93,6 +93,9 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     private var diagnosticSubmissions=0
     private var diagnosticBusyDrops=0
     private var diagnosticFrameAge: Double=0
+    private var previousMediaTime: TimeInterval?
+    private var diagnosticClock="capture"
+    private var diagnosticDisplayLead: Double=0
     private var strandTable=[Strand](repeating: Strand(),count: 32)
 
     private struct Uniforms {
@@ -130,7 +133,9 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         guard running else { stop(); return }
         configureOutput(view)
         if displayLink==nil {
-            motion.consume(SpectrumAnalyzer.shared.beatWaveFrame.kickEventID)
+            if SpectrumAnalyzer.shared.beatWaveFrame.mediaTime==nil {
+                motion.consume(SpectrumAnalyzer.shared.beatWaveFrame.kickEventID)
+            }
             previousTimestamp=nil; presentation.reset(); targetFPS=0
             diagnosticWindow=0; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
             renderScale=lowPower ? 0.3 : 0.35
@@ -151,7 +156,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     }
     func stop() {
         displayLink?.invalidate(); displayLink=nil; linkTarget=nil
-        previousTimestamp=nil; presentation.reset(); motion.settle()
+        previousTimestamp=nil; previousMediaTime=nil; presentation.reset(); motion.settle()
         MusicHapticsManager.core.setBeatWaveOverride(false)
         (view?.layer as? CAMetalLayer)?.wantsExtendedDynamicRangeContent=false
     }
@@ -169,18 +174,36 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             outputDelay=max(0,min(0.5,session.outputLatency+session.ioBufferDuration))
             lastDelayCheck=now
         }
+        // Draw for the UPCOMING display deadline, not the previous presented frame.
+        let displayLead=max(0,min(0.05,link.targetTimestamp-CACurrentMediaTime()))
+        diagnosticDisplayLead=displayLead*1000
         let capture=SpectrumAnalyzer.shared.beatWaveFrame
-        if capture.capturedAt<=0 { presentation.reset(); motion.settle() }
+        if capture.capturedAt<=0 { presentation.reset(); motion.settle(); previousMediaTime=nil }
         else {
-            presentation.push(capture)
-            let frame=presentation.sample(now: now,estimatedOutputDelay: outputDelay)
-            let age=now-frame.capturedAt
-            diagnosticFrameAge=frame.capturedAt>0 ? age*1000 : 0
-            let fresh=frame.capturedAt>0 && age>=0 && age<outputDelay+0.4
-            let newKick=motion.advance(delta: dt,frame: frame,hasFreshAudio: fresh)
-            if newKick {
-                MusicHapticsManager.core.playBeatWaveKick(eventID: frame.kickEventID,strength: frame.kickConfidence)
+            let frame: BeatWaveAudioFrame
+            let fresh: Bool
+            if capture.mediaTime != nil,let clock=StreamBeatTap.shared.currentMediaClock() {
+                if let previousMediaTime,clock.time<previousMediaTime-0.02 || clock.time-previousMediaTime>0.25 {
+                    presentation.reset(); motion.settle()
+                }
+                previousMediaTime=clock.time
+                presentation.push(capture)
+                let mediaDeadline=clock.time+displayLead*max(0,clock.rate)
+                frame=clock.rate>0 ? (presentation.sampleMedia(at: mediaDeadline) ?? BeatWaveAudioFrame()) : BeatWaveAudioFrame()
+                let age=mediaDeadline-(frame.mediaTime ?? mediaDeadline)
+                diagnosticFrameAge=age*1000; diagnosticClock="media"
+                fresh=frame.mediaTime != nil && clock.rate>0 && age>=0 && age<0.12
+                // AVPlayer's media timebase owns stream A/V sync; do not add a second guessed route delay.
+            } else {
+                previousMediaTime=nil
+                presentation.push(capture)
+                frame=presentation.sample(now: now+displayLead,estimatedOutputDelay: outputDelay)
+                let age=now-frame.capturedAt
+                diagnosticFrameAge=frame.capturedAt>0 ? age*1000 : 0; diagnosticClock="capture"
+                fresh=frame.capturedAt>0 && age>=(-displayLead) && age<outputDelay+0.4
             }
+            let newKick=motion.advance(delta: dt,frame: frame,hasFreshAudio: fresh)
+            if newKick { MusicHapticsManager.core.playBeatWaveKick(eventID: frame.kickEventID,strength: frame.kickConfidence) }
         }
         let paletteMix=1-exp(-dt/0.85)
         for i in 0..<3 { palette[i]+=(targetPalette[i]-palette[i])*paletteMix }
@@ -204,7 +227,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             // Local report only. Submitted frames are not proof of actually displayed 120 FPS.
             let ticks=Double(diagnosticTicks)/elapsed, submitted=Double(diagnosticSubmissions)/elapsed
             let gpu=gpuFeedback.sample()
-            SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f edr=%d headroom=%.2f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000,outputHDR ? 1 : 0,Double(headroom)),tag: "BEAT_WAVE")
+            SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f edr=%d headroom=%.2f clock=%@ displayLeadMs=%.1f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000,outputHDR ? 1 : 0,Double(headroom),diagnosticClock,diagnosticDisplayLead),tag: "BEAT_WAVE")
             diagnosticWindow=link.timestamp; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
         }
     }
