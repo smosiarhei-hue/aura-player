@@ -52,7 +52,7 @@ final class StreamBeatTap {
                 guard let self else { return }
                 self.probes = self.probes.filter { $0.value.item != nil }
                 if self.probes.isEmpty { self.pollingTask = nil; return }
-                if PlayerCore.shared.isPlaying, PlayerCore.shared.currentTrack?.isStream == true,
+                if PlayerCore.shared.isPlaying, PlayerCore.shared.usesStreamingBackend,
                    let item = PlayerCore.shared.streamingPlayer.currentItem {
                     let key = ObjectIdentifier(item)
                     if self.activeItemID != key {

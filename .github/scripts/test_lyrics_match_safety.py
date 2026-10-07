@@ -130,7 +130,7 @@ class LyricsMatchSafetyTests(unittest.TestCase):
 
     def test_shared_clock_avoids_double_bluetooth_compensation(self):
         policy = (ROOT / 'Sonivo/LyricsMatchPolicy.swift').read_text()
-        self.assertIn('player.currentTrack?.isStream == true ? 0', policy)
+        self.assertIn('player.usesStreamingBackend ? 0', policy)
         for filename in ['lyricsview.swift', 'PlayerScreenV2.swift', 'StaggeredLyricsView.swift']:
             source = (ROOT / 'Sonivo' / filename).read_text()
             self.assertIn('LyricsPlaybackClock.time(', source)

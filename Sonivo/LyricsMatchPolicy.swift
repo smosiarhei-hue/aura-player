@@ -114,7 +114,7 @@ nonisolated enum LyricsMatchPolicy {
 @MainActor
 enum LyricsPlaybackClock {
     static func routeLatency(for player: ActivePlayerPresentation) -> Double {
-        player.currentTrack?.isStream == true ? 0 : AVAudioSession.sharedInstance().outputLatency
+        player.usesStreamingBackend ? 0 : AVAudioSession.sharedInstance().outputLatency
     }
     static func time(for player: ActivePlayerPresentation, offset: Double) -> Double {
         max(0, player.progress - routeLatency(for: player) + offset)

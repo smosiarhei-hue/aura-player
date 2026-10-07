@@ -25,6 +25,9 @@ final class AntigravityAudioFader {
     /// Спад громкости (1.0 -> 0.0 за 200 мс) -> Переключение потока -> Нарастание громкости (0.0 -> 1.0 за 300 мс)
     func performCrossfade(onSwitch: @escaping () async -> Void) async {
         let initialVolume = PlayerCore.shared.volume
+        let request = PlayerCore.shared.playbackRequestID
+        guard PlayerCore.shared.isPlaying else { return }
+        defer { PlayerCore.shared.volume = initialVolume }
         guard initialVolume > 0.05 else {
             await onSwitch()
             return
@@ -33,18 +36,25 @@ final class AntigravityAudioFader {
         // Фаза спада громкости: 200 мс (8 шагов по 25 мс)
         let fadeOutSteps = 8
         for i in 1...fadeOutSteps {
+            guard !Task.isCancelled, PlayerCore.shared.isPlaying,
+                  PlayerCore.shared.playbackRequestID == request else { return }
             let frac = 1.0 - (Float(i) / Float(fadeOutSteps))
             PlayerCore.shared.volume = initialVolume * frac
             try? await Task.sleep(nanoseconds: 25_000_000)
         }
+        guard PlayerCore.shared.playbackRequestID == request, PlayerCore.shared.isPlaying else { return }
         PlayerCore.shared.volume = 0.0
 
         // Переключение источника волны в момент нулевой громкости
         await onSwitch()
+        guard PlayerCore.shared.isPlaying else { return }
+        let switchedRequest = PlayerCore.shared.playbackRequestID
 
         // Фаза нарастания громкости: 300 мс (12 шагов по 25 мс)
         let fadeInSteps = 12
         for i in 1...fadeInSteps {
+            guard !Task.isCancelled, PlayerCore.shared.isPlaying,
+                  PlayerCore.shared.playbackRequestID == switchedRequest else { return }
             let frac = Float(i) / Float(fadeInSteps)
             PlayerCore.shared.volume = initialVolume * frac
             try? await Task.sleep(nanoseconds: 25_000_000)
@@ -226,7 +236,9 @@ final class AntigravityTransitionManager {
                 if forceDiscover || waveStore.diversity != .discover {
                     waveStore.diversity = .discover
                 }
+                let request = PlayerCore.shared.playbackRequestID
                 _ = await waveStore.reseedActiveWaveQueue()
+                guard PlayerCore.shared.playbackRequestID == request, PlayerCore.shared.isPlaying else { return }
                 ActivePlayerPresentation.shared.next()
             }
             phase = .idle

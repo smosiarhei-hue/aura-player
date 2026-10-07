@@ -42,6 +42,7 @@ final class MediaCacheManager {
         let temporary = manager.temporaryDirectory
         return [
             caches.appendingPathComponent("tracks", isDirectory: true),
+            InternalAudioCache.directory,
             caches.appendingPathComponent("ArtworkCache", isDirectory: true),
             documents.appendingPathComponent("AIVideoShots", isDirectory: true),
             temporary.appendingPathComponent("profiles", isDirectory: true),
@@ -92,7 +93,7 @@ final class MediaCacheManager {
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) {
-            for file in files where file.lastPathComponent.hasPrefix("vocal_") {
+            for file in files where InternalAudioCache.isLegacyFileName(file.lastPathComponent) {
                 let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
                 if values?.isRegularFile == true {
                     total += Int64(values?.fileSize ?? 0)
@@ -117,7 +118,7 @@ final class MediaCacheManager {
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         ) else { return }
-        for file in files where file.lastPathComponent.hasPrefix("vocal_") {
+        for file in files where InternalAudioCache.isLegacyFileName(file.lastPathComponent) {
             try? manager.removeItem(at: file)
         }
     }

@@ -202,8 +202,10 @@ struct ChartRowView: View {
 @MainActor
 enum SonivoPlay {
     private static let router = PlaybackCommandRouter.shared
+    private static var catalogRequestID = UUID()
 
     static func track(_ item: YandexMusicService.YMTrackItem, in list: [YandexMusicService.YMTrackItem]) {
+        catalogRequestID = UUID()
         let service = YandexMusicService.shared
         service.endStationSession()
         let source = list.isEmpty ? [item] : list
@@ -213,13 +215,17 @@ enum SonivoPlay {
 
     static func wave(_ station: YandexMusicService.StationOption, forceFresh: Bool = false) {
         let service = YandexMusicService.shared
+        let request = UUID()
+        catalogRequestID = request
+        let initialPlaybackRequest = PlayerCore.shared.playbackRequestID
 
         if station.stationId == "app:recap" {
             service.endStationSession()
             Task {
                 var tracks = await service.buildRecapQueue(target: 40)
                 if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
-                guard !tracks.isEmpty else { return }
+                guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == initialPlaybackRequest,
+                      !tracks.isEmpty else { return }
                 let rankedQueue = UserTasteEngine.shared.filterAndRankWave(
                     tracks: tracks.map { service.convertToTrack($0) }
                 )
@@ -252,6 +258,7 @@ enum SonivoPlay {
             router.play(immediate, queue: [immediate])
         }
 
+        let wavePlaybackRequest = PlayerCore.shared.playbackRequestID
         Task {
             // Seed Yandex Music's recommendation rotor with the last liked track
             if let lastLiked {
@@ -264,9 +271,11 @@ enum SonivoPlay {
             }
 
             let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
+            guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == wavePlaybackRequest else { return }
             let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
             let initial = unplayed.isEmpty ? firstBatch : unplayed
             let candidates = initial.isEmpty ? (try? await service.getChart()) ?? [] : initial
+            guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == wavePlaybackRequest else { return }
 
             if !candidates.isEmpty {
                 let available = candidates
@@ -283,9 +292,11 @@ enum SonivoPlay {
                 }
             }
 
+            let queuePlaybackRequest = PlayerCore.shared.playbackRequestID
             var tracks = await service.buildWaveQueue(stationId: station.stationId, target: 45)
             if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
-            guard !tracks.isEmpty else { return }
+            guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == queuePlaybackRequest,
+                  !tracks.isEmpty else { return }
 
             let filtered = tracks
                 .map { service.convertToTrack($0) }
@@ -302,11 +313,15 @@ enum SonivoPlay {
     }
 
     static func album(_ album: YandexMusicService.YMAlbumItem) {
+        let request = UUID()
+        catalogRequestID = request
+        let playbackRequest = PlayerCore.shared.playbackRequestID
         let service = YandexMusicService.shared
         service.endStationSession()
         Task {
             let tracks = (try? await service.getAlbumTracks(albumId: album.id)) ?? []
-            guard let first = tracks.first else { return }
+            guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == playbackRequest,
+                  let first = tracks.first else { return }
             let queue = tracks.map { service.convertToTrack($0) }
             router.play(service.convertToTrack(first), queue: queue)
         }

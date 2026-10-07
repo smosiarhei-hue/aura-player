@@ -207,7 +207,7 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("processBuffer", mgr_content)
         self.assertIn("processAudioBufferList", mgr_content)
         self.assertIn("AudioUnitAddRenderNotify", mgr_content)
-        self.assertIn("migrateStreamToAudioEngineIfNeeded", mgr_content)
+        self.assertIn("scheduleStreamMigrationIfNeeded(immediate: true)", mgr_content)
 
         player_file = self.repo_root / "Sonivo" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")

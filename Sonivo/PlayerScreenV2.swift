@@ -27,7 +27,7 @@ struct PlayerScreenV2: View {
     @State private var waveActive = false
     @State private var waveMessage: String?
     @State private var videoShotURL: URL?
-    @State private var isVideoShotEnabled = UserDefaults.standard.object(forKey: "sonivo_videoshot_enabled") as? Bool ?? true
+    @State private var isVideoShotEnabled = UserDefaults.standard.object(forKey: "sonivo_videoshot_enabled") as? Bool ?? false
     @State private var videoLooperPlayer: AVQueuePlayer?
     @State private var videoLooper: AVPlayerLooper?
     @State private var videoShotTrackID: UUID?
@@ -1347,7 +1347,7 @@ struct PlayerScreenV2: View {
         videoShotURL = nil
         videoShotTrackID = nil
         teardownVideoLooper()
-        guard let track else { return }
+        guard isVideoShotEnabled, let track else { return }
         let requestedTrackID = track.id
         let id = PlayerCore.yandexTrackID(from: track)
 
@@ -1360,11 +1360,6 @@ struct PlayerScreenV2: View {
         if url == nil && !id.isEmpty {
             if let ymURL = await YandexMusicService.shared.getVideoShotUrl(for: id) {
                 url = ymURL
-                // Автоматически сохраняем видео в постоянную память iPhone для работы офлайн
-                let trackTitle = track.title
-                Task.detached(priority: .background) {
-                    await AIVideoShotGeneratorService.shared.saveVideoLocally(from: ymURL, for: id, title: trackTitle)
-                }
             }
         }
 
@@ -1378,11 +1373,6 @@ struct PlayerScreenV2: View {
                 if let (_, resp) = try? await URLSession.shared.data(for: headReq),
                    let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) {
                     url = studioURL
-                    // Мгновенно кэшируем в постоянную память iPhone! Как только ПК выключится, видео останется на телефоне навсегда
-                    let trackTitle = track.title
-                    Task.detached(priority: .background) {
-                        await AIVideoShotGeneratorService.shared.saveVideoLocally(from: studioURL, for: id, title: trackTitle)
-                    }
                 }
             }
         }
@@ -1421,6 +1411,7 @@ struct PlayerScreenV2: View {
             setupVideoLooper(url: videoShotURL)
         } else {
             teardownVideoLooper()
+            if isVideoShotEnabled { Task { await loadVideoShot() } }
         }
     }
     private func generateAIVideoShot(forceRegenerate: Bool = false) {

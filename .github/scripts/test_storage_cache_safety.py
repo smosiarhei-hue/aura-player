@@ -34,7 +34,7 @@ class StorageCacheSafetyTests(unittest.TestCase):
         for marker in ('"profiles"', '"neuromix-profiles"', 'name.hasPrefix("ym_")', 'name.hasPrefix("stream_")'):
             self.assertIn(marker, self.cache)
         self.assertIn("for file in temporaryAudioFiles", self.cache)
-        self.assertIn('hasPrefix("vocal_")', self.cache)
+        self.assertIn("InternalAudioCache.isLegacyFileName", self.cache)
 
 
 if __name__ == "__main__":

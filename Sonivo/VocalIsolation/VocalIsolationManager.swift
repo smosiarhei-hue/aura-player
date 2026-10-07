@@ -124,8 +124,6 @@ final class VocalIsolationManager {
 
         // If currently playing through AVPlayer (streaming in PlayerCore),
         // migrate playback to AVAudioEngine so raw PCM samples are accessible in real-time.
-        Task { @MainActor in
-            await PlayerCore.shared.migrateStreamToAudioEngineIfNeeded()
-        }
+        PlayerCore.shared.scheduleStreamMigrationIfNeeded(immediate: true)
     }
 }

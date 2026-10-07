@@ -25,8 +25,10 @@ class PlaybackConflictFixesTests(unittest.TestCase):
 
     def test_release_audio_session_protection(self):
         content = self.playercore.read_text(encoding="utf-8")
-        # Do not deactivate audio session if queue is active
-        self.assertIn("currentTrack == nil", content)
+        # Paused tracks retain their queue, but must return audio focus.
+        idle = content.split("func releaseAudioSessionIfIdle()", 1)[1].split("private func setupStreamingPlayer", 1)[0]
+        self.assertIn("guard !isPlaying else", idle)
+        self.assertNotIn("currentTrack == nil", idle)
 
     def test_eq_stream_migration_is_explicit_and_never_precached(self):
         content = self.playercore.read_text(encoding="utf-8")

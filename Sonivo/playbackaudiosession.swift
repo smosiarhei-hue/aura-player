@@ -10,6 +10,7 @@ final class PlaybackAudioSessionCoordinator {
     static let shared = PlaybackAudioSessionCoordinator()
 
     private var installed = false
+    private var wasPlayingBeforeInterruption = false
     private var observers: [NSObjectProtocol] = []
 
     func install() {
@@ -29,13 +30,15 @@ final class PlaybackAudioSessionCoordinator {
                 guard let rawType, let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
                 switch type {
                 case .began:
+                    self.wasPlayingBeforeInterruption = PlayerCore.shared.isPlaying
                     PlayerCore.shared.pause()
                 case .ended:
                     PlaybackAudioSessionCoordinator.shared.prepare()
                     let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-                    if shouldResume {
+                    if shouldResume && self.wasPlayingBeforeInterruption {
                         PlayerCore.shared.resume()
                     }
+                    self.wasPlayingBeforeInterruption = false
                 @unknown default:
                     break
                 }
@@ -74,7 +77,7 @@ final class PlaybackAudioSessionCoordinator {
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in
                 PlaybackAudioSessionCoordinator.shared.prepare()
-                PlayerCore.shared.resume()
+                PlayerCore.shared.handleMediaServicesReset()
             }
         })
 

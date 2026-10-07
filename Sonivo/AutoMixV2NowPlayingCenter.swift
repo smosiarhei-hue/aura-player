@@ -36,7 +36,6 @@ final class AutoMixV2NowPlayingCenter {
     func setApplicationSceneActive(_ active: Bool) {
         guard applicationIsActive != active else { return }
         applicationIsActive = active
-        if !active { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         Task { @MainActor [weak self] in await self?.refresh() }
     }
 

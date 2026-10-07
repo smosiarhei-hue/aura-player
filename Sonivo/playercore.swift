@@ -220,6 +220,52 @@ final class PlayerCore {
         applySpatialAudioConfiguration()
     }
 
+    /// Rebuild invalidated CoreAudio objects, retaining queue/position but never auto-playing.
+    func handleMediaServicesReset() {
+        pause()
+        cancelTransition()
+        streamMigrationTask?.cancel()
+        cancelSleepTimer()
+        localSegmentTokens.removeAll()
+        for (player, token) in streamingTimeObservers { player.removeTimeObserver(token) }
+        streamingTimeObservers.removeAll()
+        streamingPlayerA.replaceCurrentItem(with: nil)
+        streamingPlayerB.replaceCurrentItem(with: nil)
+        if spectrumTapInstalled { engine.mainMixerNode.removeTap(onBus: 0) }
+        spectrumTapInstalled = false
+        engine.stop()
+        streamingPlayerA = AVPlayer()
+        streamingPlayerB = AVPlayer()
+        engine = AVAudioEngine()
+        playerA = AVAudioPlayerNode()
+        playerB = AVAudioPlayerNode()
+        timePitchA = AVAudioUnitTimePitch()
+        timePitchB = AVAudioUnitTimePitch()
+        reverbA = AVAudioUnitReverb()
+        reverbB = AVAudioUnitReverb()
+        eqNodeA = AVAudioUnitEQ(numberOfBands: Self.bandFrequencies.count)
+        eqNodeB = AVAudioUnitEQ(numberOfBands: Self.bandFrequencies.count)
+        looperPlayer = AVAudioPlayerNode()
+        looperTimePitch = AVAudioUnitTimePitch()
+        looperEQ = AVAudioUnitEQ(numberOfBands: Self.bandFrequencies.count)
+        looperReverb = AVAudioUnitReverb()
+        vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
+        activePlayer = playerA
+        activeStreamingPlayer = streamingPlayerA
+        idleStreamingPlayer = streamingPlayerB
+        activeAudioFile = nil
+        incomingAudioFile = nil
+        activeLocalURL = nil
+        activeStreamURL = nil
+        isUsingStreamPlayer = currentTrack?.isStream == true || currentTrack?.streamUrlString != nil
+        setupAudioEngine()
+        setupStreamingPlayer()
+        applyEQ()
+        SpectrumAnalyzer.shared.reset()
+        playError = "Аудиосистема iOS перезапущена. Нажмите воспроизведение."
+        updateNowPlayingInfo()
+    }
+
     func handleAudioRouteChange() {
         updateAudioRouteState()
     }
@@ -261,11 +307,15 @@ final class PlayerCore {
     private var lastRemoteCommand: (name: String, date: Date)?
     private var applicationIsActive = true
 
-    private let streamingPlayerA = AVPlayer()
-    private let streamingPlayerB = AVPlayer()
+    private var streamingPlayerA = AVPlayer()
+    private var streamingPlayerB = AVPlayer()
     private var activeStreamingPlayer: AVPlayer
     private var idleStreamingPlayer: AVPlayer
     var streamingPlayer: AVPlayer { activeStreamingPlayer }
+    var usesStreamingBackend: Bool { isUsingStreamPlayer }
+    var playbackRequestID: Int { generation }
+    private var streamingTimeObservers: [(AVPlayer, Any)] = []
+    private var didInstallStreamingNotifications = false
     private var isUsingStreamPlayer = false
     private var isPrebufferingNextStream = false
     private var prebufferedTrackId: UUID? = nil
@@ -275,25 +325,25 @@ final class PlayerCore {
     private var transitionScheduledAt: Date? = nil
     private var transitionPausedAt: Date? = nil
 
-    private let engine = AVAudioEngine()
-    private let playerA = AVAudioPlayerNode()
-    private let playerB = AVAudioPlayerNode()
+    private var engine = AVAudioEngine()
+    private var playerA = AVAudioPlayerNode()
+    private var playerB = AVAudioPlayerNode()
     private var activePlayer: AVAudioPlayerNode
-    private let timePitchA = AVAudioUnitTimePitch()
-    private let timePitchB = AVAudioUnitTimePitch()
-    private let reverbA = AVAudioUnitReverb()
-    private let reverbB = AVAudioUnitReverb()
-    private let eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
-    private let eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    private var timePitchA = AVAudioUnitTimePitch()
+    private var timePitchB = AVAudioUnitTimePitch()
+    private var reverbA = AVAudioUnitReverb()
+    private var reverbB = AVAudioUnitReverb()
+    private var eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    private var eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
 
-    private let looperPlayer = AVAudioPlayerNode()
-    private let looperTimePitch = AVAudioUnitTimePitch()
-    private let looperEQ = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
-    private let looperReverb = AVAudioUnitReverb()
+    private var looperPlayer = AVAudioPlayerNode()
+    private var looperTimePitch = AVAudioUnitTimePitch()
+    private var looperEQ = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    private var looperReverb = AVAudioUnitReverb()
     private var loopBuffer: AVAudioPCMBuffer?
     private var isLoopActive = false
 
-    private let vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
+    private var vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
     private var activeStreamURL: URL?
 
     private let outputLimiter = AVAudioUnitEffect(
@@ -313,6 +363,14 @@ final class PlayerCore {
     private var metadataSwapped = false
     private var incomingStartPosition: Double = 0
     private var generation = 0
+    private var localSegmentTokens: [ObjectIdentifier: UUID] = [:]
+    private var activeLocalURL: URL?
+    private var transitionPreparationTask: Task<Void, Never>?
+    private var transitionRequestID = UUID()
+    private var streamMigrationTask: Task<Void, Never>?
+    private var sleepFadeTask: Task<Void, Never>?
+    private var sleepFadeRequestID = UUID()
+    private var qualityRequestID = UUID()
     private var anchorDate: Date?
     private var anchorOffset: Double = 0
     private var pausedProgress: Double = 0
@@ -362,7 +420,6 @@ final class PlayerCore {
 
     private func removeLegacyUnboundedStreamCacheIfNeeded() {
         let migrationKey = "storage.removed-unbounded-stream-cache.v1"
-        guard !defaults.bool(forKey: migrationKey) else { return }
 
         let manager = FileManager.default
         let documents = documentsDirectoryURL()
@@ -371,7 +428,7 @@ final class PlayerCore {
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         ) {
-            for file in files where file.lastPathComponent.hasPrefix("vocal_") {
+            for file in files where InternalAudioCache.isLegacyFileName(file.lastPathComponent) {
                 try? manager.removeItem(at: file)
             }
         }
@@ -390,6 +447,7 @@ final class PlayerCore {
         }
 
         defaults.set(true, forKey: migrationKey)
+        InternalAudioCache.prune(excluding: nil)
     }
 
     /// `AVAudioSession` category and activation are owned exclusively by
@@ -403,7 +461,7 @@ final class PlayerCore {
     /// Hands audio focus back so other apps can play again.
     /// Internal (not private) so `PlaybackAudioSessionCoordinator` can call it on backgrounding.
     func releaseAudioSessionIfIdle() {
-        guard !isPlaying, !isTransitioning, !transitionScheduled, currentTrack == nil else { return }
+        guard !isPlaying else { return }
         PlaybackAudioSessionCoordinator.shared.deactivateWhenIdle()
     }
 
@@ -413,7 +471,7 @@ final class PlayerCore {
             p.volume = volume * Self.streamHeadroomCeiling
 
             let interval = CMTime(seconds: 1.0 / 120.0, preferredTimescale: 2400)
-            p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            let timeObserver = p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     guard self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
@@ -441,12 +499,15 @@ final class PlayerCore {
                     }
                 }
             }
+            streamingTimeObservers.append((p, timeObserver))
         }
+        guard !didInstallStreamingNotifications else { return }
+        didInstallStreamingNotifications = true
 
         NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             let finishedItem = notification.object as? AVPlayerItem
             Task { @MainActor [weak self] in
-                guard let self, self.isUsingStreamPlayer else { return }
+                guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
                 if let finishedItem, finishedItem !== self.activeStreamingPlayer.currentItem {
                     return
                 }
@@ -458,7 +519,7 @@ final class PlayerCore {
             let failedItem = notification.object as? AVPlayerItem
             let message = failedItem?.error?.localizedDescription
             Task { @MainActor [weak self] in
-                guard let self, self.isUsingStreamPlayer else { return }
+                guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
                 if let failedItem, failedItem !== self.activeStreamingPlayer.currentItem {
                     return
                 }
@@ -711,12 +772,12 @@ final class PlayerCore {
         guard isUsingStreamPlayer, isPlaying, !streamMigrationInFlight else { return }
         let elapsed = Date().timeIntervalSince(lastStreamMigrationAttempt)
         if !immediate && elapsed < 0.6 { return }
-        streamMigrationInFlight = true
+        guard streamMigrationTask == nil else { return }
         lastStreamMigrationAttempt = Date()
-        Task { @MainActor [weak self] in
+        streamMigrationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.migrateStreamToAudioEngineIfNeeded()
-            self.streamMigrationInFlight = false
+            self.streamMigrationTask = nil
         }
     }
 
@@ -980,7 +1041,10 @@ final class PlayerCore {
 
     func pause() {
         generation += 1
-        pausedProgress = isUsingStreamPlayer ? progress : liveProgress()
+        streamMigrationTask?.cancel()
+        if isTransitioning && transitionStartTime == nil { cancelTransition() }
+        let streamPosition = CMTimeGetSeconds(activeStreamingPlayer.currentTime())
+        pausedProgress = isUsingStreamPlayer && streamPosition.isFinite ? streamPosition : liveProgress()
 
         // 1. Unconditionally pause ALL streaming AVPlayer instances
         activeStreamingPlayer.pause()
@@ -994,6 +1058,7 @@ final class PlayerCore {
         playerA.pause()
         playerB.pause()
         if isLoopActive { looperPlayer.pause() }
+        if engine.isRunning { engine.pause() }
 
         // 3. Invalidate live timers and clear anchors
         stopTimer()
@@ -1008,19 +1073,24 @@ final class PlayerCore {
         MusicHapticsManager.shared.stop()
         updateNowPlayingInfo()
         savePlaybackState()
+        releaseAudioSessionIfIdle()
     }
 
     func resume() {
-        guard !isPlaying, let track = currentTrack else { return }
+        guard !isPlaying, currentTrack != nil else { return }
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        if track.isStream || track.streamUrlString != nil {
+        if isUsingStreamPlayer {
             if activeStreamingPlayer.currentItem == nil {
                 start(at: progress)
                 return
             }
             activeStreamingPlayer.play()
             if isTransitioning {
-                idleStreamingPlayer.play()
+                if incomingIsStream { idleStreamingPlayer.play() }
+                else {
+                    if !engine.isRunning { try? engine.start() }
+                    idlePlayer.play()
+                }
             }
             isPlaying = true
         } else {
@@ -1028,7 +1098,10 @@ final class PlayerCore {
                 start(at: progress > 0 ? progress : pausedProgress)
                 return
             }
-            if !engine.isRunning { try? engine.start() }
+            if !engine.isRunning {
+                do { try engine.start() }
+                catch { playError = "Не удалось запустить аудио: \(error.localizedDescription)"; return }
+            }
             activePlayer.play()
             if isLoopActive { looperPlayer.play() }
             if isTransitioning {
@@ -1061,6 +1134,7 @@ final class PlayerCore {
             start(at: 0)
             refillQueueIfNeeded()
         } else if let cur = currentTrack, repeatMode != .one {
+            let requestToken = generation
             Task { @MainActor in
                 let wave: [Track]
                 if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
@@ -1068,6 +1142,7 @@ final class PlayerCore {
                 } else {
                     wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
                 }
+                guard self.generation == requestToken, self.currentTrack?.id == cur.id, self.isPlaying else { return }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id }
                 if let first = fresh.first {
@@ -1109,6 +1184,7 @@ final class PlayerCore {
 
     func seek(to seconds: Double) {
         cancelTransition()
+        guard seconds.isFinite else { return }
         let d = duration
         let clamped = max(0, min(seconds, d))
         progress = clamped
@@ -1121,6 +1197,10 @@ final class PlayerCore {
             anchorOffset = clamped
             if isPlaying {
                 start(at: clamped)
+            } else if let file = activeAudioFile {
+                localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+                activePlayer.stop()
+                scheduleLocalSegment(file, on: activePlayer, at: clamped)
             }
         }
         lastNowPlayingSync = nil
@@ -1130,6 +1210,13 @@ final class PlayerCore {
     func stopAndClear() {
         cancelSleepTimer()
         generation += 1
+        streamMigrationTask?.cancel()
+        sleepFadeRequestID = UUID()
+        if sleepFadeTask != nil { volume = 1 }
+        sleepFadeTask?.cancel()
+        sleepFadeTask = nil
+        localSegmentTokens.removeAll()
+        activeLocalURL = nil
         activeStreamingPlayer.pause()
         activeStreamingPlayer.replaceCurrentItem(with: nil)
         idleStreamingPlayer.pause()
@@ -1144,6 +1231,7 @@ final class PlayerCore {
         activeAudioFile = nil
         incomingAudioFile = nil
         currentTrack = nil
+        activeStreamURL = nil
         metadataTrack = nil
         incomingTrack = nil
         metadataSwapped = false
@@ -1155,6 +1243,7 @@ final class PlayerCore {
         cancelTransition()
         SpectrumAnalyzer.shared.reset()
         updateNowPlayingInfo()
+        releaseAudioSessionIfIdle()
     }
 
     private func start(at seconds: Double) {
@@ -1166,6 +1255,15 @@ final class PlayerCore {
         plannedNextTrack = nil
         generation += 1
         let token = generation
+        streamMigrationTask?.cancel()
+        sleepFadeRequestID = UUID()
+        if sleepFadeTask != nil { volume = 1 }
+        sleepFadeTask?.cancel()
+        sleepFadeTask = nil
+        localSegmentTokens.removeAll()
+        activeAudioFile = nil
+        activeLocalURL = nil
+        activeStreamURL = nil
 
         // Guaranteed audio session activation and playback intent
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
@@ -1185,13 +1283,8 @@ final class PlayerCore {
         stopBeatLoop()
 
         if let cachedURL = findLocalOrCachedAudioFile(for: track) {
-            var localTrack = track
-            localTrack.fileName = cachedURL.lastPathComponent
-            localTrack.relativePath = ""
-            localTrack.isStream = false
-            localTrack.streamUrlString = nil
             streamBufferFraction = 1.0
-            startLocal(localTrack, at: seconds, token: token)
+            startLocal(track, at: seconds, token: token, fileURL: cachedURL)
             return
         }
 
@@ -1204,8 +1297,8 @@ final class PlayerCore {
         }
     }
 
-    private func startLocal(_ track: Track, at seconds: Double, token: Int, isMigration: Bool = false) {
-        let wasStreaming = isUsingStreamPlayer
+    private func startLocal(_ track: Track, at seconds: Double, token: Int, isMigration: Bool = false, fileURL: URL? = nil) {
+        let resolvedURL = fileURL ?? track.url
         if !isMigration {
             isUsingStreamPlayer = false
             activeStreamingPlayer.pause()
@@ -1227,13 +1320,16 @@ final class PlayerCore {
         reverbB.wetDryMix = 0
         applyEQ()
 
-        Task {
+        Task { @MainActor in
+            guard !Task.isCancelled, self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
             do {
-                let audioFile = try AVAudioFile(forReading: track.url)
+                let audioFile = try AVAudioFile(forReading: resolvedURL)
+                guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                self.activeLocalURL = resolvedURL
                 self.activeAudioFile = audioFile
                 self.incomingAudioFile = nil
 
-                let ext = track.url.pathExtension.lowercased()
+                let ext = resolvedURL.pathExtension.lowercased()
                 if ext == "flac" || ext == "alac" || ext == "wav" {
                     self.currentCodec = ext
                     self.currentBitrate = 1411
@@ -1252,26 +1348,18 @@ final class PlayerCore {
                     try self.engine.start()
                 }
 
-                let sr = audioFile.processingFormat.sampleRate
-                let offsetFrames = AVAudioFramePosition(seconds * sr)
-                let validOffset = max(0, min(offsetFrames, audioFile.length - 1))
-                let frameCount = AVAudioFrameCount(audioFile.length - validOffset)
-
-                self.playerA.scheduleSegment(audioFile, startingFrame: validOffset, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                    Task { @MainActor in
-                        guard let self, self.generation == token, !self.isUsingStreamPlayer else { return }
-                        self.handleTrackFinish()
-                    }
-                }
-
-                guard self.generation == token else { return }
+                guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
+                self.scheduleLocalSegment(audioFile, on: self.playerA, at: seconds)
 
                 PlaybackAudioSessionCoordinator.shared.activateForPlayback()
                 self.isUsingStreamPlayer = false
+                self.applyEQ()
                 self.activeStreamingPlayer.pause()
                 self.idleStreamingPlayer.pause()
                 self.streamingPlayerA.pause()
                 self.streamingPlayerB.pause()
+                self.streamingPlayerA.replaceCurrentItem(with: nil)
+                self.streamingPlayerB.replaceCurrentItem(with: nil)
 
                 self.playerA.play()
                 self.isPlaying = true
@@ -1286,6 +1374,24 @@ final class PlayerCore {
                 self.activeAudioFile = nil
                 self.isPlaying = false
                 self.playError = "Не удалось открыть аудио: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func scheduleLocalSegment(_ file: AVAudioFile, on node: AVAudioPlayerNode, at seconds: Double) {
+        guard file.length > 0 else { return }
+        let key = ObjectIdentifier(node)
+        let segmentToken = UUID()
+        localSegmentTokens[key] = segmentToken
+        let rate = file.processingFormat.sampleRate
+        let offset = max(0, min(AVAudioFramePosition(seconds * rate), file.length - 1))
+        let count = AVAudioFrameCount(min(file.length - offset, AVAudioFramePosition(UInt32.max)))
+        node.scheduleSegment(file, startingFrame: offset, frameCount: count, at: nil,
+                             completionCallbackType: .dataPlayedBack) { [weak self, weak node] _ in
+            Task { @MainActor in
+                guard let self, let node, self.localSegmentTokens[key] == segmentToken,
+                      self.activePlayer === node, !self.isUsingStreamPlayer, self.isPlaying else { return }
+                self.handleTrackFinish()
             }
         }
     }
@@ -1380,16 +1486,20 @@ final class PlayerCore {
     }
 
     private func reapplyStreamQuality() {
-        guard let track = currentTrack, track.isStream else { return }
-        let url = track.url
-        guard !(url.scheme == "http" || url.scheme == "https") else { return }
+        guard let track = currentTrack, track.isStream, isUsingStreamPlayer, isPlaying else { return }
+        let request = UUID()
+        qualityRequestID = request
+        cancelTransition()
+        streamMigrationTask?.cancel()
         let ymID = Self.yandexTrackID(from: track)
+        guard !ymID.isEmpty, track.fileName.hasPrefix("ym_") || ymID.allSatisfy(\.isNumber) else { return }
         let pos = progress
         let token = generation
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                guard self.generation == token, self.qualityRequestID == request,
+                      self.currentTrack?.id == track.id, self.isUsingStreamPlayer, self.isPlaying else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
                 self.currentTrack?.streamUrlString = info.url.absoluteString
@@ -1400,7 +1510,15 @@ final class PlayerCore {
     }
 
     private func beginStream(_ url: URL, at seconds: Double, token: Int) {
-        guard self.generation == token else { return }
+        guard self.generation == token, isPlaying else { return }
+        localSegmentTokens.removeAll()
+        playerA.stop()
+        playerB.stop()
+        stopBeatLoop()
+        if engine.isRunning { engine.pause() }
+        activeAudioFile = nil
+        activeLocalURL = nil
+        isUsingStreamPlayer = true
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         self.activeStreamURL = url
         self.currentTrack?.streamUrlString = url.absoluteString
@@ -1428,18 +1546,18 @@ final class PlayerCore {
         if !track.isStream && track.url.isFileURL && FileManager.default.fileExists(atPath: track.url.path) {
             return track.url
         }
-        let ext = (track.url.pathExtension.isEmpty ? "mp3" : track.url.pathExtension)
-        let vocalFile = documentsDirectoryURL().appendingPathComponent("vocal_\(track.id.uuidString).\(ext)")
-        if FileManager.default.fileExists(atPath: vocalFile.path) {
-            return vocalFile
-        }
+        if let file = InternalAudioCache.fileURL(for: track.id) { return file }
         let ymID = Self.yandexTrackID(from: track)
         if !ymID.isEmpty {
-            let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("tracks", isDirectory: true)
-            if let files = try? FileManager.default.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil) {
-                if let matched = files.first(where: { $0.lastPathComponent.contains(ymID) }) {
-                    return matched
-                }
+            let encoded = Data(ymID.utf8).base64EncodedString()
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "=", with: "")
+            let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("tracks", isDirectory: true)
+            if let files = try? FileManager.default.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil),
+               let file = files.first(where: { $0.lastPathComponent.hasPrefix(encoded + ".") }) {
+                return file
             }
         }
         return nil
@@ -1447,19 +1565,16 @@ final class PlayerCore {
 
     /// Migrates streaming playback from AVPlayer to AVAudioEngine so raw PCM samples can be processed in real time
     func migrateStreamToAudioEngineIfNeeded() async {
-        guard isUsingStreamPlayer, isPlaying, let track = currentTrack else { return }
+        guard isUsingStreamPlayer, isPlaying, !streamMigrationInFlight, let track = currentTrack else { return }
+        streamMigrationInFlight = true
+        defer { streamMigrationInFlight = false }
         let currentPos = progress
         let token = generation
 
         // 1. Instant zero-latency switch if already in local cache
         if let cachedURL = findLocalOrCachedAudioFile(for: track) {
             guard self.isPlaying, self.generation == token, self.currentTrack?.id == track.id else { return }
-            var localTrack = track
-            localTrack.fileName = cachedURL.lastPathComponent
-            localTrack.relativePath = ""
-            localTrack.isStream = false
-            localTrack.streamUrlString = nil
-            self.startLocal(localTrack, at: currentPos, token: token, isMigration: true)
+            self.startLocal(track, at: currentPos, token: token, isMigration: true, fileURL: cachedURL)
             return
         }
 
@@ -1473,6 +1588,7 @@ final class PlayerCore {
             let ymID = Self.yandexTrackID(from: track)
             if !ymID.isEmpty {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
+                guard !Task.isCancelled, self.generation == token, self.currentTrack?.id == track.id else { return nil }
                 self.currentTrack?.streamUrlString = info.url.absoluteString
                 self.activeStreamURL = info.url
                 return info.url
@@ -1485,20 +1601,17 @@ final class PlayerCore {
         if let streamURL {
             do {
                 let ext = streamURL.pathExtension.isEmpty ? "mp3" : streamURL.pathExtension
-                let fileName = "vocal_\(track.id.uuidString).\(ext)"
-                let localDest = documentsDirectoryURL().appendingPathComponent(fileName)
-                if !FileManager.default.fileExists(atPath: localDest.path) {
-                    let (tempLocation, _) = try await URLSession.shared.download(from: streamURL)
-                    try? FileManager.default.removeItem(at: localDest)
-                    try FileManager.default.moveItem(at: tempLocation, to: localDest)
-                }
+                let (temporaryURL, response) = try await URLSession.shared.download(from: streamURL)
+                defer { try? FileManager.default.removeItem(at: temporaryURL) }
+                try Task.checkCancellation()
                 guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
-                var localTrack = track
-                localTrack.fileName = fileName
-                localTrack.relativePath = ""
-                localTrack.isStream = false
-                localTrack.streamUrlString = nil
-                self.startLocal(localTrack, at: self.progress, token: token, isMigration: true)
+                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                let validatedFile = try AVAudioFile(forReading: temporaryURL)
+                guard validatedFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                let localURL = try InternalAudioCache.store(temporaryURL: temporaryURL, for: track.id, fileExtension: ext)
+                self.startLocal(track, at: self.progress, token: token, isMigration: true, fileURL: localURL)
             } catch {
                 SonivoDiagnostics.log("[VocalIsolation] Stream migration to AVAudioEngine error: \(error)", tag: "AUDIO")
             }
@@ -1529,59 +1642,55 @@ final class PlayerCore {
         AutoMixDJEngine.shared.activeStrategyName = transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS"
         AutoMixDJEngine.shared.transitionProgress = 0
 
-        if isUsingStreamPlayer || nextTrack.isStream {
-            if idleStreamingPlayer.currentItem == nil || prebufferedTrackId != nextTrack.id {
-                let ymID = Self.yandexTrackID(from: nextTrack)
-                Task { @MainActor in
-                    do {
-                        let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                        let nextItem = AVPlayerItem(url: info.url)
-                        nextItem.audioTimePitchAlgorithm = .timeDomain
-                        nextItem.allowedAudioSpatializationFormats = self.spatialAudioEnabled ? .monoStereoAndMultichannel : []
-                        StreamBeatTap.shared.attach(to: nextItem)
-                        self.idleStreamingPlayer.replaceCurrentItem(with: nextItem)
-                        self.idleStreamingPlayer.volume = 0.001
-                        self.idleStreamingPlayer.playImmediately(atRate: 1.0)
-                        self.transitionStartTime = Date()
-                        self.startTransitionTimer()
-                    } catch {
-                        self.isTransitioning = false
-                        self.transitionScheduled = false
-                        self.AutoMixDJEngineCleanup()
-                    }
-                }
-            } else {
-                idleStreamingPlayer.volume = 0.001
-                idleStreamingPlayer.playImmediately(atRate: 1.0)
-                transitionStartTime = Date()
-                startTransitionTimer()
-            }
-            return
-        }
-
-        let targetIdlePlayer = idlePlayer
-        let targetIsPlayerA = targetIdlePlayer === playerA
-        Task { @MainActor in
+        let transitionID = UUID()
+        transitionRequestID = transitionID
+        let token = generation
+        let nextURL = findLocalOrCachedAudioFile(for: nextTrack)
+        incomingIsStream = nextURL == nil && (nextTrack.isStream || nextTrack.streamUrlString != nil)
+        let targetStream = idleStreamingPlayer
+        let targetNode = idlePlayer
+        transitionPreparationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                let nextFile = try AVAudioFile(forReading: nextTrack.url)
-                self.incomingAudioFile = nextFile
-                let frameCount = AVAudioFrameCount(max(0, nextFile.length))
-                targetIdlePlayer.scheduleSegment(nextFile, startingFrame: 0, frameCount: frameCount, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                    Task { @MainActor in
-                        guard let self,
-                              self.activePlayer === (targetIsPlayerA ? self.playerA : self.playerB) else { return }
-                        self.handleTrackFinish()
+                if self.incomingIsStream {
+                    let resolved: URL
+                    if let direct = nextTrack.streamUrlString.flatMap(URL.init(string:)),
+                       direct.scheme == "http" || direct.scheme == "https" {
+                        resolved = direct
+                    } else {
+                        let info = try await YandexMusicService.shared.getStreamInfo(
+                            for: Self.yandexTrackID(from: nextTrack), preferredQuality: self.audioQuality,
+                            preferredBitrate: self.audioQuality.targetBitrate)
+                        resolved = info.url
                     }
+                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                          self.isPlaying, self.currentTrack?.id == current.id, self.incomingTrack?.id == nextTrack.id,
+                          self.isTransitioning else { return }
+                    let item = AVPlayerItem(url: resolved)
+                    item.audioTimePitchAlgorithm = .timeDomain
+                    item.allowedAudioSpatializationFormats = self.spatialAudioEnabled ? .monoStereoAndMultichannel : []
+                    StreamBeatTap.shared.attach(to: item)
+                    targetStream.replaceCurrentItem(with: item)
+                    targetStream.volume = 0
+                    targetStream.playImmediately(atRate: 1)
+                } else {
+                    let file = try AVAudioFile(forReading: nextURL ?? nextTrack.url)
+                    guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                          self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
+                    self.incomingAudioFile = file
+                    self.scheduleLocalSegment(file, on: targetNode, at: 0)
+                    targetNode.volume = 0
+                    if !self.engine.isRunning { try self.engine.start() }
+                    targetNode.play()
                 }
-                targetIdlePlayer.volume = 0
-                if !self.engine.isRunning { try? self.engine.start() }
-                targetIdlePlayer.play()
+                self.incomingLaneReady = true
                 self.transitionStartTime = Date()
                 self.startTransitionTimer()
+                self.transitionPreparationTask = nil
             } catch {
-                self.isTransitioning = false
-                self.transitionScheduled = false
-                self.AutoMixDJEngineCleanup()
+                guard self.transitionRequestID == transitionID else { return }
+                self.cancelTransition()
             }
         }
     }
@@ -1613,7 +1722,7 @@ final class PlayerCore {
     }
 
     private func tickTransition() {
-        guard let start = transitionStartTime, isTransitioning else { return }
+        guard isPlaying, let start = transitionStartTime, isTransitioning else { return }
         let elapsed = -start.timeIntervalSinceNow
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
@@ -1625,14 +1734,14 @@ final class PlayerCore {
             activeStreamingPlayer.volume = sourceLevel * volume * Self.streamHeadroomCeiling
             activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
         } else {
-            activePlayer.volume = sourceLevel * volume
+            activePlayer.volume = sourceLevel
         }
 
         if incomingIsStream {
             idleStreamingPlayer.volume = targetLevel * volume * Self.streamHeadroomCeiling
             idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
         } else {
-            idlePlayer.volume = targetLevel * volume
+            idlePlayer.volume = targetLevel
         }
 
         if !metadataSwapped, let incomingTrack, transitionDuration * (1.0 - p) <= 0.25 {
@@ -1666,6 +1775,7 @@ final class PlayerCore {
     }
 
     private func completeTransition(to nextTrack: Track) {
+        let nativeIncomingPosition = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
@@ -1675,7 +1785,7 @@ final class PlayerCore {
 
         let wasStream = isUsingStreamPlayer
 
-        if nextTrack.isStream || incomingIsStream {
+        if incomingIsStream {
             if !wasStream {
                 isUsingStreamPlayer = true
             }
@@ -1716,11 +1826,12 @@ final class PlayerCore {
             outgoingNode.pitch = 0
             outgoingNode.bypass = true
 
-            generation += 1
+            localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
             activePlayer = idlePlayer
             activeAudioFile = incomingAudioFile
+            activeLocalURL = activeAudioFile?.url
             incomingAudioFile = nil
-            activePlayer.volume = volume
+            activePlayer.volume = 1
             applyEQ()
         }
 
@@ -1736,7 +1847,7 @@ final class PlayerCore {
         streamDuration = nextTrack.duration
 
         // Sync playback progress accurately to the incoming player's actual continuous time
-        let actualTime = isUsingStreamPlayer ? CMTimeGetSeconds(activeStreamingPlayer.currentTime()) : incomingStartPosition
+        let actualTime = isUsingStreamPlayer ? CMTimeGetSeconds(activeStreamingPlayer.currentTime()) : nativeIncomingPosition
         let resolvedPos = (actualTime.isFinite && actualTime >= 0) ? actualTime : incomingStartPosition
         anchorDate = Date()
         anchorOffset = resolvedPos
@@ -1752,7 +1863,13 @@ final class PlayerCore {
         SonivoDiagnostics.log("[AutoMix] Transition completed: now playing \(nextTrack.title)", tag: "AUTOMIX")
 
         if !isUsingStreamPlayer {
+            startTimer()
             releaseActiveTimePitchToUnity()
+        } else {
+            stopTimer()
+            activeAudioFile = nil
+            activeLocalURL = nil
+            localSegmentTokens.removeAll()
         }
 
         lastNowPlayingSync = nil
@@ -1849,6 +1966,10 @@ final class PlayerCore {
     }
 
     private func cancelTransition() {
+        transitionRequestID = UUID()
+        transitionPreparationTask?.cancel()
+        transitionPreparationTask = nil
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
         transitionScheduled = false
         isTransitioning = false
         transitionTimer?.invalidate()
@@ -1879,9 +2000,9 @@ final class PlayerCore {
         idleStreamingPlayer.rate = 0.0
         idlePlayer.stop()
         idlePlayer.volume = 0
-        activePlayer.volume = volume
+        activePlayer.volume = 1
         activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
-        activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+        activeStreamingPlayer.rate = isUsingStreamPlayer && isPlaying ? 1.0 : 0
         reverbA.wetDryMix = 0
         reverbB.wetDryMix = 0
         incomingAudioFile = nil
@@ -1970,6 +2091,7 @@ final class PlayerCore {
             refillQueueIfNeeded()
             finishBgTask()
         } else if let current = currentTrack, repeatMode != .one {
+            let requestToken = generation
             Task { @MainActor in
                 defer { finishBgTask() }
                 let wave: [Track]
@@ -1978,7 +2100,7 @@ final class PlayerCore {
                 } else {
                     wave = await YandexMusicService.shared.buildTrackWave(from: current, target: 20)
                 }
-                guard self.currentTrack?.id == current.id else { return }
+                guard self.generation == requestToken, self.currentTrack?.id == current.id, self.isPlaying else { return }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id }
                 guard !fresh.isEmpty else {
@@ -2186,6 +2308,10 @@ final class PlayerCore {
     }
 
     func cancelSleepTimer() {
+        if sleepFadeTask != nil { volume = 1 }
+        sleepFadeRequestID = UUID()
+        sleepFadeTask?.cancel()
+        sleepFadeTask = nil
         stopSleepTimerWatchdog()
         sleepDeadline = nil
         sleepTimerRemaining = nil
@@ -2245,11 +2371,21 @@ final class PlayerCore {
         let fadeDuration = 1.5
         let stepDelay = fadeDuration / Double(fadeSteps)
 
-        Task { @MainActor [weak self] in
+        let fadeGeneration = generation
+        let fadeID = UUID()
+        sleepFadeRequestID = fadeID
+        sleepFadeTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if self.sleepFadeRequestID == fadeID {
+                    self.volume = initialVolume
+                    self.sleepFadeTask = nil
+                }
+            }
             for step in 1...fadeSteps {
-                try? await Task.sleep(nanoseconds: UInt64(stepDelay * 1_000_000_000))
-                guard self.isPlaying else { break }
+                do { try await Task.sleep(nanoseconds: UInt64(stepDelay * 1_000_000_000)) }
+                catch { return }
+                guard !Task.isCancelled, self.generation == fadeGeneration, self.isPlaying else { return }
                 let fraction = Float(fadeSteps - step) / Float(fadeSteps)
                 self.volume = max(0.0, initialVolume * fraction)
             }

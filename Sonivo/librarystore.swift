@@ -77,6 +77,25 @@ final class LibraryStore {
            let savedPlaylists = try? JSONDecoder().decode([Playlist].self, from: pData) {
             playlists = savedPlaylists
         }
+        removeInternalAudioEntries()
+    }
+
+    /// Old processing files may already be indexed. Remove only reserved UUID cache names.
+    private func removeInternalAudioEntries() {
+        let indexed = tracks + playlists.flatMap(\.cachedTracks)
+        let removedIDs = Set(indexed.filter(Self.isInternalAudioTrack).map(\.id))
+        tracks.removeAll(where: Self.isInternalAudioTrack)
+        for index in playlists.indices {
+            playlists[index].trackIds.removeAll { removedIDs.contains($0) }
+            playlists[index].cachedTracks.removeAll {
+                Self.isInternalAudioTrack($0)
+            }
+        }
+    }
+
+    private static func isInternalAudioTrack(_ track: Track) -> Bool {
+        !track.isStream && InternalAudioCache.isLegacyFileName(track.fileName)
+            && (track.relativePath.isEmpty || track.relativePath == track.fileName)
     }
 
     // MARK: - Playlists Management
@@ -274,6 +293,8 @@ final class LibraryStore {
     // MARK: - Scan local storage (Documents, Music, and Media Library)
 
     func rescan() async {
+        guard !isScanning else { return }
+        removeInternalAudioEntries()
         isScanning = true
         defer { isScanning = false }
 
@@ -492,7 +513,8 @@ final class LibraryStore {
     // MARK: - Import helpers
 
     nonisolated private static func isSupportedAudioURL(_ url: URL) -> Bool {
-        supportedAudioExtensions.contains(url.pathExtension.lowercased())
+        !InternalAudioCache.isLegacyFileName(url.lastPathComponent)
+            && supportedAudioExtensions.contains(url.pathExtension.lowercased())
     }
 
     nonisolated private static func safeFileName(_ original: String) -> String {

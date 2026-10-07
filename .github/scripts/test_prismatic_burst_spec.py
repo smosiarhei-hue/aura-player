@@ -98,7 +98,7 @@ class PrismaticBurstTests(unittest.TestCase):
     def test_only_audible_deck_drives_stream_spectrum_and_stale_signal_resets(self):
         swift = (ROOT / 'Sonivo/streambeat.swift').read_text()
         self.assertIn('PlayerCore.shared.streamingPlayer.currentItem', swift)
-        self.assertIn('PlayerCore.shared.currentTrack?.isStream == true', swift)
+        self.assertIn('PlayerCore.shared.usesStreamingBackend', swift)
         self.assertIn('self.readSpectrum(from: self.probes[key]?.tap)', swift)
         self.assertIn('Date.timeIntervalSinceReferenceDate - lastSignal > 0.5', swift)
         self.assertIn('SpectrumAnalyzer.ingest(buffer: buffer', swift)

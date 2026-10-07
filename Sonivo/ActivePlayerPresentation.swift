@@ -55,6 +55,7 @@ final class ActivePlayerPresentation {
     // that is currently audible. In iOS 27 AutoMix, this switches on the Drop (T=0) hard cut.
     var displayTrack: Track? { legacy.displayTrack }
 
+    var usesStreamingBackend: Bool { legacy.usesStreamingBackend }
     var isPlaying: Bool {
         legacy.isPlaying
     }
