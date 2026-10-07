@@ -3,14 +3,24 @@ import unittest, pathlib, tempfile, subprocess, shutil
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 
 class BeatWaveNativeTests(unittest.TestCase):
-    def test_native_only_two_pass_gpu(self):
+    def test_native_only_single_pass_promotion_gpu(self):
         s=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
-        self.assertIn('beatWaveField',s); self.assertIn('beatWaveGlass',s)
-        self.assertIn('fieldTexture',s); self.assertIn('isPaused = true',s)
+        self.assertIn('beatWaveField',s)
+        self.assertNotIn('beatWaveGlass',s)
+        self.assertNotIn('fieldTexture',s)
+        self.assertIn('view.isPaused=true',s)
         self.assertIn('inFlight.wait(timeout: .now())',s)
-        self.assertIn('lastDraw',s)
+        self.assertIn('CADisplayLink(target:',s)
+        self.assertIn('preferredFrameRateRange',s)
+        self.assertIn('maximumFramesPerSecond',s)
+        self.assertIn('min(120,maximum)',s)
+        self.assertIn('forMode: .common',s)
+        self.assertIn('displayLink?.invalidate()',s)
+        self.assertIn('weak var renderer',s)
+        self.assertIn('gpuEndTime-buffer.gpuStartTime',s)
         self.assertNotIn('AVPlayer(',s); self.assertNotIn('WKWebView',s)
-        self.assertEqual(s.count('drawPrimitives('),2)
+        self.assertEqual(s.count('drawPrimitives('),1)
+        self.assertIn('CADisableMinimumFrameDurationOnPhone: true',(ROOT/'project.yml').read_text())
 
     def test_actual_capture_timestamp_and_single_event(self):
         a=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
@@ -22,28 +32,36 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('!isBeatWaveOverrideActive',h)
         self.assertIn('settings.musicHaptics',h)
         self.assertIn('playsHapticsOnly = true',h)
-        v=(ROOT/'Sonivo/MusicWaveBackground.swift').read_text()
+        v=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
         self.assertIn('if newKick',v)
         self.assertIn('eventID: frame.kickEventID',v)
 
-    def test_glass_reads_cached_scene_not_recomputes_neural_field(self):
+    def test_visualization_has_no_glass_and_premultiplied_alpha(self):
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
-        optics=m.split('fragment float4 beatWaveGlass',1)[1]
-        self.assertNotIn('neuralWeave(',optics)
-        self.assertEqual(optics.count('beatWaveSample(scene,'),8)
-        self.assertIn('finalGlassRgb * finalAlpha',optics)
+        for unwanted in ['beatWaveGlass','sdRoundedRect','rimBevel','glassHalfSize',
+                         'uGlass','shadowAlpha','beatWaveSample']:
+            self.assertNotIn(unwanted,m)
+        self.assertIn('rgb * alpha',m)
         self.assertIn('noise.sample(beatNoiseSampler',m)
         self.assertIn('uPulseSpeed 2.4',m)
         self.assertIn('uSegmentSpeed 1.2',m)
+        self.assertIn('strands[i].pigment.rgb',m)
+        self.assertIn('float featherX = smoothstep',m)
+        self.assertIn('float featherY = smoothstep',m)
 
     def test_scoped_lifecycle_and_no_fake_clock(self):
         s=(ROOT/'Sonivo/MusicWaveBackground.swift').read_text()
-        for item in ['!reduceMotion && scenePhase == .active','paused: !running',
-                     '.allowsHitTesting(false)', '.accessibilityHidden(true)',
-                     'presentation.reset()', 'if !active { motion.settle() }']:
+        r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        for item in ['!reduceMotion && scenePhase == .active',
+                     '.allowsHitTesting(false)', '.accessibilityHidden(true)']:
             self.assertIn(item,s)
-        for fake in ['dynamicKick','dynamicBass','120.0','player.progress']:
-            self.assertNotIn(fake,s)
+        self.assertNotIn('TimelineView',s)
+        self.assertNotIn('.mask {',s)
+        self.assertIn('guard running else { stop(); return }',r)
+        self.assertIn('presentation.reset()',r)
+        self.assertIn('motion.settle()',r)
+        for fake in ['dynamicKick','dynamicBass','player.progress']:
+            self.assertNotIn(fake,s+r)
         m=(ROOT/'Sonivo/BeatWaveMotion.swift').read_text()
         self.assertIn('first.capturedAt<=cutoff',m)
         self.assertIn('queue.count>90',m)

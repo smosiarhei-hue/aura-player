@@ -11,11 +11,11 @@ The supplied demo UI/artwork/copy are not migrated. The existing cover and contr
 
 ## Visual fidelity and deliberate corrections
 `BeatWave.metal` ports the supplied GLSL strand, pulse, noise, plasma and glass math using the final Sonivo palette/settings.
-The expensive field is evaluated once into RGBA16F; the optics pass samples that texture seven times instead of rerunning the field seven times. Small resampling differences vs analytic GLSL evaluation are expected.
+Current rendering is visualization-only in one pass to the drawable. The glass optics and intermediate RGBA16F texture were removed at the owner’s request. Frame-constant directions and pigments are computed once on CPU.
 It renders SDR premultiplied alpha to a transparent BGRA8 layer. “Dolby Vision” in the prototype comments is not a real HDR pipeline.
 Desktop pointer drift is held at zero; the spotlight remains centered, as before any pointer movement.
-Normal rendering is capped at 30 FPS / half scale (DPR capped at 2); low-power mode uses 20 FPS / 0.35 scale.
-A soft external hero mask blends into both themes. No foreground blur or cover shaking.
+Normal rendering requests the screen-supported refresh rate up to 120 Hz. Adaptive scale is 0.25–0.5 (starts at 0.35; DPR capped at 2). Low-power mode requests at most 30 Hz with scale up to 0.3.
+Soft alpha feathering inside Metal blends into both themes; no extra blurred SwiftUI mask, glass panel, foreground blur or cover shaking.
 Legacy MusicWave.metal remains unused; the home now renders BeatWaveMetalView.
 
 ## Audio and physics
@@ -37,3 +37,9 @@ The owner-supplied archive calls its source “React Bits Pro Neural Float” an
 Browser source: npm ci --ignore-scripts, 20/20 tests, production build passed during inspection.
 Native CI includes an actual Swift executable testing onset, sustained tone, silence, seek IDs, one-shot impulse, invalid inputs, stable spring at 10/20/30/60/120 FPS and causal presentation/reset. Linux source guards are not a substitute for Swift/Metal compilation.
 Build IPA must complete before delivery. Device visual comparison, GPU frame-time/power measurement, listening and iPhone/AirPods timing remain required. No such device test has been performed by this port.
+
+
+## Follow-up: visualization-only / ProMotion
+The owner rejected the glass card/rim on device and reported heavy lag. The glass optics pass, offscreen scene texture and blurred SwiftUI mask have been removed entirely. The native field writes premultiplied alpha directly to the drawable; only its soft shader feather remains.
+A single weak-target CADisplayLink now owns motion, haptics and GPU submission outside SwiftUI body/state updates. It requests the attached display's supported frequency, up to 120 Hz, uses common run-loop mode during scrolling, and invalidates on pause/hide/Reduce Motion/background/dismantle. Info.plist opts into high-refresh phone frames. Low-power mode requests at most 30 Hz.
+Frame-constant strand directions and pigments are prepared once per frame on CPU, not recomputed for every pixel. Completed GPU timings adapt pixel resolution (0.25–0.5 render scale, DPR capped at 2) without changing musical phase, strand count or selected colors. The in-flight limit is nonblocking; buffers never accumulate without bound. This is support for ProMotion, not a measured guarantee of sustained 120 FPS on all devices. Device visual/GPU/thermal validation remains required.

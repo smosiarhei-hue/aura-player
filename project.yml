@@ -70,6 +70,7 @@ targets:
       properties:
         CFBundleDisplayName: Sonivo
         CFBundleDevelopmentRegion: ru
+        CADisableMinimumFrameDurationOnPhone: true
         CFBundleShortVersionString: "1.1.0"
         CFBundleVersion: "2"
         UILaunchScreen: {}

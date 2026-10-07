@@ -52,10 +52,10 @@ class MusicWaveTests(unittest.TestCase):
     def test_edges_are_feathered_and_no_opaque_black_panel(self):
         self.assertIn('float featherX = smoothstep', METAL)
         self.assertIn('float featherY = smoothstep', METAL)
-        self.assertIn('finalGlassRgb * finalAlpha', METAL)
-        self.assertIn('view.isOpaque = false', RENDERER)
-        self.assertIn('.blur(radius: 24)', SWIFT)
-        self.assertIn('.mask {', SWIFT)
+        self.assertIn('rgb * alpha', METAL)
+        self.assertIn('view.isOpaque=false', RENDERER)
+        self.assertNotIn('glassHalfSize', METAL)
+        self.assertNotIn('.mask {', SWIFT)
         wave = HOME.split('private var waveHero:', 1)[1].split('private var quickDestinations:', 1)[0]
         self.assertIn('SN.bg', wave)
         self.assertNotIn('Color.black', wave)
@@ -70,9 +70,9 @@ class MusicWaveTests(unittest.TestCase):
 
     def test_lifecycle_and_reduce_motion_stop_motion(self):
         self.assertIn('!reduceMotion && scenePhase == .active', SWIFT)
-        self.assertIn('paused: !running', SWIFT)
-        self.assertIn('if !active { motion.settle() }', SWIFT)
-        self.assertIn('age<outputDelay+0.4', SWIFT)
+        self.assertIn('guard running else { stop(); return }', RENDERER)
+        self.assertIn('presentation.reset(); motion.settle()', RENDERER)
+        self.assertIn('age<outputDelay+0.4', RENDERER)
         self.assertIn('.allowsHitTesting(false)', SWIFT)
         self.assertIn('.accessibilityHidden(true)', SWIFT)
 

@@ -1,129 +1,212 @@
 import SwiftUI
 import MetalKit
+import AVFoundation
 
-/// Two native GPU passes: expensive field once, then seven cheap optical texture samples.
+/// One transparent Metal pass. CADisplayLink is the only frame scheduler.
 struct BeatWaveMetalView: UIViewRepresentable {
-    let motion: MusicWaveMotion
     let darkMode: Bool
     let running: Bool
     let lowPower: Bool
-
     func makeCoordinator() -> BeatWaveMetalRenderer? { BeatWaveMetalRenderer() }
     func makeUIView(context: Context) -> MTKView {
-        let view = MTKView(frame: .zero, device: context.coordinator?.device)
-        view.isOpaque = false
-        view.layer.isOpaque = false
-        view.backgroundColor = .clear
-        view.clearColor = MTLClearColorMake(0,0,0,0)
+        let view=MTKView(frame: .zero,device: context.coordinator?.device)
+        view.isOpaque=false; view.layer.isOpaque=false; view.backgroundColor = .clear
+        view.clearColor=MTLClearColorMake(0,0,0,0)
         view.colorPixelFormat = .bgra8Unorm
-        view.framebufferOnly = true
-        // SwiftUI's gated TimelineView owns scheduling. No second display-link runs offscreen.
-        view.isPaused = true
-        view.enableSetNeedsDisplay = false
-        view.isUserInteractionEnabled = false
-        view.isAccessibilityElement = false
+        view.framebufferOnly=true
+        view.autoResizeDrawable=false
+        // No MTKView timer competes with our display link.
+        view.isPaused=true; view.enableSetNeedsDisplay=false
+        view.isUserInteractionEnabled=false; view.isAccessibilityElement=false
         return view
     }
-    func updateUIView(_ view: MTKView, context: Context) {
-        guard running else { return }
-        context.coordinator?.render(view, motion: motion, darkMode: darkMode, lowPower: lowPower)
+    func updateUIView(_ view: MTKView,context: Context) {
+        context.coordinator?.configure(view,darkMode: darkMode,running: running,lowPower: lowPower)
     }
-    static func dismantleUIView(_ view: MTKView, coordinator: BeatWaveMetalRenderer?) {
-        view.isPaused = true
+    static func dismantleUIView(_ view: MTKView,coordinator: BeatWaveMetalRenderer?) {
+        coordinator?.stop()
         view.releaseDrawables()
     }
+}
+
+/// Weak target prevents CADisplayLink retaining the renderer after the hero is removed.
+@MainActor
+private final class BeatWaveDisplayLinkTarget: NSObject {
+    weak var renderer: BeatWaveMetalRenderer?
+    init(_ renderer: BeatWaveMetalRenderer) { self.renderer=renderer }
+    @objc func tick(_ link: CADisplayLink) { renderer?.tick(link) }
+}
+
+/// Completed GPU timing feedback, safe to update from Metal's completion thread.
+nonisolated private final class BeatWaveGPUFeedback: @unchecked Sendable {
+    private let lock=NSLock()
+    private var milliseconds: Double = 0
+    func record(_ value: Double) {
+        guard value.isFinite, value>0 else { return }
+        lock.lock(); milliseconds=milliseconds==0 ? value : milliseconds*0.8+value*0.2; lock.unlock()
+    }
+    func sample() -> Double { lock.lock(); defer { lock.unlock() }; return milliseconds }
 }
 
 @MainActor
 final class BeatWaveMetalRenderer {
     let device: any MTLDevice
     private let queue: any MTLCommandQueue
-    private let fieldPipeline: any MTLRenderPipelineState
-    private let glassPipeline: any MTLRenderPipelineState
+    private let pipeline: any MTLRenderPipelineState
     private let noise: any MTLTexture
-    private var fieldTexture: (any MTLTexture)?
-    private let inFlight = DispatchSemaphore(value: 2)
-    private var lastDraw: TimeInterval = 0
+    private let inFlight=DispatchSemaphore(value: 2)
+    private let gpuFeedback=BeatWaveGPUFeedback()
+    private weak var view: MTKView?
+    private var displayLink: CADisplayLink?
+    private var linkTarget: BeatWaveDisplayLinkTarget?
+    private var darkMode=false
+    private var lowPower=false
+    private var motion=MusicWaveMotion()
+    private var presentation=BeatWavePresentation()
+    private var previousTimestamp: CFTimeInterval?
+    private var outputDelay: TimeInterval=0
+    private var lastDelayCheck: TimeInterval=0
+    private var lastQualityCheck: CFTimeInterval=0
+    private var renderScale: CGFloat=0.35
+    private var targetFPS=0
+    private var strandTable=[Strand](repeating: Strand(),count: 32)
 
-    // Three float4 values have identical alignment/stride to the Metal uniform struct (48 bytes).
     private struct Uniforms {
         var resolution: SIMD4<Float>
         var motion: SIMD4<Float>
         var surface: SIMD4<Float>
     }
-
+    private struct Strand {
+        var direction=SIMD4<Float>(repeating: 0)
+        var pigment=SIMD4<Float>(repeating: 0)
+    }
     init?() {
-        guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue(), let library = device.makeDefaultLibrary(),
-              let vertex = library.makeFunction(name: "beatWaveVertex"),
-              let field = library.makeFunction(name: "beatWaveField"),
-              let glass = library.makeFunction(name: "beatWaveGlass"),
-              let noise = Self.makeNoise(device) else { return nil }
-        func pipeline(_ fragment: any MTLFunction, format: MTLPixelFormat) throws -> any MTLRenderPipelineState {
-            let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.vertexFunction = vertex
-            descriptor.fragmentFunction = fragment
-            descriptor.colorAttachments[0].pixelFormat = format
-            // Pass one stores straight RGB. Pass two writes premultiplied RGB to a transparent layer.
-            descriptor.colorAttachments[0].isBlendingEnabled = false
-            return try device.makeRenderPipelineState(descriptor: descriptor)
-        }
-        do {
-            self.fieldPipeline = try pipeline(field,format: .rgba16Float)
-            self.glassPipeline = try pipeline(glass,format: .bgra8Unorm)
-        } catch {
-            NSLog("Beat Waves Metal pipeline unavailable: %@", String(describing: error))
-            return nil
-        }
+        guard let device=MTLCreateSystemDefaultDevice(), let queue=device.makeCommandQueue(),
+              let library=device.makeDefaultLibrary(), let vertex=library.makeFunction(name: "beatWaveVertex"),
+              let field=library.makeFunction(name: "beatWaveField"), let noise=Self.makeNoise(device) else { return nil }
+        let descriptor=MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction=vertex; descriptor.fragmentFunction=field
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        descriptor.colorAttachments[0].isBlendingEnabled=false
+        do { self.pipeline=try device.makeRenderPipelineState(descriptor: descriptor) }
+        catch { NSLog("Beat Waves pipeline unavailable: %@",String(describing: error)); return nil }
         self.device=device; self.queue=queue; self.noise=noise
     }
 
-    func render(_ view: MTKView, motion: MusicWaveMotion, darkMode: Bool, lowPower: Bool) {
-        let now = CACurrentMediaTime()
-        guard now-lastDraw >= (lowPower ? 1/20.0 : 1/30.0)*0.95,
-              view.bounds.width>0, view.bounds.height>0,
+    func configure(_ view: MTKView,darkMode: Bool,running: Bool,lowPower: Bool) {
+        self.view=view; self.darkMode=darkMode; self.lowPower=lowPower
+        guard running else { stop(); return }
+        if displayLink==nil {
+            motion.consume(SpectrumAnalyzer.shared.beatWaveFrame.kickEventID)
+            previousTimestamp=nil; presentation.reset(); targetFPS=0
+            renderScale=lowPower ? 0.3 : 0.35
+            let target=BeatWaveDisplayLinkTarget(self)
+            let link=CADisplayLink(target: target,selector: #selector(BeatWaveDisplayLinkTarget.tick(_:)))
+            linkTarget=target; displayLink=link
+            link.add(to: .main,forMode: .common) // Keeps rendering during scroll tracking.
+            MusicHapticsManager.core.setBeatWaveOverride(true)
+        }
+        configureFrameRate()
+    }
+    private func configureFrameRate() {
+        let maximum=view?.window?.windowScene?.screen.maximumFramesPerSecond ?? 60
+        let desired=lowPower ? min(30,maximum) : min(120,maximum)
+        guard desired != targetFPS else { return }
+        targetFPS=desired
+        displayLink?.preferredFrameRateRange=CAFrameRateRange(minimum: Float(lowPower ? desired : min(60,desired)),maximum: Float(desired),preferred: Float(desired))
+    }
+    func stop() {
+        displayLink?.invalidate(); displayLink=nil; linkTarget=nil
+        previousTimestamp=nil; presentation.reset(); motion.settle()
+        MusicHapticsManager.core.setBeatWaveOverride(false)
+    }
+    fileprivate func tick(_ link: CADisplayLink) {
+        guard let view,view.window != nil else { return }
+        // The screen may attach after makeUIView; re-read its actual supported refresh rate.
+        configureFrameRate()
+        let dt=Float(max(0,min(0.1,link.timestamp-(previousTimestamp ?? link.timestamp))))
+        previousTimestamp=link.timestamp
+        let now=Date.timeIntervalSinceReferenceDate
+        if now-lastDelayCheck>1 {
+            let session=AVAudioSession.sharedInstance()
+            outputDelay=max(0,min(0.5,session.outputLatency+session.ioBufferDuration))
+            lastDelayCheck=now
+        }
+        let capture=SpectrumAnalyzer.shared.beatWaveFrame
+        if capture.capturedAt<=0 { presentation.reset(); motion.settle() }
+        else {
+            presentation.push(capture)
+            let frame=presentation.sample(now: now,estimatedOutputDelay: outputDelay)
+            let age=now-frame.capturedAt
+            let fresh=frame.capturedAt>0 && age>=0 && age<outputDelay+0.4
+            let newKick=motion.advance(delta: dt,frame: frame,hasFreshAudio: fresh)
+            if newKick {
+                MusicHapticsManager.core.playBeatWaveKick(eventID: frame.kickEventID,strength: frame.kickConfidence)
+            }
+        }
+        // Reduce pixel work rather than limiting ProMotion to the old hard-coded 30 FPS.
+        if link.timestamp-lastQualityCheck>0.75 {
+            lastQualityCheck=link.timestamp
+            let gpuMs=gpuFeedback.sample()
+            let budget=1000.0/Double(max(1,targetFPS))
+            let ceiling: CGFloat=lowPower ? 0.3 : 0.5
+            if gpuMs>budget*0.8 { renderScale=max(0.25,renderScale-0.05) }
+            else if gpuMs>0 && gpuMs<budget*0.45 { renderScale=min(ceiling,renderScale+0.025) }
+            renderScale=min(ceiling,renderScale)
+        }
+        render(view)
+    }
+
+    private func updateStrands() {
+        let t=Float(motion.phase)*0.6
+        let count=max(14+(6+motion.energy*2.5)*sin(t*0.3),1)
+        let a=SIMD3<Float>(1,0.15,0.55),b=SIMD3<Float>(0.58,0.20,0.95),c=SIMD3<Float>(0.10,0.85,0.98)
+        for i in 0..<32 {
+            let index=Float(i),fade=max(0,min(1,count-index)),id=index/count
+            if fade<=0 { strandTable[i]=Strand(); continue }
+            let angle=id*(2*Float.pi)+t*0.12
+            let tintTime=id+t*0.05
+            let blend=sin(tintTime*Float.pi*0.5)*0.5+0.5
+            let shade=cos(tintTime*(2*Float.pi))*0.5+0.5
+            var tint=a*(1-blend)+b*blend
+            let mixC=0.28*sin(tintTime*2.5)+0.28
+            tint=(tint*(1-mixC)+c*mixC)*(0.6+0.4*shade)
+            tint *= (0.6+0.4*sin(index*3+t))*fade
+            strandTable[i].direction=SIMD4(sin(angle),cos(angle),fade,0)
+            strandTable[i].pigment=SIMD4(tint.x,tint.y,tint.z,0)
+        }
+    }
+    private func render(_ view: MTKView) {
+        guard view.bounds.width>0,view.bounds.height>0,
               inFlight.wait(timeout: .now()) == .success else { return }
         var committed=false
         defer { if !committed { inFlight.signal() } }
-        let screenScale = view.window?.screen.scale ?? 2
-        let pixelScale = min(screenScale,2) * (lowPower ? 0.35 : 0.5)
-        let width=max(1,Int(view.bounds.width*pixelScale))
-        let height=max(1,Int(view.bounds.height*pixelScale))
-        view.drawableSize=CGSize(width: width,height: height)
-        if fieldTexture?.width != width || fieldTexture?.height != height {
-            let descriptor=MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width,height: height,mipmapped: false)
-            descriptor.usage=[.renderTarget,.shaderRead]
-            descriptor.storageMode = .private
-            fieldTexture=device.makeTexture(descriptor: descriptor)
-        }
-        guard let fieldTexture, let drawable=view.currentDrawable,
-              let output=view.currentRenderPassDescriptor, let command=queue.makeCommandBuffer() else { return }
+        let screenScale=view.window?.windowScene?.screen.scale ?? 2
+        let pixelScale=min(screenScale,2)*renderScale
+        let width=max(1,Int(view.bounds.width*pixelScale)),height=max(1,Int(view.bounds.height*pixelScale))
+        let size=CGSize(width: width,height: height)
+        if view.drawableSize != size { view.drawableSize=size }
+        guard let drawable=view.currentDrawable,let pass=view.currentRenderPassDescriptor,
+              let command=queue.makeCommandBuffer() else { return }
+        updateStrands()
         var uniforms=Uniforms(resolution: SIMD4(Float(width),Float(height),0,0),
                               motion: SIMD4(Float(motion.phase),motion.energy,motion.impact,motion.detail),
-                              surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,36*Float(pixelScale),0))
-        let fieldPass=MTLRenderPassDescriptor()
-        fieldPass.colorAttachments[0].texture=fieldTexture
-        fieldPass.colorAttachments[0].loadAction = .clear
-        fieldPass.colorAttachments[0].storeAction = .store
-        fieldPass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0)
-        guard let encoder=command.makeRenderCommandEncoder(descriptor: fieldPass) else { return }
-        encoder.setRenderPipelineState(fieldPipeline)
+                              surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,0))
+        guard let encoder=command.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBytes(&uniforms,length: MemoryLayout<Uniforms>.stride,index: 0)
+        strandTable.withUnsafeBytes { bytes in
+            if let base=bytes.baseAddress { encoder.setFragmentBytes(base,length: bytes.count,index: 1) }
+        }
         encoder.setFragmentTexture(noise,index: 0)
         encoder.drawPrimitives(type: .triangle,vertexStart: 0,vertexCount: 3)
         encoder.endEncoding()
-        guard let optics=command.makeRenderCommandEncoder(descriptor: output) else { return }
-        optics.setRenderPipelineState(glassPipeline)
-        optics.setFragmentBytes(&uniforms,length: MemoryLayout<Uniforms>.stride,index: 0)
-        optics.setFragmentTexture(fieldTexture,index: 0)
-        optics.drawPrimitives(type: .triangle,vertexStart: 0,vertexCount: 3)
-        optics.endEncoding()
-        let semaphore=inFlight
-        command.addCompletedHandler { _ in semaphore.signal() }
-        command.present(drawable)
-        committed=true
-        lastDraw=now
-        command.commit()
+        let semaphore=inFlight,feedback=gpuFeedback
+        command.addCompletedHandler { buffer in
+            feedback.record((buffer.gpuEndTime-buffer.gpuStartTime)*1000)
+            semaphore.signal()
+        }
+        command.present(drawable); committed=true; command.commit()
     }
 
     private static func makeNoise(_ device: any MTLDevice) -> (any MTLTexture)? {
