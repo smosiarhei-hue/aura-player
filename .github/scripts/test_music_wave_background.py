@@ -20,10 +20,10 @@ def advance(state, dt, value, kick, fresh=True):
     dt = max(0, min(.1, dt))
     target_energy = value if fresh else 0
     target_impact = kick if fresh else 0
-    energy += (target_energy-energy)*(1-math.exp(-dt/(.08 if target_energy>energy else (.45 if fresh else .20))))
-    impact += (target_impact-impact)*(1-math.exp(-dt/(.025 if target_impact>impact else (.38 if fresh else .15))))
-    target_speed = .07+energy*.55+impact*.28 if fresh and target_energy>.003 else 0
-    speed += (target_speed-speed)*(1-math.exp(-dt/(.06 if target_speed>speed else (.65 if fresh else .20))))
+    energy += (target_energy-energy)*(1-math.exp(-dt/(.03 if target_energy>energy else (.30 if fresh else .20))))
+    impact += (target_impact-impact)*(1-math.exp(-dt/(.008 if target_impact>impact else (.16 if fresh else .15))))
+    target_speed = .25+energy*1.65+impact*.90 if fresh and target_energy>.003 else 0
+    speed += (target_speed-speed)*(1-math.exp(-dt/(.025 if target_speed>speed else (.24 if fresh else .20))))
     return phase+dt*speed, energy, impact, speed
 
 
@@ -36,7 +36,7 @@ class MusicWaveTests(unittest.TestCase):
 
     def test_audio_changes_integrated_speed_not_absolute_time(self):
         self.assertIn('phase += Double(dt * speed)', MOTION)
-        self.assertIn('energy*0.55+impact*0.28', MOTION)
+        self.assertIn('energy*1.65+impact*0.90', MOTION)
         self.assertIn('frame.highs', MOTION)
         self.assertIn('frame.rms', MOTION)
         for fake in ['dynamicKick', 'dynamicBass', '120.0', 'player.progress']:

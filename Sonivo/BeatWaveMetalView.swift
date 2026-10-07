@@ -69,6 +69,11 @@ final class BeatWaveMetalRenderer {
     private var lastQualityCheck: CFTimeInterval=0
     private var renderScale: CGFloat=0.35
     private var targetFPS=0
+    private var diagnosticWindow: CFTimeInterval=0
+    private var diagnosticTicks=0
+    private var diagnosticSubmissions=0
+    private var diagnosticBusyDrops=0
+    private var diagnosticFrameAge: Double=0
     private var strandTable=[Strand](repeating: Strand(),count: 32)
 
     private struct Uniforms {
@@ -99,6 +104,7 @@ final class BeatWaveMetalRenderer {
         if displayLink==nil {
             motion.consume(SpectrumAnalyzer.shared.beatWaveFrame.kickEventID)
             previousTimestamp=nil; presentation.reset(); targetFPS=0
+            diagnosticWindow=0; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
             renderScale=lowPower ? 0.3 : 0.35
             let target=BeatWaveDisplayLinkTarget(self)
             let link=CADisplayLink(target: target,selector: #selector(BeatWaveDisplayLinkTarget.tick(_:)))
@@ -126,6 +132,7 @@ final class BeatWaveMetalRenderer {
         configureFrameRate()
         let dt=Float(max(0,min(0.1,link.timestamp-(previousTimestamp ?? link.timestamp))))
         previousTimestamp=link.timestamp
+        diagnosticTicks += 1
         let now=Date.timeIntervalSinceReferenceDate
         if now-lastDelayCheck>1 {
             let session=AVAudioSession.sharedInstance()
@@ -138,6 +145,7 @@ final class BeatWaveMetalRenderer {
             presentation.push(capture)
             let frame=presentation.sample(now: now,estimatedOutputDelay: outputDelay)
             let age=now-frame.capturedAt
+            diagnosticFrameAge=frame.capturedAt>0 ? age*1000 : 0
             let fresh=frame.capturedAt>0 && age>=0 && age<outputDelay+0.4
             let newKick=motion.advance(delta: dt,frame: frame,hasFreshAudio: fresh)
             if newKick {
@@ -155,10 +163,19 @@ final class BeatWaveMetalRenderer {
             renderScale=min(ceiling,renderScale)
         }
         render(view)
+        if diagnosticWindow==0 { diagnosticWindow=link.timestamp }
+        let elapsed=link.timestamp-diagnosticWindow
+        if elapsed>=5 {
+            // Local report only. Submitted frames are not proof of actually displayed 120 FPS.
+            let ticks=Double(diagnosticTicks)/elapsed, submitted=Double(diagnosticSubmissions)/elapsed
+            let gpu=gpuFeedback.sample()
+            SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000),tag: "BEAT_WAVE")
+            diagnosticWindow=link.timestamp; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
+        }
     }
 
     private func updateStrands() {
-        let t=Float(motion.phase)*0.6
+        let t=Float(motion.phase)
         let count=max(14+(6+motion.energy*2.5)*sin(t*0.3),1)
         let a=SIMD3<Float>(1,0.15,0.55),b=SIMD3<Float>(0.58,0.20,0.95),c=SIMD3<Float>(0.10,0.85,0.98)
         for i in 0..<32 {
@@ -177,8 +194,8 @@ final class BeatWaveMetalRenderer {
         }
     }
     private func render(_ view: MTKView) {
-        guard view.bounds.width>0,view.bounds.height>0,
-              inFlight.wait(timeout: .now()) == .success else { return }
+        guard view.bounds.width>0,view.bounds.height>0 else { return }
+        guard inFlight.wait(timeout: .now()) == .success else { diagnosticBusyDrops += 1; return }
         var committed=false
         defer { if !committed { inFlight.signal() } }
         let screenScale=view.window?.windowScene?.screen.scale ?? 2
@@ -207,6 +224,7 @@ final class BeatWaveMetalRenderer {
             semaphore.signal()
         }
         command.present(drawable); committed=true; command.commit()
+        diagnosticSubmissions += 1
     }
 
     private static func makeNoise(_ device: any MTLDevice) -> (any MTLTexture)? {

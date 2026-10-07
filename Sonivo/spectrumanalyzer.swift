@@ -189,11 +189,11 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
                     displayValues[band] = max(values[band], displayValues[band] * 0.80)
                 }
                 // Reuse the already-decoded PCM/spectrum, never load another copy of the song.
-                beatFrame.subBass = values[0..<4].reduce(0,+)/4
-                beatFrame.bass = values[4..<9].reduce(0,+)/5
-                beatFrame.lowMids = values[9..<15].reduce(0,+)/6
-                beatFrame.mids = values[15..<25].reduce(0,+)/10
-                beatFrame.highs = values[25..<32].reduce(0,+)/7
+                beatFrame.subBass = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 0..<4)
+                beatFrame.bass = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 4..<9)
+                beatFrame.lowMids = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 9..<15)
+                beatFrame.mids = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 15..<25)
+                beatFrame.highs = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 25..<32)
                 beatWaveDetector.process(beatFrame)
                 beatFrame.kickEventID = beatWaveDetector.eventID
                 beatFrame.kickEnvelope = beatWaveDetector.envelope

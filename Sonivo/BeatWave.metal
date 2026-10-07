@@ -88,7 +88,7 @@ float2 turn(float2 p, float angle) {
   return float2(p.x * c - p.y * s, p.x * s + p.y * c);
 }
 
-float3 neuralStrand(float2 p, float s, float c, float t, float split, float curTurbulence, float pulseBoost, float energyBoost, constant BeatWaveUniforms &u, texture2d<float> noise) {
+float3 neuralStrand(float2 p, float s, float c, float t, float split, float curTurbulence, float pulseBoost, float energyBoost, float sharedFlow, constant BeatWaveUniforms &u, texture2d<float> noise) {
   float2 q = float2(p.x * c - p.y * s, p.x * s + p.y * c);
 
   if (abs(q.y) > 0.34 + curTurbulence * 0.5 + split) return float3(0.0);
@@ -101,7 +101,8 @@ float3 neuralStrand(float2 p, float s, float c, float t, float split, float curT
   );
   if (gate <= 0.0) return float3(0.0);
 
-  q.y += (turbulence(q * uTurbulenceScale + t * 0.4, u, noise) - 0.5) * curTurbulence;
+  // Shared low-frequency flow + cheap directional ripple. No per-strand octave texture loop.
+  q.y += ((sharedFlow-0.5)*0.65 + sin(q.x*6.0+t*0.4+q.y*2.0)*0.175)*curTurbulence;
 
   float3 reach = abs(q.y + float3(split * s, 0.0, -split * s));
   float3 rim = max(1.0 - reach * 3.0, 0.0);
@@ -133,15 +134,15 @@ float3 neuralStrand(float2 p, float s, float c, float t, float split, float curT
   return spine + glint;
 }
 
-float3 neuralWeave(float2 p, float t, float split, float curTurbulence, float pulseBoost, float energyBoost, constant BeatWaveUniforms &u, texture2d<float> noise, constant BeatWaveStrand *strands) {
+float3 neuralWeave(float2 p, float t, float split, float curTurbulence, float pulseBoost, float energyBoost, float sharedFlow, constant BeatWaveUniforms &u, texture2d<float> noise, constant BeatWaveStrand *strands) {
   float3 sum = float3(0.0);
   for (int i = 0; i < 32; i++) {
     float index = float(i);
     float4 direction = strands[i].direction;
     if (direction.z <= 0.0) break;
     float s = direction.x, c = direction.y;
-    float3 lit = neuralStrand(p, s, c, t + index, split, curTurbulence, pulseBoost, energyBoost, u, noise)
-      + neuralStrand(p, c, -s, t * 1.15 + index, split, curTurbulence, pulseBoost, energyBoost, u, noise);
+    float3 lit = neuralStrand(p, s, c, t + index, split, curTurbulence, pulseBoost, energyBoost, sharedFlow, u, noise)
+      + neuralStrand(p, c, -s, t * 1.15 + index, split, curTurbulence, pulseBoost, energyBoost, sharedFlow, u, noise);
     sum += strands[i].pigment.rgb * lit;
   }
   return sum;
@@ -152,19 +153,25 @@ float4 evalNeuralFloat(float2 uvSample, constant BeatWaveUniforms &u, texture2d<
   float2 p = (uvSample - 0.5) * float2(aspect, 1.0);
   p = turn(p, uSpin) / max(uZoom, 0.01);
 
-  // Smooth, organic time flow (never rushing or racing)
-  float t = uPhase * 0.6;
+  // Continuous audio-integrated flow; no extra slow time multiplier.
+  float t = uPhase;
   float energyBoost = clamp(uEnergy, 0.0, 1.0);
   float pulseBoost = clamp(uImpact, 0.0, 1.0);
   float springImpulse = clamp(uSpringDeform, -1.5, 1.5);
 
   float curTurbulence = uTurbulence * (1.0 + energyBoost * 0.45 + abs(springImpulse) * 0.18);
 
-  p += turbulence(p * 2.0 + t, u, noise) * (uWarp * (1.0 + energyBoost * 0.3));
+  // Kick moves the FIELD, never the cover or text. Immediate punch plus damped recoil.
+  float radialPush = clamp(pulseBoost*0.08 + springImpulse*1.8,-0.12,0.24);
+  p /= 1.0+radialPush;
+  p.y += springImpulse*0.22*sin(p.x*8.0-t*0.9);
+  // Only one octave-noise evaluation per pixel, reused by every strand.
+  float sharedFlow = turbulence(p*2.0+t,u,noise);
+  p += sharedFlow * (uWarp * (1.0 + energyBoost * 0.3));
   p -= uDrift * 0.15;
 
   float split = uChroma * (1.0 + 0.66 * sin(t * 0.4));
-  float3 col = neuralWeave(p, t, split, curTurbulence, pulseBoost, energyBoost, u, noise, strands);
+  float3 col = neuralWeave(p, t, split, curTurbulence, pulseBoost, energyBoost, sharedFlow, u, noise, strands);
 
   // Synaptic Plasma Core (pulsing smoothly on kick drums and sub-bass)
   float reach = length(p);

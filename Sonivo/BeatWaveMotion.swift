@@ -57,7 +57,23 @@ nonisolated struct BeatWaveKickDetector {
     private func unit(_ value: Float) -> Float { value.isFinite ? max(0,min(1,value)) : 0 }
 }
 
-/// Same musical envelopes/preset as the approved prototype, with an exact damped spring.
+/// Responsive audio-driven flow and one-shot geometric impulse; no metronome or guessed tempo.
+nonisolated enum BeatWaveBandEnergy {
+    /// Values are already means of FFT bins. Weight by populated bin counts, not empty log slots.
+    static func mean(values: [Float], counts: [Int], range: Range<Int>) -> Float {
+        var sum: Float = 0
+        var populatedBins = 0
+        for i in range where i>=0 && i<values.count && i<counts.count && counts[i]>0 {
+            guard values[i].isFinite else { continue }
+            let count=counts[i]
+            sum += max(0,min(1,values[i])) * Float(count)
+            populatedBins += count
+        }
+        return populatedBins>0 ? max(0,min(1,sum/Float(populatedBins))) : 0
+    }
+}
+
+/// Exact damped spring plus a fast attack: the beat is visible on its first presented frame.
 nonisolated struct MusicWaveMotion {
     private(set) var phase: Double = 0
     private(set) var energy: Float = 0
@@ -78,13 +94,15 @@ nonisolated struct MusicWaveMotion {
         let bass = unit((unit(frame.subBass)*0.95*0.95 + unit(frame.bass))*0.55)
         let mids = unit(unit(frame.mids)*0.6 + unit(frame.lowMids)*0.4)
         let targetEnergy = hasFreshAudio ? unit(bass*0.48 + mids*0.28 + unit(frame.rms)*0.24) : 0
-        let targetImpact = hasFreshAudio ? unit(frame.kickEnvelope) : 0
-        let targetDetail = hasFreshAudio ? unit(unit(frame.highs)*0.55+unit(frame.mids)*0.45) : 0
-        energy += (targetEnergy-energy)*(1-exp(-dt/(targetEnergy>energy ? 0.08 : (hasFreshAudio ? 0.45 : 0.20))))
-        impact += (targetImpact-impact)*(1-exp(-dt/(targetImpact>impact ? 0.025 : (hasFreshAudio ? 0.38 : 0.15))))
-        detail += (targetDetail-detail)*(1-exp(-dt/(targetDetail>detail ? 0.08 : 0.26)))
         let newKick = hasFreshAudio && frame.kickEventID > lastKickEventID
-        if newKick { springVelocity += 1.8 * max(0.4,unit(frame.kickConfidence)) }
+        let kickStrength = newKick ? max(0.4,unit(frame.kickConfidence)) : 0
+        let targetImpact = hasFreshAudio ? max(unit(frame.kickEnvelope),kickStrength) : 0
+        let targetDetail = hasFreshAudio ? unit(unit(frame.highs)*0.55+unit(frame.mids)*0.45) : 0
+        energy += (targetEnergy-energy)*(1-exp(-dt/(targetEnergy>energy ? 0.03 : (hasFreshAudio ? 0.30 : 0.20))))
+        impact += (targetImpact-impact)*(1-exp(-dt/(targetImpact>impact ? 0.008 : (hasFreshAudio ? 0.16 : 0.15))))
+        detail += (targetDetail-detail)*(1-exp(-dt/(targetDetail>detail ? 0.08 : 0.26)))
+        // Do not smear a one-shot onset through a second attack envelope.
+        if newKick { impact=max(impact,kickStrength); springVelocity += 1.8*kickStrength }
         consume(frame.kickEventID)
         // m=1, k=130, c=15. Closed form remains stable after a 100ms frame hitch.
         let decay: Float = 7.5
@@ -95,8 +113,8 @@ nonisolated struct MusicWaveMotion {
         springPosition = attenuation * (x*c + (v+decay*x)/omega*s)
         springVelocity = attenuation * (v*c - (decay*v+130*x)/omega*s)
         if abs(springPosition)<0.0005 && abs(springVelocity)<0.001 { springPosition=0; springVelocity=0 }
-        let targetSpeed: Float = hasFreshAudio && energy>0.002 ? 0.07+energy*0.55+impact*0.28+abs(springPosition)*0.35 : 0
-        speed += (targetSpeed-speed)*(1-exp(-dt/(targetSpeed>speed ? 0.06 : (hasFreshAudio ? 0.65 : 0.20))))
+        let targetSpeed: Float = hasFreshAudio && energy>0.002 ? 0.25+energy*1.65+impact*0.90+abs(springPosition)*0.35 : 0
+        speed += (targetSpeed-speed)*(1-exp(-dt/(targetSpeed>speed ? 0.025 : (hasFreshAudio ? 0.24 : 0.20))))
         if !hasFreshAudio {
             if energy<0.008 { energy=0 }; if impact<0.008 { impact=0 }; if speed<0.008 { speed=0 }
         }

@@ -67,6 +67,29 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('queue.count>90',m)
         self.assertIn('sqrt(130-decay*decay)',m)
 
+    def test_shared_noise_budget_and_direct_geometric_punch(self):
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        strand=m.split('float3 neuralStrand(',1)[1].split('float3 neuralWeave(',1)[0]
+        self.assertNotIn('turbulence(',strand)
+        field=m.split('float4 evalNeuralFloat(',1)[1].split('fragment float4',1)[0]
+        self.assertEqual(field.count('turbulence('),1)
+        self.assertIn('p /= 1.0+radialPush',field)
+        self.assertIn('springImpulse*0.22*sin',field)
+        self.assertIn('float t = uPhase;',field)
+        r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        self.assertIn('let t=Float(motion.phase)',r)
+        self.assertNotIn('let t=Float(motion.phase)*0.6',r)
+        self.assertIn('diagnosticSubmissions',r)
+        self.assertIn('diagnosticBusyDrops',r)
+        self.assertIn('tag: "BEAT_WAVE"',r)
+        self.assertIn('routeDelayMs',r)
+
+    def test_occupied_fft_bins_drive_all_five_features(self):
+        s=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
+        for name in ['subBass','bass','lowMids','mids','highs']:
+            self.assertIn('beatFrame.'+name+' = BeatWaveBandEnergy.mean(values: values,counts: counts',s)
+        self.assertNotIn('beatFrame.subBass = values[0..<4].reduce',s)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift toolchain available in macOS CI')
     def test_compiled_swift_physics_detector_and_causal_queue(self):
         main=r'''
@@ -114,6 +137,40 @@ queue.push(BeatWaveAudioFrame(capturedAt: 1,kickEventID: 3))
 check(queue.sample(now: 1.05,estimatedOutputDelay: 0.1).kickEventID==0,"Queue returned future event")
 check(queue.sample(now: 1.11,estimatedOutputDelay: 0.1).kickEventID==3,"Due event not presented")
 queue.reset(); check(queue.sample(now: 2,estimatedOutputDelay: 0).kickEventID==0,"Reset leaked previous track")
+// Native 1024 FFT has holes in the lowest logarithmic bands. Verify both common rates.
+for sampleRate in [44100.0,48000.0] {
+    var counts=[Int](repeating: 0,count: 32)
+    var values=[Float](repeating: 0,count: 32)
+    for bin in 1..<512 {
+        let frequency=Double(bin)*sampleRate/1024
+        if frequency>=30 && frequency<=16000 {
+            let band=min(31,max(0,Int(log2(frequency/30)/log2(16000/30)*32)))
+            counts[band]+=1; values[band]=0.8
+        }
+    }
+    check(abs(BeatWaveBandEnergy.mean(values: values,counts: counts,range: 0..<4)-0.8)<0.00001,"Empty sub slots attenuated signal")
+    check(abs(BeatWaveBandEnergy.mean(values: values,counts: counts,range: 4..<9)-0.8)<0.00001,"Empty bass slots attenuated signal")
+}
+check(abs(BeatWaveBandEnergy.mean(values: [1,0.25],counts: [1,3],range: 0..<2)-0.4375)<0.00001,"Mean must weight populated bins")
+check(BeatWaveBandEnergy.mean(values: [.nan],counts: [1],range: 0..<1)==0,"Invalid spectrum must stay finite")
+check(BeatWaveBandEnergy.mean(values: [1],counts: [0],range: 0..<1)==0,"Empty spectrum is silence")
+var punch=MusicWaveMotion()
+let punchFrame=BeatWaveAudioFrame(subBass: 0.8,bass: 0.7,mids: 0.4,rms: 0.6,kickEnvelope: 1,kickEventID: 1,kickConfidence: 0.8)
+check(punch.advance(delta: 1/120,frame: punchFrame,hasFreshAudio: true),"Kick event missing")
+check(punch.impact>=0.8,"One-shot punch delayed by smoothing")
+let radialPush=min(Float(0.24),max(Float(-0.12),punch.impact*0.08+punch.springPosition*1.8))
+check(radialPush>0.06,"First presented frame must visibly deform")
+var running=MusicWaveMotion()
+let steady=BeatWaveAudioFrame(subBass: 0.8,bass: 0.7,mids: 0.4,rms: 0.6)
+for _ in 0..<240 { running.advance(delta: 1/120,frame: steady,hasFreshAudio: true) }
+check(running.speed>1.0 && running.phase>1.5,"Flow still uses the excessively slow preset")
+var previousPhase=running.phase
+for i in 0..<60 {
+    let delta: Float = i%7==0 ? 0.1 : 1/120
+    running.advance(delta: delta,frame: BeatWaveAudioFrame(),hasFreshAudio: false)
+    check(running.phase>=previousPhase && running.phase.isFinite,"Frame hitch caused phase jump or reversal")
+    previousPhase=running.phase
+}
 print("Beat Waves Swift physics and presentation checks passed")
 '''
         with tempfile.TemporaryDirectory() as d:
