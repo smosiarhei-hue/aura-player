@@ -31,10 +31,9 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('autoreleasepool { view.draw() }',tick)
         self.assertNotIn('render(view)',tick)
         self.assertNotIn('currentDrawable',tick)
-        delegate=s.split('func draw(in view:',1)[1].split('private func updateStrands()',1)[0]
+        delegate=s.split('func draw(in view:',1)[1].split('private func render(',1)[0]
         self.assertIn('autoreleasepool { render(view) }',delegate)
-        render=s.split('private func render(',1)[1].split('private static func makeNoise',1)[0]
-        self.assertLess(render.index('updateStrands()'),render.index('view.currentRenderPassDescriptor'))
+        render=s.split('private func render(',1)[1]
         self.assertLess(render.index('var uniforms='),render.index('view.currentRenderPassDescriptor'))
         self.assertLess(render.index('view.currentRenderPassDescriptor'),render.index('view.currentDrawable'))
         self.assertIn('view.delegate=nil',s)
@@ -64,11 +63,11 @@ class BeatWaveNativeTests(unittest.TestCase):
                          'uGlass','shadowAlpha','beatWaveSample']:
             self.assertNotIn(unwanted,m)
         self.assertIn('rgb * alpha',m)
-        self.assertIn('noise.sample(beatNoiseSampler',m)
+        self.assertIn('evalFerrofluid',m)
         self.assertNotIn('packetPhase',m)
         self.assertNotIn('atan2',m)
-        self.assertIn('uLowEnergy*0.55+uImpact*0.65',m)
-        self.assertIn('strands[i].pigment.rgb',m)
+        self.assertIn('ferroPalette(h,u)*ltn',m)
+        self.assertIn('clamp(uLowEnergy,0.0,1.0)',m)
         self.assertIn('float featherX = smoothstep',m)
         self.assertIn('float featherY = smoothstep',m)
 
@@ -91,29 +90,20 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('let decay: Float = 8',m)
         self.assertIn('(x+coefficient*dt)*attenuation',m)
 
-    def test_shared_noise_budget_and_direct_geometric_punch(self):
+    def test_ferrofluid_upstream_math_and_causal_punch(self):
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
-        strand=m.split('float3 neuralStrand(',1)[1].split('float3 neuralWeave(',1)[0]
-        self.assertIn('q.y-=lane+bend',strand)
-        self.assertIn('sin(q.x*3.2+t*0.85)',strand)
-        self.assertNotIn('sharedFlow',m)
-        self.assertEqual(m.count('noise.sample('),1)
-        field=m.split('float4 evalNeuralFloat(',1)[1].split('fragment float4',1)[0]
-        self.assertEqual(field.count('turbulence('),1)
-        self.assertNotIn('radialPush',field)
-        self.assertNotIn('swirl',field)
-        self.assertIn('uSpringDeform*0.8+uImpact*0.02',strand)
-        self.assertIn('float t = uPhase;',field)
+        for item in ['ferroHash','ferroSinlerp','ferroDomainBlend','ferroSmoothMin',
+                     '(2.0*n0+1.5*n1+1.25*n2+1.125*n3+n4)/7.0',
+                     'p-cell*s','const float scale=1.6','const float fluidity=0.1',
+                     'const float sharpness=2.5','float t = uPhase;',
+                     'rimWidth=0.20+punch*0.055','clamp(uSpringDeform,-0.15,0.15)*0.08']:
+            self.assertIn(item,m)
+        self.assertNotIn('neuralStrand',m)
+        self.assertNotIn('texture2d',m)
+        self.assertNotIn('atan2',m)
         r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
-        self.assertIn('let count: Float=24',r)
-        self.assertIn('let angle: Float=0.28',r)
-        self.assertIn('let lane=(id-0.5)*1.12',r)
-        self.assertNotIn('t*0.12',r)
-        self.assertNotIn('let t=Float(motion.phase)*0.6',r)
-        self.assertIn('diagnosticSubmissions',r)
-        self.assertIn('diagnosticBusyDrops',r)
-        self.assertIn('tag: "BEAT_WAVE"',r)
-        self.assertIn('routeDelayMs',r)
+        self.assertNotIn('strandTable',r)
+        self.assertNotIn('makeNoise',r)
 
     def test_top_extension_preserves_hero_lower_boundary(self):
         h=(ROOT/'Sonivo/SonivoHomeRedesignedView.swift').read_text()
@@ -134,17 +124,37 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('smoothstep(0.0, fYBot, uvSample.y)',m)
         self.assertIn('smoothstep(1.0 - fYTop, 1.0, uvSample.y)',m)
 
-    def test_requested_parallel_flow_is_larger_and_not_radial(self):
+    def test_requested_ferrofluid_replaces_all_parallel_filaments(self):
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
-        for item in ['spineCore','spineInner','spineHalo','float3 reach=abs','float gate=0.68',
-                     'q.y-=lane+bend','sin(t*0.75)*0.10','sin(t*0.52)*0.065',
-                     'float2(aspect, 1.0) * 0.80']:
+        for old in ['neuralStrand','neuralWeave','spineCore','spineHalo','BeatWaveStrand']:
+            self.assertNotIn(old,m)
+        for item in ['float2(0.0,-1.0)','float t = uPhase;',
+                     'peaks-peaks2','ferroPalette(h,u)','float cover=clamp(ltn*1.5']:
             self.assertIn(item,m)
-        weave=m.split('float3 neuralWeave',1)[1].split('float3 linearP3',1)[0]
-        self.assertEqual(weave.count('neuralStrand('),1)
-        self.assertNotIn('float coreEnergy',m)
-        self.assertNotIn('packetPhase',m)
-        self.assertNotIn('t * uSwirl',m)
+        self.assertEqual(m.count('fragment float4'),1)
+        self.assertNotIn('sin(t*',m)
+
+    def test_ferrofluid_port_has_license_and_artwork_palette(self):
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        for item in ['mix(uColorA,uColorB','mix(uColorB,uColorC','smoothstep(0.0,1.0',
+                     'docs/licenses/react-bits-ferrofluid-LICENSE.md']:
+            self.assertIn(item,m)
+        license=(ROOT/'docs/licenses/react-bits-ferrofluid-LICENSE.md').read_text()
+        self.assertIn('Copyright (c) 2026 David Haz',license)
+        self.assertIn('Commons Clause',license)
+        doc=(ROOT/'docs/ferrofluid-native-handoff.md').read_text()
+        self.assertIn('src/ts-default/Backgrounds/Ferrofluid/Ferrofluid.tsx',doc)
+
+    def test_ferrofluid_kick_deformation_is_bounded_without_extra_clock(self):
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        for item in ['clamp(uImpact,0.0,1.0)','clamp(uSpringDeform,-0.15,0.15)',
+                     'float t = uPhase;', 'clamp(uEnergy,0.0,1.0)']:
+            self.assertIn(item,m)
+        for fake in ['iTime','iMouse','dynamicKick','sin(t*','cos(t*']:
+            self.assertNotIn(fake,m)
+        r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        self.assertNotIn('setFragmentTexture',r)
+        self.assertEqual(r.count('setFragmentBytes'),1)
 
     def test_artwork_palette_reaches_uniforms_and_stale_cover_cannot_win(self):
         w=(ROOT/'Sonivo/MusicWaveBackground.swift').read_text()

@@ -1,5 +1,6 @@
-// Native port of the owner-supplied Beat Waves ZIP. See docs/beatwaves-native-handoff.md.
-// Visualization only: no glass plate, rim, refraction, shadow or optical second pass.
+// Ferrofluid adapted from React Bits (David Haz). See docs/ferrofluid-native-handoff.md.
+// License: docs/licenses/react-bits-ferrofluid-LICENSE.md.
+// Visualization only: no glass plate, frame, refraction, shadow or optical second pass.
 #include <metal_stdlib>
 using namespace metal;
 struct BeatWaveUniforms {
@@ -11,76 +12,100 @@ struct BeatWaveUniforms {
     float4 colorC;
     float4 display; // current EDR headroom, linear-P3 output flag, reserved
 };
-struct BeatWaveStrand { float4 direction; float4 pigment; };
 struct BeatWaveVertex { float4 position [[position]]; float2 uv; };
 vertex BeatWaveVertex beatWaveVertex(uint id [[vertex_id]]) {
     float2 p = id == 0 ? float2(-1,-1) : (id == 1 ? float2(3,-1) : float2(-1,3));
     return {float4(p,0,1), (p+1)*0.5};
 }
-constexpr sampler beatNoiseSampler(coord::normalized, address::repeat, filter::linear);
+
 #define uResolution u.resolution.xy
 #define uPhase u.motion.x
 #define uEnergy u.motion.y
 #define uImpact u.motion.z
-#define uDetail u.motion.w
 #define uSpringDeform u.surface.x
 #define uDarkMode u.surface.y
+#define uLowEnergy u.surface.w
 #define uColorA u.colorA.rgb
 #define uColorB u.colorB.rgb
 #define uColorC u.colorC.rgb
 #define uEdgeFeather 1.0
-#define uOpacity 1.0
-#define uTurbulence 0.16
-#define uHaloStrength 0.65
-#define uOctaves int(u.surface.z)
-#define uLowEnergy u.surface.w
-constant float TURN = 6.28318530718;
-constant float HALF_TURN = 3.14159265359;
-constant float LATTICE = 0.0078125;
-constant float3 lumVec = float3(0.213, 0.715, 0.072);
+constant float FERRO_PI = 3.14159265;
 
-// ==========================================
-// ==========================================
-
-// The archive's octave function precomputed in RGB. One sample instead of 3 per strand.
-float turbulence(float2 p,constant BeatWaveUniforms &u,texture2d<float> noise) {
-  float3 packed=noise.sample(beatNoiseSampler,p*LATTICE).rgb;
-  return uOctaves>=3 ? packed.r : (uOctaves==2 ? packed.g : packed.b);
+// Upstream hash, sinusoidal interpolation and five-offset domain blend.
+// All evaluation stays in one fragment pass: no raymarch, history texture or blur pass.
+float ferroHash(float3 p) {
+    p=fract(p*0.1031);
+    p+=dot(p,p.zyx+33.33);
+    return fract((p.x+p.y)*p.z);
 }
-
-// The owner's filament spine/halo, now arranged as a larger parallel travelling curtain.
-// Shared deformation preserves spacing. No per-line random flicker or changing axes.
-float3 neuralStrand(float2 p, float s, float c, float bendPhase, float lane,
-                   constant BeatWaveUniforms &u,texture2d<float> noise) {
-  float2 q = float2(p.x*c-p.y*s,p.x*s+p.y*c);
-  float t=bendPhase;
-  float bend=sin(q.x*3.2+t*0.85)*0.055+sin(q.x*6.0-t*0.55)*0.018;
-  bend+=(uSpringDeform*0.8+uImpact*0.02)*sin(q.x*7.0-t*0.6);
-  q.y-=lane+bend;
-  if (abs(q.y)>0.09) return float3(0.0);
-  float gate=0.68+0.32*(sin(q.x*4.0+t*0.7)*0.5+0.5);
-  float3 reach=abs(q.y+float3(0.002*s,0.0,-0.002*s));
-  float3 rim=max(1.0-reach*6.0,0.0);
-  float pulse=sin(q.x*12.0+t*1.2)*0.5+0.5;
-  float shaped=pow(pulse,mix(1.15,0.55,uImpact));
-  float musicalLight=0.42+uLowEnergy*0.55+uImpact*0.65;
-  float specularLuster=pow(pulse,4.0)*(0.25+uImpact*0.75);
-  float spineCore=exp(-reach.y*150.0)*(1.6+specularLuster);
-  float spineInner=exp(-reach.y*80.0)*0.30;
-  float spineHalo=exp(-reach.y*38.0)*0.10*(1.0+uLowEnergy*0.55);
-  return (spineCore+spineInner+spineHalo)*rim*rim*(0.55+shaped)*gate*musicalLight;
+float ferroSinlerp(float a,float b,float w) {
+    return mix(a,b,(sin(w*FERRO_PI-FERRO_PI/2.0)+1.0)/2.0);
 }
+float ferroNoise(float2 p,float s,float seed) {
+    float2 cell=floor(p/s);
+    float2 rel=p-cell*s; // GLSL mod: floor semantics, including negative flow coordinates.
+    float g1=ferroHash(float3(cell,seed));
+    float g2=ferroHash(float3(cell.x+1.0,cell.y,seed));
+    float g3=ferroHash(float3(cell.x+1.0,cell.y+1.0,seed));
+    float g4=ferroHash(float3(cell.x,cell.y+1.0,seed));
+    return ferroSinlerp(ferroSinlerp(g1,g2,rel.x/s),
+                        ferroSinlerp(g4,g3,rel.x/s),rel.y/s);
+}
+float ferroDomainBlend(float2 p,float s,float seed) {
+    float o=s/2.0;
+    float n0=ferroNoise(p,s,seed);
+    float n1=ferroNoise(p+float2(o,o),s,seed+0.1);
+    float n2=ferroNoise(p+float2(-o,o),s,seed+0.2);
+    float n3=ferroNoise(p+float2(o,-o),s,seed+0.3);
+    float n4=ferroNoise(p+float2(-o,-o),s,seed+0.4);
+    return (2.0*n0+1.5*n1+1.25*n2+1.125*n3+n4)/7.0;
+}
+float ferroSmoothMin(float a,float b,float k) {
+    return -k*log2(exp2(-a/k)+exp2(-b/k));
+}
+float3 ferroPalette(float h,constant BeatWaveUniforms &u) {
+    // Continuous artwork interpolation avoids abrupt colour seams between fluid lobes.
+    float x=clamp(h,0.0,1.0)*2.0;
+    return x<1.0 ? mix(uColorA,uColorB,smoothstep(0.0,1.0,x))
+                 : mix(uColorB,uColorC,smoothstep(0.0,1.0,x-1.0));
+}
+float4 evalFerrofluid(float2 uvSample,constant BeatWaveUniforms &u) {
+    const float scale=1.6;
+    const float fluidity=0.1;
+    const float sharpness=2.5;
+    const float shimmer=1.5;
+    const float glow=2.0;
+    float ref=700.0/scale;
+    float2 p=uvSample*uResolution/max(uResolution.y,1.0)*ref;
+    float t = uPhase; // Existing audible-energy integral, not a new wall clock/BPM oscillator.
+    float spd=100.0;
+    float2 dir=float2(0.0,-1.0),perp=float2(1.0,0.0);
+    float distort1=ferroNoise(p+perp*(t*spd),60.0,10.0)*50.0;
+    float distort2=ferroNoise(p-perp*(t*spd),120.0,15.0)*100.0;
+    float peaks=ferroDomainBlend(p+distort1+dir*(t*spd*0.5),40.0,1.0);
+    float peaks2=ferroDomainBlend(p+distort2-dir*(t*spd*0.5),40.0,0.0);
+    float mapeaks=ferroSmoothMin(peaks,peaks2,fluidity);
+    // The already causal kick/spring opens the fluid rims. No new detector or fake beat.
+    float punch=clamp(uImpact,0.0,1.0);
+    float deformation=clamp(uSpringDeform,-0.15,0.15)*0.08;
+    float rimWidth=0.20+punch*0.055;
+    float band=(rimWidth-abs((mapeaks-0.4+deformation)*2.0))*5.0;
+    float ltn=clamp(band-ferroNoise(p+dir*(t*spd*0.5),60.0,12.0)*shimmer,0.0,1.0);
+    ltn=pow(ltn,sharpness)*glow;
+    float h=clamp(0.5+(peaks-peaks2)*0.8,0.0,1.0);
+    float3 col=ferroPalette(h,u)*ltn;
+    col*=1.0+clamp(uLowEnergy,0.0,1.0)*0.20+punch*0.25;
+    // Hue-preserving SDR compression; extended highlights handled by the existing output stage.
+    col/=1.0+max(col.r,max(col.g,col.b))*0.35;
 
-float3 neuralWeave(float2 p,float t,texture2d<float> noise,constant BeatWaveUniforms &u,
-                  constant BeatWaveStrand *strands) {
-  float3 sum=float3(0.0);
-  for (int i = 0; i < 32; i++) {
-    float4 direction=strands[i].direction;
-    if (direction.z<=0.0) break;
-    float3 lit=neuralStrand(p,direction.x,direction.y,t,direction.w,u,noise);
-    sum+=strands[i].pigment.rgb*lit;
-  }
-  return sum*0.55;
+    float fX=max(0.04,0.14*uEdgeFeather);
+    float fYTop = 0.015; // Fill behind Dynamic Island, keep original top/lower boundaries.
+    float fYBot = max(0.03, 0.12 * uEdgeFeather);
+    float featherX = smoothstep(0.0,fX,uvSample.x)*(1.0-smoothstep(1.0-fX,1.0,uvSample.x));
+    float featherY = smoothstep(0.0, fYBot, uvSample.y)*(1.0-smoothstep(1.0 - fYTop, 1.0, uvSample.y));
+    float cover=clamp(ltn*1.5,0.0,1.0)*featherX*featherY
+                *mix(0.75,1.0,uDarkMode)*(0.86+clamp(uEnergy,0.0,1.0)*0.14);
+    return float4(col,cover);
 }
 
 float3 linearP3(float3 srgb) {
@@ -91,49 +116,8 @@ float3 linearP3(float3 srgb) {
                  float3(0.0,0.0,0.910302))*linear;
 }
 
-float4 evalNeuralFloat(float2 uvSample, constant BeatWaveUniforms &u, texture2d<float> noise, constant BeatWaveStrand *strands) {
-  float aspect = clamp(uResolution.x / max(uResolution.y, 1.0), 0.35, 2.5);
-  float2 p = (uvSample - 0.5) * float2(aspect, 1.0) * 0.80;
-  float t = uPhase;
-  float energyBoost = clamp(uEnergy,0.0,1.0);
-  // Slow bounded translation moves the entire field together, not around a central point.
-  // Phase integrates real audible energy, so paused/silent playback does not invent motion.
-  p-=float2(sin(t*0.75)*0.10,sin(t*0.52)*0.065);
-  p.y+=(turbulence(p*2.0+t*0.35,u,noise)-0.5)*0.014;
-  float3 col = neuralWeave(p,t,noise,u,strands);
-  float reach = length(p);
-  // No central glowing blob: the individual filaments carry the light.
-
-  // Hue-preserving SDR base. EDR highlight extension happens only in the final output stage.
-  float peak=max(col.r,max(col.g,col.b));
-  col/=1.0+peak;
-  // Preserve a visible kick after tone compression; no white glint/bloom second pass.
-  col*=0.78+uLowEnergy*0.18+uImpact*0.24;
-
-  // Soft field fadeout
-  col *= 1.0 - smoothstep(0.35, 1.35, reach);
-
-  // Edge feathering to blend seamlessly with UI container
-  float fX = max(0.04, 0.14 * uEdgeFeather);
-  float fYTop = 0.015; // Fill behind Dynamic Island; only the physical top edge fades.
-  float fYBot = max(0.03, 0.12 * uEdgeFeather); // Original physical LOWER fade.
-  float featherX = smoothstep(0.0, fX, uvSample.x) * (1.0 - smoothstep(1.0 - fX, 1.0, uvSample.x));
-  // Metal clip +Y is screen TOP: this vertex shader maps it to uv.y=1.
-  float featherY = smoothstep(0.0, fYBot, uvSample.y) * (1.0 - smoothstep(1.0 - fYTop, 1.0, uvSample.y));
-
-  col = pow(max(col, 0.0), float3(0.92)) * 1.05;
-  // Soft alpha feather, including the original lower boundary.
-  float cover = clamp(max(col.r, max(col.g, col.b)) * 1.30, 0.0, 1.0)
-    * featherX * featherY
-    * mix(0.75, 1.0, uDarkMode)
-    * (0.86 + energyBoost * 0.14)
-    * uOpacity;
-
-  return float4(col, cover);
-}
-
-fragment float4 beatWaveField(BeatWaveVertex in [[stage_in]], constant BeatWaveUniforms &u [[buffer(0)]], constant BeatWaveStrand *strands [[buffer(1)]], texture2d<float> noise [[texture(0)]]) {
-    float4 field = evalNeuralFloat(clamp(in.uv,0.0,1.0),u,noise,strands);
+fragment float4 beatWaveField(BeatWaveVertex in [[stage_in]], constant BeatWaveUniforms &u [[buffer(0)]]) {
+    float4 field = evalFerrofluid(clamp(in.uv,0.0,1.0),u);
     float alpha = clamp(field.a,0.0,1.0);
     float3 rgb=clamp(field.rgb,0.0,1.0);
     if (u.display.y>0.5) {

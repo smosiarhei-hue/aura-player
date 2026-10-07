@@ -1,5 +1,7 @@
 # Beat Waves native handoff
 
+> Current visual is now the native React Bits Ferrofluid adaptation. See `docs/ferrofluid-native-handoff.md` for current geometry, licensing and mapping. The prototype/strand descriptions below document earlier revisions, not the current visual.
+
 Owner confirmed the uploaded prototype's visual direction in chat with “да”.
 Source: `sonivo-beatwaves-prototype-handoff.zip`, SHA-256 `9feea4f0f625fe5618a7fd66767a40e0c434d2d2643e1c9a3793fd2747489799`.
 Fresh application baseline: `d54000bea67b9c0f14b318fa9977cc6ee1be25f1`.

@@ -86,7 +86,6 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     private let queue: any MTLCommandQueue
     private let sdrPipeline: any MTLRenderPipelineState
     private let hdrPipeline: (any MTLRenderPipelineState)?
-    private let noise: any MTLTexture
     private let inFlight=DispatchSemaphore(value: 2)
     private let gpuFeedback=BeatWaveGPUFeedback()
     private weak var view: MTKView?
@@ -117,7 +116,6 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     private var diagnosticClock="capture"
     private var diagnosticDisplayLead: Double=0
     private var diagnosticQueuedFuture: Double = .nan
-    private var strandTable=[Strand](repeating: Strand(),count: 32)
 
     private struct Uniforms {
         var resolution: SIMD4<Float>
@@ -128,14 +126,10 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         var colorC: SIMD4<Float>
         var display: SIMD4<Float>
     }
-    private struct Strand {
-        var direction=SIMD4<Float>(repeating: 0)
-        var pigment=SIMD4<Float>(repeating: 0)
-    }
     init?(device: any MTLDevice) {
         guard let queue=device.makeCommandQueue(),
               let library=device.makeDefaultLibrary(), let vertex=library.makeFunction(name: "beatWaveVertex"),
-              let field=library.makeFunction(name: "beatWaveField"), let noise=Self.makeNoise(device) else { return nil }
+              let field=library.makeFunction(name: "beatWaveField") else { return nil }
         let descriptor=MTLRenderPipelineDescriptor()
         descriptor.vertexFunction=vertex; descriptor.fragmentFunction=field
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
@@ -144,7 +138,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         catch { NSLog("Beat Waves pipeline unavailable: %@",String(describing: error)); return nil }
         descriptor.colorAttachments[0].pixelFormat = .rgba16Float
         self.hdrPipeline=try? device.makeRenderPipelineState(descriptor: descriptor)
-        self.device=device; self.queue=queue; self.noise=noise
+        self.device=device; self.queue=queue
         super.init()
         for name in [UIScreen.modeDidChangeNotification,UIScreen.brightnessDidChangeNotification,
                      UIScreen.didConnectNotification,UIScreen.didDisconnectNotification,
@@ -315,22 +309,6 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         targetHeadroom=desired ? BeatWavePaletteMath.safeHeadroom(potential: potential,current: current,lowPower: lowPower) : 1
     }
 
-    private func updateStrands() {
-        let count: Float=24 // More visible filaments, but one strand call each instead of crossed pairs.
-        for i in 0..<32 {
-            let index=Float(i),fade=max(0,min(1,count-index)),id=index/(count-1)
-            if fade<=0 { strandTable[i]=Strand(); continue }
-            let angle: Float=0.28 // ONE fixed direction: coherent parallel flow, never radial/orbiting.
-            let blend=id
-            var tint=palette[0]*(1-blend)+palette[1]*blend
-            let mixC: Float=0.20*id
-            tint=tint*(1-mixC)+palette[2]*mixC
-            let lane=(id-0.5)*1.12
-            strandTable[i].direction=SIMD4(sin(angle),cos(angle),fade,lane)
-            strandTable[i].pigment=SIMD4(tint.x,tint.y,tint.z,index)
-        }
-    }
-
     private func render(_ view: MTKView) {
         guard view.bounds.width>0,view.bounds.height>0 else { return }
         guard inFlight.wait(timeout: .now()) == .success else { diagnosticBusyDrops += 1; return }
@@ -342,7 +320,6 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         let size=CGSize(width: width,height: height)
         if view.drawableSize != size { view.drawableSize=size }
         guard let command=queue.makeCommandBuffer() else { return }
-        updateStrands()
         var uniforms=Uniforms(resolution: SIMD4(Float(width),Float(height),0,0),
                               motion: SIMD4(Float(motion.phase),motion.energy,motion.impact,motion.detail),
                               surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,motion.lowEnergy),
@@ -355,10 +332,6 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
               let encoder=command.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.setRenderPipelineState(outputHDR ? (hdrPipeline ?? sdrPipeline) : sdrPipeline)
         encoder.setFragmentBytes(&uniforms,length: MemoryLayout<Uniforms>.stride,index: 0)
-        strandTable.withUnsafeBytes { bytes in
-            if let base=bytes.baseAddress { encoder.setFragmentBytes(base,length: bytes.count,index: 1) }
-        }
-        encoder.setFragmentTexture(noise,index: 0)
         encoder.drawPrimitives(type: .triangle,vertexStart: 0,vertexCount: 3)
         encoder.endEncoding()
         let semaphore=inFlight,feedback=gpuFeedback
@@ -374,16 +347,4 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         diagnosticSubmissions += 1
     }
 
-    private static func makeNoise(_ device: any MTLDevice) -> (any MTLTexture)? {
-        let data=BeatWaveNoise.rgba()
-        let descriptor=MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,width: 512,height: 512,mipmapped: false)
-        descriptor.usage = .shaderRead
-        guard let texture=device.makeTexture(descriptor: descriptor) else { return nil }
-        data.withUnsafeBytes { bytes in
-            if let base=bytes.baseAddress {
-                texture.replace(region: MTLRegionMake2D(0,0,512,512),mipmapLevel: 0,withBytes: base,bytesPerRow: 512*4)
-            }
-        }
-        return texture
-    }
 }
