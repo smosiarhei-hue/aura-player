@@ -165,6 +165,8 @@ class BeatWaveNativeTests(unittest.TestCase):
                      'view.window?.windowScene?.screen']:
             self.assertIn(item,r)
         self.assertIn('desired ? .rgba16Float : .bgra8Unorm',r)
+        self.assertNotIn('view.colorspace=',r)
+        self.assertIn('layer.colorspace=CGColorSpace',r)
         self.assertIn('!lowPower && potential.isFinite',r)
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
         self.assertIn('rgb=linearP3(rgb)*gain',m)

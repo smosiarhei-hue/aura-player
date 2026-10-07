@@ -18,7 +18,7 @@ struct BeatWaveMetalView: UIViewRepresentable {
         view.isOpaque=false; view.layer.isOpaque=false; view.backgroundColor = .clear
         view.clearColor=MTLClearColorMake(0,0,0,0)
         view.colorPixelFormat = .bgra8Unorm
-        view.colorspace=CGColorSpace(name: CGColorSpace.sRGB)
+        if let layer=view.layer as? CAMetalLayer { layer.colorspace=CGColorSpace(name: CGColorSpace.sRGB) }
         view.framebufferOnly=true
         view.delegate=context.coordinator
         view.autoResizeDrawable=false
@@ -241,7 +241,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             outputHDR=desired; headroom=1
             view.releaseDrawables()
             view.colorPixelFormat=desired ? .rgba16Float : .bgra8Unorm
-            view.colorspace=CGColorSpace(name: desired ? CGColorSpace.extendedLinearDisplayP3 : CGColorSpace.sRGB)
+            layer.colorspace=CGColorSpace(name: desired ? CGColorSpace.extendedLinearDisplayP3 : CGColorSpace.sRGB)
         }
         if layer.wantsExtendedDynamicRangeContent != desired { layer.wantsExtendedDynamicRangeContent=desired }
         targetHeadroom=desired ? BeatWavePaletteMath.safeHeadroom(potential: potential,current: current,lowPower: lowPower) : 1
