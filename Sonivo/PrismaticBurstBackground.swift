@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// A fullscreen ray field, behind all home content rather than around the artwork.
+/// A beat-reactive ray field sized by its host. Home confines it to the wave scroll item.
 struct PrismaticBurstBackground: View {
     let colors: [Color]
     let isPlaying: Bool
@@ -52,7 +52,6 @@ struct PrismaticBurstBackground: View {
                 previousFrame = now
             }
         }
-        .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onChange(of: running) { _, _ in previousFrame = nil }

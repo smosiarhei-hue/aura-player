@@ -42,14 +42,35 @@ class PrismaticBurstTests(unittest.TestCase):
                       'onDisappear { isOnScreen = false', '.allowsHitTesting(false)'):
             self.assertIn(token, text)
 
-    def test_home_uses_one_fullscreen_background_not_an_artwork_aura(self):
+    def test_home_confines_background_to_wave_scroll_item_not_artwork_aura(self):
         home = (ROOT / 'Sonivo/SonivoHomeRedesignedView.swift').read_text()
         hero = (ROOT / 'Sonivo/MyWaveHeroView.swift').read_text()
         self.assertIn('PrismaticBurstBackground(', home)
-        self.assertLess(home.index('PrismaticBurstBackground('), home.index('ScrollView(showsIndicators: false)'))
+        root = home.split('private var waveHero:', 1)[0]
+        wave = home.split('private var waveHero:', 1)[1].split('private var quickDestinations:', 1)[0]
+        self.assertNotIn('PrismaticBurstBackground(', root)
+        self.assertEqual(home.count('PrismaticBurstBackground('), 1)
+        self.assertIn('.background {', wave)
+        self.assertIn('.clipped()', wave)
+        self.assertIn('waveHeroIsVisible && !showPlayer', wave)
+        self.assertIn('.onScrollVisibilityChange(threshold: 0.01)', wave)
         self.assertNotIn('atmosphericAuraBackdrop', hero)
         self.assertNotIn('rotation3DEffect', hero)
         self.assertIn('!showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay', home)
+
+    def test_shader_cannot_escape_host_and_home_respects_theme(self):
+        shader = (ROOT / 'Sonivo/PrismaticBurstBackground.swift').read_text()
+        home = (ROOT / 'Sonivo/SonivoHomeRedesignedView.swift').read_text()
+        self.assertNotIn('.ignoresSafeArea()', shader)
+        self.assertIn('SN.bg.ignoresSafeArea()', home)
+        self.assertNotIn('.preferredColorScheme(.dark)', home)
+        self.assertNotIn('Ambient Vignette', home)
+        wave = home.split('private var waveHero:', 1)[1].split('private var quickDestinations:', 1)[0]
+        self.assertIn('.environment(\\.colorScheme, .dark)', wave)
+        sections = home.split('private var chartSection:', 1)[1].split('private func toggleWave', 1)[0]
+        self.assertNotIn('.foregroundStyle(.white', sections)
+        self.assertIn('.foregroundStyle(SN.ink)', sections)
+        self.assertIn('.foregroundStyle(SN.inkMuted)', sections)
 
     def test_audio_callbacks_are_c_and_never_download_files(self):
         c = (ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe/StreamAudioProbe.c').read_text()

@@ -10,6 +10,7 @@ struct SonivoHomeRedesignedView: View {
     @State private var newTracks: [YandexMusicService.YMTrackItem] = []
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var waveHeroIsVisible = true
     @State private var showSettings = false
     @State private var showPlayer = false
     @State private var showAIAssistant = false
@@ -41,13 +42,7 @@ struct SonivoHomeRedesignedView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                Color.black.ignoresSafeArea()
-
-                PrismaticBurstBackground(
-                    colors: player.displayTrack?.palette ?? waveColors,
-                    isPlaying: player.isPlaying,
-                    isVisible: !showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay
-                )
+                SN.bg.ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 24) {
@@ -59,42 +54,6 @@ struct SonivoHomeRedesignedView: View {
                     .padding(.bottom, 120)
                 }
                 .refreshable { await load(force: true) }
-
-                // Native Apple Smooth Ambient Vignette under Dynamic Island / Status Bar
-                VStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.35),
-                            Color.black.opacity(0.12),
-                            Color.clear
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 140)
-                    .ignoresSafeArea(edges: .top)
-
-                    Spacer()
-                }
-                .allowsHitTesting(false)
-
-                // Native Apple Smooth Ambient Vignette at the bottom over Dock / Mini Player
-                VStack(spacing: 0) {
-                    Spacer()
-
-                    LinearGradient(
-                        colors: [
-                            Color.clear,
-                            Color.black.opacity(0.18),
-                            Color.black.opacity(0.42)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 120)
-                    .ignoresSafeArea(edges: .bottom)
-                }
-                .allowsHitTesting(false)
 
                 // Fullscreen native port of the supplied ShaderAnimation; no liquid sweep.
                 ShaderShakeOverlayView(
@@ -133,7 +92,6 @@ struct SonivoHomeRedesignedView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
 
@@ -146,6 +104,25 @@ struct SonivoHomeRedesignedView: View {
             onToggleWave: toggleWave,
             onShakeWave: { triggerShakeWave() }
         )
+        // Only the artwork-led wave stage uses white controls over the dark shader.
+        // Do not force the rest of Home (or its destinations) into dark appearance.
+        .environment(\.colorScheme, .dark)
+        .frame(maxWidth: .infinity)
+        .background {
+            ZStack {
+                Color.black
+                PrismaticBurstBackground(
+                    colors: player.displayTrack?.palette ?? waveColors,
+                    isPlaying: player.isPlaying,
+                    isVisible: waveHeroIsVisible && !showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay
+                )
+            }
+        }
+        // The shader belongs to this scroll item, not a fixed fullscreen layer.
+        .clipped()
+        .onScrollVisibilityChange(threshold: 0.01) { isVisible in
+            waveHeroIsVisible = isVisible
+        }
     }
 
     private var quickDestinations: some View {
@@ -203,13 +180,13 @@ struct SonivoHomeRedesignedView: View {
             }
             .frame(width: 48, height: 48).clipShape(Circle())
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(SN.text(.headline, .bold)).foregroundStyle(.white)
-                Text(subtitle).font(SN.text(.caption)).foregroundStyle(.white.opacity(0.58))
+                Text(title).font(SN.text(.headline, .bold)).foregroundStyle(SN.ink)
+                Text(subtitle).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
             }
         }
         .padding(14).frame(width: 245, alignment: .leading)
         .background(.ultraThinMaterial.opacity(0.60), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(SN.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var moodSection: some View {
@@ -237,15 +214,15 @@ struct SonivoHomeRedesignedView: View {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 8) {
-                            Text("Чарт").font(SN.display(.title2, .bold)).foregroundStyle(.white)
+                            Text("Чарт").font(SN.display(.title2, .bold)).foregroundStyle(SN.ink)
                             AppleFlareIcon(name: "FlareChart", size: 26, glowColor: SN.amber)
                         }
-                        Text("Главные треки сегодня").font(SN.text(.caption)).foregroundStyle(.white.opacity(0.48))
+                        Text("Главные треки сегодня").font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(SN.inkMuted)
                         .frame(width: SN.tapTarget, height: SN.tapTarget)
                 }
                 .padding(.horizontal, 16)
@@ -278,18 +255,18 @@ struct SonivoHomeRedesignedView: View {
                         HStack(spacing: 8) {
                             Text("Премьера")
                                 .font(SN.display(.title2, .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(SN.ink)
                             AppleFlareIcon(name: "FlarePremiere", size: 26, glowColor: SN.ember)
                             ApplePremiereBadge(title: "ТОП-100")
                         }
                         Text("Топ-100 премьер • Обновление в 00:00")
                             .font(SN.text(.caption))
-                            .foregroundStyle(.white.opacity(0.48))
+                            .foregroundStyle(SN.inkMuted)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(SN.inkMuted)
                         .frame(width: SN.tapTarget, height: SN.tapTarget)
                 }
                 .padding(.horizontal, 16)
@@ -314,16 +291,16 @@ struct SonivoHomeRedesignedView: View {
                     HStack(spacing: 8) {
                         Text("Смотреть все 100 премьер")
                             .font(SN.text(.subheadline, .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(SN.ink)
                         Spacer()
                         Image(systemName: "arrow.right")
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(SN.inkMuted)
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
                     .background(.ultraThinMaterial.opacity(0.60), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .background(SN.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
                 .buttonStyle(GlassPressStyle())
                 .padding(.horizontal, 16)
@@ -334,8 +311,8 @@ struct SonivoHomeRedesignedView: View {
 
     private func sectionTitle(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(SN.display(.title2, .bold)).foregroundStyle(.white)
-            Text(subtitle).font(SN.text(.caption)).foregroundStyle(.white.opacity(0.48))
+            Text(title).font(SN.display(.title2, .bold)).foregroundStyle(SN.ink)
+            Text(subtitle).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
         }.padding(.horizontal, 16)
     }
 
