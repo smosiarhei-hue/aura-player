@@ -22,6 +22,26 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertEqual(s.count('drawPrimitives('),1)
         self.assertIn('CADisableMinimumFrameDurationOnPhone: true',(ROOT/'project.yml').read_text())
 
+    def test_apple_explicit_draw_lifecycle_and_late_drawable(self):
+        s=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        self.assertIn('view.delegate=context.coordinator',s)
+        self.assertIn('NSObject, @preconcurrency MTKViewDelegate',s)
+        self.assertIn('func draw(in view: MTKView)',s)
+        tick=s.split('fileprivate func tick(',1)[1].split('func draw(in view:',1)[0]
+        self.assertIn('autoreleasepool { view.draw() }',tick)
+        self.assertNotIn('render(view)',tick)
+        self.assertNotIn('currentDrawable',tick)
+        delegate=s.split('func draw(in view:',1)[1].split('private func updateStrands()',1)[0]
+        self.assertIn('autoreleasepool { render(view) }',delegate)
+        render=s.split('private func render(',1)[1].split('private static func makeNoise',1)[0]
+        self.assertLess(render.index('updateStrands()'),render.index('view.currentRenderPassDescriptor'))
+        self.assertLess(render.index('var uniforms='),render.index('view.currentRenderPassDescriptor'))
+        self.assertLess(render.index('view.currentRenderPassDescriptor'),render.index('view.currentDrawable'))
+        self.assertIn('view.delegate=nil',s)
+        self.assertIn('buffer.status == .error',s)
+        self.assertNotIn('waitUntilCompleted',s)
+        self.assertNotIn('waitUntilScheduled',s)
+
     def test_actual_capture_timestamp_and_single_event(self):
         a=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
         self.assertIn('beatWaveDetector.process(beatFrame)',a)

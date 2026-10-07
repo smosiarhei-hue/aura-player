@@ -7,15 +7,20 @@ struct BeatWaveMetalView: UIViewRepresentable {
     let darkMode: Bool
     let running: Bool
     let lowPower: Bool
-    func makeCoordinator() -> BeatWaveMetalRenderer? { BeatWaveMetalRenderer() }
+    func makeCoordinator() -> BeatWaveMetalRenderer? {
+        guard let device=MTLCreateSystemDefaultDevice() else { return nil }
+        return BeatWaveMetalRenderer(device: device)
+    }
     func makeUIView(context: Context) -> MTKView {
         let view=MTKView(frame: .zero,device: context.coordinator?.device)
         view.isOpaque=false; view.layer.isOpaque=false; view.backgroundColor = .clear
         view.clearColor=MTLClearColorMake(0,0,0,0)
         view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly=true
+        view.delegate=context.coordinator
         view.autoResizeDrawable=false
-        // No MTKView timer competes with our display link.
+        // Apple explicit-drawing mode: the ONE display link calls view.draw(),
+        // which opens/closes the MTKView frame and invokes draw(in:) on the delegate.
         view.isPaused=true; view.enableSetNeedsDisplay=false
         view.isUserInteractionEnabled=false; view.isAccessibilityElement=false
         return view
@@ -25,6 +30,7 @@ struct BeatWaveMetalView: UIViewRepresentable {
     }
     static func dismantleUIView(_ view: MTKView,coordinator: BeatWaveMetalRenderer?) {
         coordinator?.stop()
+        view.delegate=nil
         view.releaseDrawables()
     }
 }
@@ -34,7 +40,10 @@ struct BeatWaveMetalView: UIViewRepresentable {
 private final class BeatWaveDisplayLinkTarget: NSObject {
     weak var renderer: BeatWaveMetalRenderer?
     init(_ renderer: BeatWaveMetalRenderer) { self.renderer=renderer }
-    @objc func tick(_ link: CADisplayLink) { renderer?.tick(link) }
+    @objc func tick(_ link: CADisplayLink) {
+        guard let renderer else { link.invalidate(); return }
+        renderer.tick(link)
+    }
 }
 
 /// Completed GPU timing feedback, safe to update from Metal's completion thread.
@@ -49,7 +58,7 @@ nonisolated private final class BeatWaveGPUFeedback: @unchecked Sendable {
 }
 
 @MainActor
-final class BeatWaveMetalRenderer {
+final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     let device: any MTLDevice
     private let queue: any MTLCommandQueue
     private let pipeline: any MTLRenderPipelineState
@@ -85,8 +94,8 @@ final class BeatWaveMetalRenderer {
         var direction=SIMD4<Float>(repeating: 0)
         var pigment=SIMD4<Float>(repeating: 0)
     }
-    init?() {
-        guard let device=MTLCreateSystemDefaultDevice(), let queue=device.makeCommandQueue(),
+    init?(device: any MTLDevice) {
+        guard let queue=device.makeCommandQueue(),
               let library=device.makeDefaultLibrary(), let vertex=library.makeFunction(name: "beatWaveVertex"),
               let field=library.makeFunction(name: "beatWaveField"), let noise=Self.makeNoise(device) else { return nil }
         let descriptor=MTLRenderPipelineDescriptor()
@@ -96,6 +105,7 @@ final class BeatWaveMetalRenderer {
         do { self.pipeline=try device.makeRenderPipelineState(descriptor: descriptor) }
         catch { NSLog("Beat Waves pipeline unavailable: %@",String(describing: error)); return nil }
         self.device=device; self.queue=queue; self.noise=noise
+        super.init()
     }
 
     func configure(_ view: MTKView,darkMode: Bool,running: Bool,lowPower: Bool) {
@@ -162,7 +172,9 @@ final class BeatWaveMetalRenderer {
             else if gpuMs>0 && gpuMs<budget*0.45 { renderScale=min(ceiling,renderScale+0.025) }
             renderScale=min(ceiling,renderScale)
         }
-        render(view)
+        // Do not bypass MTKView's frame lifecycle or reuse its cached drawable.
+        // The pool encloses draw() itself so MetalKit's autoreleased frame resources drain.
+        autoreleasepool { view.draw() }
         if diagnosticWindow==0 { diagnosticWindow=link.timestamp }
         let elapsed=link.timestamp-diagnosticWindow
         if elapsed>=5 {
@@ -172,6 +184,16 @@ final class BeatWaveMetalRenderer {
             SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000),tag: "BEAT_WAVE")
             diagnosticWindow=link.timestamp; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
         }
+    }
+
+    // Called synchronously by our MAIN-run-loop view.draw(), not a background MetalKit timer.
+    // @preconcurrency adapts the SDK's nonisolated delegate protocol; all UIKit access stays MainActor.
+    func draw(in view: MTKView) {
+        guard displayLink != nil else { return }
+        autoreleasepool { render(view) }
+    }
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // No render here: drawing is owned exclusively by the display-link frame callback.
     }
 
     private func updateStrands() {
@@ -203,13 +225,14 @@ final class BeatWaveMetalRenderer {
         let width=max(1,Int(view.bounds.width*pixelScale)),height=max(1,Int(view.bounds.height*pixelScale))
         let size=CGSize(width: width,height: height)
         if view.drawableSize != size { view.drawableSize=size }
-        guard let drawable=view.currentDrawable,let pass=view.currentRenderPassDescriptor,
-              let command=queue.makeCommandBuffer() else { return }
+        guard let command=queue.makeCommandBuffer() else { return }
         updateStrands()
         var uniforms=Uniforms(resolution: SIMD4(Float(width),Float(height),0,0),
                               motion: SIMD4(Float(motion.phase),motion.energy,motion.impact,motion.detail),
                               surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,0))
-        guard let encoder=command.makeRenderCommandEncoder(descriptor: pass) else { return }
+        // Late acquisition inside the MetalKit draw callback: descriptor obtains THIS frame's drawable.
+        guard let pass=view.currentRenderPassDescriptor,let drawable=view.currentDrawable,
+              let encoder=command.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBytes(&uniforms,length: MemoryLayout<Uniforms>.stride,index: 0)
         strandTable.withUnsafeBytes { bytes in
@@ -220,7 +243,11 @@ final class BeatWaveMetalRenderer {
         encoder.endEncoding()
         let semaphore=inFlight,feedback=gpuFeedback
         command.addCompletedHandler { buffer in
-            feedback.record((buffer.gpuEndTime-buffer.gpuStartTime)*1000)
+            if buffer.status == .error {
+                SonivoDiagnostics.log("GPU command failed: \(String(describing: buffer.error))",tag: "BEAT_WAVE")
+            } else {
+                feedback.record((buffer.gpuEndTime-buffer.gpuStartTime)*1000)
+            }
             semaphore.signal()
         }
         command.present(drawable); committed=true; command.commit()
