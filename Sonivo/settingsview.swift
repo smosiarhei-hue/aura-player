@@ -245,7 +245,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Dolby Atmos (Пространственное аудио)", isOn: $player.spatialAudioEnabled)
+                    Toggle("Системное пространственное аудио", isOn: $player.spatialAudioEnabled)
                         .tint(settings.accentColor)
 
                     ForEach(AudioQuality.allCases) { quality in
@@ -261,9 +261,9 @@ struct SettingsView: View {
                         }.buttonStyle(.plain)
                     }
                 } header: {
-                    Text("Качество звука и Dolby Atmos")
+                    Text("Качество звука и пространственное аудио")
                 } footer: {
-                    Text("Lossless воспроизводит оригинальный звук студийной записи (FLAC). Dolby Atmos воспроизводит объёмную пространственную панораму для AirPods и внешней акустики.")
+                    Text("Lossless — звук без потерь (FLAC). Пространственное звучание и отслеживание головы обрабатывает iOS на совместимых наушниках. Настройте режим в Пункте управления. Стереотрек не становится Dolby Atmos. Для защищённых и Dolby-потоков EQ может быть недоступен; исходный звук сохраняется.")
                 }
 
                 Section {

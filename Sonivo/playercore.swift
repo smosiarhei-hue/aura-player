@@ -5,6 +5,7 @@ import MediaPlayer
 import SwiftUI
 import UIKit
 import Observation
+import StreamAudioProbe
 
 enum AudioQuality: Int, CaseIterable, Identifiable, Sendable {
     case hiResLossless = 0
@@ -81,7 +82,7 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
-    nonisolated static let bandFrequencies: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
+    nonisolated static let bandFrequencies: [Float] = [31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
     nonisolated static let maximumEQGain: Float = 12
     nonisolated static let eqEnabledKey = "eq.enabled"
     nonisolated static let eqGainsKey = "eq.gains"
@@ -101,9 +102,23 @@ final class PlayerCore {
            let decoded = try? JSONDecoder().decode([Float].self, from: data) {
             gains = decoded
         }
+        if !defaults.bool(forKey: "eq.octaveCurve.v2") {
+            let old: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
+            let curve = normalized(gains)
+            gains = bandFrequencies.map { frequency in
+                guard let upper = old.firstIndex(where: { $0 >= frequency }) else { return curve.last ?? 0 }
+                guard upper > 0 else { return curve[0] }
+                let lower = upper - 1
+                let fraction = log(frequency / old[lower]) / log(old[upper] / old[lower])
+                return curve[lower] + (curve[upper] - curve[lower]) * fraction
+            }
+            if let data = try? JSONEncoder().encode(gains) { defaults.set(data, forKey: eqGainsKey) }
+            defaults.set(true, forKey: "eq.octaveCurve.v2")
+        }
         return (normalized(gains), enabled)
     }
-    private static let streamHeadroomCeiling: Float = 0.89
+    // EQ now owns measured headroom. Flat/off and spatial passthrough keep unity gain.
+    private static let streamHeadroomCeiling: Float = 1.0
 
     private(set) var isPlaying = false
     private(set) var progress: Double = 0
@@ -125,11 +140,7 @@ final class PlayerCore {
             guard eqEnabled != oldValue else { return }
             applyEQ()
             defaults.set(eqEnabled, forKey: Self.eqEnabledKey)
-            // A complete stream may be downloaded only after the user
-            // explicitly enables processing that requires AVAudioEngine.
-            if eqEnabled {
-                scheduleStreamMigrationIfNeeded(immediate: true)
-            }
+            // Realtime PCM EQ: never download a song or replace its player for this toggle.
         }
     }
 
@@ -145,9 +156,7 @@ final class PlayerCore {
             }
             applyEQ()
             scheduleSaveEQ()
-            if eqEnabled {
-                scheduleStreamMigrationIfNeeded()
-            }
+
         }
     }
 
@@ -164,7 +173,7 @@ final class PlayerCore {
     private(set) var isHeadphonesConnected: Bool = false
     private(set) var isSpatialPlaybackActive: Bool = false
 
-    /// Spatial Audio / Dolby Atmos engine toggle (matching Apple Music spatialization)
+    /// Permit system headphone spatialization; the app does not synthesize Dolby Atmos.
     var spatialAudioEnabled: Bool = true {
         didSet {
             guard spatialAudioEnabled != oldValue else { return }
@@ -173,30 +182,34 @@ final class PlayerCore {
         }
     }
 
-    /// Whether Dolby Atmos spatial audio processing is available for current track/output
+    /// Headphone spatialization is not proof that the source contains Dolby Atmos.
     var isDolbyAtmosAvailable: Bool {
-        spatialAudioEnabled && (isSpatialPlaybackActive || isHeadphonesConnected)
+        spatialAudioEnabled && (currentCodec?.lowercased().contains("atmos") == true)
     }
 
-    /// Whether Dolby Atmos spatial audio processing is actively playing to supported hardware
     var isDolbyAtmosActive: Bool {
-        spatialAudioEnabled && isSpatialPlaybackActive
+        isDolbyAtmosAvailable && isSpatialPlaybackActive
+    }
+
+    private var shouldApplyUserEQ: Bool {
+        eqEnabled && (!eqHeadphonesOnly || isHeadphonesConnected)
     }
 
     var isEQEffectivelyActive: Bool {
-        guard eqEnabled else { return false }
-        guard !isUsingStreamPlayer else { return false }
-        if eqHeadphonesOnly {
-            return isHeadphonesConnected
-        }
-        return true
+        shouldApplyUserEQ && (!isUsingStreamPlayer || StreamBeatTap.shared.activeEQState == .ready)
     }
 
-    /// Online playback begins in AVPlayer. The existing background cache moves it to
-    /// the native AVAudioEngine graph once the local asset is ready. EQ controls never
-    /// start a second network request.
     var isEQPreparingNativeStream: Bool {
-        eqEnabled && isUsingStreamPlayer
+        shouldApplyUserEQ && isUsingStreamPlayer && StreamBeatTap.shared.activeEQState == .preparing
+    }
+
+    var eqUnavailableReason: String? {
+        guard shouldApplyUserEQ, isUsingStreamPlayer else { return nil }
+        switch StreamBeatTap.shared.activeEQState {
+        case .spatialPassthrough: return "Dolby-поток • исходные каналы без EQ"
+        case .unavailable: return "Этот поток не предоставляет PCM для EQ"
+        default: return nil
+        }
     }
 
     func updateAudioRouteState() {
@@ -250,6 +263,10 @@ final class PlayerCore {
         looperEQ = AVAudioUnitEQ(numberOfBands: Self.bandFrequencies.count)
         looperReverb = AVAudioUnitReverb()
         vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
+        nativeEQRamp?.cancel()
+        outputLimiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+            componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
+            componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
         activePlayer = playerA
         activeStreamingPlayer = streamingPlayerA
         idleStreamingPlayer = streamingPlayerB
@@ -346,7 +363,7 @@ final class PlayerCore {
     @ObservationIgnored private var vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
     private var activeStreamURL: URL?
 
-    private let outputLimiter = AVAudioUnitEffect(
+    @ObservationIgnored private var outputLimiter = AVAudioUnitEffect(
         audioComponentDescription: AudioComponentDescription(
             componentType: kAudioUnitType_Effect,
             componentSubType: kAudioUnitSubType_PeakLimiter,
@@ -573,7 +590,9 @@ final class PlayerCore {
         engine.attach(vocalUnit)
         vocalUnit.bands[0].bypass = true
         engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
-        engine.connect(vocalUnit, to: engine.outputNode, format: nil)
+        engine.attach(outputLimiter)
+        engine.connect(vocalUnit, to: outputLimiter, format: nil)
+        engine.connect(outputLimiter, to: engine.outputNode, format: nil)
         VocalIsolationManager.shared.attach(to: vocalUnit)
 
         engine.mainMixerNode.outputVolume = volume
@@ -583,6 +602,7 @@ final class PlayerCore {
     private func configureEQ(_ node: AVAudioUnitEQ) {
         for (i, band) in node.bands.enumerated() {
             band.frequency = i < PlayerCore.bandFrequencies.count ? PlayerCore.bandFrequencies[i] : 1000
+            band.filterType = i == 0 ? .lowShelf : (i == node.bands.count - 1 ? .highShelf : .parametric)
             band.bandwidth = 1.0
             band.bypass = false
             band.gain = 0
@@ -628,11 +648,7 @@ final class PlayerCore {
         engine.mainMixerNode.outputVolume = volume
         streamingPlayer.volume = volume * Self.streamHeadroomCeiling
 
-        if let data = defaults.data(forKey: Self.eqGainsKey),
-           let gains = try? JSONDecoder().decode([Float].self, from: data),
-           gains.count == PlayerCore.bandFrequencies.count {
-            eqGains = gains
-        }
+        eqGains = Self.persistedEQ().gains
         updateAudioRouteState()
     }
 
@@ -737,20 +753,41 @@ final class PlayerCore {
         applyEQ()
     }
 
+    @ObservationIgnored private var nativeEQRamp: Task<Void, Never>?
+
     private func applyEQ() {
         let user = normalizedUserGains
-        let on = isEQEffectivelyActive
-        let automaticPreamp = on ? -max(0, user.max() ?? 0) : 0
+        let on = shouldApplyUserEQ
+        StreamBeatTap.shared.updateEQ(gains: user, enabled: on)
         func compose(_ offset: [Float]) -> [Float] {
-            (0..<PlayerCore.bandFrequencies.count).map { on ? (user[$0] + offset[$0]) : offset[$0] }
+            Self.normalized((0..<Self.bandFrequencies.count).map { on ? user[$0] + offset[$0] : offset[$0] })
         }
-        writeBands(eqNodeA, compose(eqOffsetA), globalGain: automaticPreamp)
-        writeBands(eqNodeB, compose(eqOffsetB), globalGain: automaticPreamp)
-        writeBands(looperEQ, compose(eqOffsetLooper), globalGain: automaticPreamp)
+        let targets = [compose(eqOffsetA), compose(eqOffsetB), compose(eqOffsetLooper)]
+        let nodes = [eqNodeA, eqNodeB, looperEQ]
+        let rate = AVAudioSession.sharedInstance().sampleRate
+        let headrooms = targets.map { curve in
+            curve.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
+        }
+        nativeEQRamp?.cancel()
+        let starting = nodes.map { $0.bands.map(\.gain) }
+        let startingPreamp = nodes.map(\.globalGain)
+        // Parameter interpolation avoids abrupt clicks on toggle, route changes or sliders.
+        nativeEQRamp = Task { @MainActor [weak self] in
+            for step in 1...8 {
+                guard !Task.isCancelled, let self else { return }
+                let fraction = Float(step) / 8
+                for deck in nodes.indices {
+                    let curve = zip(starting[deck], targets[deck]).map { $0 + ($1 - $0) * fraction }
+                    let gain = startingPreamp[deck] + (headrooms[deck] - startingPreamp[deck]) * fraction
+                    self.writeBands(nodes[deck], curve, globalGain: gain)
+                }
+                do { try await Task.sleep(for: .milliseconds(5)) } catch { return }
+            }
+        }
     }
 
     private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float], globalGain: Float) {
-        node.globalGain = max(-PlayerCore.maximumEQGain, min(0, globalGain))
+        node.globalGain = max(-48, min(0, globalGain))
         let bands = node.bands
         let count = min(bands.count, gains.count)
         guard count > 0 else { return }
@@ -764,10 +801,8 @@ final class PlayerCore {
         }
     }
 
-    /// Migrating a stream onto `AVAudioEngine` downloads the asset and rebuilds the audio
-    /// graph. It used to be kicked off from `applyEQ()` — i.e. once per EQ slider tick —
-    /// which re-entered `startLocal(...)` in the middle of a drag and crashed the app.
-    /// Now single-flight, fast debounced (0.6s) and immediate on toggle.
+    /// Explicit vocal separation may require a local processing file. EQ never calls this.
+    /// Single-flight and request-generation guarded; no automatic background download.
     func scheduleStreamMigrationIfNeeded(immediate: Bool = false) {
         guard isUsingStreamPlayer, isPlaying, !streamMigrationInFlight else { return }
         let elapsed = Date().timeIntervalSince(lastStreamMigrationAttempt)
@@ -1544,7 +1579,7 @@ final class PlayerCore {
         self.updateNowPlayingInfo()
 
         // Ordinary playback stays streaming-only. Full-file downloads happen
-        // only after an explicit EQ action that needs the native audio graph.
+        // only after explicit vocal processing, never for EQ or spatial audio.
     }
 
     func findLocalOrCachedAudioFile(for track: Track) -> URL? {
@@ -2405,7 +2440,8 @@ final class PlayerCore {
     private var spectrumTapInstalled = false
 
     nonisolated private static func handleSpectrumTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
-        VocalIsolationManager.processBuffer(buffer)
+        // Spectrum observation must not process vocal DSP a second time.
+        // Vocal processing belongs exclusively to the render notify on vocalUnit.
         SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
     }
 

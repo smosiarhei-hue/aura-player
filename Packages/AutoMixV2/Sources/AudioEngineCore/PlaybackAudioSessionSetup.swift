@@ -37,7 +37,7 @@ public final class SystemPlaybackAudioSessionConfiguration: PlaybackAudioSession
     public func setPlaybackCategory() throws {
         try session.setCategory(
             .playback,
-            mode: .moviePlayback,
+            mode: .default,
             policy: .default,
             options: Self.categoryOptions
         )

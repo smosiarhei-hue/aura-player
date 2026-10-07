@@ -17,10 +17,13 @@ class StorageCacheSafetyTests(unittest.TestCase):
         self.assertIn("removeLegacyUnboundedStreamCacheIfNeeded()", self.player)
         self.assertIn("storage.removed-unbounded-stream-cache.v1", self.player)
 
-    def test_full_download_requires_explicit_eq_action(self):
-        eq_block = self.player.split("var eqEnabled: Bool", 1)[1].split("/// User EQ curve", 1)[0]
-        self.assertIn("scheduleStreamMigrationIfNeeded(immediate: true)", eq_block)
-        self.assertIn("complete stream may be downloaded", eq_block)
+    def test_eq_never_downloads_or_migrates_a_stream(self):
+        eq_block = self.player.split("var eqEnabled: Bool", 1)[1].split("/// Smart Headphone EQ", 1)[0]
+        self.assertNotIn("scheduleStreamMigrationIfNeeded", eq_block)
+        self.assertIn("Realtime PCM EQ", eq_block)
+        apply = self.player.split("private func applyEQ()", 1)[1].split("private func writeBands", 1)[0]
+        self.assertIn("StreamBeatTap.shared.updateEQ", apply)
+        self.assertNotIn("download", apply)
 
     def test_neural_transcription_is_opt_in_and_cleans_temp_audio(self):
         self.assertIn('lyrics.neuralEngineEnabled") as? Bool ?? false', self.theme)

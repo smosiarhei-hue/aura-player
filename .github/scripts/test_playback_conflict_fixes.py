@@ -30,13 +30,15 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("guard !isPlaying else", idle)
         self.assertNotIn("currentTrack == nil", idle)
 
-    def test_eq_stream_migration_is_explicit_and_never_precached(self):
+    def test_eq_uses_realtime_processing_and_never_precaches(self):
         content = self.playercore.read_text(encoding="utf-8")
         # Ordinary listening must not download every complete track.
         self.assertNotIn("func precacheStream(", content)
         self.assertIn("Ordinary playback stays streaming-only", content)
-        # Native migration remains available after an explicit EQ action.
-        self.assertIn("scheduleStreamMigrationIfNeeded(immediate: true)", content)
+        # EQ must not migrate; explicit vocal separation retains its guarded migration API.
+        eq = content.split("var eqEnabled: Bool", 1)[1].split("/// Smart Headphone EQ", 1)[0]
+        self.assertNotIn("scheduleStreamMigrationIfNeeded", eq)
+        self.assertIn("StreamBeatTap.shared.updateEQ", content)
         self.assertIn("func scheduleStreamMigrationIfNeeded(immediate: Bool = false)", content)
 
     def test_smart_headphone_eq(self):
@@ -46,14 +48,14 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("var isEQEffectivelyActive: Bool", content)
         self.assertIn("func handleAudioRouteChange()", content)
         # Check that applyEQ respects effective EQ active state
-        self.assertIn("let on = isEQEffectivelyActive", content)
+        self.assertIn("let on = shouldApplyUserEQ", content)
 
     def test_smart_headphone_eq_ui(self):
         chrome_content = (self.repo_root / "Sonivo" / "playerchrome.swift").read_text(encoding="utf-8")
         self.assertIn("Только в наушниках", chrome_content)
         self.assertIn("$player.eqHeadphonesOnly", chrome_content)
-        self.assertIn("Наушники • нативный EQ активен", chrome_content)
-        self.assertIn("Нативный EQ • работает локально без сети", chrome_content)
+        self.assertIn("Наушники • EQ в реальном времени", chrome_content)
+        self.assertIn("EQ • обработка воспроизводимого звука", chrome_content)
         self.assertIn("isEQPreparingNativeStream", chrome_content)
 
         settings_content = (self.repo_root / "Sonivo" / "settingsview.swift").read_text(encoding="utf-8")
@@ -80,7 +82,7 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("$player.spatialAudioEnabled", player_v2_content)
 
         settings_content = (self.repo_root / "Sonivo" / "settingsview.swift").read_text(encoding="utf-8")
-        self.assertIn("Dolby Atmos (Пространственное аудио)", settings_content)
+        self.assertIn("Системное пространственное аудио", settings_content)
         self.assertIn("$player.spatialAudioEnabled", settings_content)
 
 

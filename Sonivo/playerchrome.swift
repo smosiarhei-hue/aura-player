@@ -383,7 +383,7 @@ struct PlayerEQSheetView: View {
     @Bindable private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
 
-    private let frequencies = ["20", "40", "60", "90", "160", "400", "1k", "2.5k", "6k", "16k"]
+    private let frequencies = ["31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
     @State private var activeBandIndex: Int? = nil
 
     private var activePresetName: String {
@@ -629,11 +629,15 @@ struct PlayerEQSheetView: View {
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.inkMuted)
                 } else if player.isEQPreparingNativeStream {
-                    Text("Поток кэшируется • затем включится нативный EQ")
+                    Text("Ожидание аудиобуфера • без скачивания песни")
+                        .font(SN.text(.caption, .medium))
+                        .foregroundStyle(SN.amber)
+                } else if let reason = player.eqUnavailableReason {
+                    Text(reason)
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.amber)
                 } else if player.isHeadphonesConnected {
-                    Text("Наушники • нативный EQ активен")
+                    Text("Наушники • EQ в реальном времени")
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.ink)
                 } else if player.eqHeadphonesOnly {
@@ -641,7 +645,7 @@ struct PlayerEQSheetView: View {
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.inkMuted)
                 } else {
-                    Text("Нативный EQ • работает локально без сети")
+                    Text("EQ • обработка воспроизводимого звука")
                         .font(SN.text(.caption, .medium))
                         .foregroundStyle(SN.ink)
                 }
@@ -670,13 +674,14 @@ struct PlayerEQSheetView: View {
         if !player.eqEnabled {
             return "Выключен • исходный звук"
         }
+        if let reason = player.eqUnavailableReason { return reason }
         if player.isEQPreparingNativeStream {
-            return "Подготовка нативной обработки потока"
+            return "Ожидание воспроизводимого аудио"
         }
         if player.eqHeadphonesOnly && !player.isHeadphonesConnected {
             return "Приостановлен для динамика телефона"
         }
-        return "10 полос • нативная обработка"
+        return "10 полос • обработка в реальном времени"
     }
 
     private var eqStatusColor: Color {

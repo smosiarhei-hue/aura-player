@@ -1016,7 +1016,7 @@ struct PlayerScreenV2: View {
     }
     private var qualityBadgeIcon: String {
         let codec = player.currentCodec?.lowercased() ?? ""
-        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+        if codec.contains("atmos") {
             return "dot.radiowaves.left.and.right"
         }
         return "waveform"
@@ -1024,7 +1024,7 @@ struct PlayerScreenV2: View {
     private var qualityBadgeLabel: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
-        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+        if codec.contains("atmos") {
             return "Dolby Atmos"
         }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") || bitrate >= 1000 {
@@ -2219,7 +2219,7 @@ struct PlayerQualityModalView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "dot.radiowaves.left.and.right")
                             .font(.system(size: 12, weight: .bold))
-                        Text(player.isDolbyAtmosActive ? "Dolby Atmos активен (AirPods)" : "Dolby Atmos (Пространственное аудио)")
+                        Text(player.isDolbyAtmosActive ? "Dolby Atmos • пространственный выход" : "Источник Dolby Atmos")
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundStyle(SN.amber)
@@ -2281,13 +2281,13 @@ struct PlayerQualityModalView: View {
 
     private var isTrueDolbyAtmos: Bool {
         let codec = player.currentCodec?.lowercased() ?? ""
-        return codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial")
+        return codec.contains("atmos")
     }
 
     private var qualitySettingsList: some View {
         List {
             Section {
-                Toggle("Dolby Atmos (Пространственное аудио)", isOn: $player.spatialAudioEnabled)
+                Toggle("Системное пространственное аудио", isOn: $player.spatialAudioEnabled)
             } header: {
                 Text("Пространственное аудио")
             } footer: {
@@ -2350,7 +2350,7 @@ struct PlayerQualityModalView: View {
     private var currentQualityTitle: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
-        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+        if codec.contains("atmos") {
             return "Dolby Atmos"
         }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
@@ -2364,7 +2364,7 @@ struct PlayerQualityModalView: View {
     private var currentQualityDescription: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
-        if codec.contains("atmos") || codec.contains("eac3") || codec.contains("spatial") {
+        if codec.contains("atmos") {
             return "Аудио с объёмным пространственным звучанием Dolby Atmos воспроизводит трёхмерную звуковую сцену с эффектом полного присутствия."
         }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
