@@ -104,14 +104,12 @@ struct SonivoHomeRedesignedView: View {
             onToggleWave: toggleWave,
             onShakeWave: { triggerShakeWave() }
         )
-        // Only the artwork-led wave stage uses white controls over the dark shader.
-        // Do not force the rest of Home (or its destinations) into dark appearance.
-        .environment(\.colorScheme, .dark)
+        // The ribbons dissolve into the inherited light/dark theme on every edge.
         .frame(maxWidth: .infinity)
         .background {
             ZStack {
-                Color.black
-                PrismaticBurstBackground(
+                SN.bg
+                MusicWaveBackground(
                     colors: player.displayTrack?.palette ?? waveColors,
                     isPlaying: player.isPlaying,
                     isVisible: waveHeroIsVisible && !showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay

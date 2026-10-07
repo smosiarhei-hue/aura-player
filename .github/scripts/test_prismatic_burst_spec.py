@@ -27,7 +27,7 @@ class PrismaticBurstTests(unittest.TestCase):
         self.assertGreaterEqual(report.count('|| true'), 2)
 
     def test_background_reads_real_audio_not_a_fake_bpm(self):
-        text = (ROOT / 'Sonivo/PrismaticBurstBackground.swift').read_text()
+        text = (ROOT / 'Sonivo/MusicWaveBackground.swift').read_text()
         self.assertIn('analyzer.kick', text)
         self.assertIn('analyzer.bass', text)
         self.assertIn('analyzer.mids', text)
@@ -36,7 +36,7 @@ class PrismaticBurstTests(unittest.TestCase):
             self.assertNotIn(fake, text)
 
     def test_scene_pause_accessibility_and_render_budget(self):
-        text = (ROOT / 'Sonivo/PrismaticBurstBackground.swift').read_text()
+        text = (ROOT / 'Sonivo/MusicWaveBackground.swift').read_text()
         for token in ('isOnScreen && isPlaying && isVisible && !reduceMotion', 'scenePhase == .active',
                       'paused: !running', 'isLowPowerModeEnabled', 'width * 0.5', '1 / 30.0',
                       'onDisappear { isOnScreen = false', '.allowsHitTesting(false)'):
@@ -45,11 +45,11 @@ class PrismaticBurstTests(unittest.TestCase):
     def test_home_confines_background_to_wave_scroll_item_not_artwork_aura(self):
         home = (ROOT / 'Sonivo/SonivoHomeRedesignedView.swift').read_text()
         hero = (ROOT / 'Sonivo/MyWaveHeroView.swift').read_text()
-        self.assertIn('PrismaticBurstBackground(', home)
+        self.assertIn('MusicWaveBackground(', home)
         root = home.split('private var waveHero:', 1)[0]
         wave = home.split('private var waveHero:', 1)[1].split('private var quickDestinations:', 1)[0]
-        self.assertNotIn('PrismaticBurstBackground(', root)
-        self.assertEqual(home.count('PrismaticBurstBackground('), 1)
+        self.assertNotIn('MusicWaveBackground(', root)
+        self.assertEqual(home.count('MusicWaveBackground('), 1)
         self.assertIn('.background {', wave)
         self.assertIn('.clipped()', wave)
         self.assertIn('waveHeroIsVisible && !showPlayer', wave)
@@ -59,14 +59,14 @@ class PrismaticBurstTests(unittest.TestCase):
         self.assertIn('!showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay', home)
 
     def test_shader_cannot_escape_host_and_home_respects_theme(self):
-        shader = (ROOT / 'Sonivo/PrismaticBurstBackground.swift').read_text()
+        shader = (ROOT / 'Sonivo/MusicWaveBackground.swift').read_text()
         home = (ROOT / 'Sonivo/SonivoHomeRedesignedView.swift').read_text()
         self.assertNotIn('.ignoresSafeArea()', shader)
         self.assertIn('SN.bg.ignoresSafeArea()', home)
         self.assertNotIn('.preferredColorScheme(.dark)', home)
         self.assertNotIn('Ambient Vignette', home)
         wave = home.split('private var waveHero:', 1)[1].split('private var quickDestinations:', 1)[0]
-        self.assertIn('.environment(\\.colorScheme, .dark)', wave)
+        self.assertNotIn('.environment(\\.colorScheme, .dark)', wave)
         sections = home.split('private var chartSection:', 1)[1].split('private func toggleWave', 1)[0]
         self.assertNotIn('.foregroundStyle(.white', sections)
         self.assertIn('.foregroundStyle(SN.ink)', sections)

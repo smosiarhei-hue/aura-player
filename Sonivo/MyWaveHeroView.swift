@@ -88,8 +88,7 @@ struct MyWaveHeroView: View {
             HStack(spacing: 8) {
                 Text("Моя волна")
                     .font(SN.display(.title, .black))
-                    .foregroundStyle(Color.white)
-                    .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
+                    .foregroundStyle(SN.ink)
                     .accessibilityIdentifier("sonivo.my-wave.title")
 
                 if player.isPlaying {
@@ -110,7 +109,7 @@ struct MyWaveHeroView: View {
                     } label: {
                         Image(systemName: "sparkles")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(SN.ink)
                             .frame(width: SN.tapTarget, height: SN.tapTarget)
                             .background(.ultraThinMaterial.opacity(0.70), in: Circle())
                     }
@@ -125,7 +124,7 @@ struct MyWaveHeroView: View {
                 } label: {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(SN.ink)
                         .frame(width: SN.tapTarget, height: SN.tapTarget)
                         .background(.ultraThinMaterial.opacity(0.70), in: Circle())
                 }
@@ -187,13 +186,13 @@ struct MyWaveHeroView: View {
             VStack(spacing: 3) {
                 Text(activeTrack?.title ?? "Включить волну")
                     .font(.system(size: 20, weight: .bold, design: .default))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(SN.ink)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 Text(activeTrack?.artist ?? "Персональный музыкальный поток")
                     .font(.system(size: 15, weight: .medium, design: .default))
-                    .foregroundStyle(Color.white.opacity(0.65))
+                    .foregroundStyle(SN.inkMuted)
                     .lineLimit(1)
             }
             .padding(.horizontal, 24)
@@ -214,7 +213,7 @@ struct MyWaveHeroView: View {
             } label: {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.85))
+                    .foregroundStyle(SN.ink)
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(TactileButtonStyle(scale: 0.90))
@@ -261,7 +260,7 @@ struct MyWaveHeroView: View {
             } label: {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.85))
+                    .foregroundStyle(SN.ink)
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(TactileButtonStyle(scale: 0.90))
@@ -278,7 +277,7 @@ struct MyWaveHeroView: View {
 
             Text("Переключение через \(String(format: "%.1f", pendingCountdown))с")
                 .font(SN.text(.caption, .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(SN.ink)
 
             Spacer()
 
@@ -287,10 +286,10 @@ struct MyWaveHeroView: View {
             } label: {
                 Text("Отмена")
                     .font(SN.text(.caption2, .heavy))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(SN.ink)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.18), in: Capsule())
+                    .background(SN.ink.opacity(0.12), in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -329,13 +328,13 @@ struct MyWaveHeroView: View {
                         .font(SN.text(.footnote, .semibold))
                     Image(systemName: isFilterExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.white.opacity(0.45))
+                        .foregroundStyle(SN.inkMuted)
                 }
-                .foregroundStyle(Color.white)
+                .foregroundStyle(SN.ink)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
                 .background(.ultraThinMaterial.opacity(0.40), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+                .overlay(Capsule().strokeBorder(SN.ink.opacity(0.12), lineWidth: 0.5))
             }
             .buttonStyle(TactileButtonStyle(scale: 0.96))
 
@@ -361,11 +360,11 @@ struct MyWaveHeroView: View {
                                         Text(item.title)
                                             .font(SN.text(.footnote, .semibold))
                                     }
-                                    .foregroundStyle(isSelected ? Color.black : Color.white)
+                                    .foregroundStyle(isSelected ? SN.bg : SN.ink)
                                     .padding(.horizontal, 13)
                                     .padding(.vertical, 7)
                                     .background(
-                                        isSelected ? Color.white : Color.white.opacity(0.10),
+                                        isSelected ? SN.ink : SN.ink.opacity(0.08),
                                         in: Capsule()
                                     )
                                 }
@@ -395,11 +394,11 @@ struct MyWaveHeroView: View {
                                         Text(item.title)
                                             .font(SN.text(.caption, .semibold))
                                     }
-                                    .foregroundStyle(isSelected ? Color.black : Color.white.opacity(0.85))
+                                    .foregroundStyle(isSelected ? SN.bg : SN.ink)
                                     .padding(.horizontal, 11)
                                     .padding(.vertical, 6)
                                     .background(
-                                        isSelected ? Color.white : Color.white.opacity(0.08),
+                                        isSelected ? SN.ink : SN.ink.opacity(0.06),
                                         in: Capsule()
                                     )
                                 }
