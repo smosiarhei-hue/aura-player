@@ -19,6 +19,12 @@ final class SpectrumAnalyzer {
     private(set) var lastAudioSampleTime: TimeInterval = 0
     private(set) var beatWaveFrame = BeatWaveAudioFrame()
     private var lastResetAt: TimeInterval = 0
+    @ObservationIgnored private var pendingBeatWaveFrames: [BeatWaveAudioFrame] = []
+    func drainBeatWaveFrames() -> [BeatWaveAudioFrame] {
+        let frames=pendingBeatWaveFrames
+        pendingBeatWaveFrames.removeAll(keepingCapacity: true)
+        return frames
+    }
 
     // MARK: - iOS 27 Audio-Reactive Kick / Bass Pulse (30-120 Hz)
     var dynamicKick: Float {
@@ -83,18 +89,45 @@ final class SpectrumAnalyzer {
 
     nonisolated static func ingest(buffer: AVAudioPCMBuffer, sampleRate: Double, capturedAt: TimeInterval? = nil, mediaTime: TimeInterval? = nil) {
         guard let snapshot = processor.process(buffer: buffer, sampleRate: sampleRate,capturedAt: capturedAt,mediaTime: mediaTime) else { return }
-        Task { @MainActor in
-            let analyzer = SpectrumAnalyzer.shared
+        Task { @MainActor in SpectrumAnalyzer.shared.publish([snapshot]) }
+    }
+
+    // Stream windows arrive in chronological batches. FFT never runs on the UI/audio thread.
+    nonisolated private static let streamQueue=DispatchQueue(label: "sonivo.beatwave.analysis",qos: .userInitiated)
+    nonisolated private static let streamSlots=DispatchSemaphore(value: 2)
+    nonisolated static func reserveStreamAnalysis() -> Bool { streamSlots.wait(timeout: .now()) == .success }
+    nonisolated static func submitStreamWindows(_ windows: [BeatWavePCMWindow]) {
+        streamQueue.async {
+            defer { streamSlots.signal() }
+            var snapshots: [SpectrumSnapshot] = []
+            for window in windows {
+                guard let format=AVAudioFormat(standardFormatWithSampleRate: window.sampleRate,channels: 1),
+                      let buffer=AVAudioPCMBuffer(pcmFormat: format,frameCapacity: 1024),
+                      let channel=buffer.floatChannelData?[0] else { continue }
+                buffer.frameLength=1024
+                window.samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!,count: 1024) }
+                if let snapshot=processor.process(buffer: buffer,sampleRate: window.sampleRate,capturedAt: nil,mediaTime: window.mediaTime,observedAt: window.observedAt) {
+                    snapshots.append(snapshot)
+                }
+            }
+            let batch=snapshots
+            if !batch.isEmpty { Task { @MainActor in SpectrumAnalyzer.shared.publish(batch) } }
+        }
+    }
+    private func publish(_ snapshots: [SpectrumSnapshot]) {
+        for snapshot in snapshots {
+            let analyzer=self
             guard snapshot.observedAt > analyzer.lastResetAt,
-                  snapshot.beatWaveFrame.capturedAt >= analyzer.beatWaveFrame.capturedAt else { return }
-            analyzer.beatWaveFrame = snapshot.beatWaveFrame
-            analyzer.lastAudioSampleTime = snapshot.beatWaveFrame.capturedAt
-            analyzer.bands = snapshot.bands
-            analyzer.bass = snapshot.bass
-            analyzer.kick = snapshot.kick
-            analyzer.mids = snapshot.mids
-            analyzer.highs = snapshot.highs
-            analyzer.level = snapshot.level
+                  snapshot.beatWaveFrame.capturedAt >= analyzer.beatWaveFrame.capturedAt else { continue }
+            analyzer.beatWaveFrame=snapshot.beatWaveFrame
+            pendingBeatWaveFrames.append(snapshot.beatWaveFrame)
+            if pendingBeatWaveFrames.count>512 { pendingBeatWaveFrames.removeFirst(pendingBeatWaveFrames.count-512) }
+            analyzer.lastAudioSampleTime=snapshot.beatWaveFrame.capturedAt
+            // UI meters may be throttled; beat frames MUST NOT be discarded by that throttle.
+            if snapshot.updatesDisplay {
+                analyzer.bands=snapshot.bands; analyzer.bass=snapshot.bass; analyzer.kick=snapshot.kick
+                analyzer.mids=snapshot.mids; analyzer.highs=snapshot.highs; analyzer.level=snapshot.level
+            }
         }
     }
 
@@ -111,7 +144,15 @@ final class SpectrumAnalyzer {
         bass = 0; kick = 0; mids = 0; highs = 0; level = 0; streamLevel = 0
         lastAudioSampleTime = 0
         beatWaveFrame = BeatWaveAudioFrame()
+        pendingBeatWaveFrames.removeAll(keepingCapacity: true)
     }
+}
+
+nonisolated struct BeatWavePCMWindow: Sendable {
+    let samples: [Float]
+    let sampleRate: Double
+    let mediaTime: TimeInterval?
+    let observedAt: TimeInterval // Read generation, so a queued worker cannot revive pre-seek data.
 }
 
 nonisolated private struct SpectrumSnapshot: Sendable {
@@ -119,6 +160,7 @@ nonisolated private struct SpectrumSnapshot: Sendable {
     let mids: Float; let highs: Float; let level: Float
     let beatWaveFrame: BeatWaveAudioFrame
     let observedAt: TimeInterval
+    let updatesDisplay: Bool
 }
 
 nonisolated private final class SpectrumDSP: @unchecked Sendable {
@@ -135,6 +177,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
     private var kickEnvelope: Float = 0
     private var beatWaveDetector = BeatWaveKickDetector()
     private var previousMediaTime: TimeInterval?
+    private var spectralFlux=BeatWaveSpectralFlux()
     private var lastPublish = Date.distantPast
     private var streamLastPublish = Date.distantPast
 
@@ -147,16 +190,17 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
     }
     deinit { if let fftSetup { vDSP_destroy_fftsetup(fftSetup) } }
 
-    func process(buffer: AVAudioPCMBuffer, sampleRate: Double,capturedAt: TimeInterval?,mediaTime: TimeInterval?) -> SpectrumSnapshot? {
+    func process(buffer: AVAudioPCMBuffer, sampleRate: Double,capturedAt: TimeInterval?,mediaTime: TimeInterval?,observedAt suppliedObservation: TimeInterval? = nil) -> SpectrumSnapshot? {
         lock.lock(); defer { lock.unlock() }
         guard let setup = fftSetup, buffer.frameLength >= vDSP_Length(fftSize),
               let channel = buffer.floatChannelData?[0] else { return nil }
-        let observedAt=Date.timeIntervalSinceReferenceDate
+        let observedAt=suppliedObservation ?? Date.timeIntervalSinceReferenceDate
         var beatFrame = BeatWaveAudioFrame(capturedAt: capturedAt ?? observedAt)
         beatFrame.mediaTime=mediaTime
         if let mediaTime {
             if let previousMediaTime,mediaTime<previousMediaTime || mediaTime-previousMediaTime>0.5 {
                 beatWaveDetector.reset()
+                spectralFlux.reset()
             }
             previousMediaTime=mediaTime
         } else { previousMediaTime=nil }
@@ -198,6 +242,8 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
                     values[band] /= Float(counts[band])
                     displayValues[band] = max(values[band], displayValues[band] * 0.80)
                 }
+                let flux=spectralFlux.process(magnitudes: magnitudes,sampleRate: sampleRate)
+                beatFrame.bassFlux=flux.bass; beatFrame.attackFlux=flux.attack
                 // Reuse the already-decoded PCM/spectrum, never load another copy of the song.
                 beatFrame.subBass = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 0..<4)
                 beatFrame.bass = BeatWaveBandEnergy.mean(values: values,counts: counts,range: 4..<9)
@@ -214,8 +260,8 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
             }
         }
         let now = Date()
-        guard now.timeIntervalSince(lastPublish) > 1 / 120 else { return nil }
-        lastPublish = now
+        let updatesDisplay=now.timeIntervalSince(lastPublish)>1/120
+        if updatesDisplay { lastPublish=now }
 
         // Logarithmic bands 0...7 cover approximately 30...120 Hz. The
         // transient detector weights 30...70 Hz most strongly, while the
@@ -244,7 +290,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         smoothedHighs += (rawHighs - smoothedHighs) * highsAlpha
         return SpectrumSnapshot(bands: displayValues, bass: smoothedBass,
                                 kick: kickEnvelope, mids: smoothedMids,
-                                highs: smoothedHighs, level: level, beatWaveFrame: beatFrame,observedAt: observedAt)
+                                highs: smoothedHighs, level: level, beatWaveFrame: beatFrame,observedAt: observedAt,updatesDisplay: updatesDisplay)
     }
 
     func processStreamLevel(_ rawLevel: Float) -> Float? {
@@ -260,6 +306,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         smoothedBass = 0; smoothedMids = 0; smoothedHighs = 0
         bassBaseline = 0; kickEnvelope = 0
         beatWaveDetector.reset(); previousMediaTime=nil
+        spectralFlux.reset()
         lastPublish = .distantPast; streamLastPublish = .distantPast
         lock.unlock()
     }

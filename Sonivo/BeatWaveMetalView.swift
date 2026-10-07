@@ -136,6 +136,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             if SpectrumAnalyzer.shared.beatWaveFrame.mediaTime==nil {
                 motion.consume(SpectrumAnalyzer.shared.beatWaveFrame.kickEventID)
             }
+            _=SpectrumAnalyzer.shared.drainBeatWaveFrames()
             previousTimestamp=nil; presentation.reset(); targetFPS=0
             diagnosticWindow=0; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
             renderScale=lowPower ? 0.3 : 0.35
@@ -178,6 +179,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         let displayLead=max(0,min(0.05,link.targetTimestamp-CACurrentMediaTime()))
         diagnosticDisplayLead=displayLead*1000
         let capture=SpectrumAnalyzer.shared.beatWaveFrame
+        let captures=SpectrumAnalyzer.shared.drainBeatWaveFrames()
         if capture.capturedAt<=0 { presentation.reset(); motion.settle(); previousMediaTime=nil }
         else {
             let frame: BeatWaveAudioFrame
@@ -187,6 +189,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
                     presentation.reset(); motion.settle()
                 }
                 previousMediaTime=clock.time
+                for feature in captures { presentation.push(feature) }
                 presentation.push(capture)
                 let mediaDeadline=clock.time+displayLead*max(0,clock.rate)
                 frame=clock.rate>0 ? (presentation.sampleMedia(at: mediaDeadline) ?? BeatWaveAudioFrame()) : BeatWaveAudioFrame()
@@ -196,6 +199,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
                 // AVPlayer's media timebase owns stream A/V sync; do not add a second guessed route delay.
             } else {
                 previousMediaTime=nil
+                for feature in captures { presentation.push(feature) }
                 presentation.push(capture)
                 frame=presentation.sample(now: now+displayLead,estimatedOutputDelay: outputDelay)
                 let age=now-frame.capturedAt
@@ -271,19 +275,21 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     }
 
     private func updateStrands() {
-        let count: Float=14 // Archive default, fixed axes/count keep the no-orbit requirement.
+        let count: Float=24 // More visible filaments, but one strand call each instead of crossed pairs.
         for i in 0..<32 {
-            let index=Float(i),fade=max(0,min(1,count-index)),id=index/count
+            let index=Float(i),fade=max(0,min(1,count-index)),id=index/(count-1)
             if fade<=0 { strandTable[i]=Strand(); continue }
-            let angle=id*(2*Float.pi) // Fixed axes. No time added: global field cannot orbit.
-            let blend=(sin(id*Float.pi*0.5)*0.5+0.5)
+            let angle: Float=0.28 // ONE fixed direction: coherent parallel flow, never radial/orbiting.
+            let blend=id
             var tint=palette[0]*(1-blend)+palette[1]*blend
             let mixC: Float=0.20*id
             tint=tint*(1-mixC)+palette[2]*mixC
-            strandTable[i].direction=SIMD4(sin(angle),cos(angle),fade,index)
-            strandTable[i].pigment=SIMD4(tint.x,tint.y,tint.z,0)
+            let lane=(id-0.5)*1.12
+            strandTable[i].direction=SIMD4(sin(angle),cos(angle),fade,lane)
+            strandTable[i].pigment=SIMD4(tint.x,tint.y,tint.z,index)
         }
     }
+
     private func render(_ view: MTKView) {
         guard view.bounds.width>0,view.bounds.height>0 else { return }
         guard inFlight.wait(timeout: .now()) == .success else { diagnosticBusyDrops += 1; return }

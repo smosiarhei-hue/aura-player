@@ -153,6 +153,7 @@ void destroy(void *p) { free(p); }
         self.assertIn('.spatialPassthrough',tap)
         self.assertNotIn('download',tap.split('func updateEQ',1)[1].split('func attach',1)[0])
         process=source.split('static void probeProcess',1)[1].split('MTAudioProcessingTapRef Sonivo',1)[0]
-        self.assertLess(process.index('processEQ('),process.index('atomic_flag_test_and_set'))
+        self.assertLess(process.index('processEQ('),process.index('SonivoPCMPush('))
+        self.assertNotIn('atomic_flag_test_and_set',process)
         for forbidden in ['malloc(', 'calloc(', 'dispatch_', 'mutex', 'sleep(']:
             self.assertNotIn(forbidden,process)

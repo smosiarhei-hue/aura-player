@@ -94,7 +94,8 @@ class BeatWaveNativeTests(unittest.TestCase):
     def test_shared_noise_budget_and_direct_geometric_punch(self):
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
         strand=m.split('float3 neuralStrand(',1)[1].split('float3 neuralWeave(',1)[0]
-        self.assertIn('turbulence(q*4.0+t*0.4,u,noise)',strand)
+        self.assertIn('q.y-=lane+bend',strand)
+        self.assertIn('sin(q.x*3.2+t*0.85)',strand)
         self.assertNotIn('sharedFlow',m)
         self.assertEqual(m.count('noise.sample('),1)
         field=m.split('float4 evalNeuralFloat(',1)[1].split('fragment float4',1)[0]
@@ -104,8 +105,9 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('uSpringDeform*0.8+uImpact*0.02',strand)
         self.assertIn('float t = uPhase;',field)
         r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
-        self.assertIn('let count: Float=14',r)
-        self.assertIn('let angle=id*(2*Float.pi)',r)
+        self.assertIn('let count: Float=24',r)
+        self.assertIn('let angle: Float=0.28',r)
+        self.assertIn('let lane=(id-0.5)*1.12',r)
         self.assertNotIn('t*0.12',r)
         self.assertNotIn('let t=Float(motion.phase)*0.6',r)
         self.assertIn('diagnosticSubmissions',r)
@@ -132,13 +134,15 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('smoothstep(0.0, fYBot, uvSample.y)',m)
         self.assertIn('smoothstep(1.0 - fYTop, 1.0, uvSample.y)',m)
 
-    def test_neural_float_is_paired_weave_not_parallel_lanes(self):
+    def test_requested_parallel_flow_is_larger_and_not_radial(self):
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
-        for item in ['spineCore','spineInner','spineHalo','float3 reach=abs','float gate=smoothstep',
-                     'neuralStrand(p,direction.y,-direction.x']:
+        for item in ['spineCore','spineInner','spineHalo','float3 reach=abs','float gate=0.68',
+                     'q.y-=lane+bend','sin(t*0.75)*0.10','sin(t*0.52)*0.065',
+                     'float2(aspect, 1.0) * 0.80']:
             self.assertIn(item,m)
-        self.assertNotIn('float lane=',m)
-        self.assertNotIn('q.y -= lane',m)
+        weave=m.split('float3 neuralWeave',1)[1].split('float3 linearP3',1)[0]
+        self.assertEqual(weave.count('neuralStrand('),1)
+        self.assertNotIn('float coreEnergy',m)
         self.assertNotIn('packetPhase',m)
         self.assertNotIn('t * uSwirl',m)
 
@@ -187,7 +191,9 @@ class BeatWaveNativeTests(unittest.TestCase):
         c=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/StreamAudioProbe.c').read_text()
         self.assertIn('flagsOut, &sourceRange, framesOut',c)
         self.assertIn('CMTimeRangeGetEnd(sourceRange)',c)
-        self.assertIn('p->mediaEnd-(PROBE_FRAMES*0.5)/(*sampleRate)',c)
+        q=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/PCMWindowQueue.h').read_text()
+        self.assertIn('end-(SONIVO_PCM_WINDOW*0.5)/rate',q)
+        self.assertIn('SonivoPCMPush',c)
         self.assertIn('fabs(begin-p->mediaEnd)',c)
         self.assertIn('SonivoStreamProbeReadTimed',c)
         stream=(ROOT/'Sonivo/streambeat.swift').read_text()
@@ -218,6 +224,23 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('capturedAt: sampleTime',local)
         seek=local.split('func seek(to seconds:',1)[1].split('func stopAndClear()',1)[0]
         self.assertIn('SpectrumAnalyzer.shared.reset()',seek)
+
+    def test_all_stream_windows_survive_meter_throttling_and_fft_is_off_ui(self):
+        stream=(ROOT/'Sonivo/streambeat.swift').read_text()
+        analyzer=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
+        renderer=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        self.assertIn('for _ in 0..<16',stream)
+        self.assertIn('SpectrumAnalyzer.reserveStreamAnalysis()',stream)
+        self.assertIn('SpectrumAnalyzer.submitStreamWindows(windows)',stream)
+        self.assertIn('clock.time<=queued',stream)
+        self.assertIn('streamQueue.async',analyzer)
+        self.assertIn('DispatchSemaphore(value: 2)',analyzer)
+        self.assertIn('pendingBeatWaveFrames.append(snapshot.beatWaveFrame)',analyzer)
+        self.assertIn('if snapshot.updatesDisplay',analyzer)
+        self.assertNotIn('guard now.timeIntervalSince(lastPublish)',analyzer)
+        self.assertIn('spectralFlux.process(magnitudes: magnitudes',analyzer)
+        self.assertIn('drainBeatWaveFrames()',renderer)
+        self.assertIn('for feature in captures',renderer)
 
     def test_occupied_fft_bins_drive_all_five_features(self):
         s=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
@@ -382,6 +405,26 @@ var invalidTime=BeatWavePresentation()
 invalidTime.push(BeatWaveAudioFrame(capturedAt: 1,mediaTime: .nan))
 invalidTime.push(BeatWaveAudioFrame(capturedAt: 2,kickEventID: 3,mediaTime: 1))
 check(invalidTime.sampleMedia(at: 1)?.kickEventID==3,"Invalid timing blocked valid media features")
+// Raw per-bin attacks work even when average display bass stays constant.
+var rawFlux=BeatWaveSpectralFlux()
+var spectralKicks=BeatWaveKickDetector()
+for i in 0..<200 {
+    var magnitudes=[Float](repeating: 0,count: 512)
+    if i%20==0 { magnitudes[1]=32; magnitudes[2]=24 }
+    let measured=rawFlux.process(magnitudes: magnitudes,sampleRate: 48000)
+    spectralKicks.process(BeatWaveAudioFrame(capturedAt: 20+Double(i)*0.025,
+        subBass: 0.6,bass: 0.6,rms: 0.2,bassFlux: measured.bass,attackFlux: measured.attack))
+}
+check(spectralKicks.eventID==10,"Raw low-frequency attacks missed behind constant display bands")
+var sustainedFlux=BeatWaveSpectralFlux()
+let constantSpectrum=[Float](repeating: 10,count: 512)
+_=sustainedFlux.process(magnitudes: constantSpectrum,sampleRate: 44100)
+for _ in 0..<50 {
+    let measured=sustainedFlux.process(magnitudes: constantSpectrum,sampleRate: 44100)
+    check(measured.bass==0 && measured.attack==0,"Sustained sound fabricated a new attack")
+}
+let invalidSpectrum=sustainedFlux.process(magnitudes: [.nan,.infinity],sampleRate: 48000)
+check(invalidSpectrum.bass.isFinite && invalidSpectrum.attack.isFinite,"Invalid spectrum escaped")
 print("Beat Waves Swift physics and presentation checks passed")
 '''
         with tempfile.TemporaryDirectory() as d:

@@ -13,10 +13,37 @@ nonisolated struct BeatWaveAudioFrame: Sendable {
     var kickEventID: UInt64 = 0
     var kickConfidence: Float = 0
     var mediaTime: TimeInterval? = nil // Asset/sample clock, independent of polling/UI arrival.
+    var bassFlux: Float? = nil // Positive per-bin spectral change, before display smoothing.
+    var attackFlux: Float? = nil
+}
+
+/// Positive change of each raw FFT bin, never the already-smoothed UI spectrum.
+nonisolated struct BeatWaveSpectralFlux {
+    private var previous: [Float] = []
+    private var previousRate: Double = 0
+    mutating func reset() { previous.removeAll(keepingCapacity: true); previousRate=0 }
+    mutating func process(magnitudes: [Float],sampleRate: Double) -> (bass: Float,attack: Float) {
+        guard sampleRate.isFinite,sampleRate>0,magnitudes.count>1 else { return (0,0) }
+        if previous.count != magnitudes.count || abs(previousRate-sampleRate)>1 {
+            previous=[Float](repeating: 0,count: magnitudes.count); previousRate=sampleRate
+        }
+        let size=Float(magnitudes.count*2)
+        var low: Float=0,attack: Float=0,lowCount: Float=0,attackCount: Float=0
+        for bin in 1..<magnitudes.count {
+            let raw=magnitudes[bin].isFinite ? max(0,magnitudes[bin]) : 0
+            let value=log1p(raw/size*32)
+            let rise=max(0,value-previous[bin])
+            let hz=Float(bin)*Float(sampleRate)/size
+            if hz>=30 && hz<=180 { low+=rise; lowCount+=1 }
+            if hz>180 && hz<=2000 { attack+=rise; attackCount+=1 }
+            previous[bin]=value
+        }
+        return (min(1,low/max(1,lowCount)*2.5),min(1,attack/max(1,attackCount)*2.5))
+    }
 }
 
 nonisolated struct BeatWaveKickDetector {
-    private var history: [Float] = []
+    private var history: [(time: TimeInterval,flux: Float)] = []
     private var previousBass: Float = 0
     private var previousRMS: Float = 0
     private var lastKick: TimeInterval = -.infinity
@@ -31,11 +58,17 @@ nonisolated struct BeatWaveKickDetector {
         envelope *= exp(-Float(dt) / 0.12)
         if envelope < 0.001 { envelope = 0 }
         let bass = unit(frame.subBass) * 0.65 + unit(frame.bass) * 0.35
-        let flux = max(0, bass - previousBass) * 0.75 + max(0, unit(frame.rms) - previousRMS) * 0.25
+        let flux: Float
+        if let measured=frame.bassFlux {
+            flux=unit(measured)*0.85+unit(frame.attackFlux ?? 0)*0.15
+        } else {
+            flux=max(0,bass-previousBass)*0.75+max(0,unit(frame.rms)-previousRMS)*0.25
+        }
+        history.removeAll { frame.capturedAt-$0.time>0.8 }
         // Threshold uses prior history: the onset must not raise its own threshold.
-        let mean = history.isEmpty ? 0 : history.reduce(0, +) / Float(history.count)
-        let variance = history.isEmpty ? 0 : history.reduce(Float(0)) { $0 + pow($1-mean,2) } / Float(history.count)
-        let threshold = max(0.025, mean + 1.5 * sqrt(variance))
+        let mean = history.isEmpty ? 0 : history.reduce(Float(0)) { $0+$1.flux } / Float(history.count)
+        let variance = history.isEmpty ? 0 : history.reduce(Float(0)) { $0 + pow($1.flux-mean,2) } / Float(history.count)
+        let threshold = max(frame.bassFlux==nil ? 0.025 : 0.012, mean + 1.35 * sqrt(variance))
         let suppressed = (frame.highs > bass * 2.8 && bass < 0.22) || (frame.mids > bass * 2.2 && bass < 0.15)
         if !suppressed && unit(frame.rms)>0.008 && frame.capturedAt-lastKick >= 0.160 && flux > threshold && bass > 0.10 {
             eventID &+= 1
@@ -43,8 +76,8 @@ nonisolated struct BeatWaveKickDetector {
             envelope = 1
             confidence = min(1, 0.55 + (flux-threshold)/max(0.05,threshold)*0.45)
         }
-        history.append(flux)
-        if history.count > 35 { history.removeFirst() }
+        history.append((frame.capturedAt,flux))
+        if history.count > 256 { history.removeFirst() }
         previousBass = bass
         previousRMS = unit(frame.rms)
     }
@@ -74,7 +107,7 @@ nonisolated enum BeatWaveBandEnergy {
     }
 }
 
-/// Slow in-place flow. Bass controls deformation; only a measured onset excites the spring.
+/// Slow coherent flow. Bass controls deformation; only a measured onset excites the spring.
 nonisolated struct MusicWaveMotion {
     private(set) var phase: Double = 0
     private(set) var energy: Float = 0

@@ -64,8 +64,8 @@ class MusicWaveTests(unittest.TestCase):
 
     def test_wave_has_no_grain_raymarch_or_strobe(self):
         self.assertIn('i < 32', METAL)
-        self.assertIn('float coreEnergy', METAL)
-        for heavy in ['marchT', 'prismaticNoise', 'random', 'i < 44']:
+        self.assertNotIn('float coreEnergy', METAL)
+        for heavy in ['marchT', 'prismaticNoise', 'noise.sample(beatNoiseSampler, q', 'i < 44']:
             self.assertNotIn(heavy, METAL)
 
     def test_lifecycle_and_reduce_motion_stop_motion(self):

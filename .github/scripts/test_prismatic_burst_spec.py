@@ -90,7 +90,8 @@ class PrismaticBurstTests(unittest.TestCase):
         c = (ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe/StreamAudioProbe.c').read_text()
         self.assertIn('#define PROBE_FRAMES 1024', c)
         process = c.split('static void probeProcess', 1)[1].split('MTAudioProcessingTapRef SonivoStreamProbeCreate', 1)[0]
-        self.assertIn('atomic_flag_test_and_set_explicit', process)
+        self.assertIn('SonivoPCMPush', process)
+        self.assertNotIn('atomic_flag_test_and_set',process)
         for token in ('calloc', 'malloc', 'pthread_mutex_lock', 'dispatch_sync', 'sleep('):
             self.assertNotIn(token, process)
         self.assertIn('buffers->mBuffers[b]', process)
@@ -104,8 +105,8 @@ class PrismaticBurstTests(unittest.TestCase):
         self.assertIn('PlayerCore.shared.streamingPlayer.currentItem', swift)
         self.assertIn('PlayerCore.shared.usesStreamingBackend', swift)
         self.assertIn('self.readSpectrum(from: self.probes[key]?.tap)', swift)
-        self.assertIn('Date.timeIntervalSinceReferenceDate - lastSignal > 0.5', swift)
-        self.assertIn('SpectrumAnalyzer.ingest(buffer: buffer', swift)
+        self.assertIn('Date.timeIntervalSinceReferenceDate-lastSignal>0.5', swift)
+        self.assertIn('SpectrumAnalyzer.submitStreamWindows(windows)', swift)
 
     def test_c_target_is_linked_and_license_is_shipped(self):
         project = (ROOT / 'project.yml').read_text()

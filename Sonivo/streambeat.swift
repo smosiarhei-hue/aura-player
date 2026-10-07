@@ -5,7 +5,7 @@ import AudioToolbox
 import MediaToolbox
 import StreamAudioProbe
 
-/// C applies realtime EQ and captures the latest 1024 samples already being played.
+/// C applies realtime EQ and queues chronological overlapping PCM windows from playback.
 /// No Swift closures on the media audio thread and no full-file downloads.
 @Observable
 @MainActor
@@ -29,6 +29,8 @@ final class StreamBeatTap {
     private var activeItemID: ObjectIdentifier?
     private var lastSignal: TimeInterval = 0
     private var hadSignal = false
+    private var lastDroppedWindows: UInt64 = 0
+    private var latestQueuedMediaTime: TimeInterval?
     private init() {}
 
     // Explicit state avoids recursive PlayerCore.shared initialization.
@@ -104,6 +106,7 @@ final class StreamBeatTap {
                         self.activeItemID = key
                         self.waitingSince = Date.timeIntervalSinceReferenceDate
                         self.hadSignal = false
+                        self.latestQueuedMediaTime=nil; self.lastDroppedWindows=0
                         SpectrumAnalyzer.shared.reset()
                     }
                     if let probe = self.probes[key] {
@@ -140,24 +143,34 @@ final class StreamBeatTap {
 
     private func readSpectrum(from tap: MTAudioProcessingTap?) {
         guard let tap else { return }
-        var samples = [Float](repeating: 0, count: 1024)
-        var sampleRate = 0.0
-        var mediaTime=Double.nan
-        let count = samples.withUnsafeMutableBufferPointer {
-            SonivoStreamProbeReadTimed(tap, $0.baseAddress!, $0.count, &sampleRate, &mediaTime)
+        guard SpectrumAnalyzer.reserveStreamAnalysis() else { return }
+        var windows: [BeatWavePCMWindow] = []
+        // Bounded drain per poll; slow analysis leaves PCM in the bounded C queue, not an
+        // unbounded DispatchQueue. All windows, including those inside large callbacks, survive.
+        for _ in 0..<16 {
+            var samples=[Float](repeating: 0,count: 1024)
+            var sampleRate=0.0,mediaTime=Double.nan
+            let count=samples.withUnsafeMutableBufferPointer {
+                SonivoStreamProbeReadTimed(tap,$0.baseAddress!,$0.count,&sampleRate,&mediaTime)
+            }
+            guard count==1024,sampleRate>0 else { break }
+            windows.append(BeatWavePCMWindow(samples: samples,sampleRate: sampleRate,
+                mediaTime: mediaTime.isFinite ? mediaTime : nil,observedAt: Date.timeIntervalSinceReferenceDate))
         }
-        if count == 1024, sampleRate > 0,
-           let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
-           let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024),
-           let channel = buffer.floatChannelData?[0] {
-            buffer.frameLength = 1024
-            samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: 1024) }
-            SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: sampleRate, mediaTime: mediaTime.isFinite ? mediaTime : nil)
-            lastSignal = Date.timeIntervalSinceReferenceDate
-            hadSignal = true
-        } else if hadSignal && Date.timeIntervalSinceReferenceDate - lastSignal > 0.5 {
-            SpectrumAnalyzer.shared.reset()
-            hadSignal = false
+        let dropped=UInt64(SonivoStreamProbeDroppedWindows(tap))
+        if dropped != lastDroppedWindows {
+            SonivoDiagnostics.log("PCM queue dropped windows=\(dropped)",tag: "BEAT_WAVE")
+            lastDroppedWindows=dropped
+        }
+        SpectrumAnalyzer.submitStreamWindows(windows) // Releases the reserved slot, including empty batches.
+        if !windows.isEmpty {
+            lastSignal=Date.timeIntervalSinceReferenceDate; hadSignal=true
+            latestQueuedMediaTime=windows.last?.mediaTime
+        } else if hadSignal && Date.timeIntervalSinceReferenceDate-lastSignal>0.5 {
+            // AVPlayer may decode ahead in bursts. No new callback is NOT silence while
+            // queued features still belong to future audible media.
+            if let queued=latestQueuedMediaTime,let clock=currentMediaClock(),clock.time<=queued { return }
+            SpectrumAnalyzer.shared.reset(); hadSignal=false; latestQueuedMediaTime=nil
         }
     }
 }
