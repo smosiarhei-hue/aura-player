@@ -17,6 +17,7 @@ struct MyWaveHeroView: View {
     @State private var artistImageUrl: String? = nil
     @State private var artistLookupTrackId: UUID? = nil
     @State private var isFilterExpanded: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: - 2-Second Swipe Grace Period / Debounce State
     @State private var dragOffset: CGFloat = 0
@@ -101,36 +102,38 @@ struct MyWaveHeroView: View {
 
             Spacer()
 
-            HStack(spacing: 10) {
-                if let showAIAssistant {
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 10) {
+                    if let showAIAssistant {
+                        Button {
+                            Haptics.tap(.light)
+                            showAIAssistant.wrappedValue = true
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(SN.ink)
+                                .frame(width: SN.tapTarget, height: SN.tapTarget)
+                                .glassCircle(interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("AI-куратор")
+                        .accessibilityHint("Открывает музыкального помощника")
+                    }
+
                     Button {
                         Haptics.tap(.light)
-                        showAIAssistant.wrappedValue = true
+                        showSettings = true
                     } label: {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 17, weight: .semibold))
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(SN.ink)
                             .frame(width: SN.tapTarget, height: SN.tapTarget)
-                            .background(.ultraThinMaterial.opacity(0.70), in: Circle())
+                            .glassCircle(interactive: true)
                     }
-                    .buttonStyle(TactileButtonStyle(scale: 0.92))
-                    .accessibilityLabel("AI-куратор")
-                    .accessibilityHint("Открывает музыкального помощника")
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Настройки")
+                    .accessibilityHint("Открывает оформление, звук и параметры приложения")
                 }
-
-                Button {
-                    Haptics.tap(.light)
-                    showSettings = true
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(SN.ink)
-                        .frame(width: SN.tapTarget, height: SN.tapTarget)
-                        .background(.ultraThinMaterial.opacity(0.70), in: Circle())
-                }
-                .buttonStyle(TactileButtonStyle(scale: 0.92))
-                .accessibilityLabel("Настройки")
-                .accessibilityHint("Открывает оформление, звук и параметры приложения")
             }
         }
         .padding(.horizontal, 20)
@@ -163,8 +166,7 @@ struct MyWaveHeroView: View {
                             )
                     }
                 }
-                .shadow(color: Color.black.opacity(0.60), radius: 26, y: 12)
-                .shadow(color: accentColor.opacity(0.35), radius: 20, y: 6)
+                // Clean artwork: no persistent accent halo or blurred shadow around its edge.
             }
             .buttonStyle(TactileButtonStyle(scale: 0.97))
             .accessibilityLabel("Открыть плеер")
@@ -307,7 +309,7 @@ struct MyWaveHeroView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial.opacity(0.90), in: Capsule())
+        .glassCapsule(interactive: false)
         .padding(.horizontal, 24)
     }
 
@@ -317,7 +319,7 @@ struct MyWaveHeroView: View {
             // Компактная нативная плашка-фильтр «Моей волны»
             Button {
                 Haptics.tap(.light)
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.82)) {
                     isFilterExpanded.toggle()
                 }
             } label: {
@@ -333,10 +335,9 @@ struct MyWaveHeroView: View {
                 .foregroundStyle(SN.ink)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
-                .background(.ultraThinMaterial.opacity(0.40), in: Capsule())
-                .overlay(Capsule().strokeBorder(SN.ink.opacity(0.12), lineWidth: 0.5))
+                .glassCapsule(interactive: true)
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.96))
+            .buttonStyle(.plain)
 
             if isFilterExpanded {
                 VStack(spacing: 10) {
@@ -347,7 +348,7 @@ struct MyWaveHeroView: View {
                                 let isSelected = waveStore.diversity == item
                                 Button {
                                     Haptics.tap(.light)
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.82)) {
                                         waveStore.diversity = item
                                     }
                                     if player.isPlaying {
@@ -381,7 +382,7 @@ struct MyWaveHeroView: View {
                                 let isSelected = waveStore.language == item
                                 Button {
                                     Haptics.tap(.light)
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.82)) {
                                         waveStore.language = item
                                     }
                                     if player.isPlaying {

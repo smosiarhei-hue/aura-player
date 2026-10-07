@@ -125,3 +125,11 @@ Research references (not new dependencies):
 - https://developer.apple.com/documentation/MediaToolbox/MTAudioProcessingTap
 - https://developer.apple.com/streaming/Whats-new-HLS.pdf (2026 HLS mix tap and decoded-output API; newer symbols are not unconditionally introduced into the existing SDK/deployment target)
 - https://github.com/ryanfrancesconi/spfk-tempo (multi-band spectral flux and overlapping streaming frames; package not installed and no second decoding pipeline)
+
+## Clean cover and localized system Liquid Glass
+
+Removed both the accent-colored and blurred black shadows from the My Wave artwork. The cover retains its image sizing, clipping, swipe and open-player action; no glass or blur is attached to the image itself. Header controls, the wave filter capsule and the rare pending-skip banner now use existing native `.glassEffect(.regular...)` wrappers instead of manually opacity-modified ultra-thin materials. The two header controls share a `GlassEffectContainer(spacing: 8)`; manual filter outline and extra press-scaling are removed from glass controls, while the OS supplies the fluid interactive response. Filter expansion/selection honors Reduce Motion.
+
+No global backdrop blur, extra material over the Metal background, shader/palette/timing change, full-screen glass plate, custom blur radius or new iOS-27-only symbol was introduced. The existing extended top/hero lower boundary is preserved. `glassEffect` is the public iOS 26+ API; its platform appearance and backdrop blur are supplied by the running OS, including iOS 27, rather than a fabricated "iOS 27" effect. The material does not expose a numerical blur-radius setting. Native on-device appearance/animation cannot be visually verified on the Linux development host; source tests and macOS/iOS build validate integration, not subjective blur intensity or device FPS.
+
+Reference: https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views
