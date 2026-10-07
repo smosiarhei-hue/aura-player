@@ -117,6 +117,7 @@ struct SonivoHomeRedesignedView: View {
                     SN.bg
                     MusicWaveBackground(
                         colors: player.displayTrack?.palette ?? waveColors,
+                        track: player.displayTrack,
                         isPlaying: player.isPlaying,
                         isVisible: waveHeroIsVisible && !showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay
                     )

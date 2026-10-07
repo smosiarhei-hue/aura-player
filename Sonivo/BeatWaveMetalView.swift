@@ -1,9 +1,11 @@
 import SwiftUI
 import MetalKit
 import AVFoundation
+import QuartzCore
 
 /// One transparent Metal pass. CADisplayLink is the only frame scheduler.
 struct BeatWaveMetalView: UIViewRepresentable {
+    let colors: [Color]
     let darkMode: Bool
     let running: Bool
     let lowPower: Bool
@@ -16,6 +18,7 @@ struct BeatWaveMetalView: UIViewRepresentable {
         view.isOpaque=false; view.layer.isOpaque=false; view.backgroundColor = .clear
         view.clearColor=MTLClearColorMake(0,0,0,0)
         view.colorPixelFormat = .bgra8Unorm
+        view.colorspace=CGColorSpace(name: CGColorSpace.sRGB)
         view.framebufferOnly=true
         view.delegate=context.coordinator
         view.autoResizeDrawable=false
@@ -26,7 +29,7 @@ struct BeatWaveMetalView: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: MTKView,context: Context) {
-        context.coordinator?.configure(view,darkMode: darkMode,running: running,lowPower: lowPower)
+        context.coordinator?.configure(view,colors: colors,darkMode: darkMode,running: running,lowPower: lowPower)
     }
     static func dismantleUIView(_ view: MTKView,coordinator: BeatWaveMetalRenderer?) {
         coordinator?.stop()
@@ -61,7 +64,8 @@ nonisolated private final class BeatWaveGPUFeedback: @unchecked Sendable {
 final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     let device: any MTLDevice
     private let queue: any MTLCommandQueue
-    private let pipeline: any MTLRenderPipelineState
+    private let sdrPipeline: any MTLRenderPipelineState
+    private let hdrPipeline: (any MTLRenderPipelineState)?
     private let noise: any MTLTexture
     private let inFlight=DispatchSemaphore(value: 2)
     private let gpuFeedback=BeatWaveGPUFeedback()
@@ -70,6 +74,12 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     private var linkTarget: BeatWaveDisplayLinkTarget?
     private var darkMode=false
     private var lowPower=false
+    private var outputHDR=false
+    private var headroom: Float=1
+    private var targetHeadroom: Float=1
+    private var palette=[SIMD3<Float>](repeating: SIMD3(0.5,0.5,0.5),count: 3)
+    private var targetPalette=[SIMD3<Float>](repeating: SIMD3(0.5,0.5,0.5),count: 3)
+    private var paletteInitialized=false
     private var motion=MusicWaveMotion()
     private var presentation=BeatWavePresentation()
     private var previousTimestamp: CFTimeInterval?
@@ -89,6 +99,10 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         var resolution: SIMD4<Float>
         var motion: SIMD4<Float>
         var surface: SIMD4<Float>
+        var colorA: SIMD4<Float>
+        var colorB: SIMD4<Float>
+        var colorC: SIMD4<Float>
+        var display: SIMD4<Float>
     }
     private struct Strand {
         var direction=SIMD4<Float>(repeating: 0)
@@ -102,15 +116,19 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         descriptor.vertexFunction=vertex; descriptor.fragmentFunction=field
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         descriptor.colorAttachments[0].isBlendingEnabled=false
-        do { self.pipeline=try device.makeRenderPipelineState(descriptor: descriptor) }
+        do { self.sdrPipeline=try device.makeRenderPipelineState(descriptor: descriptor) }
         catch { NSLog("Beat Waves pipeline unavailable: %@",String(describing: error)); return nil }
+        descriptor.colorAttachments[0].pixelFormat = .rgba16Float
+        self.hdrPipeline=try? device.makeRenderPipelineState(descriptor: descriptor)
         self.device=device; self.queue=queue; self.noise=noise
         super.init()
     }
 
-    func configure(_ view: MTKView,darkMode: Bool,running: Bool,lowPower: Bool) {
+    func configure(_ view: MTKView,colors: [Color],darkMode: Bool,running: Bool,lowPower: Bool) {
         self.view=view; self.darkMode=darkMode; self.lowPower=lowPower
+        setPalette(colors)
         guard running else { stop(); return }
+        configureOutput(view)
         if displayLink==nil {
             motion.consume(SpectrumAnalyzer.shared.beatWaveFrame.kickEventID)
             previousTimestamp=nil; presentation.reset(); targetFPS=0
@@ -135,11 +153,13 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         displayLink?.invalidate(); displayLink=nil; linkTarget=nil
         previousTimestamp=nil; presentation.reset(); motion.settle()
         MusicHapticsManager.core.setBeatWaveOverride(false)
+        (view?.layer as? CAMetalLayer)?.wantsExtendedDynamicRangeContent=false
     }
     fileprivate func tick(_ link: CADisplayLink) {
         guard let view,view.window != nil else { return }
-        // The screen may attach after makeUIView; re-read its actual supported refresh rate.
+        // The screen may attach after makeUIView; re-read refresh rate and AVAILABLE EDR headroom.
         configureFrameRate()
+        configureOutput(view)
         let dt=Float(max(0,min(0.1,link.timestamp-(previousTimestamp ?? link.timestamp))))
         previousTimestamp=link.timestamp
         diagnosticTicks += 1
@@ -162,12 +182,15 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
                 MusicHapticsManager.core.playBeatWaveKick(eventID: frame.kickEventID,strength: frame.kickConfidence)
             }
         }
+        let paletteMix=1-exp(-dt/0.85)
+        for i in 0..<3 { palette[i]+=(targetPalette[i]-palette[i])*paletteMix }
+        headroom=min(targetHeadroom,headroom+(targetHeadroom-headroom)*(1-exp(-dt/0.8))) // Drop immediately; never exceed available headroom.
         // Reduce pixel work rather than limiting ProMotion to the old hard-coded 30 FPS.
         if link.timestamp-lastQualityCheck>0.75 {
             lastQualityCheck=link.timestamp
             let gpuMs=gpuFeedback.sample()
             let budget=1000.0/Double(max(1,targetFPS))
-            let ceiling: CGFloat=lowPower ? 0.3 : 0.5
+            let ceiling: CGFloat=lowPower ? 0.3 : (outputHDR ? 0.4 : 0.5)
             if gpuMs>budget*0.8 { renderScale=max(0.25,renderScale-0.05) }
             else if gpuMs>0 && gpuMs<budget*0.45 { renderScale=min(ceiling,renderScale+0.025) }
             renderScale=min(ceiling,renderScale)
@@ -181,7 +204,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             // Local report only. Submitted frames are not proof of actually displayed 120 FPS.
             let ticks=Double(diagnosticTicks)/elapsed, submitted=Double(diagnosticSubmissions)/elapsed
             let gpu=gpuFeedback.sample()
-            SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000),tag: "BEAT_WAVE")
+            SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f edr=%d headroom=%.2f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000,outputHDR ? 1 : 0,Double(headroom)),tag: "BEAT_WAVE")
             diagnosticWindow=link.timestamp; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
         }
     }
@@ -196,21 +219,45 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         // No render here: drawing is owned exclusively by the display-link frame callback.
     }
 
+    private func setPalette(_ colors: [Color]) {
+        let space=CGColorSpace(name: CGColorSpace.sRGB)!
+        let rgb=colors.prefix(3).compactMap { color -> SIMD3<Float>? in
+            guard let converted=UIColor(color).cgColor.converted(to: space,intent: .relativeColorimetric,options: nil),
+                  let c=converted.components,c.count>=3 else { return nil }
+            return SIMD3(Float(c[0]),Float(c[1]),Float(c[2]))
+        }
+        guard let first=rgb.first else { return }
+        targetPalette=[first,rgb.count>1 ? rgb[1] : first,rgb.count>2 ? rgb[2] : (rgb.last ?? first)]
+        if !paletteInitialized { palette=targetPalette; paletteInitialized=true }
+    }
+
+    private func configureOutput(_ view: MTKView) {
+        guard let layer=view.layer as? CAMetalLayer else { return }
+        let screen=view.window?.windowScene?.screen
+        let potential=Float(screen?.potentialEDRHeadroom ?? 1)
+        let current=Float(screen?.currentEDRHeadroom ?? 1)
+        let desired = !lowPower && potential.isFinite && potential>1 && hdrPipeline != nil
+        if desired != outputHDR {
+            outputHDR=desired; headroom=1
+            view.releaseDrawables()
+            view.colorPixelFormat=desired ? .rgba16Float : .bgra8Unorm
+            view.colorspace=CGColorSpace(name: desired ? CGColorSpace.extendedLinearDisplayP3 : CGColorSpace.sRGB)
+        }
+        if layer.wantsExtendedDynamicRangeContent != desired { layer.wantsExtendedDynamicRangeContent=desired }
+        targetHeadroom=desired ? BeatWavePaletteMath.safeHeadroom(potential: potential,current: current,lowPower: lowPower) : 1
+    }
+
     private func updateStrands() {
-        let count: Float=14 // Fixed topology: no orbit or strand-count oscillation.
-        let a=SIMD3<Float>(1,0.15,0.55),b=SIMD3<Float>(0.58,0.20,0.95),c=SIMD3<Float>(0.10,0.85,0.98)
+        let count: Float=12 // Neural Float's 12 woven strand PAIRS, not parallel ribbon lanes.
         for i in 0..<32 {
             let index=Float(i),fade=max(0,min(1,count-index)),id=index/count
             if fade<=0 { strandTable[i]=Strand(); continue }
-            let angle: Float = -0.42+id*0.84 // Static directions; bend, never rotate.
-            let tintTime=id
-            let blend=sin(tintTime*Float.pi*0.5)*0.5+0.5
-            let shade=cos(tintTime*(2*Float.pi))*0.5+0.5
-            var tint=a*(1-blend)+b*blend
-            let mixC=0.28*sin(tintTime*2.5)+0.28
-            tint=(tint*(1-mixC)+c*mixC)*(0.6+0.4*shade)
-            tint *= 0.85*fade
-            strandTable[i].direction=SIMD4(sin(angle),cos(angle),fade,0)
+            let angle=id*(2*Float.pi) // Fixed axes. No time added: global field cannot orbit.
+            let blend=(sin(id*Float.pi*0.5)*0.5+0.5)
+            var tint=palette[0]*(1-blend)+palette[1]*blend
+            let mixC: Float=0.20*id
+            tint=tint*(1-mixC)+palette[2]*mixC
+            strandTable[i].direction=SIMD4(sin(angle),cos(angle),fade,index)
             strandTable[i].pigment=SIMD4(tint.x,tint.y,tint.z,0)
         }
     }
@@ -228,11 +275,15 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         updateStrands()
         var uniforms=Uniforms(resolution: SIMD4(Float(width),Float(height),0,0),
                               motion: SIMD4(Float(motion.phase),motion.energy,motion.impact,motion.detail),
-                              surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,motion.lowEnergy))
+                              surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,motion.lowEnergy),
+                              colorA: SIMD4(palette[0].x,palette[0].y,palette[0].z,1),
+                              colorB: SIMD4(palette[1].x,palette[1].y,palette[1].z,1),
+                              colorC: SIMD4(palette[2].x,palette[2].y,palette[2].z,1),
+                              display: SIMD4(headroom,outputHDR ? 1 : 0,0,0))
         // Late acquisition inside the MetalKit draw callback: descriptor obtains THIS frame's drawable.
         guard let pass=view.currentRenderPassDescriptor,let drawable=view.currentDrawable,
               let encoder=command.makeRenderCommandEncoder(descriptor: pass) else { return }
-        encoder.setRenderPipelineState(pipeline)
+        encoder.setRenderPipelineState(outputHDR ? (hdrPipeline ?? sdrPipeline) : sdrPipeline)
         encoder.setFragmentBytes(&uniforms,length: MemoryLayout<Uniforms>.stride,index: 0)
         strandTable.withUnsafeBytes { bytes in
             if let base=bytes.baseAddress { encoder.setFragmentBytes(base,length: bytes.count,index: 1) }

@@ -100,8 +100,8 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('uSpringDeform*0.8',strand)
         self.assertIn('float t = uPhase;',field)
         r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
-        self.assertIn('let count: Float=14',r)
-        self.assertIn('let angle: Float = -0.42+id*0.84',r)
+        self.assertIn('let count: Float=12',r)
+        self.assertIn('let angle=id*(2*Float.pi)',r)
         self.assertNotIn('t*0.12',r)
         self.assertNotIn('let t=Float(motion.phase)*0.6',r)
         self.assertIn('diagnosticSubmissions',r)
@@ -127,6 +127,55 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertIn('float fYBot = max(0.03, 0.12 * uEdgeFeather)',m)
         self.assertIn('smoothstep(0.0, fYBot, uvSample.y)',m)
         self.assertIn('smoothstep(1.0 - fYTop, 1.0, uvSample.y)',m)
+
+    def test_neural_float_is_paired_weave_not_parallel_lanes(self):
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        for item in ['spineCore','spineInner','spineHalo','float3 reach=abs','float gate=smoothstep',
+                     'neuralStrand(p,direction.y,-direction.x']:
+            self.assertIn(item,m)
+        self.assertNotIn('float lane=',m)
+        self.assertNotIn('q.y -= lane',m)
+        self.assertNotIn('packetPhase',m)
+        self.assertNotIn('t * uSwirl',m)
+
+    def test_artwork_palette_reaches_uniforms_and_stale_cover_cannot_win(self):
+        w=(ROOT/'Sonivo/MusicWaveBackground.swift').read_text()
+        self.assertIn('BeatWaveMetalView(colors: resolvedColors',w)
+        self.assertIn('.task(id: coverKey)',w)
+        self.assertIn('!Task.isCancelled,coverKey==key',w)
+        self.assertIn('resolvedCoverKey==coverKey',w)
+        p=(ROOT/'Sonivo/BeatWaveArtworkPalette.swift').read_text()
+        for item in ['LibraryStore.cachedArtworkImage','Task.detached(priority: .utility)',
+                     'while order.count>32','CGColorSpace.sRGB','data.count<=12_000_000']:
+            self.assertIn(item,p)
+        self.assertNotIn('track.url',p)
+        self.assertNotIn('AVPlayer',p)
+        r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        self.assertIn('setPalette(colors)',r)
+        self.assertIn('1-exp(-dt/0.85)',r)
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        self.assertIn('#define uColorA u.colorA.rgb',m)
+        self.assertNotIn('float3(0.58,0.20,0.95)',m)
+
+    def test_true_edr_float_output_and_hardware_sdr_fallback(self):
+        r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+        for item in ['.rgba16Float','CGColorSpace.extendedLinearDisplayP3',
+                     'wantsExtendedDynamicRangeContent=desired',
+                     'potentialEDRHeadroom','currentEDRHeadroom','hdrPipeline != nil',
+                     'view.window?.windowScene?.screen']:
+            self.assertIn(item,r)
+        self.assertIn('desired ? .rgba16Float : .bgra8Unorm',r)
+        self.assertIn('!lowPower && potential.isFinite',r)
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        self.assertIn('rgb=linearP3(rgb)*gain',m)
+        self.assertIn('rgb=clamp(rgb,0.0,max(1.0,u.display.x))',m)
+        self.assertNotIn('Dolby Vision',m)
+        # CPU/GPU SIMD4 uniform ABI must match, including cover and display channels.
+        cpu=r.split('private struct Uniforms {',1)[1].split('}',1)[0]
+        gpu=m.split('struct BeatWaveUniforms {',1)[1].split('}',1)[0]
+        names=['resolution','motion','surface','colorA','colorB','colorC','display']
+        self.assertEqual([line.split('var ')[1].split(':')[0] for line in cpu.splitlines() if 'var ' in line],names)
+        self.assertEqual([line.split('float4 ')[1].split(';')[0] for line in gpu.splitlines() if 'float4 ' in line],names)
 
     def test_occupied_fft_bins_drive_all_five_features(self):
         s=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
@@ -242,11 +291,29 @@ for _ in 0..<480 {
     check(recoil.springPosition>=0,"Recoil bounced through zero")
 }
 check(recoil.springPosition==0,"Critical recoil did not settle")
+// Actual cover colors survive extraction; neutral art never becomes arbitrary red/purple.
+func pixels(_ rgb: (UInt8,UInt8,UInt8),_ count: Int) -> [UInt8] {
+    (0..<count).flatMap { _ in [rgb.0,rgb.1,rgb.2,UInt8(255)] }
+}
+let red=BeatWavePaletteMath.dominantRGB(rgba: pixels((240,20,15),64))
+let blue=BeatWavePaletteMath.dominantRGB(rgba: pixels((10,30,240),64))
+check(red.count==1 && red[0].x>red[0].z*5,"Red cover lost its hue")
+check(blue.count==1 && blue[0].z>blue[0].x*5,"Blue cover lost its hue")
+let neutral=BeatWavePaletteMath.dominantRGB(rgba: pixels((90,90,90),64)+pixels((0,0,0),64))
+check(neutral.allSatisfy { abs($0.x-$0.y)<0.0001 && abs($0.y-$0.z)<0.0001 },"Monochrome art invented a hue")
+check(BeatWavePaletteMath.dominantRGB(rgba: [1,2,3]).isEmpty,"Malformed pixels accepted")
+check(BeatWavePaletteMath.dominantRGB(rgba: [255,0,0,0]).isEmpty,"Transparent padding tinted the field")
+let accented=BeatWavePaletteMath.dominantRGB(rgba: pixels((255,255,255),128)+pixels((10,30,240),32))
+check(accented[0].z>accented[0].x*5,"White margins hid the artwork accent")
+check(BeatWavePaletteMath.safeHeadroom(potential: 4,current: 3,lowPower: false)==2.5,"HDR safety cap lost")
+check(BeatWavePaletteMath.safeHeadroom(potential: 4,current: 1,lowPower: false)==1,"Invented unavailable headroom")
+check(BeatWavePaletteMath.safeHeadroom(potential: 4,current: 3,lowPower: true)==1,"Low-power mode enabled HDR")
+check(BeatWavePaletteMath.safeHeadroom(potential: .nan,current: .infinity,lowPower: false)==1,"Invalid headroom escaped")
 print("Beat Waves Swift physics and presentation checks passed")
 '''
         with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d); (p/'main.swift').write_text(main)
-            compiled=subprocess.run(['swiftc','-swift-version','6',str(ROOT/'Sonivo/BeatWaveMotion.swift'),str(p/'main.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
+            compiled=subprocess.run(['swiftc','-swift-version','6',str(ROOT/'Sonivo/BeatWaveMotion.swift'),str(ROOT/'Sonivo/BeatWavePaletteMath.swift'),str(p/'main.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
             self.assertEqual(compiled.returncode,0,compiled.stderr)
             checked=subprocess.run([str(p/'checks')],capture_output=True,text=True)
             self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)
