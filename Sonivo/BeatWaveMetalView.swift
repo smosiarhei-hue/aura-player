@@ -248,7 +248,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     }
 
     private func updateStrands() {
-        let count: Float=12 // Neural Float's 12 woven strand PAIRS, not parallel ribbon lanes.
+        let count: Float=14 // Archive default, fixed axes/count keep the no-orbit requirement.
         for i in 0..<32 {
             let index=Float(i),fade=max(0,min(1,count-index)),id=index/count
             if fade<=0 { strandTable[i]=Strand(); continue }
@@ -305,27 +305,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     }
 
     private static func makeNoise(_ device: any MTLDevice) -> (any MTLTexture)? {
-        // Same deterministic 128x128 hash and Hermite interpolation as supplied noiseTexture.ts.
-        var permutation=[Float](repeating: 0,count: 16_384)
-        for i in permutation.indices {
-            var a=(UInt32(0x27d4eb2d)^UInt32(i)) &* 0x165667b1
-            a ^= a >> 15
-            a = a &* 0x2545f491
-            permutation[i]=Float(Double(a ^ (a >> 13))/4_294_967_296.0)
-        }
-        func sample(_ x: Int,_ y: Int) -> Float { permutation[(y&127)*128+(x&127)] }
-        var data=[UInt8](repeating: 0,count: 512*512*4)
-        for y in 0..<512 {
-            let ny=Float(y)/4, iy=Int(ny), ly=ny-Float(iy), sy=ly*ly*(3-2*ly)
-            for x in 0..<512 {
-                let nx=Float(x)/4, ix=Int(nx), lx=nx-Float(ix), sx=lx*lx*(3-2*lx)
-                let a=sample(ix,iy)+(sample(ix+1,iy)-sample(ix,iy))*sx
-                let b=sample(ix,iy+1)+(sample(ix+1,iy+1)-sample(ix,iy+1))*sx
-                let value=UInt8(max(0,min(255,Int(((a+(b-a)*sy)*255).rounded()))))
-                let i=(y*512+x)*4
-                data[i]=value; data[i+1]=value; data[i+2]=value; data[i+3]=255
-            }
-        }
+        let data=BeatWaveNoise.rgba()
         let descriptor=MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,width: 512,height: 512,mipmapped: false)
         descriptor.usage = .shaderRead
         guard let texture=device.makeTexture(descriptor: descriptor) else { return nil }

@@ -92,15 +92,17 @@ class BeatWaveNativeTests(unittest.TestCase):
     def test_shared_noise_budget_and_direct_geometric_punch(self):
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
         strand=m.split('float3 neuralStrand(',1)[1].split('float3 neuralWeave(',1)[0]
-        self.assertNotIn('turbulence(',strand)
+        self.assertIn('turbulence(q*4.0+t*0.4,u,noise)',strand)
+        self.assertNotIn('sharedFlow',m)
+        self.assertEqual(m.count('noise.sample('),1)
         field=m.split('float4 evalNeuralFloat(',1)[1].split('fragment float4',1)[0]
         self.assertEqual(field.count('turbulence('),1)
         self.assertNotIn('radialPush',field)
         self.assertNotIn('swirl',field)
-        self.assertIn('uSpringDeform*0.8',strand)
+        self.assertIn('uSpringDeform*0.8+uImpact*0.02',strand)
         self.assertIn('float t = uPhase;',field)
         r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
-        self.assertIn('let count: Float=12',r)
+        self.assertIn('let count: Float=14',r)
         self.assertIn('let angle=id*(2*Float.pi)',r)
         self.assertNotIn('t*0.12',r)
         self.assertNotIn('let t=Float(motion.phase)*0.6',r)
@@ -311,11 +313,22 @@ check(BeatWavePaletteMath.safeHeadroom(potential: 4,current: 3,lowPower: false)=
 check(BeatWavePaletteMath.safeHeadroom(potential: 4,current: 1,lowPower: false)==1,"Invented unavailable headroom")
 check(BeatWavePaletteMath.safeHeadroom(potential: 4,current: 3,lowPower: true)==1,"Low-power mode enabled HDR")
 check(BeatWavePaletteMath.safeHeadroom(potential: .nan,current: .infinity,lowPower: false)==1,"Invalid headroom escaped")
+let baseNoise=BeatWaveNoise.base(),packedNoise=BeatWaveNoise.rgba()
+check(packedNoise.count==512*512*4,"Noise table size changed")
+for y in stride(from: 0,to: 512,by: 19) { for x in stride(from: 0,to: 512,by: 17) {
+    let a=Float(baseNoise[y*512+x])/255
+    let b=BeatWaveNoise.sample(baseNoise,x: Float(x*2)+0.5,y: Float(y*2)+0.5)
+    let c=BeatWaveNoise.sample(baseNoise,x: Float(x*4)+1.5,y: Float(y*4)+1.5)
+    let i=(y*512+x)*4
+    check(abs(Float(packedNoise[i])/255-(a+b*0.5+c*0.25)/1.75)<=0.5/255+0.00001,"3 octave archive noise differs")
+    check(abs(Float(packedNoise[i+1])/255-(a+b*0.5)/1.5)<=0.5/255+0.00001,"2 octave archive noise differs")
+    check(packedNoise[i+2]==baseNoise[y*512+x] && packedNoise[i+3]==255,"Base noise changed")
+} }
 print("Beat Waves Swift physics and presentation checks passed")
 '''
         with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d); (p/'main.swift').write_text(main)
-            compiled=subprocess.run(['swiftc','-swift-version','6',str(ROOT/'Sonivo/BeatWaveMotion.swift'),str(ROOT/'Sonivo/BeatWavePaletteMath.swift'),str(p/'main.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
+            compiled=subprocess.run(['swiftc','-swift-version','6',str(ROOT/'Sonivo/BeatWaveMotion.swift'),str(ROOT/'Sonivo/BeatWavePaletteMath.swift'),str(ROOT/'Sonivo/BeatWaveNoise.swift'),str(p/'main.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
             self.assertEqual(compiled.returncode,0,compiled.stderr)
             checked=subprocess.run([str(p/'checks')],capture_output=True,text=True)
             self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)

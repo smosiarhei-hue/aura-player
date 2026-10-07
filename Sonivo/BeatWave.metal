@@ -42,40 +42,29 @@ constant float3 lumVec = float3(0.213, 0.715, 0.072);
 // ==========================================
 // ==========================================
 
-float grain(float2 p, constant BeatWaveUniforms &u, texture2d<float> noise) {
-  return noise.sample(beatNoiseSampler, p * LATTICE).r;
-}
-
-float turbulence(float2 p, constant BeatWaveUniforms &u, texture2d<float> noise) {
-  float sum = 0.0;
-  float span = 0.0;
-  float gain = 0.5;
-  for (int i = 0; i < 5; i++) {
-    if (i >= uOctaves) break;
-    sum += gain * grain(p, u, noise);
-    span += gain;
-    p += p;
-    gain *= 0.5;
-  }
-  return sum / max(span, 0.0001);
+// The archive's octave function precomputed in RGB. One sample instead of 3 per strand.
+float turbulence(float2 p,constant BeatWaveUniforms &u,texture2d<float> noise) {
+  float3 packed=noise.sample(beatNoiseSampler,p*LATTICE).rgb;
+  return uOctaves>=3 ? packed.r : (uOctaves==2 ? packed.g : packed.b);
 }
 
 // Owner-supplied Neural Float weave: paired axes, segmented filaments, bright spine and halo.
-// Static axes/segment carrier preserve the owner's no-orbit/no-invented-beat requirements.
+// Fixed axes and musical phase preserve no orbit/no fabricated beat. Archive per-strand noise is restored.
 float3 neuralStrand(float2 p, float s, float c, float bendPhase, float strandID,
-                   float sharedFlow, constant BeatWaveUniforms &u) {
+                   constant BeatWaveUniforms &u,texture2d<float> noise) {
   float2 q = float2(p.x*c-p.y*s,p.x*s+p.y*c);
   float split=0.006;
   float curTurbulence=0.15*(1.0+uLowEnergy*0.35);
   if (abs(q.y)>0.34+curTurbulence*0.5+split) return float3(0.0);
-  // Spatial segments, not an autonomous temporal blinking gate.
-  float gate=smoothstep(0.08,0.58,sin(q.x*6.0+strandID)*cos(q.y*3.5+strandID*0.8));
+  // Archive segment carrier follows the slow MUSIC-integrated phase, not wall time.
+  float t=bendPhase+strandID;
+  float gate=smoothstep(0.08,0.58,sin(q.x*6.0+t*1.2)*cos(t*0.8+q.y*3.5));
   if (gate<=0.0) return float3(0.0);
-  q.y+=((sharedFlow-0.5)*0.65+sin(q.x*6.0+bendPhase*0.4+strandID+q.y*2.0)*0.175)*curTurbulence;
-  q.y+=uSpringDeform*0.8*sin(q.x*8.0+strandID);
+  q.y+=(turbulence(q*4.0+t*0.4,u,noise)-0.5)*curTurbulence;
+  q.y+=(uSpringDeform*0.8+uImpact*0.02)*sin(q.x*8.0+strandID);
   float3 reach=abs(q.y+float3(split*s,0.0,-split*s));
   float3 rim=max(1.0-reach*3.0,0.0);
-  float pulse=sin(q.x*18.0+strandID)*0.5+0.5;
+  float pulse=sin(q.x*18.0+t*2.4)*0.5+0.5;
   float shaped=pow(pulse,mix(1.15,0.55,uImpact));
   float musicalLight=0.42+uLowEnergy*0.55+uImpact*0.65;
   float specularLuster=pow(pulse,4.0)*(0.25+uImpact*0.75);
@@ -85,14 +74,14 @@ float3 neuralStrand(float2 p, float s, float c, float bendPhase, float strandID,
   return (spineCore+spineInner+spineHalo)*rim*rim*(0.30+shaped)*gate*musicalLight;
 }
 
-float3 neuralWeave(float2 p,float t,float sharedFlow,constant BeatWaveUniforms &u,
+float3 neuralWeave(float2 p,float t,texture2d<float> noise,constant BeatWaveUniforms &u,
                   constant BeatWaveStrand *strands) {
   float3 sum=float3(0.0);
   for (int i = 0; i < 32; i++) {
     float4 direction=strands[i].direction;
     if (direction.z<=0.0) break;
-    float3 lit=neuralStrand(p,direction.x,direction.y,t,direction.w,sharedFlow,u)
-      +neuralStrand(p,direction.y,-direction.x,t,direction.w+0.7,sharedFlow,u);
+    float3 lit=neuralStrand(p,direction.x,direction.y,t,direction.w,u,noise)
+      +neuralStrand(p,direction.y,-direction.x,t*1.15,direction.w,u,noise);
     sum+=strands[i].pigment.rgb*lit;
   }
   return sum*0.30;
@@ -111,17 +100,19 @@ float4 evalNeuralFloat(float2 uvSample, constant BeatWaveUniforms &u, texture2d<
   float2 p = (uvSample - 0.5) * float2(aspect, 1.0);
   float t = uPhase;
   float energyBoost = clamp(uEnergy,0.0,1.0);
-  // A single shared noise lookup chain, moved slowly by real musical energy.
-  float sharedFlow = turbulence(p*2.0+float2(t*0.25,0.0),u,noise);
-  float3 col = neuralWeave(p,t,sharedFlow,u,strands);
+  // Archive whole-field warp plus EACH strand's own curved turbulence.
+  p+=turbulence(p*2.0+t,u,noise)*0.06*(1.0+energyBoost*0.3);
+  float3 col = neuralWeave(p,t,noise,u,strands);
   float reach = length(p);
   // Stationary soft core. No angular/time term and no independent brightness pulsation.
-  float coreEnergy = 0.12+uLowEnergy*0.20+uImpact*0.16;
+  float coreEnergy = 0.08+uLowEnergy*0.08+uImpact*0.08;
   col += mix(uColorA,uColorB,0.5)*exp(-reach*5.0)*coreEnergy;
 
   // Hue-preserving SDR base. EDR highlight extension happens only in the final output stage.
   float peak=max(col.r,max(col.g,col.b));
   col/=1.0+peak;
+  // Preserve a visible kick after tone compression; no white glint/bloom second pass.
+  col*=0.78+uLowEnergy*0.18+uImpact*0.24;
 
   // Soft field fadeout
   col *= 1.0 - smoothstep(0.35, 1.35, reach);

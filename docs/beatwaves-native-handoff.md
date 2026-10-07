@@ -86,3 +86,11 @@ Official references: https://pro.reactbits.dev/docs/components/neural-float ; ht
 
 ### iOS colorspace API correction
 Apple's WWDC22 sample also contains macOS-only MTKView.colorspace. iOS compilation correctly rejected it. Set CAMetalLayer.colorspace instead on iOS, keeping MTKView.colorPixelFormat and CAMetalLayer.wantsExtendedDynamicRangeContent. The regression suite forbids view.colorspace and requires layer.colorspace.
+
+## Owner explicitly chose the supplied archive as implementation source
+
+Archive SHA256 9feea4f0f625fe5618a7fd66767a40e0c434d2d2643e1c9a3793fd2747489799. Restore per-strand `turbulence(q*4+t*0.4)` rather than the invented shared-flow/sinusoidal substitute. Slow archive segment/pulse carriers follow music-integrated phase. Use the archive's 14 pairs with fixed directions/count, retain no glass/orbit/swirl/packet train/white pearlescent glint. Therefore this is a deliberate native archive adaptation, NOT the paid official registry component nor an unchanged ZIP.
+
+Octave noise is baked once into RGB (3/2/1 octaves) using the archive hash, Hermite texture and texel-centre-correct repeat/bilinear samples. Native shader reads it once per strand: per-strand curvature returns without 3 separate octave reads every frame. Grid-point regression tolerance is half one RGBA8 quantization step; off-grid filtered LUT is an approximation, not bit-identical filtering. Geometry/feather stays separate from adaptive pixel resolution.
+
+A bounded kick displacement and musical gain after tone compression keep the actual onset visible. Reduce the overlapping plasma core, keep palette/EDR, single-pass rendering, no blur postprocess and no playback/EQ/download changes. Route alignment is still an estimate, not a phone/AirPods measurement.
