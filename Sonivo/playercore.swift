@@ -110,11 +110,11 @@ final class PlayerCore {
     private(set) var currentTrack: Track?
     private(set) var streamDuration: Double = 0
     private(set) var playError: String?
+    // Internal gain for transitions and the sleep timer only. User volume belongs to iOS.
     var volume: Float = 1.0 {
         didSet {
             streamingPlayer.volume = volume * Self.streamHeadroomCeiling
             engine.mainMixerNode.outputVolume = volume
-            defaults.set(volume, forKey: "player.volume")
         }
     }
     var queue: [Track] = []
@@ -560,8 +560,10 @@ final class PlayerCore {
 
         audioQuality = AudioQuality(rawValue: defaults.integer(forKey: "player.quality")) ?? .auto
 
-        let savedVol = defaults.float(forKey: "player.volume")
-        volume = savedVol > 0 ? savedVol : 1.0
+        // Migrate the old app-volume preference: restoring it would multiply iOS volume
+        // a second time. Never change the phone volume while loading player settings.
+        defaults.removeObject(forKey: "player.volume")
+        volume = 1.0
         engine.mainMixerNode.outputVolume = volume
         streamingPlayer.volume = volume * Self.streamHeadroomCeiling
 

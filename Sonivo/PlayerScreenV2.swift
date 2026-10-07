@@ -1896,44 +1896,91 @@ struct PlayerTimelineSection<Center: View>: View {
 @Observable
 final class SystemVolumeManager {
     static let shared = SystemVolumeManager()
-    var volume: Float = 1.0
-    private weak var systemSlider: UISlider?
-    private var observation: NSKeyValueObservation?
-    private var isSettingInternal = false
+    private(set) var volume: Float = AVAudioSession.sharedInstance().outputVolume
+    @ObservationIgnored private weak var systemSlider: UISlider?
+    @ObservationIgnored private var observation: NSKeyValueObservation?
+    @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var pendingVolume: Float?
+    @ObservationIgnored private var requestGeneration = 0
 
     private init() {
-        let saved = PlayerCore.shared.volume
-        volume = saved > 0 ? saved : AVAudioSession.sharedInstance().outputVolume
         let session = AVAudioSession.sharedInstance()
-        observation = session.observe(\.outputVolume, options: [.new]) { [weak self] _, change in
-            guard let newVol = change.newValue else { return }
+        observation = session.observe(\.outputVolume, options: [.initial, .new]) { [weak self] _, _ in
+            // Read the latest hardware value on the main actor, not an older queued KVO value.
+            // Never suppress hardware-button updates during a slider gesture.
             Task { @MainActor [weak self] in
-                guard let self = self, !self.isSettingInternal else { return }
-                self.volume = newVol
-                PlayerCore.shared.volume = newVol
+                self?.refreshFromSystem()
             }
+        }
+        for name in [AVAudioSession.routeChangeNotification,
+                     AVAudioSession.mediaServicesWereResetNotification,
+                     UIApplication.didBecomeActiveNotification] {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    // Do not replay a request intended for the previous output route.
+                    self.pendingVolume = nil
+                    self.requestGeneration += 1
+                    self.refreshFromSystem()
+                }
+            })
         }
     }
 
+    func refreshFromSystem() {
+        volume = max(0, min(1, AVAudioSession.sharedInstance().outputVolume))
+    }
+
     func attach(slider: UISlider) {
-        self.systemSlider = slider
+        guard slider.window != nil else { return }
+        guard systemSlider !== slider else { return }
+        systemSlider = slider
+        if let pendingVolume {
+            self.pendingVolume = nil
+            setVolume(pendingVolume)
+        } else {
+            refreshFromSystem()
+        }
+    }
+
+    func detach(slider: UISlider) {
+        guard systemSlider === slider else { return }
+        systemSlider = nil
+        pendingVolume = nil
+        requestGeneration += 1
+        refreshFromSystem()
     }
 
     func setVolume(_ newVolume: Float) {
-        let clamped = max(0.0, min(1.0, newVolume))
-        isSettingInternal = true
-        self.volume = clamped
-        PlayerCore.shared.volume = clamped
-        systemSlider?.setValue(clamped, animated: false)
-        systemSlider?.sendActions(for: .valueChanged)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.isSettingInternal = false
+        guard newVolume.isFinite else { return }
+        let clamped = max(0, min(1, newVolume))
+        requestGeneration += 1
+        let generation = requestGeneration
+        guard let slider = systemSlider, slider.window != nil else {
+            // MPVolumeView can mount after SwiftUI has already delivered an adjustment.
+            pendingVolume = clamped
+            return
+        }
+        pendingVolume = nil
+        // MPVolumeView controls iOS output volume. PlayerCore.volume is an independent
+        // internal transition/sleep-timer gain and must not also attenuate this request.
+        slider.setValue(clamped, animated: false)
+        slider.sendActions(for: .valueChanged)
+        volume = clamped
+        // Reconcile even if the route rejects an adjustment or delivers no KVO event.
+        // This is a read-back, not a window that ignores hardware updates.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.requestGeneration == generation else { return }
+            self.refreshFromSystem()
         }
     }
 }
 
 final class SystemVolumeHostView: UIView {
     private let volumeView = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 60, height: 20))
+    private weak var attachedSlider: UISlider?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1949,7 +1996,6 @@ final class SystemVolumeHostView: UIView {
         clipsToBounds = true
         volumeView.showsRouteButton = false
         volumeView.showsVolumeSlider = true
-        volumeView.alpha = 0.001
         volumeView.isUserInteractionEnabled = false
         addSubview(volumeView)
     }
@@ -1962,19 +2008,38 @@ final class SystemVolumeHostView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        guard window != nil else {
+            detachVolumeSlider()
+            return
+        }
         findSlider()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.findSlider()
         }
     }
 
-    private func findSlider() {
-        for subview in volumeView.subviews {
-            if let slider = subview as? UISlider {
-                SystemVolumeManager.shared.attach(slider: slider)
-                return
-            }
+    func detachVolumeSlider() {
+        if let attachedSlider {
+            SystemVolumeManager.shared.detach(slider: attachedSlider)
         }
+        attachedSlider = nil
+    }
+
+    private func findSlider() {
+        guard window != nil, let slider = volumeSlider(in: volumeView) else { return }
+        if let previous = attachedSlider, previous !== slider {
+            SystemVolumeManager.shared.detach(slider: previous)
+        }
+        attachedSlider = slider
+        SystemVolumeManager.shared.attach(slider: slider)
+    }
+
+    private func volumeSlider(in view: UIView) -> UISlider? {
+        if let slider = view as? UISlider { return slider }
+        for child in view.subviews {
+            if let slider = volumeSlider(in: child) { return slider }
+        }
+        return nil
     }
 }
 
@@ -1984,12 +2049,15 @@ struct InvisibleVolumeView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: SystemVolumeHostView, context: Context) {}
+
+    static func dismantleUIView(_ uiView: SystemVolumeHostView, coordinator: ()) {
+        uiView.detachVolumeSlider()
+    }
 }
 
 struct FluidVolumeSlider: View {
     @State private var volumeManager = SystemVolumeManager.shared
     @State private var isDragging = false
-    @State private var dragVolume: Float = 0.5
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -2000,7 +2068,7 @@ struct FluidVolumeSlider: View {
 
             GeometryReader { geo in
                 let width = geo.size.width
-                let currentVol = isDragging ? dragVolume : volumeManager.volume
+                let currentVol = volumeManager.volume
                 let progress = CGFloat(max(0.0, min(1.0, currentVol)))
                 let filledWidth = width * progress
                 let trackHeight: CGFloat = isDragging ? 7 : 2.5
@@ -2036,7 +2104,6 @@ struct FluidVolumeSlider: View {
                                 Haptics.tap(.light)
                             }
                             let fraction = Float(max(0.0, min(1.0, value.location.x / max(width, 1))))
-                            dragVolume = fraction
                             volumeManager.setVolume(fraction)
                         }
                         .onEnded { value in
@@ -2049,7 +2116,7 @@ struct FluidVolumeSlider: View {
                 )
             }
             .frame(height: 36)
-            .background(InvisibleVolumeView().frame(width: 60, height: 20).opacity(0.001).allowsHitTesting(false))
+            .background(InvisibleVolumeView().frame(width: 60, height: 20).opacity(0.01).allowsHitTesting(false).accessibilityHidden(true))
 
             Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 12, weight: .medium))
@@ -2058,6 +2125,7 @@ struct FluidVolumeSlider: View {
         }
         .frame(height: 44)
         .accessibilityElement(children: .combine)
+        .onAppear { volumeManager.refreshFromSystem() }
         .accessibilityLabel("Громкость")
         .accessibilityValue("\(Int(volumeManager.volume * 100))%")
         .accessibilityAdjustableAction { direction in
