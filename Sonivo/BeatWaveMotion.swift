@@ -171,6 +171,8 @@ nonisolated struct BeatWavePresentation {
     private var queue: [BeatWaveAudioFrame] = []
     private var latestCapture: TimeInterval = -.infinity
     private var presented = BeatWaveAudioFrame()
+    // M2: read-only diagnostic; never gates or modifies queued features.
+    var latestQueuedMediaTime: TimeInterval? { queue.last?.mediaTime }
     mutating func push(_ frame: BeatWaveAudioFrame) {
         guard frame.capturedAt.isFinite,frame.capturedAt > latestCapture else { return }
         if let time=frame.mediaTime,!time.isFinite { return }

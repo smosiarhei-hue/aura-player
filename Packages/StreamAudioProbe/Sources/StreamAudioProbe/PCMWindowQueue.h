@@ -15,12 +15,12 @@ typedef struct { float samples[SONIVO_PCM_WINDOW]; double rate,time; uint64_t ep
 typedef struct {
     float ring[SONIVO_PCM_WINDOW]; size_t next,count,hop;
     SonivoPCMWindow slots[SONIVO_PCM_CAPACITY];
-    _Atomic uint64_t written,read,epoch,dropped;
+    _Atomic uint64_t written,read,epoch,dropped,unstamped;
 } SonivoPCMWindowQueue;
 static inline void SonivoPCMInit(SonivoPCMWindowQueue *q) {
     q->next=q->count=q->hop=0;
     atomic_init(&q->written,0); atomic_init(&q->read,0);
-    atomic_init(&q->epoch,1); atomic_init(&q->dropped,0);
+    atomic_init(&q->epoch,1); atomic_init(&q->dropped,0); atomic_init(&q->unstamped,0);
 }
 // Called ONLY by the producer. Reader owns read index; never overwrite a slot in use.
 static inline void SonivoPCMReset(SonivoPCMWindowQueue *q) {
@@ -34,6 +34,9 @@ static inline void SonivoPCMPush(SonivoPCMWindowQueue *q,float sample,double end
     q->hop++;
     if(q->count<SONIVO_PCM_WINDOW || q->hop<SONIVO_PCM_HOP) return;
     q->hop=0;
+    double stamp=isfinite(end)&&rate>0 ? end-(SONIVO_PCM_WINDOW*0.5)/rate : NAN;
+    // Count generated unstamped windows, including those subsequently dropped on overflow.
+    if(!isfinite(stamp)) atomic_fetch_add_explicit(&q->unstamped,1,memory_order_relaxed);
     uint64_t write=atomic_load_explicit(&q->written,memory_order_relaxed);
     uint64_t read=atomic_load_explicit(&q->read,memory_order_acquire);
     if(write-read>=SONIVO_PCM_CAPACITY) {
@@ -44,7 +47,7 @@ static inline void SonivoPCMPush(SonivoPCMWindowQueue *q,float sample,double end
     memcpy(slot->samples,q->ring+q->next,tail*sizeof(float));
     memcpy(slot->samples+tail,q->ring,q->next*sizeof(float));
     slot->rate=rate;
-    slot->time=isfinite(end)&&rate>0 ? end-(SONIVO_PCM_WINDOW*0.5)/rate : NAN;
+    slot->time=stamp;
     slot->epoch=atomic_load_explicit(&q->epoch,memory_order_acquire);
     atomic_store_explicit(&q->written,write+1,memory_order_release);
 }

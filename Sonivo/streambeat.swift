@@ -20,6 +20,8 @@ final class StreamBeatTap {
     private final class ProbeContext {
         weak var item: AVPlayerItem?
         var didPrepare = false
+        var didLogFormat = false
+        var lastDiagnosticAt: TimeInterval = 0
         let tap: MTAudioProcessingTap
         init(item: AVPlayerItem, tap: MTAudioProcessingTap) { self.item = item; self.tap = tap }
     }
@@ -110,6 +112,7 @@ final class StreamBeatTap {
                         SpectrumAnalyzer.shared.reset()
                     }
                     if let probe = self.probes[key] {
+                        self.logProbeDiagnostics(probe)
                         let readiness = SonivoStreamProbeEQReady(probe.tap)
                         if readiness == 1 {
                             if !probe.didPrepare { self.publishEQ(to: probe.tap); probe.didPrepare = true }
@@ -128,6 +131,24 @@ final class StreamBeatTap {
                 do { try await Task.sleep(for: .milliseconds(PlayerCore.shared.isPlaying ? 8 : 200)) }
                 catch { return }
             }
+        }
+    }
+
+    // A4/A5: diagnostics run only on MainActor, never from the audio callback.
+    private func logProbeDiagnostics(_ probe: ProbeContext) {
+        if !probe.didLogFormat {
+            var format=AudioStreamBasicDescription()
+            if SonivoStreamProbeFormat(probe.tap,&format) != 0 {
+                SonivoDiagnostics.log("probeFormat sampleRate=\(format.mSampleRate) formatID=\(format.mFormatID) flags=\(format.mFormatFlags) bytesPerPacket=\(format.mBytesPerPacket) framesPerPacket=\(format.mFramesPerPacket) bytesPerFrame=\(format.mBytesPerFrame) channels=\(format.mChannelsPerFrame) bitsPerChannel=\(format.mBitsPerChannel) reserved=\(format.mReserved)",tag: "BEAT_WAVE")
+                probe.didLogFormat=true
+            }
+        }
+        let now=Date.timeIntervalSinceReferenceDate
+        if now-probe.lastDiagnosticAt>=5 {
+            probe.lastDiagnosticAt=now
+            let skipped=SonivoStreamProbeSkipped(probe.tap)
+            let unstamped=SonivoStreamProbeUnstamped(probe.tap)
+            SonivoDiagnostics.log("probeCounters skipped=\(skipped) unstamped=\(unstamped)",tag: "BEAT_WAVE")
         }
     }
 

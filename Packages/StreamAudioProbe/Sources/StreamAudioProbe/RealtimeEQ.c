@@ -76,7 +76,8 @@ static void consume(SonivoRealtimeEQ *eq,int initial) {
     int enabled=atomic_load_explicit(&eq->enabled,memory_order_relaxed);
     int preamp=atomic_load_explicit(&eq->preamp,memory_order_relaxed), values[SONIVO_EQ_BANDS];
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) values[b]=atomic_load_explicit(&eq->gains[b],memory_order_relaxed);
-    if (seq!=atomic_load_explicit(&eq->sequence,memory_order_acquire)) return;
+    atomic_thread_fence(memory_order_acquire);
+    if (seq!=atomic_load_explicit(&eq->sequence,memory_order_relaxed)) return;
     int nonflat=0;
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
         nonflat |= values[b]!=0;

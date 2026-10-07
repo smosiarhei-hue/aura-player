@@ -1,6 +1,7 @@
 #include "StreamAudioProbe.h"
 #include "RealtimeEQ.h"
 #include "PCMWindowQueue.h"
+#include "ProbeDiagnostics.h"
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <math.h>
@@ -12,6 +13,7 @@ typedef struct {
     atomic_uint eqRate;
     unsigned channels;
     SonivoPCMWindowQueue capture;
+    SonivoProbeDiagnostics diagnostics;
     int supportsFloat;
     double mediaEnd;
 } Probe;
@@ -21,6 +23,7 @@ static void probeInit(MTAudioProcessingTapRef tap, void *info, void **storage) {
     Probe *p = calloc(1, sizeof(Probe));
     if (p) {
         SonivoPCMInit(&p->capture);
+        SonivoProbeDiagnosticsInit(&p->diagnostics);
         p->mediaEnd=NAN;
         atomic_init(&p->eqReady,0); atomic_init(&p->eqRate,48000);
         SonivoEQInit(&p->eq);
@@ -32,6 +35,11 @@ static void probePrepare(MTAudioProcessingTapRef tap, CMItemCount maxFrames, con
     (void)maxFrames;
     Probe *p = MTAudioProcessingTapGetStorage(tap);
     if (!p) return;
+    // A5: preserve every original ASBD field, even for unsupported PCM.
+    const uint32_t fields[SONIVO_ASBD_FIELDS]={format->mFormatID,format->mFormatFlags,
+        format->mBytesPerPacket,format->mFramesPerPacket,format->mBytesPerFrame,
+        format->mChannelsPerFrame,format->mBitsPerChannel,format->mReserved};
+    SonivoProbeStoreFormat(&p->diagnostics,format->mSampleRate,fields);
     p->channels=format->mChannelsPerFrame;
     p->supportsFloat = format->mFormatID == kAudioFormatLinearPCM &&
         (format->mFormatFlags & kAudioFormatFlagIsFloat) && format->mBitsPerChannel == 32 &&
@@ -47,16 +55,18 @@ static void probeUnprepare(MTAudioProcessingTapRef tap) {
     if(p) atomic_store_explicit(&p->eqReady,0,memory_order_release);
 }
 static void processEQ(Probe *p,AudioBufferList *buffers,CMItemCount frames) {
-    if (!p->supportsFloat || frames<=0) return;
+    if (frames<=0) return;
+    if (!p->supportsFloat) { SonivoProbeRecordSkipped(&p->diagnostics); return; }
     float *channels[SONIVO_EQ_CHANNELS];size_t strides[SONIVO_EQ_CHANNELS];unsigned count=0;
     for(UInt32 b=0;b<buffers->mNumberBuffers;b++) {
         AudioBuffer *buffer=&buffers->mBuffers[b];
         unsigned n=buffer->mNumberChannels;
-        if(!buffer->mData || !n || n>SONIVO_EQ_CHANNELS || count+n>SONIVO_EQ_CHANNELS ||
-           buffer->mDataByteSize/sizeof(float)<(size_t)frames*n) return;
+        if(!SonivoProbeCheckBuffer(&p->diagnostics,buffer->mData,n,count,
+                                  SONIVO_EQ_CHANNELS,buffer->mDataByteSize,(size_t)frames)) return;
         for(unsigned ch=0;ch<n;ch++) { channels[count]=(float *)buffer->mData+ch;strides[count]=n;count++; }
     }
     if(count==p->channels) SonivoEQProcess(&p->eq,channels,strides,count,(size_t)frames);
+    else SonivoProbeRecordSkipped(&p->diagnostics);
 }
 static void probeProcess(MTAudioProcessingTapRef tap, CMItemCount frames, MTAudioProcessingTapFlags flags,
                          AudioBufferList *buffers, CMItemCount *framesOut, MTAudioProcessingTapFlags *flagsOut) {
@@ -129,6 +139,26 @@ size_t SonivoStreamProbeRead(MTAudioProcessingTapRef tap, float *output, size_t 
 unsigned long long SonivoStreamProbeDroppedWindows(MTAudioProcessingTapRef tap) {
     Probe *p=MTAudioProcessingTapGetStorage(tap);
     return p ? atomic_load_explicit(&p->capture.dropped,memory_order_relaxed) : 0;
+}
+
+unsigned long long SonivoStreamProbeSkipped(MTAudioProcessingTapRef tap) {
+    Probe *p=MTAudioProcessingTapGetStorage(tap);
+    return p ? atomic_load_explicit(&p->diagnostics.skipped,memory_order_relaxed) : 0;
+}
+unsigned long long SonivoStreamProbeUnstamped(MTAudioProcessingTapRef tap) {
+    Probe *p=MTAudioProcessingTapGetStorage(tap);
+    return p ? atomic_load_explicit(&p->capture.unstamped,memory_order_relaxed) : 0;
+}
+int SonivoStreamProbeFormat(MTAudioProcessingTapRef tap,AudioStreamBasicDescription *format) {
+    Probe *p=MTAudioProcessingTapGetStorage(tap);
+    if(!p || !format) return 0;
+    double rate;uint32_t fields[SONIVO_ASBD_FIELDS];
+    if(!SonivoProbeLoadFormat(&p->diagnostics,&rate,fields)) return 0;
+    *format=(AudioStreamBasicDescription){.mSampleRate=rate,
+        .mFormatID=fields[0],.mFormatFlags=fields[1],.mBytesPerPacket=fields[2],
+        .mFramesPerPacket=fields[3],.mBytesPerFrame=fields[4],
+        .mChannelsPerFrame=fields[5],.mBitsPerChannel=fields[6],.mReserved=fields[7]};
+    return 1;
 }
 
 void SonivoStreamProbeSetEQ(MTAudioProcessingTapRef tap,const float *gains,size_t count,int enabled) {

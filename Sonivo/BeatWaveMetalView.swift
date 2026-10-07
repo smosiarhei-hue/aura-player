@@ -3,6 +3,22 @@ import MetalKit
 import AVFoundation
 import QuartzCore
 
+/// Reconfigure when a UIKit view attaches/moves to a window, not on every frame.
+@MainActor
+private final class BeatWaveSurfaceView: MTKView {
+    var onDisplayEnvironmentChanged: ((MTKView) -> Void)?
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onDisplayEnvironmentChanged?(self)
+    }
+}
+
+// M2 session means this app process; pauses and renderer recreation do not clear the maximum.
+@MainActor
+private enum BeatWaveMeasurement {
+    static var queuedFutureMax: Double = .nan
+}
+
 /// One transparent Metal pass. CADisplayLink is the only frame scheduler.
 struct BeatWaveMetalView: UIViewRepresentable {
     let colors: [Color]
@@ -14,7 +30,10 @@ struct BeatWaveMetalView: UIViewRepresentable {
         return BeatWaveMetalRenderer(device: device)
     }
     func makeUIView(context: Context) -> MTKView {
-        let view=MTKView(frame: .zero,device: context.coordinator?.device)
+        let view=BeatWaveSurfaceView(frame: .zero,device: context.coordinator?.device)
+        view.onDisplayEnvironmentChanged={ [weak renderer=context.coordinator] view in
+            renderer?.refreshDisplayConfiguration(view)
+        }
         view.isOpaque=false; view.layer.isOpaque=false; view.backgroundColor = .clear
         view.clearColor=MTLClearColorMake(0,0,0,0)
         view.colorPixelFormat = .bgra8Unorm
@@ -34,6 +53,7 @@ struct BeatWaveMetalView: UIViewRepresentable {
     static func dismantleUIView(_ view: MTKView,coordinator: BeatWaveMetalRenderer?) {
         coordinator?.stop()
         view.delegate=nil
+        (view as? BeatWaveSurfaceView)?.onDisplayEnvironmentChanged=nil
         view.releaseDrawables()
     }
 }
@@ -96,6 +116,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     private var previousMediaTime: TimeInterval?
     private var diagnosticClock="capture"
     private var diagnosticDisplayLead: Double=0
+    private var diagnosticQueuedFuture: Double = .nan
     private var strandTable=[Strand](repeating: Strand(),count: 32)
 
     private struct Uniforms {
@@ -125,6 +146,23 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         self.hdrPipeline=try? device.makeRenderPipelineState(descriptor: descriptor)
         self.device=device; self.queue=queue; self.noise=noise
         super.init()
+        for name in [UIScreen.modeDidChangeNotification,UIScreen.brightnessDidChangeNotification,
+                     UIScreen.didConnectNotification,UIScreen.didDisconnectNotification,
+                     UIApplication.didBecomeActiveNotification] {
+            NotificationCenter.default.addObserver(self,selector: #selector(displayEnvironmentChanged(_:)),name: name,object: nil)
+        }
+    }
+
+    @objc nonisolated private func displayEnvironmentChanged(_ notification: Notification) {
+        Task { @MainActor [weak self] in
+            guard let self,let view=self.view else { return }
+            self.refreshDisplayConfiguration(view)
+        }
+    }
+    func refreshDisplayConfiguration(_ view: MTKView) {
+        guard self.view === view,displayLink != nil else { return }
+        configureFrameRate()
+        configureOutput(view)
     }
 
     func configure(_ view: MTKView,colors: [Color],darkMode: Bool,running: Bool,lowPower: Bool) {
@@ -163,9 +201,6 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     }
     fileprivate func tick(_ link: CADisplayLink) {
         guard let view,view.window != nil else { return }
-        // The screen may attach after makeUIView; re-read refresh rate and AVAILABLE EDR headroom.
-        configureFrameRate()
-        configureOutput(view)
         let dt=Float(max(0,min(0.1,link.timestamp-(previousTimestamp ?? link.timestamp))))
         previousTimestamp=link.timestamp
         diagnosticTicks += 1
@@ -180,6 +215,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         diagnosticDisplayLead=displayLead*1000
         let capture=SpectrumAnalyzer.shared.beatWaveFrame
         let captures=SpectrumAnalyzer.shared.drainBeatWaveFrames()
+        diagnosticQueuedFuture = .nan
         if capture.capturedAt<=0 { presentation.reset(); motion.settle(); previousMediaTime=nil }
         else {
             let frame: BeatWaveAudioFrame
@@ -190,7 +226,13 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
                 }
                 previousMediaTime=clock.time
                 for feature in captures { presentation.push(feature) }
-                presentation.push(capture)
+                if let queuedTime=presentation.latestQueuedMediaTime {
+                    diagnosticQueuedFuture=queuedTime-clock.time
+                    if diagnosticQueuedFuture.isFinite {
+                        BeatWaveMeasurement.queuedFutureMax=BeatWaveMeasurement.queuedFutureMax.isFinite
+                            ? max(BeatWaveMeasurement.queuedFutureMax,diagnosticQueuedFuture) : diagnosticQueuedFuture
+                    }
+                }
                 let mediaDeadline=clock.time+displayLead*max(0,clock.rate)
                 frame=clock.rate>0 ? (presentation.sampleMedia(at: mediaDeadline) ?? BeatWaveAudioFrame()) : BeatWaveAudioFrame()
                 let age=mediaDeadline-(frame.mediaTime ?? mediaDeadline)
@@ -200,7 +242,6 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             } else {
                 previousMediaTime=nil
                 for feature in captures { presentation.push(feature) }
-                presentation.push(capture)
                 frame=presentation.sample(now: now+displayLead,estimatedOutputDelay: outputDelay)
                 let age=now-frame.capturedAt
                 diagnosticFrameAge=frame.capturedAt>0 ? age*1000 : 0; diagnosticClock="capture"
@@ -231,7 +272,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             // Local report only. Submitted frames are not proof of actually displayed 120 FPS.
             let ticks=Double(diagnosticTicks)/elapsed, submitted=Double(diagnosticSubmissions)/elapsed
             let gpu=gpuFeedback.sample()
-            SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f edr=%d headroom=%.2f clock=%@ displayLeadMs=%.1f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000,outputHDR ? 1 : 0,Double(headroom),diagnosticClock,diagnosticDisplayLead),tag: "BEAT_WAVE")
+            SonivoDiagnostics.log(String(format: "ticks=%.1f submitted=%.1f target=%d gpuMs=%.2f busyDrops=%d scale=%.3f audioAgeMs=%.1f routeDelayMs=%.1f edr=%d headroom=%.2f clock=%@ displayLeadMs=%.1f queuedFuture=%.6f queuedFutureMax=%.6f",ticks,submitted,targetFPS,gpu,diagnosticBusyDrops,Double(renderScale),diagnosticFrameAge,outputDelay*1000,outputHDR ? 1 : 0,Double(headroom),diagnosticClock,diagnosticDisplayLead,diagnosticQueuedFuture,BeatWaveMeasurement.queuedFutureMax),tag: "BEAT_WAVE")
             diagnosticWindow=link.timestamp; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
         }
     }
