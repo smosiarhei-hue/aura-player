@@ -63,3 +63,11 @@ Authoritative Apple references consulted:
 - https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-27-release-notes — iOS 27 release notes, Metal fixes and new MetricKit frame-rate diagnostics. The listed clamp-to-edge sampler issue is not evidence for this repeat-addressed noise renderer's freeze.
 
 No deployment target, audio session, player, EQ, streaming tap or shader style is changed for this lifecycle fix. No undocumented iOS 27 API is introduced, and no Xcode 27/SDK 27 validation is claimed unless the actual builder toolchain confirms it. Build success/source checks do not replace an on-device Metal validation/profiling session. The local BEAT_WAVE report is needed to quantify remaining GPU/CPU/presentation stalls.
+
+## Slow in-place revision (owner feedback)
+
+Fixed 14 wave axes and pigment: no orbit, atan2 core, animated strand count, travelling light packets or time-driven color/brightness gates. Only slow audio-integrated phase bends the waves in place (speed capped at 0.18). The real low-frequency envelope controls curvature and light; measured kick events share one critically damped m=1/k=64/c=16 recoil with haptics. Visual attack 25 ms/release 300 ms softens the previous sharp tick. Real PCM RMS gates logarithmic noise levels: silence cannot invent movement. Detector uses adaptive bass flux (160 ms refractory), not BPM.
+
+Home background extends upward by the host's actual safe-area inset; its height grows by the same amount and its offset is the negative inset. Thus the lower boundary stays at the original hero bottom. Foreground layout is unchanged; background scrolls with My Wave, not Popular/Charts. Physical top feather is 1.5%; original lower feather remains 18%.
+
+Output-latency alignment remains an estimate, not sample-accurate AirPods calibration. No new player, download, Dolby Vision/HDR pipeline or audio-session owner. Native rendering/sound alignment and top-safe-area behaviour require device validation; a Linux equation preview is not an iPhone measurement.

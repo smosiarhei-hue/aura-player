@@ -11,6 +11,7 @@ struct SonivoHomeRedesignedView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var waveHeroIsVisible = true
+    @State private var waveTopInset: CGFloat = 0
     @State private var showSettings = false
     @State private var showPlayer = false
     @State private var showAIAssistant = false
@@ -53,6 +54,7 @@ struct SonivoHomeRedesignedView: View {
                     }
                     .padding(.bottom, 120)
                 }
+                .scrollClipDisabled() // The hero background may extend upward into the status area.
                 .refreshable { await load(force: true) }
 
                 // Fullscreen native port of the supplied ShaderAnimation; no liquid sweep.
@@ -67,6 +69,9 @@ struct SonivoHomeRedesignedView: View {
                     }
                 )
             }
+            .onGeometryChange(for: CGFloat.self) { geometry in
+                geometry.safeAreaInsets.top
+            } action: { waveTopInset=max(0,$0) }
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
             .fullScreenCover(isPresented: $showAIAssistant) { AIMusicAssistantView() }
@@ -106,18 +111,23 @@ struct SonivoHomeRedesignedView: View {
         )
         // The ribbons dissolve into the inherited light/dark theme on every edge.
         .frame(maxWidth: .infinity)
-        .background {
-            ZStack {
-                SN.bg
-                MusicWaveBackground(
-                    colors: player.displayTrack?.palette ?? waveColors,
-                    isPlaying: player.isPlaying,
-                    isVisible: waveHeroIsVisible && !showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay
-                )
+        .background(alignment: .top) {
+            GeometryReader { hero in
+                ZStack {
+                    SN.bg
+                    MusicWaveBackground(
+                        colors: player.displayTrack?.palette ?? waveColors,
+                        isPlaying: player.isPlaying,
+                        isVisible: waveHeroIsVisible && !showPlayer && !showSettings && !showAIAssistant && !showShakeOverlay
+                    )
+                }
+                .frame(width: hero.size.width,height: hero.size.height+waveTopInset)
+                .clipped() // Clip the extended BACKGROUND, not the foreground hero.
+                .offset(y: -waveTopInset) // Bottom stays at hero.size.height, unchanged.
             }
+            .allowsHitTesting(false)
         }
-        // The shader belongs to this scroll item, not a fixed fullscreen layer.
-        .clipped()
+        // Scrolls with this hero only; never becomes a global Popular/Charts background.
         .onScrollVisibilityChange(threshold: 0.01) { isVisible in
             waveHeroIsVisible = isVisible
         }

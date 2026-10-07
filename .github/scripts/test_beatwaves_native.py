@@ -63,8 +63,9 @@ class BeatWaveNativeTests(unittest.TestCase):
             self.assertNotIn(unwanted,m)
         self.assertIn('rgb * alpha',m)
         self.assertIn('noise.sample(beatNoiseSampler',m)
-        self.assertIn('uPulseSpeed 2.4',m)
-        self.assertIn('uSegmentSpeed 1.2',m)
+        self.assertNotIn('packetPhase',m)
+        self.assertNotIn('atan2',m)
+        self.assertIn('uLowEnergy*0.55+uImpact*0.65',m)
         self.assertIn('strands[i].pigment.rgb',m)
         self.assertIn('float featherX = smoothstep',m)
         self.assertIn('float featherY = smoothstep',m)
@@ -85,7 +86,8 @@ class BeatWaveNativeTests(unittest.TestCase):
         m=(ROOT/'Sonivo/BeatWaveMotion.swift').read_text()
         self.assertIn('first.capturedAt<=cutoff',m)
         self.assertIn('queue.count>90',m)
-        self.assertIn('sqrt(130-decay*decay)',m)
+        self.assertIn('let decay: Float = 8',m)
+        self.assertIn('(x+coefficient*dt)*attenuation',m)
 
     def test_shared_noise_budget_and_direct_geometric_punch(self):
         m=(ROOT/'Sonivo/BeatWave.metal').read_text()
@@ -93,16 +95,30 @@ class BeatWaveNativeTests(unittest.TestCase):
         self.assertNotIn('turbulence(',strand)
         field=m.split('float4 evalNeuralFloat(',1)[1].split('fragment float4',1)[0]
         self.assertEqual(field.count('turbulence('),1)
-        self.assertIn('p /= 1.0+radialPush',field)
-        self.assertIn('springImpulse*0.22*sin',field)
+        self.assertNotIn('radialPush',field)
+        self.assertNotIn('swirl',field)
+        self.assertIn('uSpringDeform*0.8',strand)
         self.assertIn('float t = uPhase;',field)
         r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
-        self.assertIn('let t=Float(motion.phase)',r)
+        self.assertIn('let count: Float=14',r)
+        self.assertIn('let angle: Float = -0.42+id*0.84',r)
+        self.assertNotIn('t*0.12',r)
         self.assertNotIn('let t=Float(motion.phase)*0.6',r)
         self.assertIn('diagnosticSubmissions',r)
         self.assertIn('diagnosticBusyDrops',r)
         self.assertIn('tag: "BEAT_WAVE"',r)
         self.assertIn('routeDelayMs',r)
+
+    def test_top_extension_preserves_hero_lower_boundary(self):
+        h=(ROOT/'Sonivo/SonivoHomeRedesignedView.swift').read_text()
+        wave=h.split('private var waveHero:',1)[1].split('private var quickDestinations:',1)[0]
+        self.assertIn('geometry.safeAreaInsets.top',h)
+        self.assertIn('.scrollClipDisabled()',h)
+        self.assertIn('height: hero.size.height+waveTopInset',wave)
+        self.assertIn('.offset(y: -waveTopInset)',wave)
+        self.assertEqual(wave.count('MusicWaveBackground('),1)
+        self.assertEqual(wave.count('.clipped()'),1)
+        self.assertNotIn('UIScreen.main',h)
 
     def test_occupied_fft_bins_drive_all_five_features(self):
         s=(ROOT/'Sonivo/spectrumanalyzer.swift').read_text()
@@ -131,7 +147,7 @@ check(silence.eventID==0,"Silence creates no kicks")
 var referenceX: Float=0
 for fps in [10,20,30,60,120] {
     var motion=MusicWaveMotion()
-    var impulse=BeatWaveAudioFrame(capturedAt: 1,kickEnvelope: 1,kickEventID: 1,kickConfidence: 1)
+    var impulse=BeatWaveAudioFrame(capturedAt: 1,rms: 0.8,kickEnvelope: 1,kickEventID: 1,kickConfidence: 1)
     var elapsed: Float=0
     for _ in 0..<fps {
         motion.advance(delta: 1/Float(fps),frame: impulse,hasFreshAudio: true)
@@ -145,7 +161,7 @@ for fps in [10,20,30,60,120] {
     check(motion.springPosition==0 && motion.speed==0,"Pause must settle")
 }
 var once=MusicWaveMotion()
-let kick=BeatWaveAudioFrame(kickEventID: 1,kickConfidence: 1)
+let kick=BeatWaveAudioFrame(rms: 0.8,kickEventID: 1,kickConfidence: 1)
 check(once.advance(delta: 1/60,frame: kick,hasFreshAudio: true),"First impulse missing")
 check(!once.advance(delta: 1/60,frame: kick,hasFreshAudio: true),"Duplicate impulse")
 once.settle(); check(once.springVelocity==0,"Settle clears velocity")
@@ -177,13 +193,14 @@ check(BeatWaveBandEnergy.mean(values: [1],counts: [0],range: 0..<1)==0,"Empty sp
 var punch=MusicWaveMotion()
 let punchFrame=BeatWaveAudioFrame(subBass: 0.8,bass: 0.7,mids: 0.4,rms: 0.6,kickEnvelope: 1,kickEventID: 1,kickConfidence: 0.8)
 check(punch.advance(delta: 1/120,frame: punchFrame,hasFreshAudio: true),"Kick event missing")
-check(punch.impact>=0.8,"One-shot punch delayed by smoothing")
-let radialPush=min(Float(0.24),max(Float(-0.12),punch.impact*0.08+punch.springPosition*1.8))
-check(radialPush>0.06,"First presented frame must visibly deform")
+check(punch.impact>0.2 && punch.impact<0.8,"Kick must have soft, short attack")
+check(punch.springPosition>0,"Measured onset must deform immediately")
+for _ in 0..<5 { punch.advance(delta: 1/120,frame: punchFrame,hasFreshAudio: true) }
+check(punch.impact>0.65,"Soft attack must not obscure the kick")
 var running=MusicWaveMotion()
 let steady=BeatWaveAudioFrame(subBass: 0.8,bass: 0.7,mids: 0.4,rms: 0.6)
 for _ in 0..<240 { running.advance(delta: 1/120,frame: steady,hasFreshAudio: true) }
-check(running.speed>1.0 && running.phase>1.5,"Flow still uses the excessively slow preset")
+check(running.speed>0.05 && running.speed<=0.18 && running.phase<0.36,"Slow flow speed cap violated")
 var previousPhase=running.phase
 for i in 0..<60 {
     let delta: Float = i%7==0 ? 0.1 : 1/120
@@ -191,6 +208,32 @@ for i in 0..<60 {
     check(running.phase>=previousPhase && running.phase.isFinite,"Frame hitch caused phase jump or reversal")
     previousPhase=running.phase
 }
+// Silent PCM with a stale/nonzero logarithmic spectrum cannot generate motion or haptics.
+var gated=MusicWaveMotion()
+let fake=BeatWaveAudioFrame(subBass: 1,bass: 1,mids: 1,highs: 1,kickEnvelope: 1,kickEventID: 12,kickConfidence: 1)
+for _ in 0..<240 {
+    check(!gated.advance(delta: 1/120,frame: fake,hasFreshAudio: true),"Silent PCM invented a kick")
+}
+check(gated.phase==0 && gated.energy==0 && gated.lowEnergy==0 && gated.impact==0,"Silent spectrum moved the field")
+// Genuine separated low-frequency onsets, not sustained bass or high-only percussion.
+var kicks=BeatWaveKickDetector()
+var highOnly=BeatWaveKickDetector()
+for i in 0..<200 {
+    let on=i%20==0
+    let stamp=Double(i)*0.025+10
+    kicks.process(BeatWaveAudioFrame(capturedAt: stamp,subBass: on ? 0.8 : 0.1,bass: on ? 0.7 : 0.1,rms: on ? 0.5 : 0.06))
+    highOnly.process(BeatWaveAudioFrame(capturedAt: stamp,highs: on ? 1 : 0,rms: on ? 0.5 : 0))
+}
+check(kicks.eventID==10,"Real kick cadence lost or duplicated")
+check(highOnly.eventID==0,"High-only sound created bass impulses")
+// Critical response decays to rest without a negative bounce/secondary tick.
+var recoil=MusicWaveMotion()
+recoil.advance(delta: 1/120,frame: kick,hasFreshAudio: true)
+for _ in 0..<480 {
+    recoil.advance(delta: 1/120,frame: BeatWaveAudioFrame(),hasFreshAudio: false)
+    check(recoil.springPosition>=0,"Recoil bounced through zero")
+}
+check(recoil.springPosition==0,"Critical recoil did not settle")
 print("Beat Waves Swift physics and presentation checks passed")
 '''
         with tempfile.TemporaryDirectory() as d:

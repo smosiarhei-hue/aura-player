@@ -197,20 +197,19 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     }
 
     private func updateStrands() {
-        let t=Float(motion.phase)
-        let count=max(14+(6+motion.energy*2.5)*sin(t*0.3),1)
+        let count: Float=14 // Fixed topology: no orbit or strand-count oscillation.
         let a=SIMD3<Float>(1,0.15,0.55),b=SIMD3<Float>(0.58,0.20,0.95),c=SIMD3<Float>(0.10,0.85,0.98)
         for i in 0..<32 {
             let index=Float(i),fade=max(0,min(1,count-index)),id=index/count
             if fade<=0 { strandTable[i]=Strand(); continue }
-            let angle=id*(2*Float.pi)+t*0.12
-            let tintTime=id+t*0.05
+            let angle: Float = -0.42+id*0.84 // Static directions; bend, never rotate.
+            let tintTime=id
             let blend=sin(tintTime*Float.pi*0.5)*0.5+0.5
             let shade=cos(tintTime*(2*Float.pi))*0.5+0.5
             var tint=a*(1-blend)+b*blend
             let mixC=0.28*sin(tintTime*2.5)+0.28
             tint=(tint*(1-mixC)+c*mixC)*(0.6+0.4*shade)
-            tint *= (0.6+0.4*sin(index*3+t))*fade
+            tint *= 0.85*fade
             strandTable[i].direction=SIMD4(sin(angle),cos(angle),fade,0)
             strandTable[i].pigment=SIMD4(tint.x,tint.y,tint.z,0)
         }
@@ -229,7 +228,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         updateStrands()
         var uniforms=Uniforms(resolution: SIMD4(Float(width),Float(height),0,0),
                               motion: SIMD4(Float(motion.phase),motion.energy,motion.impact,motion.detail),
-                              surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,0))
+                              surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,motion.lowEnergy))
         // Late acquisition inside the MetalKit draw callback: descriptor obtains THIS frame's drawable.
         guard let pass=view.currentRenderPassDescriptor,let drawable=view.currentDrawable,
               let encoder=command.makeRenderCommandEncoder(descriptor: pass) else { return }

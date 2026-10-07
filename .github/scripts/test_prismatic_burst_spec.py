@@ -54,7 +54,7 @@ class PrismaticBurstTests(unittest.TestCase):
         wave = home.split('private var waveHero:', 1)[1].split('private var quickDestinations:', 1)[0]
         self.assertNotIn('MusicWaveBackground(', root)
         self.assertEqual(home.count('MusicWaveBackground('), 1)
-        self.assertIn('.background {', wave)
+        self.assertIn('.background(alignment: .top)', wave)
         self.assertIn('.clipped()', wave)
         self.assertIn('waveHeroIsVisible && !showPlayer', wave)
         self.assertIn('.onScrollVisibilityChange(threshold: 0.01)', wave)

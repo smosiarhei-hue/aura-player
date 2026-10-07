@@ -5,7 +5,7 @@ using namespace metal;
 struct BeatWaveUniforms {
     float4 resolution; // xy physical pixel size; zw reserved
     float4 motion; // phase, energy, impact, detail
-    float4 surface; // spring displacement, dark mode, octave count, reserved
+    float4 surface; // spring displacement, dark mode, octave count, bass envelope
 };
 struct BeatWaveStrand { float4 direction; float4 pigment; };
 struct BeatWaveVertex { float4 position [[position]]; float2 uv; };
@@ -26,28 +26,10 @@ constexpr sampler beatNoiseSampler(coord::normalized, address::repeat, filter::l
 #define uColorC float3(0.10,0.85,0.98)
 #define uEdgeFeather 1.0
 #define uOpacity 1.0
-#define uStrands 14.0
-#define uStrandDrift 6.0
-#define uStrandWidth 1.0
-#define uHaloWidth 1.2
-#define uHaloStrength 0.65
-#define uZoom 1.0
-#define uSpin 0.0
 #define uTurbulence 0.16
-#define uTurbulenceScale 4.0
-#define uWarp 0.06
-#define uPulse 18.0
-#define uPulseSpeed 2.4
-#define uSegment 6.0
-#define uSegmentSpeed 1.2
-#define uCore 1.25
-#define uCoreFalloff 5.0
-#define uArms 3.0
-#define uSwirl 1.6
-#define uChroma 0.007
-#define uDrift float2(0.0)
+#define uHaloStrength 0.65
 #define uOctaves int(u.surface.z)
-#define uHdrLuster 1.35
+#define uLowEnergy u.surface.w
 constant float TURN = 6.28318530718;
 constant float HALF_TURN = 3.14159265359;
 constant float LATTICE = 0.0078125;
@@ -74,115 +56,53 @@ float turbulence(float2 p, constant BeatWaveUniforms &u, texture2d<float> noise)
   return sum / max(span, 0.0001);
 }
 
-float3 neuralTint(float t, constant BeatWaveUniforms &u, texture2d<float> noise) {
-  float blend = sin(t * HALF_TURN * 0.5) * 0.5 + 0.5;
-  float shade = cos(t * TURN) * 0.5 + 0.5;
-  float3 col = mix(uColorA, uColorB, blend);
-  col = mix(col, uColorC, 0.28 * sin(t * 2.5) + 0.28);
-  return col * (0.6 + 0.4 * shade);
+// Fixed wave axes. Only in-place curvature uses the slowly audio-integrated phase.
+// No time-driven light packets, segment gates, orbiting core or color cycles.
+float3 neuralStrand(float2 p, float s, float c, float bendPhase, float lane,
+                   float sharedFlow, constant BeatWaveUniforms &u) {
+  float2 q = float2(p.x*c-p.y*s, p.x*s+p.y*c);
+  q.y -= lane;
+  float bend = sin(q.x*5.0 + bendPhase + lane*3.0);
+  q.y += bend*(0.035 + uLowEnergy*0.055 + uSpringDeform*0.8);
+  q.y += (sharedFlow-0.5)*0.035;
+  float reach = abs(q.y);
+  if (reach>0.32) return float3(0.0);
+  float core = exp(-reach*60.0);
+  float halo = exp(-reach*14.0)*uHaloStrength;
+  // Light follows actual bass and the measured kick envelope, never sin(time).
+  float musicalLight = 0.42+uLowEnergy*0.55+uImpact*0.65;
+  return float3((core+halo)*musicalLight);
 }
 
-float2 turn(float2 p, float angle) {
-  float s = sin(angle);
-  float c = cos(angle);
-  return float2(p.x * c - p.y * s, p.x * s + p.y * c);
-}
-
-float3 neuralStrand(float2 p, float s, float c, float t, float split, float curTurbulence, float pulseBoost, float energyBoost, float sharedFlow, constant BeatWaveUniforms &u, texture2d<float> noise) {
-  float2 q = float2(p.x * c - p.y * s, p.x * s + p.y * c);
-
-  if (abs(q.y) > 0.34 + curTurbulence * 0.5 + split) return float3(0.0);
-
-  // Smooth gate with musical timing
-  float gate = smoothstep(
-    0.08,
-    0.58,
-    sin(q.x * uSegment + t * uSegmentSpeed) * cos(t * 0.8 + q.y * 3.5)
-  );
-  if (gate <= 0.0) return float3(0.0);
-
-  // Shared low-frequency flow + cheap directional ripple. No per-strand octave texture loop.
-  q.y += ((sharedFlow-0.5)*0.65 + sin(q.x*6.0+t*0.4+q.y*2.0)*0.175)*curTurbulence;
-
-  float3 reach = abs(q.y + float3(split * s, 0.0, -split * s));
-  float3 rim = max(1.0 - reach * 3.0, 0.0);
-  
-  float strandW = max(1.0, 45.0 / max(uStrandWidth, 0.05));
-  float haloW = max(1.0, 15.0 / max(uHaloWidth, 0.05));
-  float haloStr = uHaloStrength * (1.0 + energyBoost * 0.55);
-
-  // Traveling electrical pulse running along the neural strand
-  float pulse = sin(q.x * uPulse + t * uPulseSpeed) * 0.5 + 0.5;
-  
-  // Beat sync: snappy transient punch on kick drum, smooth decay in between
-  float sharpPulse = pow(pulse, mix(1.15, 0.40, pulseBoost));
-  float pulseSpike = sharpPulse * (1.0 + pulseBoost * 1.85);
-
-  // Visible traveling action potential packet running smoothly along the axon
-  float packetPhase = fract(q.x * 0.30 + t * (uPulseSpeed * 0.35));
-  float packet = exp(-pow(packetPhase - 0.5, 2.0) * 36.0) * (0.35 + pulseBoost * 1.5);
-
-  float specularLuster = pow(pulse, 4.0) * (0.7 + pulseBoost * 1.6) * uHdrLuster;
-  float spineCore = exp(-reach.y * strandW * 1.6) * (1.6 + specularLuster);
-  float spineInner = exp(-reach.y * strandW * 0.5) * 0.85;
-  float spineHalo = exp(-reach.y * haloW) * haloStr;
-
-  float3 spine = (spineCore + spineInner + spineHalo) * rim * rim * (pulseSpike + packet) * gate;
-
-  float3 glint = mix(float3(1.0), float3(0.88, 0.96, 1.0), split * 15.0) * specularLuster * exp(-reach.y * strandW * 2.2);
-
-  return spine + glint;
-}
-
-float3 neuralWeave(float2 p, float t, float split, float curTurbulence, float pulseBoost, float energyBoost, float sharedFlow, constant BeatWaveUniforms &u, texture2d<float> noise, constant BeatWaveStrand *strands) {
+float3 neuralWeave(float2 p, float t, float sharedFlow, constant BeatWaveUniforms &u,
+                  constant BeatWaveStrand *strands) {
   float3 sum = float3(0.0);
   for (int i = 0; i < 32; i++) {
-    float index = float(i);
     float4 direction = strands[i].direction;
-    if (direction.z <= 0.0) break;
-    float s = direction.x, c = direction.y;
-    float3 lit = neuralStrand(p, s, c, t + index, split, curTurbulence, pulseBoost, energyBoost, sharedFlow, u, noise)
-      + neuralStrand(p, c, -s, t * 1.15 + index, split, curTurbulence, pulseBoost, energyBoost, sharedFlow, u, noise);
-    sum += strands[i].pigment.rgb * lit;
+    if (direction.z<=0.0) break;
+    float lane=(float(i)/13.0-0.5)*0.75;
+    sum += strands[i].pigment.rgb * neuralStrand(p,direction.x,direction.y,t,lane,sharedFlow,u);
   }
-  return sum;
+  return sum*0.32;
 }
 
 float4 evalNeuralFloat(float2 uvSample, constant BeatWaveUniforms &u, texture2d<float> noise, constant BeatWaveStrand *strands) {
   float aspect = clamp(uResolution.x / max(uResolution.y, 1.0), 0.35, 2.5);
   float2 p = (uvSample - 0.5) * float2(aspect, 1.0);
-  p = turn(p, uSpin) / max(uZoom, 0.01);
-
-  // Continuous audio-integrated flow; no extra slow time multiplier.
   float t = uPhase;
-  float energyBoost = clamp(uEnergy, 0.0, 1.0);
-  float pulseBoost = clamp(uImpact, 0.0, 1.0);
-  float springImpulse = clamp(uSpringDeform, -1.5, 1.5);
-
-  float curTurbulence = uTurbulence * (1.0 + energyBoost * 0.45 + abs(springImpulse) * 0.18);
-
-  // Kick moves the FIELD, never the cover or text. Immediate punch plus damped recoil.
-  float radialPush = clamp(pulseBoost*0.08 + springImpulse*1.8,-0.12,0.24);
-  p /= 1.0+radialPush;
-  p.y += springImpulse*0.22*sin(p.x*8.0-t*0.9);
-  // Only one octave-noise evaluation per pixel, reused by every strand.
-  float sharedFlow = turbulence(p*2.0+t,u,noise);
-  p += sharedFlow * (uWarp * (1.0 + energyBoost * 0.3));
-  p -= uDrift * 0.15;
-
-  float split = uChroma * (1.0 + 0.66 * sin(t * 0.4));
-  float3 col = neuralWeave(p, t, split, curTurbulence, pulseBoost, energyBoost, sharedFlow, u, noise, strands);
-
-  // Synaptic Plasma Core (pulsing smoothly on kick drums and sub-bass)
+  float energyBoost = clamp(uEnergy,0.0,1.0);
+  // A single shared noise lookup chain, moved slowly by real musical energy.
+  float sharedFlow = turbulence(p*2.0+float2(t*0.25,0.0),u,noise);
+  float3 col = neuralWeave(p,t,sharedFlow,u,strands);
   float reach = length(p);
-  float swirl = sin(atan2(p.y, p.x) * uArms + t * uSwirl);
-  float coreEnergy = uCore * (1.0 + pulseBoost * 1.5 + max(0.0, springImpulse) * 0.8 + energyBoost * 0.4);
-  col += neuralTint(t * 0.08, u, noise) * exp(-reach * uCoreFalloff) * (0.7 + 0.3 * swirl) * coreEnergy;
+  // Stationary soft core. No angular/time term and no independent brightness pulsation.
+  float coreEnergy = 0.12+uLowEnergy*0.20+uImpact*0.16;
+  col += uColorB*exp(-reach*5.0)*coreEnergy;
 
   // Smoothly compresses high dynamic range while lifting silky specular brilliance
   float3 hdrCol = col;
   float3 tonemapped = hdrCol / (float3(1.0) + hdrCol * 0.45);
-  float3 peakLuster = pow(max(hdrCol - float3(0.60), float3(0.0)), float3(2.0)) * (0.75 * uHdrLuster);
+  float3 peakLuster = pow(max(hdrCol - float3(0.60), float3(0.0)), float3(2.0)) * 0.25;
   col = tonemapped + peakLuster;
 
   // Soft field fadeout
@@ -190,7 +110,7 @@ float4 evalNeuralFloat(float2 uvSample, constant BeatWaveUniforms &u, texture2d<
 
   // Edge feathering to blend seamlessly with UI container
   float fX = max(0.04, 0.14 * uEdgeFeather);
-  float fYTop = max(0.03, 0.12 * uEdgeFeather);
+  float fYTop = 0.015; // Fill behind Dynamic Island; only the physical top edge fades.
   float fYBot = max(0.05, 0.18 * uEdgeFeather);
   float featherX = smoothstep(0.0, fX, uvSample.x) * (1.0 - smoothstep(1.0 - fX, 1.0, uvSample.x));
   float featherY = smoothstep(0.0, fYTop, uvSample.y) * (1.0 - smoothstep(1.0 - fYBot, 1.0, uvSample.y));
