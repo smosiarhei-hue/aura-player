@@ -8,6 +8,8 @@ nonisolated final class MusicHapticsCore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.sonivo.musichaptics", qos: .userInteractive)
     private let stateLock = NSLock()
     private var visualOverride = false
+    private var beatWaveOverride = false
+    private var lastBeatWaveEventID: UInt64 = 0
     private var engine: CHHapticEngine?
     private var isEngineRunning = false
 
@@ -47,12 +49,52 @@ nonisolated final class MusicHapticsCore: @unchecked Sendable {
         return visualOverride
     }
 
+    /// The hero's confirmed visual event owns haptics while it is running.
+    func setBeatWaveOverride(_ active: Bool) {
+        stateLock.lock(); beatWaveOverride = active; stateLock.unlock()
+    }
+    private var isBeatWaveOverrideActive: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }; return beatWaveOverride
+    }
+
+    /// Called only for the SAME event ID that injected the visible spring impulse.
+    /// Presentation already accounts for the route estimate: do not add the delay twice.
+    func playBeatWaveKick(eventID: UInt64, strength: Float) {
+        queue.async { [weak self] in
+            guard let self, self.isBeatWaveOverrideActive, !self.isVisualOverrideActive,
+                  (UserDefaults.standard.object(forKey: "settings.musicHaptics") as? Bool ?? true),
+                  eventID > self.lastBeatWaveEventID,
+                  self.ensureEngineStarted(), let engine = self.engine else { return }
+            self.lastBeatWaveEventID = eventID
+            let setting = UserDefaults.standard.string(forKey: "settings.musicHapticsIntensity") ?? "strong"
+            let scale: Float = setting == "soft" ? 0.45 : (setting == "medium" ? 0.75 : 1)
+            let safeStrength = strength.isFinite ? max(0,min(1,strength)) : 0
+            let intensity = min(0.85,max(0.2,safeStrength)*scale)
+            let events = [
+                CHHapticEvent(eventType: .hapticTransient, parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity,value: intensity),
+                    CHHapticEventParameter(parameterID: .hapticSharpness,value: 0.25)
+                ],relativeTime: 0),
+                CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity,value: intensity*0.35),
+                    CHHapticEventParameter(parameterID: .hapticSharpness,value: 0.08)
+                ],relativeTime: 0.005,duration: 0.055)
+            ]
+            do {
+                let pattern = try CHHapticPattern(events: events,parameters: [])
+                let player = try engine.makePlayer(with: pattern)
+                try player.start(atTime: CHHapticTimeImmediate)
+            } catch { /* Hardware/session interruption: visuals keep working. */ }
+        }
+    }
+
     /// Prepares low-latency CoreHaptics engine
     private func prepareEngine() {
         guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
         do {
             let hapticEngine = try CHHapticEngine()
             hapticEngine.isAutoShutdownEnabled = true
+            hapticEngine.playsHapticsOnly = true
             hapticEngine.resetHandler = { [weak self] in
                 self?.queue.async {
                     try? self?.engine?.start()
@@ -101,7 +143,7 @@ nonisolated final class MusicHapticsCore: @unchecked Sendable {
     /// Runs synchronously on the audio thread with minimal CPU cycles (pure arithmetic),
     /// and dispatches haptic triggers to the interactive queue.
     func processRawBands(_ values: [Float]) {
-        guard values.count >= 32, !isVisualOverrideActive else { return }
+        guard values.count >= 32, !isVisualOverrideActive, !isBeatWaveOverrideActive else { return }
         guard UserDefaults.standard.bool(forKey: "settings.musicHaptics") else { return }
 
         // 1. Compute instantaneous band energies (normalized 0...1)
@@ -187,7 +229,9 @@ nonisolated final class MusicHapticsCore: @unchecked Sendable {
 
     /// Triggers distinct, physically separated Taptic Engine waveforms
     private func fireEvents(kick: Float?, hiHat: Float?, bass: Float?) {
-        guard !isVisualOverrideActive, ensureEngineStarted(), let engine else { return }
+        guard !isVisualOverrideActive, !isBeatWaveOverrideActive,
+              UserDefaults.standard.bool(forKey: "settings.musicHaptics"),
+              ensureEngineStarted(), let engine else { return }
         var events = [CHHapticEvent]()
 
         // A. Kick Drum Hit (Deep, Solid Mechanical Thump in the center of the palm)

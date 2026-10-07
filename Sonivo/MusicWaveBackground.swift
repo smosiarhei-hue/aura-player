@@ -1,94 +1,57 @@
 import SwiftUI
+import AVFoundation
 import UIKit
 
-/// Continuous phase plus attack/release envelopes: music changes speed, never jumps time.
-nonisolated struct MusicWaveMotion {
-    private(set) var phase: Float = 0
-    private(set) var energy: Float = 0
-    private(set) var impact: Float = 0
-    private(set) var detail: Float = 0
-    private(set) var speed: Float = 0
-
-    mutating func advance(delta: Float, bass: Float, mids: Float, highs: Float,
-                          level: Float, kick: Float, hasFreshAudio: Bool) {
-        let dt = delta.isFinite ? max(0, min(0.1, delta)) : 0
-        func unit(_ value: Float) -> Float { value.isFinite ? max(0, min(1, value)) : 0 }
-        let targetEnergy = hasFreshAudio
-            ? unit(bass) * 0.42 + unit(mids) * 0.30 + unit(level) * 0.28 : 0
-        let targetImpact = hasFreshAudio ? unit(kick) : 0
-        let targetDetail = hasFreshAudio ? unit(highs) * 0.55 + unit(mids) * 0.45 : 0
-        energy += (targetEnergy - energy) * (1 - exp(-dt / (targetEnergy > energy ? 0.10 : 0.42)))
-        impact += (targetImpact - impact) * (1 - exp(-dt / (targetImpact > impact ? 0.035 : 0.22)))
-        detail += (targetDetail - detail) * (1 - exp(-dt / 0.24))
-        // Fast passages flow faster; quiet passages settle. No guessed BPM or metronome.
-        let targetSpeed: Float = hasFreshAudio && targetEnergy > 0.003
-            ? 0.14 + energy * 1.65 + impact * 0.70 : 0
-        speed += (targetSpeed - speed) * (1 - exp(-dt / (targetSpeed > speed ? 0.12 : 0.48)))
-        phase += dt * speed
-    }
-
-    mutating func settle() {
-        energy = 0; impact = 0; detail = 0; speed = 0
-    }
-}
-
-/// Soft flowing ribbons, confined to the wave hero and dissolving into the current theme.
+/// Approved Beat Waves field, scoped to the scrolling My Wave hero. No audio ownership here.
 struct MusicWaveBackground: View {
-    let colors: [Color]
+    let colors: [Color] // Retained call-site compatibility; approved shader uses its Sonivo palette.
     let isPlaying: Bool
     let isVisible: Bool
     @State private var analyzer = SpectrumAnalyzer.shared
     @State private var isOnScreen = false
     @State private var motion = MusicWaveMotion()
+    @State private var presentation = BeatWavePresentation()
     @State private var previousFrame: TimeInterval?
+    @State private var outputDelay: TimeInterval = 0
+    @State private var lastDelayCheck: TimeInterval = 0
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
     private var running: Bool { isOnScreen && isPlaying && isVisible && !reduceMotion && scenePhase == .active }
-    private var interval: Double { ProcessInfo.processInfo.isLowPowerModeEnabled ? 1 / 20.0 : 1 / 30.0 }
-    private var palette: [Color] { colors.isEmpty ? [.pink, .purple, .cyan] : colors }
+    private var interval: Double { lowPower ? 1 / 20.0 : 1 / 30.0 }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: interval, paused: !running)) { timeline in
-            GeometryReader { proxy in
-                let shaderColors = palette
-                let phase = motion.phase
-                let energy = motion.energy
-                let impact = motion.impact
-                let detail = motion.detail
-                let darkMode: Float = colorScheme == .dark ? 1 : 0
-                Color.white
-                    .frame(width: max(1, proxy.size.width * 0.5), height: max(1, proxy.size.height * 0.5))
-                    .visualEffect { content, _ in
-                        content.colorEffect(ShaderLibrary.musicWaveRibbons(
-                            .boundingRect, .float(phase),
-                            .float(energy), .float(impact), .float(detail),
-                            .float(darkMode),
-                            .color(shaderColors[0]), .color(shaderColors[min(1, shaderColors.count - 1)]),
-                            .color(shaderColors[min(2, shaderColors.count - 1)])
-                        ))
+            BeatWaveMetalView(motion: motion, darkMode: colorScheme == .dark, running: running, lowPower: lowPower)
+                .onChange(of: timeline.date) { _, date in
+                    guard running else { previousFrame=nil; return }
+                    let now=date.timeIntervalSinceReferenceDate
+                    let delta=Float(min(0.10,max(0,now-(previousFrame ?? now))))
+                    previousFrame=now
+                    if now-lastDelayCheck>1 {
+                        let session=AVAudioSession.sharedInstance()
+                        // Route-reported estimate, not a promise of exact Bluetooth/acoustic latency.
+                        outputDelay=max(0,min(0.5,session.outputLatency+session.ioBufferDuration))
+                        lastDelayCheck=now
                     }
-                    .drawingGroup(opaque: false)
-                    .scaleEffect(2)
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .clipped()
-            }
-            .onChange(of: timeline.date) { _, date in
-                guard running else { previousFrame = nil; return }
-                let now = date.timeIntervalSinceReferenceDate
-                let delta = Float(min(0.10, max(0, now - (previousFrame ?? now))))
-                previousFrame = now
-                let fresh = Date.timeIntervalSinceReferenceDate - analyzer.lastAudioSampleTime < 0.4
-                motion.advance(delta: delta, bass: analyzer.bass, mids: analyzer.mids,
-                               highs: analyzer.highs, level: analyzer.level, kick: analyzer.kick,
-                               hasFreshAudio: fresh)
-            }
+                    guard analyzer.beatWaveFrame.capturedAt>0 else {
+                        presentation.reset(); motion.settle(); return
+                    }
+                    presentation.push(analyzer.beatWaveFrame)
+                    let frame=presentation.sample(now: now,estimatedOutputDelay: outputDelay)
+                    let age=now-frame.capturedAt
+                    let fresh=frame.capturedAt>0 && age>=0 && age<outputDelay+0.4
+                    let newKick=motion.advance(delta: delta,frame: frame,hasFreshAudio: fresh)
+                    if newKick {
+                        MusicHapticsManager.core.playBeatWaveKick(eventID: frame.kickEventID,
+                                                               strength: frame.kickConfidence)
+                    }
+                }
         }
-        // Blur only the decorative layer, never artwork, text, or touch targets.
-        .blur(radius: 5)
         .mask {
-            RoundedRectangle(cornerRadius: 40, style: .continuous)
+            RoundedRectangle(cornerRadius: 40,style: .continuous)
                 .fill(.white)
                 .blur(radius: 24)
                 .padding(12)
@@ -97,10 +60,19 @@ struct MusicWaveBackground: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onChange(of: running) { _, active in
-            previousFrame = nil
+            previousFrame=nil
+            presentation.reset()
+            motion.consume(analyzer.beatWaveFrame.kickEventID)
+            MusicHapticsManager.core.setBeatWaveOverride(active)
             if !active { motion.settle() }
         }
-        .onAppear { isOnScreen = true; previousFrame = nil }
-        .onDisappear { isOnScreen = false; previousFrame = nil; motion.settle() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            lowPower=ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+        .onAppear { isOnScreen=true; previousFrame=nil }
+        .onDisappear {
+            isOnScreen=false; previousFrame=nil; presentation.reset(); motion.settle()
+            MusicHapticsManager.core.setBeatWaveOverride(false)
+        }
     }
 }

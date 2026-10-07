@@ -28,19 +28,23 @@ class PrismaticBurstTests(unittest.TestCase):
 
     def test_background_reads_real_audio_not_a_fake_bpm(self):
         text = (ROOT / 'Sonivo/MusicWaveBackground.swift').read_text()
-        self.assertIn('analyzer.kick', text)
-        self.assertIn('analyzer.bass', text)
-        self.assertIn('analyzer.mids', text)
-        self.assertIn('analyzer.lastAudioSampleTime < 0.4', text)
+        self.assertIn('analyzer.beatWaveFrame', text)
+        self.assertIn('motion.advance(delta: delta,frame: frame', text)
+        self.assertIn('presentation.sample(now:', text)
+        self.assertIn('age<outputDelay+0.4', text)
         for fake in ('dynamicKick', 'dynamicBass', 'tempo', '120.0', 'player.progress'):
             self.assertNotIn(fake, text)
 
     def test_scene_pause_accessibility_and_render_budget(self):
         text = (ROOT / 'Sonivo/MusicWaveBackground.swift').read_text()
         for token in ('isOnScreen && isPlaying && isVisible && !reduceMotion', 'scenePhase == .active',
-                      'paused: !running', 'isLowPowerModeEnabled', 'width * 0.5', '1 / 30.0',
-                      'onDisappear { isOnScreen = false', '.allowsHitTesting(false)'):
+                      'paused: !running', 'isLowPowerModeEnabled',  '1 / 30.0',
+                      'isOnScreen=false; previousFrame=nil', '.allowsHitTesting(false)'):
             self.assertIn(token, text)
+
+        renderer = (ROOT / 'Sonivo/BeatWaveMetalView.swift').read_text()
+        self.assertIn('lowPower ? 0.35 : 0.5', renderer)
+        self.assertIn('lastDraw', renderer)
 
     def test_home_confines_background_to_wave_scroll_item_not_artwork_aura(self):
         home = (ROOT / 'Sonivo/SonivoHomeRedesignedView.swift').read_text()

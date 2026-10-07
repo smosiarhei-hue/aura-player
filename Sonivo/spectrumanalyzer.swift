@@ -17,6 +17,8 @@ final class SpectrumAnalyzer {
     private(set) var level: Float = 0
     private(set) var streamLevel: Float = 0
     private(set) var lastAudioSampleTime: TimeInterval = 0
+    private(set) var beatWaveFrame = BeatWaveAudioFrame()
+    private var lastResetAt: TimeInterval = 0
 
     // MARK: - iOS 27 Audio-Reactive Kick / Bass Pulse (30-120 Hz)
     var dynamicKick: Float {
@@ -83,7 +85,10 @@ final class SpectrumAnalyzer {
         guard let snapshot = processor.process(buffer: buffer, sampleRate: sampleRate) else { return }
         Task { @MainActor in
             let analyzer = SpectrumAnalyzer.shared
-            analyzer.lastAudioSampleTime = Date.timeIntervalSinceReferenceDate
+            guard snapshot.beatWaveFrame.capturedAt > analyzer.lastResetAt,
+                  snapshot.beatWaveFrame.capturedAt >= analyzer.beatWaveFrame.capturedAt else { return }
+            analyzer.beatWaveFrame = snapshot.beatWaveFrame
+            analyzer.lastAudioSampleTime = snapshot.beatWaveFrame.capturedAt
             analyzer.bands = snapshot.bands
             analyzer.bass = snapshot.bass
             analyzer.kick = snapshot.kick
@@ -99,17 +104,20 @@ final class SpectrumAnalyzer {
     }
 
     func reset() {
+        lastResetAt = Date.timeIntervalSinceReferenceDate
         Self.processor.reset()
         MusicHapticsManager.shared.reset()
         bands = Array(repeating: 0, count: Self.bandCount)
         bass = 0; kick = 0; mids = 0; highs = 0; level = 0; streamLevel = 0
         lastAudioSampleTime = 0
+        beatWaveFrame = BeatWaveAudioFrame()
     }
 }
 
 nonisolated private struct SpectrumSnapshot: Sendable {
     let bands: [Float]; let bass: Float; let kick: Float
     let mids: Float; let highs: Float; let level: Float
+    let beatWaveFrame: BeatWaveAudioFrame
 }
 
 nonisolated private final class SpectrumDSP: @unchecked Sendable {
@@ -124,6 +132,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
     private var smoothedHighs: Float = 0
     private var bassBaseline: Float = 0
     private var kickEnvelope: Float = 0
+    private var beatWaveDetector = BeatWaveKickDetector()
     private var lastPublish = Date.distantPast
     private var streamLastPublish = Date.distantPast
 
@@ -140,6 +149,10 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard let setup = fftSetup, buffer.frameLength >= vDSP_Length(fftSize),
               let channel = buffer.floatChannelData?[0] else { return nil }
+        var beatFrame = BeatWaveAudioFrame(capturedAt: Date.timeIntervalSinceReferenceDate)
+        var rmsSum: Float = 0
+        for i in 0..<fftSize { rmsSum += channel[i] * channel[i] }
+        beatFrame.rms = min(1, sqrt(rmsSum/Float(fftSize))*1.8)
         var input = [Float](repeating: 0, count: fftSize)
         for index in input.indices { input[index] = channel[index] * window[index] }
         var real = [Float](repeating: 0, count: fftSize / 2)
@@ -175,6 +188,16 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
                     values[band] /= Float(counts[band])
                     displayValues[band] = max(values[band], displayValues[band] * 0.80)
                 }
+                // Reuse the already-decoded PCM/spectrum, never load another copy of the song.
+                beatFrame.subBass = values[0..<4].reduce(0,+)/4
+                beatFrame.bass = values[4..<9].reduce(0,+)/5
+                beatFrame.lowMids = values[9..<15].reduce(0,+)/6
+                beatFrame.mids = values[15..<25].reduce(0,+)/10
+                beatFrame.highs = values[25..<32].reduce(0,+)/7
+                beatWaveDetector.process(beatFrame)
+                beatFrame.kickEventID = beatWaveDetector.eventID
+                beatFrame.kickEnvelope = beatWaveDetector.envelope
+                beatFrame.kickConfidence = beatWaveDetector.confidence
                 MusicHapticsManager.core.processRawBands(values)
             }
         }
@@ -209,7 +232,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         smoothedHighs += (rawHighs - smoothedHighs) * highsAlpha
         return SpectrumSnapshot(bands: displayValues, bass: smoothedBass,
                                 kick: kickEnvelope, mids: smoothedMids,
-                                highs: smoothedHighs, level: level)
+                                highs: smoothedHighs, level: level, beatWaveFrame: beatFrame)
     }
 
     func processStreamLevel(_ rawLevel: Float) -> Float? {
@@ -224,6 +247,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
         displayValues = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
         smoothedBass = 0; smoothedMids = 0; smoothedHighs = 0
         bassBaseline = 0; kickEnvelope = 0
+        beatWaveDetector.reset()
         lastPublish = .distantPast; streamLastPublish = .distantPast
         lock.unlock()
     }
