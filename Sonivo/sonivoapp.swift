@@ -122,15 +122,16 @@ struct NativeMiniPlayer: View {
     private var tapSide: CGFloat { max(44, min(controlSide, 56)) }
     private var track: Track? { player.displayTrack }
     private var isPlaying: Bool { player.isPlaying }
-    private var isLoading: Bool { player.isLoading }
+    @State private var showsWaitingStatus = false
+    private var isWaitingForAudio: Bool { player.isLoading || player.isBuffering }
     private var playbackFraction: Double {
         guard player.duration > 0 else { return 0 }
         return min(1, max(0, player.progress / player.duration))
     }
     private var statusText: String {
-        if let value = player.downloadProgress, player.isDownloading { return "Загрузка трека \(Int(value * 100))%" }
-        if let value = player.nextDownloadProgress, player.isNextDownloading { return "Следующий трек \(Int(value * 100))%" }
-        if isLoading { return "Подготовка полного трека…" }
+        if showsWaitingStatus && isWaitingForAudio {
+            return player.isBuffering ? "Буферизация…" : "Подключение…"
+        }
         return track?.artist ?? ""
     }
     var body: some View {
@@ -144,7 +145,7 @@ struct NativeMiniPlayer: View {
                             Text(track?.title ?? "").font(SN.rounded(.headline, .semibold)).foregroundStyle(SN.ink)
                                 .lineLimit(1).minimumScaleFactor(0.85)
                             Text(statusText).font(SN.rounded(.subheadline))
-                                .foregroundStyle((isLoading || player.isDownloading || player.isNextDownloading) ? SN.amber : SN.inkMuted)
+                                .foregroundStyle((showsWaitingStatus && isWaitingForAudio) ? SN.amber : SN.inkMuted)
                                 .lineLimit(1).minimumScaleFactor(0.85)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.contentShape(Rectangle())
@@ -153,24 +154,25 @@ struct NativeMiniPlayer: View {
                 .accessibilityLabel(track.map { "Открыть плеер: \($0.title)" } ?? "Открыть плеер")
                 Button(action: togglePlayback) {
                     Group {
-                        if isLoading { ProgressView().tint(SN.ink) }
-                        else { Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(SN.glyph(.bold)).foregroundStyle(SN.ink)
-                                .contentTransition(.symbolEffect(.replace)) }
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(SN.glyph(.bold)).foregroundStyle(SN.ink)
+                            .contentTransition(.symbolEffect(.replace))
                     }.frame(width: tapSide, height: tapSide).contentShape(Circle())
-                }.buttonStyle(TactileButtonStyle(scale: 0.92)).disabled(isLoading)
-                    .accessibilityLabel(isLoading ? "Загрузка трека" : (isPlaying ? "Пауза" : "Воспроизвести"))
+                }.buttonStyle(TactileButtonStyle(scale: 0.92))
+                    .accessibilityLabel(isPlaying ? "Пауза" : "Воспроизвести")
                 Button(action: nextTrack) {
                     Image(systemName: "forward.fill").font(SN.glyph(.bold)).foregroundStyle(SN.ink)
                         .frame(width: tapSide, height: tapSide).contentShape(Circle())
-                }.buttonStyle(TactileButtonStyle(scale: 0.92)).disabled(isLoading).accessibilityLabel("Следующий трек")
+                }.buttonStyle(TactileButtonStyle(scale: 0.92)).accessibilityLabel("Следующий трек")
             }
-            ZStack(alignment: .leading) {
-                if let buffered = player.downloadProgress ?? player.nextDownloadProgress,
-                   player.isDownloading || player.isNextDownloading {
-                    ProgressView(value: buffered).progressViewStyle(.linear).tint(SN.amber.opacity(0.55))
-                }
-                ProgressView(value: playbackFraction).progressViewStyle(.linear).tint(SN.ink)
-            }.scaleEffect(x: 1, y: 0.55)
+            ProgressView(value: playbackFraction).progressViewStyle(.linear).tint(SN.ink)
+                .scaleEffect(x: 1, y: 0.55)
+        }
+        .task(id: isWaitingForAudio) {
+            showsWaitingStatus = false
+            guard isWaitingForAudio else { return }
+            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
+            guard !Task.isCancelled, isWaitingForAudio else { return }
+            showsWaitingStatus = true
         }
         .frame(maxWidth: .infinity).padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 4)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1).contentShape(Rectangle())

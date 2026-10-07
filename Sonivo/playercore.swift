@@ -115,6 +115,16 @@ final class PlayerCore {
             if let data = try? JSONEncoder().encode(gains) { defaults.set(data, forKey: eqGainsKey) }
             defaults.set(true, forKey: "eq.octaveCurve.v2")
         }
+        // Upgrade only exact old factory bass curves; never overwrite a custom curve.
+        if !defaults.bool(forKey: "eq.bassProfiles.v3") {
+            if gains == [6, 5, 3, 1, 0, 0, 0, 0, 0, 0] {
+                gains = [8, 6, 2, -2, -1, 0, 0, 0, 0, 0]
+            } else if gains == [5, 4, 2, 0, -1, 0, 1, 2, 4, 4] {
+                gains = [6, 4.5, 1.5, -1, -1, 0, 1, 2, 3, 3]
+            }
+            if let data = try? JSONEncoder().encode(gains) { defaults.set(data, forKey: eqGainsKey) }
+            defaults.set(true, forKey: "eq.bassProfiles.v3")
+        }
         return (normalized(gains), enabled)
     }
     // EQ now owns measured headroom. Flat/off and spatial passthrough keep unity gain.
@@ -242,6 +252,8 @@ final class PlayerCore {
         localSegmentTokens.removeAll()
         for (player, token) in streamingTimeObservers { player.removeTimeObserver(token) }
         streamingTimeObservers.removeAll()
+        streamStatusObservers.removeAll()
+        isStreamBuffering = false
         streamingPlayerA.replaceCurrentItem(with: nil)
         streamingPlayerB.replaceCurrentItem(with: nil)
         if spectrumTapInstalled { engine.mainMixerNode.removeTap(onBus: 0) }
@@ -404,6 +416,8 @@ final class PlayerCore {
     private var rateReleaseTimer: Timer?
 
     var streamBufferFraction: Double = 0.0
+    private(set) var isStreamBuffering = false
+    @ObservationIgnored private var streamStatusObservers: [NSKeyValueObservation] = []
     private var failedPrebufferTrackId: UUID?
     private var lastPrebufferAttempt: Date?
 
@@ -483,7 +497,18 @@ final class PlayerCore {
     }
 
     private func setupStreamingPlayer() {
+        streamStatusObservers.removeAll()
         for p in [streamingPlayerA, streamingPlayerB] {
+            let isPlayerA = p === streamingPlayerA
+            streamStatusObservers.append(p.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let source = isPlayerA ? self.streamingPlayerA : self.streamingPlayerB
+                    guard source === self.activeStreamingPlayer else { return }
+                    self.isStreamBuffering = self.isUsingStreamPlayer && self.isPlaying &&
+                        source.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                }
+            })
             p.automaticallyWaitsToMinimizeStalling = false
             p.volume = volume * Self.streamHeadroomCeiling
 
@@ -492,6 +517,7 @@ final class PlayerCore {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     guard self.isUsingStreamPlayer, self.isPlaying, p === self.activeStreamingPlayer else { return }
+                    self.isStreamBuffering = p.timeControlStatus == .waitingToPlayAtSpecifiedRate
                     let sec = CMTimeGetSeconds(time)
                     if sec.isFinite && sec >= 0 {
                         self.progress = sec
@@ -1560,6 +1586,7 @@ final class PlayerCore {
         activeLocalURL = nil
         isUsingStreamPlayer = true
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        isStreamBuffering = true
         self.activeStreamURL = url
         self.currentTrack?.streamUrlString = url.absoluteString
         let item = AVPlayerItem(url: url)

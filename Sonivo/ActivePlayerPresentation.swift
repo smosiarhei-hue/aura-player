@@ -71,17 +71,12 @@ final class ActivePlayerPresentation {
     var duration: Double {
         legacy.duration
     }
-    var downloadProgress: Double? {
-        if legacy.currentTrack?.isStream == true {
-            return legacy.streamBufferFraction > 0 ? legacy.streamBufferFraction : nil
-        }
-        return 1
+    /// Buffered range is NOT a saved/offline download and is not a loading state.
+    var bufferedProgress: Double? {
+        guard legacy.usesStreamingBackend else { return nil }
+        return legacy.streamBufferFraction > 0 ? legacy.streamBufferFraction : nil
     }
-    var isDownloading: Bool {
-        legacy.streamBufferFraction < 0.99 && legacy.currentTrack?.isStream == true
-    }
-    var nextDownloadProgress: Double? { nil }
-    var isNextDownloading: Bool { false }
+    var isBuffering: Bool { legacy.usesStreamingBackend && legacy.isPlaying && legacy.isStreamBuffering }
     var queue: [Track] {
         get {
             legacy.queue

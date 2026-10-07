@@ -189,11 +189,14 @@ enum EQPresets {
     static let classical = EQPreset(name: "Классическая музыка", gains: [2, 2, 1, 0, 0, 0, 1, 2, 2, 1])
     static let club = EQPreset(name: "Клубная музыка", gains: [4, 4, 2, 0, -1, 0, 1, 2, 3, 2])
     static let dance = EQPreset(name: "Танцевальная музыка", gains: [5, 4, 2, 0, -1, 0, 2, 3, 3, 2])
-    static let bassBoost = EQPreset(name: "Усиление НЧ", gains: [6, 5, 3, 1, 0, 0, 0, 0, 0, 0])
-    static let bassTrebleBoost = EQPreset(name: "Усиление НЧ и ВЧ", gains: [5, 4, 2, 0, -1, 0, 1, 2, 4, 4])
+    // Taste profiles, not device calibration. Strong sub-bass without a 250 Hz hump.
+    static let airPodsPro2Bass = EQPreset(name: "AirPods Pro 2", gains: [6, 4.5, 1.5, -1, -0.5, 0, 0, 0, 0, 0])
+    static let bassBoost = EQPreset(name: "Глубокий бас", gains: [8, 6, 2, -2, -1, 0, 0, 0, 0, 0])
+    static let bassTrebleBoost = EQPreset(name: "Усиление НЧ и ВЧ", gains: [6, 4.5, 1.5, -1, -1, 0, 1, 2, 3, 3])
 
     static let all: [EQPreset] = [
         flat,
+        airPodsPro2Bass,
         classical,
         club,
         dance,

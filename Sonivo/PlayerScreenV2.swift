@@ -1787,7 +1787,7 @@ struct PlayerTimelineSection<Center: View>: View {
                         .fill(.white.opacity(isScrubbing ? 0.20 : 0.14))
                         .frame(height: trackHeight)
 
-                    if let bufferFraction = player.downloadProgress, bufferFraction > 0.005 {
+                    if let bufferFraction = player.bufferedProgress, bufferFraction > 0.005 {
                         Capsule(style: .continuous)
                             .fill(.white.opacity(isScrubbing ? 0.38 : 0.28))
                             .frame(

@@ -86,6 +86,22 @@ void destroy(void *p) { free(p); }
         for frequency in [31,63,125,250,500,1000,2000,4000,8000,16000,22000]:
             self.assertLessEqual(self.response(gains,frequency),-.85)
 
+    def test_bass_profiles_emphasize_subbass_without_low_mid_mud(self):
+        import re
+        models=(ROOT/'Sonivo/models.swift').read_text()
+        for name in ['airPodsPro2Bass','bassBoost']:
+            values=re.search(r'static let '+name+r' = EQPreset\(name: "[^"]+", gains: \[([^\]]+)\]',models).group(1)
+            gains=[float(x.strip()) for x in values.split(',')]
+            self.assertEqual(len(gains),10)
+            mid=self.response(gains,500)
+            self.assertGreater(self.response(gains,20)-mid,4)
+            self.assertGreater(self.response(gains,63)-mid,5)
+            self.assertLess(self.response(gains,250)-mid,2)
+            # High-level multitone: protection remains finite without channel clipping.
+            signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
+            output=self.run_audio(signal,gains)
+            self.assertTrue(all(math.isfinite(x) and abs(x)<=.99001 for x in output))
+
     def test_channels_do_not_crossmix_in_planar_or_interleaved_audio(self):
         for interleaved in [False,True]:
             frames=1024;channels=8;samples=[0.]*(frames*channels)
