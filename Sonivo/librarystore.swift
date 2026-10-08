@@ -25,7 +25,13 @@ enum LocalAudioImportError: LocalizedError {
 final class LibraryStore {
     static let shared = LibraryStore()
 
-    private(set) var tracks: [Track] = [] { didSet { persistTracks() } }
+    nonisolated static let tracksDidChange = Notification.Name("SonivoLibraryTracksDidChange")
+    private(set) var tracks: [Track] = [] {
+        didSet {
+            persistTracks()
+            NotificationCenter.default.post(name: Self.tracksDidChange, object: nil)
+        }
+    }
     private(set) var playlists: [Playlist] = [] { didSet { persistPlaylists() } }
     private(set) var isScanning = false
     /// True while a local file-picker import is copying/reading files, so the
@@ -228,6 +234,12 @@ final class LibraryStore {
 
     var favorites: [Track] {
         tracks.filter { $0.isFavorite }
+    }
+
+    /// Remote feedback specifies an absolute state; retries must not invert it again.
+    func setTrackFavorite(_ track: Track, isFavorite: Bool) {
+        guard isTrackFavorite(track) != isFavorite else { return }
+        toggleFavorite(track)
     }
 
     func toggleFavorite(_ track: Track) {

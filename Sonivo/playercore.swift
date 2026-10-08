@@ -79,6 +79,15 @@ nonisolated final class NowPlayingSessionObserver: NSObject, MPNowPlayingSession
     }
 }
 
+/// Remote callbacks may arrive off-main. Capture the advertised track under a tiny lock,
+/// then validate its identity on MainActor before changing the shared library.
+nonisolated private final class RemoteFavoriteSnapshot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var track: Track?
+    func publish(_ value: Track?) { lock.lock(); track = value; lock.unlock() }
+    func read() -> Track? { lock.lock(); defer { lock.unlock() }; return track }
+}
+
 @Observable
 @MainActor
 final class PlayerCore {
@@ -335,6 +344,9 @@ final class PlayerCore {
     private var nowPlayingSessionObserver: NowPlayingSessionObserver?
     private var nowPlayingActivationInFlight = false
     private var lastRemoteCommand: (name: String, date: Date)?
+    private let remoteFavoriteSnapshot = RemoteFavoriteSnapshot()
+    @ObservationIgnored private var favoriteCommandCenters: [MPRemoteCommandCenter] = []
+    @ObservationIgnored private var favoritesObserver: NSObjectProtocol?
     private var applicationIsActive = true
 
     @ObservationIgnored private var streamingPlayerA = AVPlayer()
@@ -447,6 +459,11 @@ final class PlayerCore {
         setupNowPlayingSession()
         loadSettings()
         setupRemoteCommandCenter()
+        favoritesObserver = NotificationCenter.default.addObserver(
+            forName: LibraryStore.tracksDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshFavoriteCommandState() }
+        }
         UIApplication.shared.beginReceivingRemoteControlEvents()
     }
 
@@ -887,8 +904,22 @@ final class PlayerCore {
         if let sessionCenter = nowPlayingSession?.remoteCommandCenter, sessionCenter !== MPRemoteCommandCenter.shared() {
             centers.append(sessionCenter)
         }
+        favoriteCommandCenters = centers
         for center in centers {
             configureRemoteCommands(center)
+        }
+    }
+
+    private func refreshFavoriteCommandState() {
+        let track = currentTrack
+        remoteFavoriteSnapshot.publish(track)
+        let favorite = track.map { LibraryStore.shared.isTrackFavorite($0) } ?? false
+        let l10n = SonivoL10n.shared
+        for center in favoriteCommandCenters {
+            center.likeCommand.isEnabled = track != nil
+            center.likeCommand.isActive = favorite
+            center.likeCommand.localizedTitle = favorite ? l10n.removeFromFavorites : l10n.addToFavorites
+            center.likeCommand.localizedShortTitle = l10n.isRussian ? "Избранное" : "Favorite"
         }
     }
 
@@ -906,10 +937,25 @@ final class PlayerCore {
         commandCenter.seekBackwardCommand.isEnabled = false
         commandCenter.changeRepeatModeCommand.isEnabled = false
         commandCenter.changeShuffleModeCommand.isEnabled = false
-        commandCenter.likeCommand.isEnabled = false
+        commandCenter.likeCommand.isEnabled = false // Enabled once an actual track is advertised.
         commandCenter.dislikeCommand.isEnabled = false
         commandCenter.bookmarkCommand.isEnabled = false
         commandCenter.ratingCommand.isEnabled = false
+
+        // Router replaces transport targets, not feedback. Install exactly one favorite target.
+        commandCenter.likeCommand.removeTarget(nil)
+        let snapshot = remoteFavoriteSnapshot
+        commandCenter.likeCommand.addTarget { [weak self] event in
+            guard let feedback = event as? MPFeedbackCommandEvent else { return .commandFailed }
+            guard let track = snapshot.read() else { return .noSuchContent }
+            let favorite = !feedback.isNegative
+            Task { @MainActor [weak self] in
+                guard let self, self.currentTrack?.id == track.id else { return }
+                LibraryStore.shared.setTrackFavorite(track, isFavorite: favorite)
+                self.refreshFavoriteCommandState()
+            }
+            return .success
+        }
 
         commandCenter.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in
@@ -966,6 +1012,7 @@ final class PlayerCore {
     }
 
     private func updateNowPlayingInfo() {
+        refreshFavoriteCommandState()
         guard let track = currentTrack else {
             publishNowPlaying(nil, state: .stopped)
             return
