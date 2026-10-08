@@ -35,6 +35,7 @@ struct PlayerScreenV2: View {
     @State private var videoShotTrackID: UUID?
     @ObservedObject private var aiVideoShotService = AIVideoShotGeneratorService.shared
     @State private var artworkPaletteColors: [Color] = []
+    @State private var resolvedArtworkPaletteTrackID: UUID?
     @State private var paletteTrackId: UUID?
     @State private var artworkTrackId: UUID?
     @State private var currentArtworkImage: UIImage?
@@ -871,17 +872,23 @@ struct PlayerScreenV2: View {
         let catalogTrack = track.flatMap { YandexMusicService.ymId(fromFileName: $0.fileName) } != nil
         let station = YandexMusicService.shared.activeStationId
         let isTrackRadio = station?.hasPrefix("track:") == true
+        // Only a palette extracted from this track's actual cover may tint the button.
+        let coverColors = resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors : []
+        let glassTint = coverColors.first?.opacity(0.12) ?? Color.clear
         return Button(action: startTrackWave) {
             HStack(spacing: 14) {
                 Image(systemName: "waveform")
                     .font(SN.text(.title2, .semibold))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(waveLoading ? "Настраиваем волну…" : "Моя волна")
+                    Text(waveLoading ? "Настраиваем волну…" : "Моя волна по текущему треку")
                         .font(SN.text(.headline, .bold))
-                    Text(catalogTrack ? "По текущему треку · Яндекс Музыка" : "Доступна для треков Яндекс Музыки")
-                        .font(SN.text(.caption, .medium))
                         .fixedSize(horizontal: false, vertical: true)
+                    if !catalogTrack {
+                        Text("Недоступна для этого трека")
+                            .font(SN.text(.caption, .medium))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if waveLoading {
@@ -894,22 +901,20 @@ struct PlayerScreenV2: View {
             .foregroundStyle(SN.ink)
             .padding(18)
             .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            .glassEffect(.regular.tint(glassTint).interactive(), in: .rect(cornerRadius: SN.radius))
             .background {
-                PlayerTrackWaveBackdrop(colors: palette, isPlaying: player.isPlaying)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: SN.radius, style: .continuous)
-                    .strokeBorder(SN.ink.opacity(0.16), lineWidth: 1)
+                // A transparent moving tint sits behind the system glass, not a painted card.
+                PlayerTrackWaveBackdrop(colors: coverColors, isPlaying: player.isPlaying)
+                    .clipShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
             }
             .contentShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
         }
-        .buttonStyle(CardPressStyle(scale: 1, haptic: false))
+        .buttonStyle(.plain)
         .disabled(!catalogTrack || waveLoading)
         .opacity(catalogTrack ? 1 : 0.55)
         .accessibilityLabel("Моя волна по текущему треку")
         .accessibilityValue(waveLoading ? "Загрузка рекомендаций" : (isTrackRadio ? "Волна по треку активна" : "Не запущена"))
-        .accessibilityHint("Заменяет следующие треки рекомендациями Яндекс Музыки, не прерывая текущую песню")
+        .accessibilityHint("Заменяет следующие треки волной по текущей песне, не прерывая её")
     }
 
     private var secondaryPlayerActions: some View {
@@ -1337,23 +1342,27 @@ struct PlayerScreenV2: View {
             .navigationTitle("Исполнители").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
     }
 
-    private func updatePalette(from image: UIImage) async {
+    private func updatePalette(from image: UIImage, trackID: UUID) async {
         let hexes = await Task.detached(priority: .utility) { LibraryStore.artworkPalette(from: image) }.value
+        guard !Task.isCancelled, track?.id == trackID, paletteTrackId == trackID else { return }
         let colors = hexes.compactMap(Color.init(hex:)); guard !colors.isEmpty else { return }
-        withAnimation(.easeInOut(duration: 0.85)) { artworkPaletteColors = colors }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.85)) {
+            artworkPaletteColors = colors
+            resolvedArtworkPaletteTrackID = trackID
+        }
     }
     private func refreshPalette() async {
-        guard let track, paletteTrackId != track.id else { return }
+        guard let track, paletteTrackId != track.id || resolvedArtworkPaletteTrackID != track.id else { return }
         paletteTrackId = track.id
         artworkTrackId = track.id
         if let image = LibraryStore.cachedArtworkImage(for: track) {
             currentArtworkImage = image
-            await updatePalette(from: image)
+            await updatePalette(from: image, trackID: track.id)
         } else if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) {
             LibraryStore.cacheArtworkImage(image, for: track)
             if paletteTrackId == track.id {
                 currentArtworkImage = image
-                await updatePalette(from: image)
+                await updatePalette(from: image, trackID: track.id)
             }
         } else {
             currentArtworkImage = nil
@@ -1577,7 +1586,7 @@ struct PlayerScreenV2: View {
                   PlayerCore.shared.playbackRequestID == playbackID, track?.id == current.id else { return }
             let waveTracks = tracks.filter { $0.id != current.id }
             guard !waveTracks.isEmpty else {
-                waveMessage = "Яндекс Музыка не вернула рекомендации. Попробуй ещё раз; текущая очередь сохранена."
+                waveMessage = "Не удалось настроить волну. Попробуй ещё раз; текущая очередь сохранена."
                 return
             }
             MoodRadioEngine.shared.activateYandexTrackWave(tracks: waveTracks)
@@ -2673,13 +2682,11 @@ private struct PlayerTrackWaveBackdrop: View {
     @State private var startedAt = Date()
 
     var body: some View {
-        let paint = colors.isEmpty ? [Color.purple, Color.blue] : colors
+        let paint = colors.isEmpty ? [Color.primary.opacity(0.18)] : colors
         let shouldAnimate = isVisible && isPlaying && scenePhase == .active && !reduceMotion
-        let base = SN.card
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldAnimate)) { timeline in
             let time = reduceMotion ? 0 : timeline.date.timeIntervalSince(startedAt) * 0.32
             Canvas { context, size in
-                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(base))
                 for index in 0..<3 {
                     let offset = Double(index) * 1.7
                     var path = Path()

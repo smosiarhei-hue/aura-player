@@ -47,6 +47,28 @@ class PlayerTrackWaveTests(unittest.TestCase):
     def test_button_is_accessible_and_loading_or_local_track_is_disabled(self):
         button=source('PlayerScreenV2.swift').split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
         for expected in ['Button(action: startTrackWave)','minHeight: 84','.disabled(!catalogTrack || waveLoading)','ProgressView()','.accessibilityValue(','.accessibilityHint(','.fixedSize(horizontal: false, vertical: true)']: self.assertIn(expected,button)
+    def test_button_is_native_glass_and_has_no_provider_brand(self):
+        button=source('PlayerScreenV2.swift').split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
+        self.assertIn('"Моя волна по текущему треку"',button)
+        self.assertNotIn('Яндекс',button)
+        self.assertIn('.glassEffect(.regular.tint(glassTint).interactive(), in: .rect(cornerRadius: SN.radius))',button)
+        self.assertIn('.buttonStyle(.plain)',button)
+        self.assertNotIn('.strokeBorder',button)
+        self.assertNotIn('.ultraThinMaterial',button)
+        self.assertIn('minHeight: 84',button)
+    def test_button_tint_uses_only_current_artwork_not_mood_or_random_palette(self):
+        text=source('PlayerScreenV2.swift')
+        button=text.split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
+        self.assertIn('resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors : []',button)
+        self.assertIn('coverColors.first?.opacity(0.12) ?? Color.clear',button)
+        self.assertIn('PlayerTrackWaveBackdrop(colors: coverColors',button)
+        update=text.split('private func updatePalette',1)[1].split('private func refreshPalette',1)[0]
+        self.assertIn('!Task.isCancelled, track?.id == trackID, paletteTrackId == trackID',update)
+        self.assertIn('resolvedArtworkPaletteTrackID = trackID',update)
+        backdrop=text.split('private struct PlayerTrackWaveBackdrop',1)[1]
+        self.assertIn('[Color.primary.opacity(0.18)]',backdrop)
+        self.assertNotIn('Color.purple',backdrop)
+        self.assertNotIn('SN.card',backdrop)
     def test_decorative_button_motion_is_local_and_stops_when_hidden(self):
         text=source('PlayerScreenV2.swift').split('private struct PlayerTrackWaveBackdrop',1)[1]
         for expected in ['scenePhase == .active && !reduceMotion','isVisible && isPlaying','minimumInterval: 1.0 / 30.0, paused: !shouldAnimate','.onScrollVisibilityChange','.onDisappear { isVisible = false }','Canvas {','.accessibilityHidden(true)']: self.assertIn(expected,text)
