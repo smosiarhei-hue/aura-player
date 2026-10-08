@@ -20,7 +20,7 @@ struct SonivoHomeRedesignedView: View {
     @State private var showShakeOverlay = false
     @State private var shakeTriggerCount = 0
     @State private var shakeHUDMessage = "Волна встряхнута!"
-    @State private var shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
+    @State private var shakeHUDDetail = "Свежие треки с выбранными настройками"
     @State private var lastShakeTimestamp: TimeInterval = 0
 
     private var moodStation: YandexMusicService.StationOption { ym.waveMoodStation }
@@ -335,8 +335,8 @@ struct SonivoHomeRedesignedView: View {
         }
     }
 
-    /// Логика встряхивания «Моей волны» (переключение на «Незнакомое», кинетический переход «Антигравити» и свежий поток)
-    private func triggerShakeWave(forceDiscover: Bool = true) {
+    /// Встряхивание обновляет поток без сброса выбранного характера, языка и настроения.
+    private func triggerShakeWave(forceDiscover: Bool = false) {
         guard scenePhase == .active && !showPlayer && !showSettings && !showAIAssistant,
               antigravity.phase == .idle, !showShakeOverlay else { return }
 
@@ -351,14 +351,11 @@ struct SonivoHomeRedesignedView: View {
         shakeTriggerCount += 1
         showShakeOverlay = true
 
-        // 3. Логика HUD
-        if forceDiscover || waveStore.diversity != .discover {
-            shakeHUDMessage = "Новый поток"
-            shakeHUDDetail = "Режим «Незнакомое» • Свежие открытия"
-        } else {
-            shakeHUDMessage = "Поток обновлен!"
-            shakeHUDDetail = "Свежие треки в «Незнакомом»"
-        }
+        // The explicit discovery card changes mode; an ordinary shake preserves settings.
+        shakeHUDMessage = forceDiscover ? "Новый поток" : "Поток обновлён!"
+        let diversity = forceDiscover ? WaveDiversity.discover : waveStore.diversity
+        shakeHUDDetail = "\(diversity.title) • \(waveStore.language.title) • \(waveStore.moodEnergy.title)"
+
     }
 
     // Proximity sensor disabled per user request: proximityState remains false so phone calls mode is never triggered

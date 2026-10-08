@@ -224,7 +224,7 @@ final class AntigravityTransitionManager {
     }
 
     /// Refresh the queue only. ShaderShakeOverlayView owns all visual/haptic feedback.
-    func triggerShift(forceDiscover: Bool = true) {
+    func triggerShift(forceDiscover: Bool = false) {
         guard isAppActive && !isModalActive && isOnMainScreen else { return }
         let now = CACurrentMediaTime()
         guard now - lastTriggerTimestamp > 2.6, phase == .idle else { return }
@@ -233,7 +233,7 @@ final class AntigravityTransitionManager {
         Task {
             await AntigravityAudioFader.shared.performCrossfade {
                 let waveStore = WaveSettingsStore.shared
-                if forceDiscover || waveStore.diversity != .discover {
+                if forceDiscover {
                     waveStore.diversity = .discover
                 }
                 let request = PlayerCore.shared.playbackRequestID

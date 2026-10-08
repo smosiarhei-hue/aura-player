@@ -24,7 +24,9 @@ enum SN {
     static let radiusLarge: CGFloat = 28
 
     // MARK: Canvas — system semantic colors resolve safely in SwiftUI rendering.
-    private static func surface(light: UIColor, dark: UIColor) -> Color {
+    // UIKit resolves this provider on SwiftUI's AsyncRenderer too, not only MainActor.
+    // No app state/UI mutation is captured: only the supplied immutable colors and traits.
+    private nonisolated static func surface(light: UIColor, dark: UIColor) -> Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? dark : light
         })

@@ -473,5 +473,7 @@ print("Beat Waves Swift physics, presentation and cosmetic light checks passed")
             self.assertEqual(compiled.returncode,0,compiled.stderr)
             checked=subprocess.run([str(p/'checks')],capture_output=True,text=True)
             self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)
+            from check_surface_provider_sil import verify_surface_provider
+            verify_surface_provider(ROOT)
 
 if __name__=='__main__': unittest.main()
