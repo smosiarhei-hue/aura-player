@@ -167,6 +167,7 @@ final class MoodRadioEngine {
 
     // Состояние сессии «Моей волны по треку»
     private(set) var isTrackWaveActive: Bool = false
+    private var moodRequestID = UUID()
     private(set) var trackWaveSeed: Track? = nil
     private(set) var trackWaveVector: TrackVector = MoodPreset.dreamy.baseVector
     private(set) var sessionPlayedKeys: Set<String> = []
@@ -200,6 +201,8 @@ final class MoodRadioEngine {
     // MARK: - API: Старт радио по настроению (POST /mood/start)
 
     func start(mood: MoodPreset) {
+        let requestID = UUID()
+        moodRequestID = requestID
         if mood == .discover {
             WaveSettingsStore.shared.diversity = .discover
         }
@@ -224,9 +227,11 @@ final class MoodRadioEngine {
 
         // 2. Асинхронно дозапрашиваем официальную станцию Яндекса под это настроение (например, activity:workout)
         Task {
+            guard self.moodRequestID == requestID, self.activeMood == mood else { return }
             let stationId = stationIdForMood(mood)
             let ym = YandexMusicService.shared
             let rotorTracks = await ym.buildWaveQueue(stationId: stationId, target: 45)
+            guard self.moodRequestID == requestID, self.activeMood == mood else { return }
             let unplayed = rotorTracks.filter { !ym.isRecentlyPlayed(ymTrackId: $0.id) }
             let picked = unplayed.isEmpty ? rotorTracks.shuffled() : unplayed
             let existing = Set(self.queue.map { PlayerCore.yandexTrackID(from: $0) })
@@ -260,10 +265,21 @@ final class MoodRadioEngine {
         startTrackWave(seed: seed, initialTracks: [])
     }
 
+    /// Server-managed track radio must not enter the local vibe/refill engine.
+    func activateYandexTrackWave(tracks: [Track]) {
+        moodRequestID = UUID()
+        isTrackWaveActive = false
+        activeMood = nil
+        trackWaveSeed = nil
+        queue = tracks
+        ActivePlayerPresentation.shared.replaceUpcomingQueue(with: tracks)
+    }
+
     /// Старт «Моей волны по треку»: инициализирует аудио-вектор вайба,
     /// запоминает историю сыгранных артистов и треков, и мгновенно
     /// переключает предстоящую очередь в плеере на сгенерированную волну.
     func startTrackWave(seed: Track, initialTracks: [Track]) {
+        moodRequestID = UUID()
         isTrackWaveActive = true
         activeMood = nil
         trackWaveSeed = seed

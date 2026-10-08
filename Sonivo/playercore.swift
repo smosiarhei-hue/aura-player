@@ -1246,12 +1246,16 @@ final class PlayerCore {
             let requestToken = generation
             Task { @MainActor in
                 let wave: [Track]
-                if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                let wasLocalTrackWave = MoodRadioEngine.shared.isTrackWaveActive && YandexMusicService.shared.activeStationId?.hasPrefix("track:") != true
+                if YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                    wave = await YandexMusicService.shared.refillYandexTrackWave(target: 20)
+                } else if MoodRadioEngine.shared.isTrackWaveActive {
                     wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
                 } else {
                     wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
                 }
                 guard self.generation == requestToken, self.currentTrack?.id == cur.id, self.isPlaying else { return }
+                guard !wasLocalTrackWave || YandexMusicService.shared.activeStationId?.hasPrefix("track:") != true else { return }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id }
                 if let first = fresh.first {
@@ -2211,12 +2215,16 @@ final class PlayerCore {
             Task { @MainActor in
                 defer { finishBgTask() }
                 let wave: [Track]
-                if MoodRadioEngine.shared.isTrackWaveActive || YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                let wasLocalTrackWave = MoodRadioEngine.shared.isTrackWaveActive && YandexMusicService.shared.activeStationId?.hasPrefix("track:") != true
+                if YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
+                    wave = await YandexMusicService.shared.refillYandexTrackWave(target: 20)
+                } else if MoodRadioEngine.shared.isTrackWaveActive {
                     wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
                 } else {
                     wave = await YandexMusicService.shared.buildTrackWave(from: current, target: 20)
                 }
                 guard self.generation == requestToken, self.currentTrack?.id == current.id, self.isPlaying else { return }
+                guard !wasLocalTrackWave || YandexMusicService.shared.activeStationId?.hasPrefix("track:") != true else { return }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id }
                 guard !fresh.isEmpty else {
@@ -2258,7 +2266,14 @@ final class PlayerCore {
             guard let self, self.currentTrack != nil else { return }
             let ym = YandexMusicService.shared
             let rawTracks: [Track]
-            if MoodRadioEngine.shared.isTrackWaveActive || ym.activeStationId?.hasPrefix("track:") == true {
+            let playbackID = self.playbackRequestID
+            let sessionID = ym.rotorSessionID
+            let refillingTrackStation = ym.activeStationId?.hasPrefix("track:") == true
+            let stationBefore = ym.activeStationId
+            let startingStation = stationBefore == nil && !MoodRadioEngine.shared.isTrackWaveActive
+            if ym.activeStationId?.hasPrefix("track:") == true {
+                rawTracks = await ym.refillYandexTrackWave(target: 25)
+            } else if MoodRadioEngine.shared.isTrackWaveActive {
                 rawTracks = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 25)
             } else if let station = ym.activeStationId {
                 let rotorTracks = await ym.buildWaveQueue(stationId: station, target: 25)
@@ -2269,7 +2284,11 @@ final class PlayerCore {
             } else {
                 rawTracks = await ym.buildTrackWave(from: seed, target: 20)
             }
-            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
+            guard self.playbackRequestID == playbackID, self.currentTrack?.id == current.id else { return }
+            guard !refillingTrackStation || ym.rotorSessionID == sessionID else { return }
+            guard startingStation || ym.activeStationId == stationBefore else { return }
+            let serverOrdered = ym.activeStationId?.hasPrefix("track:") == true
+            let ranked = serverOrdered ? rawTracks : UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
             let fresh = ranked.filter { !existing.contains($0.id) && $0.id != current.id && !UserTasteEngine.shared.isDisliked(track: $0) }
             guard !fresh.isEmpty else { return }

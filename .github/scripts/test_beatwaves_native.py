@@ -475,5 +475,7 @@ print("Beat Waves Swift physics, presentation and cosmetic light checks passed")
             self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)
             from check_surface_provider_sil import verify_surface_provider
             verify_surface_provider(ROOT)
+            from check_yandex_track_station import verify_yandex_track_station
+            verify_yandex_track_station(ROOT)
 
 if __name__=='__main__': unittest.main()

@@ -1275,7 +1275,7 @@ private func playTrackWave(from track: Track) {
         let tracks = await YandexMusicService.shared.buildTrackWave(from: track, target: 45)
         guard let first = tracks.first else { return }
         PlaybackCommandRouter.shared.play(first, queue: tracks)
-        MoodRadioEngine.shared.startTrackWave(seed: track, initialTracks: tracks)
+        MoodRadioEngine.shared.activateYandexTrackWave(tracks: tracks)
     }
 }
 

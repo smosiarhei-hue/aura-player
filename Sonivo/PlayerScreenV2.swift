@@ -26,6 +26,8 @@ struct PlayerScreenV2: View {
     @State private var waveLoading = false
     @State private var waveActive = false
     @State private var waveMessage: String?
+    @State private var trackWaveTask: Task<Void, Never>?
+    @State private var trackWaveRequestID = UUID()
     @State private var videoShotURL: URL?
     @State private var isVideoShotEnabled = UserDefaults.standard.object(forKey: "sonivo_videoshot_enabled") as? Bool ?? false
     @State private var videoLooperPlayer: AVQueuePlayer?
@@ -109,7 +111,6 @@ struct PlayerScreenV2: View {
             let totalHeight = geo.size.height
             let totalWidth = geo.size.width
             let topInset = max(geo.safeAreaInsets.top, 50)
-            let artworkTopOffset = topInset + 44
             let standardArtworkStageHeight = isFullScreenVideoShot
                 ? (totalHeight * 0.55)
                 : min(totalWidth - 40, totalHeight * 0.44)
@@ -133,29 +134,25 @@ struct PlayerScreenV2: View {
                     .transition(.opacity)
                     .zIndex(2)
                 } else {
-                    artworkStage(width: totalWidth, height: standardArtworkStageHeight)
-                        .frame(width: totalWidth, height: standardArtworkStageHeight, alignment: .center)
-                        .padding(.top, artworkTopOffset)
-                        .transition(.scale(scale: 0.92, anchor: .top).combined(with: .opacity))
-
                     VStack(spacing: 0) {
                         topHeader
                             .padding(.top, topInset)
                             .padding(.horizontal, 20)
+                            // Dismiss only from the header; a content scroll must not close the player.
+                            .simultaneousGesture(playerDismissGesture)
+                            .zIndex(3)
 
-                        Spacer(minLength: 0)
-
-                        if let waveMessage {
-                            Text(waveMessage)
-                                .font(SN.text(.caption, .semibold))
-                                .foregroundStyle(SN.ink)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .glassCapsule()
-                                .padding(.bottom, 6)
+                        ScrollView(.vertical) {
+                            VStack(spacing: 0) {
+                                artworkStage(width: totalWidth, height: standardArtworkStageHeight)
+                                    .frame(width: totalWidth, height: standardArtworkStageHeight)
+                                    .padding(.top, 12)
+                                lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-
-                        lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
+                        .scrollIndicators(.hidden)
+                        .accessibilityLabel("Плеер и дополнительные действия")
                     }
                     .transition(.opacity)
                 }
@@ -183,27 +180,6 @@ struct PlayerScreenV2: View {
         }
         .ignoresSafeArea()
         .background(SN.bg.ignoresSafeArea())
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 15)
-                .onChanged { value in
-                    guard value.translation.height > 0,
-                          value.translation.height > abs(value.translation.width) * 1.25,
-                          !showLyricsMode else { return }
-                    dismissOffsetY = value.translation.height
-                }
-                .onEnded { value in
-                    guard dismissOffsetY > 0 else { return }
-                    let threshold: CGFloat = 110
-                    let projected = value.predictedEndTranslation.height
-                    if value.translation.height > threshold || projected > 240 {
-                        close()
-                    } else {
-                        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                            dismissOffsetY = 0
-                        }
-                    }
-                }
-        )
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -239,6 +215,10 @@ struct PlayerScreenV2: View {
             }
         }
         .onChange(of: track?.id) { _, _ in
+            trackWaveTask?.cancel()
+            trackWaveRequestID = UUID()
+            waveLoading = false
+            waveMessage = nil
             lyrics = nil
             cachedPhrases = []
             lyricsLoading = true
@@ -274,8 +254,28 @@ struct PlayerScreenV2: View {
             }
         }
         .onDisappear {
+            trackWaveTask?.cancel()
+            trackWaveRequestID = UUID()
             teardownVideoLooper()
         }
+    }
+
+    private var playerDismissGesture: some Gesture {
+        DragGesture(minimumDistance: 15)
+            .onChanged { value in
+                guard value.translation.height > 0,
+                      value.translation.height > abs(value.translation.width) * 1.25,
+                      !showLyricsMode else { return }
+                dismissOffsetY = value.translation.height
+            }
+            .onEnded { value in
+                guard dismissOffsetY > 0 else { return }
+                if value.translation.height > 110 || value.predictedEndTranslation.height > 240 {
+                    close()
+                } else {
+                    withAnimation(reduceMotion ? nil : SN.spring) { dismissOffsetY = 0 }
+                }
+            }
     }
 
     private var isFullScreenVideoShot: Bool {
@@ -818,7 +818,105 @@ struct PlayerScreenV2: View {
             FluidVolumeSlider()
                 .accessibilityElement(children: .contain)
 
-            // Apple Design Bottom Action Bar: Lyrics | AirPlay | Sleep Timer | EQ | Queue
+            trackWaveButton
+
+            if let waveMessage {
+                Text(waveMessage)
+                    .font(SN.text(.caption, .semibold))
+                    .foregroundStyle(SN.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Label("Действия ниже", systemImage: "chevron.down")
+                .font(SN.text(.caption, .medium))
+                .foregroundStyle(SN.inkMuted)
+                .padding(.top, 4)
+            secondaryPlayerActions
+                .padding(.top, 24)
+
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, max(safeAreaBottom, 20))
+        .frame(maxWidth: .infinity)
+        .background {
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial.opacity(0.50))
+                Color.black.opacity(0.35)
+                if let tint = palette.first {
+                    tint.opacity(0.08)
+                }
+            }
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .clear, location: 0.12),
+                        .init(color: .black.opacity(0.40), location: 0.35),
+                        .init(color: .black.opacity(0.80), location: 0.65),
+                        .init(color: .black, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .ignoresSafeArea(edges: .bottom)
+        }
+    }
+
+    private var trackWaveButton: some View {
+        let catalogTrack = track.flatMap { YandexMusicService.ymId(fromFileName: $0.fileName) } != nil
+        let station = YandexMusicService.shared.activeStationId
+        let isTrackRadio = station?.hasPrefix("track:") == true
+        return Button(action: startTrackWave) {
+            HStack(spacing: 14) {
+                Image(systemName: "waveform")
+                    .font(SN.text(.title2, .semibold))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(waveLoading ? "Настраиваем волну…" : "Моя волна")
+                        .font(SN.text(.headline, .bold))
+                    Text(catalogTrack ? "По текущему треку · Яндекс Музыка" : "Доступна для треков Яндекс Музыки")
+                        .font(SN.text(.caption, .medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if waveLoading {
+                    ProgressView().tint(SN.ink)
+                } else {
+                    Image(systemName: isTrackRadio ? "checkmark" : "arrow.right")
+                        .accessibilityHidden(true)
+                }
+            }
+            .foregroundStyle(SN.ink)
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            .background {
+                PlayerTrackWaveBackdrop(colors: palette, isPlaying: player.isPlaying)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: SN.radius, style: .continuous)
+                    .strokeBorder(SN.ink.opacity(0.16), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
+        }
+        .buttonStyle(CardPressStyle(scale: 1, haptic: false))
+        .disabled(!catalogTrack || waveLoading)
+        .opacity(catalogTrack ? 1 : 0.55)
+        .accessibilityLabel("Моя волна по текущему треку")
+        .accessibilityValue(waveLoading ? "Загрузка рекомендаций" : (isTrackRadio ? "Волна по треку активна" : "Не запущена"))
+        .accessibilityHint("Заменяет следующие треки рекомендациями Яндекс Музыки, не прерывая текущую песню")
+    }
+
+    private var secondaryPlayerActions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Дополнительно")
+                .font(SN.text(.caption, .semibold))
+                .foregroundStyle(SN.inkMuted)
+            // Existing native actions remain below the primary track-wave button.
             HStack(spacing: 0) {
                 GlassIconButton(
                     systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble",
@@ -857,34 +955,7 @@ struct PlayerScreenV2: View {
             }
             .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, max(safeAreaBottom, 20))
-        .frame(maxWidth: .infinity)
-        .background {
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial.opacity(0.50))
-                Color.black.opacity(0.35)
-                if let tint = palette.first {
-                    tint.opacity(0.08)
-                }
-            }
-            .mask {
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .clear, location: 0.12),
-                        .init(color: .black.opacity(0.40), location: 0.35),
-                        .init(color: .black.opacity(0.80), location: 0.65),
-                        .init(color: .black, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-            .ignoresSafeArea(edges: .bottom)
-        }
+        .accessibilityElement(children: .contain)
     }
 
     private var sleepTimerBottomButton: some View {
@@ -1131,7 +1202,7 @@ struct PlayerScreenV2: View {
                 } label: {
                     Label("AI Вайб-волна (похожие по вайбу)", systemImage: "sparkles")
                 }
-                .disabled(track == nil || AIDJService.shared.isVibeWaveGenerating)
+                .disabled(track == nil || waveLoading || AIDJService.shared.isVibeWaveGenerating)
 
                 if videoShotURL != nil {
                     Button {
@@ -1488,23 +1559,34 @@ struct PlayerScreenV2: View {
         Task { let result = await YandexMusicService.shared.resolvePlayerArtists(for: track); resolvingArtist = false; artistChoices = result; if result.count == 1 { selectedArtist = result[0] } else if !result.isEmpty { activeModal = .artistSelection } }
     }
     private func startTrackWave() {
-        guard let current = track else { return }; waveLoading = true
-        waveActive = true
-        Task {
-            let tracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45)
-            await MainActor.run {
-                waveLoading = false
-                let waveTracks = tracks.filter { $0.id != current.id }
-                MoodRadioEngine.shared.startTrackWave(seed: current, initialTracks: waveTracks)
-                waveMessage = "🌊 Моя волна по треку запущена"
+        guard !waveLoading, let current = track,
+              YandexMusicService.ymId(fromFileName: current.fileName) != nil else { return }
+        let requestID = UUID()
+        trackWaveRequestID = requestID
+        let playbackID = PlayerCore.shared.playbackRequestID
+        waveLoading = true
+        waveMessage = nil
+        trackWaveTask?.cancel()
+        trackWaveTask = Task { @MainActor in
+            defer {
+                if trackWaveRequestID == requestID { waveLoading = false }
             }
-            try? await Task.sleep(for: .seconds(2.5))
-            await MainActor.run { waveMessage = nil }
+            let tracks = await YandexMusicService.shared.buildTrackWave(from: current, target: 45)
+            guard !Task.isCancelled, trackWaveRequestID == requestID,
+                  PlayerCore.shared.playbackRequestID == playbackID, track?.id == current.id else { return }
+            let waveTracks = tracks.filter { $0.id != current.id }
+            guard !waveTracks.isEmpty else {
+                waveMessage = "Яндекс Музыка не вернула рекомендации. Попробуй ещё раз; текущая очередь сохранена."
+                return
+            }
+            MoodRadioEngine.shared.activateYandexTrackWave(tracks: waveTracks)
+            waveActive = true
+            waveMessage = "Волна по треку запущена. Текущая песня продолжает играть."
         }
     }
 
     private func startAIVibeWave() {
-        guard let current = track else { return }
+        guard !waveLoading, let current = track else { return }
         waveLoading = true
         waveMessage = "✨ AI подбирает треки по вайбу..."
         Task {
@@ -2578,3 +2660,46 @@ struct PlayerAmbientCoverGlow: View {
 
 #Preview("Full player") { PlayerScreenV2(isPresented: .constant(true)) }
 #Preview("Timeline") { PlayerTimelineSection(player: ActivePlayerPresentation()) { EmptyView() }.padding() }
+
+// Lightweight, self-contained decoration: no second Metal renderer or audio probe.
+// This slow flow communicates an animated control, not a fabricated beat clock.
+private struct PlayerTrackWaveBackdrop: View {
+    let colors: [Color]
+    let isPlaying: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isVisible = false
+    @State private var startedAt = Date()
+
+    var body: some View {
+        let paint = colors.isEmpty ? [Color.purple, Color.blue] : colors
+        let shouldAnimate = isVisible && isPlaying && scenePhase == .active && !reduceMotion
+        let base = SN.card
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldAnimate)) { timeline in
+            let time = reduceMotion ? 0 : timeline.date.timeIntervalSince(startedAt) * 0.32
+            Canvas { context, size in
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(base))
+                for index in 0..<3 {
+                    let offset = Double(index) * 1.7
+                    var path = Path()
+                    path.move(to: CGPoint(x: 0, y: size.height))
+                    for step in 0...24 {
+                        let x = Double(step) / 24
+                        let y = 0.64 + sin(x * 5.4 + time + offset) * 0.18
+                        path.addLine(to: CGPoint(x: size.width * x, y: size.height * y))
+                    }
+                    path.addLine(to: CGPoint(x: size.width, y: size.height))
+                    path.closeSubpath()
+                    context.fill(path, with: .linearGradient(
+                        Gradient(colors: [paint[index % paint.count].opacity(0.32), paint[(index + 1) % paint.count].opacity(0.08)]),
+                        startPoint: .zero, endPoint: CGPoint(x: size.width, y: size.height)))
+                }
+            }
+        }
+        .onScrollVisibilityChange(threshold: 0.1) { isVisible = $0 }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}

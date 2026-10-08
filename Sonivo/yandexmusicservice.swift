@@ -33,6 +33,8 @@ final class YandexMusicService {
     private var artistCounts: [String: Int] = [:]
     private(set) var activeStationId: String?
     private var lastBatchId: String?
+    private(set) var rotorSessionID = UUID()
+    private var trackStationRequestID = UUID()
 
     /// Выбранное настроение волны (stationId ротора).
     var waveMoodStationId: String = "user:onyourwave" {
@@ -776,7 +778,96 @@ final class YandexMusicService {
         return stations
     }
 
+    /// Strict track-station API. No chart, artist, local taste or AI fallback.
+    /// Requests have no side effects until the caller/session is still current.
+    private func requestTrackStationQueue(
+        stationId: String, target: Int, history: [String]
+    ) async -> (items: [YMTrackItem], batchID: String?) {
+        guard stationId.hasPrefix("track:"), target > 0 else { return ([], nil) }
+        var seen = Set(history)
+        var queueIDs = history
+        var result: [YMTrackItem] = []
+        var batchID: String?
+        let settings = WaveSettingsStore.shared
+        // Capture the server-side filters once; never re-rank its returned sequence.
+        let diversity = settings.diversity.rotorValue
+        let language = settings.language.rotorValue
+        let moodEnergy = settings.moodEnergy.rotorValue
+        struct Response: Decodable {
+            struct Batch: Decodable {
+                struct Entry: Decodable { let track: YMTrackItem? }
+                let sequence: [Entry]?
+                let batchId: String?
+            }
+            let result: Batch?
+        }
+        do {
+            for _ in 0..<7 {
+                try Task.checkCancellation()
+                guard var url = URLComponents(string: Self.apiBase + "/rotor/station/" + stationId + "/tracks") else { return ([], nil) }
+                url.queryItems = [
+                    URLQueryItem(name: "settings2", value: "true"),
+                    URLQueryItem(name: "queue", value: queueIDs.suffix(400).joined(separator: ",")),
+                    URLQueryItem(name: "diversity", value: diversity),
+                    URLQueryItem(name: "language", value: language),
+                    URLQueryItem(name: "moodEnergy", value: moodEnergy)
+                ]
+                guard let endpoint = url.url else { return ([], nil) }
+                let (data, response) = try await URLSession.shared.data(for: authorizedRequest(url: endpoint))
+                try Task.checkCancellation()
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return ([], nil) }
+                let decoded = try JSONDecoder().decode(Response.self, from: data)
+                guard let batch = decoded.result else { return ([], nil) }
+                let items = Self.playable((batch.sequence ?? []).compactMap { $0.track })
+                if items.isEmpty { break }
+                let before = result.count
+                for item in items {
+                    guard seen.insert(item.id).inserted else { continue }
+                    queueIDs.append(item.id)
+                    result.append(item)
+                }
+                batchID = batch.batchId
+                if result.count >= target || result.count == before { break }
+            }
+        } catch {
+            // A failed/incomplete fetch must not silently substitute another station.
+            return ([], nil)
+        }
+        return (Array(result.prefix(target)), batchID)
+    }
+
+    func startYandexTrackStation(seedID: String, target: Int) async -> [Track] {
+        guard !seedID.isEmpty else { return [] }
+        let requestID = UUID()
+        trackStationRequestID = requestID
+        let sessionID = rotorSessionID
+        let playbackID = PlayerCore.shared.playbackRequestID
+        let station = "track:\(seedID)"
+        let batch = await requestTrackStationQueue(stationId: station, target: target, history: [seedID])
+        guard !Task.isCancelled, trackStationRequestID == requestID,
+              rotorSessionID == sessionID, PlayerCore.shared.playbackRequestID == playbackID,
+              !batch.items.isEmpty else { return [] }
+        beginStationSession(station)
+        lastBatchId = batch.batchID
+        return batch.items.map { convertToTrack($0) }
+    }
+
+    func refillYandexTrackWave(target: Int = 25) async -> [Track] {
+        guard let station = activeStationId, station.hasPrefix("track:") else { return [] }
+        let sessionID = rotorSessionID
+        let history = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
+        let batch = await requestTrackStationQueue(stationId: station, target: target, history: history)
+        guard !Task.isCancelled, rotorSessionID == sessionID, activeStationId == station else { return [] }
+        if !batch.items.isEmpty { lastBatchId = batch.batchID }
+        return batch.items.map { convertToTrack($0) }
+    }
+
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
+        // Direct track-radio callers also must not fall back to the chart.
+        if stationId.hasPrefix("track:") {
+            let batch = await requestTrackStationQueue(stationId: stationId, target: 25, history: [])
+            return batch.items
+        }
         beginStationSession(stationId)
         let queueSeed = recentYmIDs.suffix(40).joined(separator: ",")
         let batch = await fetchRotorBatch(stationId: stationId, queueSeed: queueSeed.isEmpty ? nil : queueSeed)
@@ -902,6 +993,7 @@ final class YandexMusicService {
     }
 
     private func fetchRotorBatch(stationId: String, queueSeed: String?) async -> [YMTrackItem] {
+        let sessionID = rotorSessionID
         guard var comps = URLComponents(string: Self.apiBase + "/rotor/station/" + stationId + "/tracks") else { return [] }
         var items = [URLQueryItem(name: "settings2", value: "true")]
         if let queueSeed { items.append(URLQueryItem(name: "queue", value: queueSeed)) }
@@ -934,6 +1026,7 @@ final class YandexMusicService {
         }
 
         guard let resp = try? JSONDecoder().decode(StationResponse.self, from: pair.0) else { return [] }
+        guard rotorSessionID == sessionID, activeStationId == stationId else { return [] }
         if let batch = resp.result?.batchId { lastBatchId = batch }
         let list = (resp.result?.sequence ?? []).compactMap { $0.track }
         return Self.playable(list)
@@ -986,11 +1079,15 @@ final class YandexMusicService {
     }
 
     func beginStationSession(_ stationId: String) {
+        rotorSessionID = UUID()
+        lastBatchId = nil
         activeStationId = stationId
         Task { await sendRotorFeedback(stationId: stationId, type: "radioStarted") }
     }
 
     func endStationSession() {
+        rotorSessionID = UUID()
+        lastBatchId = nil
         activeStationId = nil
     }
 
