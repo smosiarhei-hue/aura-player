@@ -72,9 +72,9 @@ float3 ferroPalette(float h,constant BeatWaveUniforms &u) {
 float4 evalFerrofluid(float2 uvSample,constant BeatWaveUniforms &u) {
     const float scale=1.6;
     const float fluidity=0.1;
-    const float sharpness=2.5;
-    const float shimmer=1.5;
-    const float glow=2.0;
+    const float sharpness=1.8;
+    const float shimmer=1.05;
+    const float glow=3.0;
     float ref=700.0/scale;
     float2 p=uvSample*uResolution/max(uResolution.y,1.0)*ref;
     float t = uPhase; // Existing audible-energy integral, not a new wall clock/BPM oscillator.

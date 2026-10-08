@@ -95,7 +95,7 @@ class BeatWaveNativeTests(unittest.TestCase):
         for item in ['ferroHash','ferroSinlerp','ferroDomainBlend','ferroSmoothMin',
                      '(2.0*n0+1.5*n1+1.25*n2+1.125*n3+n4)/7.0',
                      'p-cell*s','const float scale=1.6','const float fluidity=0.1',
-                     'const float sharpness=2.5','float t = uPhase;',
+                     'const float sharpness=1.8','float t = uPhase;',
                      'rimWidth=0.20+punch*0.055','clamp(uSpringDeform,-0.15,0.15)*0.08']:
             self.assertIn(item,m)
         self.assertNotIn('neuralStrand',m)
@@ -155,6 +155,21 @@ class BeatWaveNativeTests(unittest.TestCase):
         r=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
         self.assertNotIn('setFragmentTexture',r)
         self.assertEqual(r.count('setFragmentBytes'),1)
+
+    def test_ferrofluid_visibility_gain_is_monotonic_without_extra_pass(self):
+        import math
+        m=(ROOT/'Sonivo/BeatWave.metal').read_text()
+        for item in ['const float sharpness=1.8','const float shimmer=1.05',
+                     'const float glow=3.0','float rimWidth=0.20+punch*0.055']:
+            self.assertIn(item,m)
+        # Same field coordinates/band: reveal weaker rims rather than inject extra motion.
+        for band in [i/20 for i in range(21)]:
+            for noise in [i/20 for i in range(21)]:
+                before=max(0,min(1,band-noise*1.5))**2.5*2
+                after=max(0,min(1,band-noise*1.05))**1.8*3
+                self.assertTrue(math.isfinite(after))
+                self.assertGreaterEqual(after+1e-12,before)
+        self.assertEqual(m.count('fragment float4'),1)
 
     def test_artwork_palette_reaches_uniforms_and_stale_cover_cannot_win(self):
         w=(ROOT/'Sonivo/MusicWaveBackground.swift').read_text()
