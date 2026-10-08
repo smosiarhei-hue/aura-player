@@ -137,7 +137,7 @@ final class PlayerCore {
         }
         return (normalized(gains), enabled)
     }
-    // EQ now owns measured headroom. Flat/off and spatial passthrough keep unity gain.
+    // EQ boosts retain unity preamp by request. Flat/off and spatial passthrough stay unchanged.
     private static let streamHeadroomCeiling: Float = 1.0
 
     private(set) var isPlaying = false
@@ -635,6 +635,8 @@ final class PlayerCore {
         vocalUnit.bands[0].bypass = true
         engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
         engine.attach(outputLimiter)
+        // User-requested unprotected output; keep graph wiring stable across route/reset changes.
+        outputLimiter.bypass = true
         engine.connect(vocalUnit, to: outputLimiter, format: nil)
         engine.connect(outputLimiter, to: engine.outputNode, format: nil)
         VocalIsolationManager.shared.attach(to: vocalUnit)

@@ -79,12 +79,27 @@ void destroy(void *p) { free(p); }
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)
         self.assertGreater(self.response(treble,22000)-self.response(treble,1000),5.5)
 
-    def test_overlapping_boosts_have_full_cascade_headroom(self):
+    def test_overlapping_boosts_keep_unity_preamp_without_automatic_attenuation(self):
         gains=[12]*10
         pre=self.lib.SonivoEQPreamp((C.c_float*10)(*gains),10,48000)
-        self.assertLess(pre,-15)
+        self.assertEqual(pre,0)
         for frequency in [31,63,125,250,500,1000,2000,4000,8000,16000,22000]:
-            self.assertLessEqual(self.response(gains,frequency),-.85)
+            self.assertGreater(self.response(gains,frequency),6)
+
+    def test_bass_boost_does_not_turn_down_unaffected_midrange(self):
+        gains=[6]+[0]*9
+        self.assertEqual(self.lib.SonivoEQPreamp((C.c_float*10)(*gains),10,48000),0)
+        self.assertAlmostEqual(self.response(gains,1000),0,delta=.1)
+        self.assertGreater(self.response(gains,20),4)
+
+    def test_high_level_eq_is_not_limited_or_clipped_by_app(self):
+        gains=[12]+[0]*9
+        low=[.06*math.sin(2*math.pi*20*n/48000) for n in range(12000)]
+        high=[x*10 for x in low]
+        a=self.run_audio(low,gains);b=self.run_audio(high,gains)
+        self.assertGreater(max(map(abs,b)),1.0)
+        self.assertTrue(all(math.isfinite(x) for x in b))
+        self.assertLess(max(abs(y-x*10) for x,y in zip(a,b)),1e-5)
 
     def test_bass_profiles_emphasize_subbass_without_low_mid_mud(self):
         import re
@@ -97,10 +112,11 @@ void destroy(void *p) { free(p); }
             self.assertGreater(self.response(gains,20)-mid,4)
             self.assertGreater(self.response(gains,63)-mid,5)
             self.assertLess(self.response(gains,250)-mid,2)
-            # High-level multitone: protection remains finite without channel clipping.
+            # High-level multitone remains finite but is intentionally not peak-limited.
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
             output=self.run_audio(signal,gains)
-            self.assertTrue(all(math.isfinite(x) and abs(x)<=.99001 for x in output))
+            self.assertTrue(all(math.isfinite(x) for x in output))
+            self.assertGreater(max(map(abs,output)),1.0)
 
     def test_channels_do_not_crossmix_in_planar_or_interleaved_audio(self):
         for interleaved in [False,True]:
@@ -112,19 +128,21 @@ void destroy(void *p) { free(p); }
                 if ch==3:self.assertGreater(max(map(abs,data)),.01)
                 else:self.assertEqual(max(map(abs,data)),0)
 
-    def test_linked_protection_preserves_stereo_ratio(self):
+    def test_unlimited_output_preserves_stereo_ratio(self):
         samples=[]
         for n in range(5000):
             x=2*math.sin(n*.13); samples.extend([x,x*.25])
         output=self.run_audio(samples,[3]*10,channels=2)
-        self.assertLessEqual(max(map(abs,output)),.99001)
+        self.assertGreater(max(map(abs,output)),1.0)
         self.assertLess(max(abs(output[i+1]-output[i]*.25) for i in range(0,len(output),2)),1e-6)
 
     def test_sample_rates_and_invalid_gains_remain_finite(self):
         for rate in [8000,32000,44100,48000,96000]:
             gains=[float('nan'),float('inf'),-float('inf'),12,-12,6,-6,12,12,12]
             output=self.run_audio([.5*math.sin(n*.37) for n in range(10000)],gains,rate)
-            self.assertTrue(all(math.isfinite(x) and abs(x)<=.99001 for x in output))
+            self.assertTrue(all(math.isfinite(x) for x in output))
+            sanitized=[0,0,0,12,-12,6,-6,12,12,12]
+            self.assertEqual(output,self.run_audio([.5*math.sin(n*.37) for n in range(10000)],sanitized,rate))
 
     def test_toggle_and_slider_updates_are_smooth_and_return_to_exact_bypass(self):
         g=(C.c_float*10)(*[0]*10);ptr=self.lib.create(48000,g,0)
@@ -148,6 +166,11 @@ void destroy(void *p) { free(p); }
         source=(DSP/'StreamAudioProbe.c').read_text()
         self.assertNotIn('VocalIsolationManager.processBuffer(buffer)',core)
         self.assertIn('engine.connect(vocalUnit, to: outputLimiter',core)
+        self.assertIn('outputLimiter.bypass = true',core)
+        self.assertNotIn('outputLimiter.bypass = false',core)
+        render=(DSP/'RealtimeEQ.c').read_text().split('void SonivoEQProcess',1)[1]
+        self.assertNotIn('eq->limiter)',render)
+        self.assertNotIn('peak>.99',render)
         self.assertIn('mode: .default',session);self.assertNotIn('.moviePlayback',session)
         self.assertIn('kAudioFormatEnhancedAC3',tap)
         self.assertIn('.spatialPassthrough',tap)
