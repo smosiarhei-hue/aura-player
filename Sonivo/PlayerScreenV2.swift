@@ -158,19 +158,6 @@ struct PlayerScreenV2: View {
                     .transition(.opacity)
                 }
 
-                // Native Apple Smooth Ambient Vignette under Dynamic Island / Status Bar
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.85),
-                        Color.black.opacity(0.40),
-                        Color.clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: topInset + 40)
-                .ignoresSafeArea(edges: .top)
-                .allowsHitTesting(false)
             }
             .frame(width: totalWidth, height: totalHeight, alignment: .top)
             .animation(SN.slowSpring, value: showLyricsMode)
@@ -285,76 +272,13 @@ struct PlayerScreenV2: View {
     }
 
     private var background: some View {
-        ZStack {
-            if isFullScreenVideoShot {
-                // Размытый атмосферный фон на весь экран (ambient blur по краям)
-                if let videoLooperPlayer {
-                    VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .scaledToFill()
-                        .blur(radius: 12)
-                        .scaleEffect(1.08)
-                        .opacity(0.35)
-                        .clipped()
-                        .ignoresSafeArea()
-                } else if let img = (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? track.flatMap({ LibraryStore.cachedArtworkImage(for: $0) }) {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .blur(radius: 14)
-                        .scaleEffect(1.10)
-                        .opacity(0.30)
-                        .clipped()
-                        .ignoresSafeArea()
-                }
-
-                // Четкое видео 1080x1920 (9:16) от лейбла без обрезки по бокам и без искусственного зума
-                if let videoLooperPlayer {
-                    VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspect)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                        .ignoresSafeArea()
-                }
-
-                // Элегантная кинематографичная виньетка:
-                // Верх — легкое затемнение под хедер; центр — кристально чистое видео; низ — мягкое затемнение под контролы
-                LinearGradient(stops: [
-                    .init(color: .black.opacity(0.40), location: 0.0),
-                    .init(color: .black.opacity(0.10), location: 0.18),
-                    .init(color: .clear, location: 0.32),
-                    .init(color: .clear, location: 0.55),
-                    .init(color: .black.opacity(0.22), location: 0.72),
-                    .init(color: .black.opacity(0.50), location: 0.88),
-                    .init(color: .black.opacity(0.68), location: 1.0)
-                ], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-            } else if reduceMotion || scenePhase != .active {
-                gradientBackground
-                LinearGradient(stops: [.init(color: .black.opacity(0.15), location: 0),
-                                        .init(color: .black.opacity(0.45), location: 0.70),
-                                        .init(color: .black.opacity(0.75), location: 1)],
-                                startPoint: .top, endPoint: .bottom)
-            } else {
-                PlayerMusicReactiveBackdrop(
-                    artwork: currentArtworkImage ?? track.flatMap { LibraryStore.cachedArtworkImage(for: $0) },
-                    palette: backgroundColors,
-                    kick: kickEnergy,
-                    bass: bassEnergy,
-                    mids: midEnergy,
-                    highs: highEnergy,
-                    level: fullSpectrumEnergy,
-                    isPlaying: player.isPlaying,
-                    reduceMotion: reduceMotion
-                )
-            }
-        }.allowsHitTesting(false)
-    }
-    private var backgroundColors: [Color] { palette.isEmpty ? [SN.amber, SN.ember] : palette }
-    private var gradientBackground: some View {
-        let colors = backgroundColors
-        return LinearGradient(colors: [colors[0].opacity(0.65), colors[min(1, colors.count - 1)].opacity(0.38), .black],
-                              startPoint: .topLeading, endPoint: .bottomTrailing)
+        // A spatially uniform cover tint over semantic light/dark background.
+        // Never display a previous track's extracted palette while the new cover is loading.
+        let coverColor = resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors.first : nil
+        let base = showLyricsMode ? Color.black : SN.bg
+        return base.overlay((coverColor ?? Color.clear).opacity(0.22))
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
     }
 
     private var topHeader: some View {
@@ -365,16 +289,16 @@ struct PlayerScreenV2: View {
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(SN.ink)
                     .frame(width: 36, height: 36)
-                    .background(Color.white.opacity(0.12), in: Circle())
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
             .buttonStyle(TactileButtonStyle(scale: 0.90))
 
             Spacer()
 
             Capsule()
-                .fill(Color.white.opacity(0.35))
+                .fill(SN.inkMuted)
                 .frame(width: 36, height: 5)
 
             Spacer()
@@ -419,6 +343,7 @@ struct PlayerScreenV2: View {
         }
         .frame(width: width, height: height, alignment: .top)
         .animation(SN.spring, value: lyricsControlsVisible)
+        .environment(\.colorScheme, .dark)
     }
 
     private var lyricsTopHeader: some View {
@@ -842,30 +767,6 @@ struct PlayerScreenV2: View {
         .padding(.top, 24)
         .padding(.bottom, max(safeAreaBottom, 20))
         .frame(maxWidth: .infinity)
-        .background {
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial.opacity(0.50))
-                Color.black.opacity(0.35)
-                if let tint = palette.first {
-                    tint.opacity(0.08)
-                }
-            }
-            .mask {
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .clear, location: 0.12),
-                        .init(color: .black.opacity(0.40), location: 0.35),
-                        .init(color: .black.opacity(0.80), location: 0.65),
-                        .init(color: .black, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-            .ignoresSafeArea(edges: .bottom)
-        }
     }
 
     private var trackWaveButton: some View {
@@ -877,9 +778,6 @@ struct PlayerScreenV2: View {
         let glassTint = coverColors.first?.opacity(0.12) ?? Color.clear
         return Button(action: startTrackWave) {
             HStack(spacing: 14) {
-                Image(systemName: "waveform")
-                    .font(SN.text(.title2, .semibold))
-                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(waveLoading ? "Настраиваем волну…" : "Моя волна по текущему треку")
                         .font(SN.text(.headline, .bold))
@@ -899,14 +797,9 @@ struct PlayerScreenV2: View {
                 }
             }
             .foregroundStyle(SN.ink)
-            .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
             .glassEffect(.regular.tint(glassTint).interactive(), in: .rect(cornerRadius: SN.radius))
-            .background {
-                // A transparent moving tint sits behind the system glass, not a painted card.
-                PlayerTrackWaveBackdrop(colors: coverColors, isPlaying: player.isPlaying)
-                    .clipShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
-            }
             .contentShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -1136,14 +1029,14 @@ struct PlayerScreenV2: View {
             Button(action: togglePlayback) {
                 ZStack {
                     Circle()
-                        .fill(Color.white)
+                        .fill(SN.ink)
                         .frame(width: 70, height: 70)
-                        .shadow(color: .white.opacity(0.20), radius: 14, y: 4)
+                        .shadow(color: SN.ink.opacity(0.20), radius: 14, y: 4)
                         .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
 
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 30, weight: .black))
-                        .foregroundStyle(Color.black.opacity(0.92))
+                        .foregroundStyle(SN.bg)
                         .offset(x: player.isPlaying ? 0 : 2)
                         .contentTransition(.symbolEffect(.replace.byLayer))
                 }
@@ -1876,12 +1769,12 @@ struct PlayerTimelineSection<Center: View>: View {
 
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(.white.opacity(isScrubbing ? 0.20 : 0.14))
+                        .fill(SN.ink.opacity(isScrubbing ? 0.20 : 0.14))
                         .frame(height: trackHeight)
 
                     if let bufferFraction = player.bufferedProgress, bufferFraction > 0.005 {
                         Capsule(style: .continuous)
-                            .fill(.white.opacity(isScrubbing ? 0.38 : 0.28))
+                            .fill(SN.ink.opacity(isScrubbing ? 0.38 : 0.28))
                             .frame(
                                 width: max(trackHeight, geo.size.width * min(1.0, CGFloat(bufferFraction))),
                                 height: trackHeight
@@ -1890,12 +1783,12 @@ struct PlayerTimelineSection<Center: View>: View {
                     }
 
                     Capsule(style: .continuous)
-                        .fill(.white.opacity(0.96))
+                        .fill(SN.ink.opacity(0.96))
                         .frame(width: max(0, width), height: trackHeight)
 
                     if isScrubbing {
                         Circle()
-                            .fill(.white)
+                            .fill(SN.ink)
                             .frame(width: thumbSize, height: thumbSize)
                             .offset(x: max(0, min(width - thumbSize / 2, geo.size.width - thumbSize)))
                             .shadow(color: .black.opacity(0.26), radius: 3, y: 1)
@@ -2159,15 +2052,15 @@ struct FluidVolumeSlider: View {
 
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(isDragging ? 0.20 : 0.14))
+                        .fill(SN.ink.opacity(isDragging ? 0.20 : 0.14))
                         .frame(height: trackHeight)
 
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.94))
+                        .fill(SN.ink.opacity(0.94))
                         .frame(width: max(0, filledWidth), height: trackHeight)
 
                     Circle()
-                        .fill(Color.white)
+                        .fill(SN.ink)
                         .frame(width: thumbSize, height: thumbSize)
                         .shadow(
                             color: .black.opacity(isDragging ? 0.26 : 0.16),
@@ -2670,44 +2563,3 @@ struct PlayerAmbientCoverGlow: View {
 
 #Preview("Full player") { PlayerScreenV2(isPresented: .constant(true)) }
 #Preview("Timeline") { PlayerTimelineSection(player: ActivePlayerPresentation()) { EmptyView() }.padding() }
-
-// Lightweight, self-contained decoration: no second Metal renderer or audio probe.
-// This slow flow communicates an animated control, not a fabricated beat clock.
-private struct PlayerTrackWaveBackdrop: View {
-    let colors: [Color]
-    let isPlaying: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var isVisible = false
-    @State private var startedAt = Date()
-
-    var body: some View {
-        let paint = colors.isEmpty ? [Color.primary.opacity(0.18)] : colors
-        let shouldAnimate = isVisible && isPlaying && scenePhase == .active && !reduceMotion
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldAnimate)) { timeline in
-            let time = reduceMotion ? 0 : timeline.date.timeIntervalSince(startedAt) * 0.32
-            Canvas { context, size in
-                for index in 0..<3 {
-                    let offset = Double(index) * 1.7
-                    var path = Path()
-                    path.move(to: CGPoint(x: 0, y: size.height))
-                    for step in 0...24 {
-                        let x = Double(step) / 24
-                        let y = 0.64 + sin(x * 5.4 + time + offset) * 0.18
-                        path.addLine(to: CGPoint(x: size.width * x, y: size.height * y))
-                    }
-                    path.addLine(to: CGPoint(x: size.width, y: size.height))
-                    path.closeSubpath()
-                    context.fill(path, with: .linearGradient(
-                        Gradient(colors: [paint[index % paint.count].opacity(0.32), paint[(index + 1) % paint.count].opacity(0.08)]),
-                        startPoint: .zero, endPoint: CGPoint(x: size.width, y: size.height)))
-                }
-            }
-        }
-        .onScrollVisibilityChange(threshold: 0.1) { isVisible = $0 }
-        .onAppear { isVisible = true }
-        .onDisappear { isVisible = false }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}

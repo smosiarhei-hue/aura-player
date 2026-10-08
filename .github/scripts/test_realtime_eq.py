@@ -83,8 +83,13 @@ void destroy(void *p) { free(p); }
         gains=[12]*10
         pre=self.lib.SonivoEQPreamp((C.c_float*10)(*gains),10,48000)
         self.assertEqual(pre,0)
-        for frequency in [31,63,125,250,500,1000,2000,4000,8000,16000,22000]:
+        for frequency in [30,62.5,125,250,500,1000,2000,4000,8000,20000,22000]:
             self.assertGreater(self.response(gains,frequency),6)
+
+    def test_gap_below_new_top_shelf_still_boosts_without_attenuation(self):
+        # 16 kHz is no longer a band centre; shifting the shelf to 20 kHz changes its response.
+        self.assertGreater(self.response([12]*10,16000),0)
+        self.assertEqual(self.lib.SonivoEQPreamp((C.c_float*10)(*([12]*10)),10,48000),0)
 
     def test_bass_boost_does_not_turn_down_unaffected_midrange(self):
         gains=[6]+[0]*9

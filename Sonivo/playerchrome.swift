@@ -383,29 +383,14 @@ struct PlayerEQSheetView: View {
     @Bindable private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var selectedRegion = EQRegion.bass
-
-    private enum EQRegion: String, CaseIterable, Identifiable {
-        case bass = "Низ", mids = "Середина", treble = "Верх"
-        var id: String { rawValue }
-        var indices: [Int] {
-            switch self {
-            case .bass: return [0, 1, 2]
-            case .mids: return [3, 4, 5, 6]
-            case .treble: return [7, 8, 9]
-            }
-        }
-        var detail: String {
-            switch self {
-            case .bass: return "Глубина, удар и вес баса"
-            case .mids: return "Тело инструментов и разборчивость голоса"
-            case .treble: return "Детали, яркость и воздух"
-            }
-        }
-    }
+    @State private var userPresets = EQUserPresetStore()
+    @State private var showingSavePreset = false
+    @State private var presetName = ""
+    @State private var presetError: String?
+    @State private var deletingPreset: SavedEQPreset?
 
     private let bandNames = ["Глубина", "Удар бочки", "Плотность", "Теплота", "Тело", "Голос", "Присутствие", "Детали", "Яркость", "Воздух"]
-    private let frequencyLabels = ["31,25 Гц · нижняя полка", "62,5 Гц", "125 Гц", "250 Гц", "500 Гц", "1 кГц", "2 кГц", "4 кГц", "8 кГц", "16 кГц · верхняя полка"]
+    private let frequencyLabels = ["30 Гц · нижняя полка", "62,5 Гц", "125 Гц", "250 Гц", "500 Гц", "1 кГц", "2 кГц", "4 кГц", "8 кГц", "20 кГц · верхняя полка"]
     private var primaryPresets: [EQPreset] { [EQPresets.flat, EQPresets.airPodsPro2Bass, EQPresets.bassBoost, EQPresets.bassTrebleBoost] }
     private var activePreset: EQPreset? { EQPresets.all.first { matches($0.gains) } }
     private var columns: [GridItem] {
@@ -419,6 +404,7 @@ struct PlayerEQSheetView: View {
                     masterCard
                     profilesSection
                     bandsSection
+                    savedPresetsSection
                     outputCard
                     listeningNote
                 }
@@ -443,6 +429,34 @@ struct PlayerEQSheetView: View {
                 }
             }
         }
+        .alert("Сохранить пресет", isPresented: $showingSavePreset) {
+            TextField("Название", text: $presetName)
+            Button("Отмена", role: .cancel) { }
+            Button("Сохранить") {
+                do {
+                    try userPresets.save(name: presetName, gains: PlayerCore.normalized(player.eqGains))
+                    player.saveEQ()
+                } catch { presetError = error.localizedDescription }
+            }
+        } message: {
+            Text("Сохраняются значения всех десяти полос. Системная громкость не меняется.")
+        }
+        .alert("Не удалось сохранить", isPresented: Binding(
+            get: { presetError != nil }, set: { if !$0 { presetError = nil } }
+        )) {
+            Button("ОК", role: .cancel) { presetError = nil }
+        } message: { Text(presetError ?? "") }
+        .confirmationDialog("Удалить пресет?", isPresented: Binding(
+            get: { deletingPreset != nil }, set: { if !$0 { deletingPreset = nil } }
+        ), titleVisibility: .visible) {
+            Button("Удалить", role: .destructive) {
+                if let preset = deletingPreset {
+                    do { try userPresets.delete(id: preset.id) }
+                    catch { presetError = error.localizedDescription }
+                }
+                deletingPreset = nil
+            }
+        }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationBackground(SN.bg)
@@ -455,7 +469,7 @@ struct PlayerEQSheetView: View {
                     Text("Твой звук")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(SN.ink)
-                    Text(player.eqEnabled ? (activePreset?.name ?? "Своя настройка") : "Исходный звук")
+                    Text(player.eqEnabled ? (activePreset?.name ?? userPresets.presets.first(where: { matches($0.gains) })?.name ?? "Своя настройка") : "Исходный звук")
                         .font(.subheadline)
                         .foregroundStyle(SN.inkMuted)
                 }
@@ -531,17 +545,26 @@ struct PlayerEQSheetView: View {
                 Spacer()
                 Text("±12 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
-            Picker("Диапазон частот", selection: $selectedRegion) {
-                ForEach(EQRegion.allCases) { region in Text(region.rawValue).tag(region) }
-            }
-            .pickerStyle(.segmented)
-            Text(selectedRegion.detail)
+            Text("30 Гц — 20 кГц • все полосы в одной линейке")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
-            VStack(spacing: 0) {
-                ForEach(selectedRegion.indices, id: \.self) { index in
-                    bandRow(index)
-                    if index != selectedRegion.indices.last { Divider().padding(.horizontal, 16) }
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 0) {
+                        ForEach(0..<10, id: \.self) { index in
+                            bandRow(index)
+                            if index < 9 { Divider().padding(.horizontal, 16) }
+                        }
+                    }
+                } else {
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(0..<10, id: \.self) { index in bandColumn(index) }
+                        }
+                        .padding(16)
+                    }
+                    .scrollIndicators(.visible)
+                    .accessibilityLabel("Полосы эквалайзера от низких к высоким частотам")
                 }
             }
             .background(SN.card, in: RoundedRectangle(cornerRadius: 24))
@@ -553,6 +576,84 @@ struct PlayerEQSheetView: View {
             }
         }
         .foregroundStyle(SN.ink)
+    }
+
+    private func bandColumn(_ index: Int) -> some View {
+        let gain = PlayerCore.normalized(player.eqGains)[index]
+        let labels = ["30", "62,5", "125", "250", "500", "1k", "2k", "4k", "8k", "20k"]
+        return VStack(spacing: 8) {
+            Text(labels[index]).font(.subheadline.weight(.semibold)).monospacedDigit()
+            Text(db(gain)).font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
+            Text("+12").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
+            // Keep UIKit/SwiftUI's native adjustable control; rotate its layout, not a custom drag recognizer.
+            Slider(value: Binding(
+                get: { Double(PlayerCore.normalized(player.eqGains)[index]) },
+                set: { value in
+                    var curve = PlayerCore.normalized(player.eqGains)
+                    curve[index] = Float(value)
+                    player.eqGains = curve
+                }
+            ), in: -12...12, step: 0.5, onEditingChanged: { editing in
+                if !editing { player.saveEQ() }
+            })
+            .tint(SN.amber)
+            .frame(width: 180, height: 44)
+            .rotationEffect(.degrees(-90))
+            .frame(width: 60, height: 180)
+            .accessibilityLabel("\(bandNames[index]), \(frequencyLabels[index])")
+            .accessibilityValue(db(gain))
+            Text("−12").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
+            Button("0 дБ") {
+                var curve = PlayerCore.normalized(player.eqGains)
+                curve[index] = 0
+                player.eqGains = curve
+                player.saveEQ()
+            }
+            .font(.caption)
+            .frame(minWidth: 60, minHeight: 44)
+            .accessibilityLabel("Сбросить \(bandNames[index])")
+        }
+        .frame(width: 68)
+    }
+
+    private var savedPresetsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Мои пресеты").font(.headline).foregroundStyle(SN.ink)
+            Button {
+                presetName = ""
+                showingSavePreset = true
+            } label: {
+                Label("Сохранить текущую настройку", systemImage: "plus.circle")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            if userPresets.presets.isEmpty {
+                Text("Сохрани свой баланс частот, чтобы вернуть его одним нажатием.")
+                    .font(.subheadline).foregroundStyle(SN.inkMuted)
+            }
+            ForEach(userPresets.presets) { preset in
+                HStack(spacing: 12) {
+                    Button {
+                        player.eqGains = preset.gains
+                        player.eqEnabled = true
+                        player.saveEQ()
+                    } label: {
+                        HStack {
+                            Text(preset.name).fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            if matches(preset.gains) { Image(systemName: "checkmark").accessibilityHidden(true) }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .accessibilityAddTraits(matches(preset.gains) ? .isSelected : [])
+                    Button { deletingPreset = preset } label: {
+                        Image(systemName: "trash").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Удалить пресет \(preset.name)")
+                }
+            }
+        }
+        .padding(16)
+        .background(SN.card, in: RoundedRectangle(cornerRadius: 24))
     }
 
     private func bandRow(_ index: Int) -> some View {
@@ -639,7 +740,8 @@ struct PlayerEQSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Бас начинается с посадки", systemImage: "earbuds")
                 .font(.subheadline.weight(.semibold))
-            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 31,25 Гц воздействует и на частоты ниже неё; 62,5 Гц отвечает за удар, 125 Гц — за плотность. Точная нижняя граница не заявлена Apple.")
+            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 30 Гц воздействует и на частоты ниже неё; 62,5 Гц отвечает за удар, 125 Гц — за плотность. Точная нижняя граница не заявлена Apple.")
+            Text("20 кГц — номинальная верхняя полоса. Рабочая частота ограничена частотой дискретизации аудиовыхода; это не заявленный диапазон наушников.")
             Text("Защита EQ от перегрузки отключена. Сильное усиление может вызвать хрип и искажения. EQ не добавляет низкие частоты, которых нет в записи. Проверяй настройки сначала на небольшой громкости.")
         }
         .font(.subheadline)
@@ -661,7 +763,8 @@ struct PlayerEQSheetView: View {
         Haptics.tap(.light)
     }
     private func matches(_ gains: [Float]) -> Bool {
-        zip(PlayerCore.normalized(player.eqGains), gains).allSatisfy { abs($0 - $1) < 0.2 }
+        guard gains.count == PlayerCore.bandFrequencies.count else { return false }
+        return zip(PlayerCore.normalized(player.eqGains), gains).allSatisfy { abs($0 - $1) < 0.2 }
     }
     private func db(_ gain: Float) -> String { String(format: "%+.1f дБ", gain) }
     private func presetIcon(_ preset: EQPreset) -> String {

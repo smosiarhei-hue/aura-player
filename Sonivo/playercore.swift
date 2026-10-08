@@ -92,7 +92,7 @@ nonisolated private final class RemoteFavoriteSnapshot: @unchecked Sendable {
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
-    nonisolated static let bandFrequencies: [Float] = [31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+    nonisolated static let bandFrequencies: [Float] = [30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000]
     nonisolated static let maximumEQGain: Float = 12
     nonisolated static let eqEnabledKey = "eq.enabled"
     nonisolated static let eqGainsKey = "eq.gains"
@@ -645,9 +645,17 @@ final class PlayerCore {
         installSpectrumTap()
     }
 
+    private func resolvedEQFrequency(at index: Int, sampleRate: Double) -> Float {
+        let rate = sampleRate > 0 ? sampleRate : AVAudioSession.sharedInstance().sampleRate
+        let validRate = rate.isFinite && rate > 0 ? rate : 48000
+        let nominal = Self.bandFrequencies.indices.contains(index) ? Self.bandFrequencies[index] : 1000
+        return min(nominal, Float(validRate * 0.44))
+    }
+
     private func configureEQ(_ node: AVAudioUnitEQ) {
+        let sampleRate = node.inputFormat(forBus: 0).sampleRate
         for (i, band) in node.bands.enumerated() {
-            band.frequency = i < PlayerCore.bandFrequencies.count ? PlayerCore.bandFrequencies[i] : 1000
+            band.frequency = resolvedEQFrequency(at: i, sampleRate: sampleRate)
             band.filterType = i == 0 ? .lowShelf : (i == node.bands.count - 1 ? .highShelf : .parametric)
             band.bandwidth = 1.0
             band.bypass = false
@@ -835,9 +843,12 @@ final class PlayerCore {
     private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float], globalGain: Float) {
         node.globalGain = max(-48, min(0, globalGain))
         let bands = node.bands
+        let sampleRate = node.inputFormat(forBus: 0).sampleRate
         let count = min(bands.count, gains.count)
         guard count > 0 else { return }
         for i in 0..<count {
+            let frequency = resolvedEQFrequency(at: i, sampleRate: sampleRate)
+            if abs(bands[i].frequency - frequency) > 0.1 { bands[i].frequency = frequency }
             let targetGain = gains[i]
             guard targetGain.isFinite else { continue }
             let clamped = max(-PlayerCore.maximumEQGain, min(PlayerCore.maximumEQGain, targetGain))

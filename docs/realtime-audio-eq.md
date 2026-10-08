@@ -9,7 +9,7 @@
 
 ## DSP
 
-Ten octave bands: 31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 Hz. Edge bands are shelves, inner bands one-octave parametric filters. Saved legacy curves are interpolated in log-frequency space once, not discarded. Presets use moderate boosts.
+Ten graphic bands: 30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000 Hz. Edge bands are shelves, inner bands one-octave parametric filters. Saved legacy curves are interpolated in log-frequency space once, not discarded. Presets use moderate boosts.
 
 The C renderer keeps independent double-precision state for up to eight Float32 PCM channels, planar or interleaved. It never crossfeeds/downmixes the output. By explicit user request, automatic EQ headroom attenuation and app peak limiting are disabled. `SonivoEQPreamp` returns 0 dB for both streamed and native settings. PCM output is neither normalized nor hard-clipped by this DSP and can exceed ±1; the native output limiter remains wired but is bypassed. Independent channels retain their balance. Coefficients and dry/wet/gain changes are smoothed. Flat or fully disabled EQ is an exact PCM bypass. Control values use an atomic mailbox, with no render-thread allocation, Swift callbacks, network work or waiting for UI locks.
 
@@ -36,7 +36,7 @@ The screen now uses native, half-decibel horizontal sliders in three regions (lo
 - AirPods Pro 2 taste profile: `[6, 4.5, 1.5, -1, -0.5, 0, 0, 0, 0, 0]` dB.
 - Deep bass: `[8, 6, 2, -2, -1, 0, 0, 0, 0, 0]` dB.
 
-The lower shelf affects frequencies below 31.25 Hz, including the sub-bass region; 62.5 Hz adds kick weight, and 125 Hz controls density. Reducing 250–500 Hz avoids confusing low-mid boom with deeper bass. Automatic attenuation and app peak limiting are disabled by request. Boosts may clip/distort later in the system/device output path. No fabricated subharmonics, automatic phone-volume increase or Bluetooth/HFP route changes are introduced.
+The lower shelf affects frequencies below 30 Hz, including the sub-bass region; 62.5 Hz adds kick weight, and 125 Hz controls density. Reducing 250–500 Hz avoids confusing low-mid boom with deeper bass. Automatic attenuation and app peak limiting are disabled by request. Boosts may clip/distort later in the system/device output path. No fabricated subharmonics, automatic phone-volume increase or Bluetooth/HFP route changes are introduced.
 
 Apple's [AirPods Pro 2 specifications](https://support.apple.com/en-us/111851) describe the high-excursion driver, amplifier, Adaptive EQ and spatial audio, but do not publish a numerical lowest frequency or fixed EQ bands. This app profile is not an Apple-certified calibration. Apple's [ear-tip guidance](https://support.apple.com/en-md/119849) explicitly links a good acoustic seal with rich bass. The physical result depends on the recording, seal, firmware/system processing and listening level.
 
@@ -54,3 +54,9 @@ Tests exercise both actual preset curves at 20/63/250/500 Hz and check finite, i
 - Other transport/transition gain shaping and any system/headphone protections are not disabled. This does not guarantee unchanged perceived loudness or prevent iOS/AirPods from applying their own processing.
 - **Risk:** high bass boosts can cause audible distortion or downstream clipping. Start listening at a low system volume; no device volume is increased automatically.
 - Replaced the obsolete tests asserting a negative automatic preamp/≤0.99 ceiling with checks for unity, retained boosts, output >1, amplitude proportionality, stereo ratio and numerical validity. Did not weaken any pinned capture/detector/seqlock tests.
+
+
+## Graphic EQ and user presets
+All ten bands are displayed in one low-to-high horizontal strip using native adjustable sliders. Accessibility text sizes use all ten full-width native rows instead; there is no segmented range selection. End bands are now nominally 30 Hz and 20 kHz, while the ten existing gain values and factory presets are retained. Both C and native paths cap band frequency at 0.44 of their working sample rate (not a claim about headphone acoustic limits). Filter formulas, gain bounds and the explicit removal of automatic attenuation remain unchanged.
+
+Named curves are stored separately in `eq.userPresets.v1`. Saving validates the name, ten finite gains within ±12 dB and name uniqueness; duplicate names do not silently overwrite a curve. Applying a saved curve enables EQ without changing system volume. Deletion requires confirmation. Invalid archives are not overwritten. A compiled Swift 6 check covers persistence across store recreation, delete, duplicate/invalid input and corrupt archive preservation.

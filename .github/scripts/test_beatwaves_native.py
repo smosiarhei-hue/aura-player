@@ -477,5 +477,7 @@ print("Beat Waves Swift physics, presentation and cosmetic light checks passed")
             verify_surface_provider(ROOT)
             from check_yandex_track_station import verify_yandex_track_station
             verify_yandex_track_station(ROOT)
+            from check_eq_user_presets import verify_eq_user_presets
+            verify_eq_user_presets(ROOT)
 
 if __name__=='__main__': unittest.main()

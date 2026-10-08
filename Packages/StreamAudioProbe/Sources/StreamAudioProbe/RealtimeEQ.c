@@ -2,7 +2,7 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+static const double frequencies[SONIVO_EQ_BANDS] = {30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000};
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
 static double cleanGain(double gain) { return isfinite(gain) ? clamp(gain, -12, 12) : 0; }
 static SonivoEQCoefficients identity(void) { return (SonivoEQCoefficients){1,0,0,0,0}; }
