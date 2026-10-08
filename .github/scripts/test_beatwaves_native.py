@@ -450,11 +450,26 @@ for _ in 0..<50 {
 }
 let invalidSpectrum=sustainedFlux.process(magnitudes: [.nan,.infinity],sampleRate: 48000)
 check(invalidSpectrum.bass.isFinite && invalidSpectrum.attack.isFinite,"Invalid spectrum escaped")
-print("Beat Waves Swift physics and presentation checks passed")
+var lightReference: Float=0
+for fps in [30,60,120] {
+    var light=BeatWaveHighlightEnvelope()
+    for _ in 0..<fps { light.advance(delta: 1/Float(fps),bass: 0.6,kick: 0.8) }
+    check(light.bass>0.59 && light.kick>0.79,"Light failed to rise")
+    for _ in 0..<(fps/2) { light.advance(delta: 1/Float(fps),bass: 0,kick: 0) }
+    if fps==30 { lightReference=light.kick }
+    check(abs(light.kick-lightReference)<0.00001,"Light envelope depends on FPS")
+    light.advance(delta: .nan,bass: .infinity,kick: .nan)
+    check(light.bass.isFinite && light.kick.isFinite,"Invalid light escaped")
+    light.reset();check(light.bass==0 && light.kick==0,"Light reset retains old glow")
+}
+print("Beat Waves Swift physics, presentation and cosmetic light checks passed")
 '''
         with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d); (p/'main.swift').write_text(main)
-            compiled=subprocess.run(['swiftc','-swift-version','6',str(ROOT/'Sonivo/BeatWaveMotion.swift'),str(ROOT/'Sonivo/BeatWavePaletteMath.swift'),str(ROOT/'Sonivo/BeatWaveNoise.swift'),str(p/'main.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
+            renderer=(ROOT/'Sonivo/BeatWaveMetalView.swift').read_text()
+            light=renderer.split('nonisolated struct BeatWaveHighlightEnvelope {',1)[1].split('/// Reconfigure when',1)[0]
+            (p/'Light.swift').write_text('import Foundation\nnonisolated struct BeatWaveHighlightEnvelope {'+light)
+            compiled=subprocess.run(['swiftc','-swift-version','6',str(ROOT/'Sonivo/BeatWaveMotion.swift'),str(ROOT/'Sonivo/BeatWavePaletteMath.swift'),str(ROOT/'Sonivo/BeatWaveNoise.swift'),str(p/'Light.swift'),str(p/'main.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
             self.assertEqual(compiled.returncode,0,compiled.stderr)
             checked=subprocess.run([str(p/'checks')],capture_output=True,text=True)
             self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)

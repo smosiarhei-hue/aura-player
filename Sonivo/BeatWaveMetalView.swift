@@ -3,6 +3,21 @@ import MetalKit
 import AVFoundation
 import QuartzCore
 
+/// Cosmetic light only: never feeds the detector, motion phase, spring or haptics.
+nonisolated struct BeatWaveHighlightEnvelope {
+    private(set) var bass: Float = 0
+    private(set) var kick: Float = 0
+    mutating func advance(delta: Float, bass targetBass: Float, kick targetKick: Float) {
+        let dt = delta.isFinite ? max(0, min(0.1, delta)) : 0
+        func unit(_ x: Float) -> Float { x.isFinite ? max(0, min(1, x)) : 0 }
+        let b = unit(targetBass), k = unit(targetKick)
+        // Short smooth rise, gentle tail. No timers or replayed onset.
+        bass += (b-bass)*(1-exp(-dt/(b>bass ? 0.020 : 0.24)))
+        kick += (k-kick)*(1-exp(-dt/(k>kick ? 0.018 : 0.22)))
+    }
+    mutating func reset() { bass=0; kick=0 }
+}
+
 /// Reconfigure when a UIKit view attaches/moves to a window, not on every frame.
 @MainActor
 private final class BeatWaveSurfaceView: MTKView {
@@ -100,6 +115,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     private var targetPalette=[SIMD3<Float>](repeating: SIMD3(0.5,0.5,0.5),count: 3)
     private var paletteInitialized=false
     private var motion=MusicWaveMotion()
+    private var highlight=BeatWaveHighlightEnvelope()
     private var presentation=BeatWavePresentation()
     private var previousTimestamp: CFTimeInterval?
     private var outputDelay: TimeInterval=0
@@ -169,7 +185,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
                 motion.consume(SpectrumAnalyzer.shared.beatWaveFrame.kickEventID)
             }
             _=SpectrumAnalyzer.shared.drainBeatWaveFrames()
-            previousTimestamp=nil; presentation.reset(); targetFPS=0
+            previousTimestamp=nil; presentation.reset(); highlight.reset(); targetFPS=0
             diagnosticWindow=0; diagnosticTicks=0; diagnosticSubmissions=0; diagnosticBusyDrops=0
             renderScale=lowPower ? 0.3 : 0.35
             let target=BeatWaveDisplayLinkTarget(self)
@@ -189,7 +205,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     }
     func stop() {
         displayLink?.invalidate(); displayLink=nil; linkTarget=nil
-        previousTimestamp=nil; previousMediaTime=nil; presentation.reset(); motion.settle()
+        previousTimestamp=nil; previousMediaTime=nil; presentation.reset(); motion.settle(); highlight.reset()
         MusicHapticsManager.core.setBeatWaveOverride(false)
         (view?.layer as? CAMetalLayer)?.wantsExtendedDynamicRangeContent=false
     }
@@ -210,13 +226,13 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         let capture=SpectrumAnalyzer.shared.beatWaveFrame
         let captures=SpectrumAnalyzer.shared.drainBeatWaveFrames()
         diagnosticQueuedFuture = .nan
-        if capture.capturedAt<=0 { presentation.reset(); motion.settle(); previousMediaTime=nil }
+        if capture.capturedAt<=0 { presentation.reset(); motion.settle(); highlight.reset(); previousMediaTime=nil }
         else {
             let frame: BeatWaveAudioFrame
             let fresh: Bool
             if capture.mediaTime != nil,let clock=StreamBeatTap.shared.currentMediaClock() {
                 if let previousMediaTime,clock.time<previousMediaTime-0.02 || clock.time-previousMediaTime>0.25 {
-                    presentation.reset(); motion.settle()
+                    presentation.reset(); motion.settle(); highlight.reset()
                 }
                 previousMediaTime=clock.time
                 for feature in captures { presentation.push(feature) }
@@ -244,6 +260,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             let newKick=motion.advance(delta: dt,frame: frame,hasFreshAudio: fresh)
             if newKick { MusicHapticsManager.core.playBeatWaveKick(eventID: frame.kickEventID,strength: frame.kickConfidence) }
         }
+        highlight.advance(delta: dt,bass: motion.lowEnergy,kick: motion.impact)
         let paletteMix=1-exp(-dt/0.85)
         for i in 0..<3 { palette[i]+=(targetPalette[i]-palette[i])*paletteMix }
         headroom=min(targetHeadroom,headroom+(targetHeadroom-headroom)*(1-exp(-dt/0.8))) // Drop immediately; never exceed available headroom.
@@ -320,7 +337,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
         let size=CGSize(width: width,height: height)
         if view.drawableSize != size { view.drawableSize=size }
         guard let command=queue.makeCommandBuffer() else { return }
-        var uniforms=Uniforms(resolution: SIMD4(Float(width),Float(height),0,0),
+        var uniforms=Uniforms(resolution: SIMD4(Float(width),Float(height),highlight.bass,highlight.kick),
                               motion: SIMD4(Float(motion.phase),motion.energy,motion.impact,motion.detail),
                               surface: SIMD4(motion.springPosition,darkMode ? 1 : 0,lowPower ? 2 : 3,motion.lowEnergy),
                               colorA: SIMD4(palette[0].x,palette[0].y,palette[0].z,1),

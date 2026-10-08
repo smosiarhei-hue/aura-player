@@ -4,7 +4,7 @@
 #include <metal_stdlib>
 using namespace metal;
 struct BeatWaveUniforms {
-    float4 resolution; // xy physical pixel size; zw reserved
+    float4 resolution; // xy physical pixel size; zw cosmetic bass/kick light envelopes
     float4 motion; // phase, energy, impact, detail
     float4 surface; // spring displacement, dark mode, octave count, bass envelope
     float4 colorA;
@@ -19,6 +19,8 @@ vertex BeatWaveVertex beatWaveVertex(uint id [[vertex_id]]) {
 }
 
 #define uResolution u.resolution.xy
+#define uBassLight u.resolution.z
+#define uKickLight u.resolution.w
 #define uPhase u.motion.x
 #define uEnergy u.motion.y
 #define uImpact u.motion.z
@@ -69,6 +71,10 @@ float3 ferroPalette(float h,constant BeatWaveUniforms &u) {
     return x<1.0 ? mix(uColorA,uColorB,smoothstep(0.0,1.0,x))
                  : mix(uColorB,uColorC,smoothstep(0.0,1.0,x-1.0));
 }
+// Only existing low-frequency and kick channels drive highlights; no mids/vocal input.
+float ferroLightPulse(constant BeatWaveUniforms &u) {
+    return clamp(clamp(uBassLight,0.0,1.0)*0.55+clamp(uKickLight,0.0,1.0)*0.80,0.0,1.0);
+}
 float4 evalFerrofluid(float2 uvSample,constant BeatWaveUniforms &u) {
     const float scale=1.6;
     const float fluidity=0.1;
@@ -95,6 +101,9 @@ float4 evalFerrofluid(float2 uvSample,constant BeatWaveUniforms &u) {
     float h=clamp(0.5+(peaks-peaks2)*0.8,0.0,1.0);
     float3 col=ferroPalette(h,u)*ltn;
     col*=1.0+clamp(uLowEnergy,0.0,1.0)*0.20+punch*0.25;
+    // Bright rims breathe; the dark field stays dark (no fullscreen flash or added blur).
+    float hotspot=smoothstep(0.18,1.10,ltn);
+    col*=1.0+hotspot*ferroLightPulse(u)*0.85;
     // Hue-preserving SDR compression; extended highlights handled by the existing output stage.
     col/=1.0+max(col.r,max(col.g,col.b))*0.35;
 
@@ -119,10 +128,14 @@ float3 linearP3(float3 srgb) {
 fragment float4 beatWaveField(BeatWaveVertex in [[stage_in]], constant BeatWaveUniforms &u [[buffer(0)]]) {
     float4 field = evalFerrofluid(clamp(in.uv,0.0,1.0),u);
     float alpha = clamp(field.a,0.0,1.0);
-    float3 rgb=clamp(field.rgb,0.0,1.0);
+    float3 rgb=max(field.rgb,0.0);
+    // A shared scale preserves artwork hue instead of clipping RGB channels separately.
+    float sdrPeak=max(rgb.r,max(rgb.g,rgb.b));
+    rgb*=sdrPeak>0.00001 ? (1.0-exp(-sdrPeak*1.25))/sdrPeak : 1.25;
     if (u.display.y>0.5) {
         float peak=max(rgb.r,max(rgb.g,rgb.b));
-        float gain=1.0+(max(1.0,u.display.x)-1.0)*smoothstep(0.45,0.9,peak);
+        float musicalHeadroom=0.35+ferroLightPulse(u)*0.65;
+        float gain=1.0+(max(1.0,u.display.x)-1.0)*smoothstep(0.45,0.9,peak)*musicalHeadroom;
         rgb=linearP3(rgb)*gain; // Real >1 linear values for rgba16Float, not an SDR brightness label.
         rgb=clamp(rgb,0.0,max(1.0,u.display.x));
     }
