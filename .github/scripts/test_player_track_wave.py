@@ -37,13 +37,36 @@ class PlayerTrackWaveTests(unittest.TestCase):
         screen=source('PlayerScreenV2.swift')
         body=screen.split('var body: some View',1)[1].split('.sheet(item:',1)[0]
         self.assertIn('ScrollView(.vertical)',body)
-        self.assertIn('.simultaneousGesture(playerDismissGesture)',body)
+        self.assertIn('.simultaneousGesture(playerDismissGesture(requiresScrollTop: false))',body)
         self.assertNotIn('.background(SN.bg.ignoresSafeArea())\n        .simultaneousGesture',body)
         deck=screen.split('private func lowerDeck',1)[1].split('private var trackWaveButton',1)[0]
         for first,second in [('metadataRow','transportControls'),('FluidVolumeSlider()','trackWaveButton'),('trackWaveButton','secondaryPlayerActions')]:
             self.assertLess(deck.index(first),deck.index(second))
         actions=screen.split('private var secondaryPlayerActions',1)[1].split('private var sleepTimerBottomButton',1)[0]
         for expected in ['AirPlayButtonView','sleepTimerBottomButton','"Эквалайзер"','"Очередь"','"Текст песни"']: self.assertIn(expected,actions)
+    def test_dismissal_is_on_header_and_artwork_not_audio_controls(self):
+        text=source('PlayerScreenV2.swift')
+        body=text.split('var body: some View',1)[1].split('.sheet(item:',1)[0]
+        self.assertIn('.contentShape(Rectangle())',body)
+        self.assertIn('.simultaneousGesture(playerDismissGesture(requiresScrollTop: true))',body)
+        self.assertIn('.onScrollGeometryChange(for: Bool.self)',body)
+        self.assertIn('geometry.contentOffset.y + geometry.contentInsets.top <= 1',body)
+        deck=text.split('private func lowerDeck',1)[1].split('private var trackWaveButton',1)[0]
+        self.assertNotIn('playerDismissGesture',deck)
+        sliders=text.split('struct FluidVolumeSlider:',1)[1].split('struct VideoShotPlayerView:',1)[0]
+        self.assertNotIn('playerDismissGesture',sliders)
+    def test_swipe_direction_is_latched_and_lyrics_header_can_dismiss(self):
+        text=source('PlayerScreenV2.swift')
+        drag=text.split('private func playerDismissGesture',1)[1].split('private var isFullScreenVideoShot',1)[0]
+        self.assertIn('if dismissDragEligible == nil',drag)
+        self.assertIn('PlayerDismissPolicy.canBegin(',drag)
+        self.assertIn('PlayerDismissPolicy.shouldClose(',drag)
+        self.assertIn('dismissDragEligible = nil',drag)
+        self.assertIn('.updating($dismissGestureActive)',drag)
+        self.assertIn('.onChange(of: dismissGestureActive)',text)
+        self.assertNotIn('!showLyricsMode',drag)
+        lyrics=text.split('private func lyricsPlayerLayout',1)[1].split('private var lyricsTopHeader',1)[0]
+        self.assertIn('.simultaneousGesture(playerDismissGesture(requiresScrollTop: false))',lyrics)
     def test_button_is_accessible_and_loading_or_local_track_is_disabled(self):
         button=source('PlayerScreenV2.swift').split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
         for expected in ['Button(action: startTrackWave)','minHeight: 56','.disabled(!catalogTrack || waveLoading)','ProgressView()','.accessibilityValue(','.accessibilityHint(','.fixedSize(horizontal: false, vertical: true)']: self.assertIn(expected,button)

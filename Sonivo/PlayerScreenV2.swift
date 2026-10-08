@@ -22,6 +22,9 @@ struct PlayerScreenV2: View {
     @State private var lyricsLoading = false
     @State private var coverDragX: CGFloat = 0
     @State private var dismissOffsetY: CGFloat = 0
+    @State private var playerScrollAtTop = true
+    @State private var dismissDragEligible: Bool?
+    @GestureState private var dismissGestureActive = false
     @State private var isCoverSwitching = false
     @State private var waveLoading = false
     @State private var waveActive = false
@@ -139,8 +142,9 @@ struct PlayerScreenV2: View {
                         topHeader
                             .padding(.top, topInset)
                             .padding(.horizontal, 20)
-                            // Dismiss only from the header; a content scroll must not close the player.
-                            .simultaneousGesture(playerDismissGesture)
+                            // The whole header, including spacer areas, is a dismissal surface.
+                            .contentShape(Rectangle())
+                            .simultaneousGesture(playerDismissGesture(requiresScrollTop: false))
                             .zIndex(3)
 
                         ScrollView(.vertical) {
@@ -148,11 +152,18 @@ struct PlayerScreenV2: View {
                                 artworkStage(width: totalWidth, height: standardArtworkStageHeight)
                                     .frame(width: totalWidth, height: standardArtworkStageHeight)
                                     .padding(.top, 12)
+                                    .contentShape(Rectangle())
+                                    .simultaneousGesture(playerDismissGesture(requiresScrollTop: true))
                                 lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
                             }
                             .frame(maxWidth: .infinity)
                         }
                         .scrollIndicators(.hidden)
+                        .onScrollGeometryChange(for: Bool.self) { geometry in
+                            geometry.contentOffset.y + geometry.contentInsets.top <= 1
+                        } action: { _, atTop in
+                            playerScrollAtTop = atTop
+                        }
                         .accessibilityLabel("Плеер и дополнительные действия")
                     }
                     .transition(.opacity)
@@ -168,6 +179,14 @@ struct PlayerScreenV2: View {
         }
         .ignoresSafeArea()
         .background(SN.bg.ignoresSafeArea())
+        .onChange(of: dismissGestureActive) { _, active in
+            guard !active else { return }
+            // GestureState also resets when the system cancels a drag without onEnded.
+            dismissDragEligible = nil
+            if isPresented && dismissOffsetY > 0 {
+                withAnimation(reduceMotion ? nil : SN.spring) { dismissOffsetY = 0 }
+            }
+        }
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -219,6 +238,8 @@ struct PlayerScreenV2: View {
             lyricsControlsVisible = false
             coverDragX = 0
             dismissOffsetY = 0
+            dismissDragEligible = nil
+            playerScrollAtTop = true
             if !isEnabled {
                 activeModal = nil
             }
@@ -249,17 +270,27 @@ struct PlayerScreenV2: View {
         }
     }
 
-    private var playerDismissGesture: some Gesture {
+    private func playerDismissGesture(requiresScrollTop: Bool) -> some Gesture {
         DragGesture(minimumDistance: 15)
+            .updating($dismissGestureActive) { _, active, _ in active = true }
             .onChanged { value in
-                guard value.translation.height > 0,
-                      value.translation.height > abs(value.translation.width) * 1.25,
-                      !showLyricsMode else { return }
-                dismissOffsetY = value.translation.height
+                // Latch eligibility at the start: scrolling back to the top mid-drag must not dismiss.
+                if dismissDragEligible == nil {
+                    dismissDragEligible = PlayerDismissPolicy.canBegin(
+                        x: Double(value.translation.width), y: Double(value.translation.height),
+                        requiresScrollTop: requiresScrollTop, isAtTop: playerScrollAtTop
+                    )
+                }
+                guard dismissDragEligible == true else { return }
+                dismissOffsetY = max(0, value.translation.height)
             }
             .onEnded { value in
-                guard dismissOffsetY > 0 else { return }
-                if value.translation.height > 110 || value.predictedEndTranslation.height > 240 {
+                let shouldClose = dismissDragEligible == true && PlayerDismissPolicy.shouldClose(
+                    x: Double(value.translation.width), y: Double(value.translation.height),
+                    predictedY: Double(value.predictedEndTranslation.height)
+                )
+                dismissDragEligible = nil
+                if shouldClose {
                     close()
                 } else {
                     withAnimation(reduceMotion ? nil : SN.spring) { dismissOffsetY = 0 }
@@ -319,6 +350,8 @@ struct PlayerScreenV2: View {
             lyricsTopHeader
                 .padding(.top, topInset)
                 .padding(.horizontal, 20)
+                .contentShape(Rectangle())
+                .simultaneousGesture(playerDismissGesture(requiresScrollTop: false))
 
             compactLyricsMetadata
                 .padding(.horizontal, 24)
