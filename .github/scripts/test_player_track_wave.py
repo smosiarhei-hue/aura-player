@@ -24,6 +24,8 @@ class PlayerTrackWaveTests(unittest.TestCase):
         for expected in ['guard !waveLoading','trackWaveRequestID == requestID','track?.id == current.id','activateYandexTrackWave(tracks: waveTracks)','guard !waveTracks.isEmpty']:
             self.assertIn(expected,screen)
         self.assertNotIn('startTrackWave(seed:',screen)
+        lifetime=source('PlayerScreenV2.swift').split('.onDisappear {\n            trackWaveTask?.cancel()',1)[1].split('teardownVideoLooper()',1)[0]
+        self.assertIn('waveLoading = false',lifetime)
     def test_all_player_refills_prefer_track_station_before_local_engine(self):
         core=source('playercore.swift')
         self.assertEqual(core.count('await YandexMusicService.shared.refillYandexTrackWave(target: 20)'),2)

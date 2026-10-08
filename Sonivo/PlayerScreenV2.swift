@@ -256,6 +256,7 @@ struct PlayerScreenV2: View {
         .onDisappear {
             trackWaveTask?.cancel()
             trackWaveRequestID = UUID()
+            waveLoading = false
             teardownVideoLooper()
         }
     }
