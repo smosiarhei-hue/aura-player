@@ -49,9 +49,7 @@ struct YandexAuthSheet: View {
     private var deviceCodeView: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let code, let url = code.verificationURL {
-                Text("1. Откройте страницу Яндекса.
-2. Введите код и подтвердите свой аккаунт.
-3. Вернитесь в Sonivo.")
+                Text("1. Откройте страницу Яндекса.\n2. Введите код и подтвердите свой аккаунт.\n3. Вернитесь в Sonivo.")
                     .font(.subheadline)
                 Text(code.user_code).font(.system(.largeTitle, design: .monospaced).bold())
                     .textSelection(.enabled).accessibilityLabel("Код входа: " + code.user_code)

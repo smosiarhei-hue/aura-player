@@ -99,7 +99,7 @@ nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
     with tempfile.TemporaryDirectory() as directory:
         directory = Path(directory)
         (directory / 'Checks.swift').write_text(code)
-        args = ['swiftc', '-swift-version', '6', '-strict-concurrency=complete', '-parse-as-library',
+        args = ['swiftc', '-swift-version', '6', '-default-isolation', 'MainActor', '-strict-concurrency=complete', '-parse-as-library',
                 str(root / 'Sonivo/YandexDeviceAuthClient.swift'), str(root / 'Sonivo/YandexCredentialStore.swift'),
                 str(directory / 'Checks.swift'), '-o', str(directory / 'checks')]
         result = subprocess.run(args, capture_output=True, text=True)
@@ -261,7 +261,7 @@ nonisolated struct Playlist {
         directory = Path(directory)
         (directory / 'Credential.swift').write_text(credential)
         (directory / 'Checks.swift').write_text(code)
-        args = ['swiftc', '-swift-version', '6', '-strict-concurrency=complete', '-parse-as-library',
+        args = ['swiftc', '-swift-version', '6', '-default-isolation', 'MainActor', '-strict-concurrency=complete', '-parse-as-library',
                 str(root / 'Sonivo/YandexDeviceAuthClient.swift'), str(directory / 'Credential.swift'),
                 str(directory / 'Checks.swift'), '-o', str(directory / 'checks')]
         compiled = subprocess.run(args, capture_output=True, text=True)

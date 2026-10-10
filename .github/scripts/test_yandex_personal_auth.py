@@ -13,6 +13,8 @@ class YandexPersonalAuthTests(unittest.TestCase):
         for expected in ['openURL(url)', 'code.user_code', 'ContinuousClock()', 'Task.checkCancellation()', '.onDisappear { cancel()', 'operation?.cancel()', 'interval += 5', 'YandexAuthError.pending']:
             self.assertIn(expected, view)
         self.assertNotIn('UIPasteboard.general.string = token', view)
+        self.assertIn('Яндекса.\\n2.', view)
+        self.assertNotIn('Яндекса.\n2.', view)
 
     def test_upstream_protocol_and_form_encoding_are_explicit(self):
         client = (ROOT / 'Sonivo/YandexDeviceAuthClient.swift').read_text()
