@@ -481,5 +481,7 @@ print("Beat Waves Swift physics, presentation and cosmetic light checks passed")
             verify_eq_user_presets(ROOT)
             from check_player_dismiss import verify_player_dismiss
             verify_player_dismiss(ROOT)
+            from check_launch_intro import verify_launch_intro
+            verify_launch_intro(ROOT)
 
 if __name__=='__main__': unittest.main()

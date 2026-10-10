@@ -18,7 +18,7 @@ struct SonivoApp: App {
         UIScrollView.appearance().decelerationRate = UIScrollView.DecelerationRate.normal
         UIScrollView.appearance().bounces = true
     }
-    var body: some Scene { WindowGroup { RootView().tint(SN.accent) } }
+    var body: some Scene { WindowGroup { SonivoLaunchHost() } }
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
@@ -45,6 +45,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
+    var onExternalPlaybackOpen: (() -> Void)? = nil
     @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
     @State private var router = PlaybackCommandRouter.shared
@@ -99,9 +100,9 @@ struct RootView: View {
             AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(showPlayer)
             if active, presentedIsPlaying { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
-        .onOpenURL { _ in showPlayer = true }
-        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in showPlayer = true }
-        .onContinueUserActivity("com.apple.mediaitem") { _ in showPlayer = true }
+        .onOpenURL { _ in onExternalPlaybackOpen?(); showPlayer = true }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in onExternalPlaybackOpen?(); showPlayer = true }
+        .onContinueUserActivity("com.apple.mediaitem") { _ in onExternalPlaybackOpen?(); showPlayer = true }
         .onChange(of: player.currentTrack?.id) { _, _ in rememberCurrentTrack() }
         .onChange(of: player.isPlaying) { _, playing in
             if playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
