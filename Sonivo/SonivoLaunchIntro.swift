@@ -11,20 +11,26 @@ struct SonivoLaunchHost: View {
     @State private var epoch: TimeInterval = 0
     @State private var haptics = SonivoLaunchHaptics()
     @State private var brandFontName: String?
+    @State private var revealingHome = false
 
     var body: some View {
         ZStack {
             RootView(onExternalPlaybackOpen: finish).tint(SN.accent)
+                .modifier(SonivoLaunchHomeReveal(
+                    progress: session.isFinished || revealingHome ? 1 : 0,
+                    reduceMotion: reduceMotion
+                ))
                 .allowsHitTesting(session.isFinished)
                 .accessibilityHidden(!session.isFinished)
             if !session.isFinished {
                 SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion,
-                                  brandFontName: brandFontName, onSkip: finish)
-                    .transition(.opacity)
+                                  brandFontName: brandFontName,
+                                  exitBlurRadius: revealingHome ? SonivoLaunchMotion.exitDefocusRadius : 0,
+                                  onSkip: finish)
+                    .transition(.identity)
                     .zIndex(10)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: session.isFinished)
         .task(id: scenePhase) {
             guard scenePhase == .active else {
                 if session.hasStarted { finish() }
@@ -34,6 +40,17 @@ struct SonivoLaunchHost: View {
             brandFontName = SonivoLaunchTypography.prepare()
             epoch = haptics.start(reduceMotion: reduceMotion)
             do {
+                if !reduceMotion {
+                    // Use the final existing 350 ms, not an extra startup delay.
+                    let untilHandoff = max(0, epoch + SonivoLaunchMotion.fadeStart - CACurrentMediaTime())
+                    try await Task.sleep(for: .seconds(untilHandoff))
+                    try Task.checkCancellation()
+                    guard !session.isFinished, scenePhase == .active else { return }
+                    withAnimation(.timingCurve(0.23, 1, 0.32, 1,
+                                              duration: SonivoLaunchMotion.exitTransitionDuration)) {
+                        revealingHome = true
+                    }
+                }
                 let remaining = reduceMotion ? SonivoLaunchMotion.reducedDuration
                     : max(0, epoch + SonivoLaunchMotion.duration - CACurrentMediaTime())
                 try await Task.sleep(for: .seconds(remaining))
@@ -55,7 +72,10 @@ struct SonivoLaunchHost: View {
 
     private func finish() {
         haptics.stop()
-        session.finish()
+        // Skip/deep-link/background/playback interruptions never wait for the handoff.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { session.finish() }
     }
 }
 
@@ -71,6 +91,7 @@ private struct SonivoLaunchIntro: View {
     let epoch: TimeInterval
     let reduceMotion: Bool
     let brandFontName: String?
+    let exitBlurRadius: Double
     let onSkip: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -96,6 +117,7 @@ private struct SonivoLaunchIntro: View {
                                            increasedContrast: contrast == .increased)
                     focusScene(time: time, unit: unit)
                         .scaleEffect(reduceMotion ? 1 : SonivoLaunchMotion.zoom(at: time, peak: peak))
+                        .blur(radius: reduceMotion ? 0 : exitBlurRadius)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .offset(y: -24 * unit)
                     VStack {

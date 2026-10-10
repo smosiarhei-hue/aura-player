@@ -13,6 +13,9 @@ nonisolated struct SonivoLaunchFocusWeights: Sendable {
 nonisolated enum SonivoLaunchMotion {
     static let duration = 4.20
     static let fadeStart = 3.85
+    static let exitTransitionDuration = duration - fadeStart
+    static let exitDefocusRadius = 12.0
+    static let homeRevealBlurRadius = 6.0
     static let reducedPreviewTime = 3.62
     static let reducedDuration = 0.35
     static let focusPadding = 10.0
@@ -30,6 +33,14 @@ nonisolated enum SonivoLaunchMotion {
     }
     static func atmosphereDrift(at time: Double) -> Double {
         0.075 * sin(surfaceTime(at: time) * 0.48)
+    }
+    static func exitProgress(at time: Double) -> Double {
+        easeOut(progress(time, from: fadeStart, duration: exitTransitionDuration))
+    }
+    /// The live root is sharp before/after the handoff; only intermediate frames are blurred.
+    static func homeRevealBlur(progress: Double, reduceMotion: Bool) -> Double {
+        guard !reduceMotion, progress.isFinite, progress > 0, progress < 1 else { return 0 }
+        return homeRevealBlurRadius * (1 - progress)
     }
     static func progress(_ time: Double, from start: Double, duration: Double) -> Double {
         guard time.isFinite, duration > 0 else { return 0 }

@@ -25,6 +25,31 @@ import CoreText
             precondition(surface.isFinite && surface >= 0 && surface <= 4.2)
             precondition(drift.isFinite && abs(drift) <= 0.075)
         }
+        precondition(abs(SonivoLaunchMotion.exitTransitionDuration - 0.35) < 1e-12)
+        precondition(SonivoLaunchMotion.exitProgress(at: 3.85) == 0)
+        precondition(SonivoLaunchMotion.exitProgress(at: 4.2) == 1)
+        precondition(SonivoLaunchMotion.exitProgress(at: .nan) == 0)
+        precondition(SonivoLaunchMotion.exitDefocusRadius <= 20)
+        for p in [-1.0, 0, 0.25, 0.5, 0.75, 1, 2, .nan, .infinity] {
+            let blur = SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: false)
+            precondition(blur.isFinite && blur >= 0 && blur <= 6)
+            precondition(SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: true) == 0)
+        }
+        precondition(SonivoLaunchMotion.homeRevealBlur(progress: 0, reduceMotion: false) == 0)
+        precondition(SonivoLaunchMotion.homeRevealBlur(progress: 1, reduceMotion: false) == 0)
+        var previousProgress = 0.0
+        var previousHomeBlur = 6.0
+        for frame in 0...120 {
+            let time = SonivoLaunchMotion.fadeStart + Double(frame) / 120 * SonivoLaunchMotion.exitTransitionDuration
+            let p = SonivoLaunchMotion.exitProgress(at: time)
+            precondition(p >= previousProgress && p <= 1)
+            if p > 0 {
+                let blur = SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: false)
+                precondition(blur <= previousHomeBlur)
+                previousHomeBlur = blur
+            }
+            previousProgress = p
+        }
         var session=SonivoLaunchSession()
         precondition(!session.begin(isActive:false,isPlaying:false))
         precondition(!session.hasStarted && !session.isFinished)

@@ -56,3 +56,11 @@ Applied guidance:
 | Slow contraction with possible suggested smear | Keep contraction crisp; preserve inactive-word defocus | Follow motion guidance: blur should describe focus, not manufacture softness. |
 
 **Review — Approve code scope, pending native build/device QA:** no extra blocking wait, no audio changes, no SDK bump, no extra tactile events, preserved Skip/theme/accessibility. Structural asset/material checks and real macOS font/glyph checks supplement the existing timing/lifetime tests. Preview videos remain composition studies; physical iPhone performance and tactile feel are not established by them.
+
+## Blur-to-home handoff
+
+Natural completion now bridges into the already-mounted Home tab (the existing `RootView` default, including My Wave) during the **existing final 350 ms**, 3.85–4.20 s. The wordmark/focus scene defocuses to 12 pt while the existing intro opacity fades. A native `ViewModifier, Animatable` applies a 6-to-0 pt blur to the live root only on intermediate reveal frames. At progress 0 and 1 its blur is exactly zero: no full-screen blur runs under the opaque intro throughout startup, and none persists after completion. Skip remains outside the defocused wordmark layer.
+
+There is no snapshot, second RootView, navigation reset, second display timer, added wait, or new haptic cue. The handoff uses the same strong ease-out curve as the intro. This 350 ms bridge is a launch-only explanatory transition, not a recurring 350 ms control interaction. Reduced Motion does not start it. Skip, external playback/deep links, scene deactivation, playback starting and disappearance all use a disables-animations transaction to remove the overlay and clear any in-flight root blur immediately. They retain the existing playback route rather than forcing Home.
+
+Portable structural tests guard the single live root, bounded material, unchanged deadline, cancellation before handoff, immediate bypass and unchanged navigation. The compiled macOS model checks normalized monotonic reveal progress, bounded/settled home blur and Reduced Motion. SwiftUI compilation validates the actual modifier; the visual feel and device rendering budget still require iPhone testing.
