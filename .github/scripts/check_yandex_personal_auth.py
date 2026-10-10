@@ -167,7 +167,7 @@ nonisolated struct Playlist {
     LIBRARY_METHODS
 }
 @MainActor final class YandexMusicService {
-    struct Profile { let uid: Int }
+    struct Profile: Sendable { let uid: Int }
     var credential: YandexCredential?
     var token = ""
     var isAuthorized = false

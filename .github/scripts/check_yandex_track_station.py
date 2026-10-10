@@ -46,6 +46,13 @@ struct Track { let fileName: String }
     private var lastBatchId: String?
     private(set) var rotorSessionID = UUID()
     private var trackStationRequestID = UUID()
+    var accountGeneration = UUID()
+    func sessionData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let generation = accountGeneration
+        let response = try await URLSession.shared.data(for: request)
+        guard accountGeneration == generation else { throw CancellationError() }
+        return response
+    }
     func authorizedRequest(url: URL) -> URLRequest { URLRequest(url: url) }
     func convertToTrack(_ item: YMTrackItem) -> Track { Track(fileName: "ym_\(item.id).mp3") }
     static func ymId(fromFileName name: String) -> String? {
@@ -106,6 +113,10 @@ struct Track { let fileName: String }
         invalidRefill.beginStationSession("track:1")
         transport.hook={ invalidRefill.beginStationSession("user:other") }
         check(await invalidRefill.refillYandexTrackWave(target: 1).isEmpty,"Stale refill appended")
+        let otherAccount=setup([fixture(["2"])])
+        transport.hook={ otherAccount.accountGeneration = UUID() }
+        check(await otherAccount.startYandexTrackStation(seedID: "1",target: 1).isEmpty,"Previous account's response committed")
+        check(otherAccount.activeStationId==nil,"Previous account activated a station")
         let cancelled=setup([fixture(["2"])])
         let task=Task { @MainActor in await cancelled.startYandexTrackStation(seedID: "1",target: 1) }
         task.cancel()
