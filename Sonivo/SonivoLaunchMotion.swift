@@ -1,16 +1,27 @@
 import Foundation
 
-/// One monotonic timeline is used by the native visuals and scheduled tactile events.
+nonisolated struct SonivoLaunchFocusWeights: Sendable {
+    let brand: Double
+    let first: Double
+    let second: Double
+    func value(for index: Int) -> Double {
+        switch index { case 1: first; case 2: second; default: brand }
+    }
+}
+
+/// True Focus choreography and tactile events share one monotonic launch clock.
 nonisolated enum SonivoLaunchMotion {
-    static let brandLetters = ["S", "o", "n", "i", "v", "o"]
-    static let markHeights: [Double] = [28, 58, 86, 58, 28]
-    static let duration = 3.25
-    static let fadeStart = 2.88
-    static let hapticOnsets: [Double] = [1.00, 1.84]
-    static let hapticStrengths: [Float] = [1.0, 0.80]
-    static let hapticBodyDuration = 0.18
-    static let reducedPreviewTime = 2.62
+    static let duration = 4.20
+    static let fadeStart = 3.85
+    static let reducedPreviewTime = 3.62
     static let reducedDuration = 0.35
+    static let focusPadding = 10.0
+    static let focusTransitionDuration = 0.50
+    static let hapticOnsets: [Double] = [0.70, 1.78, 2.56, 3.36]
+    static let hapticStrengths: [Float] = [1.0, 0.85, 0.90, 1.0]
+    static let hapticBodyDuration = 0.24
+    static let zoomTickOnsets: [Double] = [1.03, 1.52, 2.01, 2.50, 2.99, 3.40]
+    static let zoomTickStrengths: [Float] = [0.24, 0.30, 0.35, 0.28, 0.21, 0.12]
 
     static func progress(_ time: Double, from start: Double, duration: Double) -> Double {
         guard time.isFinite, duration > 0 else { return 0 }
@@ -35,16 +46,26 @@ nonisolated enum SonivoLaunchMotion {
         let t = (lo + hi) * 0.5, u = 1 - t
         return 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t
     }
-    static func markProgress(at time: Double, index: Int) -> Double {
-        easeInOut(progress(time, from: 0.12 + Double(index) * 0.055, duration: 0.82))
+    static func focusWeights(at time: Double) -> SonivoLaunchFocusWeights {
+        guard time.isFinite else { return .init(brand: 1, first: 0, second: 0) }
+        if time < 1.28 { return .init(brand: 1, first: 0, second: 0) }
+        if time < 2.06 {
+            let t = easeInOut(progress(time, from: 1.28, duration: focusTransitionDuration))
+            return .init(brand: 1 - t, first: t, second: 0)
+        }
+        if time < 2.86 {
+            let t = easeInOut(progress(time, from: 2.06, duration: focusTransitionDuration))
+            return .init(brand: 0, first: 1 - t, second: t)
+        }
+        let t = easeInOut(progress(time, from: 2.86, duration: focusTransitionDuration))
+        return .init(brand: t, first: 0, second: 1 - t)
     }
-    static func letterProgress(at time: Double, index: Int) -> Double {
-        easeOut(progress(time, from: 1.12 + Double(index) * 0.06, duration: 0.66))
+    static func blur(at time: Double, index: Int) -> Double {
+        5 * (1 - focusWeights(at: time).value(for: index))
     }
-    static func accentVisibility(at time: Double) -> Double {
-        let enter = easeOut(progress(time, from: hapticOnsets[0], duration: 0.14))
-        let leave = progress(time, from: 1.28, duration: 0.48)
-        return enter * (1 - leave)
+    static func zoom(at time: Double, peak: Double) -> Double {
+        let maximum = peak.isFinite ? min(2.2, max(1, peak)) : 1
+        return maximum - (maximum - 1) * easeInOut(progress(time, from: 1.00, duration: 2.45))
     }
     static func impact(at time: Double) -> Double {
         hapticOnsets.reduce(0) { result, onset in
@@ -54,9 +75,6 @@ nonisolated enum SonivoLaunchMotion {
             let release = 1 - easeOut(progress(age, from: 0.06, duration: 0.40))
             return max(result, attack * release)
         }
-    }
-    static func sweep(at time: Double) -> Double {
-        easeInOut(progress(time, from: 1.76, duration: 0.76))
     }
     static func opacity(at time: Double) -> Double {
         1 - easeOut(progress(time, from: fadeStart, duration: duration - fadeStart))

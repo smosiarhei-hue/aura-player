@@ -19,39 +19,52 @@ import Foundation
         precondition(!playback.begin(isActive:true,isPlaying:true) && playback.isFinished)
         var skipped=SonivoLaunchSession(); skipped.finish()
         precondition(!skipped.begin(isActive:true,isPlaying:false),"External playback/skip ignored")
-        precondition(SonivoLaunchMotion.duration<=3.5 && SonivoLaunchMotion.reducedDuration<0.5)
+        precondition(SonivoLaunchMotion.duration==4.2 && SonivoLaunchMotion.reducedDuration<0.5)
+        precondition(SonivoLaunchMotion.hapticOnsets.count==4)
         precondition(SonivoLaunchMotion.hapticOnsets.count==SonivoLaunchMotion.hapticStrengths.count)
-        for onset in SonivoLaunchMotion.hapticOnsets {
+        precondition(SonivoLaunchMotion.zoomTickOnsets.count==SonivoLaunchMotion.zoomTickStrengths.count)
+        for onset in SonivoLaunchMotion.hapticOnsets + SonivoLaunchMotion.zoomTickOnsets {
             precondition(onset>=0 && onset<SonivoLaunchMotion.fadeStart)
         }
-        for index in 0..<6 {
-            var previous=0.0
-            for frame in 0...420 {
-                let time=Double(frame)/120
-                let current=SonivoLaunchMotion.letterProgress(at:time,index:index)
-                precondition(current>=previous && current<=1 && current.isFinite)
-                previous=current
-            }
-            precondition(previous==1)
+        for strength in SonivoLaunchMotion.hapticStrengths + SonivoLaunchMotion.zoomTickStrengths {
+            precondition(strength>0 && strength<=1)
         }
+        for frame in 0...540 {
+            let time=Double(frame)/120
+            let focus=SonivoLaunchMotion.focusWeights(at:time)
+            precondition(abs(focus.brand+focus.first+focus.second-1)<1e-12)
+            for index in 0..<3 {
+                precondition(focus.value(for:index)>=0 && focus.value(for:index)<=1)
+                let blur=SonivoLaunchMotion.blur(at:time,index:index)
+                precondition(blur.isFinite && blur>=0 && blur<=5)
+            }
+            let impact=SonivoLaunchMotion.impact(at:time)
+            precondition(impact.isFinite && impact>=0 && impact<=1)
+        }
+        for (time,index) in [(0.70,0),(1.78,1),(2.56,2),(3.36,0)] {
+            precondition(SonivoLaunchMotion.blur(at:time,index:index)<1e-6,"Tactile lock cue misses clear text")
+        }
+        for peak in [1.0,1.4,2.2,8.0] {
+            var previous=2.2
+            for frame in 0...540 {
+                let zoom=SonivoLaunchMotion.zoom(at:Double(frame)/120,peak:peak)
+                precondition(zoom>=1 && zoom<=2.2 && zoom<=previous+1e-12)
+                previous=zoom
+            }
+            precondition(previous==1,"Zoom did not settle to standard size")
+        }
+        precondition(SonivoLaunchMotion.zoom(at:0,peak:1.7)==1.7)
+        precondition(SonivoLaunchMotion.zoom(at:SonivoLaunchMotion.reducedPreviewTime,peak:1.7)==1)
+        precondition(SonivoLaunchMotion.blur(at:SonivoLaunchMotion.reducedPreviewTime,index:0)==0)
         precondition(SonivoLaunchMotion.opacity(at:0)==1)
         precondition(SonivoLaunchMotion.opacity(at:SonivoLaunchMotion.duration)==0)
         precondition(SonivoLaunchMotion.progress(.nan,from:0,duration:1)==0)
-        precondition(SonivoLaunchMotion.hapticStrengths==[1.0,0.80])
-        for frame in 0...420 {
-            let t=Double(frame)/120
-            let impact=SonivoLaunchMotion.impact(at:t)
-            precondition(impact.isFinite && impact>=0 && impact<=1)
-            precondition(SonivoLaunchMotion.sweep(at:t)>=0 && SonivoLaunchMotion.sweep(at:t)<=1)
-        }
-        precondition(SonivoLaunchMotion.impact(at:0)==0)
-        precondition(SonivoLaunchMotion.impact(at:SonivoLaunchMotion.duration)==0)
-        precondition(SonivoLaunchMotion.letterProgress(at:SonivoLaunchMotion.reducedPreviewTime,index:5)==1)
+        precondition(SonivoLaunchMotion.focusWeights(at:.nan).brand==1)
         for fps in [30,60,120] {
-            let t=Double(fps)*2.6/Double(fps)
-            precondition(SonivoLaunchMotion.letterProgress(at:t,index:5)==1)
+            let time=Double(fps)*3.62/Double(fps)
+            precondition(SonivoLaunchMotion.zoom(at:time,peak:1.7)==1)
         }
-        print("Sonivo launch timing, lifecycle, playback bypass, skip and reduced-motion checks passed")
+        print("Sonivo launch True Focus/zoom, tactile cue timing, lifecycle, playback bypass, skip and reduced-motion checks passed")
     }
 }
 '''

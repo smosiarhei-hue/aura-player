@@ -32,18 +32,22 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertIn('if !dynamicTypeSize.isAccessibilitySize',intro)
         self.assertIn('.accessibilityLabel("Sonivo")',intro)
         self.assertIn('Button("Пропустить"',intro)
-    def test_intro_is_small_finite_native_brand_reveal(self):
+    def test_intro_is_large_then_standard_true_focus_not_old_letter_reveal(self):
         model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        self.assertIn('static let duration = 3.25',model)
+        self.assertIn('static let duration = 4.20',model)
         self.assertIn('static let reducedDuration = 0.35',model)
-        self.assertIn('letterProgress(at: time, index: index)',intro)
-        self.assertIn('ForEach(0..<5',intro)
-        self.assertIn('.accessibilityLabel("Sonivo")',intro)
+        for expected in ['focusedWord("Sonivo"','focusedWord("Твоя"','focusedWord("музыка"','.blur(radius: blur)','.anchorPreference(key: SonivoLaunchFocusBounds.self','.overlayPreferenceValue(SonivoLaunchFocusBounds.self)','cornerPath(in: bounds)','SonivoLaunchMotion.zoom(at: time, peak: peak)','measuredWordWidth','measuredGroupHeight','SonivoLaunchMotion.focusPadding * 2']:
+            self.assertIn(expected,intro)
+        for removed in ['letterProgress','sweep(at:','soundMark(']:
+            self.assertNotIn(removed,intro)
         self.assertIn('.frame(minWidth: 120, minHeight: 44)',intro)
         self.assertNotIn('UIScreen.main',intro)
-        self.assertIn('RadialGradient(colors:',intro)
-        self.assertIn('SonivoLaunchMotion.sweep(at: time)',intro)
-        self.assertIn('hapticBodyDuration',intro)
-        self.assertIn('strength * 0.40',intro)
+        self.assertIn('zoomTicks',intro)
+        self.assertIn('strength * 0.55',intro)
+    def test_focus_preferences_are_not_actor_isolated_shared_state(self):
+        intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
+        self.assertIn('nonisolated private struct SonivoLaunchFocusBounds: PreferenceKey',intro)
+        self.assertIn('static var defaultValue: [Int: Anchor<CGRect>] { [:] }',intro)
+        self.assertNotIn('static var defaultValue: [Int: Anchor<CGRect>] =',intro)
 if __name__=='__main__':unittest.main()

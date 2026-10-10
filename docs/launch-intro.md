@@ -1,40 +1,30 @@
-# Native Sonivo launch intro
+# Sonivo True Focus launch intro
 
-A 3.25-second SwiftUI brand reveal after the static iOS launch screen. Five warm-accent sound bars assemble, six rounded wordmark letters reveal in a 60 ms stagger, and the scene crossfades into the already-mounted app. No streamed assets, video player, imported fonts, new packages or audio samples are used.
+A 4.2-second native adaptation of the True Focus behavior requested by the owner: inactive words are blurred, the active word is clear, and four accent-colored corner markers travel between actual native text bounds. The sequence is Sonivo → Твоя → музыка → Sonivo. The wordmark starts near the available viewport width and contracts to its normal size; fitting includes the frame corners, viewport height and the Skip control clearance. There is no cropped giant text, forced font-layout resizing, web view or React runtime.
 
-RootView is created immediately, so startup work is not postponed until the reveal ends. The in-memory launch session plays once per host lifetime, not whenever the scene resumes. A visible, accessible Skip action completes it immediately. Backgrounding, disappearance, external playback openings and playback starting stop the haptics and finish the intro. Existing RootView deep-link handlers remain responsible for opening the player.
+The implementation uses native SwiftUI text, bounded blur (0–5 pt), anchor preferences, a single eight-segment corner path and a transform-based zoom. Native geometry reporting measures the base word width and scene height; the fitting calculation is not based only on guessed font metrics. A nonisolated preference key returns a fresh default dictionary, avoiding shared actor-isolated static mutable state in layout callbacks.
 
-Reduced Motion shows the complete static brand for 0.35 seconds with a short opacity transition, no spatial choreography and no scheduled tactile pattern. Devices without haptic support or with app control haptics disabled still show the visual reveal. CoreHaptics failures fall back to visual-only playback.
+## Shared physical timeline
+Four focus-lock impulses at 0.70, 1.78, 2.56 and 3.36 seconds use strengths 1.00, 0.85, 0.90 and 1.00. Each is followed by a 240 ms continuous body at 55% of its strength. Six softer ticks accompany the large-to-normal contraction. Values stay inside the supported 0–1 intensity range: hardware intensity is not described as exceeding CoreHaptics' maximum. The visual epoch and the scheduled tactile pattern retain the shared 35 ms lead. The frame's localized glow responds to the same lock envelope. No audio events or audio-session configuration changes are introduced.
 
-## Tactile timing
+## Lifetime and accessibility
+RootView still mounts immediately. Skip, scene deactivation after startup, disappearance, direct external playback opening or playback starting stops all pending tactile events and finishes the intro. The in-memory launch session does not replay on a return from the background. Disabled haptics/unsupported hardware yields visual-only behavior. Reduced Motion shows the settled, clear, standard-size brand for 0.35 seconds, with no moving frame, text blur, spatial zoom or tactile pattern. Accessibility text sizes omit the nonessential secondary words and keep the native Skip control.
 
-Two stronger haptic-only transients with short continuous bodies use the shared `SonivoLaunchMotion` timeline at 1.00 and 1.84 seconds (strengths 1.00 and 0.80). The visual epoch and the haptic engine are both scheduled with a 35 ms lead. Stop/skip cancels queued events. No music haptics override, audio-session configuration change or fabricated beat detector input is introduced.
+The static iOS launch screen remains separate: this animation runs after it. No full-track downloads, streaming queue changes, beat detector modifications or renderer changes outside the intro are included.
 
-This is bounded launch choreography, not a promise of measured frame rate or sample-accurate synchronization on a physical device. SwiftUI chooses the display cadence; actual smoothness and Taptic feel require an iPhone test.
+## Verification
+Structural checks guard root mounting, lifecycle, preferences, real geometry fitting, active/inactive-word blur, corner-frame rendering and shared tactile/zoom timing. The compiled Swift check executes the real model: weights remain normalized, blur stays within 0–5, focus-lock cues align to clear words, the zoom is monotonic and settles to 1, tactile values/times are valid, and cancellation/playback/reduced-motion lifetimes are preserved. Final macOS compilation verifies the actual SwiftUI/CoreHaptics code. Smoothness and motor feel require a physical iPhone; rendered preview videos are composition studies, not device recordings.
 
-## Checks
+## Reference and motion review
+- https://reactbits.dev/text-animations/true-focus
+- https://github.com/DavidHDev/react-bits/blob/main/src/content/TextAnimations/TrueFocus/TrueFocus.jsx
 
-The compiled Swift check executes the real timing/lifetime model: one-shot startup, inactive scenes, playback bypass, early skip, monotonic letter reveal, fade completion, finite input handling and time-based behavior at 30/60/120 sampling rates. Structural tests verify immediate root mounting, cancellation hooks, existing deep-link routing, no video/network startup dependency, accessibility and common haptic/visual timing. Final app compilation validates the SwiftUI/CoreHaptics integration on macOS.
-
-## Reference
-
-https://prompt-motion.com/jesscaroline7-1ff7cb — kinetic typography / app-motion reel used for direction only. Its video, artwork and code were not copied. Sonivo's native vectors and wordmark are original implementation.
-
-
-## Motion polish v2
-A longer assembly uses the shared strong ease-in-out curve; lettering then reveals with ease-out. The native vector mark gains a localized radial bloom and a bounded pulse tied to the haptic timeline. A narrow accent-colored sweep crosses the wordmark once, not a repeating shimmer. There is no fullscreen flash, large blur filter, particle simulation or added rendering dependency. Each haptic transient is followed after 20 ms by a 180 ms continuous body at 40% of the transient's intensity. Hardware feel is not asserted from those nominal values.
-
-UI/UX Pro Max, Apple Design, Animate and Review Animations guidance was applied. Public references were inspected, not copied or installed:
-- https://community.rive.app/c/showcase/building-an-engaging-splash-screen-with-rive
-- https://mobbin.com/glossary/launch-screen
-- https://reactbits.dev/text-animations/blur-text
+The original demo and component behavior were inspected. This is a native adaptation of its focus/blur/corner-frame interaction, not a claim that the React component or an NPM package was installed into SwiftUI. No external assets or new runtime dependencies are used.
 
 | Before | After | Why |
 | --- | --- | --- |
-| 1.85 s compressed reveal | 3.25 s staged assembly/read/exit | Owner requested slower brand choreography; skip and playback bypass remain immediate. |
-| Transients at 0.45/0.22 | Transients at 1.00/0.80 plus brief tactile bodies | Noticeable tactile punctuation rather than a longer continuous buzz. |
-| Flat mark and text | Localized glow, subtle depth and one masked text sweep | Hierarchy and polish without heavy video/shader infrastructure. |
+| Small sound bars and staggered letters | Oversized wordmark, moving focus corners and inactive-word blur | Explicit owner's True Focus reference and near-full-width opening. |
+| Two tactile cues | Four focus-lock impacts, short bodies and softer contraction ticks | A richer physical sequence without unsupported intensities or indefinite buzzing. |
+| Fixed guessed opening size | Native word/scene measurements plus viewport fitting | Keep focus corners and the Skip control visible on small/landscape layouts. |
 
-**Motion review — Approve code scope:** bounded cold-launch choreography, shared timing, cancellation/skip, native transforms/opacity, unchanged reduced-motion lifetime, no repeat on resume and no audio-session mutation. Longer timing is an explicit owner preference for this branded reveal, not a new duration for interactive UI. Physical smoothness and Taptic intensity still require the owner's iPhone check.
-
-At accessibility text sizes, the nonessential tagline is omitted so the brand and the native Skip control do not compete for vertical space, especially in landscape.
+**Motion review — Approve code scope:** bounded launch-only choreography; Skip and playback bypass remain immediate. Normal-size landing, finite curve sampling, no indefinite loop, reduced-motion fallback, actor-safe preference defaults and unchanged root lifetime are covered. Device feel and frame rate remain unverified.

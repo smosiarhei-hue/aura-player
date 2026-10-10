@@ -56,53 +56,44 @@ struct SonivoLaunchHost: View {
     }
 }
 
+/// Anchors track the actual native text bounds rather than estimated glyph widths.
+nonisolated private struct SonivoLaunchFocusBounds: PreferenceKey {
+    static var defaultValue: [Int: Anchor<CGRect>] { [:] }
+    static func reduce(value: inout [Int: Anchor<CGRect>], nextValue: () -> [Int: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
 private struct SonivoLaunchIntro: View {
     let epoch: TimeInterval
     let reduceMotion: Bool
     let onSkip: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var measuredWordWidth: Double?
+    @State private var measuredGroupHeight: Double?
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion || scenePhase != .active)) { _ in
-            let time = reduceMotion ? SonivoLaunchMotion.reducedPreviewTime : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
-            GeometryReader { geometry in
-                let unit = Double(min(1.3, min(geometry.size.width / 390, geometry.size.height / 844)))
+        GeometryReader { geometry in
+            let unit = Double(min(1.3, min(geometry.size.width / 390, geometry.size.height / 844)))
+            // Include the focus corners in fitting, so the oversized opening is never cropped.
+            let wordWidth = (measuredWordWidth ?? 225 * unit) + SonivoLaunchMotion.focusPadding * 2
+            let groupHeight = (measuredGroupHeight ?? 118 * unit) + SonivoLaunchMotion.focusPadding * 2
+            let peak = max(1, min(2.2, min((Double(geometry.size.width) - 32) / wordWidth,
+                                          max(1, Double(geometry.size.height) - 140) / groupHeight)))
+            TimelineView(.animation(paused: reduceMotion || scenePhase != .active)) { _ in
+                let time = reduceMotion ? SonivoLaunchMotion.reducedPreviewTime
+                    : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
                 ZStack {
                     SN.bg.ignoresSafeArea()
-                    VStack(spacing: 26 * unit) {
-                        soundMark(time: time, unit: unit)
-                            .frame(width: 180 * unit, height: 120 * unit)
-                            .accessibilityHidden(true)
-                        wordmark(time: time, unit: unit, highlighted: false)
-                            .overlay {
-                                if !reduceMotion {
-                                    wordmark(time: time, unit: unit, highlighted: true)
-                                        .mask {
-                                            GeometryReader { bounds in
-                                                let stripeWidth = 64 * unit
-                                                let travel = Double(bounds.size.width) + stripeWidth
-                                                LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
-                                                    .frame(width: stripeWidth)
-                                                    .offset(x: -stripeWidth + travel * SonivoLaunchMotion.sweep(at: time))
-                                            }
-                                        }
-                                        .accessibilityHidden(true)
-                                }
-                            }
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("Sonivo")
-                        if !dynamicTypeSize.isAccessibilitySize {
-                            Text("Музыка, которую чувствуешь.")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(SN.inkMuted)
-                                .multilineTextAlignment(.center)
-                                .opacity(SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 2.05, duration: 0.35)))
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .offset(y: -28 * unit)
+                    RadialGradient(colors: [SN.accent.opacity(0.08), .clear], center: .center,
+                                   startRadius: 0, endRadius: min(geometry.size.width, geometry.size.height) * 0.60)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    focusScene(time: time, unit: unit)
+                        .scaleEffect(reduceMotion ? 1 : SonivoLaunchMotion.zoom(at: time, peak: peak))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .offset(y: -24 * unit)
                     VStack {
                         Spacer()
                         Button("Пропустить", action: onSkip)
@@ -113,51 +104,83 @@ private struct SonivoLaunchIntro: View {
                             .padding(.bottom, 16)
                     }
                 }
+                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.opacity(at: time))
             }
-            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.opacity(at: time))
         }
         .accessibilityIdentifier("sonivo.launch.intro")
     }
 
-    private func wordmark(time: Double, unit: Double, highlighted: Bool) -> some View {
-        HStack(spacing: 0) {
-            ForEach(0..<6, id: \.self) { index in
-                let reveal = SonivoLaunchMotion.letterProgress(at: time, index: index)
-                Text(SonivoLaunchMotion.brandLetters[index])
-                    .font(.system(size: 62 * unit, weight: .black, design: .rounded))
-                    .foregroundStyle(highlighted ? SN.accent : SN.ink)
-                    .offset(y: reduceMotion ? 0 : (1 - reveal) * 22 * unit)
-                    .opacity(reveal)
+    private func focusScene(time: Double, unit: Double) -> some View {
+        VStack(spacing: 22 * unit) {
+            focusedWord("Sonivo", index: 0, time: time, fontSize: 62 * unit)
+                .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { measuredWordWidth = $0 }
+            if !dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: 10 * unit) {
+                    focusedWord("Твоя", index: 1, time: time, fontSize: 24 * unit)
+                    focusedWord("музыка", index: 2, time: time, fontSize: 24 * unit)
+                }
+                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 1.04, duration: 0.24)))
+                .accessibilityHidden(true)
             }
         }
+        .onGeometryChange(for: Double.self) { Double($0.size.height) } action: { measuredGroupHeight = $0 }
+        .overlayPreferenceValue(SonivoLaunchFocusBounds.self) { anchors in
+            GeometryReader { resolver in
+                if !reduceMotion, let brandAnchor = anchors[0] {
+                    let brand = resolver[brandAnchor]
+                    let first = anchors[1].map { resolver[$0] } ?? brand
+                    let second = anchors[2].map { resolver[$0] } ?? brand
+                    let weights = dynamicTypeSize.isAccessibilitySize
+                        ? SonivoLaunchFocusWeights(brand: 1, first: 0, second: 0)
+                        : SonivoLaunchMotion.focusWeights(at: time)
+                    let bounds = blend(brand, first, second, weights: weights)
+                        .insetBy(dx: -SonivoLaunchMotion.focusPadding, dy: -6)
+                    cornerPath(in: bounds)
+                        .stroke(SN.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                        .shadow(color: SN.accent.opacity(0.35 + SonivoLaunchMotion.impact(at: time) * 0.20), radius: 4)
+                        .opacity(SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 0.12, duration: 0.20)))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Sonivo")
     }
 
-    private func soundMark(time: Double, unit: Double) -> some View {
-        let accent = reduceMotion ? 0 : SonivoLaunchMotion.accentVisibility(at: time)
-        let impact = reduceMotion ? 0 : SonivoLaunchMotion.impact(at: time)
-        return ZStack {
-            RadialGradient(colors: [SN.accent.opacity(0.18 + impact * 0.12), SN.ember.opacity(0.06), .clear],
-                           center: .center, startRadius: 4, endRadius: 138 * unit)
-                .frame(width: 280 * unit, height: 280 * unit)
-                .scaleEffect(reduceMotion ? 1 : 0.96 + impact * 0.08)
-                .opacity(SonivoLaunchMotion.markProgress(at: time, index: 2))
-            Circle()
-                .stroke(SN.accent.opacity(accent * 0.32), lineWidth: 1.5)
-                .frame(width: 108 * unit, height: 108 * unit)
-                .scaleEffect(reduceMotion ? 1 : 0.94 + SonivoLaunchMotion.progress(time, from: SonivoLaunchMotion.hapticOnsets[0], duration: 0.64) * 0.32)
-            ForEach(0..<5, id: \.self) { index in
-                let reveal = SonivoLaunchMotion.markProgress(at: time, index: index)
-                let drift = Double(index - 2) * 25 * (1 - reveal)
-                Capsule()
-                    .fill(LinearGradient(colors: [SN.accent, SN.ember], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 11 * unit, height: SonivoLaunchMotion.markHeights[index] * unit)
-                    .overlay(Capsule().strokeBorder(SN.ink.opacity(0.16), lineWidth: 0.75))
-                    .scaleEffect(y: reduceMotion ? 1 : 0.92 + reveal * 0.08 + impact * 0.055)
-                    .rotationEffect(.degrees(reduceMotion ? 0 : Double(index - 2) * 9 * (1 - reveal)))
-                    .offset(x: (Double(index - 2) * 21 + (reduceMotion ? 0 : drift)) * unit,
-                            y: reduceMotion ? 0 : (index.isMultiple(of: 2) ? 14 : -14) * (1 - reveal) * unit)
-                    .opacity(0.15 + reveal * 0.85)
-            }
+    private func focusedWord(_ text: String, index: Int, time: Double, fontSize: Double) -> some View {
+        let blur = reduceMotion || dynamicTypeSize.isAccessibilitySize ? 0 : SonivoLaunchMotion.blur(at: time, index: index)
+        return Text(text)
+            .font(.system(size: fontSize, weight: .black, design: .rounded))
+            .foregroundStyle(SN.ink)
+            .fixedSize()
+            .blur(radius: blur)
+            .anchorPreference(key: SonivoLaunchFocusBounds.self, value: .bounds) { [index: $0] }
+            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 0.08, duration: 0.22)))
+    }
+
+    private func blend(_ a: CGRect, _ b: CGRect, _ c: CGRect, weights: SonivoLaunchFocusWeights) -> CGRect {
+        let wa = CGFloat(weights.brand), wb = CGFloat(weights.first), wc = CGFloat(weights.second)
+        return CGRect(x: a.minX * wa + b.minX * wb + c.minX * wc,
+                      y: a.minY * wa + b.minY * wb + c.minY * wc,
+                      width: a.width * wa + b.width * wb + c.width * wc,
+                      height: a.height * wa + b.height * wb + c.height * wc)
+    }
+    private func cornerPath(in rect: CGRect) -> Path {
+        let length = min(16, min(rect.width, rect.height) * 0.30)
+        return Path { p in
+            p.move(to: CGPoint(x: rect.minX, y: rect.minY + length))
+            p.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.minX + length, y: rect.minY))
+            p.move(to: CGPoint(x: rect.maxX - length, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + length))
+            p.move(to: CGPoint(x: rect.minX, y: rect.maxY - length))
+            p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            p.addLine(to: CGPoint(x: rect.minX + length, y: rect.maxY))
+            p.move(to: CGPoint(x: rect.maxX - length, y: rect.maxY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - length))
         }
     }
 }
@@ -187,12 +210,18 @@ private final class SonivoLaunchHaptics {
                     CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.45)
                 ], relativeTime: onset)
                 let body = CHHapticEvent(eventType: .hapticContinuous, parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: strength * 0.40),
+                    CHHapticEventParameter(parameterID: .hapticIntensity, value: strength * 0.55),
                     CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.12)
                 ], relativeTime: onset + 0.02, duration: SonivoLaunchMotion.hapticBodyDuration)
                 return [impact, body]
             }
-            let pattern = try CHHapticPattern(events: events, parameters: [])
+            let zoomTicks = zip(SonivoLaunchMotion.zoomTickOnsets, SonivoLaunchMotion.zoomTickStrengths).map { onset, strength in
+                CHHapticEvent(eventType: .hapticTransient, parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity, value: strength),
+                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.16)
+                ], relativeTime: onset)
+            }
+            let pattern = try CHHapticPattern(events: events + zoomTicks, parameters: [])
             let player = try engine.makePlayer(with: pattern)
             self.player = player
             // A shared start offset, not two independent animation/haptic timers.
