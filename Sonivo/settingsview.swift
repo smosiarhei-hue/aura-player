@@ -13,6 +13,8 @@ struct SettingsView: View {
     @State private var musixmatchProxyInput = ""
     @State private var musixmatchKeyInput = ""
     @State private var musixmatchKeyMessage = ""
+    @AppStorage("sonivo_videoshot_enabled") private var videoShotsEnabled = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showYandexAuthSheet = false
     @State private var showEqualizerSheet = false
     @State private var isSyncingLikes = false
@@ -61,6 +63,14 @@ struct SettingsView: View {
                             }.buttonStyle(.borderedProminent).tint(SN.ember)
                         }.padding(.vertical, 4)
                     }
+                }
+
+                Section {
+                    Toggle("Видеошоты", isOn: $videoShotsEnabled)
+                } header: { Text("Внешний вид плеера") } footer: {
+                    Text(reduceMotion
+                         ? "Уменьшение движения включено: видеошоты не воспроизводятся автоматически."
+                         : "Автоматически показывать готовое видео трека без звука. Если видео отсутствует, останется обложка. Отключение применяется ко всем трекам.")
                 }
 
                 Section("Аккаунт") {

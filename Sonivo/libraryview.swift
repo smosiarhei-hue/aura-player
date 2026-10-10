@@ -27,8 +27,10 @@ struct LibraryView: View {
         }
     }
 
+    private var visibleTracks: [Track] { YandexMusicService.shared.isUserLoggedIn ? library.tracks : localAudioTracks }
+
     var filteredTracks: [Track] {
-        var list = library.tracks
+        var list = visibleTracks
         switch filter {
         case .all, .playlists: break
         case .favorites: list = list.filter { $0.isFavorite || library.isTrackFavorite($0) }
@@ -47,7 +49,7 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if library.tracks.isEmpty && library.playlists.isEmpty {
+                if visibleTracks.isEmpty && library.playlists.isEmpty {
                     emptyStateView
                 } else {
                     mainLibraryContent
@@ -172,7 +174,7 @@ struct LibraryView: View {
                         playlistsShelfSection
                     }
 
-                    if filter == .all && searchText.isEmpty && library.tracks.count >= 2 {
+                    if filter == .all && searchText.isEmpty && visibleTracks.count >= 2 {
                         recentlyAddedSection
                     }
 
@@ -402,9 +404,9 @@ struct LibraryView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 14) {
-                    ForEach(Array(library.tracks.prefix(8))) { track in
+                    ForEach(Array(visibleTracks.prefix(8))) { track in
                         Button {
-                            PlaybackCommandRouter.shared.play(track, queue: library.tracks)
+                            PlaybackCommandRouter.shared.play(track, queue: filteredTracks)
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 SonivoArtworkCard(title: track.title, subtitle: track.artist, width: 140) {

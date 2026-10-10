@@ -1147,9 +1147,11 @@ final class PlayerCore {
     }
 
     func play(_ track: Track, newQueue: [Track]? = nil) {
+        guard !track.isStream || YandexMusicService.shared.isUserLoggedIn else { return }
         flushListeningStats()
         reportWaveSkipIfNeeded()
         if let q = newQueue, q != queue { queue = q }
+        if !YandexMusicService.shared.isUserLoggedIn { queue.removeAll { $0.isStream } }
         currentTrack = track
         metadataTrack = nil
         incomingTrack = nil

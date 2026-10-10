@@ -51,6 +51,12 @@ struct RootView: View {
     @State private var router = PlaybackCommandRouter.shared
     @State private var themeManager = ThemeFontManager.shared
     @State private var tab: AppTab = .home
+    @State private var ym = YandexMusicService.shared
+    @State private var rootSheet: RootSheet?
+    private enum RootSheet: String, Identifiable {
+        case account, settings
+        var id: String { rawValue }
+    }
     @State private var showPlayer = false
     @Namespace private var playerTransition
     static let playerZoomID = "now-playing-artwork"
@@ -68,16 +74,35 @@ struct RootView: View {
     }
     var body: some View {
         TabView(selection: $tab) {
-            Tab(AppTab.home.label, systemImage: AppTab.home.icon, value: .home) { SonivoHomeRedesignedView() }
-            Tab(AppTab.browse.label, systemImage: AppTab.browse.icon, value: .browse) { TrendsExploreView() }
-            Tab(AppTab.radio.label, systemImage: AppTab.radio.icon, value: .radio) { RadioStationsExploreView() }
+            Tab(AppTab.home.label, systemImage: AppTab.home.icon, value: .home) {
+                if ym.isUserLoggedIn { SonivoHomeRedesignedView() }
+                else { SonivoLocalHomeView(onConnect: { rootSheet = .account }, onSettings: { rootSheet = .settings }) }
+            }
+            if ym.isUserLoggedIn {
+                Tab(AppTab.browse.label, systemImage: AppTab.browse.icon, value: .browse) { TrendsExploreView() }
+                Tab(AppTab.radio.label, systemImage: AppTab.radio.icon, value: .radio) { RadioStationsExploreView() }
+            }
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
-            Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) { SearchCatalogView() }
+            Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) {
+                if ym.isUserLoggedIn { SearchCatalogView() } else { SonivoLocalSearchView() }
+            }
         }
         .accessibilityIdentifier("sonivo.root.tabs")
         .tint(themeManager.accentColor).tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
             if miniVisible { NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition) }
+        }
+        .sheet(item: $rootSheet) { sheet in
+            switch sheet {
+            case .account: YandexAuthSheet(onLoggedIn: { tab = .home })
+            case .settings: SettingsView()
+            }
+        }
+        .onChange(of: ym.isUserLoggedIn) { _, loggedIn in
+            if !loggedIn {
+                if tab == .browse || tab == .radio { tab = .home }
+                restrictGuestPlayback()
+            }
         }
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreenV2(isPresented: $showPlayer)
@@ -85,6 +110,7 @@ struct RootView: View {
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
+            if !ym.isUserLoggedIn { restrictGuestPlayback() }
             let active = (scenePhase == .active)
             player.setApplicationSceneActive(active)
             AutoMixV2NowPlayingCenter.shared.setApplicationSceneActive(active)
@@ -108,6 +134,11 @@ struct RootView: View {
             if playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
     }
+    private func restrictGuestPlayback() {
+        if player.currentTrack?.isStream == true { player.stopAndClear() }
+        player.queue.removeAll { $0.isStream }
+    }
+
     private func rememberCurrentTrack() {
         guard let track = presentedTrack else { return }
         YandexMusicService.shared.remember(key: track.id.uuidString, artist: track.artist,

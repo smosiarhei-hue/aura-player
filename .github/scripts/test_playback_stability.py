@@ -142,11 +142,11 @@ class PlaybackStabilityTests(unittest.TestCase):
         self.assertIn('playerB.stop()', begin)
         self.assertIn('isUsingStreamPlayer = true', begin)
 
-    def test_video_is_opt_in_and_does_not_auto_save_to_phone(self):
+    def test_video_autoplays_with_saved_opt_out_and_does_not_auto_save_to_phone(self):
         screen = source('PlayerScreenV2.swift')
-        self.assertIn('"sonivo_videoshot_enabled") as? Bool ?? false', screen)
+        self.assertIn('@AppStorage("sonivo_videoshot_enabled") private var isVideoShotEnabled = true', screen)
         load = screen.split('private func loadVideoShot()', 1)[1].split('private func setupVideoLooper', 1)[0]
-        self.assertIn('guard isVideoShotEnabled, let track', load)
+        self.assertIn('guard isVideoShotEnabled, !reduceMotion, let track', load)
         self.assertNotIn('saveVideoLocally', load)
         self.assertNotIn('Task.detached', load)
 

@@ -32,9 +32,10 @@ struct PlayerScreenV2: View {
     @State private var trackWaveTask: Task<Void, Never>?
     @State private var trackWaveRequestID = UUID()
     @State private var videoShotURL: URL?
-    @State private var isVideoShotEnabled = UserDefaults.standard.object(forKey: "sonivo_videoshot_enabled") as? Bool ?? false
-    @State private var videoLooperPlayer: AVQueuePlayer?
-    @State private var videoLooper: AVPlayerLooper?
+    @AppStorage("sonivo_videoshot_enabled") private var isVideoShotEnabled = true
+    @State private var videoPlayback = VideoShotPlaybackController()
+    @Environment(\.colorScheme) private var preferredScheme
+    private var videoLooperPlayer: AVQueuePlayer? { videoPlayback.player }
     @State private var videoShotTrackID: UUID?
     @ObservedObject private var aiVideoShotService = AIVideoShotGeneratorService.shared
     @State private var artworkPaletteColors: [Color] = []
@@ -128,6 +129,13 @@ struct PlayerScreenV2: View {
                     .frame(width: totalWidth, height: totalHeight)
                     .clipped()
 
+                if isFullScreenVideoShot, let videoLooperPlayer {
+                    VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
+                        .frame(width: totalWidth, height: totalHeight).clipped()
+                        .overlay(Color.black.opacity(0.32))
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+
                 if showLyricsMode {
                     lyricsPlayerLayout(
                         width: totalWidth,
@@ -172,6 +180,7 @@ struct PlayerScreenV2: View {
             }
             .frame(width: totalWidth, height: totalHeight, alignment: .top)
             .animation(SN.slowSpring, value: showLyricsMode)
+            .environment(\.colorScheme, isFullScreenVideoShot ? .dark : preferredScheme)
             .offset(y: dismissOffsetY)
             .scaleEffect(dismissScale, anchor: .bottom)
             .clipShape(RoundedRectangle(cornerRadius: dismissCorner, style: .continuous))
@@ -208,18 +217,17 @@ struct PlayerScreenV2: View {
         .task(id: track?.id) {
             async let p: () = refreshPalette()
             async let l: () = loadLyrics()
-            async let v: () = loadVideoShot()
-            _ = await (p, l, v)
+            _ = await (p, l)
         }
         .onChange(of: player.currentTrack?.id) { _, _ in
             isCoverSwitching = false
         }
-        .onChange(of: player.isPlaying) { _, playing in
-            if playing {
-                videoLooperPlayer?.play()
-            } else {
-                videoLooperPlayer?.pause()
-            }
+        .task(id: videoLoadKey) { await loadVideoShot() }
+        .onChange(of: player.isPlaying) { _, _ in updateVideoPlayback() }
+        .onChange(of: scenePhase) { _, _ in updateVideoPlayback() }
+        .onChange(of: isPresented) { _, _ in updateVideoPlayback() }
+        .onChange(of: isVideoShotEnabled) { _, enabled in
+            if !enabled { teardownVideoLooper() }
         }
         .onChange(of: track?.id) { _, _ in
             trackWaveTask?.cancel()
@@ -229,11 +237,9 @@ struct PlayerScreenV2: View {
             lyrics = nil
             cachedPhrases = []
             lyricsLoading = true
-            videoShotURL = nil
-            videoShotTrackID = nil
-            teardownVideoLooper()
         }
         .onChange(of: showLyricsMode) { _, isEnabled in
+            updateVideoPlayback()
             lyricsControlsHideTask?.cancel()
             lyricsControlsVisible = false
             coverDragX = 0
@@ -252,7 +258,7 @@ struct PlayerScreenV2: View {
                let targetURL = note.userInfo?["url"] as? URL {
                 videoShotURL = targetURL
                 videoShotTrackID = targetUUID
-                if isVideoShotEnabled {
+                if isVideoShotEnabled && !reduceMotion {
                     setupVideoLooper(url: targetURL)
                 }
             }
@@ -299,7 +305,7 @@ struct PlayerScreenV2: View {
     }
 
     private var isFullScreenVideoShot: Bool {
-        isVideoShotEnabled && videoShotTrackID == track?.id && videoLooperPlayer != nil && !showLyricsMode
+        isVideoShotEnabled && videoPlayback.isReady && videoShotTrackID == track?.id && videoLooperPlayer != nil && !showLyricsMode && !reduceMotion
     }
 
     private var background: some View {
@@ -1136,16 +1142,8 @@ struct PlayerScreenV2: View {
                 }
                 .disabled(track == nil || waveLoading || AIDJService.shared.isVibeWaveGenerating)
 
+                Toggle("Видеошоты", isOn: $isVideoShotEnabled)
                 if videoShotURL != nil {
-                    Button {
-                        toggleVideoShot()
-                    } label: {
-                        Label(
-                            isVideoShotEnabled ? "Скрыть видео-шот" : "Показать видео-шот",
-                            systemImage: isVideoShotEnabled ? "eye.slash" : "eye"
-                        )
-                    }
-
                     Button {
                         generateAIVideoShot(forceRegenerate: true)
                     } label: {
@@ -1354,7 +1352,7 @@ struct PlayerScreenV2: View {
         videoShotURL = nil
         videoShotTrackID = nil
         teardownVideoLooper()
-        guard isVideoShotEnabled, let track else { return }
+        guard isVideoShotEnabled, !reduceMotion, let track else { return }
         let requestedTrackID = track.id
         let id = PlayerCore.yandexTrackID(from: track)
 
@@ -1364,27 +1362,14 @@ struct PlayerScreenV2: View {
         url = AIVideoShotGeneratorService.shared.localVideoShotURL(for: id, title: track.title, artist: track.artist)
 
         // 2. ПРИОРИТЕТ 2: Официальный видео-шот из Yandex Music (по LTE/5G/Wi-Fi)
-        if url == nil && !id.isEmpty {
+        if url == nil && track.isStream && YandexMusicService.shared.isUserLoggedIn && !id.isEmpty {
             if let ymURL = await YandexMusicService.shared.getVideoShotUrl(for: id) {
                 url = ymURL
             }
         }
 
-        // 3. ПРИОРИТЕТ 3: Локальная студия видео-шотов Aura Studio на ПК (RTX 4060) по Wi-Fi
-        if url == nil {
-            let key = !id.isEmpty ? id : (track.title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "video")
-            if let studioURL = URL(string: "http://192.168.0.150:5055/videos/\(key).mp4") {
-                var headReq = URLRequest(url: studioURL)
-                headReq.httpMethod = "HEAD"
-                headReq.timeoutInterval = 0.6
-                if let (_, resp) = try? await URLSession.shared.data(for: headReq),
-                   let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                    url = studioURL
-                }
-            }
-        }
-
-        guard !Task.isCancelled, player.currentTrack?.id == requestedTrackID else { return }
+        guard !Task.isCancelled, isVideoShotEnabled, !reduceMotion,
+              self.track?.id == requestedTrackID, player.currentTrack?.id == requestedTrackID else { return }
         videoShotURL = url
         videoShotTrackID = requestedTrackID
         if isVideoShotEnabled, let url {
@@ -1392,35 +1377,24 @@ struct PlayerScreenV2: View {
         }
     }
     private func setupVideoLooper(url: URL) {
-        teardownVideoLooper()
-        let itemA = AVPlayerItem(url: url)
-        itemA.allowedAudioSpatializationFormats = []
-        let playerA = AVQueuePlayer(playerItem: itemA)
-        playerA.volume = 0
-        playerA.isMuted = true
-        playerA.actionAtItemEnd = .none
-        playerA.preventsDisplaySleepDuringVideoPlayback = false
-        videoLooper = AVPlayerLooper(player: playerA, templateItem: itemA)
-        videoLooperPlayer = playerA
-
-        playerA.play()
+        videoPlayback.configure(url: url)
+        updateVideoPlayback()
     }
     private func teardownVideoLooper() {
-        videoLooper?.disableLooping()
-        videoLooperPlayer?.pause()
-        videoLooper = nil
-        videoLooperPlayer = nil
+        videoPlayback.teardown()
     }
-    private func toggleVideoShot() {
-        isVideoShotEnabled.toggle()
-        UserDefaults.standard.set(isVideoShotEnabled, forKey: "sonivo_videoshot_enabled")
-        if isVideoShotEnabled, videoShotTrackID == track?.id, let videoShotURL {
-            setupVideoLooper(url: videoShotURL)
-        } else {
-            teardownVideoLooper()
-            if isVideoShotEnabled { Task { await loadVideoShot() } }
-        }
+    private var videoLoadKey: VideoShotLoadKey {
+        VideoShotLoadKey(trackID: track?.id, playbackTrackID: player.currentTrack?.id,
+                         enabled: isVideoShotEnabled, reduceMotion: reduceMotion,
+                         accountGeneration: YandexMusicService.shared.accountGeneration)
     }
+
+    private func updateVideoPlayback() {
+        videoPlayback.update(enabled: isVideoShotEnabled, matchingTrack: videoShotTrackID == track?.id,
+                             musicPlaying: player.isPlaying, sceneActive: scenePhase == .active,
+                             playerVisible: isPresented, lyricsVisible: showLyricsMode, reduceMotion: reduceMotion)
+    }
+
     private func generateAIVideoShot(forceRegenerate: Bool = false) {
         guard let current = track else { return }
         Haptics.tap(.medium)
@@ -1437,9 +1411,7 @@ struct PlayerScreenV2: View {
                 guard player.currentTrack?.id == current.id else { return }
                 videoShotURL = url
                 videoShotTrackID = current.id
-                isVideoShotEnabled = true
-                UserDefaults.standard.set(true, forKey: "sonivo_videoshot_enabled")
-                setupVideoLooper(url: url)
+                if isVideoShotEnabled && !reduceMotion { setupVideoLooper(url: url) }
                 waveMessage = "🎬 AI Видео-шот готов!"
                 try? await Task.sleep(for: .seconds(3.0))
                 if waveMessage == "🎬 AI Видео-шот готов!" { waveMessage = nil }

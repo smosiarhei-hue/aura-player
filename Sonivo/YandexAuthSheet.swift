@@ -4,7 +4,11 @@ import UIKit
 struct YandexAuthSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedTab = 0
+    @State private var isValidating = false
+    @State private var isConnected = false
+    @State private var codeDeadline: ContinuousClock.Instant?
     @State private var manualToken = ""
     @State private var code: YandexDeviceCode?
     @State private var isProcessing = false
@@ -13,28 +17,49 @@ struct YandexAuthSheet: View {
     @State private var operationID = UUID()
     var onLoggedIn: (() -> Void)?
 
+    private var phase: Int {
+        if isConnected { return 3 }
+        if isValidating { return 2 }
+        return code == nil ? 0 : 1
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Подключите свой аккаунт: музыка, избранное и рекомендации будут связаны с ним.")
-                        .foregroundStyle(SN.inkMuted)
-                    Picker("Способ входа", selection: $selectedTab) {
-                        Text("Войти по коду").tag(0)
-                        Text("Ввести токен").tag(1)
-                    }.pickerStyle(.segmented)
-                    if selectedTab == 0 { deviceCodeView } else { manualTokenView }
-                    if isProcessing { ProgressView("Ожидаем вход…") }
-                    if let statusMessage {
-                        Text(statusMessage).font(.footnote).foregroundStyle(SN.inkMuted)
+                VStack(spacing: 28) {
+                    SonivoAuthWordmark(size: code == nil ? 42 : 34)
+                        .frame(maxWidth: .infinity).padding(.top, 20)
+                    Group {
+                        if isConnected { successView }
+                        else if selectedTab == 1 { manualTokenView }
+                        else if let code, let url = code.verificationURL { deviceCodeView(code, url: url) }
+                        else { introductionView }
+                    }
+                    .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : 8)))
+                    if isProcessing && !isConnected {
+                        ProgressView(isValidating ? "Проверяем аккаунт…" : code == nil ? "Получаем код…" : "Ожидаем подтверждение")
+                            .frame(maxWidth: .infinity)
+                    }
+                    if let statusMessage, !isConnected {
+                        Text(statusMessage).font(.footnote).foregroundStyle(.secondary)
                             .accessibilityAddTraits(.updatesFrequently)
                     }
-                    Text("Подключение использует неофициальный API Яндекс Музыки. На странице согласия может отображаться имя исходного OAuth-клиента библиотеки. Доступ и качество зависят от аккаунта и ограничений Яндекса.")
-                        .font(.footnote).foregroundStyle(SN.inkMuted)
-                }.padding(20)
+                    if !isConnected {
+                        Button("Пока без входа") { cancel(); dismiss() }
+                            .frame(minHeight: 44)
+                        Menu("Другой способ входа") {
+                            Button("Войти по коду") { selectedTab = 0 }
+                            Button("Ввести личный токен") { selectedTab = 1 }
+                        }.font(.footnote).frame(minHeight: 44)
+                        Text("Подключение использует неофициальный API Яндекс Музыки. На странице согласия может отображаться имя исходного OAuth-клиента библиотеки. Доступ и качество зависят от аккаунта и ограничений Яндекса.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }.padding(24).frame(maxWidth: 600)
+                    .frame(maxWidth: .infinity)
+                    .animation(reduceMotion ? nil : SN.fastSpring, value: phase)
             }
-            .background(SN.bgRaised)
-            .navigationTitle("Вход в Яндекс Музыку")
+            .background(SN.bgRaised.ignoresSafeArea())
+            .navigationTitle("Подключение аккаунта")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -46,34 +71,70 @@ struct YandexAuthSheet: View {
         }
     }
 
-    private var deviceCodeView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let code, let url = code.verificationURL {
-                Text("1. Откройте страницу Яндекса.\n2. Введите код и подтвердите свой аккаунт.\n3. Вернитесь в Sonivo.")
-                    .font(.subheadline)
-                Text(code.user_code).font(.system(.largeTitle, design: .monospaced).bold())
-                    .textSelection(.enabled).accessibilityLabel("Код входа: " + code.user_code)
-                Button("Скопировать код") { UIPasteboard.general.string = code.user_code }
-                Button("Открыть Яндекс") { openURL(url) }.buttonStyle(.borderedProminent)
-                Button("Отменить ожидание") { cancel() }
-            } else {
-                Button("Получить код входа", action: startDeviceLogin)
-                    .buttonStyle(.borderedProminent).disabled(isProcessing)
-            }
+    private var introductionView: some View {
+        VStack(spacing: 24) {
+            Text("Ваша музыка.\nВаш аккаунт.").font(.largeTitle.bold()).multilineTextAlignment(.center)
+            Text("Избранное, плейлисты и персональная волна из Яндекс Музыки.")
+                .foregroundStyle(.secondary).multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Без пароля в Sonivo", systemImage: "person.badge.key").font(.headline)
+                Text("Подтвердите вход на странице Яндекса. Личная сессия хранится в Keychain.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading).glassCard(corner: 24, padding: 20)
+            Button(action: startDeviceLogin) {
+                Text("Получить код входа").font(.headline).frame(maxWidth: .infinity, minHeight: 56).glassProminent(SN.ember)
+            }.buttonStyle(GlassPressStyle()).disabled(isProcessing)
         }
     }
 
+    private func deviceCodeView(_ code: YandexDeviceCode, url: URL) -> some View {
+        VStack(spacing: 24) {
+            Text(isValidating ? "Подключаем аккаунт" : "Подтвердите вход").font(.title.bold())
+                .multilineTextAlignment(.center)
+            Text("1. Откройте страницу Яндекса.\n2. Введите код и подтвердите свой аккаунт.\n3. Вернитесь в Sonivo.")
+                .font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 18) {
+                Text("Код входа").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(code.user_code).font(.system(.largeTitle, design: .monospaced).bold())
+                    .textSelection(.enabled).multilineTextAlignment(.center)
+                    .accessibilityLabel("Код входа: " + code.user_code)
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    let seconds = max(0, Int(codeDeadline.map { ContinuousClock().now.duration(to: $0).components.seconds } ?? 0))
+                    Text(String(format: "Код действует ещё %02d:%02d", seconds / 60, seconds % 60))
+                        .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+            }.frame(maxWidth: .infinity).glassCard(corner: 24, padding: 24)
+            Button { UIPasteboard.general.string = code.user_code } label: {
+                Text("Скопировать код").font(.headline).frame(maxWidth: .infinity, minHeight: 48).glassCard(corner: 18)
+            }.buttonStyle(GlassPressStyle())
+            Button { openURL(url) } label: {
+                Text("Открыть Яндекс").font(.headline).frame(maxWidth: .infinity, minHeight: 56).glassProminent(SN.ember)
+            }.buttonStyle(GlassPressStyle())
+            Button("Отменить ожидание") { cancel() }.frame(minHeight: 44)
+        }
+    }
+
+    private var successView: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundStyle(.green).accessibilityHidden(true)
+            Text("Вы подключены.").font(.largeTitle.bold()).multilineTextAlignment(.center)
+            Text("Загружаем вашу медиатеку").foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity).padding(.vertical, 40)
+    }
+
     private var manualTokenView: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Если у вас уже есть личный OAuth-токен музыкального API, вставьте его здесь.")
-                .font(.subheadline)
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Личный токен").font(.title.bold())
+            Text("Если у вас уже есть OAuth-токен музыкального API, вставьте его здесь.").font(.subheadline).foregroundStyle(.secondary)
             SecureField("OAuth-токен", text: $manualToken)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder).disabled(isProcessing)
-            Button("Подключить аккаунт") { startManualLogin() }
-                .buttonStyle(.borderedProminent)
+            Button { startManualLogin() } label: {
+                Text("Подключить аккаунт").font(.headline).frame(maxWidth: .infinity, minHeight: 56).glassProminent(SN.ember)
+            }.buttonStyle(GlassPressStyle())
                 .disabled(isProcessing || manualToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            if isProcessing { Button("Отменить", action: cancel) }
+            if isProcessing { Button("Отменить", action: cancel).frame(minHeight: 44) }
         }
     }
 
@@ -82,7 +143,10 @@ struct YandexAuthSheet: View {
         operation?.cancel()
         operation = nil
         code = nil
+        codeDeadline = nil
         isProcessing = false
+        isValidating = false
+        isConnected = false
     }
 
     private func startDeviceLogin() {
@@ -99,6 +163,7 @@ struct YandexAuthSheet: View {
                 statusMessage = "Подтвердите вход на странице Яндекса."
                 let clock = ContinuousClock()
                 let deadline = clock.now.advanced(by: .seconds(received.expires_in))
+                codeDeadline = deadline
                 var interval = received.interval
                 while clock.now < deadline {
                     try await Task.sleep(for: .seconds(interval))
@@ -140,12 +205,19 @@ struct YandexAuthSheet: View {
 
     private func connect(_ token: YandexOAuthToken, operationID id: UUID) async {
         guard !Task.isCancelled, operationID == id else { return }
+        isValidating = true
         statusMessage = "Проверяем доступ к музыкальному аккаунту…"
         let ok = await YandexMusicService.shared.loginWithOAuthToken(token)
         guard !Task.isCancelled, operationID == id else { return }
         isProcessing = false
+        isValidating = false
         if ok {
             manualToken = ""
+            isConnected = true
+            if !reduceMotion { Haptics.success() }
+            // The success state follows verified Keychain installation, never a fake timer.
+            if !reduceMotion { try? await Task.sleep(for: .milliseconds(250)) }
+            guard !Task.isCancelled, operationID == id else { return }
             onLoggedIn?()
             dismiss()
         } else {

@@ -1400,6 +1400,8 @@ final class YandexMusicService {
 
     /// Получение официального вертикального видеошота (Canvas Video 9:16) для трека из Yandex Music API
     func getVideoShotUrl(for trackId: String) async -> URL? {
+        let generation = accountGeneration
+        guard isUserLoggedIn, !Task.isCancelled else { return nil }
         let cleanId = trackId
             .replacingOccurrences(of: "ym_", with: "")
             .replacingOccurrences(of: ".mp3", with: "")
@@ -1410,6 +1412,7 @@ final class YandexMusicService {
         // 1. ПРИОРИТЕТ №1: Официальный вертикальный видеошот лейбла (backgroundVideoUri: 1080x1920)
         if let trackURL = URL(string: Self.apiBase + "/tracks/" + cleanId) {
             if let (data, _) = try? await sessionData(for: authorizedRequest(url: trackURL)) {
+                guard !Task.isCancelled, accountGeneration == generation else { return nil }
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let result = (json["result"] as? [[String: Any]])?.first ?? (json["result"] as? [String: Any]) {
                     var candidate: String? = nil
@@ -1433,9 +1436,11 @@ final class YandexMusicService {
             }
         }
 
+        guard !Task.isCancelled, accountGeneration == generation else { return nil }
         // 2. Резервный запрос в /tracks/{id}/supplement
         if let suppURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/supplement") {
             if let (data, _) = try? await sessionData(for: authorizedRequest(url: suppURL)) {
+                guard !Task.isCancelled, accountGeneration == generation else { return nil }
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let result = json["result"] as? [String: Any] {
                     var candidate: String? = nil
@@ -1453,6 +1458,7 @@ final class YandexMusicService {
             }
         }
 
+        guard !Task.isCancelled, accountGeneration == generation else { return nil }
         // 3. Резервный запрос официального видео артиста через /artists/{id}/brief-info
         if let trackURL = URL(string: Self.apiBase + "/tracks/" + cleanId) {
             if let (data, _) = try? await sessionData(for: authorizedRequest(url: trackURL)),
@@ -1467,6 +1473,7 @@ final class YandexMusicService {
                        let artJson = try? JSONSerialization.jsonObject(with: artData) as? [String: Any],
                        let artRes = artJson["result"] as? [String: Any],
                        let artistObj = artRes["artist"] as? [String: Any] {
+                        guard !Task.isCancelled, accountGeneration == generation else { return nil }
                         var candidate: String? = nil
                         if let bg = artistObj["backgroundVideoUrl"] as? String, !bg.isEmpty { candidate = bg }
                         else if let bg = artistObj["videoUrl"] as? String, !bg.isEmpty { candidate = bg }
@@ -1789,6 +1796,7 @@ final class YandexMusicService {
         recentYmIDs = []
         artistCounts = [:]
         totalPlays = 0
+        videoShotCache = [:]
         chartCache = []; chartCacheAt = nil
         newAlbumsCache = []; newAlbumsCacheAt = nil
         newTracksCache = []; newTracksCacheAt = nil

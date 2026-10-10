@@ -224,6 +224,10 @@ final class LibraryStore {
         let resolved = playlist.trackIds.compactMap { id in
             libraryDict[id] ?? cachedDict[id]
         }
+        if !YandexMusicService.shared.isUserLoggedIn {
+            let candidates = resolved.isEmpty ? playlist.cachedTracks : resolved
+            return candidates.filter { !$0.isStream && FileManager.default.fileExists(atPath: $0.url.path) }
+        }
         if !resolved.isEmpty {
             return resolved
         }
