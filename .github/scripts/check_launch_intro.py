@@ -19,14 +19,14 @@ import Foundation
         precondition(!playback.begin(isActive:true,isPlaying:true) && playback.isFinished)
         var skipped=SonivoLaunchSession(); skipped.finish()
         precondition(!skipped.begin(isActive:true,isPlaying:false),"External playback/skip ignored")
-        precondition(SonivoLaunchMotion.duration<2 && SonivoLaunchMotion.reducedDuration<0.5)
+        precondition(SonivoLaunchMotion.duration<=3.5 && SonivoLaunchMotion.reducedDuration<0.5)
         precondition(SonivoLaunchMotion.hapticOnsets.count==SonivoLaunchMotion.hapticStrengths.count)
         for onset in SonivoLaunchMotion.hapticOnsets {
             precondition(onset>=0 && onset<SonivoLaunchMotion.fadeStart)
         }
         for index in 0..<6 {
             var previous=0.0
-            for frame in 0...240 {
+            for frame in 0...420 {
                 let time=Double(frame)/120
                 let current=SonivoLaunchMotion.letterProgress(at:time,index:index)
                 precondition(current>=previous && current<=1 && current.isFinite)
@@ -37,8 +37,18 @@ import Foundation
         precondition(SonivoLaunchMotion.opacity(at:0)==1)
         precondition(SonivoLaunchMotion.opacity(at:SonivoLaunchMotion.duration)==0)
         precondition(SonivoLaunchMotion.progress(.nan,from:0,duration:1)==0)
+        precondition(SonivoLaunchMotion.hapticStrengths==[1.0,0.80])
+        for frame in 0...420 {
+            let t=Double(frame)/120
+            let impact=SonivoLaunchMotion.impact(at:t)
+            precondition(impact.isFinite && impact>=0 && impact<=1)
+            precondition(SonivoLaunchMotion.sweep(at:t)>=0 && SonivoLaunchMotion.sweep(at:t)<=1)
+        }
+        precondition(SonivoLaunchMotion.impact(at:0)==0)
+        precondition(SonivoLaunchMotion.impact(at:SonivoLaunchMotion.duration)==0)
+        precondition(SonivoLaunchMotion.letterProgress(at:SonivoLaunchMotion.reducedPreviewTime,index:5)==1)
         for fps in [30,60,120] {
-            let t=Double(fps)*1.3/Double(fps)
+            let t=Double(fps)*2.6/Double(fps)
             precondition(SonivoLaunchMotion.letterProgress(at:t,index:5)==1)
         }
         print("Sonivo launch timing, lifecycle, playback bypass, skip and reduced-motion checks passed")
