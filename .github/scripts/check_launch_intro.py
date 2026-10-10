@@ -6,8 +6,25 @@ import tempfile
 def verify_launch_intro(root):
     code='''
 import Foundation
+import CoreText
 @main struct Checks {
-    static func main() {
+    @MainActor static func main() {
+        let fontName = SonivoLaunchTypography.prepare()
+        precondition(fontName == "SonivoLaunchDisplay", "Offline brand font did not register")
+        precondition(SonivoLaunchTypography.prepare() == fontName, "Font was not cached")
+        let font = CTFontCreateWithName(fontName! as CFString, 62, nil)
+        var characters = Array("Sonivo".utf16)
+        let glyphCount = characters.count
+        var glyphs = [CGGlyph](repeating: 0, count: glyphCount)
+        precondition(CTFontGetGlyphsForCharacters(font, &characters, &glyphs, glyphCount))
+        precondition(glyphs.allSatisfy { $0 != 0 }, "Brand glyph fallback")
+        precondition(CTFontCopyPostScriptName(font) as String == fontName!)
+        for time in [-100.0, 0, 0.7, 2.2, 4.2, 100, .nan, .infinity] {
+            let surface = SonivoLaunchMotion.surfaceTime(at: time)
+            let drift = SonivoLaunchMotion.atmosphereDrift(at: time)
+            precondition(surface.isFinite && surface >= 0 && surface <= 4.2)
+            precondition(drift.isFinite && abs(drift) <= 0.075)
+        }
         var session=SonivoLaunchSession()
         precondition(!session.begin(isActive:false,isPlaying:false))
         precondition(!session.hasStarted && !session.isFinished)
@@ -70,7 +87,7 @@ import Foundation
 '''
     with tempfile.TemporaryDirectory() as d:
         p=Path(d);(p/'Checks.swift').write_text(code)
-        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/SonivoLaunchMotion.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
+        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/SonivoLaunchMotion.swift'),str(root/'Sonivo/SonivoLaunchTypography.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
         assert built.returncode==0,built.stderr
         result=subprocess.run([str(p/'checks')],capture_output=True,text=True)
         assert result.returncode==0,result.stdout+result.stderr

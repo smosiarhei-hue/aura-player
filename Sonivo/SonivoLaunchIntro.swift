@@ -10,6 +10,7 @@ struct SonivoLaunchHost: View {
     @State private var session = SonivoLaunchSession()
     @State private var epoch: TimeInterval = 0
     @State private var haptics = SonivoLaunchHaptics()
+    @State private var brandFontName: String?
 
     var body: some View {
         ZStack {
@@ -17,7 +18,8 @@ struct SonivoLaunchHost: View {
                 .allowsHitTesting(session.isFinished)
                 .accessibilityHidden(!session.isFinished)
             if !session.isFinished {
-                SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion, onSkip: finish)
+                SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion,
+                                  brandFontName: brandFontName, onSkip: finish)
                     .transition(.opacity)
                     .zIndex(10)
             }
@@ -29,6 +31,7 @@ struct SonivoLaunchHost: View {
                 return
             }
             guard session.begin(isActive: true, isPlaying: player.isPlaying) else { return }
+            brandFontName = SonivoLaunchTypography.prepare()
             epoch = haptics.start(reduceMotion: reduceMotion)
             do {
                 let remaining = reduceMotion ? SonivoLaunchMotion.reducedDuration
@@ -67,9 +70,12 @@ nonisolated private struct SonivoLaunchFocusBounds: PreferenceKey {
 private struct SonivoLaunchIntro: View {
     let epoch: TimeInterval
     let reduceMotion: Bool
+    let brandFontName: String?
     let onSkip: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var measuredWordWidth: Double?
     @State private var measuredGroupHeight: Double?
 
@@ -86,10 +92,8 @@ private struct SonivoLaunchIntro: View {
                     : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
                 ZStack {
                     SN.bg.ignoresSafeArea()
-                    RadialGradient(colors: [SN.accent.opacity(0.08), .clear], center: .center,
-                                   startRadius: 0, endRadius: min(geometry.size.width, geometry.size.height) * 0.60)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
+                    SonivoLaunchAtmosphere(time: time, reduced: reduceMotion,
+                                           increasedContrast: contrast == .increased)
                     focusScene(time: time, unit: unit)
                         .scaleEffect(reduceMotion ? 1 : SonivoLaunchMotion.zoom(at: time, peak: peak))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -150,10 +154,27 @@ private struct SonivoLaunchIntro: View {
 
     private func focusedWord(_ text: String, index: Int, time: Double, fontSize: Double) -> some View {
         let blur = reduceMotion || dynamicTypeSize.isAccessibilitySize ? 0 : SonivoLaunchMotion.blur(at: time, index: index)
+        // Capture plain values before the sendable visual-effect callback; no actor reads there.
+        let shaderTime = Float(SonivoLaunchMotion.surfaceTime(at: time))
+        let lightFlag: Float = colorScheme == .light ? 1 : 0
+        let materialEnabled = index == 0 && !reduceMotion && contrast != .increased
         return Text(text)
-            .font(.system(size: fontSize, weight: .black, design: .rounded))
+            .font(index == 0
+                  ? brandFontName.map { Font.custom($0, fixedSize: fontSize) }
+                    ?? .system(size: fontSize, weight: .bold)
+                  : .system(size: fontSize, weight: .semibold))
             .foregroundStyle(SN.ink)
             .fixedSize()
+            .visualEffect { content, proxy in
+                content.colorEffect(
+                    ShaderLibrary.sonivoLaunchChrome(
+                        .float2(Float(proxy.size.width), Float(proxy.size.height)),
+                        .float(shaderTime),
+                        .float(lightFlag)
+                    ),
+                    isEnabled: materialEnabled
+                )
+            }
             .blur(radius: blur)
             .anchorPreference(key: SonivoLaunchFocusBounds.self, value: .bounds) { [index: $0] }
             .opacity(reduceMotion ? 1 : SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 0.08, duration: 0.22)))

@@ -28,3 +28,6 @@ tools/videoshot-studio/__pycache__/
 tools/videoshot-studio/*.mp4
 
 
+
+# Generated project-local agent skills; exact versions and hashes are committed.
+/.agents/skills/

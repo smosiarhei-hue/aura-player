@@ -1,0 +1,11 @@
+{
+  "family": "Unbounded",
+  "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/unbounded/Unbounded%5Bwght%5D.ttf",
+  "source_sha256": "323b511be380c8d474ef030686b71aedde501f8d9cd46da558b7c40454372c3f",
+  "derived_postscript_name": "SonivoLaunchDisplay",
+  "weight": 800,
+  "glyph_text": "Sonivo",
+  "derived_sha256": "0dc6b0ce3657aec4f405ea2d55e1f6be1e49e1ee08d653afafbc89dfb1e904bc",
+  "license": "SIL OFL 1.1",
+  "registration": "once, offline, before launch animation; no runtime font download"
+}

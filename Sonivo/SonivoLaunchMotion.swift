@@ -23,6 +23,14 @@ nonisolated enum SonivoLaunchMotion {
     static let zoomTickOnsets: [Double] = [1.03, 1.52, 2.01, 2.50, 2.99, 3.40]
     static let zoomTickStrengths: [Float] = [0.24, 0.30, 0.35, 0.28, 0.21, 0.12]
 
+    /// Material and atmosphere read the same finite launch clock; no independent loops.
+    static func surfaceTime(at time: Double) -> Double {
+        guard time.isFinite else { return 0 }
+        return min(duration, max(0, time))
+    }
+    static func atmosphereDrift(at time: Double) -> Double {
+        0.075 * sin(surfaceTime(at: time) * 0.48)
+    }
     static func progress(_ time: Double, from start: Double, duration: Double) -> Double {
         guard time.isFinite, duration > 0 else { return 0 }
         return min(1, max(0, (time - start) / duration))
