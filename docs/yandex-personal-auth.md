@@ -27,7 +27,8 @@ No additional package/runtime dependency, no Python in the iOS app.
 1. Explicit user action requests `POST https://oauth.yandex.ru/device/code` with
    `client_id`, random `device_id`, and truthful unofficial Sonivo `device_name`.
 2. Show `user_code`; open only the validated HTTPS `verification_url` on the
-   allowed OAuth Yandex host, in the user's external browser. No WKWebView,
+   allowed OAuth Yandex host (or exactly `https://ya.ru/device`, the live server's
+   current short confirmation page), in the user's external browser. No WKWebView,
    WebAuthn suppression, token-fragment scraping, native passkey emulation, or
    automatic clipboard reads. Only the short user code can be copied by a button.
 3. Poll `/token` using the exact upstream `grant_type=device_code`, `code` and
@@ -85,7 +86,7 @@ No additional package/runtime dependency, no Python in the iOS app.
 ## Validation
 
 Linux: `python3 -m unittest discover -s .github/scripts -p 'test_*.py'`.
-Seven added source regression tests in `test_yandex_personal_auth.py`.
+Eight added source regression tests in `test_yandex_personal_auth.py`.
 The existing macOS compiled Swift test also invokes
 `check_yandex_personal_auth.py`: actual OAuth transport with URLProtocol fixtures,
 server errors, allowed login URLs, cancellation, form escaping, refresh/expiry
@@ -110,3 +111,16 @@ Full iOS Swift 6 strict-concurrency archive / IPA in `build-ipa.yml`.
 
 Live Device Flow/account permissions, subscription, real token refresh and server
 behavior remain unverified until an owner performs this authorized device test.
+
+## Device verification URL regression
+
+A live unauthenticated `/device/code` contract check returned HTTP 200 and
+`verification_url: https://ya.ru/device`, `expires_in: 300`, `interval: 5`. The
+original OAuth-only URL allowlist rejected that valid response before displaying
+the code. The correction permits `ya.ru` only at `/device` or `/device/`, still
+HTTPS-only, without userinfo or explicit ports. Exact-host matching rejects
+`ya.ru.evil.test`, and other paths on `ya.ru` remain forbidden. Added real Swift
+URLProtocol coverage for the short URL plus rejection fixtures. No device codes,
+user codes, user tokens or response bodies were logged/persisted by this contract
+check; it did not authenticate any account. Actual consent/token exchange still
+requires the user to complete sign-in on their device.

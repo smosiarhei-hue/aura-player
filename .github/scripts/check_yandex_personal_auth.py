@@ -44,7 +44,11 @@ nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
         let code = try await client.requestCode()
         precondition(code.user_code == "ABCD" && code.interval == 5 && code.expires_in == 300)
         precondition(code.verificationURL?.host == "oauth.yandex.ru")
-        for address in ["http://oauth.yandex.ru/", "https://oauth.yandex.ru.evil.test/", "https://user@oauth.yandex.ru/", "https://oauth.yandex.ru:443/", "https://evil.test/"] {
+        // Actual production response shape: verification_url is https://ya.ru/device.
+        StubProtocol.enqueue(200, codeJSON.replacingOccurrences(of: "https://oauth.yandex.ru/authorize/device", with: "https://ya.ru/device"))
+        let shortCode = try await client.requestCode()
+        precondition(shortCode.verificationURL?.absoluteString == "https://ya.ru/device")
+        for address in ["http://oauth.yandex.ru/", "https://oauth.yandex.ru.evil.test/", "https://user@oauth.yandex.ru/", "https://oauth.yandex.ru:443/", "https://evil.test/", "https://ya.ru/", "https://ya.ru/other", "https://ya.ru.evil.test/device", "http://ya.ru/device", "https://user@ya.ru/device", "https://ya.ru:443/device"] {
             let invalid = YandexDeviceCode(device_code: "x", user_code: "U", verification_url: address, expires_in: 300, interval: 5)
             precondition(invalid.verificationURL == nil)
         }
@@ -86,7 +90,8 @@ nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
         let requests = StubProtocol.recorded()
         precondition(requests.allSatisfy { $0.httpMethod == "POST" && $0.url?.host == "oauth.yandex.ru" })
         precondition(requests.first?.url?.path == "/device/code")
-        precondition(requests[1].url?.path == "/token")
+        precondition(requests[1].url?.path == "/device/code")
+        precondition(requests[2].url?.path == "/token")
         let encoded = String(data: YandexOAuthForm.encode(["code": "a+b &=%#", "grant_type": "device_code"]), encoding: .utf8)!
         precondition(encoded == "code=a%2Bb%20%26%3D%25%23&grant_type=device_code")
         session.invalidateAndCancel()

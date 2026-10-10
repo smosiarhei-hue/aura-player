@@ -25,6 +25,15 @@ class YandexPersonalAuthTests(unittest.TestCase):
         self.assertNotIn('print(', client)
         self.assertNotIn('SonivoDiagnostics.log', client)
 
+    def test_actual_short_device_url_is_allowed_only_on_exact_host_and_path(self):
+        client = (ROOT / 'Sonivo/YandexDeviceAuthClient.swift').read_text()
+        fixtures = (ROOT / '.github/scripts/check_yandex_personal_auth.py').read_text()
+        self.assertIn('host == "ya.ru" && ["/device", "/device/"].contains(url.path)', client)
+        self.assertIn('guard isOAuthHost || isShortDeviceURL else { return nil }', client)
+        self.assertIn('with: "https://ya.ru/device"', fixtures)
+        self.assertIn('"https://ya.ru.evil.test/device"', fixtures)
+        self.assertIn('"https://ya.ru/other"', fixtures)
+
     def test_user_token_never_falls_back_or_is_persisted_in_defaults(self):
         for path in (ROOT / 'Sonivo').glob('*.swift'):
             source = path.read_text()

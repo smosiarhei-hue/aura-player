@@ -100,8 +100,13 @@ nonisolated struct YandexDeviceCode: Decodable, Sendable {
     let interval: Double
     var verificationURL: URL? {
         guard let url = URL(string: verification_url), url.scheme == "https",
-              url.user == nil, url.password == nil, url.port == nil,
-              ["oauth.yandex.ru", "oauth.yandex.com"].contains(url.host?.lowercased() ?? "") else { return nil }
+              url.user == nil, url.password == nil, url.port == nil else { return nil }
+        let host = url.host?.lowercased() ?? ""
+        let isOAuthHost = ["oauth.yandex.ru", "oauth.yandex.com"].contains(host)
+        // /device/code currently returns https://ya.ru/device (verified live).
+        // Permit only that device-consent path on the short host, not arbitrary links.
+        let isShortDeviceURL = host == "ya.ru" && ["/device", "/device/"].contains(url.path)
+        guard isOAuthHost || isShortDeviceURL else { return nil }
         return url
     }
 }
