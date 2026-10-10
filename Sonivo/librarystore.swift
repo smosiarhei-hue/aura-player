@@ -244,17 +244,18 @@ final class LibraryStore {
 
     func toggleFavorite(_ track: Track) {
         let ymId = PlayerCore.yandexTrackID(from: track)
+        let accountGeneration = YandexMusicService.shared.accountGeneration
         if let i = tracks.firstIndex(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
             tracks[i].isFavorite.toggle()
             let isFav = tracks[i].isFavorite
             if isFav {
                 MoodRadioEngine.shared.recordFeedback(track: tracks[i], action: .like)
                 if !ymId.isEmpty {
-                    Task { await YandexMusicService.shared.likeTrackOnServer(trackId: ymId) }
+                    Task { guard YandexMusicService.shared.accountGeneration == accountGeneration else { return }; await YandexMusicService.shared.likeTrackOnServer(trackId: ymId) }
                 }
             } else {
                 if !ymId.isEmpty {
-                    Task { await YandexMusicService.shared.unlikeTrackOnServer(trackId: ymId) }
+                    Task { guard YandexMusicService.shared.accountGeneration == accountGeneration else { return }; await YandexMusicService.shared.unlikeTrackOnServer(trackId: ymId) }
                 }
             }
         } else {
@@ -264,15 +265,39 @@ final class LibraryStore {
             tracks.insert(newFavorite, at: 0)
             MoodRadioEngine.shared.recordFeedback(track: newFavorite, action: .like)
             if !ymId.isEmpty {
-                Task { await YandexMusicService.shared.likeTrackOnServer(trackId: ymId) }
+                Task { guard YandexMusicService.shared.accountGeneration == accountGeneration else { return }; await YandexMusicService.shared.likeTrackOnServer(trackId: ymId) }
             }
         }
     }
 
+    func clearYandexAccountData() {
+        // Local files and hand-created playlists are never deleted on OAuth logout.
+        let remoteIDs = Set(tracks.filter { YandexMusicService.isPersonalYandexTrack($0) }.map(\.id))
+        tracks.removeAll { YandexMusicService.isPersonalYandexTrack($0) }
+        let cloudPlaylistIDs = Set(UserDefaults.standard.stringArray(forKey: "ym.imported_playlist_ids") ?? [])
+        playlists.removeAll { cloudPlaylistIDs.contains($0.id.uuidString) }
+        for i in playlists.indices {
+            let cachedRemoteIDs = Set(playlists[i].cachedTracks.filter { YandexMusicService.isPersonalYandexTrack($0) }.map(\.id))
+            playlists[i].trackIds.removeAll { remoteIDs.contains($0) || cachedRemoteIDs.contains($0) }
+            playlists[i].cachedTracks.removeAll { YandexMusicService.isPersonalYandexTrack($0) }
+        }
+        UserDefaults.standard.removeObject(forKey: "ym.imported_playlist_ids")
+    }
+
+    func setYandexPlaylistsFromCloud(_ imported: [Playlist]) {
+        let oldIDs = Set(UserDefaults.standard.stringArray(forKey: "ym.imported_playlist_ids") ?? [])
+        let local = playlists.filter { !oldIDs.contains($0.id.uuidString) }
+        playlists = imported + local
+        UserDefaults.standard.set(imported.map { $0.id.uuidString }, forKey: "ym.imported_playlist_ids")
+    }
+
     func setFavoritesFromCloud(_ cloudTracks: [Track]) {
         var updated = tracks
+        for i in updated.indices where YandexMusicService.isPersonalYandexTrack(updated[i]) {
+            updated[i].isFavorite = false
+        }
         for ct in cloudTracks {
-            if let idx = updated.firstIndex(where: { $0.id == ct.id || ($0.fileName == ct.fileName && !ct.fileName.isEmpty) }) {
+            if let idx = updated.firstIndex(where: { $0.id == ct.id }) {
                 updated[idx].isFavorite = true
             } else {
                 var newFav = ct

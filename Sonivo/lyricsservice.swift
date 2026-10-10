@@ -146,13 +146,13 @@ final class LyricsService {
         guard let url = URL(string: YandexMusicService.apiBase + "/tracks/\(cleanId)/supplement") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        let token = YandexMusicService.shared.token.isEmpty ? YandexMusicService.defaultToken : YandexMusicService.shared.token
+        let token = YandexMusicService.shared.token
         request.setValue("OAuth " + token, forHTTPHeaderField: "Authorization")
         request.setValue("ru", forHTTPHeaderField: "Accept-Language")
         request.setValue("YandexMusic/2024.1", forHTTPHeaderField: "User-Agent")
         request.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
 
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await YandexMusicService.shared.sessionData(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else {
             return nil
         }

@@ -35,11 +35,11 @@ extension YandexMusicService {
         components.queryItems = [URLQueryItem(name: "track-ids", value: trackId)]
         guard let url = components.url else { return nil }
         var request = URLRequest(url: url)
-        request.setValue("OAuth " + (token.isEmpty ? Self.defaultToken : token), forHTTPHeaderField: "Authorization")
+        request.setValue("OAuth " + token, forHTTPHeaderField: "Authorization")
         request.setValue("ru", forHTTPHeaderField: "Accept-Language")
         request.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
 
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
+        guard let (data, _) = try? await sessionData(for: request) else { return nil }
         struct Response: Decodable { let result: [YMTrackItem]? }
         guard let item = (try? JSONDecoder().decode(Response.self, from: data))?.result?.first else { return nil }
         return (item.artists ?? []).compactMap { artist in

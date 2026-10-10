@@ -47,7 +47,11 @@ struct SettingsView: View {
                         } label: {
                             HStack { Image(systemName: "arrow.triangle.2.circlepath"); Text(isSyncingLikes ? "Синхронизация..." : "Синхронизировать медиатеку") }
                         }.disabled(isSyncingLikes)
-                        Button(role: .destructive) { ym.logout() } label: { Text("Выйти из Яндекс ID") }
+                        if let message = ym.accountSyncMessage {
+                            Text(message).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Button("Сменить аккаунт") { showYandexAuthSheet = true }
+                        Button(role: .destructive) { ym.logout() } label: { Text("Выйти из Яндекс Музыки") }
                     } else {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Войдите в свой Яндекс ID, чтобы слушать персональную Мою волну и синхронизировать любимую музыку.").font(SN.text(.footnote)).foregroundStyle(.secondary)

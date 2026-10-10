@@ -12,16 +12,13 @@ import Observation
 final class YandexMusicService {
     static let shared = YandexMusicService()
 
-    // Default User Token for full 320kbps and unlimited streaming
-    static let defaultToken = "y0__wgBEKKSlpUBGN74BiDN-cLlGKqO1NIws5NU7nK8VFyfbs9Ou9So"
-
-    var token: String {
-        didSet {
-            UserDefaults.standard.set(token, forKey: "ym.token")
-            isAuthorized = !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-    var isAuthorized: Bool = true
+    private(set) var token: String = ""
+    private(set) var isAuthorized = false
+    private var credential: YandexCredential?
+    private(set) var accountGeneration = UUID()
+    private var loginAttemptID = UUID()
+    private var refreshTask: Task<Bool, Never>?
+    private(set) var accountSyncMessage: String?
     private(set) var currentUser: YMUserProfile? = nil
     var isUserLoggedIn: Bool {
         currentUser != nil
@@ -82,10 +79,12 @@ final class YandexMusicService {
 
     private init() {
         let defaults = UserDefaults.standard
-        let saved = defaults.string(forKey: "ym.token") ?? ""
-        let activeToken = saved.isEmpty ? Self.defaultToken : saved
-        self.token = activeToken
-        self.isAuthorized = !activeToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // Old builds shipped a common token. Require explicit personal sign-in instead
+        // of importing an unverified token or trusting its cached profile.
+        defaults.removeObject(forKey: "ym.token")
+        self.credential = YandexCredentialStore.read()
+        self.token = credential?.accessToken ?? ""
+        self.isAuthorized = !token.isEmpty
         self.recentKeys = defaults.stringArray(forKey: Self.keyRecent) ?? []
         self.recentYmIDs = defaults.stringArray(forKey: Self.keyRecentYm) ?? []
         self.artistCounts = (defaults.dictionary(forKey: Self.keyArtists) as? [String: Int]) ?? [:]
@@ -93,7 +92,8 @@ final class YandexMusicService {
         self.waveMoodStationId = defaults.string(forKey: "ym.waveMood") ?? "user:onyourwave"
 
         if let uData = defaults.data(forKey: "ym.user_profile"),
-           let savedProfile = try? JSONDecoder().decode(YMUserProfile.self, from: uData) {
+           let savedProfile = try? JSONDecoder().decode(YMUserProfile.self, from: uData),
+           savedProfile.uid == credential?.uid {
             self.currentUser = savedProfile
         }
 
@@ -105,6 +105,13 @@ final class YandexMusicService {
            !tracks.isEmpty {
             self.newTracksCache = tracks
             self.newTracksCacheAt = savedDate
+        }
+        if credential == nil {
+            defaults.removeObject(forKey: "ym.user_profile")
+            resetPersonalState()
+            LibraryStore.shared.clearYandexAccountData()
+        } else {
+            Task { await syncAccountData() }
         }
     }
 
@@ -287,7 +294,7 @@ final class YandexMusicService {
             URLQueryItem(name: "nocorrect", value: "false")
         ]
         guard let url = comps.url,
-              let pair = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else {
+              let pair = try? await sessionData(for: authorizedRequest(url: url)) else {
             return GlobalSearchResults()
         }
 
@@ -379,7 +386,7 @@ final class YandexMusicService {
         guard var comps = URLComponents(string: Self.apiBase + "/search/suggest") else { return [] }
         comps.queryItems = [URLQueryItem(name: "part", value: query)]
         guard let url = comps.url,
-              let pair = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return [] }
+              let pair = try? await sessionData(for: authorizedRequest(url: url)) else { return [] }
         struct Response: Decodable {
             struct Result: Decodable { let suggestions: [String]? }
             let result: Result?
@@ -404,7 +411,7 @@ final class YandexMusicService {
             URLQueryItem(name: "similarArtists", value: "true")
         ]
         guard let url = comps.url else { throw URLError(.badURL) }
-        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
+        let (data, _) = try await sessionData(for: authorizedRequest(url: url))
 
         struct Response: Decodable {
             struct Result: Decodable {
@@ -471,7 +478,7 @@ final class YandexMusicService {
             URLQueryItem(name: "sort", value: "plays")
         ]
         guard let url = comps.url else { throw URLError(.badURL) }
-        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
+        let (data, _) = try await sessionData(for: authorizedRequest(url: url))
         struct Response: Decodable {
             struct Result: Decodable { let tracks: [YMTrackItem]? }
             let result: Result?
@@ -490,7 +497,7 @@ final class YandexMusicService {
 
         guard let url = URL(string: Self.apiBase + "/landing3/chart/russia") else { throw URLError(.badURL) }
         let req = authorizedRequest(url: url)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await sessionData(for: req)
 
         struct ChartResponse: Decodable {
             struct Result: Decodable {
@@ -516,6 +523,7 @@ final class YandexMusicService {
     // MARK: - Новые релизы (альбомы и синглы)
 
     func getNewAlbums(force: Bool = false) async throws -> [YMAlbumItem] {
+        let generation = accountGeneration
         if !force, !newAlbumsCache.isEmpty, let at = newAlbumsCacheAt, Date().timeIntervalSince(at) < 1800 {
             return newAlbumsCache
         }
@@ -527,6 +535,7 @@ final class YandexMusicService {
         guard !ids.isEmpty else { return newAlbumsCache }
 
         let albums = try await fetchAlbums(ids: Array(ids.prefix(70)))
+        guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
         let clean = albums.filter { $0.id != 0 }
         if !clean.isEmpty {
             newAlbumsCache = clean
@@ -539,7 +548,7 @@ final class YandexMusicService {
         guard let url = URL(string: Self.apiBase + "/landing3/new-releases") else {
             throw URLError(.badURL)
         }
-        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
+        let (data, _) = try await sessionData(for: authorizedRequest(url: url))
 
         struct Response: Decodable {
             struct Result: Decodable {
@@ -558,7 +567,7 @@ final class YandexMusicService {
         }
         comps.queryItems = [URLQueryItem(name: "blocks", value: "new-releases")]
         guard let url = comps.url else { throw URLError(.badURL) }
-        let (data, _) = try await URLSession.shared.data(for: authorizedRequest(url: url))
+        let (data, _) = try await sessionData(for: authorizedRequest(url: url))
 
         struct Response: Decodable {
             struct Result: Decodable {
@@ -587,7 +596,7 @@ final class YandexMusicService {
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         let joined = ids.map { String($0) }.joined(separator: "%2C")
         req.httpBody = ("album-ids=" + joined).data(using: .utf8)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await sessionData(for: req)
 
         struct Response: Decodable {
             let result: [YMAlbumItem]?
@@ -621,11 +630,16 @@ final class YandexMusicService {
     }
 
     func getAlbumTracks(albumId: Int) async throws -> [YMTrackItem] {
-        return await Self.fetchAlbumTracks(albumId: albumId, token: token)
+        let generation = accountGeneration
+        guard await ensureValidCredentials(), generation == accountGeneration else { throw URLError(.userAuthenticationRequired) }
+        let items = await Self.fetchAlbumTracks(albumId: albumId, token: token)
+        guard generation == accountGeneration, !Task.isCancelled else { throw CancellationError() }
+        return items
     }
 
     /// Свежие треки («Топ-100 премьер») — зафиксированы на день до полуночи 00:00 (при наступлении полуночи обновляются).
     func getNewTracks(limit: Int = 100, force: Bool = false) async -> [YMTrackItem] {
+        let generation = accountGeneration
         if !force, isDailyPremiereCacheValid {
             return Array(newTracksCache.prefix(limit))
         }
@@ -643,6 +657,7 @@ final class YandexMusicService {
         }
 
         let albums = (try? await getNewAlbums(force: force)) ?? []
+        guard accountGeneration == generation, !Task.isCancelled else { return [] }
         let albumsToFetch = Array(albums.prefix(70))
         let currentToken = self.token
         var albumTracksMap: [Int: [YMTrackItem]] = [:]
@@ -701,6 +716,7 @@ final class YandexMusicService {
 
         if !out.isEmpty {
             let finalTop = Array(out.prefix(limit))
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
             saveDailyPremiereCache(finalTop)
             return finalTop
         }
@@ -783,6 +799,7 @@ final class YandexMusicService {
     private func requestTrackStationQueue(
         stationId: String, target: Int, history: [String]
     ) async -> (items: [YMTrackItem], batchID: String?) {
+        let generation = accountGeneration
         guard stationId.hasPrefix("track:"), target > 0 else { return ([], nil) }
         var seen = Set(history)
         var queueIDs = history
@@ -813,8 +830,9 @@ final class YandexMusicService {
                     URLQueryItem(name: "moodEnergy", value: moodEnergy)
                 ]
                 guard let endpoint = url.url else { return ([], nil) }
-                let (data, response) = try await URLSession.shared.data(for: authorizedRequest(url: endpoint))
+                let (data, response) = try await sessionData(for: authorizedRequest(url: endpoint))
                 try Task.checkCancellation()
+                guard accountGeneration == generation else { return ([], nil) }
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return ([], nil) }
                 let decoded = try JSONDecoder().decode(Response.self, from: data)
                 guard let batch = decoded.result else { return ([], nil) }
@@ -890,6 +908,7 @@ final class YandexMusicService {
     ///    получал почти нулевой контекст и мог присылать тот же трек в
     ///    следующей пачке.
     func buildWaveQueue(stationId: String = "user:onyourwave", target: Int = 45) async -> [YMTrackItem] {
+        let generation = accountGeneration
         beginStationSession(stationId)
 
         var collected: [YMTrackItem] = []
@@ -899,6 +918,7 @@ final class YandexMusicService {
         for _ in 0..<7 {
             let queueParam = seenOrder.isEmpty ? nil : seenOrder.suffix(400).joined(separator: ",")
             let batch = await fetchRotorBatch(stationId: stationId, queueSeed: queueParam)
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
             if batch.isEmpty { break }
             for item in batch {
                 seenOrder.append(item.id)
@@ -912,6 +932,7 @@ final class YandexMusicService {
 
         if collected.count < 12 {
             let extra = await personalPicks(limit: max(0, target - collected.count), excluding: seen)
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
             collected.append(contentsOf: extra)
         }
 
@@ -920,6 +941,7 @@ final class YandexMusicService {
 
     /// Подборка на основе того, что пользователь реально слушает.
     func personalPicks(limit: Int, excluding: Set<String> = []) async -> [YMTrackItem] {
+        let generation = accountGeneration
         guard limit > 0 else { return [] }
         var used = excluding
         var out: [YMTrackItem] = []
@@ -927,6 +949,7 @@ final class YandexMusicService {
         for artist in topArtists.shuffled().prefix(8) {
             if out.count >= limit { break }
             let found = await searchAll(query: artist).tracks
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
             for item in found.prefix(6) {
                 if out.count >= limit { break }
                 if used.contains(item.id) { continue }
@@ -938,6 +961,7 @@ final class YandexMusicService {
 
         if out.count < limit {
             let chart = (try? await getChart()) ?? []
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
             for item in chart.shuffled() {
                 if out.count >= limit { break }
                 if used.contains(item.id) { continue }
@@ -955,6 +979,7 @@ final class YandexMusicService {
     /// сервиса), а не случайную выдачу общего ротора. Явно дизлайкнутые
     /// исполнители исключаются.
     func buildRecapQueue(target: Int = 40) async -> [YMTrackItem] {
+        let generation = accountGeneration
         let engineScores = UserTasteEngine.shared.artistScores
         var pool = Set(topArtists)
         pool.formUnion(engineScores.keys)
@@ -972,6 +997,7 @@ final class YandexMusicService {
             if out.count >= target { break }
             if engineScores[artist, default: 0] < -5 { continue }
             let found = await searchAll(query: artist).tracks
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
             for item in found.prefix(6) {
                 if out.count >= target { break }
                 if seen.contains(item.id) { continue }
@@ -982,11 +1008,13 @@ final class YandexMusicService {
 
         if out.count < target {
             let extra = await personalPicks(limit: target - out.count, excluding: seen)
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
             out.append(contentsOf: extra)
         }
 
         if out.isEmpty {
             out = (try? await getChart()) ?? []
+            guard accountGeneration == generation, !Task.isCancelled else { return [] }
         }
 
         return Array(out.prefix(target))
@@ -1012,7 +1040,7 @@ final class YandexMusicService {
 
         comps.queryItems = items
         guard let url = comps.url else { return [] }
-        guard let pair = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return [] }
+        guard let pair = try? await sessionData(for: authorizedRequest(url: url)) else { return [] }
 
         struct StationResponse: Decodable {
             struct Result: Decodable {
@@ -1057,7 +1085,7 @@ final class YandexMusicService {
         if type == "radioStarted" { body["from"] = "sonivo-ios" }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        _ = try? await URLSession.shared.data(for: req)
+        _ = try? await sessionData(for: req)
     }
 
     /// Отправляет на сервер Яндекса изменение настроек «Моей волны» (характер, язык, настроение)
@@ -1069,7 +1097,9 @@ final class YandexMusicService {
             "language": s.language.rotorValue,
             "moodEnergy": s.moodEnergy.rotorValue
         ]
+        let generation = accountGeneration
         Task {
+            guard accountGeneration == generation else { return }
             await sendRotorFeedback(
                 stationId: station,
                 type: "settingsChange",
@@ -1082,7 +1112,8 @@ final class YandexMusicService {
         rotorSessionID = UUID()
         lastBatchId = nil
         activeStationId = stationId
-        Task { await sendRotorFeedback(stationId: stationId, type: "radioStarted") }
+        let generation = accountGeneration
+        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: stationId, type: "radioStarted") }
     }
 
     func endStationSession() {
@@ -1098,13 +1129,15 @@ final class YandexMusicService {
     /// под то, что реально пропускается.
     func reportSkip(trackId: String) {
         guard let station = activeStationId else { return }
-        Task { await sendRotorFeedback(stationId: station, type: "skip", trackId: trackId) }
+        let generation = accountGeneration
+        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: station, type: "skip", trackId: trackId) }
     }
 
     /// Трек доиграл до конца — подкрепляет выбор ротора.
     func reportTrackFinished(trackId: String, totalPlayedSeconds: Double) {
         guard let station = activeStationId else { return }
-        Task { await sendRotorFeedback(stationId: station, type: "trackFinished", trackId: trackId, totalPlayedSeconds: totalPlayedSeconds) }
+        let generation = accountGeneration
+        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: station, type: "trackFinished", trackId: trackId, totalPlayedSeconds: totalPlayedSeconds) }
     }
 
     // MARK: - Память прослушиваний
@@ -1120,6 +1153,7 @@ final class YandexMusicService {
     }
 
     func remember(key: String, artist: String?, ymTrackId: String?) {
+        guard isUserLoggedIn else { return }
         var keys = recentKeys.filter { $0 != key }
         keys.insert(key, at: 0)
         if keys.count > Self.memoryLimit { keys = Array(keys.prefix(Self.memoryLimit)) }
@@ -1147,7 +1181,8 @@ final class YandexMusicService {
         }
 
         if let station = activeStationId, let ymTrackId {
-            Task { await sendRotorFeedback(stationId: station, type: "trackStarted", trackId: ymTrackId) }
+            let generation = accountGeneration
+        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: station, type: "trackStarted", trackId: ymTrackId) }
         }
     }
 
@@ -1222,7 +1257,7 @@ final class YandexMusicService {
         ]
         guard let url = comps.url else { return nil }
 
-        guard let (data, response) = try? await URLSession.shared.data(for: authorizedRequest(url: url)) else { return nil }
+        guard let (data, response) = try? await sessionData(for: authorizedRequest(url: url)) else { return nil }
         if let http = response as? HTTPURLResponse, http.statusCode != 200 { return nil }
 
         struct FileInfoResponse: Decodable {
@@ -1250,6 +1285,7 @@ final class YandexMusicService {
     }
 
     func getStreamInfo(for trackId: String, preferredQuality: AudioQuality = .auto, preferredBitrate: Int? = nil) async throws -> StreamInfo {
+        let generation = accountGeneration
         let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
 
         // The legacy /download-info endpoint stopped reliably returning FLAC entries for most
@@ -1259,6 +1295,7 @@ final class YandexMusicService {
         // lossless master there.
         if preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto {
             if let losslessInfo = await getLosslessFileInfo(cleanId: cleanId) {
+                guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
                 SonivoDiagnostics.log("get-file-info delivered \(losslessInfo.codec) \(losslessInfo.bitrate)kbps for \(cleanId)", tag: "STREAM")
                 return losslessInfo
             }
@@ -1266,7 +1303,7 @@ final class YandexMusicService {
 
         guard let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info") else { throw URLError(.badURL) }
         let req = authorizedRequest(url: downloadInfoListURL)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await sessionData(for: req)
 
         struct DownloadInfoEntry: Codable {
             let codec: String
@@ -1312,6 +1349,7 @@ final class YandexMusicService {
 
         guard let xmlURL = URL(string: best.downloadInfoUrl) else { throw URLError(.badURL) }
         let (xmlData, _) = try await URLSession.shared.data(from: xmlURL)
+        guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
         guard let xmlString = String(data: xmlData, encoding: .utf8) else { throw URLError(.cannotDecodeRawData) }
 
         let host = extractTag("host", from: xmlString)
@@ -1371,7 +1409,7 @@ final class YandexMusicService {
 
         // 1. ПРИОРИТЕТ №1: Официальный вертикальный видеошот лейбла (backgroundVideoUri: 1080x1920)
         if let trackURL = URL(string: Self.apiBase + "/tracks/" + cleanId) {
-            if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: trackURL)) {
+            if let (data, _) = try? await sessionData(for: authorizedRequest(url: trackURL)) {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let result = (json["result"] as? [[String: Any]])?.first ?? (json["result"] as? [String: Any]) {
                     var candidate: String? = nil
@@ -1397,7 +1435,7 @@ final class YandexMusicService {
 
         // 2. Резервный запрос в /tracks/{id}/supplement
         if let suppURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/supplement") {
-            if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: suppURL)) {
+            if let (data, _) = try? await sessionData(for: authorizedRequest(url: suppURL)) {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let result = json["result"] as? [String: Any] {
                     var candidate: String? = nil
@@ -1417,7 +1455,7 @@ final class YandexMusicService {
 
         // 3. Резервный запрос официального видео артиста через /artists/{id}/brief-info
         if let trackURL = URL(string: Self.apiBase + "/tracks/" + cleanId) {
-            if let (data, _) = try? await URLSession.shared.data(for: authorizedRequest(url: trackURL)),
+            if let (data, _) = try? await sessionData(for: authorizedRequest(url: trackURL)),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let result = (json["result"] as? [[String: Any]])?.first ?? (json["result"] as? [String: Any]),
                let artists = result["artists"] as? [[String: Any]],
@@ -1425,7 +1463,7 @@ final class YandexMusicService {
                let artistId = firstArtist["id"] {
                 let artistIdStr = "\(artistId)"
                 if let artURL = URL(string: Self.apiBase + "/artists/" + artistIdStr + "/brief-info") {
-                    if let (artData, _) = try? await URLSession.shared.data(for: authorizedRequest(url: artURL)),
+                    if let (artData, _) = try? await sessionData(for: authorizedRequest(url: artURL)),
                        let artJson = try? JSONSerialization.jsonObject(with: artData) as? [String: Any],
                        let artRes = artJson["result"] as? [String: Any],
                        let artistObj = artRes["artist"] as? [String: Any] {
@@ -1474,11 +1512,12 @@ final class YandexMusicService {
 
     // MARK: - Account, Profile & Cloud Sync
 
-    func fetchAccountStatus() async -> YMUserProfile? {
-        guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+    private func profile(for candidateToken: String) async -> YMUserProfile? {
+        guard !candidateToken.isEmpty,
               let url = URL(string: Self.apiBase + "/account/status") else { return nil }
-
-        let req = authorizedRequest(url: url)
+        var req = URLRequest(url: url)
+        req.setValue("OAuth " + candidateToken, forHTTPHeaderField: "Authorization")
+        req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -1505,11 +1544,11 @@ final class YandexMusicService {
             }
 
             let decoded = try JSONDecoder().decode(ResponseWrapper.self, from: data)
-            guard let acc = decoded.result?.account, let uid = acc.uid else { return nil }
+            guard let acc = decoded.result?.account, let uid = acc.uid, uid > 0 else { return nil }
 
             let avatarId = acc.default_avatar_id ?? decoded.result?.default_avatar_id
             let avatarUrl = avatarId.map { "https://avatars.yandex.net/get-yapic/\($0)/islands-200" }
-            let hasPlus = decoded.result?.plus?.hasPlus ?? true
+            let hasPlus = decoded.result?.plus?.hasPlus ?? false
 
             let profile = YMUserProfile(
                 uid: uid,
@@ -1520,10 +1559,6 @@ final class YandexMusicService {
                 hasPlus: hasPlus
             )
 
-            self.currentUser = profile
-            if let enc = try? JSONEncoder().encode(profile) {
-                UserDefaults.standard.set(enc, forKey: "ym.user_profile")
-            }
             return profile
         } catch {
             return nil
@@ -1536,7 +1571,7 @@ final class YandexMusicService {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        let activeToken = token.isEmpty ? Self.defaultToken : token
+        let activeToken = token
         req.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue("ru", forHTTPHeaderField: "Accept-Language")
@@ -1547,7 +1582,7 @@ final class YandexMusicService {
         req.httpBody = body.data(using: .utf8)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await sessionData(for: req)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 return []
             }
@@ -1561,14 +1596,14 @@ final class YandexMusicService {
         }
     }
 
-    func fetchUserLikes(uid: Int, limit: Int = 120) async -> [YMTrackItem] {
-        guard let url = URL(string: Self.apiBase + "/users/\(uid)/likes/tracks") else { return [] }
+    private func fetchUserLikes(uid: Int, limit: Int = 2000) async -> [YMTrackItem]? {
+        guard let url = URL(string: Self.apiBase + "/users/\(uid)/likes/tracks") else { return nil }
         let req = authorizedRequest(url: url)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await sessionData(for: req)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                return []
+                return nil
             }
 
             struct LikeTrackItem: Decodable {
@@ -1585,33 +1620,134 @@ final class YandexMusicService {
             }
 
             let decoded = try JSONDecoder().decode(ResponseWrapper.self, from: data)
-            let rawIds = (decoded.result?.library?.tracks ?? []).compactMap { $0.id }
-            let prefixIds = Array(rawIds.prefix(limit))
+            guard let liked = decoded.result?.library?.tracks else { return nil }
+            let rawIds = liked.compactMap { $0.id }
+            guard rawIds.count <= limit else { return nil }
+            let prefixIds = rawIds
             guard !prefixIds.isEmpty else { return [] }
-
-            return await fetchTracksBatch(ids: prefixIds)
+            let generation = accountGeneration
+            var tracks: [YMTrackItem] = []
+            for start in stride(from: 0, to: prefixIds.count, by: 200) {
+                let ids = Array(prefixIds[start..<min(start + 200, prefixIds.count)])
+                let batch = await fetchTracksBatch(ids: ids)
+                guard accountGeneration == generation, !Task.isCancelled,
+                      Set(batch.map(\.id)) == Set(ids) else { return nil }
+                tracks.append(contentsOf: batch)
+            }
+            return tracks
         } catch {
-            return []
+            return nil
+        }
+    }
+
+    func fetchAccountStatus() async -> YMUserProfile? {
+        guard await ensureValidCredentials() else { return nil }
+        let generation = accountGeneration
+        let activeToken = token
+        guard let profile = await profile(for: activeToken),
+              !Task.isCancelled, accountGeneration == generation,
+              credential?.uid == profile.uid else { return nil }
+        installProfile(profile)
+        return profile
+    }
+
+    private func installProfile(_ profile: YMUserProfile) {
+        currentUser = profile
+        if let data = try? JSONEncoder().encode(profile) {
+            UserDefaults.standard.set(data, forKey: "ym.user_profile")
         }
     }
 
     func syncAccountData() async {
-        guard let profile = await fetchAccountStatus() else { return }
-        let likedItems = await fetchUserLikes(uid: profile.uid, limit: 120)
-        let tracks = likedItems.map { convertToTrack($0) }
-        LibraryStore.shared.setFavoritesFromCloud(tracks)
+        let generation = accountGeneration
+        guard let profile = await fetchAccountStatus(),
+              accountGeneration == generation, !Task.isCancelled else { return }
+        guard let likedItems = await fetchUserLikes(uid: profile.uid, limit: 2000),
+              accountGeneration == generation, !Task.isCancelled else {
+            if accountGeneration == generation { accountSyncMessage = "Не удалось полностью обновить избранное (до 2000 треков). Сохранённые данные не изменены." }
+            return
+        }
+        LibraryStore.shared.setFavoritesFromCloud(likedItems.map { convertToTrack($0) })
+        let playlistsOK = await syncPersonalPlaylists(uid: profile.uid, generation: generation)
+        guard accountGeneration == generation, !Task.isCancelled else { return }
+        accountSyncMessage = playlistsOK ? nil : "Избранное обновлено. Плейлисты не удалось загрузить полностью (до 50 плейлистов, до 2000 треков в каждом). Повторите синхронизацию позже."
     }
 
     func loginWithToken(_ newToken: String) async -> Bool {
-        let clean = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return false }
-        self.token = clean
-        guard let profile = await fetchAccountStatus() else {
+        await loginWithOAuthToken(YandexOAuthToken(access_token: newToken.trimmingCharacters(in: .whitespacesAndNewlines), refresh_token: nil, expires_in: nil, token_type: nil))
+    }
+
+    func loginWithOAuthToken(_ result: YandexOAuthToken) async -> Bool {
+        let attempt = UUID()
+        loginAttemptID = attempt
+        let generation = accountGeneration
+        guard let profile = await profile(for: result.access_token),
+              !Task.isCancelled, loginAttemptID == attempt,
+              accountGeneration == generation else { return false }
+        let candidate = YandexCredential(uid: profile.uid, token: result)
+        guard YandexCredentialStore.save(candidate) else { return false }
+        // No suspension between validating, persisting and replacing the session.
+        let changedAccount = credential?.uid != profile.uid
+        accountGeneration = UUID()
+        refreshTask?.cancel()
+        refreshTask = nil
+        if changedAccount { resetPersonalState(); LibraryStore.shared.clearYandexAccountData(); stopOldYandexPlayback() }
+        credential = candidate
+        token = candidate.accessToken
+        isAuthorized = true
+        installProfile(profile)
+        let installedGeneration = accountGeneration
+        Task { guard accountGeneration == installedGeneration else { return }; await syncAccountData() }
+        return true
+    }
+
+    private func ensureValidCredentials() async -> Bool {
+        guard let credential, !token.isEmpty else { return false }
+        guard credential.needsRefresh() else { return true }
+        if let refreshTask { return await refreshTask.value }
+        guard let refreshToken = credential.refreshToken, !refreshToken.isEmpty else {
+            logout()
             return false
         }
-        _ = profile
-        await syncAccountData()
-        return true
+        let generation = accountGeneration
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            do {
+                let refreshed = try await YandexDeviceAuthClient.shared.refresh(refreshToken)
+                guard let profile = await self.profile(for: refreshed.access_token),
+                      profile.uid == credential.uid,
+                      !Task.isCancelled, self.accountGeneration == generation else { return false }
+                let updated = YandexCredential(uid: credential.uid, token: refreshed, previousRefreshToken: refreshToken)
+                guard YandexCredentialStore.save(updated) else { return false }
+                self.credential = updated
+                self.token = updated.accessToken
+                self.installProfile(profile)
+                return true
+            } catch {
+                if !Task.isCancelled, self.accountGeneration == generation,
+                   error as? YandexAuthError == .rejectedToken { self.logout() }
+                return false
+            }
+        }
+        refreshTask = task
+        let ok = await task.value
+        if accountGeneration == generation { refreshTask = nil }
+        return ok && accountGeneration == generation && !Task.isCancelled
+    }
+
+    // All mutable account API responses are discarded after logout/account replacement.
+    func sessionData(for original: URLRequest) async throws -> (Data, URLResponse) {
+        let generation = accountGeneration
+        guard await ensureValidCredentials(), accountGeneration == generation else { throw URLError(.userAuthenticationRequired) }
+        try Task.checkCancellation()
+        let activeToken = token
+        var request = original
+        request.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
+        let result = try await URLSession.shared.data(for: request)
+        try Task.checkCancellation()
+        guard accountGeneration == generation else { throw CancellationError() }
+        if (result.1 as? HTTPURLResponse)?.statusCode == 401, token == activeToken { logout(); throw URLError(.userAuthenticationRequired) }
+        return result
     }
 
     func likeTrackOnServer(trackId: String) async {
@@ -1620,14 +1756,14 @@ final class YandexMusicService {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        let activeToken = token.isEmpty ? Self.defaultToken : token
+        let activeToken = token
         req.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue("ru", forHTTPHeaderField: "Accept-Language")
         req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
         req.httpBody = "track-ids=\(trackId)".data(using: .utf8)
 
-        _ = try? await URLSession.shared.data(for: req)
+        _ = try? await sessionData(for: req)
     }
 
     func unlikeTrackOnServer(trackId: String) async {
@@ -1636,39 +1772,68 @@ final class YandexMusicService {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        let activeToken = token.isEmpty ? Self.defaultToken : token
+        let activeToken = token
         req.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue("ru", forHTTPHeaderField: "Accept-Language")
         req.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
         req.httpBody = "track-ids=\(trackId)".data(using: .utf8)
 
-        _ = try? await URLSession.shared.data(for: req)
+        _ = try? await sessionData(for: req)
+    }
+
+    private func resetPersonalState() {
+        endStationSession()
+        trackStationRequestID = UUID()
+        recentKeys = []
+        recentYmIDs = []
+        artistCounts = [:]
+        totalPlays = 0
+        chartCache = []; chartCacheAt = nil
+        newAlbumsCache = []; newAlbumsCacheAt = nil
+        newTracksCache = []; newTracksCacheAt = nil
+        artistCache = [:]; artistTracksCache = [:]
+        waveMoodStationId = "user:onyourwave"
+        accountSyncMessage = nil
+        for key in [Self.keyRecent, Self.keyRecentYm, Self.keyArtists, Self.keyPlays,
+                    Self.keyPremiereTracks, Self.keyPremiereDate, "ym.waveMood", "sonivo_recent_searches"] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    private func stopOldYandexPlayback() {
+        let player = PlayerCore.shared
+        if let track = player.currentTrack, Self.isPersonalYandexTrack(track) {
+            player.stopAndClear()
+        }
+        player.queue.removeAll { Self.isPersonalYandexTrack($0) }
+    }
+
+    static func isPersonalYandexTrack(_ track: Track) -> Bool {
+        track.isStream && ymId(fromFileName: track.fileName) != nil
     }
 
     func logout() {
-        self.token = Self.defaultToken
-        self.currentUser = nil
-        self.recentKeys = []
-        self.recentYmIDs = []
-        self.artistCounts = [:]
-        self.totalPlays = 0
-
+        accountGeneration = UUID()
+        loginAttemptID = UUID()
+        refreshTask?.cancel()
+        refreshTask = nil
+        token = ""
+        isAuthorized = false
+        credential = nil
+        currentUser = nil
+        YandexCredentialStore.remove()
         UserDefaults.standard.removeObject(forKey: "ym.token")
         UserDefaults.standard.removeObject(forKey: "ym.user_profile")
-        UserDefaults.standard.removeObject(forKey: Self.keyRecent)
-        UserDefaults.standard.removeObject(forKey: Self.keyRecentYm)
-        UserDefaults.standard.removeObject(forKey: Self.keyArtists)
-        UserDefaults.standard.removeObject(forKey: Self.keyPlays)
-        UserDefaults.standard.removeObject(forKey: "sonivo_recent_searches")
-
-        LibraryStore.shared.clearFavorites()
+        resetPersonalState()
+        LibraryStore.shared.clearYandexAccountData()
+        stopOldYandexPlayback()
     }
 
     private func authorizedRequest(url: URL) -> URLRequest {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        let activeToken = token.isEmpty ? Self.defaultToken : token
+        let activeToken = token
         req.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
         req.setValue("ru", forHTTPHeaderField: "Accept-Language")
         req.setValue("WindowsPhone/4.75 (Windows Phone 8.1; Microsoft; Lumia 950)", forHTTPHeaderField: "User-Agent")

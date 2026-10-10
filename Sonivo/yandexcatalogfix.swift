@@ -91,7 +91,7 @@ extension YandexMusicService {
         ]
 
         guard let url = components.url,
-              let pair = try? await URLSession.shared.data(for: catalogRequest(url: url)),
+              let pair = try? await sessionData(for: catalogRequest(url: url)),
               let decoded = try? JSONDecoder().decode(YMCatalogSearchResponse.self, from: pair.0) else {
             return GlobalSearchResults()
         }
@@ -258,7 +258,7 @@ extension YandexMusicService {
             URLQueryItem(name: "similarArtists", value: "true")
         ]
         guard let url = components.url,
-              let pair = try? await URLSession.shared.data(for: catalogRequest(url: url)),
+              let pair = try? await sessionData(for: catalogRequest(url: url)),
               let decoded = try? JSONDecoder().decode(YMCatalogArtistResponse.self, from: pair.0),
               let raw = decoded.result?.artist,
               let id = raw.id,
@@ -313,7 +313,7 @@ extension YandexMusicService {
     private func catalogRequest(url: URL) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        let activeToken = token.isEmpty ? Self.defaultToken : token
+        let activeToken = token
         request.setValue("OAuth " + activeToken, forHTTPHeaderField: "Authorization")
         request.setValue("ru", forHTTPHeaderField: "Accept-Language")
         request.setValue("WindowsPhone/4.75 (Windows Phone 8.1; Microsoft; Lumia 950)", forHTTPHeaderField: "User-Agent")
