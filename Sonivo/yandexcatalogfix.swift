@@ -78,6 +78,22 @@ private struct YMCatalogArtistResponse: Decodable {
 // MARK: - Safe global catalog decoding
 
 extension YandexMusicService {
+    /// Curator-only track search: no artist/album expansion, four callers at most.
+    func searchCuratorTracks(query: String) async throws -> [YMTrackItem] {
+        guard isUserLoggedIn, !Task.isCancelled else { return [] }
+        guard var components = URLComponents(string: Self.apiBase + "/search") else { throw URLError(.badURL) }
+        components.queryItems = [URLQueryItem(name:"text",value:String(query.prefix(600))),
+            URLQueryItem(name:"type",value:"track"),URLQueryItem(name:"page",value:"0"),URLQueryItem(name:"nocorrect",value:"true")]
+        guard let url = components.url else { throw URLError(.badURL) }
+        var request = catalogRequest(url:url); request.timeoutInterval = 15
+        let (data,response) = try await sessionData(for:request)
+        try Task.checkCancellation()
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        guard data.count <= 2_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
+        let decoded = try JSONDecoder().decode(YMCatalogSearchResponse.self,from:data)
+        return Self.playable(decoded.result?.tracks?.results ?? [])
+    }
+
     func searchAllFixed(query: String) async -> GlobalSearchResults {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return GlobalSearchResults() }

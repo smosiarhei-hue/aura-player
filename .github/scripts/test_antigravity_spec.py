@@ -365,14 +365,14 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("forceRegenerate: true", ps_content)
 
 
-    def test_playlist_detail_and_curator_50_tracks(self):
+    def test_playlist_detail_and_curator_bounded_extensions(self):
         playlist_detail = self.repo_root / "Sonivo" / "PlaylistDetailView.swift"
         self.assertTrue(playlist_detail.exists(), "PlaylistDetailView.swift must exist")
 
         pd_content = playlist_detail.read_text(encoding="utf-8")
         self.assertIn("struct PlaylistDetailView", pd_content)
         self.assertIn("PlaybackCommandRouter.shared.play", pd_content)
-        self.assertIn("Дополнить ещё +50", pd_content)
+        self.assertIn("Дополнить · до 10 песен", pd_content)
         self.assertIn("extendPlaylistInLibrary", pd_content)
         self.assertIn("tracksListSection", pd_content)
 
@@ -399,7 +399,7 @@ class AntigravitySpecTests(unittest.TestCase):
         assistant_view = self.repo_root / "Sonivo" / "Dify" / "AIMusicAssistantView.swift"
         as_content = assistant_view.read_text(encoding="utf-8")
         self.assertIn("store.extend(message.id)", as_content)
-        self.assertIn("Найти ещё до 50 новых песен", as_content)
+        self.assertIn("Дополнить · до 10 песен", as_content)
 
     def test_playlist_cover_art_and_collection_navigation(self):
         models_file = self.repo_root / "Sonivo" / "models.swift"

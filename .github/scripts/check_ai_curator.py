@@ -56,8 +56,12 @@ nonisolated struct Track: Codable, Sendable, Identifiable { var id = UUID(); var
         return Search(tracks: [Item(title:"Wrong Remix",artists:[Artist(name:"Wrong")],available:true),
                               Item(title:"Song",artists:[Artist(name:"Artist")],available:true)])
     }
+    func searchCuratorTracks(query: String) async throws -> [Item] {
+        await searchAllFixed(query:query).tracks
+    }
     func convertToTrack(_ item: Item) -> Track {
-        Track(id: UUID(uuidString:"00000000-0000-0000-0000-000000000001")!,title:item.title,artist:"Artist")
+        if item.title == "Song" { return Track(id:UUID(uuidString:"00000000-0000-0000-0000-000000000001")!,title:item.title,artist:item.artists?.first?.name ?? "Artist") }
+        return Track(title:item.title,artist:item.artists?.first?.name ?? "Artist")
     }
 }
 nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
@@ -155,6 +159,31 @@ import CryptoKit
         let remixRejected = await generator.resolveTracks(for:playlist.tracks)
         precondition(remixRejected.isEmpty)
         YandexMusicService.shared.fixtureTracks = nil
+        let seed = CuratorSongReference(id:UUID(),title:"Seed",artist:"Баста")
+        let discoveryRules = CuratorSelectionRules.make(query:"Хочу похожий вайб",reference:seed)
+        precondition(discoveryRules.excludes("Баста") && discoveryRules.excludes("Basta"))
+        precondition(discoveryRules.maxTracksPerArtist == 2)
+        precondition(CuratorSelectionRules.make(query:"Теперь без вокала",reference:seed,previous:discoveryRules) == discoveryRules)
+        precondition(CuratorSelectionRules.make(query:"Только этого исполнителя",reference:seed).excludedArtists.isEmpty)
+        let variety = discoveryRules.diverse([Track(title:"seed",artist:"Баста"),Track(title:"A",artist:"Другой"),Track(title:"B",artist:"Другой, Гость"),Track(title:"C",artist:"Другой"),Track(title:"D",artist:"Третий")])
+        precondition(variety.count == 3 && !variety.contains { $0.artist == "Баста" })
+        let afterExisting = discoveryRules.diverse([Track(title:"C",artist:"Другой"),Track(title:"D",artist:"Третий")],existing:[Track(title:"A",artist:"Другой"),Track(title:"B",artist:"Другой")])
+        precondition(afterExisting.count == 1)
+        let beforeExcluded = YandexMusicService.shared.searches
+        let blockedSeed = await generator.resolveTracks(for:[AITrackSuggestion(artist:"Баста",title:"Seed")],rules:discoveryRules)
+        precondition(blockedSeed.isEmpty && YandexMusicService.shared.searches == beforeExcluded)
+        var progress: [(Int,Int)] = []
+        let checkProgress = await generator.resolveTracks(for:playlist.tracks) { progress.append(($0,$1)) }
+        precondition(checkProgress.count == 1 && progress.first!.0 == 0 && progress.last!.0 == 1)
+        StubProtocol.reply(200,"data: " + String(data:chunk,encoding:.utf8)! + "\n\ndata: [DONE]\n\n")
+        let extensionQueryPlaylist = try await ai.extendPlaylist(title:"Fixture",description:"Vibe",existingTracks:[],count:10,originalRequest:"Исходный вайб: Seed Song",suggestedBefore:[AITrackSuggestion(artist:"Old",title:"Missing")])
+        let extensionQueryRequest = StubProtocol.requests.last!
+        let extensionQueryBody = try JSONSerialization.jsonObject(with:extensionQueryRequest.httpBody!) as! [String:Any]
+        let extensionQueryMessages = extensionQueryBody["messages"] as! [[String:Any]]
+        let extensionQuery = extensionQueryMessages.last!["content"] as! String
+        precondition(extensionQuery.contains("до 10") && extensionQuery.contains("Seed Song") && extensionQuery.contains("Old — Missing"))
+        _ = extensionQueryPlaylist
+        StubProtocol.reply(200,"data: " + String(data:chunk,encoding:.utf8)! + "\n\ndata: [DONE]\n\n")
 
         let store = AIMusicCuratorStore(ai:ai)
         store.clearChat()

@@ -238,6 +238,11 @@ struct AIMessage: Identifiable, Codable, Sendable {
     var requestSummary: String? = nil
     var songReference: CuratorSongReference? = nil
     var requestedYearRange: CuratorYearRange? = nil
+    var selectionRules: CuratorSelectionRules? = nil
+    var originalRequest: String? = nil
+    var extensionSuggestions: [AITrackSuggestion]? = nil
+    var extensionAttemptedCount: Int? = nil
+    var extensionMissingCount: Int? = nil
     var clarification: String? = nil
     var webSources: [CuratorWebSource]? = nil
     var webNotice: String? = nil

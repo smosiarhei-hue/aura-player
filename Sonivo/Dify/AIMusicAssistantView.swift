@@ -227,6 +227,12 @@ struct AIMusicAssistantView: View {
                 Text("Период \(range.label): оставляем только совпадения с годом по данным каталога. Неизвестный год, поздняя версия или переиздание могут быть пропущены.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if let rules = message.selectionRules, !rules.excludedArtists.isEmpty {
+                Text("По вайбу · другие исполнители · не больше двух песен одного артиста").font(.caption).foregroundStyle(.secondary)
+            }
+            if let attempted = message.extensionAttemptedCount {
+                Text("Последнее дополнение: добавлено \(max(0,attempted - (message.extensionMissingCount ?? 0))) из \(attempted) предложенных").font(.caption).foregroundStyle(.secondary)
+            }
             if message.isResolvingTracks {
                 Label("Проверяем доступность…", systemImage: "magnifyingglass").font(.callout)
             } else {
@@ -235,7 +241,7 @@ struct AIMusicAssistantView: View {
                      : "Найдено \(message.resolvedTracks.count) песен · предложено \(playlist.tracks.count)")
                     .font(.subheadline.weight(.medium))
                 if let missing = message.unresolvedCount, missing > 0, service.isUserLoggedIn {
-                    Text("\(missing) рекомендаций без точного доступного совпадения. Мы не заменяем их случайными песнями.")
+                    Text("\(missing) рекомендаций пропущено: точное совпадение, доступность, повторы или ограничения подборки. Случайными песнями не заменяем.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -246,7 +252,7 @@ struct AIMusicAssistantView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(track.title).font(.subheadline.weight(.medium)).lineLimit(2)
                         Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        if let suggestion = playlist.tracks.first(where: { AICuratorPolicy.matches(artist:$0.artist,title:$0.title,candidateArtist:track.artist,candidateTitle:track.title) }),
+                        if let suggestion = (playlist.tracks + (message.extensionSuggestions ?? [])).first(where: { AICuratorPolicy.matches(artist:$0.artist,title:$0.title,candidateArtist:track.artist,candidateTitle:track.title) }),
                            let reason = suggestion.reason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
                     }
                     Spacer(minLength: 0)
@@ -270,8 +276,15 @@ struct AIMusicAssistantView: View {
                     HStack { playlistActions(message) }
                     VStack(alignment: .leading) { playlistActions(message) }
                 }
-                Button("Найти ещё до 50 новых песен", systemImage: "plus") { store.extend(message.id) }
-                    .disabled(store.isBusy).frame(minHeight: 44)
+                Menu {
+                    Button("Небольшая порция · до 10") { store.extend(message.id,count:10) }
+                    Button("До 20 песен") { store.extend(message.id,count:20) }
+                    Button("До 50 · дольше") { store.extend(message.id,count:50) }
+                } label: {
+                    Label("Дополнить · до 10 песен",systemImage:"plus")
+                } primaryAction: { store.extend(message.id) }
+                .disabled(store.isBusy).frame(minHeight:44)
+                Text("Нажатие — небольшая порция. В меню можно выбрать 20 или 50; каждый трек проверяем отдельно.").font(.caption).foregroundStyle(.secondary)
                 if let id = message.savedPlaylistID, let saved = LibraryStore.shared.playlist(byId: id) {
                     NavigationLink("Открыть в медиатеке") { PlaylistDetailView(playlist: saved) }.frame(minHeight: 44)
                 }
@@ -287,7 +300,10 @@ struct AIMusicAssistantView: View {
     private var workingCard: some View {
         HStack(spacing: 12) {
             CuratorMotionMark(active: true).frame(width: 36, height: 36)
-            Text(store.phase.title).font(.callout.weight(.medium)).accessibilityAddTraits(.updatesFrequently)
+            VStack(alignment:.leading,spacing:4) {
+                Text(store.phase.title).font(.callout.weight(.medium))
+                if let progress = store.catalogProgress { Text(progress).font(.caption).foregroundStyle(.secondary) }
+            }.accessibilityAddTraits(.updatesFrequently)
             Spacer(minLength: 0)
             Button("Стоп") { store.cancel() }.frame(minWidth: 44, minHeight: 44)
         }.padding(16).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))

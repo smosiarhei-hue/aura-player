@@ -204,19 +204,19 @@ struct PlaylistDetailView: View {
                 .disabled(tracks.isEmpty)
             }
 
-            // Кнопка «Дополнить ещё +50»
+            // Кнопка «Дополнить · до 10 песен»
             Button {
                 extendPlaylistWithAI()
             } label: {
                 HStack(spacing: 8) {
                     if isExtending {
                         ProgressView().tint(SN.ink).scaleEffect(0.9)
-                        Text("AI подбирает +50 треков…")
+                        Text("AI ищет продолжение…")
                     } else {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(SN.amber)
-                        Text("Дополнить ещё +50")
+                        Text("Дополнить · до 10 песен")
                     }
                 }
                 .font(SN.text(.subheadline, .bold))
@@ -332,7 +332,7 @@ struct PlaylistDetailView: View {
                 .font(SN.text(.subheadline, .medium))
                 .foregroundStyle(SN.inkMuted)
 
-            Button("Дополнить +50 треков через AI") {
+            Button("Дополнить · до 10 через AI") {
                 extendPlaylistWithAI()
             }
             .font(SN.text(.subheadline, .bold))
@@ -352,7 +352,7 @@ struct PlaylistDetailView: View {
         Task {
             do {
                 let added = try await AIPlaylistGeneratorService.shared.extendPlaylistInLibrary(playlistId: currentPlaylist.id)
-                showToast("Добавлено +\(added) новых треков в плейлист!")
+                showToast(added == 0 ? "Новых точных совпадений не найдено" : "Добавлено \(added) новых треков")
                 Haptics.notification(.success)
             } catch {
                 showToast("Ошибка дополнения: \(error.localizedDescription)")
