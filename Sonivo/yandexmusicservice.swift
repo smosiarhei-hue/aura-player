@@ -139,19 +139,19 @@ final class YandexMusicService {
         let hasPlus: Bool
     }
 
-    struct YMArtist: Codable, Equatable, Sendable {
+    nonisolated struct YMArtist: Codable, Equatable, Sendable {
         let id: Int?
         let name: String?
     }
 
-    struct YMAlbum: Codable, Equatable, Sendable {
+    nonisolated struct YMAlbum: Codable, Equatable, Sendable {
         let id: Int?
         let title: String?
         let year: Int?
         let coverUri: String?
     }
 
-    struct YMTrackItem: Identifiable, Codable, Equatable, Sendable {
+    nonisolated struct YMTrackItem: Identifiable, Codable, Equatable, Sendable {
         let id: String
         let title: String
         let version: String?

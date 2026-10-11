@@ -104,3 +104,65 @@ nonisolated struct OffMainSnapshot: Encodable, Sendable {
         result = subprocess.run([str(p/'checks')],capture_output=True,text=True,timeout=60)
         assert result.returncode == 0,result.stdout + result.stderr
         print(result.stdout.strip())
+
+
+def verify_library_model_isolation(root):
+    """Compile actual metadata models with the app's MainActor-by-default setting."""
+    from check_yandex_personal_auth import _method
+    source = (root/'Sonivo/models.swift').read_text()
+    models = source.split('// MARK: - Track Model', 1)[1].split('// MARK: - Repeat / Shuffle', 1)[0]
+    service = (root/'Sonivo/yandexmusicservice.swift').read_text()
+    ym = '\n'.join(_method(service, marker) for marker in [
+        'nonisolated struct YMArtist:', 'nonisolated struct YMAlbum:', 'nonisolated struct YMTrackItem:',
+        'nonisolated func convertToTrack(', 'nonisolated private static func stableID('])
+    fixtures = r'''
+import Foundation
+import CryptoKit
+@MainActor struct Color { init?(hex: String) {} }
+@MainActor struct PaletteValue { let colors: [Color] }
+@MainActor enum Palette { static func seeded(_ seed: Int) -> PaletteValue { PaletteValue(colors: []) } }
+nonisolated func documentsDirectoryURL() -> URL { FileManager.default.temporaryDirectory }
+nonisolated enum LyricsMatchPolicy {
+    static func recordingTitle(_ title: String, version: String?) -> String { title }
+}
+@MainActor final class YandexMusicService {
+    static let shared = YandexMusicService()
+'''+ym+'\n}\n'+models
+    main = r'''
+import Foundation
+@main struct Checks {
+    @MainActor static func main() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let service = YandexMusicService.shared
+        let result = try await Task.detached {
+            let raw = Data("{\"id\":123,\"title\":\"Song\",\"durationMs\":1000,\"artists\":[{\"id\":1,\"name\":\"Artist\"}]}".utf8)
+            let ym = try JSONDecoder().decode(YandexMusicService.YMTrackItem.self,from:raw)
+            let track = service.convertToTrack(ym)
+            let playlist = Playlist(title:"Fixture",trackIds:[track.id],cachedTracks:[track])
+            let archive = try JSONEncoder().encode([playlist])
+            let decoded = try JSONDecoder().decode([Playlist].self,from:archive)
+            precondition(decoded[0].cachedTracks[0].artist == "Artist")
+            precondition(track.duration == 1 && track.url.absoluteString == "123")
+            let projected = try LibraryTrackProjection.visibleOnly([track],loggedIn:true)
+            return (projected, decoded)
+        }.value
+        let writer = LibraryPersistenceWriter(delay:.seconds(30))
+        writer.write(result.0,to:directory.appendingPathComponent("tracks.json"))
+        writer.write(result.1,to:directory.appendingPathComponent("playlists.json"))
+        await writer.flush()
+        precondition(writer.diagnostics.writes == 2 && writer.diagnostics.lastError == nil)
+        print("Actual Track/Playlist/Yandex metadata background decode/convert/encode/projection passed with MainActor default isolation; UI palette remains MainActor")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as directory:
+        p = Path(directory)
+        (p/'Models.swift').write_text(fixtures); (p/'Checks.swift').write_text(main)
+        files = [p/'Models.swift',root/'Sonivo/LibraryPersistenceWriter.swift',root/'Sonivo/LibraryTrackProjection.swift',p/'Checks.swift']
+        compiled = subprocess.run(['swiftc','-swift-version','6','-default-isolation','MainActor',*map(str,files),'-o',str(p/'checks')],capture_output=True,text=True)
+        assert compiled.returncode == 0,compiled.stderr
+        result = subprocess.run([str(p/'checks')],capture_output=True,text=True,timeout=60)
+        assert result.returncode == 0,result.stdout + result.stderr
+        print(result.stdout.strip())

@@ -71,7 +71,7 @@ final class AutoMixDJEngine {
 
 // MARK: - Track Model
 
-struct Track: Identifiable, Codable, Equatable, Sendable {
+nonisolated struct Track: Identifiable, Codable, Equatable, Sendable {
     var id: UUID = UUID()
     var fileName: String
     var relativePath: String = ""
@@ -99,7 +99,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         return documentsDirectoryURL().appendingPathComponent(fileName)
     }
 
-    var palette: [Color] {
+    @MainActor var palette: [Color] {
         let parsed = colorsHex.compactMap { Color(hex: $0) }
         return parsed.isEmpty ? Palette.seeded(artworkSeed).colors : parsed
     }
@@ -111,7 +111,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
 
 // MARK: - Playlist Model
 
-struct Playlist: Identifiable, Codable, Equatable, Sendable {
+nonisolated struct Playlist: Identifiable, Codable, Equatable, Sendable {
     var id: UUID = UUID()
     var title: String
     var createdAt: Date = Date()

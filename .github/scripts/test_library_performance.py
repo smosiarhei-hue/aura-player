@@ -65,3 +65,10 @@ class LibraryPerformanceTests(unittest.TestCase):
         self.assertIn('guard !isImportingFiles else', copy)
         self.assertIn('startAccessingSecurityScopedResource', copy)
         self.assertIn('stopAccessingSecurityScopedResource', copy)
+    def test_actual_metadata_is_nonisolated_but_ui_palette_is_main_actor(self):
+        s = source('models.swift')
+        self.assertIn('nonisolated struct Track:', s)
+        self.assertIn('nonisolated struct Playlist:', s)
+        self.assertIn('@MainActor var palette:', s)
+        for model in ['YMArtist', 'YMAlbum', 'YMTrackItem']:
+            self.assertIn('nonisolated struct ' + model + ':', source('yandexmusicservice.swift'))
