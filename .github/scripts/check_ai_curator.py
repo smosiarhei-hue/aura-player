@@ -64,7 +64,20 @@ nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        Self.lock.lock(); let (code,body) = Self.queue.isEmpty ? Self.state : Self.queue.removeFirst(); Self.seen.append(request); Self.lock.unlock()
+        // URLSession.bytes may expose upload bytes as httpBodyStream instead of httpBody.
+        // Snapshot only inside the intercepted fixture; no upstream transport consumes this stream.
+        var captured = request
+        if captured.httpBody == nil, let stream = captured.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var data = Data(); var buffer = [UInt8](repeating:0,count:4096)
+            while true {
+                let count = stream.read(&buffer,maxLength:buffer.count)
+                if count <= 0 { break }
+                data.append(contentsOf:buffer.prefix(count))
+            }
+            captured.httpBodyStream = nil; captured.httpBody = data
+        }
+        Self.lock.lock(); let (code,body) = Self.queue.isEmpty ? Self.state : Self.queue.removeFirst(); Self.seen.append(captured); Self.lock.unlock()
         if code == -1 { return }
         let response = HTTPURLResponse(url:request.url!, statusCode:code, httpVersion:"HTTP/1.1", headerFields:["Content-Type":"text/event-stream"])!
         client?.urlProtocol(self, didReceive:response, cacheStoragePolicy:.notAllowed)
