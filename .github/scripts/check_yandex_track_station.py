@@ -116,6 +116,22 @@ nonisolated enum RepeatMode { case off, all, one }
         let count = transport.requests.count
         let empty = try await client.next()
         precondition(empty.isEmpty && transport.requests.count == count)
+        precondition(client.requiresRestart)
+        transport.responses = [batch("renewed","renewed-batch",["6","7","8"])]
+        let renewed = try await client.start(station:"user:onyourwave",settings:settings,history:["6"])
+        precondition(renewed.map(\.id) == ["7","8"] && !client.requiresRestart)
+        // Buffer is redelivered until the app acknowledges it, without a second HTTP fetch.
+        let beforeBuffer = transport.requests.count
+        let tracksBeforeBuffer = transport.requests.filter { $0.url!.path.hasSuffix("/tracks") }.count
+        let buffered = try await client.next(excluding:["6"])
+        precondition(buffered.map(\.id) == ["7","8"])
+        precondition(transport.requests.filter { $0.url!.path.hasSuffix("/tracks") }.count == tracksBeforeBuffer)
+        client.event(type:"trackStarted",trackID:"7")
+        client.event(type:"trackFinished",trackID:"7",seconds:2)
+        client.close()
+        await client.flushFeedback()
+        precondition(client.serverID == nil)
+        precondition(transport.requests.count > beforeBuffer)
         let cancelled = Task { @MainActor in try await client.start(station:"track:7",settings:settings,history:[]) }
         cancelled.cancel()
         do { _ = try await cancelled.value; preconditionFailure("Cancelled startup accepted") } catch {}

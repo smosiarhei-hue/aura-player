@@ -247,7 +247,7 @@ enum SonivoPlay {
             if !forceFresh, let current = PlayerCore.shared.currentTrack {
                 ActivePlayerPresentation.shared.replaceUpcomingQueue(with: available.filter { $0.id != current.id })
             } else {
-                router.play(first, queue: available)
+                router.play(first, queue: available, radio: true)
             }
         }
     }

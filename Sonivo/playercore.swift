@@ -1147,10 +1147,13 @@ final class PlayerCore {
         isPlaying ? pause() : resume()
     }
 
-    func play(_ track: Track, newQueue: [Track]? = nil) {
+    func play(_ track: Track, newQueue: [Track]? = nil, radio: Bool = false) {
         guard !track.isStream || YandexMusicService.shared.isUserLoggedIn else { return }
         flushListeningStats()
         reportWaveSkipIfNeeded()
+        if !radio && YandexMusicService.shared.activeStationId != nil {
+            YandexMusicService.shared.endStationSession()
+        }
         if let q = newQueue, q != queue { queue = q }
         if !YandexMusicService.shared.isUserLoggedIn { queue.removeAll { $0.isStream } }
         currentTrack = track
@@ -2355,6 +2358,7 @@ final class PlayerCore {
             YandexMusicService.shared.remember(key: track.id.uuidString, artist: track.artist, ymTrackId: id)
         }
     }
+    func finishWaveBeforeLeaving() { reportWaveSkipIfNeeded() }
     private func reportWaveSkipIfNeeded() {
         guard let track = currentTrack, track.isStream else { return }
         let id = Self.yandexTrackID(from: track)

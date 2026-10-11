@@ -836,12 +836,12 @@ final class PlaybackCommandRouter {
         await NeuroMixRuntime.shared.stop()
     }
 
-    func play(_ track: Track, queue: [Track]) {
+    func play(_ track: Track, queue: [Track], radio: Bool = false) {
         owner = .legacy
         transportTask?.cancel()
         requestID += 1
         isBusy = false
-        PlayerCore.shared.play(track, newQueue: queue)
+        PlayerCore.shared.play(track, newQueue: queue, radio: radio)
         SonivoDiagnostics.log("[Router] Playing \(track.title) via PlayerCore stream. Falling back to PlayerCore stream.", tag: "ROUTER")
         Task { @MainActor in
             await AutoMixV2Runtime.shared.stop()

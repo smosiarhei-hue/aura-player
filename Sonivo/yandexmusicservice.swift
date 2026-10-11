@@ -33,7 +33,10 @@ final class YandexMusicService {
         send: { [weak self] request in
             guard let self else { throw CancellationError() }
             return try await self.sessionData(for: request)
-        }, identity: { $0.id }, playable: { $0.available != false },
+        }, identity: { $0.id }, playable: { [weak self] item in
+            guard item.available != false, let self else { return false }
+            return !UserTasteEngine.shared.isDisliked(track: self.convertToTrack(item))
+        },
         log: { SonivoDiagnostics.log($0, tag: "WAVE") })
     private(set) var waveError: String?
     private(set) var appliedWaveSettings: [String: String]?
@@ -850,12 +853,33 @@ final class YandexMusicService {
             let history = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
             let items = try await waveSession.next(excluding: history)
             guard rotorSessionID == session, !Task.isCancelled else { return [] }
+            if items.isEmpty && waveSession.requiresRestart { return await renewExpiredWave(session: session) }
             waveError = items.isEmpty ? "Ожидаем новые треки от Яндекса." : nil
             return items
         } catch {
             guard rotorSessionID == session else { return [] }
+            if waveSession.requiresRestart { return await renewExpiredWave(session: session) }
             waveError = "Не удалось продолжить волну. Попробуйте снова."
             SonivoDiagnostics.log("Session refill failed: \(String(describing: error))", tag: "WAVE")
+            return []
+        }
+    }
+    private func renewExpiredWave(session: UUID) async -> [YMTrackItem] {
+        guard let station = activeStationId, rotorSessionID == session else { return [] }
+        let account = accountGeneration
+        let history = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
+        do {
+            let items = try await waveSession.start(station: station, settings: appliedWaveSettings ?? waveServerSettings,
+                history: history, canCommit: { [weak self] in
+                    self?.accountGeneration == account && self?.rotorSessionID == session
+                })
+            guard rotorSessionID == session, accountGeneration == account else { return [] }
+            waveError = nil
+            SonivoDiagnostics.log("Expired server session renewed with queue history", tag: "WAVE")
+            return items
+        } catch {
+            guard rotorSessionID == session, accountGeneration == account else { return [] }
+            waveError = "Не удалось восстановить волну. Нажмите следующий, чтобы повторить запрос."
             return []
         }
     }
@@ -956,9 +980,11 @@ final class YandexMusicService {
     func beginStationSession(_ stationId: String) {
         endStationSession()
     }
-    func endStationSession() {
+    func endStationSession(discardFeedback: Bool = false) {
+        if !discardFeedback { PlayerCore.shared.finishWaveBeforeLeaving() }
         rotorSessionID = UUID(); trackStationRequestID = UUID()
-        activeStationId = nil; waveError = nil; appliedWaveSettings = nil; waveSession.reset()
+        activeStationId = nil; waveError = nil; appliedWaveSettings = nil
+        if discardFeedback { waveSession.reset() } else { waveSession.close() }
     }
     func reportTrackStarted(trackId: String) {
         waveSession.event(type: "trackStarted", trackID: trackId)
@@ -1617,6 +1643,7 @@ final class YandexMusicService {
     }
 
     private func resetPersonalState() {
+        waveSession.reset() // Discard the previous account's pending events before closing.
         endStationSession()
         trackStationRequestID = UUID()
         recentKeys = []

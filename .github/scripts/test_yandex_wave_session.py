@@ -62,6 +62,18 @@ class YandexWaveSessionTests(unittest.TestCase):
         s=source('MoodRadioEngine.swift').split('func start(mood:',1)[1].split('let requestID = UUID()',1)[0]
         self.assertIn('if YandexMusicService.shared.isUserLoggedIn',s)
         self.assertIn('SonivoPlay.wave(station, forceFresh: true)',s)
+    def test_expired_session_renews_only_when_server_reports_terminal(self):
+        s=source('yandexmusicservice.swift')
+        self.assertIn('items.isEmpty && waveSession.requiresRestart',s)
+        self.assertIn('renewExpiredWave(session: session)',s)
+        self.assertIn('settings: appliedWaveSettings ?? waveServerSettings',s)
+        self.assertIn('waveSession.reset() // Discard the previous account',s)
+    def test_ordinary_play_exits_radio_and_wave_play_keeps_it(self):
+        core=source('playercore.swift')
+        self.assertIn('if !radio && YandexMusicService.shared.activeStationId != nil',core)
+        self.assertIn('finishWaveBeforeLeaving()',core)
+        self.assertIn('router.play(first, queue: available, radio: true)',source('sonivocatalog.swift'))
+        self.assertIn('waveSession.close()',source('yandexmusicservice.swift'))
     def test_wave_errors_are_visible_and_geometry_unchanged(self):
         self.assertIn('waveService.waveError',source('MyWaveHeroView.swift'))
         player=source('PlayerScreenV2.swift')

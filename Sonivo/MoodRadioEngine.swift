@@ -293,6 +293,7 @@ final class MoodRadioEngine {
     /// запоминает историю сыгранных артистов и треков, и мгновенно
     /// переключает предстоящую очередь в плеере на сгенерированную волну.
     func startTrackWave(seed: Track, initialTracks: [Track]) {
+        YandexMusicService.shared.endStationSession()
         moodRequestID = UUID()
         isTrackWaveActive = true
         activeMood = nil

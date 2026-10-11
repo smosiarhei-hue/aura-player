@@ -19,7 +19,7 @@ final class YandexWaveSession<Item: Decodable> {
         let session: String
         let body: [String: Any]
     }
-    enum Failure: Error { case unsupportedSetting(String), badResponse, unknownSession, terminated }
+    enum Failure: Error { case unsupportedSetting(String), badResponse, http(Int), unknownSession, terminated }
     private let send: (URLRequest) async throws -> (Data, URLResponse)
     private let identity: (Item) -> String
     private let playable: (Item) -> Bool
@@ -34,6 +34,7 @@ final class YandexWaveSession<Item: Decodable> {
     private var feedbacks: [Feedback] = []
     private var draining = false
     private var terminal = false
+    var requiresRestart: Bool { terminal && unacknowledged.isEmpty }
     private var playingContexts: [String: (session: String, batch: String)] = [:]
 
     init(send: @escaping (URLRequest) async throws -> (Data, URLResponse),
@@ -57,8 +58,8 @@ final class YandexWaveSession<Item: Decodable> {
         try Task.checkCancellation()
         let (data, response) = try await send(request)
         try Task.checkCancellation()
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode)
-        else { throw Failure.badResponse }
+        guard let response = response as? HTTPURLResponse else { throw Failure.badResponse }
+        guard (200..<300).contains(response.statusCode) else { throw Failure.http(response.statusCode) }
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], json["error"] != nil {
             throw Failure.badResponse
         }
@@ -130,7 +131,7 @@ final class YandexWaveSession<Item: Decodable> {
         }
         guard let serverID else { return [] }
         let excluded = Set(excluding)
-        unacknowledged.removeAll { excluded.contains(identity($0)) }
+        unacknowledged.removeAll { excluded.contains(identity($0)) || !playable($0) }
         if !unacknowledged.isEmpty { return unacknowledged }
         guard !terminal else { return [] }
         fetching = true
@@ -142,7 +143,12 @@ final class YandexWaveSession<Item: Decodable> {
         let response = try await data(request("/rotor/session/\(serverID)/tracks", body: ["queue": Array(queue.suffix(1000))]))
         let batch = try JSONDecoder().decode(Envelope.self, from: response).result
         guard generation == operation, self.serverID == serverID else { throw CancellationError() }
-        if batch.unknownSession == true { terminal = true; throw Failure.unknownSession }
+        if batch.unknownSession == true {
+            terminal = true
+            feedbacks.removeAll { $0.session == serverID }
+            playingContexts = playingContexts.filter { $0.value.session != serverID }
+            throw Failure.unknownSession
+        }
         let accepted = accept(batch, excluding: excluded)
         unacknowledged = accepted
         if batch.terminated == true {
@@ -206,11 +212,21 @@ final class YandexWaveSession<Item: Decodable> {
                 guard let current = feedbacks.first, current.session == first.session,
                       NSDictionary(dictionary: current.body).isEqual(to: first.body) else { return }
                 feedbacks.removeFirst()
+            } catch Failure.http(404) {
+                // A missing server session cannot accept this old event; do not block newer sessions.
+                if feedbacks.first?.session == first.session { feedbacks.removeFirst() }
+                log("Feedback session no longer exists")
             } catch {
                 if generation == operation { log("Feedback pending; will retry before refill") }
                 return
             }
         }
+    }
+    func close() {
+        let pending = feedbacks
+        reset()
+        feedbacks = pending
+        Task { await flushFeedback() }
     }
     func reset() {
         generation = UUID(); station = nil; serverID = nil; terminal = false

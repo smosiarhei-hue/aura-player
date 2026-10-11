@@ -58,3 +58,15 @@ change filters while a request is in-flight, offline and recovery, account chang
 Track Radio and ordinary My Wave. Confirm one server session across ordinary
 refills and inspect WAVE diagnostics on any empty/unknown session response.
 Do not claim zero lifetime repeats: server output and bounded history still matter.
+
+## Expiry and leaving radio
+
+Only an unknown/terminated server session is renewed during continuation. Keep
+station, applied filters and queue history; retain the native playback-session
+generation so normal refill race guards remain valid. Never restart for an
+ordinary duplicate/empty batch. Preserve a final terminated batch until consumed.
+Ordinary router/direct PlayerCore play exits radio; explicit wave play passes
+`radio: true`. Leaving closes the server context after capturing a terminal event
+and preserves its pending outbox. Logout instead discards it, so no old account's
+event can be submitted with another account. A feedback 404 cannot block newer
+sessions indefinitely.

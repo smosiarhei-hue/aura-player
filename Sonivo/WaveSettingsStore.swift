@@ -184,7 +184,7 @@ final class WaveSettingsStore: @unchecked Sendable {
         MoodRadioEngine.shared.deactivateLocalWave()
         let presentation = ActivePlayerPresentation.shared
         if presentation.currentTrack != nil { presentation.replaceUpcomingQueue(with: available) }
-        else if let first = available.first { PlaybackCommandRouter.shared.play(first, queue: available) }
+        else if let first = available.first { PlaybackCommandRouter.shared.play(first, queue: available, radio: true) }
         return true
     }
 }
