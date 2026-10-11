@@ -33,3 +33,6 @@ import Foundation
         assert result.returncode == 0, result.stderr
         result = subprocess.run([str(directory/'checks')],capture_output=True,text=True)
         assert result.returncode == 0, result.stdout + result.stderr
+
+    from check_native_videoshot import verify_native_videoshot
+    verify_native_videoshot(root)

@@ -105,3 +105,14 @@ failed video, next/previous track, scrolled actions, portrait/landscape, light/d
 and larger Dynamic Type. Compare control positions before and after readiness
 without dragging or rotating the phone. This fix does not redesign controls
 or alter music playback, recommendation, or audio DSP behavior.
+
+## Native video preparation diagnostics
+
+Keep AVPlayerLayer mounted whenever a video player exists, including during
+preparation. Readiness toggles only its opacity and the cover placeholder; it
+must not create/destroy the rendering layer on every loop-item status change.
+Local VIDEOSHOT diagnostics record skipped-load flags, whether a URL was
+resolved, native status and error domain/code (no token or video URL).
+The macOS compiled test now exercises the actual controller with a generated
+1-second local MP4: readiness, timeline advancement, mute, pause, teardown and
+stale callbacks. It does not verify Yandex responses or physical iPhone rendering.

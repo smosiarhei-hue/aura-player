@@ -68,7 +68,8 @@ class LocalFirstAndVideoAutoplayTests(unittest.TestCase):
     def test_video_is_actually_rendered_without_replacing_uniform_cover_fallback(self):
         player = source('PlayerScreenV2.swift')
         self.assertIn('VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)', player)
-        self.assertIn('if isFullScreenVideoShot, let videoLooperPlayer', player)
+        self.assertIn('if let videoLooperPlayer {', player)
+        self.assertIn('.opacity(isFullScreenVideoShot ? 1 : 0)', player)
         self.assertIn('isVideoShotEnabled && videoPlayback.isReady', player)
         setup = player.split('private func setupVideoLooper', 1)[1].split('private func teardownVideoLooper', 1)[0]
         controller = source('VideoShotPlaybackController.swift')
@@ -96,7 +97,8 @@ class LocalFirstAndVideoAutoplayTests(unittest.TestCase):
         controller = source('VideoShotPlaybackController.swift')
         self.assertIn('self.generation == request', controller)
         self.assertIn('self.isReady = status == .readyToPlay', controller)
-        self.assertIn('if status == .failed { self.teardown() }', controller)
+        self.assertIn('if status == .failed {', controller)
+        self.assertIn('self.teardown()', controller)
         self.assertIn('statusObservation?.cancel()', controller)
         self.assertIn('failureObservation?.cancel()', controller)
         self.assertNotIn('videoStatusPublisher', player)
@@ -109,6 +111,17 @@ class LocalFirstAndVideoAutoplayTests(unittest.TestCase):
         self.assertIn('videoShotCache = [:]', source('yandexmusicservice.swift'))
 
 class VideoShotLayoutStabilityTests(unittest.TestCase):
+    def test_native_layer_is_attached_before_readiness_without_hiding_cover_early(self):
+        player = source('PlayerScreenV2.swift')
+        layer = player.split('if let videoLooperPlayer {', 1)[1].split('if showLyricsMode', 1)[0]
+        self.assertIn('VideoShotPlayerView', layer)
+        self.assertIn('.opacity(isFullScreenVideoShot ? 1 : 0)', layer)
+        self.assertNotIn('if isFullScreenVideoShot', layer)
+        self.assertIn('isVideoShotEnabled && videoPlayback.isReady', player)
+        self.assertIn('No video URL resolved', player)
+        self.assertIn('Load skipped: enabled=', player)
+
+
     def test_video_readiness_and_setting_cannot_change_artwork_stage_height(self):
         player = source('PlayerScreenV2.swift')
         geometry = player.split('GeometryReader { geo in', 1)[1].split('let isPullingDown', 1)[0]
@@ -124,7 +137,7 @@ class VideoShotLayoutStabilityTests(unittest.TestCase):
 
     def test_video_layer_does_not_resize_controls_or_rebind_unchanged_player(self):
         player = source('PlayerScreenV2.swift')
-        background_video = player.split('if isFullScreenVideoShot, let videoLooperPlayer', 1)[1].split('if showLyricsMode', 1)[0]
+        background_video = player.split('if let videoLooperPlayer {', 1)[1].split('if showLyricsMode', 1)[0]
         self.assertIn('.frame(width: totalWidth, height: totalHeight).clipped()', background_video)
         self.assertIn('.allowsHitTesting(false).accessibilityHidden(true)', background_video)
         update = player.split('func updateUIView(_ uiView: PlayerUIView', 1)[1].split('static func dismantleUIView', 1)[0]

@@ -41,7 +41,13 @@ final class VideoShotPlaybackController {
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == request else { return }
                     self.isReady = status == .readyToPlay
-                    if status == .failed { self.teardown() }
+                    SonivoDiagnostics.log("Native item status=\(status.rawValue)", tag: "VIDEOSHOT")
+                    if status == .failed {
+                        if let error = self.player?.currentItem?.error as NSError? {
+                            SonivoDiagnostics.log("Native item failed: domain=\(error.domain), code=\(error.code)", tag: "VIDEOSHOT")
+                        }
+                        self.teardown()
+                    }
                     else { self.applyPlaybackState() }
                 }
             }

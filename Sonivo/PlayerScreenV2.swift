@@ -129,10 +129,13 @@ struct PlayerScreenV2: View {
                     .frame(width: totalWidth, height: totalHeight)
                     .clipped()
 
-                if isFullScreenVideoShot, let videoLooperPlayer {
+                // Attach the native rendering layer during preparation too. Readiness
+                // only controls visibility; loop-item status must not recreate the layer.
+                if let videoLooperPlayer {
                     VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
                         .frame(width: totalWidth, height: totalHeight).clipped()
                         .overlay(Color.black.opacity(0.32))
+                        .opacity(isFullScreenVideoShot ? 1 : 0)
                         .allowsHitTesting(false).accessibilityHidden(true)
                 }
 
@@ -1352,11 +1355,15 @@ struct PlayerScreenV2: View {
         videoShotURL = nil
         videoShotTrackID = nil
         teardownVideoLooper()
-        guard isVideoShotEnabled, !reduceMotion, let track else { return }
+        guard isVideoShotEnabled, !reduceMotion, let track else {
+            SonivoDiagnostics.log("Load skipped: enabled=\(isVideoShotEnabled), reduceMotion=\(reduceMotion), hasTrack=\(track != nil)", tag: "VIDEOSHOT")
+            return
+        }
         let requestedTrackID = track.id
         let id = PlayerCore.yandexTrackID(from: track)
 
         var url: URL? = nil
+        SonivoDiagnostics.log("Resolving video: stream=\(track.isStream), signedIn=\(YandexMusicService.shared.isUserLoggedIn), hasCatalogID=\(!id.isEmpty)", tag: "VIDEOSHOT")
 
         // 1. ПРИОРИТЕТ 1: Локальный кэш устройства и встроенные видео в App Bundle (работает всегда 24/7 офлайн, когда ПК выключен)
         url = AIVideoShotGeneratorService.shared.localVideoShotURL(for: id, title: track.title, artist: track.artist)
@@ -1370,6 +1377,7 @@ struct PlayerScreenV2: View {
 
         guard !Task.isCancelled, isVideoShotEnabled, !reduceMotion,
               self.track?.id == requestedTrackID, player.currentTrack?.id == requestedTrackID else { return }
+        SonivoDiagnostics.log(url == nil ? "No video URL resolved" : "Video URL resolved; preparing native player", tag: "VIDEOSHOT")
         videoShotURL = url
         videoShotTrackID = requestedTrackID
         if isVideoShotEnabled, let url {
