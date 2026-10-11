@@ -148,6 +148,7 @@ import Foundation
         precondition(DifyService.extractPlaylist(from:structured)?.tracks.count == 1)
         let conversation = "{\"intent\":\"conversation\",\"summary\":\"Обсуждаем артиста\",\"question\":null,\"playlist\":null}"
         precondition(AICuratorPrompt.reply(from:conversation)?.intent == .conversation)
+        precondition(DifyService.cleanDisplayText(from:conversation).isEmpty)
         precondition(DifyService.extractPlaylist(from:conversation) == nil)
         precondition(AICuratorPrompt.system(.curator).contains("ОДИН короткий вопрос"))
         precondition(AICuratorPrompt.system(.curator).contains("не создавай плейлист"))

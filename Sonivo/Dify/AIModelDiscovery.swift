@@ -11,7 +11,7 @@ nonisolated struct AIAvailableModel: Codable, Sendable, Identifiable, Equatable 
     }
 }
 nonisolated enum AIModelDiscovery {
-    private struct Catalog: Decodable { let data: [AIAvailableModel] }
+    private struct Catalog: Decodable, Sendable { let data: [AIAvailableModel] }
     static func decode(_ data: Data) throws -> [AIAvailableModel] {
         guard data.count <= 2_000_000 else { throw DifyError.invalidResponse }
         var seen = Set<String>()

@@ -245,12 +245,19 @@ final class DifyService: ObservableObject {
     }
 
     static func cleanDisplayText(from rawText: String) -> String {
+        // Hide raw/partial JSON envelopes too; UI renders validated summary/question/cards separately.
+        if rawText.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") { return "" }
         var text = rawText
         // 1. Remove completed <think>...</think>
         text = text.replacingOccurrences(of: "<think>[\\s\\S]*?</think>", with: "", options: .regularExpression)
         // If <think> tag is unclosed (streaming), cut off from <think>
         if let thinkRange = text.range(of: "<think>") {
             text = String(text[..<thinkRange.lowerBound])
+        }
+
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") { return "" }
+        if let json = text.range(of: "\\{\\s*\"(?:intent|summary|question|playlist)\"\\s*:", options: .regularExpression) {
+            text = String(text[..<json.lowerBound])
         }
 
         // 2. Strip completed markdown blocks
