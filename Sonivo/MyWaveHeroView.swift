@@ -13,6 +13,7 @@ struct MyWaveHeroView: View {
     var onShakeWave: (() -> Void)? = nil
 
     @State private var waveStore = WaveSettingsStore.shared
+    @State private var waveService = YandexMusicService.shared
     @State private var library = LibraryStore.shared
     @State private var artistImageUrl: String? = nil
     @State private var artistLookupTrackId: UUID? = nil
@@ -76,6 +77,10 @@ struct MyWaveHeroView: View {
             // 6. Настроение и язык (аккуратные капсулы без жестких рамок)
             bottomSparklesAndChips
                 .padding(.top, 18)
+            if let error = waveService.waveError {
+                Text(error).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 20).padding(.top, 10)
+            }
         }
         .padding(.vertical, 12)
         .task(id: activeTrack?.id) {

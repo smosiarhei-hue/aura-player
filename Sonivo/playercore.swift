@@ -554,6 +554,7 @@ final class PlayerCore {
                             }
                         }
 
+                        self.recordWavePlaybackTick()
                         self.syncNowPlayingElapsedIfNeeded()
                         self.scheduleTransitionIfNeeded()
                         self.refillQueueIfNeeded()
@@ -1257,19 +1258,21 @@ final class PlayerCore {
             streamDuration = nextTrack.duration
             start(at: 0)
             refillQueueIfNeeded()
-        } else if let cur = currentTrack, repeatMode != .one {
+        } else if let cur = currentTrack, (YandexMusicService.shared.activeStationId != nil || repeatMode != .one) {
             let requestToken = generation
             Task { @MainActor in
                 let wave: [Track]
                 let wasLocalTrackWave = MoodRadioEngine.shared.isTrackWaveActive && YandexMusicService.shared.activeStationId?.hasPrefix("track:") != true
                 if YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
                     wave = await YandexMusicService.shared.refillYandexTrackWave(target: 20)
+                } else if YandexMusicService.shared.activeStationId != nil {
+                    wave = await YandexMusicService.shared.refillYandexWave().map { YandexMusicService.shared.convertToTrack($0) }
                 } else if MoodRadioEngine.shared.isTrackWaveActive {
                     wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
                 } else {
                     wave = await YandexMusicService.shared.buildTrackWave(from: cur, target: 20)
                 }
-                guard self.generation == requestToken, self.currentTrack?.id == cur.id, self.isPlaying else { return }
+                guard self.generation == requestToken, self.currentTrack?.id == cur.id else { return }
                 guard !wasLocalTrackWave || YandexMusicService.shared.activeStationId?.hasPrefix("track:") != true else { return }
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id }
@@ -1279,6 +1282,9 @@ final class PlayerCore {
                     self.streamDuration = first.duration
                     self.start(at: 0)
                     self.refillQueueIfNeeded()
+                } else if YandexMusicService.shared.activeStationId != nil {
+                    self.pause()
+                    self.playError = YandexMusicService.shared.waveError ?? "Ожидаем продолжение волны. Нажмите следующий, чтобы повторить запрос."
                 } else {
                     self.start(at: 0)
                     self.currentTrack = cur
@@ -1315,6 +1321,7 @@ final class PlayerCore {
         guard seconds.isFinite else { return }
         let d = duration
         let clamped = max(0, min(seconds, d))
+        _ = waveListening.sample(trackID: currentTrack.map { Self.yandexTrackID(from: $0) } ?? "", position: clamped, advancing: false)
         progress = clamped
         SpectrumAnalyzer.shared.reset() // No pre-seek beat may reach the new timeline.
 
@@ -1380,6 +1387,7 @@ final class PlayerCore {
         metadataTrack = nil
         incomingTrack = nil
         guard let track = currentTrack else { return }
+        waveListening.reset()
         playError = nil
         plannedNextTrack = nil
         generation += 1
@@ -2215,7 +2223,7 @@ final class PlayerCore {
             }
         }
 
-        if repeatMode == .one {
+        if repeatMode == .one && YandexMusicService.shared.activeStationId == nil {
             start(at: 0)
             finishBgTask()
             return
@@ -2225,7 +2233,7 @@ final class PlayerCore {
             start(at: 0)
             refillQueueIfNeeded()
             finishBgTask()
-        } else if let current = currentTrack, repeatMode != .one {
+        } else if let current = currentTrack, (YandexMusicService.shared.activeStationId != nil || repeatMode != .one) {
             let requestToken = generation
             Task { @MainActor in
                 defer { finishBgTask() }
@@ -2233,6 +2241,8 @@ final class PlayerCore {
                 let wasLocalTrackWave = MoodRadioEngine.shared.isTrackWaveActive && YandexMusicService.shared.activeStationId?.hasPrefix("track:") != true
                 if YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true {
                     wave = await YandexMusicService.shared.refillYandexTrackWave(target: 20)
+                } else if YandexMusicService.shared.activeStationId != nil {
+                    wave = await YandexMusicService.shared.refillYandexWave().map { YandexMusicService.shared.convertToTrack($0) }
                 } else if MoodRadioEngine.shared.isTrackWaveActive {
                     wave = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 20)
                 } else {
@@ -2243,6 +2253,7 @@ final class PlayerCore {
                 let existing = Set(self.queue.map(\.id))
                 let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id }
                 guard !fresh.isEmpty else {
+                    self.playError = YandexMusicService.shared.waveError
                     self.isPlaying = false
                     self.updateNowPlayingInfo()
                     return
@@ -2262,9 +2273,10 @@ final class PlayerCore {
 
     private var lastRefillCheck: Date?
     private var isRefillingWave = false
+    private var waveListening = WaveListeningState()
 
     func refillQueueIfNeeded() {
-        guard !isRefillingWave, repeatMode != .one, let current = currentTrack else { return }
+        guard !isRefillingWave, (YandexMusicService.shared.activeStationId != nil || repeatMode != .one), let current = currentTrack else { return }
         let now = Date()
         if let last = lastRefillCheck, now.timeIntervalSince(last) < 4.0 { return }
         lastRefillCheck = now
@@ -2291,7 +2303,7 @@ final class PlayerCore {
             } else if MoodRadioEngine.shared.isTrackWaveActive {
                 rawTracks = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 25)
             } else if let station = ym.activeStationId {
-                let rotorTracks = await ym.buildWaveQueue(stationId: station, target: 25)
+                let rotorTracks = await ym.refillYandexWave()
                 rawTracks = rotorTracks.map { ym.convertToTrack($0) }
             } else if let mood = MoodRadioEngine.shared.activeMood {
                 let rotorTracks = await ym.buildWaveQueue(stationId: ym.waveMoodStationId, target: 25)
@@ -2301,8 +2313,9 @@ final class PlayerCore {
             }
             guard self.playbackRequestID == playbackID, self.currentTrack?.id == current.id else { return }
             guard !refillingTrackStation || ym.rotorSessionID == sessionID else { return }
+            guard startingStation || ym.rotorSessionID == sessionID else { return }
             guard startingStation || ym.activeStationId == stationBefore else { return }
-            let serverOrdered = ym.activeStationId?.hasPrefix("track:") == true
+            let serverOrdered = ym.activeStationId != nil
             let ranked = serverOrdered ? rawTracks : UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
             let fresh = ranked.filter { !existing.contains($0.id) && $0.id != current.id && !UserTasteEngine.shared.isDisliked(track: $0) }
@@ -2333,18 +2346,26 @@ final class PlayerCore {
         }
     }
 
+    private func recordWavePlaybackTick() {
+        guard let track = currentTrack, track.isStream else { return }
+        let id = Self.yandexTrackID(from: track)
+        let advancing = isPlaying && (!isUsingStreamPlayer || activeStreamingPlayer.timeControlStatus == .playing)
+        if waveListening.sample(trackID: id, position: progress, advancing: advancing) {
+            YandexMusicService.shared.reportTrackStarted(trackId: id)
+            YandexMusicService.shared.remember(key: track.id.uuidString, artist: track.artist, ymTrackId: id)
+        }
+    }
     private func reportWaveSkipIfNeeded() {
         guard let track = currentTrack, track.isStream else { return }
-        let ymID = Self.yandexTrackID(from: track)
-        guard !ymID.isEmpty else { return }
-        YandexMusicService.shared.reportSkip(trackId: ymID)
+        let id = Self.yandexTrackID(from: track)
+        guard let seconds = waveListening.finish(trackID: id) else { return }
+        YandexMusicService.shared.reportSkip(trackId: id, totalPlayedSeconds: seconds)
     }
-
     private func reportWaveFinishedIfNeeded() {
-        guard let track = currentTrack, track.isStream, track.duration > 5 else { return }
-        let ymID = Self.yandexTrackID(from: track)
-        guard !ymID.isEmpty else { return }
-        YandexMusicService.shared.reportTrackFinished(trackId: ymID, totalPlayedSeconds: track.duration)
+        guard let track = currentTrack, track.isStream else { return }
+        let id = Self.yandexTrackID(from: track)
+        guard let seconds = waveListening.finish(trackID: id) else { return }
+        YandexMusicService.shared.reportTrackFinished(trackId: id, totalPlayedSeconds: seconds)
     }
 
     private func effectiveQueue() -> [Track] {
@@ -2376,7 +2397,8 @@ final class PlayerCore {
     private func peekNext(auto: Bool) -> Track? {
         let q = effectiveQueue()
         guard !q.isEmpty else { return nil }
-        if shuffle {
+        let serverRadio = YandexMusicService.shared.activeStationId != nil
+        if shuffle && !serverRadio {
             if q.count == 1 { return repeatMode == .off && auto ? nil : q[0] }
             let candidates = q.filter { $0.id != currentTrack?.id }
             return candidates.randomElement()
@@ -2384,6 +2406,7 @@ final class PlayerCore {
         guard let cur = currentTrack, let idx = q.firstIndex(where: { $0.id == cur.id }) else { return q.first }
         let nextIdx = idx + 1
         if nextIdx < q.count { return q[nextIdx] }
+        if serverRadio { return nil }
         if repeatMode == .all { return q.first }
         return auto ? nil : q.first
     }
@@ -2412,6 +2435,7 @@ final class PlayerCore {
     private func tickProgress() {
         guard isPlaying, !isUsingStreamPlayer else { return }
         progress = liveProgress()
+        recordWavePlaybackTick()
         syncNowPlayingElapsedIfNeeded()
         scheduleTransitionIfNeeded()
         refillQueueIfNeeded()

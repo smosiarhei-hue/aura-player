@@ -148,15 +148,7 @@ final class ActivePlayerPresentation {
     func pause() { router.pause() }
     func resume() { router.play() }
     func previous() { router.previous() }
-    func next() {
-        if let current = currentTrack, current.isStream {
-            let ymId = PlayerCore.yandexTrackID(from: current)
-            if !ymId.isEmpty {
-                YandexMusicService.shared.reportSkip(trackId: ymId)
-            }
-        }
-        router.next()
-    }
+    func next() { router.next() }
     func seek(to seconds: Double) { router.seek(to: seconds) }
     func play(_ track: Track) { router.play(track, queue: queue) }
     func removeFromQueue(_ track: Track) {

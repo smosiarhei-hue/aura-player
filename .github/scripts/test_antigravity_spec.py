@@ -174,15 +174,13 @@ class AntigravitySpecTests(unittest.TestCase):
         self.assertIn("let inVol = Float(sin(p * (.pi / 2)))", models_content)
         self.assertIn("return (outVol, inVol, 0.0, 0.0, 1.0)", models_content)
 
-    def test_my_wave_fresh_random_seed(self):
-        catalog_file = self.repo_root / "Sonivo" / "sonivocatalog.swift"
-        catalog_content = catalog_file.read_text(encoding="utf-8")
-        # Wave supports forceFresh and seeds from last liked track
+    def test_my_wave_start_uses_server_session_not_fake_favorite_playback(self):
+        catalog_content = (self.repo_root / "Sonivo" / "sonivocatalog.swift").read_text()
+        wave = catalog_content.split('let queuePlaybackRequest =', 1)[1].split('static func album', 1)[0]
         self.assertIn("forceFresh: Bool = false", catalog_content)
-        self.assertIn("LibraryStore.shared.favorites", catalog_content)
-        self.assertIn("randomElement()", catalog_content)
-        self.assertIn("service.remember(", catalog_content)
-        self.assertIn("ymTrackId: lastLikedYmId", catalog_content)
+        self.assertIn("service.startYandexWave(stationId: station.stationId)", wave)
+        for forbidden in ["randomElement()", "service.remember(", "LibraryStore.shared.favorites", "getChart()"]:
+            self.assertNotIn(forbidden, wave)
 
     def test_vocal_isolation_architecture_and_dsp(self):
         processing_file = self.repo_root / "Sonivo" / "VocalIsolation" / "VocalIsolationProcessing.swift"

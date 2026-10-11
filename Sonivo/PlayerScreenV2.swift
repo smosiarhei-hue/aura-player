@@ -788,6 +788,10 @@ struct PlayerScreenV2: View {
                 .accessibilityElement(children: .contain)
 
             trackWaveButton
+            if let error = YandexMusicService.shared.waveError {
+                Text(error).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if let waveMessage {
                 Text(waveMessage)

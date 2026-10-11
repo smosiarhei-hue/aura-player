@@ -158,9 +158,7 @@ final class WaveSettingsStore: @unchecked Sendable {
     }
 
     private func notifySettingsChanged() {
-        Task { @MainActor in
-            YandexMusicService.shared.sendWaveSettingsChange()
-        }
+        // Applying settings is transactional in reseedActiveWaveQueue, not a fake feedback event.
     }
 
     /// Бесшовно пересобирает хвост очереди воспроизведения «Моей волны» под новые настройки,
@@ -169,49 +167,24 @@ final class WaveSettingsStore: @unchecked Sendable {
     func reseedActiveWaveQueue() async -> Bool {
         let service = YandexMusicService.shared
         let stationId = service.activeStationId ?? service.waveMoodStationId
-
-        var tracks = await service.buildWaveQueue(stationId: stationId, target: 45)
-        if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
-        if tracks.isEmpty { tracks = service.chartCache }
-
+        let requested = [diversity.rawValue, language.rawValue, moodEnergy.rawValue]
+        let tracks = await service.startYandexWave(stationId: stationId)
+        guard !tracks.isEmpty else {
+            if requested == [diversity.rawValue, language.rawValue, moodEnergy.rawValue],
+               let applied = service.appliedWaveSettings {
+                diversity = WaveDiversity(rawValue: applied["diversity"] ?? "default") ?? .defaultMode
+                language = WaveLanguage(rawValue: applied["language"] ?? "any") ?? .any
+                moodEnergy = WaveMoodEnergy(rawValue: applied["moodEnergy"] ?? "all") ?? .all
+            }
+            return false
+        }
+        let available = tracks.map { service.convertToTrack($0) }
+            .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
+        guard !available.isEmpty else { return false }
+        MoodRadioEngine.shared.deactivateLocalWave()
         let presentation = ActivePlayerPresentation.shared
-        let current = presentation.currentTrack
-
-        let pool = tracks.map { service.convertToTrack($0) }
-        guard !pool.isEmpty else {
-            // Если сеть недоступна, пересортируем текущую очередь плеера
-            let fallbackPool = presentation.queue.count > 1 ? presentation.queue : LibraryStore.shared.favorites
-            guard !fallbackPool.isEmpty else { return false }
-            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: fallbackPool)
-            if let current {
-                presentation.queue = [current] + ranked.filter { $0.id != current.id }
-            } else if let first = ranked.first {
-                presentation.play(first)
-            }
-            return true
-        }
-
-        if let current {
-            let filtered = pool.filter {
-                !UserTasteEngine.shared.isDisliked(track: $0) && $0.id != current.id
-            }
-
-            var ranked = UserTasteEngine.shared.filterAndRankWave(tracks: filtered)
-            if ranked.isEmpty {
-                ranked = filtered
-            }
-            guard !ranked.isEmpty else { return false }
-
-            // Обновляем очередь через ActivePlayerPresentation (AutoMix V2, NeuroMix или PlayerCore)
-            presentation.queue = [current] + ranked
-            return true
-        } else {
-            let available = pool.filter { !UserTasteEngine.shared.isDisliked(track: $0) }
-            var ranked = UserTasteEngine.shared.filterAndRankWave(tracks: available)
-            if ranked.isEmpty { ranked = available }
-            guard let first = ranked.first else { return false }
-            presentation.play(first)
-            return true
-        }
+        if presentation.currentTrack != nil { presentation.replaceUpcomingQueue(with: available) }
+        else if let first = available.first { PlaybackCommandRouter.shared.play(first, queue: available) }
+        return true
     }
 }

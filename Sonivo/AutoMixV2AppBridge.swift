@@ -695,16 +695,13 @@ final class AutoMixV2Runtime {
             guard let self else { return }
             let ym = YandexMusicService.shared
             let rawTracks: [Track]
-            if MoodRadioEngine.shared.isTrackWaveActive || ym.activeStationId?.hasPrefix("track:") == true {
+            if MoodRadioEngine.shared.isTrackWaveActive && ym.activeStationId == nil {
                 rawTracks = await MoodRadioEngine.shared.refillTrackWaveQueue(target: 30)
             } else {
                 let stationId = ym.activeStationId ?? ym.waveMoodStation.stationId
-                rawTracks = (await ym.buildWaveQueue(
-                    stationId: stationId,
-                    target: 30
-                )).map { $0.toTrack() }
+                rawTracks = (ym.activeStationId != nil ? await ym.refillYandexWave() : await ym.buildWaveQueue(stationId: stationId, target: 30)).map { $0.toTrack() }
             }
-            let ranked = UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
+            let ranked = ym.activeStationId != nil ? rawTracks : UserTasteEngine.shared.filterAndRankWave(tracks: rawTracks)
             let existing = Set(self.queue.map(\.id))
             let fresh = ranked.filter {
                 !existing.contains($0.id) && $0.id != current.id &&

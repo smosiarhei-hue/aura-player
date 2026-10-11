@@ -330,7 +330,8 @@ struct SonivoHomeRedesignedView: View {
         if player.isPlaying {
             player.pause()
         } else {
-            SonivoPlay.wave(moodStation, forceFresh: true)
+            if ym.activeStationId != nil, ym.waveError != nil { player.next() }
+            else { SonivoPlay.wave(moodStation, forceFresh: true) }
             showPlayer = true
         }
     }

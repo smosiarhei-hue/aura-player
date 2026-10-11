@@ -235,79 +235,19 @@ enum SonivoPlay {
             return
         }
 
-        service.beginStationSession(station.stationId)
-        let active = PlayerCore.shared.currentTrack
-
-        let favorites = LibraryStore.shared.favorites
-        let lastLiked = favorites.first
-
-        // When launching "Моя волна", start a fresh random song based on user's taste
-        // and latest saved/liked track, preventing repeating the same track every time.
-        let immediate: Track? = {
-            if forceFresh || active == nil {
-                if favorites.count > 1 {
-                    return favorites.filter { $0.id != active?.id }.randomElement() ?? lastLiked
-                }
-                return lastLiked ?? service.chartCache.shuffled().first.map { service.convertToTrack($0) }
-            }
-            return active
-        }()
-
-        let startedImmediately = immediate != nil
-        if let immediate, (forceFresh || active == nil) {
-            router.play(immediate, queue: [immediate])
-        }
-
-        let wavePlaybackRequest = PlayerCore.shared.playbackRequestID
+        let queuePlaybackRequest = PlayerCore.shared.playbackRequestID
         Task {
-            // Seed Yandex Music's recommendation rotor with the last liked track
-            if let lastLiked {
-                let lastLikedYmId = PlayerCore.yandexTrackID(from: lastLiked)
-                service.remember(
-                    key: lastLiked.id.uuidString,
-                    artist: lastLiked.artist,
-                    ymTrackId: lastLikedYmId.isEmpty ? nil : lastLikedYmId
-                )
-            }
-
-            let firstBatch = (try? await service.getStationTracks(stationId: station.stationId)) ?? []
-            guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == wavePlaybackRequest else { return }
-            let unplayed = firstBatch.filter { !service.isRecentlyPlayed(ymTrackId: $0.id) }
-            let initial = unplayed.isEmpty ? firstBatch : unplayed
-            let candidates = initial.isEmpty ? (try? await service.getChart()) ?? [] : initial
-            guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == wavePlaybackRequest else { return }
-
-            if !candidates.isEmpty {
-                let available = candidates
-                    .map { service.convertToTrack($0) }
-                    .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
-                if let current = PlayerCore.shared.currentTrack {
-                    var immediateQueue = [current]
-                    for t in available where t.id != current.id {
-                        immediateQueue.append(t)
-                    }
-                    PlayerCore.shared.queue = immediateQueue
-                } else if !startedImmediately, let first = available.first {
-                    router.play(first, queue: available)
-                }
-            }
-
-            let queuePlaybackRequest = PlayerCore.shared.playbackRequestID
-            var tracks = await service.buildWaveQueue(stationId: station.stationId, target: 45)
-            if tracks.isEmpty { tracks = (try? await service.getChart()) ?? [] }
+            let tracks = await service.startYandexWave(stationId: station.stationId)
             guard catalogRequestID == request, PlayerCore.shared.playbackRequestID == queuePlaybackRequest,
                   !tracks.isEmpty else { return }
-
-            let filtered = tracks
-                .map { service.convertToTrack($0) }
+            let available = tracks.map { service.convertToTrack($0) }
                 .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
-
-            if let current = PlayerCore.shared.currentTrack {
-                var newQueue = filtered.filter { $0.id != current.id }
-                newQueue.insert(current, at: 0)
-                PlayerCore.shared.queue = newQueue
-            } else if !startedImmediately, let first = filtered.first {
-                router.play(first, queue: filtered)
+            guard let first = available.first else { return }
+            MoodRadioEngine.shared.deactivateLocalWave()
+            if !forceFresh, let current = PlayerCore.shared.currentTrack {
+                ActivePlayerPresentation.shared.replaceUpcomingQueue(with: available.filter { $0.id != current.id })
+            } else {
+                router.play(first, queue: available)
             }
         }
     }

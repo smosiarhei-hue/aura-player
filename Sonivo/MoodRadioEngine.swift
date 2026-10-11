@@ -201,6 +201,15 @@ final class MoodRadioEngine {
     // MARK: - API: Старт радио по настроению (POST /mood/start)
 
     func start(mood: MoodPreset) {
+        // Signed-in mood cards are server radio, not locally sequenced replacements.
+        if YandexMusicService.shared.isUserLoggedIn {
+            if mood == .discover { WaveSettingsStore.shared.diversity = .discover }
+            let stationID = stationIdForMood(mood)
+            let station = YandexMusicService.StationOption(id: mood.rawValue, title: mood.title,
+                subtitle: "", stationId: stationID, gradient: [], icon: mood.iconName)
+            SonivoPlay.wave(station, forceFresh: true)
+            return
+        }
         let requestID = UUID()
         moodRequestID = requestID
         if mood == .discover {
@@ -263,6 +272,11 @@ final class MoodRadioEngine {
 
     func start(seed: Track) {
         startTrackWave(seed: seed, initialTracks: [])
+    }
+
+    func deactivateLocalWave() {
+        moodRequestID = UUID(); isTrackWaveActive = false; activeMood = nil
+        trackWaveSeed = nil; queue = []
     }
 
     /// Server-managed track radio must not enter the local vibe/refill engine.

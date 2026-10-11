@@ -11,14 +11,14 @@ class PlayerTrackWaveTests(unittest.TestCase):
         for forbidden in ['extractVector', 'shuffled()', 'AIRankerService', 'personalPicks', 'getChart', 'getArtist', 'filterAndRankWave']:
             self.assertNotIn(forbidden,text)
     def test_rotor_only_queue_preserves_server_sequence_and_checks_http(self):
-        text=source('yandexmusicservice.swift').split('private func requestTrackStationQueue',1)[1].split('func getStationTracks',1)[0]
-        for expected in ['/rotor/station/', 'stationId.hasPrefix("track:")', '(200..<300).contains(http.statusCode)', 'try Task.checkCancellation()', 'result.append(item)', 'queueIDs.suffix(400)', 'history: [seedID]']:
+        text=source('YandexWaveSession.swift')
+        for expected in ['/rotor/session/new', '/tracks', '(200..<300).contains(response.statusCode)', 'try Task.checkCancellation()', 'accepted.append(item)', '"queue": Array(queue.suffix(1000))']:
             self.assertIn(expected,text)
         for forbidden in ['getChart', 'personalPicks', '.sorted', '.shuffled', 'extractVector', 'filterAndRankWave']:
             self.assertNotIn(forbidden,text)
     def test_station_and_playback_generations_reject_stale_requests(self):
-        text=source('yandexmusicservice.swift').split('func startYandexTrackStation',1)[1].split('func getStationTracks',1)[0]
-        for expected in ['trackStationRequestID == requestID','rotorSessionID == sessionID','PlayerCore.shared.playbackRequestID == playbackID','activeStationId == station','!Task.isCancelled']:
+        text=source('yandexmusicservice.swift').split('func startYandexWave',1)[1].split('func getStationTracks',1)[0]
+        for expected in ['trackStationRequestID == requestID','rotorSessionID == session','PlayerCore.shared.playbackRequestID == playback','!Task.isCancelled']:
             self.assertIn(expected,text)
         screen=source('PlayerScreenV2.swift').split('private func startTrackWave()',1)[1].split('private func startAIVibeWave',1)[0]
         for expected in ['guard !waveLoading','trackWaveRequestID == requestID','track?.id == current.id','activateYandexTrackWave(tracks: waveTracks)','guard !waveTracks.isEmpty']:

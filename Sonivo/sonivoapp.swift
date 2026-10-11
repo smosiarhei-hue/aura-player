@@ -129,7 +129,6 @@ struct RootView: View {
         .onOpenURL { _ in onExternalPlaybackOpen?(); showPlayer = true }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in onExternalPlaybackOpen?(); showPlayer = true }
         .onContinueUserActivity("com.apple.mediaitem") { _ in onExternalPlaybackOpen?(); showPlayer = true }
-        .onChange(of: player.currentTrack?.id) { _, _ in rememberCurrentTrack() }
         .onChange(of: player.isPlaying) { _, playing in
             if playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
@@ -139,11 +138,7 @@ struct RootView: View {
         player.queue.removeAll { $0.isStream }
     }
 
-    private func rememberCurrentTrack() {
-        guard let track = presentedTrack else { return }
-        YandexMusicService.shared.remember(key: track.id.uuidString, artist: track.artist,
-                                           ymTrackId: YandexMusicService.ymId(fromFileName: track.fileName))
-    }
+
 }
 
 struct NativeMiniPlayer: View {

@@ -29,7 +29,14 @@ final class YandexMusicService {
     private(set) var totalPlays: Int = 0
     private var artistCounts: [String: Int] = [:]
     private(set) var activeStationId: String?
-    private var lastBatchId: String?
+    @ObservationIgnored private lazy var waveSession = YandexWaveSession<YMTrackItem>(
+        send: { [weak self] request in
+            guard let self else { throw CancellationError() }
+            return try await self.sessionData(for: request)
+        }, identity: { $0.id }, playable: { $0.available != false },
+        log: { SonivoDiagnostics.log($0, tag: "WAVE") })
+    private(set) var waveError: String?
+    private(set) var appliedWaveSettings: [String: String]?
     private(set) var rotorSessionID = UUID()
     private var trackStationRequestID = UUID()
 
@@ -794,149 +801,74 @@ final class YandexMusicService {
         return stations
     }
 
-    /// Strict track-station API. No chart, artist, local taste or AI fallback.
-    /// Requests have no side effects until the caller/session is still current.
-    private func requestTrackStationQueue(
-        stationId: String, target: Int, history: [String]
-    ) async -> (items: [YMTrackItem], batchID: String?) {
-        let generation = accountGeneration
-        guard stationId.hasPrefix("track:"), target > 0 else { return ([], nil) }
-        var seen = Set(history)
-        var queueIDs = history
-        var result: [YMTrackItem] = []
-        var batchID: String?
+    private var waveServerSettings: [String: String] {
         let settings = WaveSettingsStore.shared
-        // Capture the server-side filters once; never re-rank its returned sequence.
-        let diversity = settings.diversity.rotorValue
-        let language = settings.language.rotorValue
-        let moodEnergy = settings.moodEnergy.rotorValue
-        struct Response: Decodable {
-            struct Batch: Decodable {
-                struct Entry: Decodable { let track: YMTrackItem? }
-                let sequence: [Entry]?
-                let batchId: String?
-            }
-            let result: Batch?
-        }
+        return ["diversity": settings.diversity.rotorValue,
+                "language": settings.language.rotorValue, "moodEnergy": settings.moodEnergy.rotorValue]
+    }
+
+    /// Start/reconfigure explicitly; normal refill never starts another session.
+    func startYandexWave(stationId: String, seedID: String? = nil) async -> [YMTrackItem] {
+        let requestID = UUID(); trackStationRequestID = requestID
+        let account = accountGeneration
+        let playback = PlayerCore.shared.playbackRequestID
+        let settings = waveServerSettings
+        guard isUserLoggedIn else { return [] }
         do {
-            for _ in 0..<7 {
-                try Task.checkCancellation()
-                guard var url = URLComponents(string: Self.apiBase + "/rotor/station/" + stationId + "/tracks") else { return ([], nil) }
-                url.queryItems = [
-                    URLQueryItem(name: "settings2", value: "true"),
-                    URLQueryItem(name: "queue", value: queueIDs.suffix(400).joined(separator: ",")),
-                    URLQueryItem(name: "diversity", value: diversity),
-                    URLQueryItem(name: "language", value: language),
-                    URLQueryItem(name: "moodEnergy", value: moodEnergy)
-                ]
-                guard let endpoint = url.url else { return ([], nil) }
-                let (data, response) = try await sessionData(for: authorizedRequest(url: endpoint))
-                try Task.checkCancellation()
-                guard accountGeneration == generation else { return ([], nil) }
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return ([], nil) }
-                let decoded = try JSONDecoder().decode(Response.self, from: data)
-                guard let batch = decoded.result else { return ([], nil) }
-                let items = Self.playable((batch.sequence ?? []).compactMap { $0.track })
-                if items.isEmpty { break }
-                let before = result.count
-                for item in items {
-                    guard seen.insert(item.id).inserted else { continue }
-                    queueIDs.append(item.id)
-                    result.append(item)
-                }
-                batchID = batch.batchId
-                if result.count >= target || result.count == before { break }
-            }
+            let history = Array(recentYmIDs.prefix(Self.noRepeatWindow).reversed())
+            let items = try await waveSession.start(station: stationId, settings: settings,
+                history: history, seedTrack: seedID, canCommit: { [weak self] in
+                    guard let self else { return false }
+                    return self.accountGeneration == account && self.trackStationRequestID == requestID &&
+                        PlayerCore.shared.playbackRequestID == playback
+                })
+            guard accountGeneration == account, trackStationRequestID == requestID, !Task.isCancelled else { return [] }
+            activeStationId = stationId; rotorSessionID = UUID(); waveError = nil
+            appliedWaveSettings = settings
+            return items
         } catch {
-            // A failed/incomplete fetch must not silently substitute another station.
-            return ([], nil)
+            guard accountGeneration == account, trackStationRequestID == requestID else { return [] }
+            if !(error is CancellationError) {
+                if case YandexWaveSession<YMTrackItem>.Failure.unsupportedSetting = error {
+                    waveError = "Яндекс не поддерживает выбранную настройку. Текущая волна сохранена."
+                } else { waveError = "Не удалось обновить волну. Текущая очередь сохранена." }
+                SonivoDiagnostics.log("Session startup failed: \(String(describing: error))", tag: "WAVE")
+            }
+            return []
         }
-        return (Array(result.prefix(target)), batchID)
     }
 
     func startYandexTrackStation(seedID: String, target: Int) async -> [Track] {
-        guard !seedID.isEmpty else { return [] }
-        let requestID = UUID()
-        trackStationRequestID = requestID
-        let sessionID = rotorSessionID
-        let playbackID = PlayerCore.shared.playbackRequestID
-        let station = "track:\(seedID)"
-        let batch = await requestTrackStationQueue(stationId: station, target: target, history: [seedID])
-        guard !Task.isCancelled, trackStationRequestID == requestID,
-              rotorSessionID == sessionID, PlayerCore.shared.playbackRequestID == playbackID,
-              !batch.items.isEmpty else { return [] }
-        beginStationSession(station)
-        lastBatchId = batch.batchID
-        return batch.items.map { convertToTrack($0) }
+        guard !seedID.isEmpty, target > 0 else { return [] }
+        return await startYandexWave(stationId: "track:\(seedID)", seedID: seedID).map { convertToTrack($0) }
     }
 
+    func refillYandexWave() async -> [YMTrackItem] {
+        guard activeStationId != nil, isUserLoggedIn else { return [] }
+        let session = rotorSessionID
+        do {
+            let history = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
+            let items = try await waveSession.next(excluding: history)
+            guard rotorSessionID == session, !Task.isCancelled else { return [] }
+            waveError = items.isEmpty ? "Ожидаем новые треки от Яндекса." : nil
+            return items
+        } catch {
+            guard rotorSessionID == session else { return [] }
+            waveError = "Не удалось продолжить волну. Попробуйте снова."
+            SonivoDiagnostics.log("Session refill failed: \(String(describing: error))", tag: "WAVE")
+            return []
+        }
+    }
     func refillYandexTrackWave(target: Int = 25) async -> [Track] {
-        guard let station = activeStationId, station.hasPrefix("track:") else { return [] }
-        let sessionID = rotorSessionID
-        let history = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
-        let batch = await requestTrackStationQueue(stationId: station, target: target, history: history)
-        guard !Task.isCancelled, rotorSessionID == sessionID, activeStationId == station else { return [] }
-        if !batch.items.isEmpty { lastBatchId = batch.batchID }
-        return batch.items.map { convertToTrack($0) }
+        guard activeStationId?.hasPrefix("track:") == true else { return [] }
+        return await refillYandexWave().map { convertToTrack($0) }
     }
-
     func getStationTracks(stationId: String) async throws -> [YMTrackItem] {
-        // Direct track-radio callers also must not fall back to the chart.
-        if stationId.hasPrefix("track:") {
-            let batch = await requestTrackStationQueue(stationId: stationId, target: 25, history: [])
-            return batch.items
-        }
-        beginStationSession(stationId)
-        let queueSeed = recentYmIDs.suffix(40).joined(separator: ",")
-        let batch = await fetchRotorBatch(stationId: stationId, queueSeed: queueSeed.isEmpty ? nil : queueSeed)
-        if !batch.isEmpty { return batch }
-        return try await getChart()
+        await startYandexWave(stationId: stationId)
     }
-
-    /// Собирает длинную очередь волны без повторов под выбранное настроение.
-    ///
-    /// Два реальных источника повторов, которые чинит этот метод (сверено с
-    /// официальными клиентами из MarshalX/yandex-music-api):
-    /// 1. Сессия ротора никогда не начиналась (`activeStationId` оставался
-    ///    nil), поэтому обратная связь "trackStarted" в `remember(...)`
-    ///    физически не могла уйти на сервер — Яндекс не понимал, что мы
-    ///    что-то прослушали, и не мог учиться избегать повторов на своей
-    ///    стороне.
-    /// 2. Параметр `queue` в запрос уходил только с ОДНИМ последним id вместо
-    ///    полного списка уже показанных треков этой сессии (так делают все
-    ///    сторонние клиенты — `queue` это история, а не курсор). Сервер
-    ///    получал почти нулевой контекст и мог присылать тот же трек в
-    ///    следующей пачке.
     func buildWaveQueue(stationId: String = "user:onyourwave", target: Int = 45) async -> [YMTrackItem] {
-        let generation = accountGeneration
-        beginStationSession(stationId)
-
-        var collected: [YMTrackItem] = []
-        var seen = Set<String>()
-        var seenOrder: [String] = []
-
-        for _ in 0..<7 {
-            let queueParam = seenOrder.isEmpty ? nil : seenOrder.suffix(400).joined(separator: ",")
-            let batch = await fetchRotorBatch(stationId: stationId, queueSeed: queueParam)
-            guard accountGeneration == generation, !Task.isCancelled else { return [] }
-            if batch.isEmpty { break }
-            for item in batch {
-                seenOrder.append(item.id)
-                if seen.contains(item.id) { continue }
-                seen.insert(item.id)
-                if isRecentlyPlayed(ymTrackId: item.id) { continue }
-                collected.append(item)
-            }
-            if collected.count >= target { break }
-        }
-
-        if collected.count < 12 {
-            let extra = await personalPicks(limit: max(0, target - collected.count), excluding: seen)
-            guard accountGeneration == generation, !Task.isCancelled else { return [] }
-            collected.append(contentsOf: extra)
-        }
-
-        return Array(collected.prefix(target))
+        // target is a prefetch hint, not permission to restart seven times or drop a batch tail.
+        await startYandexWave(stationId: stationId)
     }
 
     /// Подборка на основе того, что пользователь реально слушает.
@@ -1020,124 +952,22 @@ final class YandexMusicService {
         return Array(out.prefix(target))
     }
 
-    private func fetchRotorBatch(stationId: String, queueSeed: String?) async -> [YMTrackItem] {
-        let sessionID = rotorSessionID
-        guard var comps = URLComponents(string: Self.apiBase + "/rotor/station/" + stationId + "/tracks") else { return [] }
-        var items = [URLQueryItem(name: "settings2", value: "true")]
-        if let queueSeed { items.append(URLQueryItem(name: "queue", value: queueSeed)) }
-
-        // Передаем активные фильтры характера, языка и настроения волны
-        let settings = WaveSettingsStore.shared
-        if settings.diversity != .defaultMode {
-            items.append(URLQueryItem(name: "diversity", value: settings.diversity.rotorValue))
-        }
-        if settings.language != .any {
-            items.append(URLQueryItem(name: "language", value: settings.language.rotorValue))
-        }
-        if settings.moodEnergy != .all {
-            items.append(URLQueryItem(name: "moodEnergy", value: settings.moodEnergy.rotorValue))
-        }
-
-        comps.queryItems = items
-        guard let url = comps.url else { return [] }
-        guard let pair = try? await sessionData(for: authorizedRequest(url: url)) else { return [] }
-
-        struct StationResponse: Decodable {
-            struct Result: Decodable {
-                struct SequenceEntry: Decodable {
-                    let track: YMTrackItem?
-                }
-                let sequence: [SequenceEntry]?
-                let batchId: String?
-            }
-            let result: Result?
-        }
-
-        guard let resp = try? JSONDecoder().decode(StationResponse.self, from: pair.0) else { return [] }
-        guard rotorSessionID == sessionID, activeStationId == stationId else { return [] }
-        if let batch = resp.result?.batchId { lastBatchId = batch }
-        let list = (resp.result?.sequence ?? []).compactMap { $0.track }
-        return Self.playable(list)
-    }
-
-    /// Обратная связь ротору — так «Моя волна» учится на прослушиваниях.
-    func sendRotorFeedback(
-        stationId: String,
-        type: String,
-        trackId: String? = nil,
-        totalPlayedSeconds: Double? = nil,
-        extraSettings: [String: String]? = nil
-    ) async {
-        guard var comps = URLComponents(string: Self.apiBase + "/rotor/station/" + stationId + "/feedback") else { return }
-        if let batch = lastBatchId {
-            comps.queryItems = [URLQueryItem(name: "batch-id", value: batch)]
-        }
-        guard let url = comps.url else { return }
-
-        var req = authorizedRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        var body: [String: Any] = ["type": type, "timestamp": Date().timeIntervalSince1970]
-        if let trackId { body["trackId"] = trackId }
-        if let totalPlayedSeconds { body["totalPlayedSeconds"] = totalPlayedSeconds }
-        if let extraSettings { body["settings"] = extraSettings }
-        if type == "radioStarted" { body["from"] = "sonivo-ios" }
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        _ = try? await sessionData(for: req)
-    }
-
-    /// Отправляет на сервер Яндекса изменение настроек «Моей волны» (характер, язык, настроение)
-    func sendWaveSettingsChange() {
-        guard let station = activeStationId else { return }
-        let s = WaveSettingsStore.shared
-        let settingsDict: [String: String] = [
-            "diversity": s.diversity.rotorValue,
-            "language": s.language.rotorValue,
-            "moodEnergy": s.moodEnergy.rotorValue
-        ]
-        let generation = accountGeneration
-        Task {
-            guard accountGeneration == generation else { return }
-            await sendRotorFeedback(
-                stationId: station,
-                type: "settingsChange",
-                extraSettings: settingsDict
-            )
-        }
-    }
-
+    /// Compatibility lifecycle entry for non-radio callers; no fake radioStarted.
     func beginStationSession(_ stationId: String) {
-        rotorSessionID = UUID()
-        lastBatchId = nil
-        activeStationId = stationId
-        let generation = accountGeneration
-        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: stationId, type: "radioStarted") }
+        endStationSession()
     }
-
     func endStationSession() {
-        rotorSessionID = UUID()
-        lastBatchId = nil
-        activeStationId = nil
+        rotorSessionID = UUID(); trackStationRequestID = UUID()
+        activeStationId = nil; waveError = nil; appliedWaveSettings = nil; waveSession.reset()
     }
-
-    /// Явный сигнал "трек пропущен" — ротор учится не предлагать похожее в
-    /// следующих пачках. До этого исправления такой сигнал в принципе никогда
-    /// не отправлялся: ни один экран его не вызывал, поэтому «Моя волна» вела
-    /// себя так, будто пользователь дослушивает всё подряд, и не подстраивалась
-    /// под то, что реально пропускается.
-    func reportSkip(trackId: String) {
-        guard let station = activeStationId else { return }
-        let generation = accountGeneration
-        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: station, type: "skip", trackId: trackId) }
+    func reportTrackStarted(trackId: String) {
+        waveSession.event(type: "trackStarted", trackID: trackId)
     }
-
-    /// Трек доиграл до конца — подкрепляет выбор ротора.
+    func reportSkip(trackId: String, totalPlayedSeconds: Double) {
+        waveSession.event(type: "skip", trackID: trackId, seconds: totalPlayedSeconds)
+    }
     func reportTrackFinished(trackId: String, totalPlayedSeconds: Double) {
-        guard let station = activeStationId else { return }
-        let generation = accountGeneration
-        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: station, type: "trackFinished", trackId: trackId, totalPlayedSeconds: totalPlayedSeconds) }
+        waveSession.event(type: "trackFinished", trackID: trackId, seconds: totalPlayedSeconds)
     }
 
     // MARK: - Память прослушиваний
@@ -1180,10 +1010,7 @@ final class YandexMusicService {
             defaults.set(artistCounts, forKey: Self.keyArtists)
         }
 
-        if let station = activeStationId, let ymTrackId {
-            let generation = accountGeneration
-        Task { guard accountGeneration == generation else { return }; await sendRotorFeedback(stationId: station, type: "trackStarted", trackId: ymTrackId) }
-        }
+
     }
 
     func isRecentlyPlayed(ymTrackId: String) -> Bool {
