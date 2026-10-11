@@ -116,9 +116,9 @@ struct PlayerScreenV2: View {
             let totalHeight = geo.size.height
             let totalWidth = geo.size.width
             let topInset = max(geo.safeAreaInsets.top, 50)
-            let standardArtworkStageHeight = isFullScreenVideoShot
-                ? (totalHeight * 0.55)
-                : min(totalWidth - 40, totalHeight * 0.44)
+            // Video is a background layer, never a different layout mode.
+            // Keep the same reserved artwork space as readiness/setting changes.
+            let standardArtworkStageHeight = min(totalWidth - 40, totalHeight * 0.44)
 
             let isPullingDown = dismissOffsetY > 0
             let dismissScale = reduceMotion ? 1.0 : max(0.88, 1.0 - (dismissOffsetY / totalHeight) * 0.14)
@@ -518,7 +518,7 @@ struct PlayerScreenV2: View {
 
         return ZStack {
             if isFullScreenVideoShot {
-                // В полноэкранном режиме видеошота обложка не закрывает видео даже при включении текста!
+                // Preserve the artwork footprint and swipe surface while revealing the video.
                 Color.clear
                     .frame(width: width, height: height)
             } else {
@@ -2135,8 +2135,9 @@ struct VideoShotPlayerView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
-        uiView.videoGravity = videoGravity
-        uiView.player = player
+        // Spectrum/timeline updates must not rebind an unchanged AVPlayerLayer.
+        if uiView.videoGravity != videoGravity { uiView.videoGravity = videoGravity }
+        if uiView.player !== player { uiView.player = player }
     }
 
     static func dismantleUIView(_ uiView: PlayerUIView, coordinator: ()) {

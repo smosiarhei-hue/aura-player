@@ -89,3 +89,19 @@ login/code/cancel/success and logout; VideoShot-enabled track, consecutive track
 changes, missing/expired video URL, pause/resume/background, lyrics, Reduce Motion,
 Settings toggle live and across restart. No iPhone video decode/performance or
 physical haptic claim is inferred from CI or the design-preview MP4.
+
+## VideoShot layout stability
+
+The standard artwork stage reserves the same `min(width - 40, height * 0.44)`
+height whether video is pending, ready, failed, or disabled. The full-screen
+video remains a clipped, non-interactive background layer. Revealing it must
+not move metadata, timeline, transport, volume, or the track-wave button, and
+must not reset the existing ScrollView offset. The artwork's empty video state
+retains the same frame and swipe surface. AVPlayerLayer updates rebind only
+when player identity or video gravity actually changes.
+
+Device regression checks: slow VideoShot readiness, switch off/on, missing or
+failed video, next/previous track, scrolled actions, portrait/landscape, light/dark
+and larger Dynamic Type. Compare control positions before and after readiness
+without dragging or rotating the phone. This fix does not redesign controls
+or alter music playback, recommendation, or audio DSP behavior.

@@ -108,4 +108,27 @@ class LocalFirstAndVideoAutoplayTests(unittest.TestCase):
         self.assertIn('if !enabled { teardownVideoLooper() }', player)
         self.assertIn('videoShotCache = [:]', source('yandexmusicservice.swift'))
 
+class VideoShotLayoutStabilityTests(unittest.TestCase):
+    def test_video_readiness_and_setting_cannot_change_artwork_stage_height(self):
+        player = source('PlayerScreenV2.swift')
+        geometry = player.split('GeometryReader { geo in', 1)[1].split('let isPullingDown', 1)[0]
+        self.assertIn('let standardArtworkStageHeight = min(totalWidth - 40, totalHeight * 0.44)', geometry)
+        for condition in ['isFullScreenVideoShot', 'isVideoShotEnabled', 'videoPlayback', 'videoShotURL']:
+            self.assertNotIn(condition, geometry)
+        stage = player.split('private func artworkStage(', 1)[1].split('private func', 1)[0]
+        self.assertIn('Color.clear\n                    .frame(width: width, height: height)', stage)
+        self.assertIn('.frame(width: width, height: height)\n        .scaleEffect', stage)
+        deck = player.split('private func lowerDeck(', 1)[1].split('private var trackWaveButton', 1)[0]
+        self.assertNotIn('isFullScreenVideoShot', deck)
+        self.assertNotIn('isVideoShotEnabled', deck)
+
+    def test_video_layer_does_not_resize_controls_or_rebind_unchanged_player(self):
+        player = source('PlayerScreenV2.swift')
+        background_video = player.split('if isFullScreenVideoShot, let videoLooperPlayer', 1)[1].split('if showLyricsMode', 1)[0]
+        self.assertIn('.frame(width: totalWidth, height: totalHeight).clipped()', background_video)
+        self.assertIn('.allowsHitTesting(false).accessibilityHidden(true)', background_video)
+        update = player.split('func updateUIView(_ uiView: PlayerUIView', 1)[1].split('static func dismantleUIView', 1)[0]
+        self.assertIn('if uiView.videoGravity != videoGravity { uiView.videoGravity = videoGravity }', update)
+        self.assertIn('if uiView.player !== player { uiView.player = player }', update)
+
 if __name__ == '__main__': unittest.main()
