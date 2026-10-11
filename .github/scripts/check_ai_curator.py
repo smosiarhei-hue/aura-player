@@ -90,6 +90,7 @@ nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
 '''
     checks = r'''
 import Foundation
+import CryptoKit
 @main struct Checks {
     @MainActor static func main() async throws {
         let configuration = URLSessionConfiguration.ephemeral
