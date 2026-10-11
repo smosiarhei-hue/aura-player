@@ -76,3 +76,37 @@ class CuratorTests(unittest.TestCase):
         s = source('AIMusicCuratorStore.swift')
         toast = s.split('func showToast', 1)[1].split('func copyToClipboard', 1)[0]
         self.assertNotIn('UIPasteboard', toast)
+    def test_live_catalog_and_staged_connect(self):
+        s = source('DifyService.swift')
+        connect = s.split('func connect(', 1)[1].split('private func validateHTTP', 1)[0]
+        self.assertIn('discoverModels(key:', connect)
+        self.assertLess(connect.index('session.data(for: request)'), connect.index('try configure('))
+        self.assertIn('configurationID == revision', connect)
+        self.assertIn('YandexMusicService.shared.accountGeneration == account', connect)
+        self.assertNotIn('fallback', connect)
+    def test_catalog_excludes_non_chat_and_preserves_existing(self):
+        s = source('AIModelDiscovery.swift')
+        for token in ['"embed"', '"tts"', '"rerank"', '"image"', 'models.contains(where:', 'preserving current']:
+            self.assertIn(token, s)
+    def test_setup_automatic_choice_and_dify_server_model(self):
+        s = source('DifySettingsSheet.swift')
+        self.assertIn('Подобрать автоматически', s)
+        self.assertIn('Модель берётся из настроек приложения Dify', s)
+        self.assertIn('DisclosureGroup("Дополнительно")', s)
+        self.assertIn('service.discoverModels', s)
+        self.assertIn('service.connect', s)
+        self.assertNotIn('Ваш AI, ваш доступ', s)
+    def test_intent_contract_and_constraint_priority(self):
+        s = source('AICuratorPrompt.swift')
+        for token in ['case playlist, clarify, conversation', 'ОДИН короткий вопрос', 'явные запреты пользователя',
+                      'язык песен', 'Без вокала', 'не создавай плейлист', 'validatedPlaylist', 'summary']:
+            self.assertIn(token.lower(), s.lower())
+        self.assertIn('Понял запрос так', source('AIMusicAssistantView.swift'))
+    def test_both_providers_keep_bounded_context(self):
+        s = source('DifyService.swift')
+        self.assertIn('conversation == nil && channel == .curator', s)
+        self.assertIn('history.suffix(12)', s)
+        self.assertIn('prefix(1600)', s)
+        store = source('AIMusicCuratorStore.swift')
+        self.assertIn('Предложенные песни:', store)
+        self.assertIn('message.clarification', store)

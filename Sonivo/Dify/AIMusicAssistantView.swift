@@ -156,6 +156,15 @@ struct AIMusicAssistantView: View {
                 Label("Куратор", systemImage: "sparkles").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 let clean = DifyService.cleanDisplayText(from: message.text)
                 if !clean.isEmpty { Text(.init(clean)).font(.body).textSelection(.enabled) }
+                if let summary = message.requestSummary, !summary.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Понял запрос так").font(.caption.weight(.semibold)).foregroundStyle(.pink)
+                        Text(summary).font(.callout)
+                    }.padding(14).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                }
+                if let question = message.clarification, !question.isEmpty, !clean.contains(question) {
+                    Text(question).font(.headline)
+                }
                 if let error = message.error { Text(error).font(.callout).foregroundStyle(.orange) }
                 if let playlist = message.playlist { playlistCard(message, playlist: playlist) }
             }.frame(maxWidth: .infinity, alignment: .leading)

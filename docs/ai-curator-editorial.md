@@ -37,3 +37,15 @@
 - Linux structural tests: honest selection, idempotent save, UUID cancellation guards, account archive bounds, credentials, channels, HTTPS, metadata opt-in, native motion, guest gating, clipboard.
 - macOS fixture executable compiles actual policy/models/transport/resolver/store: exact/wrong-remix matches, guest resolution, clear during suspended request, account switching, save IDs, clipboard preservation, HTTP 401 single request, Dify SSE error and isolated channel state.
 - Fixture responses contain no real account/provider credential. Native layout, physical haptics, provider billing/availability and real catalog matching require owner testing on iPhone with a personal key.
+
+## Automatic model setup and intent contract
+- Saved provider/key/endpoint/model are reused. Settings load the NVIDIA `/models` catalog with the personal key; no API keys are obtained from the music login.
+- The normal model choice is automatic. Existing selected models remain selected. Advanced settings still allow a custom HTTPS endpoint/exact model ID when a provider does not support catalog listing.
+- Auto selection excludes obvious embedding/reranking/audio/image/safety-only IDs, preserves a suitable existing ID, then selects a deterministic chat/instruct candidate from the returned catalog. Names are only hints, not proof of capability/access.
+- A blocking chat health probe must return nonempty content before credentials/model are committed. Catalog access alone is not claimed as a verified connection. Failed/cancelled setup preserves the previous connection; no blind alternate-model retries.
+- Dify uses its server-configured app/model, not a client-invented model ID. Its isolated health request is verified before saving; it does not overwrite the curator conversation.
+- Setup fields cannot change during an operation; Stop/Close cancel it. Keys are not logged.
+- The improved editorial prompt distinguishes playlist, clarification and conversation, including implicit requests such as music for an activity and follow-up edits. It prioritizes exclusions/latest edits, asks one question only when material information is missing, and does not invent audio analysis or user history.
+- Structured responses include intent and a visible “Понял запрос так” summary. Clarification/conversation cannot be interpreted as a playlist even if an erroneous playlist field is present. Empty/invalid structured replies are rejected. Existing flat-playlist responses remain compatible.
+- Bounded conversation context retains the previous clarification and suggested artist/title pairs. New Dify conversations receive the local bounded context after relaunch; existing Dify conversations retain their server context.
+- These are contract/transport/prompt tests, **not a claim of 100% semantic accuracy**. Real model quality and catalog match rates still depend on the request/provider/model and need owner evaluation.

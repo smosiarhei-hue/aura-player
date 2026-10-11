@@ -52,12 +52,14 @@ nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var state: (Int, String) = (200, "")
     nonisolated(unsafe) private static var seen: [URLRequest] = []
-    static func reply(_ code: Int, _ body: String) { lock.lock(); state = (code,body); lock.unlock() }
+    nonisolated(unsafe) private static var queue: [(Int,String)] = []
+    static func reply(_ code: Int, _ body: String) { lock.lock(); state = (code,body); queue = []; lock.unlock() }
+    static func enqueue(_ code: Int, _ body: String) { lock.lock(); queue.append((code,body)); lock.unlock() }
     static var requests: [URLRequest] { lock.lock(); defer { lock.unlock() }; return seen }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        Self.lock.lock(); let (code,body) = Self.state; Self.seen.append(request); Self.lock.unlock()
+        Self.lock.lock(); let (code,body) = Self.queue.isEmpty ? Self.state : Self.queue.removeFirst(); Self.seen.append(request); Self.lock.unlock()
         if code == -1 { return }
         let response = HTTPURLResponse(url:request.url!, statusCode:code, httpVersion:"HTTP/1.1", headerFields:["Content-Type":"text/event-stream"])!
         client?.urlProtocol(self, didReceive:response, cacheStoragePolicy:.notAllowed)
@@ -136,6 +138,47 @@ import Foundation
         precondition(ai.currentConversationId == "fixture-conversation")
         _ = try await ai.sendMessage(query:"video",channel:.video,onDelta:{ _ in })
         precondition(ai.currentConversationId == "fixture-conversation")
+
+        // Structured intent must never turn a clarification/conversation into a playlist.
+        let playlistJSON = String(data:try JSONEncoder().encode(playlist),encoding:.utf8)!
+        let clarification = "```json\n{\"intent\":\"clarify\",\"summary\":\"Не хватает настроения\",\"question\":\"Спокойно или энергично?\",\"playlist\":" + playlistJSON + "}\n```"
+        precondition(AICuratorPrompt.reply(from:clarification)?.intent == .clarify)
+        precondition(DifyService.extractPlaylist(from:clarification) == nil)
+        let structured = "```json\n{\"intent\":\"playlist\",\"summary\":\"Спокойно и без вокала\",\"question\":null,\"playlist\":" + playlistJSON + "}\n```"
+        precondition(DifyService.extractPlaylist(from:structured)?.tracks.count == 1)
+        let conversation = "{\"intent\":\"conversation\",\"summary\":\"Обсуждаем артиста\",\"question\":null,\"playlist\":null}"
+        precondition(AICuratorPrompt.reply(from:conversation)?.intent == .conversation)
+        precondition(DifyService.extractPlaylist(from:conversation) == nil)
+        precondition(AICuratorPrompt.system(.curator).contains("ОДИН короткий вопрос"))
+        precondition(AICuratorPrompt.system(.curator).contains("не создавай плейлист"))
+        // Live catalog, duplicate IDs, non-chat exclusions, preserve existing model, staged commit.
+        let catalog = "{\"data\":[{\"id\":\"vendor/llama-instruct\"},{\"id\":\"vendor/llama-instruct\"},{\"id\":\"vendor/qwen-embed\"},{\"id\":\"vendor/tts\"},{\"id\":\"vendor/qwen-chat\"}]}"
+        let decoded = try AIModelDiscovery.decode(Data(catalog.utf8))
+        precondition(decoded.count == 4)
+        precondition(AIModelDiscovery.recommended(in:decoded,preserving:"vendor/qwen-chat") == "vendor/qwen-chat")
+        precondition(AIModelDiscovery.recommended(in:decoded,preserving:"") == "vendor/llama-instruct")
+        StubProtocol.reply(200, catalog)
+        let models = try await ai.discoverModels(key:"fixture-only-not-a-real-key",endpoint:"https://fixture.invalid/v1")
+        precondition(models == decoded && StubProtocol.requests.last!.url!.path == "/v1/models")
+        try ai.configure(provider:.nvidia,key:"old-fixture-key",endpoint:"https://fixture.invalid/v1",model:"old-fixture-model")
+        StubProtocol.enqueue(200, catalog)
+        StubProtocol.enqueue(200, "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"OK\"}}]}")
+        let chosen = try await ai.connect(provider:.nvidia,key:"new-fixture-key",endpoint:"https://fixture.invalid/v1",model:nil)
+        precondition(chosen == "vendor/llama-instruct" && ai.nvidiaApiKey == "new-fixture-key")
+        StubProtocol.enqueue(200, catalog)
+        StubProtocol.enqueue(401, "{}")
+        do { _ = try await ai.connect(provider:.nvidia,key:"rejected-fixture-key",endpoint:"https://fixture.invalid/v1",model:nil); fatalError("Accepted rejected setup") }
+        catch DifyError.unauthorized { }
+        precondition(ai.nvidiaApiKey == "new-fixture-key" && ai.nvidiaSelectedModel == chosen)
+        // Dify takes its server-side model, and performs no /models request.
+        StubProtocol.reply(200, "{\"answer\":\"OK\",\"conversation_id\":\"health-only\"}")
+        let requestsBeforeDify = StubProtocol.requests.count
+        let difyModel = try await ai.connect(provider:.dify,key:"dify-fixture-key",endpoint:"https://fixture.invalid/v1",model:nil)
+        precondition(difyModel.isEmpty && StubProtocol.requests.count == requestsBeforeDify + 1)
+        precondition(ai.currentConversationId == nil)
+        print("Curator auto setup: live catalog, non-chat exclusions, preserve model, staged commit, rejected key preservation and Dify server model passed")
+        print("Curator intent: playlist/clarify/conversation envelope and constraint-priority prompt checks passed")
+
         print("Curator: transport errors, exact matching, guest gating, cancellation/clear, account scope, save ID, clipboard and isolated channels passed")
     }
 }
@@ -145,7 +188,7 @@ import Foundation
         (p/'Fixtures.swift').write_text(fixtures)
         (p/'Checks.swift').write_text(checks)
         (p/'Store.swift').write_text((root/'Sonivo/Dify/AIMusicCuratorStore.swift').read_text().replace('import UIKit', ''))
-        files = [root/'Sonivo/Dify'/name for name in ['AICuratorPolicy.swift','DifyModels.swift','DifyService.swift','AIPlaylistGeneratorService.swift']]
+        files = [root/'Sonivo/Dify'/name for name in ['AICuratorPolicy.swift','DifyModels.swift','AICuratorPrompt.swift','AIModelDiscovery.swift','DifyService.swift','AIPlaylistGeneratorService.swift']]
         built = subprocess.run(['swiftc','-swift-version','6',*map(str,files),str(p/'Store.swift'),str(p/'Fixtures.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
         assert built.returncode == 0, built.stderr
         ran = subprocess.run([str(p/'checks')],capture_output=True,text=True,timeout=60)

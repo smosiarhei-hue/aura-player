@@ -384,7 +384,8 @@ class AntigravitySpecTests(unittest.TestCase):
 
         dify_file = self.repo_root / "Sonivo" / "Dify" / "DifyService.swift"
         dify_content = dify_file.read_text(encoding="utf-8")
-        self.assertIn("12–20", dify_content)
+        self.assertIn("AICuratorPrompt.system(channel)", dify_content)
+        self.assertIn("12–20", (self.repo_root / "Sonivo/Dify/AICuratorPrompt.swift").read_text())
         self.assertNotIn("МИНИМУМ 50", dify_content)
         self.assertIn("maxTokens:channel == .health ? 96 : 4096", dify_content)
         self.assertIn("extendPlaylist", dify_content)

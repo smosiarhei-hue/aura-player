@@ -7,89 +7,129 @@ struct DifySettingsSheet: View {
     @State private var key = ""
     @State private var endpoint = ""
     @State private var model = ""
+    @State private var models: [AIAvailableModel] = []
     @State private var notice: String?
     @State private var checking = false
-    @State private var testTask: Task<Void, Never>?
+    @State private var loadingModels = false
+    @State private var operation: Task<Void, Never>?
+    @State private var operationID = UUID()
     @State private var deleteConfirmation = false
     @AppStorage("ai_curator.share_current_track") private var shareCurrentTrack = false
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Label("Ваш AI, ваш доступ", systemImage: "key.horizontal").font(.title3.bold())
-                    Text("Sonivo не предоставляет общий AI-ключ. Подключите свой провайдер; его тариф и доступность моделей определяются вашим аккаунтом.")
+                    Label("Подключение куратора", systemImage: "sparkles").font(.title3.bold())
+                    Text("Сохранённое подключение подхватится автоматически. Для нового подключения достаточно ключа: адрес уже заполнен, модель можно подобрать и проверить автоматически.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Section("Подключение") {
-                    Picker("Провайдер", selection: $provider) {
+                    Picker("Сервис", selection: $provider) {
                         Text("NVIDIA NIM").tag(AIProvider.nvidia)
                         Text("Dify").tag(AIProvider.dify)
-                    }.onChange(of: provider) { _, _ in loadFields() }
+                    }.onChange(of: provider) { _, _ in loadFields(); refreshModels() }
                     SecureField("API-ключ", text: $key).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    TextField("HTTPS адрес API", text: $endpoint).keyboardType(.URL)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
                     if provider == .nvidia {
-                        TextField("ID модели из кабинета NVIDIA", text: $model)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        Text("Укажите точный ID доступной вам модели. Мы не переключаем модель без вашего решения.")
+                        Picker("Модель", selection: $model) {
+                            Text("Подобрать автоматически").tag("")
+                            if !model.isEmpty && !models.contains(where: { $0.id == model }) {
+                                Text(model).tag(model)
+                            }
+                            ForEach(models) { item in Text(item.displayName).tag(item.id) }
+                        }.onChange(of: model) { _, _ in if checking { cancel() } }
+                        if loadingModels { ProgressView("Получаем доступные модели…") }
+                        Button("Обновить список моделей") { refreshModels() }
+                            .disabled(checking || loadingModels || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Text("Сохранённая модель не меняется сама. В автоматическом режиме выберем кандидат из каталога сервиса и проверим, что он отвечает на чат-запрос.")
                             .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Label("Модель берётся из настроек приложения Dify", systemImage: "checkmark.circle")
+                            .font(.subheadline)
+                    }
+                    DisclosureGroup("Дополнительно") {
+                        TextField("HTTPS адрес API", text: $endpoint).keyboardType(.URL)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .onChange(of: endpoint) { _, _ in models = [] }
+                        if provider == .nvidia {
+                            TextField("Точный ID модели, если каталог недоступен", text: $model)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        }
                     }
                 }
-                Section("Проверка") {
-                    Button(checking ? "Проверяем…" : "Сохранить и проверить соединение") { testConnection() }
-                        .disabled(checking || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    if checking { Button("Остановить проверку") { testTask?.cancel(); checking = false } }
+                .disabled(checking || loadingModels)
+                Section {
+                    Button(checking ? "Проверяем подключение…" : "Подключить и проверить") { connect() }
+                        .disabled(checking || loadingModels || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if checking || loadingModels { Button("Остановить") { cancel() } }
                     if let notice { Text(notice).font(.callout).textSelection(.enabled) }
-                    Text("Проверка отправит провайдеру короткий тестовый запрос; он может учитываться в вашем тарифе.")
+                    Text("Ключ и выбранная модель сохранятся только после успешной проверки. Короткий тестовый запрос может учитываться в тарифе сервиса.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Данные и приватность") {
                     Toggle("Передавать название и исполнителя текущей песни", isOn: $shareCurrentTrack)
-                    Text("Ключ хранится в Keychain на этом устройстве. Провайдер получает текст запросов и последние уточнения диалога. Название и исполнитель текущей песни — только при включённом согласии на экране куратора.")
-                    Text("PCM, файлы аудио, избранное и история прослушиваний не отправляются. При дополнении подборки передаются названия её песен, чтобы исключить повторы.")
-                    Button("Удалить ключ этого провайдера", role: .destructive) { deleteConfirmation = true }
+                    Text("Ключ хранится в Keychain на этом устройстве. AI получает текст запросов и предыдущие уточнения. Название и исполнитель песни — только с вашим согласием.")
+                    Text("Аудио, избранное и история прослушиваний не отправляются. Для дополнения подборки передаются названия уже выбранных песен.")
+                    Text("Вход в музыкальный аккаунт не даёт AI-ключ. Нужен личный ключ выбранного сервиса или отдельно настроенное подключение приложения.")
+                    Button("Удалить ключ этого сервиса", role: .destructive) { deleteConfirmation = true }
                 }.font(.subheadline)
             }
-            .navigationTitle("Настройки AI").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Настройки куратора").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { testTask?.cancel(); dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Сохранить") {
-                    do { try apply(); dismiss() } catch { notice = error.localizedDescription }
-                }.disabled(checking) }
+                ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { cancel(); dismiss() } }
             }
             .confirmationDialog("Удалить сохранённый API-ключ?", isPresented: $deleteConfirmation, titleVisibility: .visible) {
                 Button("Удалить ключ", role: .destructive) {
-                    testTask?.cancel(); checking = false
+                    cancel()
                     do { try service.removeCredential(provider); key = ""; notice = "Ключ удалён" }
                     catch { notice = error.localizedDescription }
                 }
             }
-            .onAppear { provider = service.provider; loadFields() }
-            .onDisappear { testTask?.cancel() }
+            .onAppear { provider = service.provider; loadFields(); refreshModels() }
+            .onDisappear { cancel() }
         }
     }
+    private func cancel() {
+        operation?.cancel(); operation = nil; operationID = UUID(); checking = false; loadingModels = false
+    }
     private func loadFields() {
-        testTask?.cancel(); checking = false; notice = nil
+        cancel(); notice = nil; models = []
         key = provider == .nvidia ? service.nvidiaApiKey : service.apiKey
         endpoint = provider == .nvidia ? service.nvidiaBaseURL : service.baseURL
-        model = service.nvidiaSelectedModel
+        model = provider == .nvidia ? service.nvidiaSelectedModel : ""
     }
-    private func apply() throws {
-        AIMusicCuratorStore.shared.cancel()
-        try service.configure(provider: provider, key: key, endpoint: endpoint, model: model)
-    }
-    private func testConnection() {
-        do { try apply() } catch { notice = error.localizedDescription; return }
-        checking = true; notice = nil
-        testTask = Task {
+    private func refreshModels() {
+        guard provider == .nvidia, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        cancel(); loadingModels = true
+        let token = operationID, selectedKey = key, selectedEndpoint = endpoint
+        operation = Task {
             do {
-                let result = try await service.testConnection()
-                try Task.checkCancellation()
-                notice = "Соединение работает · \(result.latencyMs) мс"
+                let available = try await service.discoverModels(key: selectedKey, endpoint: selectedEndpoint)
+                try Task.checkCancellation(); guard operationID == token else { return }
+                models = available
+                if available.isEmpty { notice = "Сервис вернул пустой каталог. Попробуйте позже или укажите модель в дополнительных настройках." }
             } catch {
-                if !Task.isCancelled { notice = error.localizedDescription }
+                guard operationID == token, !Task.isCancelled else { return }
+                notice = "Список моделей недоступен: \(error.localizedDescription) Сохранённую модель можно продолжить использовать."
             }
-            if !Task.isCancelled { checking = false }
+            guard operationID == token else { return }; loadingModels = false; operation = nil
+        }
+    }
+    private func connect() {
+        cancel(); checking = true; notice = nil
+        let token = operationID, selectedProvider = provider, selectedKey = key, selectedEndpoint = endpoint, selectedModel = model
+        AIMusicCuratorStore.shared.cancel()
+        operation = Task {
+            do {
+                let chosen = try await service.connect(provider: selectedProvider, key: selectedKey,
+                    endpoint: selectedEndpoint, model: selectedModel.isEmpty ? nil : selectedModel)
+                try Task.checkCancellation(); guard operationID == token else { return }
+                // Finish the operation before updating Picker state so onChange does not cancel success.
+                checking = false; operation = nil; model = chosen
+                notice = selectedProvider == .dify ? "Подключено. Модель настроена в Dify." : "Подключено · \(chosen)"
+            } catch {
+                guard operationID == token, !Task.isCancelled else { return }
+                checking = false; operation = nil; notice = error.localizedDescription
+            }
         }
     }
 }

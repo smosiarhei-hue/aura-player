@@ -62,13 +62,22 @@ final class AIMusicCuratorStore: ObservableObject {
         cancel(); messages = []; UserDefaults.standard.removeObject(forKey: defaultsKey)
         ai.resetConversation()
     }
+    private func historyContent(_ message: AIMessage) -> String {
+        var text = DifyService.cleanDisplayText(from: message.text)
+        if let summary = message.requestSummary { text += "\n" + summary }
+        if let question = message.clarification { text += "\n" + question }
+        if let playlist = message.playlist {
+            text += "\nПредложенные песни: " + playlist.tracks.prefix(20).map { $0.artist + " — " + $0.title }.joined(separator: "; ")
+        }
+        return text
+    }
     @discardableResult
     func send(_ prompt: String, shareCurrentTrack: Bool) -> Bool {
         let text = String(prompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4000))
         guard !isBusy, !text.isEmpty, ai.isConfigured else { return false }
         switchAccount()
         let history = messages.suffix(12).filter { $0.error == nil }.map {
-            OpenAIChatRequest.Message(role: $0.role.rawValue, content: String(DifyService.cleanDisplayText(from: $0.text).prefix(1600)))
+            OpenAIChatRequest.Message(role: $0.role.rawValue, content: String(historyContent($0).prefix(1600)))
         }
         let track = PlayerCore.shared.currentTrack
         let context = AICuratorPolicy.context(title: track?.title, artist: track?.artist, enabled: shareCurrentTrack)
@@ -94,7 +103,9 @@ final class AIMusicCuratorStore: ObservableObject {
                 guard requestID == token, account == YandexMusicService.shared.accountGeneration else { return }
                 var playlistResult = result.playlist
                 if playlistResult != nil { playlistResult!.tracks = Array(playlistResult!.tracks.prefix(AICuratorPolicy.suggestionLimit)) }
-                update(id) { $0.text = result.fullText; $0.isStreaming = false; $0.playlist = playlistResult }
+                let reply = AICuratorPrompt.reply(from: result.fullText)
+                update(id) { $0.text = result.fullText; $0.isStreaming = false; $0.playlist = playlistResult
+                    $0.requestSummary = reply?.summary; $0.clarification = reply?.intent == .clarify ? reply?.question : nil }
                 if let playlist = playlistResult {
                     phase = .resolving; update(id) { $0.isResolvingTracks = true }
                     let tracks = await AIPlaylistGeneratorService.shared.resolveTracks(for: playlist.tracks)

@@ -235,6 +235,8 @@ struct AIMessage: Identifiable, Codable, Sendable {
     var savedPlaylistID: UUID? = nil
     var unresolvedCount: Int? = nil
     var extendedCount: Int? = nil
+    var requestSummary: String? = nil
+    var clarification: String? = nil
 
     init(
         id: UUID = UUID(),
