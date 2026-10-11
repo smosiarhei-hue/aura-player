@@ -490,5 +490,7 @@ print("Beat Waves Swift physics, presentation and cosmetic light checks passed")
             verify_video_shot_playback(ROOT)
             from check_ai_curator import verify_ai_curator
             verify_ai_curator(ROOT)
+            from check_library_performance import verify_library_performance
+            verify_library_performance(ROOT)
 
 if __name__=='__main__': unittest.main()

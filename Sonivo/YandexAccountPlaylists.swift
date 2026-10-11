@@ -8,7 +8,11 @@ extension YandexMusicService {
         do {
             let (data, response) = try await sessionData(for: URLRequest(url: url))
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
-            let list = try JSONDecoder().decode(YandexPlaylistList.self, from: data).result
+            let list = try await Task.detached(priority: .utility) {
+                try JSONDecoder().decode(YandexPlaylistList.self, from: data).result
+            }.value
+            try Task.checkCancellation()
+            guard currentUser?.uid == uid, accountGeneration == generation else { return false }
             // Bound startup traffic; report a partial import instead of implying all were loaded.
             guard list.count <= 50 else { return false }
             var imported: [Playlist] = []
@@ -18,12 +22,16 @@ extension YandexMusicService {
                       let detailURL = URL(string: Self.apiBase + "/users/\(uid)/playlists/\(info.kind)") else { return false }
                 let (detailData, detailResponse) = try await sessionData(for: URLRequest(url: detailURL))
                 guard (detailResponse as? HTTPURLResponse)?.statusCode == 200 else { return false }
-                let detail = try JSONDecoder().decode(YandexPlaylistDetail.self, from: detailData).result
+                let detail = try await Task.detached(priority: .utility) {
+                    try JSONDecoder().decode(YandexPlaylistDetail.self, from: detailData).result
+                }.value
                 guard let entries = detail.tracks, entries.count <= 2000 else { return false }
                 let items = entries.compactMap(\.track)
                 // Missing embedded tracks must not silently create an incomplete playlist.
                 guard items.count == entries.count else { return false }
-                let tracks = items.map { convertToTrack($0) }
+                let tracks = await Task.detached(priority: .utility) { items.map { self.convertToTrack($0) } }.value
+                try Task.checkCancellation()
+                guard accountGeneration == generation, currentUser?.uid == uid else { return false }
                 let id = UUID(uuidString: Self.stableKey(for: "playlist:\(uid):\(info.kind)"))!
                 imported.append(Playlist(id: id, title: detail.title ?? info.title ?? "Плейлист",
                                          trackIds: tracks.map(\.id), coverURL: tracks.first?.coverURL,
@@ -36,7 +44,7 @@ extension YandexMusicService {
     }
 }
 
-nonisolated private struct YandexPlaylistInfo: Decodable {
+nonisolated private struct YandexPlaylistInfo: Decodable, Sendable {
     let kind: String
     let title: String?
     enum CodingKeys: String, CodingKey { case kind, title }
@@ -58,9 +66,9 @@ nonisolated private struct YandexPlaylistInfo: Decodable {
     }
 }
 
-nonisolated private struct YandexPlaylistList: Decodable { let result: [YandexPlaylistInfo] }
-nonisolated private struct YandexPlaylistDetail: Decodable {
-    struct Entry: Decodable { let track: YandexMusicService.YMTrackItem? }
-    struct Contents: Decodable { let title: String?; let tracks: [Entry]? }
+nonisolated private struct YandexPlaylistList: Decodable, Sendable { let result: [YandexPlaylistInfo] }
+nonisolated private struct YandexPlaylistDetail: Decodable, Sendable {
+    nonisolated struct Entry: Decodable, Sendable { let track: YandexMusicService.YMTrackItem? }
+    nonisolated struct Contents: Decodable, Sendable { let title: String?; let tracks: [Entry]? }
     let result: Contents
 }

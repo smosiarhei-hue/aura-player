@@ -13,13 +13,19 @@ struct PlaylistDetailView: View {
     @State private var isExtending = false
     @State private var toastMessage: String? = nil
     @State private var showDeleteAlert = false
+    @State private var resolvedTracks: [Track] = []
+    @State private var resolvedForLoggedIn = false
+    @State private var isLoadingTracks = true
+    private var trackLoadKey: String {
+        "\(playlist.id)-\(library.tracksRevision)-\(library.playlistsRevision)-\(YandexMusicService.shared.isUserLoggedIn)"
+    }
 
     private var currentPlaylist: Playlist {
         library.playlist(byId: playlist.id) ?? playlist
     }
 
     private var tracks: [Track] {
-        library.tracks(for: currentPlaylist)
+        resolvedForLoggedIn == YandexMusicService.shared.isUserLoggedIn ? resolvedTracks : []
     }
 
     private var totalDurationText: String {
@@ -44,7 +50,8 @@ struct PlaylistDetailView: View {
                         playlistHeroHeader
                         actionButtonsRow
 
-                        if tracks.isEmpty {
+                        if isLoadingTracks { ProgressView("Открываем песни…").padding() }
+                        else if tracks.isEmpty {
                             emptyPlaylistView
                         } else {
                             tracksListSection
@@ -72,6 +79,17 @@ struct PlaylistDetailView: View {
                     Spacer()
                 }
             }
+        }
+        .task(id: trackLoadKey) {
+            let key = trackLoadKey, loggedIn = YandexMusicService.shared.isUserLoggedIn
+            let snapshot = library.trackCandidates(for: currentPlaylist)
+            isLoadingTracks = true
+            do {
+                let worker = Task.detached(priority: .userInitiated) { try LibraryTrackProjection.visibleOnly(snapshot, loggedIn: loggedIn) }
+                let result = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+                guard !Task.isCancelled, key == trackLoadKey else { return }
+                resolvedTracks = result; resolvedForLoggedIn = loggedIn; isLoadingTracks = false
+            } catch { /* Latest library/account revision owns the next result. */ }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -126,7 +144,7 @@ struct PlaylistDetailView: View {
                         .foregroundStyle(SN.inkMuted)
                 }
 
-                Text("Собрано AI-Куратором")
+                Text("Плейлист из медиатеки")
                     .font(SN.text(.caption, .semibold))
                     .foregroundStyle(
                         LinearGradient(

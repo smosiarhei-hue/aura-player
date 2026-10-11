@@ -16,46 +16,46 @@ struct LibraryView: View {
     @State private var newPlaylistTitle = ""
     @State private var showAIAssistant = false
 
-    enum LibraryFilter: String, CaseIterable, Identifiable {
-        case all = "Все песни", favorites = "Избранное", playlists = "Плейлисты", recent = "Недавние"
-        var id: String { rawValue }
+    typealias LibraryFilter = LibraryTrackFilter
+    @State private var projection: LibraryTrackProjection?
+    private var projectionKey: LibraryProjectionKey {
+        LibraryProjectionKey(revision: library.tracksRevision, loggedIn: YandexMusicService.shared.isUserLoggedIn,
+                             filter: filter, query: searchText)
     }
-
-    private var localAudioTracks: [Track] {
-        library.tracks.filter {
-            !$0.isStream && FileManager.default.fileExists(atPath: $0.url.path)
-        }
+    private var visibleTracks: [Track] {
+        guard let projection, projection.key.loggedIn == YandexMusicService.shared.isUserLoggedIn else { return [] }
+        return projection.visible
     }
-
-    private var visibleTracks: [Track] { YandexMusicService.shared.isUserLoggedIn ? library.tracks : localAudioTracks }
-
     var filteredTracks: [Track] {
         var list = visibleTracks
-        switch filter {
-        case .all, .playlists: break
-        case .favorites: list = list.filter { $0.isFavorite || library.isTrackFavorite($0) }
-        case .recent: list = Array(list.sorted { $0.addedAt > $1.addedAt }.prefix(30))
-        }
-        if !searchText.isEmpty {
-            list = list.filter {
-                $0.title.localizedCaseInsensitiveContains(searchText) ||
-                $0.artist.localizedCaseInsensitiveContains(searchText) ||
-                $0.album.localizedCaseInsensitiveContains(searchText)
-            }
-        }
+        if let projection, projection.key.loggedIn == YandexMusicService.shared.isUserLoggedIn { list = projection.filtered }
         return list
+    }
+    private func updateProjection() async {
+        let key = projectionKey, snapshot = library.tracks
+        do {
+            if !key.query.isEmpty { try await Task.sleep(for: .milliseconds(150)) }
+            try Task.checkCancellation()
+            let worker = Task.detached(priority: .userInitiated) { try LibraryTrackProjection.build(snapshot, key: key) }
+            let result = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+            guard !Task.isCancelled, projectionKey == key else { return }
+            projection = result
+        } catch { /* A newer revision/query owns the result. */ }
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if visibleTracks.isEmpty && library.playlists.isEmpty {
+                if projection == nil {
+                    ProgressView("Открываем медиатеку…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if visibleTracks.isEmpty && library.playlists.isEmpty {
                     emptyStateView
                 } else {
                     mainLibraryContent
                 }
             }
             .navigationTitle("Медиатека")
+            .task(id: projectionKey) { await updateProjection() }
             .searchable(text: $searchText, prompt: "Поиск по песням и плейлистам")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -153,7 +153,7 @@ struct LibraryView: View {
 
     private var mainLibraryContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Коллекция")
                         .font(SN.display(.largeTitle, .bold))
@@ -178,7 +178,7 @@ struct LibraryView: View {
                         recentlyAddedSection
                     }
 
-                    VStack(spacing: 2) {
+                    LazyVStack(spacing: 2) {
                         ForEach(filteredTracks) { track in
                             trackRow(track)
                         }
@@ -362,7 +362,7 @@ struct LibraryView: View {
             .padding(.horizontal, 16)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
+                LazyHStack(spacing: 14) {
                     ForEach(library.playlists) { playlist in
                         NavigationLink(destination: PlaylistDetailView(playlist: playlist)) {
                             VStack(alignment: .leading, spacing: 6) {
@@ -403,7 +403,7 @@ struct LibraryView: View {
                 .padding(.horizontal, 16)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
+                LazyHStack(spacing: 14) {
                     ForEach(Array(visibleTracks.prefix(8))) { track in
                         Button {
                             PlaybackCommandRouter.shared.play(track, queue: filteredTracks)

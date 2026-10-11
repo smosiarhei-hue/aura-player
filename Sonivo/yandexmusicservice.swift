@@ -18,6 +18,9 @@ final class YandexMusicService {
     private(set) var accountGeneration = UUID()
     private var loginAttemptID = UUID()
     private var refreshTask: Task<Bool, Never>?
+    @ObservationIgnored private var accountSyncTask: Task<Void, Never>?
+    @ObservationIgnored private var accountSyncGeneration: UUID?
+    @ObservationIgnored private var accountSyncRequestID = UUID()
     private(set) var accountSyncMessage: String?
     private(set) var currentUser: YMUserProfile? = nil
     var isUserLoggedIn: Bool {
@@ -1226,7 +1229,7 @@ final class YandexMusicService {
 
     // MARK: - Convert YMTrackItem to App Track Model
 
-    func convertToTrack(_ ym: YMTrackItem) -> Track {
+    nonisolated func convertToTrack(_ ym: YMTrackItem) -> Track {
         let numericSeed = Int(String(ym.id.prefix(6))) ?? 777
         return Track(
             id: Self.stableID(from: ym.id),
@@ -1360,7 +1363,7 @@ final class YandexMusicService {
     }
 
     /// Детерминированный UUID из строки — один и тот же Yandex track id всегда даёт один UUID.
-    private static func stableID(from string: String) -> UUID {
+    nonisolated private static func stableID(from string: String) -> UUID {
         let bytes = Array(Insecure.MD5.hash(data: Data(string.utf8)))
         return UUID(uuid: (
             bytes[0], bytes[1], bytes[2], bytes[3],
@@ -1519,7 +1522,20 @@ final class YandexMusicService {
     }
 
     func syncAccountData() async {
+        guard !Task.isCancelled else { return }
         let generation = accountGeneration
+        if let task = accountSyncTask, accountSyncGeneration == generation { await task.value; return }
+        accountSyncTask?.cancel()
+        let request = UUID(); accountSyncRequestID = request; accountSyncGeneration = generation
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performAccountSync(generation: generation)
+        }
+        accountSyncTask = task; await task.value
+        if accountSyncRequestID == request { accountSyncTask = nil; accountSyncGeneration = nil }
+    }
+    private func performAccountSync(generation: UUID) async {
+        guard accountGeneration == generation, !Task.isCancelled else { return }
         guard let profile = await fetchAccountStatus(),
               accountGeneration == generation, !Task.isCancelled else { return }
         guard let likedItems = await fetchUserLikes(uid: profile.uid, limit: 2000),
@@ -1527,7 +1543,9 @@ final class YandexMusicService {
             if accountGeneration == generation { accountSyncMessage = "Не удалось полностью обновить избранное (до 2000 треков). Сохранённые данные не изменены." }
             return
         }
-        LibraryStore.shared.setFavoritesFromCloud(likedItems.map { convertToTrack($0) })
+        let converted = await Task.detached(priority: .utility) { likedItems.map { self.convertToTrack($0) } }.value
+        guard accountGeneration == generation, !Task.isCancelled else { return }
+        LibraryStore.shared.setFavoritesFromCloud(converted)
         let playlistsOK = await syncPersonalPlaylists(uid: profile.uid, generation: generation)
         guard accountGeneration == generation, !Task.isCancelled else { return }
         accountSyncMessage = playlistsOK ? nil : "Избранное обновлено. Плейлисты не удалось загрузить полностью (до 50 плейлистов, до 2000 треков в каждом). Повторите синхронизацию позже."
@@ -1643,6 +1661,7 @@ final class YandexMusicService {
     }
 
     private func resetPersonalState() {
+        accountSyncTask?.cancel(); accountSyncTask = nil; accountSyncGeneration = nil; accountSyncRequestID = UUID()
         waveSession.reset() // Discard the previous account's pending events before closing.
         endStationSession()
         trackStationRequestID = UUID()

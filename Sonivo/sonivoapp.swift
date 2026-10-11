@@ -3,6 +3,7 @@ import UIKit
 
 @main
 struct SonivoApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     init() {
         let appearance = UITabBarAppearance(); appearance.configureWithTransparentBackground()
         appearance.stackedLayoutAppearance.normal.iconColor = .secondaryLabel
@@ -18,7 +19,17 @@ struct SonivoApp: App {
         UIScrollView.appearance().decelerationRate = UIScrollView.DecelerationRate.normal
         UIScrollView.appearance().bounces = true
     }
-    var body: some Scene { WindowGroup { SonivoLaunchHost() } }
+    var body: some Scene {
+        WindowGroup { SonivoLaunchHost() }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .background else { return }
+                let lease = UIApplication.shared.beginBackgroundTask(withName: "Library metadata save", expirationHandler: nil)
+                Task { @MainActor in
+                    await LibraryPersistenceWriter.shared.flush()
+                    if lease != .invalid { UIApplication.shared.endBackgroundTask(lease) }
+                }
+            }
+    }
 }
 
 enum AppTab: String, CaseIterable, Identifiable {

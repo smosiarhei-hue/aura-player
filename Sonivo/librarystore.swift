@@ -28,11 +28,17 @@ final class LibraryStore {
     nonisolated static let tracksDidChange = Notification.Name("SonivoLibraryTracksDidChange")
     private(set) var tracks: [Track] = [] {
         didSet {
+            trackLookup = LibraryTrackLookup(tracks)
+            tracksRevision &+= 1
             persistTracks()
             NotificationCenter.default.post(name: Self.tracksDidChange, object: nil)
         }
     }
-    private(set) var playlists: [Playlist] = [] { didSet { persistPlaylists() } }
+    private(set) var playlists: [Playlist] = [] { didSet { playlistsRevision &+= 1; persistPlaylists() } }
+    private(set) var tracksRevision: UInt64 = 0
+    private(set) var playlistsRevision: UInt64 = 0
+    @ObservationIgnored private var trackLookup = LibraryTrackLookup([])
+    @ObservationIgnored private var isLoadingIndex = true
     private(set) var isScanning = false
     /// True while a local file-picker import is copying/reading files, so the
     /// UI can show a spinner instead of looking like nothing happened.
@@ -55,6 +61,8 @@ final class LibraryStore {
 
     private init() {
         loadData()
+        isLoadingIndex = false
+        removeInternalAudioEntries()
         Task {
             await rescan()
         }
@@ -63,16 +71,14 @@ final class LibraryStore {
     // MARK: - Persistence
 
     private func persistTracks() {
-        if let data = try? JSONEncoder().encode(tracks) {
-            try? data.write(to: Self.tracksIndexURL, options: .atomic)
-        }
+        guard !isLoadingIndex else { return }
+        LibraryPersistenceWriter.shared.write(tracks, to: Self.tracksIndexURL)
     }
-
     private func persistPlaylists() {
-        if let data = try? JSONEncoder().encode(playlists) {
-            try? data.write(to: Self.playlistsIndexURL, options: .atomic)
-        }
+        guard !isLoadingIndex else { return }
+        LibraryPersistenceWriter.shared.write(playlists, to: Self.playlistsIndexURL)
     }
+    func flushPersistence() async { await LibraryPersistenceWriter.shared.flush() }
 
     private func loadData() {
         if let data = try? Data(contentsOf: Self.tracksIndexURL),
@@ -83,13 +89,13 @@ final class LibraryStore {
            let savedPlaylists = try? JSONDecoder().decode([Playlist].self, from: pData) {
             playlists = savedPlaylists
         }
-        removeInternalAudioEntries()
     }
 
     /// Old processing files may already be indexed. Remove only reserved UUID cache names.
     private func removeInternalAudioEntries() {
         let indexed = tracks + playlists.flatMap(\.cachedTracks)
         let removedIDs = Set(indexed.filter(Self.isInternalAudioTrack).map(\.id))
+        guard !removedIDs.isEmpty else { return }
         tracks.removeAll(where: Self.isInternalAudioTrack)
         for index in playlists.indices {
             playlists[index].trackIds.removeAll { removedIDs.contains($0) }
@@ -134,17 +140,11 @@ final class LibraryStore {
         if !initialTracks.isEmpty {
             var currentTracks = tracks
             let existingIds = Set(currentTracks.map(\.id))
-            var addedAny = false
             for track in initialTracks where !existingIds.contains(track.id) {
                 currentTracks.append(track)
-                addedAny = true
             }
             self.tracks = currentTracks
-            if addedAny {
-                persistTracks()
-            }
         }
-        persistPlaylists()
         return p
     }
 
@@ -153,7 +153,6 @@ final class LibraryStore {
         // Ensure track is in library
         if !tracks.contains(where: { $0.id == track.id }) {
             tracks.append(track)
-            persistTracks()
         }
         if !playlists[idx].trackIds.contains(track.id) {
             playlists[idx].trackIds.append(track.id)
@@ -164,22 +163,16 @@ final class LibraryStore {
         if playlists[idx].coverURL == nil || playlists[idx].coverURL?.isEmpty == true {
             playlists[idx].coverURL = track.coverURL
         }
-        persistPlaylists()
     }
 
     func addTracksToPlaylist(tracks newTracks: [Track], playlistId: UUID) {
         guard let idx = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
         var currentTracks = tracks
         let existingIds = Set(currentTracks.map(\.id))
-        var addedAny = false
         for track in newTracks where !existingIds.contains(track.id) {
             currentTracks.append(track)
-            addedAny = true
         }
         self.tracks = currentTracks
-        if addedAny {
-            persistTracks()
-        }
 
         var currentPlaylistTrackIds = playlists[idx].trackIds
         let playlistIdSet = Set(currentPlaylistTrackIds)
@@ -198,39 +191,34 @@ final class LibraryStore {
         if playlists[idx].coverURL == nil || playlists[idx].coverURL?.isEmpty == true {
             playlists[idx].coverURL = newTracks.first(where: { $0.coverURL != nil && !($0.coverURL?.isEmpty ?? true) })?.coverURL
         }
-        persistPlaylists()
     }
 
     func removeTrackFromPlaylist(trackId: UUID, playlistId: UUID) {
         guard let idx = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
         playlists[idx].trackIds.removeAll { $0 == trackId }
         playlists[idx].cachedTracks.removeAll { $0.id == trackId }
-        persistPlaylists()
     }
 
     func deletePlaylist(_ playlist: Playlist) {
         playlists.removeAll { $0.id == playlist.id }
-        persistPlaylists()
     }
 
     func playlist(byId id: UUID) -> Playlist? {
         playlists.first { $0.id == id }
     }
 
-    func tracks(for playlist: Playlist) -> [Track] {
+    func trackCandidates(for playlist: Playlist) -> [Track] {
+        _ = tracksRevision // Observed invalidation; the lookup itself is not published.
         let cachedDict = Dictionary(playlist.cachedTracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let libraryDict = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-
-        let resolved = playlist.trackIds.compactMap { id in
-            libraryDict[id] ?? cachedDict[id]
-        }
+        let resolved = playlist.trackIds.compactMap { id in trackLookup.byID(id) ?? cachedDict[id] }
+        return resolved.isEmpty ? playlist.cachedTracks : resolved
+    }
+    func tracks(for playlist: Playlist) -> [Track] {
+        let candidates = trackCandidates(for: playlist)
         if !YandexMusicService.shared.isUserLoggedIn {
-            let candidates = resolved.isEmpty ? playlist.cachedTracks : resolved
             return candidates.filter { !$0.isStream && FileManager.default.fileExists(atPath: $0.url.path) }
         }
-        if !resolved.isEmpty {
-            return resolved
-        }
+        if !candidates.isEmpty { return candidates }
         return playlist.cachedTracks
     }
 
@@ -297,16 +285,16 @@ final class LibraryStore {
 
     func setFavoritesFromCloud(_ cloudTracks: [Track]) {
         var updated = tracks
-        for i in updated.indices where YandexMusicService.isPersonalYandexTrack(updated[i]) {
-            updated[i].isFavorite = false
+        var indices: [UUID: Int] = [:]
+        for i in updated.indices {
+            if indices[updated[i].id] == nil { indices[updated[i].id] = i }
+            if YandexMusicService.isPersonalYandexTrack(updated[i]) { updated[i].isFavorite = false }
         }
         for ct in cloudTracks {
-            if let idx = updated.firstIndex(where: { $0.id == ct.id }) {
-                updated[idx].isFavorite = true
-            } else {
-                var newFav = ct
-                newFav.isFavorite = true
-                updated.append(newFav)
+            if let idx = indices[ct.id] { updated[idx].isFavorite = true }
+            else {
+                var newFav = ct; newFav.isFavorite = true
+                indices[newFav.id] = updated.count; updated.append(newFav)
             }
         }
         self.tracks = updated
@@ -321,14 +309,12 @@ final class LibraryStore {
     }
 
     func isTrackFavorite(_ track: Track) -> Bool {
-        if let found = tracks.first(where: { ($0.fileName == track.fileName && !track.fileName.isEmpty) || $0.id == track.id }) {
-            return found.isFavorite
-        }
-        return false
+        _ = tracksRevision
+        return trackLookup.matching(track)?.isFavorite ?? false
     }
-
     func isTrackInLibrary(_ track: Track) -> Bool {
-        tracks.contains { ($0.fileName == track.fileName && !track.fileName.isEmpty) || $0.id == track.id }
+        _ = tracksRevision
+        return trackLookup.matching(track) != nil
     }
 
     // MARK: - Scan local storage (Documents, Music, and Media Library)
@@ -428,11 +414,11 @@ final class LibraryStore {
             defer { if isScoped { url.stopAccessingSecurityScopedResource() } }
 
             do {
-                let destination = Self.uniqueDestinationURL(
-                    for: url.lastPathComponent,
-                    in: targetDir
-                )
-                try Self.copyPickedFile(from: url, to: destination)
+                let destination = try await Task.detached(priority: .userInitiated) {
+                    let destination = Self.uniqueDestinationURL(for: url.lastPathComponent, in: targetDir)
+                    try Self.copyPickedFile(from: url, to: destination)
+                    return destination
+                }.value
                 try await addLocalFile(at: destination)
                 imported += 1
                 SonivoDiagnostics.log("Imported local file: \(url.lastPathComponent)", tag: "LIBRARY")
@@ -547,8 +533,8 @@ final class LibraryStore {
     func resetIndex() {
         tracks.removeAll()
         playlists.removeAll()
-        try? FileManager.default.removeItem(at: Self.tracksIndexURL)
-        try? FileManager.default.removeItem(at: Self.playlistsIndexURL)
+        LibraryPersistenceWriter.shared.remove(Self.tracksIndexURL)
+        LibraryPersistenceWriter.shared.remove(Self.playlistsIndexURL)
     }
 
     // MARK: - Import helpers
