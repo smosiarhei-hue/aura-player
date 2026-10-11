@@ -524,7 +524,7 @@ struct LibraryView: View {
             Button {
                 startAIVibeWave(for: track)
             } label: {
-                Label("AI Вайб-волна (Dify)", systemImage: "sparkles")
+                Label("AI Вайб-волна", systemImage: "sparkles")
             }
 
             if !library.playlists.isEmpty {

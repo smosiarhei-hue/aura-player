@@ -488,5 +488,7 @@ print("Beat Waves Swift physics, presentation and cosmetic light checks passed")
             verify_yandex_account_transactions(ROOT)
             from check_video_shot_playback import verify_video_shot_playback
             verify_video_shot_playback(ROOT)
+            from check_ai_curator import verify_ai_curator
+            verify_ai_curator(ROOT)
 
 if __name__=='__main__': unittest.main()

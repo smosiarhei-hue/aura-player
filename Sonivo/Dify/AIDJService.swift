@@ -24,7 +24,7 @@ final class AIDJService: ObservableObject {
         Опиши вайб в 1-2 коротких предложениях и верни JSON со списком треков строго по шаблону.
         """
 
-        let (fullAnswer, _, playlist) = try await DifyService.shared.sendMessage(query: prompt) { _ in }
+        let (fullAnswer, _, playlist) = try await DifyService.shared.sendMessage(query: prompt, channel: .dj) { _ in }
 
         guard let playlist = playlist, !playlist.tracks.isEmpty else {
             // Фолбек: если JSON не вернулся
@@ -60,7 +60,7 @@ final class AIDJService: ObservableObject {
         """
 
         do {
-            let (answer, _, _) = try await DifyService.shared.sendMessage(query: prompt) { _ in }
+            let (answer, _, _) = try await DifyService.shared.sendMessage(query: prompt, channel: .dj) { _ in }
             let cleaned = cleanDJAnswer(answer)
             if !cleaned.isEmpty {
                 commentaryCache[key] = cleaned

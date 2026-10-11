@@ -384,8 +384,9 @@ class AntigravitySpecTests(unittest.TestCase):
 
         dify_file = self.repo_root / "Sonivo" / "Dify" / "DifyService.swift"
         dify_content = dify_file.read_text(encoding="utf-8")
-        self.assertIn("МИНИМУМ 50", dify_content)
-        self.assertIn("maxTokens: 4096", dify_content)
+        self.assertIn("12–20", dify_content)
+        self.assertNotIn("МИНИМУМ 50", dify_content)
+        self.assertIn("maxTokens:channel == .health ? 96 : 4096", dify_content)
         self.assertIn("extendPlaylist", dify_content)
 
         gen_file = self.repo_root / "Sonivo" / "Dify" / "AIPlaylistGeneratorService.swift"
@@ -396,8 +397,8 @@ class AntigravitySpecTests(unittest.TestCase):
 
         assistant_view = self.repo_root / "Sonivo" / "Dify" / "AIMusicAssistantView.swift"
         as_content = assistant_view.read_text(encoding="utf-8")
-        self.assertIn("extendPlaylistBy50", as_content)
-        self.assertIn("+50 ещё", as_content)
+        self.assertIn("store.extend(message.id)", as_content)
+        self.assertIn("Найти ещё до 50 новых песен", as_content)
 
     def test_playlist_cover_art_and_collection_navigation(self):
         models_file = self.repo_root / "Sonivo" / "models.swift"
@@ -422,14 +423,15 @@ class AntigravitySpecTests(unittest.TestCase):
 
         gen_file = self.repo_root / "Sonivo" / "Dify" / "AIPlaylistGeneratorService.swift"
         gen_content = gen_file.read_text(encoding="utf-8")
-        self.assertIn("YandexMusicService.shared.getChart()", gen_content)
+        self.assertNotIn("getChart()", gen_content)
+        self.assertIn("AICuratorPolicy.matches", gen_content)
         self.assertIn("coverURL = tracks.first(where:", gen_content)
 
         as_file = self.repo_root / "Sonivo" / "Dify" / "AIMusicAssistantView.swift"
         as_content = as_file.read_text(encoding="utf-8")
-        self.assertIn("VibeEqualizerWaveView", as_content)
-        self.assertIn("vibePresets", as_content)
-        self.assertIn("modernPlaylistShowcaseCard", as_content)
+        self.assertIn("CuratorMotionMark", as_content)
+        self.assertIn("private var discovery", as_content)
+        self.assertIn("private func playlistCard", as_content)
 
     def test_automix_transition_and_playback_resilience(self):
         player_file = self.repo_root / "Sonivo" / "playercore.swift"

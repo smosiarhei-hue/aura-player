@@ -17,13 +17,13 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var subtitle: String {
         switch self {
-        case .nvidia: return "DeepSeek V4.1 Flash, Nemotron 3 и актуальные модели сентября 2026"
+        case .nvidia: return "Модель и доступ настраиваются в кабинете провайдера"
         case .dify: return "Собственные агенты и пайплайны Dify Workflow"
         }
     }
 }
 
-// MARK: - NVIDIA NIM Models (Актуальные на сентябрь 2026)
+// MARK: - Provider model metadata (configured by the account owner)
 
 struct NVIDIAAIModel: Identifiable, Hashable, Sendable {
     let id: String
@@ -32,57 +32,8 @@ struct NVIDIAAIModel: Identifiable, Hashable, Sendable {
     let badge: String
     let isRecommended: Bool
 
-    static let availableModels: [NVIDIAAIModel] = [
-        NVIDIAAIModel(
-            id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-            displayName: "Nemotron 3 Nano Omni (30B)",
-            summary: "Сверхскоростной отклик (~1.8 сек), точное понимание настроений и живые рекомендации.",
-            badge: "⚡ Рекомендовано",
-            isRecommended: true
-        ),
-        NVIDIAAIModel(
-            id: "nvidia/nemotron-3-super-120b-a12b",
-            displayName: "Nemotron 3 Super (120B)",
-            summary: "Мощная 120-миллиардная модель с энциклопедическим кругозором в музыке и редких жанрах.",
-            badge: "120B MoE",
-            isRecommended: true
-        ),
-        NVIDIAAIModel(
-            id: "deepseek-ai/deepseek-v4.1-flash",
-            displayName: "DeepSeek V4.1 Flash",
-            summary: "Флагманский MoE Flash для музыкального анализа и глубокого подбора треков.",
-            badge: "MoE Flash",
-            isRecommended: false
-        ),
-        NVIDIAAIModel(
-            id: "nvidia/nemotron-3-ultra-550b-a55b",
-            displayName: "Nemotron 3 Ultra (550B)",
-            summary: "Максимальная интеллектуальная глубина для сложных концептуальных плейлистов.",
-            badge: "550B Ultra",
-            isRecommended: false
-        ),
-        NVIDIAAIModel(
-            id: "nvidia/nemotron-3.5-lightning-30b-a3b",
-            displayName: "Nemotron 3.5 Lightning (30B)",
-            summary: "Специализированная скоростная модель для мгновенных DJ-подводок и диалогов.",
-            badge: "Lightning",
-            isRecommended: false
-        ),
-        NVIDIAAIModel(
-            id: "z-ai/glm-5.3-flash",
-            displayName: "GLM 5.3 Flash",
-            summary: "Быстрая компактная модель для генерации лаконичных списков треков.",
-            badge: "Flash",
-            isRecommended: false
-        ),
-        NVIDIAAIModel(
-            id: "moonshotai/kimi-k3",
-            displayName: "Kimi K3",
-            summary: "Глубокое понимание длинных запросов, контекста и сложных переходов.",
-            badge: "Reasoning",
-            isRecommended: false
-        )
-    ]
+    static let availableModels: [NVIDIAAIModel] = []
+
 }
 
 // MARK: - OpenAI / NVIDIA NIM Chat Completions Models
@@ -113,13 +64,13 @@ struct OpenAIChatRequest: Codable, Sendable {
         userQuery: String,
         temperature: Double = 0.7,
         maxTokens: Int = 1024,
-        stream: Bool = true
+        stream: Bool = true,
+        history: [Message] = []
     ) {
         self.model = model
         self.messages = [
-            Message(role: "system", content: systemPrompt),
-            Message(role: "user", content: userQuery)
-        ]
+            Message(role: "system", content: systemPrompt)
+        ] + Array(history.suffix(12)) + [Message(role: "user", content: userQuery)]
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.stream = stream
@@ -281,6 +232,9 @@ struct AIMessage: Identifiable, Codable, Sendable {
     var isStreaming: Bool
     var isResolvingTracks: Bool
     var error: String?
+    var savedPlaylistID: UUID? = nil
+    var unresolvedCount: Int? = nil
+    var extendedCount: Int? = nil
 
     init(
         id: UUID = UUID(),
