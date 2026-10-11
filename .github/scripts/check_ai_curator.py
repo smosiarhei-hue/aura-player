@@ -7,6 +7,7 @@ def verify_ai_curator(root):
     fixtures = r'''
 import Foundation
 import Combine
+import CryptoKit
 nonisolated struct Track: Codable, Sendable, Identifiable { var id = UUID(); var title: String; var artist: String; var coverURL: String? = nil }
 @MainActor enum CuratorWebCredentialStore {
     static var token = ""
@@ -205,25 +206,32 @@ import Foundation
         defer { webDefaults.removePersistentDomain(forName:suiteName) }
         let web = CuratorWebSearch(session:session,defaults:webDefaults)
         precondition(!web.enabled && !web.isConfigured)
-        for invalid in ["http://proxy.example.com/search","https://user:pass@proxy.example.com/search",
-                        "https://proxy.example.com/search?token=x","https://api.firecrawl.dev/v2/search"] {
-            precondition(CuratorWebSearch.validEndpoint(invalid) == nil)
-        }
-        try web.configure(endpoint:"https://proxy.example.com/search",token:"proxy-fixture-not-real")
-        web.enabled = true
-        let sourceJSON = "{\"sources\":[{\"title\":\"Release\",\"url\":\"https://music.example.com/release\",\"excerpt\":\"Artist — Song\"},{\"title\":\"Private\",\"url\":\"https://127.0.0.1/private\",\"excerpt\":\"bad\"}]}"
+        do { try web.configure(key:"   "); fatalError("Empty key accepted") } catch CuratorWebError.configuration { }
+        try web.configure(key:"fc-fixture-not-real")
+        precondition(web.enabled && web.isConfigured)
+        let sourceJSON = "{\"success\":true,\"data\":{\"web\":[{\"title\":\"Release\",\"url\":\"https://music.example.com/release\",\"markdown\":\"Artist — Song\"},{\"title\":\"Private\",\"url\":\"https://127.0.0.1/private\",\"markdown\":\"bad\"}]}}"
         StubProtocol.reply(200,sourceJSON)
         let found = try await web.search("jazz")
         precondition(found.sources.count == 1 && found.promptContext.contains("недоверенные данные"))
         let webRequest = StubProtocol.requests.last!
-        precondition(webRequest.value(forHTTPHeaderField:"Authorization") == "Bearer proxy-fixture-not-real")
+        precondition(webRequest.value(forHTTPHeaderField:"Authorization") == "Bearer fc-fixture-not-real")
         let webBody = try JSONSerialization.jsonObject(with:webRequest.httpBody!) as! [String:Any]
-        precondition(Set(webBody.keys) == ["query"] && webBody["query"] as? String == "jazz")
+        precondition(webRequest.url!.absoluteString == "https://api.firecrawl.dev/v2/search")
+        precondition(webBody["query"] as? String == "jazz" && webBody["limit"] as? Int == 3)
+        precondition(webBody["sources"] as? [String] == ["web"])
+        let scrape = webBody["scrapeOptions"] as! [String:Any]
+        precondition(scrape["formats"] as? [String] == ["markdown"] && (scrape["parsers"] as! [Any]).isEmpty)
+        let beforeCached = StubProtocol.requests.count
+        let cachedResult = try await web.search("jazz")
+        precondition(cachedResult.sources.count == 1 && StubProtocol.requests.count == beforeCached)
+        let resumed = CuratorWebSearch(session:session,defaults:webDefaults)
+        precondition(resumed.enabled && resumed.isConfigured)
+
         StubProtocol.reply(429,"{\"error\":\"quota\"}")
         do { _ = try await web.search("q"); fatalError("Web quota ignored") } catch CuratorWebError.limit { }
         StubProtocol.reply(403,"secret upstream error")
         do { _ = try await web.search("q"); fatalError("Web rejected auth ignored") } catch CuratorWebError.unauthorized { }
-        StubProtocol.reply(200,String(repeating:"x",count:64_001))
+        StubProtocol.reply(200,String(repeating:"x",count:256_001))
         do { _ = try await web.search("q"); fatalError("Oversized web accepted") } catch CuratorWebError.invalidResponse { }
         try ai.configure(provider:.nvidia,key:"fixture-only-not-real",endpoint:"https://fixture.invalid/v1",model:"fixture-model")
         let webStore = AIMusicCuratorStore(ai:ai,web:web)
@@ -268,7 +276,20 @@ import Foundation
         precondition(webStore.send("Without web",shareCurrentTrack:false))
         for _ in 0..<500 { if !webStore.isBusy { break }; try await Task.sleep(for:.milliseconds(10)) }
         precondition(StubProtocol.requests.count == requestsBeforeDisabled + 1)
-        webStore.clearChat(); try web.removeCredential()
+        let nextLaunch = CuratorWebSearch(session:session,defaults:webDefaults)
+        precondition(!nextLaunch.enabled && nextLaunch.isConfigured)
+        // Personal-key quotas are persistent, distinct from a server-wide budget.
+        webStore.clearChat()
+        web.enabled = true
+        let keyHash = SHA256.hash(data:Data("fc-fixture-not-real".utf8)).map { String(format:"%02x",$0) }.joined()
+        let budgetKey = "ai_curator.firecrawl.budget.v1." + keyHash
+        let day = Int(Date().timeIntervalSince1970/86400), minute = Int(Date().timeIntervalSince1970/60)
+        webDefaults.set(["day":day,"daily":60,"minute":minute,"burst":0],forKey:budgetKey)
+        do { _ = try await web.search("new uncached quota fixture"); fatalError("Daily cap ignored") } catch CuratorWebError.dailyLimit { }
+        webDefaults.set(["day":day,"daily":0,"minute":minute,"burst":12],forKey:budgetKey)
+        do { _ = try await web.search("new uncached burst fixture"); fatalError("Burst cap ignored") } catch CuratorWebError.rateLimit { }
+        try web.removeCredential()
+
         print("Curator web: opt-in, safe source URLs, bounded transport, auth/quota, AI source context, exact catalog resolution, honest fallback, archive migration, cancellation and disabled zero-web-network passed")
 
         print("Curator: transport errors, exact matching, guest gating, cancellation/clear, account scope, save ID, clipboard and isolated channels passed")

@@ -1,18 +1,27 @@
-# Optional web-grounded AI curator
+# Automatic personal-key Firecrawl connection
 
-Sonivo connects to a personal authenticated Firecrawl proxy, not directly to Firecrawl. No shared credential, deployed URL or paid request is included in this change. Owner deployment instructions: workers/curator-web/README.md.
+Sonivo now calls Firecrawl v2 directly. No proxy, Cloudflare account, custom HTTP address or deployment is required for this personal-key flow. No common API key is shipped in the app.
 
 ## User flow
-- Configure HTTPS `/search` proxy URL and a distinct server access token in AI settings. Token is stored in device-only Keychain; Firecrawl key stays on server.
-- Explicitly enable web search (off by default). The toggle states that query text, one previous user clarification and optionally consented song title/artist go to the server/Firecrawl. No account token, audio, favorites or listening history is sent.
-- Curator shows searching → AI reply → catalog resolution, within the same cancellable operation.
-- Build requests and conversational answers get up to3 bounded source excerpts. Follow-up playlist extensions also retrieve fresh context, with the existing exclusion/duplicate policy unchanged.
-- Source URLs/titles/date are rendered separately from model text. They are actually retrieved candidates, not proof every claim/track came from that page. Prompt requests numbered [1] citations but does not guarantee model compliance.
-- No sources/quota/HTTP/network failure produces an explicit “without fresh web data” notice, then continues the ordinary AI request. It must not claim an internet search took place when disabled or failed.
-- Stop, clear, account changes and settings changes cancel/discard stale work. Source metadata survives chat archive reload; older archives decode optional fields.
+- AI Куратор → Настройки AI → Веб-поиск · Firecrawl: paste your personal Firecrawl API key and tap “Сохранить и включить”. This explicitly enables retrieval and consent; the standard API address, headers and formats are automatic.
+- Device-only Keychain stores the personal key. It is a different account from the old proxy-access token; the old token is never reinterpreted/sent to Firecrawl. The old custom endpoint preference is removed. No paid validation request is made merely for saving a key; authentication is checked by Firecrawl on the first search.
+- Relaunch picks up the key and enabled setting. Manual opt-out is preserved. Deleting the key disables search and clears memory cache. This key supplies web data, not an LLM: the existing AI model/provider connection remains separate.
+- Query, one previous user clarification and optionally consented track title/artist go directly to Firecrawl. No Yandex token, audio, favorites or account listening history is sent. The AI model receives bounded source excerpts.
+- Answers, playlist creation and follow-up extensions retrieve up to3 sources. Existing artist/title matching, guest restrictions and duplicate exclusions remain unchanged. Original answer source numbering is not overwritten by a later extension.
+- Retrieval → AI response → catalog resolution is one cancellable operation. Source links, notices and retrieval date are separate UI fields, persisted with chat. Older archives remain compatible.
+- Empty results, HTTP auth/quota/network errors produce an explicit “without fresh web data” notice, then ordinary AI continues. No web traffic when disabled. Stop/clear/account/configuration changes discard stale work.
 
-## Boundaries
-Retrieved text is serialized data, never a system instruction; system prompt rejects page-injected commands/secret exfiltration and distinguishes release facts from catalog availability. This is defense in depth, not a promise of complete prompt-injection immunity or100% answers. AI remains advisory; the existing exact artist/title resolver is the only source of playable account tracks. No change to My Wave, VideoShots, audio engine or library sync.
+## Automatic defaults / cost controls
+Fixed HTTPS endpoint `https://api.firecrawl.dev/v2/search`. Bearer key, web only, limit3, main-content Markdown, no PDF parsing (`parsers: []`), 15s Firecrawl timeout /22s request timeout,256KB response bound, up to3000 characters per excerpt, public HTTPS source links only. Production redirects are rejected to avoid credential forwarding. No model-generated API address is accepted.
+
+15-minute in-memory cache of identical queries, max60 entries, cleared on key/enable changes. Successful nonempty results only. Restart discards cache. Persisted local limits per key fingerprint:60 attempts/day and12/minute, counted before network including failures. Cache hits do not reserve an attempt. These are device-side guardrails, not hard account-wide enforcement or a live credit balance. They do not replace Firecrawl's own rate limits/billing. A normal search+three ordinary pages is approximately5 credits under current pricing; real costs depend on returned content and service policy. No JSON extraction or paid connection probe.
+
+## Safety / deployment boundary
+Retrieved text is serialized data, not system instructions. Prompt rejects page-injected commands and distinguishes source facts from catalog availability. This is defense in depth, not guaranteed prompt-injection immunity or100% factual correctness. Source candidates are actually retrieved, but a numbered citation generated by AI is not proof that every claim is supported.
+
+The old `workers/curator-web` module remains an optional private server template for a future shared-key deployment. The personal-key app no longer uses it and has no server-address input. Do not embed a shared Firecrawl key in distributed app binaries; each user supplies their own key. For a common app-funded key, use a backend with verified per-user authentication and quotas.
 
 ## Verification
-Offline Node tests: auth/body contract, fixed upstream, safe public source URLs, truncation, deduplication, sanitized errors, response size, persistent atomic budgets and bounded cache. macOS Swift transport/store fixtures exercise opt-in, HTTP/auth/quota, bounded response, source context into AI, exact catalog resolution, visible fallback, archives, cancellation and zero web traffic when disabled. CI does not verify production Firecrawl credentials, Cloudflare deployment or factual music recommendations.
+macOS production transport/store fixtures: standard direct endpoint/body/auth; auto enable/relaunch/manual off; safe URLs, truncation, response cap, auth/quota;15-minute cache/no extra requests; persistent local budgets; source context into AI, exact catalog resolution, extension/source separation, honest fallback, archive migration, cancellation and disabled zero-web-network. Offline fixtures do not verify a live key, actual provider availability or factual recommendation quality. iOS SDK compilation is checked by Build IPA.
+
+Official contract/costs: https://docs.firecrawl.dev/api-reference/endpoint/search and https://docs.firecrawl.dev/features/search

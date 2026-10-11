@@ -5,7 +5,7 @@ import Security
     private static var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: "com.sonivo.curator.web",
-         kSecAttrAccount as String: "proxy-access"]
+         kSecAttrAccount as String: "personal-firecrawl-api-key"]
     }
     static func read() -> String {
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -14,8 +14,8 @@ import Security
               let data = result as? Data else { return "" }
         return String(data: data, encoding: .utf8) ?? ""
     }
-    static func write(_ token: String) throws {
-        let clean = token.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func write(_ key: String) throws {
+        let clean = key.trimmingCharacters(in: .whitespacesAndNewlines)
         let q = query
         if clean.isEmpty {
             let status = SecItemDelete(q as CFDictionary)
