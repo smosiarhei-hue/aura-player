@@ -16,7 +16,8 @@ class AIModelSelectionTests(unittest.TestCase):
         self.assertIn('[400, 404, 410].contains(status)',source)
         self.assertIn('guard automatic, Self.isModelSpecificSetupFailure(error)',source)
         self.assertIn('remaining = 120',source)
-        self.assertIn('min(60, remaining)',source)
+        self.assertIn('laterReserve',source)
+        self.assertIn('remaining - laterReserve',source)
     def test_ui_retains_auto_and_explains_attempts(self):
         source=(ROOT/'Sonivo/Dify/DifySettingsSheet.swift').read_text()
         self.assertIn('Лучшая доступная для Куратора · авто',source)

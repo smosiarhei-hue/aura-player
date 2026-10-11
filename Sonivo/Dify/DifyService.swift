@@ -90,7 +90,9 @@ final class DifyService: ObservableObject {
             let elapsed = started.duration(to: clock.now).components
             let remaining = 120 - Double(elapsed.seconds) - Double(elapsed.attoseconds) / 1e18
             guard remaining > 0 else { throw DifyError.automaticSelectionFailed(failures: failures) }
-            let seconds = automatic ? min(60, remaining) : 120
+            // Reserve time for later candidates; two slow quality probes must not starve the final working option.
+            let laterReserve = Double(candidates.count - index - 1) * 30
+            let seconds = automatic ? min(60, min(remaining, max(1, remaining - laterReserve))) : 120
             onProgress(automatic ? "Проверяем модель \(index + 1)/\(candidates.count): \(chosen)" : "Проверяем подключение…")
             do {
                 try await probeConnection(provider: provider, key: cleanKey, endpoint: endpoint, model: chosen,
