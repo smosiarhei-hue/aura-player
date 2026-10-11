@@ -51,11 +51,11 @@ final class AIPlaylistGeneratorService {
         return service.convertToTrack(match)
     }
 
-    func extendPlaylist(playlistTitle: String, description: String, existingTracks: [Track]) async throws -> [Track] {
+    func extendPlaylist(playlistTitle: String, description: String, existingTracks: [Track], webContext: String = "") async throws -> [Track] {
         let account = YandexMusicService.shared.accountGeneration
         guard YandexMusicService.shared.isUserLoggedIn else { throw DifyError.unauthorized }
         guard let playlist = try await DifyService.shared.extendPlaylist(
-            title: playlistTitle, description: description, existingTracks: existingTracks) else { throw DifyError.emptyAnswer }
+            title: playlistTitle, description: description, existingTracks: existingTracks, webContext: webContext) else { throw DifyError.emptyAnswer }
         try Task.checkCancellation()
         let tracks = await resolveTracks(for: playlist.tracks)
         try Task.checkCancellation()

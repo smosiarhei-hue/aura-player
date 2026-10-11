@@ -237,6 +237,12 @@ struct AIMessage: Identifiable, Codable, Sendable {
     var extendedCount: Int? = nil
     var requestSummary: String? = nil
     var clarification: String? = nil
+    var webSources: [CuratorWebSource]? = nil
+    var webNotice: String? = nil
+    var webFetchedAt: Date? = nil
+    var extensionWebSources: [CuratorWebSource]? = nil
+    var extensionWebNotice: String? = nil
+    var extensionWebFetchedAt: Date? = nil
 
     init(
         id: UUID = UUID(),

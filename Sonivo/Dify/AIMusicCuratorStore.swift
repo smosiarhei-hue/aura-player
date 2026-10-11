@@ -6,10 +6,11 @@ import Combine
 final class AIMusicCuratorStore: ObservableObject {
     static let shared = AIMusicCuratorStore()
     enum Phase: Equatable {
-        case idle, thinking, resolving, extending
+        case idle, searching, thinking, resolving, extending
         var title: String {
             switch self {
             case .idle: "Готов к новым открытиям"
+            case .searching: "Ищу музыкальные источники…"
             case .thinking: "Ищу музыкальную идею…"
             case .resolving: "Проверяю песни в каталоге…"
             case .extending: "Ищу продолжение без повторов…"
@@ -23,8 +24,9 @@ final class AIMusicCuratorStore: ObservableObject {
     private var requestID = UUID()
     private var scope = ""
     var isBusy: Bool { phase != .idle }
+    private let web: CuratorWebSearch
     private let ai: DifyService
-    init(ai: DifyService = .shared) { self.ai = ai; switchAccount() }
+    init(ai: DifyService = .shared, web: CuratorWebSearch = .shared) { self.ai = ai; self.web = web; switchAccount() }
     private var defaultsKey: String { "sonivo.ai_curator.messages.v2." + scope }
 
     func switchAccount() {
@@ -86,12 +88,18 @@ final class AIMusicCuratorStore: ObservableObject {
         messages.append(AIMessage(role: .user, text: text + context))
         messages.append(AIMessage(id: id, role: .assistant, text: "", isStreaming: true))
         if messages.count > AICuratorPolicy.messageLimit { messages.removeFirst(messages.count - AICuratorPolicy.messageLimit) }
-        phase = .thinking
+        phase = web.enabled ? .searching : .thinking
         operation = Task { [weak self] in
             guard let self else { return }
             var accumulated = "", lastUpdate = Date.distantPast
             do {
-                let result = try await ai.sendMessage(query: text + context, history: history) { [weak self] delta in
+                let previous = history.last(where: { $0.role == "user" }).map { String($0.content.prefix(150)) } ?? ""
+                let searchQuery = String(text.prefix(700)) + String(context.prefix(100)) + (previous.isEmpty ? "" : "\nПредыдущее уточнение: " + previous)
+                let retrieval = try await webContext(for: searchQuery, messageID: id, token: token, account: account)
+                try Task.checkCancellation()
+                guard requestID == token, account == YandexMusicService.shared.accountGeneration else { throw CancellationError() }
+                phase = .thinking
+                let result = try await ai.sendMessage(query: text + context + retrieval, history: history) { [weak self] delta in
                     accumulated += delta
                     if Date().timeIntervalSince(lastUpdate) >= 0.08 {
                         lastUpdate = Date()
@@ -124,6 +132,29 @@ final class AIMusicCuratorStore: ObservableObject {
         }
         return true
     }
+    private func webContext(for query: String, messageID: UUID, token: UUID, account: UUID, isExtension: Bool = false) async throws -> String {
+        guard web.enabled else { return "" }
+        do {
+            let result = try await web.search(query)
+            try Task.checkCancellation()
+            guard requestID == token, account == YandexMusicService.shared.accountGeneration else { throw CancellationError() }
+            let notice = result.sources.isEmpty ? "Веб-поиск не нашёл источников. Ответ без свежих веб-данных." : nil
+            update(messageID) {
+                if isExtension { $0.extensionWebSources = result.sources; $0.extensionWebFetchedAt = Date(); $0.extensionWebNotice = notice }
+                else { $0.webSources = result.sources; $0.webFetchedAt = Date(); $0.webNotice = notice }
+            }
+            return result.promptContext
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            guard requestID == token, account == YandexMusicService.shared.accountGeneration else { throw CancellationError() }
+            update(messageID) {
+                let notice = error.localizedDescription + " Ответ без свежих веб-данных."
+                if isExtension { $0.extensionWebSources = nil; $0.extensionWebFetchedAt = nil; $0.extensionWebNotice = notice }
+                else { $0.webSources = nil; $0.webFetchedAt = nil; $0.webNotice = notice }
+            }
+            return ""
+        }
+    }
     func extend(_ messageID: UUID) {
         guard !isBusy, let message = messages.first(where: { $0.id == messageID }),
               let playlist = message.playlist, !message.resolvedTracks.isEmpty else { return }
@@ -132,8 +163,12 @@ final class AIMusicCuratorStore: ObservableObject {
         operation = Task { [weak self] in
             guard let self else { return }
             do {
+                let context = try await webContext(for: "Новые песни для подборки: " + playlist.playlistTitle + ". " + playlist.description,
+                                                   messageID: messageID, token: token, account: account, isExtension: true)
+                try Task.checkCancellation()
+                guard requestID == token, account == YandexMusicService.shared.accountGeneration else { throw CancellationError() }
                 let tracks = try await AIPlaylistGeneratorService.shared.extendPlaylist(playlistTitle: playlist.playlistTitle,
-                    description: playlist.description, existingTracks: message.resolvedTracks)
+                    description: playlist.description, existingTracks: message.resolvedTracks, webContext: context)
                 try Task.checkCancellation()
                 guard requestID == token, account == YandexMusicService.shared.accountGeneration else { return }
                 update(messageID) { $0.resolvedTracks += tracks; $0.extendedCount = ($0.extendedCount ?? 0) + tracks.count }

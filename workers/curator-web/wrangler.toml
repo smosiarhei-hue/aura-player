@@ -1,0 +1,18 @@
+name = "sonivo-curator-web"
+main = "src/index.js"
+compatibility_date = "2026-10-05"
+
+[[durable_objects.bindings]]
+name = "SEARCH_GATE"
+class_name = "SearchGate"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SearchGate"]
+
+# Set encrypted secrets with wrangler secret put:
+# FIRECRAWL_API_KEY (upstream key, never sent to Sonivo)
+# CURATOR_ACCESS_TOKEN (random >=32 chars, personal deployment only)
+# Default persistent budget: 60 upstream searches/day, 12/minute.
+# For a public multi-user service replace the personal bearer with verified
+# per-user authentication, quotas and revocation before distributing it.

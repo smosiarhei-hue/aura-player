@@ -5,6 +5,7 @@ struct AIMusicAssistantView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var store = AIMusicCuratorStore.shared
+    @ObservedObject private var web = CuratorWebSearch.shared
     @ObservedObject private var dify = DifyService.shared
     @State private var service = YandexMusicService.shared
     @State private var player = PlayerCore.shared
@@ -63,6 +64,7 @@ struct AIMusicAssistantView: View {
             }
             .onChange(of: service.accountGeneration) { _, _ in store.switchAccount() }
             .onChange(of: dify.configurationID) { _, _ in if store.isBusy { store.cancel() } }
+            .onChange(of: web.configurationID) { _, _ in if store.isBusy { store.cancel() } }
             .onDisappear { store.cancel() }
             .task {
                 store.switchAccount()
@@ -86,6 +88,11 @@ struct AIMusicAssistantView: View {
                 .foregroundStyle(SN.ink).fixedSize(horizontal: false, vertical: true)
             Text("Идея → подборка → музыка. Расскажи, что хочется услышать — я предложу направление и проверю песни.")
                 .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Toggle("Искать в интернете", isOn: $web.enabled).font(.subheadline)
+                .disabled(!web.isConfigured || store.isBusy)
+            if !web.isConfigured {
+                Button("Подключить веб-поиск", systemImage: "globe") { showSettings = true }.frame(minHeight: 44)
+            }
             HStack(spacing: 8) {
                 Circle().fill(dify.isConfigured ? Color.green : Color.orange).frame(width: 6, height: 6)
                 Text(dify.isConfigured ? "AI подключён · отдельная подборка, не Моя волна" : "Для начала подключи своего AI-провайдера")
@@ -166,9 +173,29 @@ struct AIMusicAssistantView: View {
                     Text(question).font(.headline)
                 }
                 if let error = message.error { Text(error).font(.callout).foregroundStyle(.orange) }
+                if let notice = message.webNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+                if let sources = message.webSources, !sources.isEmpty {
+                    webSourceList(sources, date: message.webFetchedAt, title: "Веб-источники")
+                }
+                if let notice = message.extensionWebNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+                if let sources = message.extensionWebSources, !sources.isEmpty {
+                    webSourceList(sources, date: message.extensionWebFetchedAt, title: "Источники последнего дополнения")
+                }
                 if let playlist = message.playlist { playlistCard(message, playlist: playlist) }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+    private func webSourceList(_ sources: [CuratorWebSource], date: Date?, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: "globe").font(.caption.weight(.semibold))
+            ForEach(Array(sources.enumerated()), id: \.element.id) { index, source in
+                if let url = URL(string: source.url), url.scheme == "https" {
+                    Link("[\(index + 1)] " + (source.title.isEmpty ? (url.host ?? "Источник") : source.title), destination: url)
+                        .font(.callout).frame(minHeight: 44, alignment: .leading)
+                }
+            }
+            if let date { Text(date, style: .date).font(.caption2).foregroundStyle(.secondary) }
+        }.padding(14).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
     private func playlistCard(_ message: AIMessage, playlist: AIGeneratedPlaylist) -> some View {
         VStack(alignment: .leading, spacing: 18) {

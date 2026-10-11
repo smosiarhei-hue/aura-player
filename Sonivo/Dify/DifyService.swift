@@ -285,7 +285,8 @@ final class DifyService: ObservableObject {
     func extendPlaylist(
         title: String,
         description: String,
-        existingTracks: [Track]
+        existingTracks: [Track],
+        webContext: String = ""
     ) async throws -> AIGeneratedPlaylist? {
         let existingSummary = existingTracks.suffix(200).map { "\($0.artist) — \($0.title)" }.joined(separator: ", ")
         let query = """
@@ -306,7 +307,7 @@ final class DifyService: ObservableObject {
         ```
         """
 
-        let result = try await sendMessage(query: query, channel: .playlistExtension, onDelta: { _ in })
+        let result = try await sendMessage(query: query + webContext, channel: .playlistExtension, onDelta: { _ in })
         return result.playlist ?? Self.extractPlaylist(from: result.fullText)
     }
 

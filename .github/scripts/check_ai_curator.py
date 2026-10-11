@@ -8,6 +8,11 @@ def verify_ai_curator(root):
 import Foundation
 import Combine
 nonisolated struct Track: Codable, Sendable, Identifiable { var id = UUID(); var title: String; var artist: String; var coverURL: String? = nil }
+@MainActor enum CuratorWebCredentialStore {
+    static var token = ""
+    static func read() -> String { token }
+    static func write(_ value: String) throws { token = value }
+}
 @MainActor enum AICredentialStore {
     static var keys: [String:String] = [:]
     static func migrate(_ provider: AIProvider, legacyKey: String) {}
@@ -180,6 +185,79 @@ import Foundation
         print("Curator auto setup: live catalog, non-chat exclusions, preserve model, staged commit, rejected key preservation and Dify server model passed")
         print("Curator intent: playlist/clarify/conversation envelope and constraint-priority prompt checks passed")
 
+
+        // Actual web transport/store integration; no real keys, servers or web requests.
+        let suiteName = "curator-web-fixture-" + UUID().uuidString
+        let webDefaults = UserDefaults(suiteName:suiteName)!
+        defer { webDefaults.removePersistentDomain(forName:suiteName) }
+        let web = CuratorWebSearch(session:session,defaults:webDefaults)
+        precondition(!web.enabled && !web.isConfigured)
+        for invalid in ["http://proxy.example.com/search","https://user:pass@proxy.example.com/search",
+                        "https://proxy.example.com/search?token=x","https://api.firecrawl.dev/v2/search"] {
+            precondition(CuratorWebSearch.validEndpoint(invalid) == nil)
+        }
+        try web.configure(endpoint:"https://proxy.example.com/search",token:"proxy-fixture-not-real")
+        web.enabled = true
+        let sourceJSON = "{\"sources\":[{\"title\":\"Release\",\"url\":\"https://music.example.com/release\",\"excerpt\":\"Artist — Song\"},{\"title\":\"Private\",\"url\":\"https://127.0.0.1/private\",\"excerpt\":\"bad\"}]}"
+        StubProtocol.reply(200,sourceJSON)
+        let found = try await web.search("jazz")
+        precondition(found.sources.count == 1 && found.promptContext.contains("недоверенные данные"))
+        let webRequest = StubProtocol.requests.last!
+        precondition(webRequest.value(forHTTPHeaderField:"Authorization") == "Bearer proxy-fixture-not-real")
+        let webBody = try JSONSerialization.jsonObject(with:webRequest.httpBody!) as! [String:Any]
+        precondition(Set(webBody.keys) == ["query"] && webBody["query"] as? String == "jazz")
+        StubProtocol.reply(429,"{\"error\":\"quota\"}")
+        do { _ = try await web.search("q"); fatalError("Web quota ignored") } catch CuratorWebError.limit { }
+        StubProtocol.reply(403,"secret upstream error")
+        do { _ = try await web.search("q"); fatalError("Web rejected auth ignored") } catch CuratorWebError.unauthorized { }
+        StubProtocol.reply(200,String(repeating:"x",count:64_001))
+        do { _ = try await web.search("q"); fatalError("Oversized web accepted") } catch CuratorWebError.invalidResponse { }
+        try ai.configure(provider:.nvidia,key:"fixture-only-not-real",endpoint:"https://fixture.invalid/v1",model:"fixture-model")
+        let webStore = AIMusicCuratorStore(ai:ai,web:web)
+        webStore.clearChat()
+        let chatChunk = try JSONSerialization.data(withJSONObject:["choices":[["delta":["content":"Found a recommendation [1].\n```json\n" + String(data:try JSONEncoder().encode(playlist),encoding:.utf8)! + "\n```"]]]])
+        let chatSSE = "data: " + String(data:chatChunk,encoding:.utf8)! + "\n\ndata: [DONE]\n\n"
+        StubProtocol.enqueue(200,sourceJSON); StubProtocol.enqueue(200,chatSSE)
+        precondition(webStore.send("Подбери джаз",shareCurrentTrack:false))
+        for _ in 0..<500 { if !webStore.isBusy { break }; try await Task.sleep(for:.milliseconds(10)) }
+        precondition(!webStore.isBusy && webStore.messages.last?.webSources?.count == 1)
+        precondition(webStore.messages.last?.resolvedTracks.count == 1 && webStore.messages.last?.webFetchedAt != nil)
+        let aiWebRequest = StubProtocol.requests.last { $0.url!.path.contains("chat/completions") }!
+        let aiWebBody = try JSONSerialization.jsonObject(with:aiWebRequest.httpBody!) as! [String:Any]
+        let aiWebMessages = aiWebBody["messages"] as! [[String:Any]]
+        precondition((aiWebMessages.last!["content"] as! String).contains("https://music.example.com/release"))
+        StubProtocol.enqueue(429,"{}"); StubProtocol.enqueue(200,chatSSE)
+        precondition(webStore.send("Ещё джаз",shareCurrentTrack:false))
+        for _ in 0..<500 { if !webStore.isBusy { break }; try await Task.sleep(for:.milliseconds(10)) }
+        precondition(webStore.messages.last?.error == nil && webStore.messages.last?.webNotice?.contains("без свежих") == true)
+        precondition(webStore.messages.last?.webSources == nil)
+        // Extensions must not rewrite source numbering for the original answer.
+        let originalSources = webStore.messages[1].webSources!
+        StubProtocol.enqueue(200,sourceJSON); StubProtocol.enqueue(200,chatSSE)
+        webStore.extend(webStore.messages[1].id)
+        for _ in 0..<500 { if !webStore.isBusy { break }; try await Task.sleep(for:.milliseconds(10)) }
+        precondition(webStore.messages[1].webSources?.first?.url == originalSources.first?.url)
+        precondition(webStore.messages[1].extensionWebSources?.count == 1)
+        let archived = try JSONEncoder().encode(webStore.messages)
+        let reloaded = try JSONDecoder().decode([AIMessage].self,from:archived)
+        precondition(reloaded.contains { $0.webSources?.count == 1 })
+        let oldArchive = try JSONSerialization.data(withJSONObject:[["id":UUID().uuidString,"role":"assistant","text":"Old reply",
+            "timestamp":0,"resolvedTracks":[],"isStreaming":false,"isResolvingTracks":false]])
+        let oldDecoded = try JSONDecoder().decode([AIMessage].self,from:oldArchive)
+        precondition(oldDecoded[0].webSources == nil && oldDecoded[0].extensionWebSources == nil)
+        StubProtocol.reply(-1,"")
+        precondition(webStore.send("Cancel web",shareCurrentTrack:false))
+        try await Task.sleep(for:.milliseconds(30)); webStore.clearChat()
+        try await Task.sleep(for:.milliseconds(30)); precondition(webStore.messages.isEmpty && !webStore.isBusy)
+        web.enabled = false
+        StubProtocol.reply(200,chatSSE)
+        let requestsBeforeDisabled = StubProtocol.requests.count
+        precondition(webStore.send("Without web",shareCurrentTrack:false))
+        for _ in 0..<500 { if !webStore.isBusy { break }; try await Task.sleep(for:.milliseconds(10)) }
+        precondition(StubProtocol.requests.count == requestsBeforeDisabled + 1)
+        webStore.clearChat(); try web.removeCredential()
+        print("Curator web: opt-in, safe source URLs, bounded transport, auth/quota, AI source context, exact catalog resolution, honest fallback, archive migration, cancellation and disabled zero-web-network passed")
+
         print("Curator: transport errors, exact matching, guest gating, cancellation/clear, account scope, save ID, clipboard and isolated channels passed")
     }
 }
@@ -189,7 +267,7 @@ import Foundation
         (p/'Fixtures.swift').write_text(fixtures)
         (p/'Checks.swift').write_text(checks)
         (p/'Store.swift').write_text((root/'Sonivo/Dify/AIMusicCuratorStore.swift').read_text().replace('import UIKit', ''))
-        files = [root/'Sonivo/Dify'/name for name in ['AICuratorPolicy.swift','DifyModels.swift','AICuratorPrompt.swift','AIModelDiscovery.swift','DifyService.swift','AIPlaylistGeneratorService.swift']]
+        files = [root/'Sonivo/Dify'/name for name in ['CuratorWebSearch.swift','AICuratorPolicy.swift','DifyModels.swift','AICuratorPrompt.swift','AIModelDiscovery.swift','DifyService.swift','AIPlaylistGeneratorService.swift']]
         built = subprocess.run(['swiftc','-swift-version','6',*map(str,files),str(p/'Store.swift'),str(p/'Fixtures.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
         assert built.returncode == 0, built.stderr
         ran = subprocess.run([str(p/'checks')],capture_output=True,text=True,timeout=60)
