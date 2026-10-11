@@ -6,7 +6,7 @@ final class AIPlaylistGeneratorService {
     private init() {}
 
     /// Recommendations only: never pad a selection with unrelated chart/library tracks.
-    func resolveTracks(for suggestions: [AITrackSuggestion]) async -> [Track] {
+    func resolveTracks(for suggestions: [AITrackSuggestion], yearRange: CuratorYearRange? = nil) async -> [Track] {
         let service = YandexMusicService.shared
         guard service.isUserLoggedIn, !Task.isCancelled else { return [] }
         let account = service.accountGeneration
@@ -16,14 +16,14 @@ final class AIPlaylistGeneratorService {
             var iterator = items.enumerated().makeIterator()
             for _ in 0..<4 {
                 if let (index, item) = iterator.next() {
-                    group.addTask { (index, await Self.searchSingleTrack(item)) }
+                    group.addTask { (index, await Self.searchSingleTrack(item, yearRange: yearRange)) }
                 }
             }
             for await (index, track) in group {
                 guard !Task.isCancelled, service.accountGeneration == account else { group.cancelAll(); break }
                 if let track { map[index] = track }
                 if let (index, item) = iterator.next() {
-                    group.addTask { (index, await Self.searchSingleTrack(item)) }
+                    group.addTask { (index, await Self.searchSingleTrack(item, yearRange: yearRange)) }
                 }
             }
             return map
@@ -36,28 +36,29 @@ final class AIPlaylistGeneratorService {
         }
     }
 
-    private static func searchSingleTrack(_ item: AITrackSuggestion) async -> Track? {
+    private static func searchSingleTrack(_ item: AITrackSuggestion, yearRange: CuratorYearRange?) async -> Track? {
         guard !Task.isCancelled else { return nil }
         let service = YandexMusicService.shared
         let account = service.accountGeneration
         let result = await service.searchAllFixed(query: "\(item.artist) \(item.title)")
         guard !Task.isCancelled, service.accountGeneration == account,
               let match = result.tracks.first(where: { candidate in
-                  candidate.available != false && AICuratorPolicy.matches(
-                    artist: item.artist, title: item.title,
-                    candidateArtist: candidate.artists?.compactMap(\.name).joined(separator: ", ") ?? "",
-                    candidateTitle: candidate.title)
+                  let catalogYears = candidate.albums?.compactMap(\.year).filter { $0 >= 1900 && $0 <= 2099 } ?? []
+                  let periodMatches = yearRange.map { range in catalogYears.min().map(range.contains) ?? false } ?? true
+                  return candidate.available != false && periodMatches && AICuratorPolicy.matchesCatalog(
+                    artist:item.artist,title:item.title,candidateArtists:candidate.artists?.compactMap(\.name) ?? [],
+                    candidateTitle:candidate.title,version:candidate.version)
               }) else { return nil }
         return service.convertToTrack(match)
     }
 
-    func extendPlaylist(playlistTitle: String, description: String, existingTracks: [Track], webContext: String = "") async throws -> [Track] {
+    func extendPlaylist(playlistTitle: String, description: String, existingTracks: [Track], webContext: String = "", yearRange: CuratorYearRange? = nil) async throws -> [Track] {
         let account = YandexMusicService.shared.accountGeneration
         guard YandexMusicService.shared.isUserLoggedIn else { throw DifyError.unauthorized }
         guard let playlist = try await DifyService.shared.extendPlaylist(
-            title: playlistTitle, description: description, existingTracks: existingTracks, webContext: webContext) else { throw DifyError.emptyAnswer }
+            title: playlistTitle, description: description, existingTracks: existingTracks, webContext: webContext + AICuratorRequest.periodContext(yearRange)) else { throw DifyError.emptyAnswer }
         try Task.checkCancellation()
-        let tracks = await resolveTracks(for: playlist.tracks)
+        let tracks = await resolveTracks(for: playlist.tracks, yearRange: yearRange)
         try Task.checkCancellation()
         guard account == YandexMusicService.shared.accountGeneration else { throw CancellationError() }
         let ids = Set(existingTracks.map(\.id))

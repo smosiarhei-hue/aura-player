@@ -40,13 +40,19 @@ nonisolated struct Track: Codable, Sendable, Identifiable { var id = UUID(); var
 @MainActor final class YandexMusicService {
     struct User { let uid: Int }
     struct Artist: Sendable { let name: String? }
-    struct Item: Sendable { let title: String; let artists: [Artist]?; let available: Bool? }
+    struct Album: Sendable { let year: Int? }
+    struct Item: Sendable {
+        let title: String; let artists: [Artist]?; let available: Bool?
+        var version: String? = nil; var albums: [Album]? = nil
+    }
     struct Search { let tracks: [Item] }
     static let shared = YandexMusicService(); var accountGeneration = UUID(); var currentUser: User?
     var isUserLoggedIn: Bool { currentUser != nil }
     var searches = 0
+    var fixtureTracks: [Item]?
     func searchAllFixed(query: String) async -> Search {
         searches += 1
+        if let fixtureTracks { return Search(tracks:fixtureTracks) }
         return Search(tracks: [Item(title:"Wrong Remix",artists:[Artist(name:"Wrong")],available:true),
                               Item(title:"Song",artists:[Artist(name:"Artist")],available:true)])
     }
@@ -121,6 +127,35 @@ import CryptoKit
         YandexMusicService.shared.currentUser = .init(uid:991)
         let tracks = await generator.resolveTracks(for:playlist.tracks)
         precondition(tracks.count == 1 && tracks[0].title == "Song")
+
+        precondition(AICuratorRequest.yearRange(query:"Хиты нулевых") == .init(lower:2000,upper:2009))
+        precondition(AICuratorRequest.yearRange(query:"Молодёжные хиты 2000-х") == .init(lower:2000,upper:2009))
+        precondition(AICuratorRequest.yearRange(query:"Дай хиты 2000–2009") == .init(lower:2000,upper:2009))
+        precondition(AICuratorRequest.yearRange(query:"В стиле нулевых") == nil)
+        precondition(AICuratorRequest.yearRange(query:"Хиты 2000s") == .init(lower:2000,upper:2009))
+        precondition(AICuratorRequest.yearRange(query:"Теперь помягче",previousUserQueries:["Хиты 2000-х","Новая подборка для бега"]) == nil)
+        precondition(AICuratorRequest.yearRange(query:"Теперь помягче",previousUserQueries:["Хиты 2000-х","Любой год"]) == nil)
+        precondition(AICuratorRequest.yearRange(query:"Теперь помягче",previousUserQueries:["Хиты 2000-х","Подбери музыку для сна"]) == nil)
+        precondition(AICuratorRequest.yearRange(query:"Помягче, без вокала",previousUserQueries:["Хиты 2000-х"]) == .init(lower:2000,upper:2009))
+        precondition(AICuratorRequest.yearRange(query:"Новая подборка для бега",previousUserQueries:["Хиты 2000-х"]) == nil)
+        precondition(AICuratorPolicy.matchesCatalog(artist:"Artist",title:"Song",candidateArtists:["Artist","Guest"],candidateTitle:"Song",version:nil))
+        precondition(!AICuratorPolicy.matchesCatalog(artist:"Artist",title:"Song",candidateArtists:["Cover Artist","Artist"],candidateTitle:"Song",version:nil))
+        precondition(!AICuratorPolicy.matchesCatalog(artist:"Artist",title:"Song",candidateArtists:["Artist"],candidateTitle:"Song",version:"Remix"))
+        YandexMusicService.shared.fixtureTracks = [.init(title:"Song",artists:[.init(name:"Artist")],available:true,albums:[.init(year:2003),.init(year:2024)])]
+        let period = CuratorYearRange(lower:2000,upper:2009)
+        let validPeriodTracks = await generator.resolveTracks(for:playlist.tracks,yearRange:period)
+        precondition(validPeriodTracks.count == 1)
+        YandexMusicService.shared.fixtureTracks = [.init(title:"Song",artists:[.init(name:"Artist")],available:true,albums:[.init(year:2013)])]
+        let periodRejectedLate = await generator.resolveTracks(for:playlist.tracks,yearRange:period)
+        precondition(periodRejectedLate.isEmpty)
+        YandexMusicService.shared.fixtureTracks = [.init(title:"Song",artists:[.init(name:"Artist")],available:true)]
+        let periodRejectedUnknown = await generator.resolveTracks(for:playlist.tracks,yearRange:period)
+        precondition(periodRejectedUnknown.isEmpty)
+        YandexMusicService.shared.fixtureTracks = [.init(title:"Song",artists:[.init(name:"Artist")],available:true,version:"Remix",albums:[.init(year:2003)])]
+        let remixRejected = await generator.resolveTracks(for:playlist.tracks)
+        precondition(remixRejected.isEmpty)
+        YandexMusicService.shared.fixtureTracks = nil
+
         let store = AIMusicCuratorStore(ai:ai)
         store.clearChat()
         precondition(store.send("test",shareCurrentTrack:false))
@@ -262,6 +297,24 @@ import CryptoKit
         print("Curator intent: playlist/clarify/conversation envelope and constraint-priority prompt checks passed")
 
 
+
+        try ai.configure(provider:.nvidia,key:"reference-fixture",endpoint:"https://fixture.invalid/v1",model:"fixture-model")
+        let referenceStore = AIMusicCuratorStore(ai:ai)
+        referenceStore.clearChat()
+        let reference = CuratorSongReference(id:UUID(),title:"Seed Song",artist:"Seed Artist")
+        StubProtocol.reply(200,"data: {\"choices\":[{\"delta\":{\"content\":\"Reference received.\"}}]}\n\ndata: [DONE]\n\n")
+        precondition(referenceStore.send("Похожие песни",shareCurrentTrack:false,reference:reference))
+        for _ in 0..<100 where referenceStore.isBusy { try await Task.sleep(for:.milliseconds(10)) }
+        let referenceRequest = StubProtocol.requests.last!
+        let referenceBody = try JSONSerialization.jsonObject(with:referenceRequest.httpBody!) as! [String:Any]
+        let referenceMessages = referenceBody["messages"] as! [[String:Any]]
+        precondition((referenceMessages.last!["content"] as! String).contains("Seed Artist"))
+        precondition(referenceStore.messages.first!.songReference?.title == "Seed Song")
+        let archivedReference = try JSONEncoder().encode(referenceStore.messages)
+        let decodedReference = try JSONDecoder().decode([AIMessage].self,from:archivedReference)
+        precondition(decodedReference.first!.songReference == reference)
+        referenceStore.clearChat()
+
         // Actual web transport/store integration; no real keys, servers or web requests.
         let suiteName = "curator-web-fixture-" + UUID().uuidString
         let webDefaults = UserDefaults(suiteName:suiteName)!
@@ -363,7 +416,7 @@ import CryptoKit
         (p/'Fixtures.swift').write_text(fixtures)
         (p/'Checks.swift').write_text(checks)
         (p/'Store.swift').write_text((root/'Sonivo/Dify/AIMusicCuratorStore.swift').read_text().replace('import UIKit', ''))
-        files = [root/'Sonivo/Dify'/name for name in ['CuratorWebSearch.swift','AICuratorPolicy.swift','DifyModels.swift','AICuratorPrompt.swift','AIModelDiscovery.swift','DifyService.swift','AIPlaylistGeneratorService.swift']]
+        files = [root/'Sonivo/Dify'/name for name in ['AICuratorRequest.swift','CuratorWebSearch.swift','AICuratorPolicy.swift','DifyModels.swift','AICuratorPrompt.swift','AIModelDiscovery.swift','DifyService.swift','AIPlaylistGeneratorService.swift']]
         built = subprocess.run(['swiftc','-swift-version','6',*map(str,files),str(p/'Store.swift'),str(p/'Fixtures.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
         assert built.returncode == 0, built.stderr
         ran = subprocess.run([str(p/'checks')],capture_output=True,text=True,timeout=60)

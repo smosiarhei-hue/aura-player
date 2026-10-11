@@ -1,7 +1,7 @@
 # AI Curator — music editorial
 
 ## What the screen does
-- Current-song discovery: sends title and artist only with the explicitly enabled metadata toggle. Audio is not analysed/uploaded.
+- Current-song discovery: sends title and artist only with the explicitly enabled metadata toggle. The paperclip also allows an explicit current/library song reference, independent of that toggle. Audio is not analysed/uploaded. The selected reference is cleared on music-account change.
 - Activity / mood: starts an editable request, not a hidden radio mode.
 - Discover something new: visible, explicit alternative-electronic discovery prompt; not a claim of knowing the user's taste.
 - Own idea: free text with the previous 12 bounded turns for clarification.
@@ -21,7 +21,7 @@
 ## Provider and privacy
 - Keys migrate from legacy UserDefaults to device-only Keychain. Two retired shared-key fingerprints are rejected; there are no usable shared API-key literals in this implementation.
 - **Repository owner must revoke the previously shipped shared NVIDIA/Dify keys in the provider accounts.** Removing source literals does not revoke them or remove Git history. This agent did not use/revoke those keys.
-- User supplies HTTPS endpoint, personal key and (NVIDIA) an exact model ID from their account. No marketing model list, fallback-model retries, or silent retries after auth/cancellation errors.
+- User supplies a personal key; standard provider endpoints are prefilled. NVIDIA has bounded automatic curator-contract verification or an explicit manual model. See `ai-curator-model-selection.md`; auth/cancellation failures do not silently switch models.
 - The external AI provider receives requests and bounded conversation text. Explicit metadata consent adds title/artist. Extension sends up to 200 existing artist/title entries; all existing IDs/names are still excluded locally.
 - PCM, audio files, favorites and listening history are not sent by the curator. Personal provider policies/billing still apply.
 - Dify curator conversations are isolated from video, DJ, extension and health requests; changing account/configuration clears the local conversation reference. NVIDIA receives bounded chat history. Private reasoning deltas are not displayed/persisted.
@@ -41,11 +41,18 @@
 ## Automatic model setup and intent contract
 - Saved provider/key/endpoint/model are reused. Settings load the NVIDIA `/models` catalog with the personal key; no API keys are obtained from the music login.
 - The normal model choice is automatic. Existing selected models remain selected. Advanced settings still allow a custom HTTPS endpoint/exact model ID when a provider does not support catalog listing.
-- Auto selection excludes obvious embedding/reranking/audio/image/safety-only IDs, preserves a suitable existing ID, then selects a deterministic chat/instruct candidate from the returned catalog. Names are only hints, not proof of capability/access.
-- A blocking chat health probe must return nonempty content before credentials/model are committed. Catalog access alone is not claimed as a verified connection. Failed/cancelled setup preserves the previous connection; no blind alternate-model retries.
+- Automatic selection is quality-oriented and bounded, not a benchmark or a guarantee of best semantic quality. Catalog membership alone is insufficient: candidates must pass a curator JSON contract probe. See `ai-curator-model-selection.md` for actual priorities, deadlines and stop conditions.
 - Dify uses its server-configured app/model, not a client-invented model ID. Its isolated health request is verified before saving; it does not overwrite the curator conversation.
 - Setup fields cannot change during an operation; Stop/Close cancel it. Keys are not logged.
 - The improved editorial prompt distinguishes playlist, clarification and conversation, including implicit requests such as music for an activity and follow-up edits. It prioritizes exclusions/latest edits, asks one question only when material information is missing, and does not invent audio analysis or user history.
 - Structured responses include intent and a visible “Понял запрос так” summary. Clarification/conversation cannot be interpreted as a playlist even if an erroneous playlist field is present. Empty/invalid structured replies are rejected. Existing flat-playlist responses remain compatible.
 - Bounded conversation context retains the previous clarification and suggested artist/title pairs. New Dify conversations receive the local bounded context after relaunch; existing Dify conversations retain their server context.
 - These are contract/transport/prompt tests, **not a claim of 100% semantic accuracy**. Real model quality and catalog match rates still depend on the request/provider/model and need owner evaluation.
+
+## Reference / era refinement
+- Explicit song references are archived with a user message and carried into bounded follow-up context. Web search includes the selected artist/title, not just a generic context header. The picker uses cancellable off-main library projections, lazy rows, account-generation ownership, a 100-row cap and searchable filtering.
+- Requests distinguish activity, similar-song discovery, explicit original-release decades, stylistic references and follow-up exclusions. Examples guide inference; **no model weights were trained or fine-tuned**.
+- Explicit year ranges and decades such as 2000–2009 are persisted on the answer and reused for extensions. A concrete new task or an explicit any-year instruction stops inheritance. Stylistic “in the style of the 2000s” is not automatically treated as a release-date limit.
+- Resolver checks exact normalized recording title, separately supplied version, primary/full artist and availability. When a period is requested it uses the earliest known album year from catalog metadata. Unknown/out-of-period metadata is rejected. This is a catalog proxy: it cannot prove original recording year when the catalog contains only a reissue. The UI warns that valid reissues/missing years can be skipped.
+- Reasons are displayed alongside exact matching recommendations. No guarantee of vocal content, BPM, perceived similarity or availability is derived from AI prose.
+- Live evaluation is opt-in (`tools/curator_live_eval.py`), uses credentials from environment only, 3 searches + 4 generations by default, and supports a single named scenario. Recommendations/web sources are public data; keys/raw provider responses are not written. The check is inference/retrieval, not training. See `curator-live-evaluation.md` for observed results and remaining quality limitations.

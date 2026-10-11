@@ -10,6 +10,8 @@ struct AIMusicAssistantView: View {
     @State private var service = YandexMusicService.shared
     @State private var player = PlayerCore.shared
     @State private var input = ""
+    @State private var songReference: CuratorSongReference?
+    @State private var showReferencePicker = false
     @State private var showSettings = false
     @State private var showLogin = false
     @State private var clearConfirmation = false
@@ -58,11 +60,16 @@ struct AIMusicAssistantView: View {
             }
             .sheet(isPresented: $showSettings) { DifySettingsSheet() }
             .sheet(isPresented: $showLogin) { YandexAuthSheet() }
+            .sheet(isPresented: $showReferencePicker) {
+                CuratorReferencePicker(currentTrack:player.currentTrack) { songReference = $0; composerFocused = true }
+            }
             .confirmationDialog("Удалить этот диалог? Сохранённые плейлисты останутся в медиатеке.",
                                 isPresented: $clearConfirmation, titleVisibility: .visible) {
                 Button("Удалить диалог", role: .destructive) { store.clearChat() }
             }
-            .onChange(of: service.accountGeneration) { _, _ in store.switchAccount() }
+            .onChange(of: service.accountGeneration) { _, _ in
+                songReference = nil; showReferencePicker = false; store.switchAccount()
+            }
             .onChange(of: dify.configurationID) { _, _ in if store.isBusy { store.cancel() } }
             .onChange(of: web.configurationID) { _, _ in if store.isBusy { store.cancel() } }
             .onDisappear { store.cancel() }
@@ -129,6 +136,10 @@ struct AIMusicAssistantView: View {
             }
             Text("С чего начнём?").font(.title3.bold())
             LazyVGrid(columns: columns, spacing: 12) {
+                Button("На прогулку", systemImage:"figure.walk") { input = "Подбери музыку для вечерней прогулки";composerFocused = true }
+                Button("Хиты 2000-х", systemImage:"clock.arrow.circlepath") { input = "Подбери молодёжные хиты 2000–2009 годов";composerFocused = true }
+            }.buttonStyle(.bordered).frame(minHeight:44)
+            LazyVGrid(columns: columns, spacing: 12) {
                 scenario("Под занятие", detail: "Работа, дорога, тренировка", icon: "figure.walk") {
                     input = "Подбери музыку для "; composerFocused = true
                 }
@@ -155,8 +166,12 @@ struct AIMusicAssistantView: View {
     }
     @ViewBuilder private func messageView(_ message: AIMessage) -> some View {
         if message.role == .user {
-            Text(message.text).font(.body).padding(16)
-                .background(.pink.opacity(0.10), in: RoundedRectangle(cornerRadius: 20))
+            VStack(alignment:.leading,spacing:8) {
+                Text(message.text).font(.body)
+                if let reference = message.songReference {
+                    Label(reference.artist + " — " + reference.title,systemImage:"music.note").font(.caption)
+                }
+            }.padding(16).background(.pink.opacity(0.10), in: RoundedRectangle(cornerRadius: 20))
                 .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             VStack(alignment: .leading, spacing: 16) {
@@ -208,6 +223,10 @@ struct AIMusicAssistantView: View {
                 Image(systemName: "square.stack.fill").font(.title2).foregroundStyle(.pink.opacity(0.8))
             }
             if !playlist.description.isEmpty { Text(playlist.description).font(.subheadline).foregroundStyle(.secondary) }
+            if let range = message.requestedYearRange {
+                Text("Период \(range.label): оставляем только совпадения с годом по данным каталога. Неизвестный год, поздняя версия или переиздание могут быть пропущены.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if message.isResolvingTracks {
                 Label("Проверяем доступность…", systemImage: "magnifyingglass").font(.callout)
             } else {
@@ -227,6 +246,8 @@ struct AIMusicAssistantView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(track.title).font(.subheadline.weight(.medium)).lineLimit(2)
                         Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        if let suggestion = playlist.tracks.first(where: { AICuratorPolicy.matches(artist:$0.artist,title:$0.title,candidateArtist:track.artist,candidateTitle:track.title) }),
+                           let reason = suggestion.reason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
                     }
                     Spacer(minLength: 0)
                 }
@@ -273,7 +294,16 @@ struct AIMusicAssistantView: View {
     }
     private var composer: some View {
         VStack(spacing: 8) {
+            if let reference = songReference {
+                HStack(spacing:8) {
+                    Label(reference.artist + " — " + reference.title,systemImage:"music.note").font(.caption).lineLimit(2)
+                    Spacer()
+                    Button("Убрать песню",systemImage:"xmark.circle.fill") { songReference = nil }.labelStyle(.iconOnly).frame(minWidth:44,minHeight:44)
+                }.padding(.horizontal,12)
+            }
             HStack(alignment: .bottom, spacing: 12) {
+                Button("Прикрепить песню",systemImage:"paperclip") { showReferencePicker = true }
+                    .labelStyle(.iconOnly).frame(width:44,height:48).disabled(store.isBusy)
                 TextField("Какую музыку хочется?", text: $input, axis: .vertical)
                     .lineLimit(1...5).focused($composerFocused).font(.body).padding(.vertical, 12)
                     .accessibilityLabel("Запрос куратору")
@@ -290,7 +320,7 @@ struct AIMusicAssistantView: View {
     }
     private func submit(_ prompt: String) {
         guard dify.isConfigured else { input = prompt; showSettings = true; return }
-        if store.send(prompt, shareCurrentTrack: shareCurrentTrack) { input = ""; composerFocused = false }
+        if store.send(prompt, shareCurrentTrack: shareCurrentTrack, reference: songReference) { input = ""; songReference = nil; composerFocused = false }
     }
 }
 

@@ -66,6 +66,7 @@ final class AIMusicCuratorStore: ObservableObject {
     }
     private func historyContent(_ message: AIMessage) -> String {
         var text = DifyService.cleanDisplayText(from: message.text)
+        if let reference = message.songReference { text += AICuratorRequest.referenceContext(reference) }
         if let summary = message.requestSummary { text += "\n" + summary }
         if let question = message.clarification { text += "\n" + question }
         if let playlist = message.playlist {
@@ -74,7 +75,7 @@ final class AIMusicCuratorStore: ObservableObject {
         return text
     }
     @discardableResult
-    func send(_ prompt: String, shareCurrentTrack: Bool) -> Bool {
+    func send(_ prompt: String, shareCurrentTrack: Bool, reference: CuratorSongReference? = nil) -> Bool {
         let text = String(prompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4000))
         guard !isBusy, !text.isEmpty, ai.isConfigured else { return false }
         switchAccount()
@@ -82,11 +83,17 @@ final class AIMusicCuratorStore: ObservableObject {
             OpenAIChatRequest.Message(role: $0.role.rawValue, content: String(historyContent($0).prefix(1600)))
         }
         let track = PlayerCore.shared.currentTrack
-        let context = AICuratorPolicy.context(title: track?.title, artist: track?.artist, enabled: shareCurrentTrack)
+        let context = reference.map(AICuratorRequest.referenceContext) ?? AICuratorPolicy.context(title: track?.title, artist: track?.artist, enabled: shareCurrentTrack)
+        let yearRange = AICuratorRequest.yearRange(query:text,previousUserQueries:messages.filter { $0.role == .user }.map(\.text))
+        let periodContext = AICuratorRequest.periodContext(yearRange)
         let id = UUID(), token = UUID(), account = YandexMusicService.shared.accountGeneration
         requestID = token
-        messages.append(AIMessage(role: .user, text: text + context))
-        messages.append(AIMessage(id: id, role: .assistant, text: "", isStreaming: true))
+        var userMessage = AIMessage(role:.user,text:text + (reference == nil ? context : ""))
+        userMessage.songReference = reference; userMessage.requestedYearRange = yearRange
+        messages.append(userMessage)
+        var answerMessage = AIMessage(id:id,role:.assistant,text:"",isStreaming:true)
+        answerMessage.requestedYearRange = yearRange
+        messages.append(answerMessage)
         if messages.count > AICuratorPolicy.messageLimit { messages.removeFirst(messages.count - AICuratorPolicy.messageLimit) }
         phase = web.enabled ? .searching : .thinking
         operation = Task { [weak self] in
@@ -94,12 +101,13 @@ final class AIMusicCuratorStore: ObservableObject {
             var accumulated = "", lastUpdate = Date.distantPast
             do {
                 let previous = history.last(where: { $0.role == "user" }).map { String($0.content.prefix(150)) } ?? ""
-                let searchQuery = String(text.prefix(700)) + String(context.prefix(100)) + (previous.isEmpty ? "" : "\nПредыдущее уточнение: " + previous)
+                let searchReference = reference.map { "\nРеференс: " + String($0.artist.prefix(150)) + " — " + String($0.title.prefix(150)) } ?? String(context.prefix(100))
+                let searchQuery = String(text.prefix(500)) + searchReference + (previous.isEmpty ? "" : "\nПредыдущее уточнение: " + previous)
                 let retrieval = try await webContext(for: searchQuery, messageID: id, token: token, account: account)
                 try Task.checkCancellation()
                 guard requestID == token, account == YandexMusicService.shared.accountGeneration else { throw CancellationError() }
                 phase = .thinking
-                let result = try await ai.sendMessage(query: text + context + retrieval, history: history) { [weak self] delta in
+                let result = try await ai.sendMessage(query: text + context + periodContext + retrieval, history: history) { [weak self] delta in
                     accumulated += delta
                     if Date().timeIntervalSince(lastUpdate) >= 0.08 {
                         lastUpdate = Date()
@@ -116,7 +124,7 @@ final class AIMusicCuratorStore: ObservableObject {
                     $0.requestSummary = reply?.summary; $0.clarification = reply?.intent == .clarify ? reply?.question : nil }
                 if let playlist = playlistResult {
                     phase = .resolving; update(id) { $0.isResolvingTracks = true }
-                    let tracks = await AIPlaylistGeneratorService.shared.resolveTracks(for: playlist.tracks)
+                    let tracks = await AIPlaylistGeneratorService.shared.resolveTracks(for: playlist.tracks, yearRange: yearRange)
                     try Task.checkCancellation()
                     guard requestID == token, account == YandexMusicService.shared.accountGeneration else { return }
                     update(id) { $0.resolvedTracks = tracks; $0.isResolvingTracks = false
@@ -168,7 +176,7 @@ final class AIMusicCuratorStore: ObservableObject {
                 try Task.checkCancellation()
                 guard requestID == token, account == YandexMusicService.shared.accountGeneration else { throw CancellationError() }
                 let tracks = try await AIPlaylistGeneratorService.shared.extendPlaylist(playlistTitle: playlist.playlistTitle,
-                    description: playlist.description, existingTracks: message.resolvedTracks, webContext: context)
+                    description: playlist.description, existingTracks: message.resolvedTracks, webContext: context, yearRange: message.requestedYearRange)
                 try Task.checkCancellation()
                 guard requestID == token, account == YandexMusicService.shared.accountGeneration else { return }
                 update(messageID) { $0.resolvedTracks += tracks; $0.extendedCount = ($0.extendedCount ?? 0) + tracks.count }

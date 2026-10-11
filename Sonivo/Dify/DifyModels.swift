@@ -236,6 +236,8 @@ struct AIMessage: Identifiable, Codable, Sendable {
     var unresolvedCount: Int? = nil
     var extendedCount: Int? = nil
     var requestSummary: String? = nil
+    var songReference: CuratorSongReference? = nil
+    var requestedYearRange: CuratorYearRange? = nil
     var clarification: String? = nil
     var webSources: [CuratorWebSource]? = nil
     var webNotice: String? = nil
