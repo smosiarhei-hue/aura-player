@@ -80,6 +80,7 @@ nonisolated final class StubProtocol: URLProtocol, @unchecked Sendable {
         }
         Self.lock.lock(); let (code,body) = Self.queue.isEmpty ? Self.state : Self.queue.removeFirst(); Self.seen.append(captured); Self.lock.unlock()
         if code == -1 { return }
+        if code == -1001 { client?.urlProtocol(self, didFailWithError: URLError(.timedOut)); return }
         let response = HTTPURLResponse(url:request.url!, statusCode:code, httpVersion:"HTTP/1.1", headerFields:["Content-Type":"text/event-stream"])!
         client?.urlProtocol(self, didReceive:response, cacheStoragePolicy:.notAllowed)
         client?.urlProtocol(self, didLoad:Data(body.utf8))
@@ -191,6 +192,28 @@ import CryptoKit
         do { _ = try await ai.connect(provider:.nvidia,key:"rejected-fixture-key",endpoint:"https://fixture.invalid/v1",model:nil); fatalError("Accepted rejected setup") }
         catch DifyError.unauthorized { }
         precondition(ai.nvidiaApiKey == "new-fixture-key" && ai.nvidiaSelectedModel == chosen)
+
+        let latencyModels = try AIModelDiscovery.decode(Data("{\"data\":[{\"id\":\"vendor/llama-70b-instruct\"},{\"id\":\"vendor/llama-8b-instruct\"},{\"id\":\"vendor/deepseek-r1-8b\"}]}".utf8))
+        precondition(AIModelDiscovery.recommended(in:latencyModels,preserving:"") == "vendor/llama-8b-instruct")
+        precondition(AIModelDiscovery.recommended(in:latencyModels,preserving:"vendor/llama-70b-instruct") == "vendor/llama-70b-instruct")
+        let requestsBeforeTimeout = StubProtocol.requests.count
+        StubProtocol.reply(-1001, "")
+        do { _ = try await ai.connect(provider:.nvidia,key:"timed-out-fixture",endpoint:"https://fixture.invalid/v1",model:"vendor/llama-8b-instruct"); fatalError("Timeout treated as success") }
+        catch DifyError.connectionTimedOut { }
+        precondition(StubProtocol.requests.count == requestsBeforeTimeout + 1, "Paid probe retried")
+        precondition(ai.nvidiaApiKey == "new-fixture-key" && ai.nvidiaSelectedModel == chosen)
+        precondition(StubProtocol.requests.last!.timeoutInterval == 120)
+        StubProtocol.reply(-1001, "")
+        do { _ = try await ai.discoverModels(key:"fixture-key",endpoint:"https://fixture.invalid/v1"); fatalError("Catalog timeout ignored") }
+        catch DifyError.catalogTimedOut { }
+        precondition(StubProtocol.requests.last!.timeoutInterval == 45)
+        StubProtocol.reply(-1, "")
+        let cancelledConnect = Task { try await ai.connect(provider:.nvidia,key:"cancelled-fixture",endpoint:"https://fixture.invalid/v1",model:"vendor/llama-8b-instruct") }
+        try await Task.sleep(for:.milliseconds(30)); cancelledConnect.cancel()
+        do { _ = try await cancelledConnect.value; fatalError("Cancelled setup accepted") } catch is CancellationError { }
+        precondition(ai.nvidiaApiKey == "new-fixture-key")
+        print("Provider setup: typed catalog/probe timeout, hard deadline, no paid retry, existing-key preservation, cancellation and small automatic candidate checks passed")
+
         // Dify takes its server-side model, and performs no /models request.
         StubProtocol.reply(200, "{\"answer\":\"OK\",\"conversation_id\":\"health-only\"}")
         let requestsBeforeDify = StubProtocol.requests.count

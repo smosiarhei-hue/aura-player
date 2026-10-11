@@ -59,10 +59,10 @@ final class DifyService: ObservableObject {
     func discoverModels(key: String, endpoint: String) async throws -> [AIAvailableModel] {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw DifyError.missingApiKey }
         guard let url = AICuratorPolicy.endpoint(base: endpoint, path: "models") else { throw DifyError.invalidURL }
-        var request = URLRequest(url: url); request.timeoutInterval = 25
+        var request = URLRequest(url: url); request.timeoutInterval = 45
         request.setValue("Bearer " + key.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await setupData(for: request, seconds: 45, timeoutError: .catalogTimedOut)
         try Task.checkCancellation(); try validateHTTP(response)
         return try AIModelDiscovery.decode(data)
     }
@@ -83,7 +83,7 @@ final class DifyService: ObservableObject {
         try Task.checkCancellation()
         guard configurationID == revision, YandexMusicService.shared.accountGeneration == account else { throw CancellationError() }
         guard let url = AICuratorPolicy.endpoint(base: endpoint, path: provider == .nvidia ? "chat/completions" : "chat-messages") else { throw DifyError.invalidURL }
-        var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 30
+        var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 120
         request.setValue("Bearer " + cleanKey, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if provider == .nvidia {
@@ -94,7 +94,7 @@ final class DifyService: ObservableObject {
             request.httpBody = try JSONEncoder().encode(DifyChatRequest(query: "Ответь одним словом OK.",
                 responseMode: "blocking", user: "sonivo-" + installationID + "-health"))
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await setupData(for: request, seconds: 120, timeoutError: .connectionTimedOut)
         try Task.checkCancellation(); try validateHTTP(response)
         guard data.count <= 256_000 else { throw DifyError.invalidResponse }
         let answer: String?
@@ -109,6 +109,26 @@ final class DifyService: ObservableObject {
         guard configurationID == revision, YandexMusicService.shared.accountGeneration == account else { throw CancellationError() }
         try configure(provider: provider, key: cleanKey, endpoint: endpoint, model: chosen)
         return chosen
+    }
+
+    /// Hard deadline in addition to URLSession idle timeout; cancellation never commits staged credentials.
+    private func setupData(for request: URLRequest, seconds: Double, timeoutError: DifyError) async throws -> (Data, URLResponse) {
+        do {
+            return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+                group.addTask { [session] in try await session.data(for: request) }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(seconds))
+                    throw timeoutError
+                }
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else { throw DifyError.invalidResponse }
+                return result
+            }
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            if let network = error as? URLError, network.code == .timedOut { throw timeoutError }
+            throw error
+        }
     }
 
     private func validateHTTP(_ response: URLResponse) throws {
@@ -412,8 +432,11 @@ final class DifyService: ObservableObject {
 enum DifyError: LocalizedError {
     case missingApiKey, invalidURL, invalidResponse, unauthorized, notPublished, rateLimited, emptyAnswer, noChatModel
     case serverError(statusCode:Int)
+    case catalogTimedOut, connectionTimedOut
     var errorDescription:String? {
         switch self {
+        case .catalogTimedOut:return "NVIDIA не успел вернуть каталог моделей за 45 секунд. Проверьте сеть и повторите запрос или укажите точный ID модели. Сохранённое подключение не изменено."
+        case .connectionTimedOut:return "AI-модель не ответила за время проверки (до 120 секунд). Это может быть очередь или медленная модель, а не неверный ключ. Попробуйте меньшую модель или повторите позже. Ключ и прежнее подключение не изменены."
         case .noChatModel:return "Провайдер не вернул подходящую чат-модель. Выберите доступную модель в дополнительных настройках."
         case .missingApiKey:return "Подключите AI-провайдера в настройках куратора."
         case .invalidURL:return "Нужен корректный HTTPS-адрес API без логина и параметров."

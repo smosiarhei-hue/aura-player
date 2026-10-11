@@ -23,8 +23,20 @@ nonisolated enum AIModelDiscovery {
     static func recommended(in models: [AIAvailableModel], preserving current: String) -> String? {
         if models.contains(where: { $0.id == current && $0.isAutomaticCandidate }) { return current }
         return models.filter(\.isAutomaticCandidate).sorted {
-            let lhs = $0.id.lowercased().contains("instruct"), rhs = $1.id.lowercased().contains("instruct")
-            return lhs != rhs ? lhs : $0.id < $1.id
+            let lhs = automaticRank($0.id), rhs = automaticRank($1.id)
+            return lhs != rhs ? lhs < rhs : $0.id < $1.id
         }.first?.id
     }
+    /// Size/reasoning names are only latency hints; access and actual speed still require a probe.
+    private static func automaticRank(_ id: String) -> Int {
+        let name = id.lowercased()
+        let reasoning = ["deepseek-r1", "qwq", "reason", "thinking"].contains(where: name.contains)
+        var sizePenalty = 40
+        if let range = name.range(of: "[0-9]+(?:\\.[0-9]+)?b(?:[^a-z]|$)", options: .regularExpression) {
+            let matched = String(name[range]).split(separator: "b").first.map(String.init) ?? ""
+            if let size = Double(matched) { sizePenalty = size <= 16 ? 0 : (size <= 32 ? 20 : 80) }
+        }
+        return (reasoning ? 200 : 0) + sizePenalty + (name.contains("instruct") ? 0 : 10)
+    }
+
 }

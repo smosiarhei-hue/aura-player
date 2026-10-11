@@ -60,6 +60,11 @@ struct DifySettingsSheet: View {
                 Section {
                     Button(checking ? "Проверяем подключение…" : "Подключить и проверить") { connect() }
                         .disabled(checking || loadingModels || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if checking {
+                        ProgressView("Ждём ответ модели…")
+                        Text("Каталог: до 45 секунд. Проверка модели: до 2 минут. Медленные модели могут ожидать в очереди; проверку можно остановить.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if checking || loadingModels { Button("Остановить") { cancel() } }
                     if let notice { Text(notice).font(.callout).textSelection(.enabled) }
                     Text("Ключ и выбранная модель сохранятся только после успешной проверки. Короткий тестовый запрос может учитываться в тарифе сервиса.")
