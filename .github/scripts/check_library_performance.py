@@ -45,15 +45,22 @@ nonisolated struct OffMainSnapshot: Encodable, Sendable {
         let updatedB = try JSONDecoder().decode(Int.self,from:Data(contentsOf:b))
         precondition(updatedB == 45)
         // Lookup must exactly preserve old first-match semantics including filename/ID collisions.
-        var collection = (0..<10000).map { n in
-            Track(id:UUID(),fileName:"ym_\(n).mp3",title:"Song \(n)",artist:n % 2 == 0 ? "Artist A" : "Artist B",
-                  isStream:true,isFavorite:n % 5 == 0,addedAt:Date(timeIntervalSince1970:Double(n)))
+        var collection: [Track] = []
+        collection.reserveCapacity(10000)
+        for n in 0..<10000 {
+            let artist = n % 2 == 0 ? "Artist A" : "Artist B"
+            let item = Track(id:UUID(),fileName:"ym_\(n).mp3",title:"Song \(n)",artist:artist,
+                             isStream:true,isFavorite:n % 5 == 0,addedAt:Date(timeIntervalSince1970:Double(n)))
+            collection.append(item)
         }
         collection[10].fileName = collection[0].fileName
         collection[20] = Track(id:collection[30].id,fileName:"alias",title:"Alias",artist:"Other",isStream:true,isFavorite:true)
         let lookup = LibraryTrackLookup(collection)
         for track in collection.prefix(1000) {
-            let legacy = collection.first { ($0.fileName == track.fileName && !track.fileName.isEmpty) || $0.id == track.id }
+            let legacy: Track? = collection.first { candidate in
+                let sameName = candidate.fileName == track.fileName && !track.fileName.isEmpty
+                return sameName || candidate.id == track.id
+            }
             precondition(lookup.matching(track)?.id == legacy?.id && lookup.matching(track)?.isFavorite == legacy?.isFavorite)
         }
         let start = ContinuousClock.now
@@ -62,19 +69,25 @@ nonisolated struct OffMainSnapshot: Encodable, Sendable {
         let key = LibraryProjectionKey(revision:1,loggedIn:true,filter:.favorites,query:"Artist A")
         let projected = try LibraryTrackProjection.build(collection,key:key)
         let reference = Array(collection.prefix(1000))
-        let referenceIDs = Set(reference.map(\.id))
-        let expected = reference.filter { track in
-            let stored = collection.first { ($0.fileName == track.fileName && !track.fileName.isEmpty) || $0.id == track.id }
-            return (track.isFavorite || stored?.isFavorite == true) && track.artist.contains("Artist A")
+        let referenceIDs: Set<UUID> = Set(reference.map { $0.id })
+        let expected: [Track] = reference.filter { track in
+            let stored: Track? = collection.first { candidate in
+                let sameName = candidate.fileName == track.fileName && !track.fileName.isEmpty
+                return sameName || candidate.id == track.id
+            }
+            let favorite = track.isFavorite || stored?.isFavorite == true
+            return favorite && track.artist.contains("Artist A")
         }
-        precondition(projected.filtered.filter { referenceIDs.contains($0.id) }.map(\.id) == expected.map(\.id))
+        let actualIDs: [UUID] = projected.filtered.filter { referenceIDs.contains($0.id) }.map { $0.id }
+        let expectedIDs: [UUID] = expected.map { $0.id }
+        precondition(actualIDs == expectedIDs)
         let recent = try LibraryTrackProjection.build(collection,key:.init(revision:2,loggedIn:true,filter:.recent,query:""))
         precondition(recent.filtered.count == 30 && recent.filtered.first!.title == "Song 9999")
         let localFile = directory.appendingPathComponent("fixture.txt"); try Data("metadata fixture".utf8).write(to:localFile)
         let local = Track(id:UUID(),fileName:localFile.path,title:"Local",artist:"Local")
         let missing = Track(id:UUID(),fileName:directory.appendingPathComponent("missing").path,title:"Missing",artist:"Local")
         let guest = try LibraryTrackProjection.visibleOnly([collection[0],local,missing],loggedIn:false)
-        precondition(guest.map(\.id) == [local.id], "Guest remote/missing file gating changed")
+        precondition(guest.map { $0.id } == [local.id], "Guest remote/missing file gating changed")
         let immutableCollection = collection
         let cancelled = Task.detached { try await Task.sleep(for:.seconds(1)); return try LibraryTrackProjection.build(immutableCollection,key:key) }
         cancelled.cancel()
