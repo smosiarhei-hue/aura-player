@@ -67,48 +67,113 @@ final class DifyService: ObservableObject {
         return try AIModelDiscovery.decode(data)
     }
 
-    /// Resolve/verify first; commit to Keychain only after a successful chat probe.
-    func connect(provider: AIProvider, key: String, endpoint: String, model: String?) async throws -> String {
+    /// Automatic mode verifies bounded curator candidates; explicit choices never change behind the user's back.
+    func connect(provider: AIProvider, key: String, endpoint: String, model: String?,
+                 onProgress: @MainActor (String) -> Void = { _ in }) async throws -> String {
         let revision = configurationID, account = YandexMusicService.shared.accountGeneration
         let cleanKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanKey.isEmpty else { throw DifyError.missingApiKey }
-        var chosen = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if provider == .nvidia && chosen.isEmpty {
+        let requested = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let automatic = provider == .nvidia && requested.isEmpty
+        var candidates = [requested]
+        if automatic {
+            onProgress("Получаем каталог моделей…")
             let models = try await discoverModels(key: cleanKey, endpoint: endpoint)
-            guard let automatic = AIModelDiscovery.recommended(in: models, preserving: nvidiaSelectedModel) else {
-                throw DifyError.noChatModel
-            }
-            chosen = automatic
+            candidates = AIModelDiscovery.curatorCandidates(in: models)
+            guard !candidates.isEmpty else { throw DifyError.noChatModel }
         }
-        try Task.checkCancellation()
-        guard configurationID == revision, YandexMusicService.shared.accountGeneration == account else { throw CancellationError() }
+        let clock = ContinuousClock(), started = ContinuousClock.now
+        var failures: [String] = []
+        for (index, chosen) in candidates.enumerated() {
+            try Task.checkCancellation()
+            guard configurationID == revision, YandexMusicService.shared.accountGeneration == account else { throw CancellationError() }
+            let elapsed = started.duration(to: clock.now).components
+            let remaining = 120 - Double(elapsed.seconds) - Double(elapsed.attoseconds) / 1e18
+            guard remaining > 0 else { throw DifyError.automaticSelectionFailed(failures: failures) }
+            let seconds = automatic ? min(60, remaining) : 120
+            onProgress(automatic ? "Проверяем модель \(index + 1)/\(candidates.count): \(chosen)" : "Проверяем подключение…")
+            do {
+                try await probeConnection(provider: provider, key: cleanKey, endpoint: endpoint, model: chosen,
+                                          seconds: seconds, curatorContract: automatic)
+                try Task.checkCancellation()
+                guard configurationID == revision, YandexMusicService.shared.accountGeneration == account else { throw CancellationError() }
+                try configure(provider: provider, key: cleanKey, endpoint: endpoint, model: chosen)
+                return chosen
+            } catch {
+                if Task.isCancelled || error is CancellationError { throw CancellationError() }
+                guard configurationID == revision, YandexMusicService.shared.accountGeneration == account else { throw CancellationError() }
+                guard automatic, Self.isModelSpecificSetupFailure(error) else { throw error }
+                // Retry only the next catalog candidate, never the same billed probe or a different provider.
+                failures.append(chosen + ": " + Self.setupFailureLabel(error))
+            }
+        }
+        throw DifyError.automaticSelectionFailed(failures: failures)
+    }
+
+    private static func isModelSpecificSetupFailure(_ error: Error) -> Bool {
+        guard let error = error as? DifyError else { return false }
+        switch error {
+        case .connectionTimedOut, .emptyAnswer, .invalidResponse: return true
+        case .serverError(let status): return [400, 404, 410].contains(status)
+        default: return false // Bad key, quota, connectivity and service-wide errors must not trigger paid extra checks.
+        }
+    }
+    private static func setupFailureLabel(_ error: Error) -> String {
+        guard let error = error as? DifyError else { return "ошибка" }
+        switch error {
+        case .serverError(let status): return "HTTP \(status)"
+        case .connectionTimedOut: return "не дождались ответа"
+        case .emptyAnswer: return "пустой ответ"
+        default: return "не поддерживает формат Куратора"
+        }
+    }
+    private func probeConnection(provider: AIProvider, key: String, endpoint: String, model: String,
+                                 seconds: Double, curatorContract: Bool) async throws {
         guard let url = AICuratorPolicy.endpoint(base: endpoint, path: provider == .nvidia ? "chat/completions" : "chat-messages") else { throw DifyError.invalidURL }
-        var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 120
-        request.setValue("Bearer " + cleanKey, forHTTPHeaderField: "Authorization")
+        var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = seconds
+        request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if provider == .nvidia {
-            request.httpBody = try JSONEncoder().encode(OpenAIChatRequest(model: chosen,
-                systemPrompt: "Ответь одним словом OK.", userQuery: "Проверка подключения", temperature: 0,
-                maxTokens: 96, stream: false))
+            let system = curatorContract ? "Ты музыкальный редактор. Верни только JSON без рассуждений. Это проверка формата, не запрос к аккаунту пользователя." : "Ответь одним словом OK."
+            let query = curatorContract ? "Сформируй подборку из ровно одной переданной песни: Bill Evans — Peace Piece. Не добавляй другие песни. Схема: {\"intent\":\"playlist\",\"summary\":\"Одна переданная песня\",\"question\":null,\"playlist\":{\"playlist_title\":\"Проверка\",\"description\":\"Проверка формата\",\"tracks\":[{\"artist\":\"Bill Evans\",\"title\":\"Peace Piece\",\"reason\":\"Переданная песня\"}]}}" : "Проверка подключения"
+            guard var payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(OpenAIChatRequest(model: model,
+                systemPrompt: system, userQuery: query, temperature: 0, maxTokens: curatorContract ? 384 : 96, stream: false))) as? [String: Any] else {
+                throw DifyError.invalidResponse
+            }
+            if curatorContract && model.hasPrefix("nvidia/nemotron-3") {
+                payload["chat_template_kwargs"] = ["enable_thinking": false]
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         } else {
             request.httpBody = try JSONEncoder().encode(DifyChatRequest(query: "Ответь одним словом OK.",
                 responseMode: "blocking", user: "sonivo-" + installationID + "-health"))
         }
-        let (data, response) = try await setupData(for: request, seconds: 120, timeoutError: .connectionTimedOut)
+        let (data, response) = try await setupData(for: request, seconds: seconds, timeoutError: .connectionTimedOut)
         try Task.checkCancellation(); try validateHTTP(response)
         guard data.count <= 256_000 else { throw DifyError.invalidResponse }
-        let answer: String?
-        if provider == .nvidia {
-            answer = try JSONDecoder().decode(OpenAIChatBlockingResponse.self, from: data).choices?.first?.message?.content
-        } else {
-            let result = try JSONDecoder().decode(DifyChatBlockingResponse.self, from: data)
-            guard result.event != "error" else { throw DifyError.invalidResponse }
-            answer = result.answer
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["error"] != nil {
+            throw DifyError.serverError(statusCode: 502) // Do not retry a provider-reported global error disguised as HTTP200.
         }
-        guard !(answer?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else { throw DifyError.emptyAnswer }
-        guard configurationID == revision, YandexMusicService.shared.accountGeneration == account else { throw CancellationError() }
-        try configure(provider: provider, key: cleanKey, endpoint: endpoint, model: chosen)
-        return chosen
+        let answer: String?
+        do {
+            if provider == .nvidia {
+                answer = try JSONDecoder().decode(OpenAIChatBlockingResponse.self, from: data).choices?.first?.message?.content
+            } else {
+                let result = try JSONDecoder().decode(DifyChatBlockingResponse.self, from: data)
+                guard result.event != "error" else { throw DifyError.invalidResponse }
+                answer = result.answer
+            }
+        } catch { throw DifyError.invalidResponse }
+        guard let answer, !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw DifyError.emptyAnswer }
+        if curatorContract {
+            guard let reply = AICuratorPrompt.reply(from: answer), reply.intent == .playlist, reply.question == nil,
+                  !reply.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let playlist = reply.validatedPlaylist, reply.playlist?.tracks.count == 1, playlist.tracks.count == 1,
+                  AICuratorPolicy.matches(artist: "Bill Evans", title: "Peace Piece",
+                    candidateArtist: playlist.tracks[0].artist, candidateTitle: playlist.tracks[0].title) else {
+                throw DifyError.invalidResponse
+            }
+        }
     }
 
     /// Hard deadline in addition to URLSession idle timeout; cancellation never commits staged credentials.
@@ -433,8 +498,10 @@ enum DifyError: LocalizedError {
     case missingApiKey, invalidURL, invalidResponse, unauthorized, notPublished, rateLimited, emptyAnswer, noChatModel
     case serverError(statusCode:Int)
     case catalogTimedOut, connectionTimedOut
+    case automaticSelectionFailed(failures: [String])
     var errorDescription:String? {
         switch self {
+        case .automaticSelectionFailed(let failures):return "Не удалось проверить подходящую модель Куратора. " + failures.joined(separator: "; ") + ". Прежнее подключение не изменено. Можно выбрать модель вручную."
         case .catalogTimedOut:return "NVIDIA не успел вернуть каталог моделей за 45 секунд. Проверьте сеть и повторите запрос или укажите точный ID модели. Сохранённое подключение не изменено."
         case .connectionTimedOut:return "AI-модель не ответила за время проверки (до 120 секунд). Это может быть очередь или медленная модель, а не неверный ключ. Попробуйте меньшую модель или повторите позже. Ключ и прежнее подключение не изменены."
         case .noChatModel:return "Провайдер не вернул подходящую чат-модель. Выберите доступную модель в дополнительных настройках."

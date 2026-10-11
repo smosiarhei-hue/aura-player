@@ -10,10 +10,12 @@ struct DifySettingsSheet: View {
     @State private var models: [AIAvailableModel] = []
     @State private var notice: String?
     @State private var checking = false
+    @State private var connectionProgress = "Проверяем подключение…"
     @State private var loadingModels = false
     @State private var operation: Task<Void, Never>?
     @State private var operationID = UUID()
     @State private var deleteConfirmation = false
+    @AppStorage("nvidia_curator.auto_selection") private var autoSelection = true
     @AppStorage("ai_curator.share_current_track") private var shareCurrentTrack = false
     var body: some View {
         NavigationStack {
@@ -31,7 +33,7 @@ struct DifySettingsSheet: View {
                     SecureField("API-ключ", text: $key).textInputAutocapitalization(.never).autocorrectionDisabled()
                     if provider == .nvidia {
                         Picker("Модель", selection: $model) {
-                            Text("Подобрать автоматически").tag("")
+                            Text("Лучшая доступная для Куратора · авто").tag("")
                             if !model.isEmpty && !models.contains(where: { $0.id == model }) {
                                 Text(model).tag(model)
                             }
@@ -40,7 +42,7 @@ struct DifySettingsSheet: View {
                         if loadingModels { ProgressView("Получаем доступные модели…") }
                         Button("Обновить список моделей") { refreshModels() }
                             .disabled(checking || loadingModels || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Text("Сохранённая модель не меняется сама. В автоматическом режиме выберем кандидат из каталога сервиса и проверим, что он отвечает на чат-запрос.")
+                        Text("Подобрать автоматически: проверим подходящие модели из актуального каталога, включая формат подборок. Не более 3 проверок; недоступные модели пропускаются. Ручной выбор не меняется сам.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         Label("Модель берётся из настроек приложения Dify", systemImage: "checkmark.circle")
@@ -61,13 +63,13 @@ struct DifySettingsSheet: View {
                     Button(checking ? "Проверяем подключение…" : "Подключить и проверить") { connect() }
                         .disabled(checking || loadingModels || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     if checking {
-                        ProgressView("Ждём ответ модели…")
-                        Text("Каталог: до 45 секунд. Проверка модели: до 2 минут. Медленные модели могут ожидать в очереди; проверку можно остановить.")
+                        ProgressView(connectionProgress)
+                        Text("Каталог: до 45 секунд. Автовыбор: до 2 минут суммарно и не более 3 моделей. Ручная проверка: до 2 минут. Можно остановить.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if checking || loadingModels { Button("Остановить") { cancel() } }
                     if let notice { Text(notice).font(.callout).textSelection(.enabled) }
-                    Text("Ключ и выбранная модель сохранятся только после успешной проверки. Короткий тестовый запрос может учитываться в тарифе сервиса.")
+                    Text("Ключ и выбранная модель сохранятся только после успешной проверки. Автовыбор может выполнить до 3 коротких запросов, которые учитываются в тарифе сервиса. Успех проверки формата не гарантирует точность каждой рекомендации.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 CuratorWebSettingsView()
@@ -101,7 +103,7 @@ struct DifySettingsSheet: View {
         cancel(); notice = nil; models = []
         key = provider == .nvidia ? service.nvidiaApiKey : service.apiKey
         endpoint = provider == .nvidia ? service.nvidiaBaseURL : service.baseURL
-        model = provider == .nvidia ? service.nvidiaSelectedModel : ""
+        model = provider == .nvidia ? (autoSelection ? "" : service.nvidiaSelectedModel) : ""
     }
     private func refreshModels() {
         guard provider == .nvidia, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -121,16 +123,20 @@ struct DifySettingsSheet: View {
         }
     }
     private func connect() {
-        cancel(); checking = true; notice = nil
+        cancel(); checking = true; notice = nil; connectionProgress = "Проверяем подключение…"
         let token = operationID, selectedProvider = provider, selectedKey = key, selectedEndpoint = endpoint, selectedModel = model
         AIMusicCuratorStore.shared.cancel()
         operation = Task {
             do {
                 let chosen = try await service.connect(provider: selectedProvider, key: selectedKey,
-                    endpoint: selectedEndpoint, model: selectedModel.isEmpty ? nil : selectedModel)
+                    endpoint: selectedEndpoint, model: selectedModel.isEmpty ? nil : selectedModel) { progress in
+                    if operationID == token { connectionProgress = progress }
+                }
                 try Task.checkCancellation(); guard operationID == token else { return }
                 // Finish the operation before updating Picker state so onChange does not cancel success.
-                checking = false; operation = nil; model = chosen
+                checking = false; operation = nil
+                if selectedProvider == .nvidia { autoSelection = selectedModel.isEmpty }
+                model = selectedModel.isEmpty ? "" : chosen
                 notice = selectedProvider == .dify ? "Подключено. Модель настроена в Dify." : "Подключено · \(chosen)"
             } catch {
                 guard operationID == token, !Task.isCancelled else { return }

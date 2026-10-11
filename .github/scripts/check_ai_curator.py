@@ -173,6 +173,12 @@ import CryptoKit
         precondition(DifyService.extractPlaylist(from:conversation) == nil)
         precondition(AICuratorPrompt.system(.curator).contains("ОДИН короткий вопрос"))
         precondition(AICuratorPrompt.system(.curator).contains("не создавай плейлист"))
+
+        let probeSelection = AIGeneratedPlaylist(playlistTitle:"Проверка",description:"Проверка формата",tracks:[AITrackSuggestion(artist:"Bill Evans",title:"Peace Piece",reason:"Переданная песня")])
+        let probeReply = AICuratorReply(intent:.playlist,summary:"Одна переданная песня",question:nil,playlist:probeSelection)
+        let probeAnswer = String(data:try JSONEncoder().encode(probeReply),encoding:.utf8)!
+        let probeBody = String(data:try JSONSerialization.data(withJSONObject:["choices":[["message":["role":"assistant","content":probeAnswer]]]]),encoding:.utf8)!
+
         // Live catalog, duplicate IDs, non-chat exclusions, preserve existing model, staged commit.
         let catalog = "{\"data\":[{\"id\":\"vendor/llama-instruct\"},{\"id\":\"vendor/llama-instruct\"},{\"id\":\"vendor/qwen-embed\"},{\"id\":\"vendor/tts\"},{\"id\":\"vendor/qwen-chat\"}]}"
         let decoded = try AIModelDiscovery.decode(Data(catalog.utf8))
@@ -184,7 +190,7 @@ import CryptoKit
         precondition(models == decoded && StubProtocol.requests.last!.url!.path == "/v1/models")
         try ai.configure(provider:.nvidia,key:"old-fixture-key",endpoint:"https://fixture.invalid/v1",model:"old-fixture-model")
         StubProtocol.enqueue(200, catalog)
-        StubProtocol.enqueue(200, "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"OK\"}}]}")
+        StubProtocol.enqueue(200, probeBody)
         let chosen = try await ai.connect(provider:.nvidia,key:"new-fixture-key",endpoint:"https://fixture.invalid/v1",model:nil)
         precondition(chosen == "vendor/llama-instruct" && ai.nvidiaApiKey == "new-fixture-key")
         StubProtocol.enqueue(200, catalog)
@@ -213,6 +219,38 @@ import CryptoKit
         do { _ = try await cancelledConnect.value; fatalError("Cancelled setup accepted") } catch is CancellationError { }
         precondition(ai.nvidiaApiKey == "new-fixture-key")
         print("Provider setup: typed catalog/probe timeout, hard deadline, no paid retry, existing-key preservation, cancellation and small automatic candidate checks passed")
+
+
+        let modernCatalog = "{\"data\":[{\"id\":\"aisingapore/sea-lion-7b-instruct\"},{\"id\":\"nvidia/nemotron-3-super-120b-a12b\"},{\"id\":\"moonshotai/kimi-k3\"},{\"id\":\"deepseek-ai/deepseek-v4.1-flash\"},{\"id\":\"nvidia/nemotron-3.5-lightning-30b-a3b\"}]}"
+        let ranked = AIModelDiscovery.curatorCandidates(in:try AIModelDiscovery.decode(Data(modernCatalog.utf8)))
+        precondition(ranked == ["nvidia/nemotron-3-super-120b-a12b","moonshotai/kimi-k3","nvidia/nemotron-3.5-lightning-30b-a3b"])
+        StubProtocol.enqueue(200,modernCatalog); StubProtocol.enqueue(404,"{}"); StubProtocol.enqueue(200,"{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}"); StubProtocol.enqueue(200,probeBody)
+        var selectionProgress: [String] = []
+        let verifiedChoice = try await ai.connect(provider:.nvidia,key:"auto-verified-fixture",endpoint:"https://fixture.invalid/v1",model:nil) { selectionProgress.append($0) }
+        precondition(verifiedChoice == "nvidia/nemotron-3.5-lightning-30b-a3b" && ai.nvidiaApiKey == "auto-verified-fixture")
+        precondition(selectionProgress.contains { $0.contains("3/3") })
+        let latestProbe = StubProtocol.requests.last!
+        let probePayload = try JSONSerialization.jsonObject(with:latestProbe.httpBody!) as! [String:Any]
+        precondition(probePayload["max_tokens"] as? Int == 384 && latestProbe.timeoutInterval <= 60)
+        precondition((probePayload["chat_template_kwargs"] as! [String:Bool])["enable_thinking"] == false)
+        for fatalStatus in [401,403,429,500,503] {
+            StubProtocol.enqueue(200,modernCatalog); StubProtocol.enqueue(fatalStatus,"{}")
+            let beforeFatal = StubProtocol.requests.count
+            do { _ = try await ai.connect(provider:.nvidia,key:"blocked-fixture",endpoint:"https://fixture.invalid/v1",model:nil); fatalError("Accepted blocked setup") } catch { }
+            precondition(StubProtocol.requests.count == beforeFatal + 2, "Global auth/quota/service failure retried")
+            precondition(ai.nvidiaApiKey == "auto-verified-fixture")
+        }
+        StubProtocol.enqueue(200,modernCatalog); StubProtocol.enqueue(404,"{}"); StubProtocol.enqueue(410,"{}"); StubProtocol.enqueue(400,"{}")
+        let beforeExhausted = StubProtocol.requests.count
+        do { _ = try await ai.connect(provider:.nvidia,key:"unverified-fixture",endpoint:"https://fixture.invalid/v1",model:nil); fatalError("Accepted no verified model") }
+        catch DifyError.automaticSelectionFailed(let failures) { precondition(failures.count == 3) }
+        precondition(StubProtocol.requests.count == beforeExhausted + 4 && ai.nvidiaApiKey == "auto-verified-fixture")
+        StubProtocol.reply(404,"{}")
+        let beforeExplicit = StubProtocol.requests.count
+        do { _ = try await ai.connect(provider:.nvidia,key:"explicit-fixture",endpoint:"https://fixture.invalid/v1",model:"aisingapore/sea-lion-7b-instruct"); fatalError("Explicit 404 accepted") }
+        catch DifyError.serverError(let status) { precondition(status == 404) }
+        precondition(StubProtocol.requests.count == beforeExplicit + 1 && ai.nvidiaApiKey == "auto-verified-fixture")
+        print("Curator auto selection: quality-oriented catalog ranking, JSON/one-track constraint probe,404/format progression, maximum3 probes, explicit choice preservation and global-failure stop passed")
 
         // Dify takes its server-side model, and performs no /models request.
         StubProtocol.reply(200, "{\"answer\":\"OK\",\"conversation_id\":\"health-only\"}")

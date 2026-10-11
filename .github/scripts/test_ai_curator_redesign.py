@@ -80,7 +80,7 @@ class CuratorTests(unittest.TestCase):
         s = source('DifyService.swift')
         connect = s.split('func connect(', 1)[1].split('private func validateHTTP', 1)[0]
         self.assertIn('discoverModels(key:', connect)
-        self.assertLess(connect.index('setupData(for: request'), connect.index('try configure('))
+        self.assertLess(connect.index('probeConnection(provider:'), connect.index('try configure('))
         self.assertIn('configurationID == revision', connect)
         self.assertIn('YandexMusicService.shared.accountGeneration == account', connect)
         self.assertNotIn('fallback', connect)
