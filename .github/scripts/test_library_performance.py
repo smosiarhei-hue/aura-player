@@ -62,5 +62,6 @@ class LibraryPerformanceTests(unittest.TestCase):
         s = source('librarystore.swift')
         copy = s.split('func importFiles(', 1)[1].split('func clearLastError', 1)[0]
         self.assertIn('Task.detached(priority: .userInitiated)', copy)
+        self.assertIn('guard !isImportingFiles else', copy)
         self.assertIn('startAccessingSecurityScopedResource', copy)
         self.assertIn('stopAccessingSecurityScopedResource', copy)

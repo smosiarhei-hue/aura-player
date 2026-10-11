@@ -54,7 +54,7 @@ nonisolated struct OffMainSnapshot: Encodable, Sendable {
             collection.append(item)
         }
         collection[10].fileName = collection[0].fileName
-        collection[20] = Track(id:collection[30].id,fileName:"alias",title:"Alias",artist:"Other",isStream:true,isFavorite:true)
+        collection[20] = Track(id:collection[30].id,fileName:"alias",title:"Alias",artist:"Other",isStream:true,isFavorite:true,addedAt:Date(timeIntervalSince1970:20))
         let lookup = LibraryTrackLookup(collection)
         for track in collection.prefix(1000) {
             let legacy: Track? = collection.first { candidate in

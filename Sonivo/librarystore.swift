@@ -383,6 +383,10 @@ final class LibraryStore {
     }
 
     func importFiles(from urls: [URL]) async {
+        guard !isImportingFiles else {
+            lastError = "Дождитесь завершения текущего импорта и выберите файлы снова."
+            return
+        }
         lastError = nil
         lastImportMessage = nil
         guard !urls.isEmpty else {
