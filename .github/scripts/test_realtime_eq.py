@@ -74,6 +74,13 @@ void destroy(void *p) { free(p); }
         self.assertAlmostEqual(self.response(gains,1000)-pre,6,delta=.06)
         self.assertLess(self.response(gains,100)-pre,.2)
 
+    def test_extended_bass_range_is_real_and_does_not_boost_high_band_limits(self):
+        strong=[18,0,0,0,0,0,0,0,0,0]
+        mild=[12,0,0,0,0,0,0,0,0,0]
+        self.assertGreater(self.response(strong,12)-self.response(mild,12),5)
+        self.assertAlmostEqual(self.response(strong,1000),0,delta=.1)
+        self.assertAlmostEqual(self.response([0]*5+[18]+[0]*4,1000),self.response([0]*5+[12]+[0]*4,1000),delta=.1)
+        self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[18]*3+[12]*7)))
     def test_shelves_control_bass_and_treble_without_edge_resonance(self):
         bass=[6]+[0]*9;treble=[0]*9+[6]
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)

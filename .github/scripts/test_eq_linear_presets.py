@@ -26,7 +26,7 @@ class LinearEQTests(unittest.TestCase):
         for expected in ['TextField("Название"','try userPresets.save(','player.eqGains = preset.gains','.confirmationDialog("Удалить пресет?"','try userPresets.delete(']:
             self.assertIn(expected,ui)
         store=(ROOT/'Sonivo/EQUserPresetStore.swift').read_text()
-        for expected in ['JSONEncoder','JSONDecoder','eq.userPresets.v1','gains.count == 10','$0.isFinite','duplicateName','archiveIsValid','presets = next']:
+        for expected in ['JSONEncoder','JSONDecoder','eq.userPresets.v1','gains.count == 10','$0.element.isFinite','duplicateName','archiveIsValid','presets = next']:
             self.assertIn(expected,store)
         compiled=(ROOT/'.github/scripts/check_eq_user_presets.py').read_text()
         for expected in ['reloaded.presets==[saved]','reloaded.delete','broken archive','.nan','.infinity','bad count']:

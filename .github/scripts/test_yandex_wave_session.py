@@ -19,9 +19,10 @@ class YandexWaveSessionTests(unittest.TestCase):
         s=source('yandexmusicservice.swift').split('func refillYandexWave()',1)[1].split('func getStationTracks',1)[0]
         self.assertIn('waveSession.next(excluding: history)',s)
         self.assertNotIn('startYandexWave(',s)
-        core=source('playercore.swift').split('func refillQueueIfNeeded()',1)[1].split('private func flushListeningStats()',1)[0]
+        core=source('playercore.swift').split('private func loadQueueContinuation',1)[1].split('private func flushListeningStats()',1)[0]
         self.assertIn('await ym.refillYandexWave()',core)
-        self.assertIn('let serverOrdered = ym.activeStationId != nil',core)
+        self.assertNotIn('filterAndRankWave',core)
+        self.assertIn('continuationLoader.load(key:key)',core)
     def test_server_order_without_chart_or_taste_fallback(self):
         s=source('yandexmusicservice.swift').split('func startYandexWave(',1)[1].split('/// Подборка',1)[0]
         for token in ['getChart(', 'personalPicks(', '.shuffled()', 'filterAndRankWave(']:self.assertNotIn(token,s)

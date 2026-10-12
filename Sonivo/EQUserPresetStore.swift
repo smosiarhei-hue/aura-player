@@ -20,7 +20,7 @@ final class EQUserPresetStore {
             switch self {
             case .invalidName: return "Введи название от 1 до 64 символов."
             case .duplicateName: return "Пресет с таким названием уже есть. Выбери другое название."
-            case .invalidCurve: return "Нужны десять конечных значений от −12 до +12 дБ."
+            case .invalidCurve: return "Нужны десять конечных значений: НЧ от −12 до +18 дБ, остальные от −12 до +12 дБ."
             case .invalidArchive: return "Сохранённые пресеты повреждены. Они не были перезаписаны."
             }
         }
@@ -67,7 +67,7 @@ final class EQUserPresetStore {
         presets = next
     }
     private static func validGains(_ gains: [Float]) -> Bool {
-        gains.count == 10 && gains.allSatisfy { $0.isFinite && (-12...12).contains($0) }
+        gains.count == 10 && gains.enumerated().allSatisfy { $0.element.isFinite && EQGainLimits.range(at:$0.offset).contains($0.element) }
     }
     private static func nameKey(_ name: String) -> String {
         name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))

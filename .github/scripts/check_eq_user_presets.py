@@ -29,9 +29,15 @@ import Foundation
         rejects { _ = try reloaded.save(name:"nan",gains:bad) }
         bad[0] = .infinity
         rejects { _ = try reloaded.save(name:"inf",gains:bad) }
-        bad[0] = 12.5
+        bad[0] = 18.5
         rejects { _ = try reloaded.save(name:"range",gains:bad) }
         precondition(reloaded.presets==[saved],"Rejection changed saved preset")
+        let strong: [Float] = [18,18,18,12,12,12,12,12,12,12]
+        let strongPreset = try reloaded.save(name:"Сильный",gains:strong)
+        precondition(EQUserPresetStore(defaults:defaults).presets.contains(strongPreset))
+        var high = strong; high[3] = 12.5
+        rejects { _ = try reloaded.save(name:"High invalid",gains:high) }
+        try reloaded.delete(id:strongPreset.id)
         try reloaded.delete(id:saved.id)
         precondition(EQUserPresetStore(defaults:defaults).presets.isEmpty)
         let broken=Data("broken archive".utf8)
@@ -45,7 +51,7 @@ import Foundation
 '''
     with tempfile.TemporaryDirectory() as d:
         p=Path(d);(p/'Checks.swift').write_text(main)
-        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/EQUserPresetStore.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
+        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/EQGainLimits.swift'),str(root/'Sonivo/EQUserPresetStore.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
         assert built.returncode==0,built.stderr
         result=subprocess.run([str(p/'checks')],capture_output=True,text=True)
         assert result.returncode==0,result.stdout+result.stderr

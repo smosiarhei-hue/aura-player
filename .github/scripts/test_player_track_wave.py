@@ -28,11 +28,14 @@ class PlayerTrackWaveTests(unittest.TestCase):
         self.assertIn('waveLoading = false',lifetime)
     def test_all_player_refills_prefer_track_station_before_local_engine(self):
         core=source('playercore.swift')
-        self.assertEqual(core.count('await YandexMusicService.shared.refillYandexTrackWave(target: 20)'),2)
+        loader=core.split('private func loadQueueContinuation',1)[1].split('func refillQueueIfNeeded',1)[0]
+        self.assertLess(loader.index('await ym.refillYandexTrackWave'),loader.index('await MoodRadioEngine.shared.refillTrackWaveQueue'))
+        self.assertIn('continuationLoader.load(key:key)',loader)
         refill=core.split('func refillQueueIfNeeded()',1)[1].split('private func flushListeningStats()',1)[0]
-        self.assertLess(refill.index('await ym.refillYandexTrackWave'),refill.index('await MoodRadioEngine.shared.refillTrackWaveQueue'))
-        self.assertIn('serverOrdered ? rawTracks : UserTasteEngine.shared.filterAndRankWave',refill)
-        self.assertIn('guard !refillingTrackStation || ym.rotorSessionID == sessionID',refill)
+        self.assertIn('self.queueContinuationID == queueID',refill)
+        self.assertIn('ym.accountGeneration == account',refill)
+        self.assertNotIn('filterAndRankWave',refill)
+        self.assertIn('remainingAhead <= (ym.activeStationId == nil ? 0 : 5)',refill)
     def test_native_secondary_actions_are_below_primary_wave_and_scrollable(self):
         screen=source('PlayerScreenV2.swift')
         body=screen.split('var body: some View',1)[1].split('.sheet(item:',1)[0]

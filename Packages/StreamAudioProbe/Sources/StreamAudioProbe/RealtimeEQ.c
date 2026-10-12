@@ -4,7 +4,7 @@
 
 static const double frequencies[SONIVO_EQ_BANDS] = {30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000};
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
-static double cleanGain(double gain) { return isfinite(gain) ? clamp(gain, -12, 12) : 0; }
+static double cleanGain(double gain, unsigned band) { return isfinite(gain) ? clamp(gain, -12, band < 3 ? 18 : 12) : 0; }
 static SonivoEQCoefficients identity(void) { return (SonivoEQCoefficients){1,0,0,0,0}; }
 static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate) {
     if (fabs(gain) < 0.00001) return identity();
@@ -48,7 +48,7 @@ void SonivoEQSet(SonivoRealtimeEQ *eq,const float *gains,size_t count,int enable
     atomic_store_explicit(&eq->enabled,enabled!=0,memory_order_relaxed);
     atomic_store_explicit(&eq->preamp,(int)lrint(clamp(isfinite(preamp)?preamp:0,-48,0)*1000),memory_order_relaxed);
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++)
-        atomic_store_explicit(&eq->gains[b],(int)lrint(cleanGain(gains && b<count?gains[b]:0)*1000),memory_order_relaxed);
+        atomic_store_explicit(&eq->gains[b],(int)lrint(cleanGain(gains && b<count?gains[b]:0,b)*1000),memory_order_relaxed);
     atomic_fetch_add_explicit(&eq->sequence,1,memory_order_release);
 }
 static void consume(SonivoRealtimeEQ *eq,int initial) {

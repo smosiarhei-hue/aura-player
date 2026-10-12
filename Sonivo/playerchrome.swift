@@ -391,7 +391,7 @@ struct PlayerEQSheetView: View {
 
     private let bandNames = ["Глубина", "Удар бочки", "Плотность", "Теплота", "Тело", "Голос", "Присутствие", "Детали", "Яркость", "Воздух"]
     private let frequencyLabels = ["30 Гц · нижняя полка", "62,5 Гц", "125 Гц", "250 Гц", "500 Гц", "1 кГц", "2 кГц", "4 кГц", "8 кГц", "20 кГц · верхняя полка"]
-    private var primaryPresets: [EQPreset] { [EQPresets.flat, EQPresets.airPodsPro2Bass, EQPresets.bassBoost, EQPresets.bassTrebleBoost] }
+    private var primaryPresets: [EQPreset] { [EQPresets.flat, EQPresets.airPodsPro2Bass, EQPresets.bassBoost, EQPresets.subBassPower, EQPresets.bassTrebleBoost] }
     private var activePreset: EQPreset? { EQPresets.all.first { matches($0.gains) } }
     private var columns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 12), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
@@ -543,11 +543,13 @@ struct PlayerEQSheetView: View {
             HStack {
                 Text("Точная настройка").font(.headline)
                 Spacer()
-                Text("±12 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
+                Text("НЧ до +18 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
-            Text("30 Гц — 20 кГц • все полосы в одной линейке")
+            Text("30 Гц — 20 кГц • низкие полосы до +18 дБ, остальные ±12 дБ")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
+            Text("Выше +12 дБ возможны искажения. Начни с умеренной громкости; физический бас зависит от наушников. Системную громкость и ограничения iOS приложение не меняет.")
+                .font(.caption).foregroundStyle(SN.inkMuted)
             Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(spacing: 0) {
@@ -584,7 +586,7 @@ struct PlayerEQSheetView: View {
         return VStack(spacing: 8) {
             Text(labels[index]).font(.subheadline.weight(.semibold)).monospacedDigit()
             Text(db(gain)).font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
-            Text("+12").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
+            Text("+\(Int(EQGainLimits.range(at:index).upperBound))").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
             // Keep UIKit/SwiftUI's native adjustable control; rotate its layout, not a custom drag recognizer.
             Slider(value: Binding(
                 get: { Double(PlayerCore.normalized(player.eqGains)[index]) },
@@ -593,13 +595,13 @@ struct PlayerEQSheetView: View {
                     curve[index] = Float(value)
                     player.eqGains = curve
                 }
-            ), in: -12...12, step: 0.5, onEditingChanged: { editing in
+            ), in: Double(EQGainLimits.range(at:index).lowerBound)...Double(EQGainLimits.range(at:index).upperBound), step: 0.5, onEditingChanged: { editing in
                 if !editing { player.saveEQ() }
             })
             .tint(SN.amber)
-            .frame(width: 180, height: 44)
+            .frame(width: 260, height: 44)
             .rotationEffect(.degrees(-90))
-            .frame(width: 60, height: 180)
+            .frame(width: 60, height: 260)
             .accessibilityLabel("\(bandNames[index]), \(frequencyLabels[index])")
             .accessibilityValue(db(gain))
             Text("−12").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
@@ -677,7 +679,7 @@ struct PlayerEQSheetView: View {
                     curve[index] = Float(value)
                     player.eqGains = curve
                 }
-            ), in: -12...12, step: 0.5, onEditingChanged: { editing in
+            ), in: Double(EQGainLimits.range(at:index).lowerBound)...Double(EQGainLimits.range(at:index).upperBound), step: 0.5, onEditingChanged: { editing in
                 if !editing { player.saveEQ() }
             })
             .tint(SN.amber)
@@ -696,7 +698,7 @@ struct PlayerEQSheetView: View {
                 .frame(minWidth: 60, minHeight: 44)
                 .accessibilityLabel("Сбросить \(bandNames[index])")
                 Spacer()
-                Text("+12")
+                Text("+\(Int(EQGainLimits.range(at:index).upperBound))")
             }
             .font(.subheadline.monospacedDigit())
             .foregroundStyle(SN.inkMuted)

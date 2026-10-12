@@ -45,6 +45,7 @@ final class YandexWaveSession<Item: Decodable> {
 
     private func request(_ path: String, body: [String: Any]? = nil) -> URLRequest {
         var request = URLRequest(url: URL(string: "https://api.music.yandex.net" + path)!)
+        request.timeoutInterval = 20
         request.setValue("ru", forHTTPHeaderField: "Accept-Language")
         request.setValue("com.yandex.mobile.music", forHTTPHeaderField: "X-Yandex-Music-Client")
         if let body {
