@@ -38,11 +38,13 @@ nonisolated struct Item: Decodable, Sendable { let id: String; let available: Bo
         (Data(body.utf8), HTTPURLResponse(url:request.url!,statusCode:status,httpVersion:nil,headerFields:nil)!)
     }
 }
-nonisolated struct Track: Equatable { let id: Int }
+nonisolated struct Track: Equatable { let id: Int; var fileName: String { "ym_\(id)" } }
 nonisolated enum RepeatMode { case off, all, one }
 @MainActor final class YandexMusicService {
     static let shared = YandexMusicService()
     var activeStationId: String?
+    var isUserLoggedIn = true
+    static func ymId(fromFileName: String) -> String? { fromFileName.hasPrefix("ym_") ? String(fromFileName.dropFirst(3)) : nil }
 }
 @MainActor final class Selector {
     var queue = [Track(id:1),Track(id:2),Track(id:3),Track(id:4),Track(id:5)]
@@ -151,7 +153,12 @@ nonisolated enum RepeatMode { case off, all, one }
         }
         YandexMusicService.shared.activeStationId = nil
         selector.shuffle = false; selector.repeatMode = .off
-        precondition(selector.peekNext(auto:false)?.id == 1) // existing playlist semantics retained
+        precondition(selector.peekNext(auto:false) == nil) // signed-in catalog playlist requests continuation
+        YandexMusicService.shared.isUserLoggedIn = false
+        precondition(selector.peekNext(auto:false)?.id == 1) // local/guest manual wrap remains
+        YandexMusicService.shared.isUserLoggedIn = true
+        selector.repeatMode = .all
+        precondition(selector.peekNext(auto:true)?.id == 1) // explicit whole-playlist repeat remains
         // Media accounting: buffering, pause, backward/forward seek and duplicate end events.
         var listening = WaveListeningState()
         precondition(!listening.sample(trackID:"1",position:0,advancing:true))
