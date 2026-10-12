@@ -5,6 +5,10 @@ nonisolated struct SavedEQPreset: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     let name: String
     let gains: [Float]
+    let frequencies: [Float]?
+    init(id: UUID, name: String, gains: [Float], frequencies: [Float]? = nil) {
+        self.id = id; self.name = name; self.gains = gains; self.frequencies = frequencies
+    }
 }
 
 /// Only control metadata is persisted. No audio, PCM or system volume is stored.
@@ -20,7 +24,7 @@ final class EQUserPresetStore {
             switch self {
             case .invalidName: return "Введи название от 1 до 64 символов."
             case .duplicateName: return "Пресет с таким названием уже есть. Выбери другое название."
-            case .invalidCurve: return "Нужны 29 конечных значений: НЧ от −12 до +18 дБ, остальные от −12 до +12 дБ."
+            case .invalidCurve: return "Нужны 10 конечных значений: НЧ от −12 до +18 дБ, остальные от −12 до +12 дБ."
             case .invalidArchive: return "Сохранённые пресеты повреждены. Они не были перезаписаны."
             }
         }
@@ -38,9 +42,13 @@ final class EQUserPresetStore {
                 archiveIsValid = false
                 return
             }
-            presets = decoded.map { SavedEQPreset(id:$0.id,name:$0.name,gains:EQGainLimits.normalized($0.gains)) }
-            if decoded.contains(where: { $0.gains.count == 10 }) {
-                if defaults.data(forKey:"eq.userPresets.dense29.backup") == nil { defaults.set(data,forKey:"eq.userPresets.dense29.backup") }
+            presets = decoded.map { preset in
+                let source = preset.frequencies ?? (preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies)
+                let gains = EQGainLimits.normalized(EQGainLimits.resample(preset.gains,from:source,to:EQGainLimits.frequencies))
+                return SavedEQPreset(id:preset.id,name:preset.name,gains:gains,frequencies:EQGainLimits.frequencies)
+            }
+            if presets != decoded {
+                if defaults.data(forKey:"eq.userPresets.compact10.backup") == nil { defaults.set(data,forKey:"eq.userPresets.compact10.backup") }
                 defaults.set(try JSONEncoder().encode(presets),forKey:key)
             }
         } catch { archiveIsValid = false }
@@ -55,7 +63,7 @@ final class EQUserPresetStore {
         guard !presets.contains(where: { Self.nameKey($0.name) == Self.nameKey(trimmed) }) else {
             throw SaveError.duplicateName
         }
-        let preset = SavedEQPreset(id: UUID(), name: trimmed, gains: EQGainLimits.normalized(gains))
+        let preset = SavedEQPreset(id: UUID(), name: trimmed, gains: EQGainLimits.normalized(gains), frequencies: EQGainLimits.frequencies)
         try persist(presets + [preset])
         return preset
     }
@@ -71,9 +79,6 @@ final class EQUserPresetStore {
         presets = next
     }
     private static func validGains(_ gains: [Float]) -> Bool {
-        if gains.count == 10 {
-            return gains.enumerated().allSatisfy { $0.element.isFinite && (-12...($0.offset < 3 ? Float(18) : Float(12))).contains($0.element) }
-        }
         return gains.count == EQGainLimits.frequencies.count && gains.enumerated().allSatisfy {
             $0.element.isFinite && EQGainLimits.range(at:$0.offset).contains($0.element)
         }
@@ -83,6 +88,13 @@ final class EQUserPresetStore {
     }
     private static func isValid(_ preset: SavedEQPreset) -> Bool {
         let trimmed = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && trimmed.count <= 64 && validGains(preset.gains)
+        guard !trimmed.isEmpty, trimmed.count <= 64 else { return false }
+        if let frequencies = preset.frequencies {
+            return frequencies == EQGainLimits.frequencies && validGains(preset.gains)
+        }
+        let source = preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies
+        return preset.gains.count == source.count && preset.gains.enumerated().allSatisfy {
+            $0.element.isFinite && (-12...(source[$0.offset] <= (source.count == 29 ? 250 : 125) ? Float(18) : Float(12))).contains($0.element)
+        }
     }
 }

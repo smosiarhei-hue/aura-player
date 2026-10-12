@@ -3,7 +3,7 @@ import Testing
 
 @Suite("Equalizer configuration")
 struct EqualizerConfigurationTests {
-    @Test("Every preset has dense finite bands inside the UI range")
+    @Test("Every preset has compact finite bands inside the UI range")
     func presetRanges() {
         for preset in EQPresets.all {
             #expect(preset.gains.count == PlayerCore.bandFrequencies.count)
@@ -22,6 +22,6 @@ struct EqualizerConfigurationTests {
         #expect(normalized.allSatisfy { abs($0) <= PlayerCore.maximumEQGain })
         #expect(normalized[0] == 0)
         #expect(normalized[1] == -12)
-        #expect(normalized[6] == 18)
+        #expect(normalized[6] == 12)
     }
 }

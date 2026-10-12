@@ -8,25 +8,30 @@ class LinearEQTests(unittest.TestCase):
         c=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.c').read_text()
         a=[float(x) for x in re.search(r'frequencies: \[Float\] = \[([^]]+)\]',swift)[1].split(',')]
         b=[float(x) for x in re.search(r'frequencies\[SONIVO_EQ_BANDS\] = \{([^}]+)\}',c)[1].split(',')]
-        self.assertEqual(a,b);self.assertEqual(len(a),29);self.assertEqual(a[:23],list(range(30,251,10)))
-        self.assertEqual((a[0],a[-1]),(30,20000))
+        self.assertEqual(a,b);self.assertEqual(a,[30,60,120,250,500,1000,2000,4000,8000,15000])
+        self.assertEqual((a[0],a[-1]),(30,15000))
         self.assertIn('validRate * 0.44',(ROOT/'Sonivo/playercore.swift').read_text())
         self.assertIn('rate * 0.44',c)
         dual=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
         d=[float(x) for x in re.search(r'let frequencies: \[Float\] = \[([^]]+)',dual)[1].split(',')]
         self.assertEqual(a,d)
-        self.assertIn('numberOfBands: 29',dual)
+        self.assertIn('numberOfBands: 10',dual)
         self.assertIn('bandwidth * w',c)
         self.assertIn('EQGainLimits.bandwidth(at:i)',(ROOT/'Sonivo/playercore.swift').read_text())
-    def test_linear_native_sliders_and_accessibility_rows(self):
+    def test_single_screen_graph_and_native_precise_slider(self):
         text=(ROOT/'Sonivo/playerchrome.swift').read_text().split('struct PlayerEQSheetView:',1)[1]
         self.assertNotIn('EQRegion',text)
-        self.assertIn('ScrollView(.horizontal)',text)
+        self.assertNotIn('ScrollView(.horizontal)',text)
         self.assertIn('ForEach(PlayerCore.bandFrequencies.indices',text)
         self.assertIn('dynamicTypeSize.isAccessibilitySize',text)
-        self.assertIn('.rotationEffect(.degrees(-90))',text)
+        self.assertIn('CompactEQCurve(gains:',text)
+        self.assertIn('bandRow(selectedBand)',text)
+        self.assertIn('count: 5',text)
+        self.assertIn('minHeight: 44',text)
+        self.assertIn('draggingBand = closest',text)
+        self.assertIn('selectedBand = closest',text)
         self.assertIn('bandRow(index)',text)
-        self.assertIn('20 кГц — номинальная',text)
+        self.assertIn('15 кГц — номинальная',text)
     def test_named_presets_have_native_save_apply_and_confirmed_delete(self):
         ui=(ROOT/'Sonivo/playerchrome.swift').read_text()
         for expected in ['TextField("Название"','try userPresets.save(','player.eqGains = preset.gains','.confirmationDialog("Удалить пресет?"','try userPresets.delete(']:

@@ -112,24 +112,27 @@ final class PlayerCore {
            let decoded = try? JSONDecoder().decode([Float].self, from: data) {
             gains = decoded
         }
-        if !defaults.bool(forKey:"eq.octaveCurve.v2"), gains.count == 10 {
-            let old: [Float] = [20,40,60,90,160,400,1000,2500,6000,16000]
-            gains = EQGainLimits.resample(gains,from:old,to:EQGainLimits.legacyFrequencies)
+        if !defaults.bool(forKey:"eq.layout.compact10") {
+            if !defaults.bool(forKey:"eq.octaveCurve.v2"), gains.count == 10 {
+                let old: [Float] = [20,40,60,90,160,400,1000,2500,6000,16000]
+                gains = EQGainLimits.resample(gains,from:old,to:EQGainLimits.legacyFrequencies)
+            }
+            // Historical exact factory remaps: never overwrite a custom curve with a factory preset.
+            if !defaults.bool(forKey:"eq.bassProfiles.v3"), gains.count == 10 {
+                if gains == [6,5,3,1,0,0,0,0,0,0] { gains = [8,6,2,-2,-1,0,0,0,0,0] }
+                else if gains == [5,4,2,0,-1,0,1,2,4,4] { gains = [6,4.5,1.5,-1,-1,0,1,2,3,3] }
+            }
+            if gains.count == 10 || gains.count == EQGainLimits.denseFrequencies.count {
+                if defaults.data(forKey:"eq.gains.compact10.backup") == nil,
+                   let original = defaults.data(forKey:eqGainsKey) { defaults.set(original,forKey:"eq.gains.compact10.backup") }
+                let source = gains.count == 10 ? EQGainLimits.legacyFrequencies : EQGainLimits.denseFrequencies
+                gains = EQGainLimits.normalized(EQGainLimits.resample(gains,from:source,to:EQGainLimits.frequencies))
+                if let data = try? JSONEncoder().encode(gains) { defaults.set(data,forKey:eqGainsKey) }
+            }
+            defaults.set(true,forKey:"eq.octaveCurve.v2")
+            defaults.set(true,forKey:"eq.bassProfiles.v3")
+            defaults.set(true,forKey:"eq.layout.compact10")
         }
-        defaults.set(true,forKey:"eq.octaveCurve.v2")
-        // Historical exact factory remaps: never overwrite a custom curve with a factory preset.
-        if !defaults.bool(forKey:"eq.bassProfiles.v3"), gains.count == 10 {
-            if gains == [6,5,3,1,0,0,0,0,0,0] { gains = [8,6,2,-2,-1,0,0,0,0,0] }
-            else if gains == [5,4,2,0,-1,0,1,2,4,4] { gains = [6,4.5,1.5,-1,-1,0,1,2,3,3] }
-        }
-        defaults.set(true,forKey:"eq.bassProfiles.v3")
-        if gains.count == 10 {
-            if defaults.data(forKey:"eq.gains.dense29.backup") == nil,
-               let original = defaults.data(forKey:eqGainsKey) { defaults.set(original,forKey:"eq.gains.dense29.backup") }
-            gains = EQGainLimits.normalized(gains)
-            if let data = try? JSONEncoder().encode(gains) { defaults.set(data,forKey:eqGainsKey) }
-        }
-        defaults.set(true,forKey:"eq.layout.dense29")
         return (normalized(gains), enabled)
     }
     // EQ boosts retain unity preamp by request. Flat/off and spatial passthrough stay unchanged.

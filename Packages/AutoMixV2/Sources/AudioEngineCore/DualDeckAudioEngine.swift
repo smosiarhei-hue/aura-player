@@ -31,7 +31,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let engine = AVAudioEngine()
             let a = DeckSlot(deck: .a, capacity: preloadPolicy.initialChunksPerDeck)
             let b = DeckSlot(deck: .b, capacity: preloadPolicy.initialChunksPerDeck)
-            let userEQ = AVAudioUnitEQ(numberOfBands: 29)
+            let userEQ = AVAudioUnitEQ(numberOfBands: 10)
             for slot in [a, b] {
                 engine.attach(slot.player)
                 engine.attach(slot.timePitch)
@@ -50,10 +50,10 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 slot.resetFX()
             }
             engine.attach(userEQ)
-            let frequencies: [Float] = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 500, 1000, 2000, 4000, 8000, 20000]
+            let frequencies: [Float] = [30, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000]
             for (index, band) in userEQ.bands.enumerated() {
                 band.frequency = frequencies[index]
-                band.bandwidth = index > 0 && frequencies[index] <= 250 ? max(0.05,min(5,0.5 * log2((frequencies[index]+10) / (frequencies[index]-10)))) : 1
+                band.bandwidth = 1
                 band.filterType = index == 0 ? .lowShelf : (index == frequencies.count - 1 ? .highShelf : .parametric)
                 band.gain = 0
                 band.bypass = false
@@ -144,7 +144,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         await inspect { owner in
             owner.userEQ.bypass = !enabled
             let normalized = Array(gains.prefix(owner.userEQ.bands.count)).enumerated().map {
-                $0.element.isFinite ? max(-12,min($0.offset < 23 ? Float(18) : Float(12),$0.element)) : 0
+                $0.element.isFinite ? max(-12,min($0.offset < 4 ? Float(18) : Float(12),$0.element)) : 0
             }
             owner.userEQ.globalGain = 0
             for (index, band) in owner.userEQ.bands.enumerated() {

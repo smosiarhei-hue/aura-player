@@ -388,6 +388,7 @@ struct PlayerEQSheetView: View {
     @State private var presetName = ""
     @State private var presetError: String?
     @State private var deletingPreset: SavedEQPreset?
+    @State private var selectedBand = 0
 
     private let bandNames = EQGainLimits.frequencies.map { $0 <= 250 ? "Низкие частоты" : "Частотная полоса" }
     private let frequencyLabels = EQGainLimits.frequencies.map { "\(Int($0)) Гц" }
@@ -402,8 +403,8 @@ struct PlayerEQSheetView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     masterCard
-                    profilesSection
                     bandsSection
+                    profilesSection
                     savedPresetsSection
                     outputCard
                     listeningNote
@@ -545,7 +546,7 @@ struct PlayerEQSheetView: View {
                 Spacer()
                 Text("НЧ до +18 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
-            Text("30–250 Гц с шагом 10 Гц • дальше до 20 кГц")
+            Text("30, 60, 120 Гц → 15 кГц • все полосы на одном экране")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
             Text("Выше +12 дБ возможны искажения. Начни с умеренной громкости; физический бас зависит от наушников. Системную громкость и ограничения iOS приложение не меняет.")
@@ -559,14 +560,29 @@ struct PlayerEQSheetView: View {
                         }
                     }
                 } else {
-                    ScrollView(.horizontal) {
-                        HStack(alignment: .top, spacing: 4) {
-                            ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in bandColumn(index) }
+                    VStack(spacing: 12) {
+                        CompactEQCurve(gains: player.eqGains, selectedBand: $selectedBand,
+                                       onChange: setBandGain, onEnd: { player.saveEQ() })
+                            .frame(height: 240)
+                            .accessibilityHidden(true)
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5), spacing: 4) {
+                            ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
+                                Button { selectedBand = index } label: {
+                                    Text(compactFrequency(index))
+                                        .font(.caption.weight(.semibold)).monospacedDigit()
+                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                        .background(selectedBand == index ? SN.amber.opacity(0.16) : Color.clear,
+                                                    in: RoundedRectangle(cornerRadius: 12))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Выбрать \(frequencyLabels[index])")
+                                .accessibilityValue(db(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0))
+                                .accessibilityAddTraits(selectedBand == index ? .isSelected : [])
+                            }
                         }
-                        .padding(16)
+                        bandRow(selectedBand)
                     }
-                    .scrollIndicators(.visible)
-                    .accessibilityLabel("Полосы эквалайзера от низких к высоким частотам")
+                    .padding(12)
                 }
             }
             .background(SN.card, in: RoundedRectangle(cornerRadius: 24))
@@ -580,43 +596,16 @@ struct PlayerEQSheetView: View {
         .foregroundStyle(SN.ink)
     }
 
-    private func bandColumn(_ index: Int) -> some View {
-        let gain = player.eqGains.indices.contains(index) ? player.eqGains[index] : 0
+    private func compactFrequency(_ index: Int) -> String {
         let frequency = PlayerCore.bandFrequencies[index]
-        let label = frequency >= 1000 ? "\(Int(frequency / 1000))k" : "\(Int(frequency))"
-        return VStack(spacing: 8) {
-            Text(label).font(.subheadline.weight(.semibold)).monospacedDigit()
-            Text(String(format:"%+.1f",gain)).font(.caption.monospacedDigit()).lineLimit(1).foregroundStyle(SN.inkMuted)
-            Text("+\(Int(EQGainLimits.range(at:index).upperBound))").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
-            // Keep UIKit/SwiftUI's native adjustable control; rotate its layout, not a custom drag recognizer.
-            Slider(value: Binding(
-                get: { Double(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0) },
-                set: { value in
-                    var curve = PlayerCore.normalized(player.eqGains)
-                    curve[index] = Float(value)
-                    player.eqGains = curve
-                }
-            ), in: Double(EQGainLimits.range(at:index).lowerBound)...Double(EQGainLimits.range(at:index).upperBound), step: 0.5, onEditingChanged: { editing in
-                if !editing { player.saveEQ() }
-            })
-            .tint(SN.amber)
-            .frame(width: 230, height: 44)
-            .rotationEffect(.degrees(-90))
-            .frame(width: 44, height: 230)
-            .accessibilityLabel("\(bandNames[index]), \(frequencyLabels[index])")
-            .accessibilityValue(db(gain))
-            Text("−12").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
-            Button("0 дБ") {
-                var curve = PlayerCore.normalized(player.eqGains)
-                curve[index] = 0
-                player.eqGains = curve
-                player.saveEQ()
-            }
-            .font(.caption)
-            .frame(minWidth: 44, minHeight: 44)
-            .accessibilityLabel("Сбросить \(frequencyLabels[index])")
-        }
-        .frame(width: 44)
+        return frequency >= 1000 ? "\(Int(frequency / 1000))к" : "\(Int(frequency))"
+    }
+
+    private func setBandGain(_ index: Int, _ gain: Float) {
+        guard PlayerCore.bandFrequencies.indices.contains(index) else { return }
+        var curve = PlayerCore.normalized(player.eqGains)
+        curve[index] = EQGainLimits.clean((gain * 2).rounded() / 2, at: index)
+        player.eqGains = curve
     }
 
     private var savedPresetsSection: some View {
@@ -743,8 +732,8 @@ struct PlayerEQSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Бас начинается с посадки", systemImage: "earbuds")
                 .font(.subheadline.weight(.semibold))
-            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 30 Гц воздействует и на частоты ниже неё. Полосы 40–250 Гц позволяют отдельно настроить глубину, удар и плотность. Точная нижняя граница не заявлена Apple.")
-            Text("20 кГц — номинальная верхняя полоса. Рабочая частота ограничена частотой дискретизации аудиовыхода; это не заявленный диапазон наушников.")
+            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 30 Гц воздействует и на частоты ниже неё. Полосы 60, 120 и 250 Гц позволяют отдельно настроить глубину, удар и плотность. Точная нижняя граница не заявлена Apple.")
+            Text("15 кГц — номинальная верхняя полоса. Рабочая частота ограничена частотой дискретизации аудиовыхода; это не заявленный диапазон наушников.")
             Text("Защита EQ от перегрузки отключена. Сильное усиление может вызвать хрип и искажения. EQ не добавляет низкие частоты, которых нет в записи. Проверяй настройки сначала на небольшой громкости.")
         }
         .font(.subheadline)
@@ -774,6 +763,78 @@ struct PlayerEQSheetView: View {
         if preset == EQPresets.airPodsPro2Bass { return "earbuds" }
         if preset == EQPresets.flat { return "slider.horizontal.3" }
         return "waveform"
+    }
+}
+
+/// Control-gain curve, not a measured summed DSP response. Every node maps to one real band.
+private struct CompactEQCurve: View {
+    let gains: [Float]
+    @Binding var selectedBand: Int
+    let onChange: (Int, Float) -> Void
+    let onEnd: () -> Void
+    @State private var draggingBand: Int?
+
+    private func point(_ index: Int, size: CGSize) -> CGPoint {
+        let gain = EQGainLimits.clean(gains.indices.contains(index) ? gains[index] : 0, at: index)
+        return CGPoint(x: EQGainLimits.graphX(at: index, width: Double(size.width)),
+                       y: EQGainLimits.graphY(gain: gain, height: Double(size.height)))
+    }
+    private func curve(size: CGSize) -> Path {
+        let points = EQGainLimits.frequencies.indices.map { point($0, size: size) }
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        // Horizontal tangents stay within the two adjacent values; no overshoot above gain limits.
+        for index in 1..<points.count {
+            let a = points[index - 1], b = points[index]
+            let midX = (a.x + b.x) / 2
+            path.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
+        }
+        return path
+    }
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            ZStack {
+                Path { path in
+                    let zeroY = EQGainLimits.graphY(gain: 0, height: Double(size.height))
+                    path.move(to: CGPoint(x: 14, y: zeroY))
+                    path.addLine(to: CGPoint(x: size.width - 14, y: zeroY))
+                }
+                .stroke(SN.ink.opacity(0.15), lineWidth: 1)
+                curve(size: size)
+                    .stroke(LinearGradient(colors: [SN.amber, SN.amber.opacity(0.7), SN.amber],
+                                           startPoint: .leading, endPoint: .trailing),
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                ForEach(EQGainLimits.frequencies.indices, id: \.self) { index in
+                    Circle().fill(SN.card)
+                        .overlay(Circle().stroke(SN.amber, lineWidth: index == selectedBand ? 3 : 2))
+                        .frame(width: index == selectedBand ? 18 : 12, height: index == selectedBand ? 18 : 12)
+                        .position(point(index, size: size))
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if draggingBand == nil {
+                        let closest = EQGainLimits.frequencies.indices.min {
+                            abs(point($0, size: size).x - value.startLocation.x) < abs(point($1, size: size).x - value.startLocation.x)
+                        } ?? 0
+                        let start = point(closest, size: size)
+                        guard abs(start.x - value.startLocation.x) <= 24,
+                              abs(start.y - value.startLocation.y) <= 24 else { return }
+                        draggingBand = closest
+                        selectedBand = closest
+                    }
+                    guard let index = draggingBand else { return }
+                    let rawGain = EQGainLimits.graphGain(y: Double(value.location.y), height: Double(size.height), at: index)
+                    onChange(index, rawGain)
+                }
+                .onEnded { _ in
+                    if draggingBand != nil { onEnd() }
+                    draggingBand = nil
+                })
+        }
     }
 }
 

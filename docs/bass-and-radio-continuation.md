@@ -1,3 +1,5 @@
+> EQ UI and frequency layout superseded by [compact curve EQ](compact-curve-eq.md). Historical implementation notes below.
+
 # Stronger bass and queue continuation
 
 Historical ten-band stage. The current dense bass layout and compact controls supersede the EQ-layout details below; see `dense-bass-eq.md`. Radio continuation remains unchanged.

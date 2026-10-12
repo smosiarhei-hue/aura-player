@@ -182,7 +182,7 @@ struct EQPreset: Identifiable, Equatable, Sendable {
     var id: String { name }
     let name: String
     let gains: [Float]
-    init(name: String, gains: [Float]) { self.name = name; self.gains = EQGainLimits.normalized(gains) }
+    init(name: String, gains: [Float]) { self.name = name; self.gains = EQGainLimits.normalized(EQGainLimits.resample(gains, from: EQGainLimits.legacyFrequencies, to: EQGainLimits.frequencies)) }
 }
 
 enum EQPresets {

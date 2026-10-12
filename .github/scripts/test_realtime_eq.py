@@ -9,19 +9,20 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
-FREQUENCIES=list(range(30,251,10))+[500,1000,2000,4000,8000,20000]
+FREQUENCIES=[30,60,120,250,500,1000,2000,4000,8000,15000]
 N=len(FREQUENCIES)
 LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
 def expanded(gains):
-    if len(gains) != 10: return list(gains)+[0]*(N-len(gains))
-    values=[x if math.isfinite(x) else 0 for x in gains]
+    return list(gains)+[0]*(N-len(gains))
+
+def migrated_factory(gains):
     result=[]
     for f in FREQUENCIES:
         upper=next((i for i,x in enumerate(LEGACY) if x>=f),9)
-        if upper==0: result.append(values[0]);continue
+        if upper==0: result.append(gains[0]);continue
         lower=upper-1
         fraction=math.log(f/LEGACY[lower])/math.log(LEGACY[upper]/LEGACY[lower])
-        result.append(values[lower]+(values[upper]-values[lower])*fraction)
+        result.append(gains[lower]+(gains[upper]-gains[lower])*fraction)
     return result
 
 def array(gains):return (C.c_float*N)(*expanded(gains))
@@ -78,16 +79,13 @@ void destroy(void *p) { free(p); }
         rms=lambda x: math.sqrt(sum(y*y for y in x)/len(x))
         return 20*math.log10(rms(output[len(output)//2:])/rms(samples[len(samples)//2:]))
 
-    def test_dense_bass_centers_are_independently_adjustable(self):
-        for hz in [40,70,100,150,200,240]:
+    def test_compact_centers_are_real_independently_adjustable_filters(self):
+        for hz in [60,120,250,500,1000,2000,4000,8000]:
             gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
             self.assertAlmostEqual(self.response(gains,hz),6,delta=.08)
-        gains=[0]*N;gains[FREQUENCIES.index(100)]=6
-        self.assertLess(self.response(gains,80),1)
-        self.assertLess(self.response(gains,120),1)
-        edge=[0]*N;edge[FREQUENCIES.index(250)]=6
-        self.assertAlmostEqual(self.response(edge,250),6,delta=.08)
-        self.assertLess(self.response(edge,230),1)
+        gains=[0]*N;gains[FREQUENCIES.index(120)]=6
+        self.assertLess(self.response(gains,30),1)
+        self.assertLess(self.response(gains,500),1)
     def test_flat_and_disabled_are_exact_bypass(self):
         samples=[.95*math.sin(n*.031) for n in range(5000)]
         exact=list((C.c_float*len(samples))(*samples))
@@ -106,7 +104,11 @@ void destroy(void *p) { free(p); }
         self.assertGreater(self.response(strong,12)-self.response(mild,12),5)
         self.assertAlmostEqual(self.response(strong,1000),0,delta=.1)
         self.assertAlmostEqual(self.response([0]*5+[18]+[0]*4,1000),self.response([0]*5+[12]+[0]*4,1000),delta=.1)
-        self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[18]*3+[12]*7)))
+        self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[18]*4+[12]*6)))
+        gains=[0]*N;gains[3]=18
+        self.assertAlmostEqual(self.response(gains,250),18,delta=.1)
+        gains[3]=24
+        self.assertAlmostEqual(self.response(gains,250),18,delta=.1)
     def test_shelves_control_bass_and_treble_without_edge_resonance(self):
         bass=[6]+[0]*9;treble=[0]*9+[6]
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)
@@ -120,7 +122,7 @@ void destroy(void *p) { free(p); }
             self.assertGreater(self.response(gains,frequency),6)
 
     def test_gap_below_new_top_shelf_still_boosts_without_attenuation(self):
-        # 16 kHz is no longer a band centre; shifting the shelf to 20 kHz changes its response.
+        # The last control is a real 15 kHz high shelf, not a cosmetic label.
         self.assertGreater(self.response([12]*10,16000),0)
         self.assertEqual(self.lib.SonivoEQPreamp(array([12]*10),N,48000),0)
 
@@ -146,6 +148,7 @@ void destroy(void *p) { free(p); }
             values=re.search(r'static let '+name+r' = EQPreset\(name: "[^"]+", gains: \[([^\]]+)\]',models).group(1)
             gains=[float(x.strip()) for x in values.split(',')]
             self.assertEqual(len(gains),10)
+            gains=migrated_factory(gains)
             mid=self.response(gains,500)
             self.assertGreater(self.response(gains,20)-mid,4)
             self.assertGreater(self.response(gains,63)-mid,5)

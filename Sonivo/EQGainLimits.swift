@@ -1,8 +1,9 @@
 import Foundation
 
-/// Dense bass centers; upper-frequency controls retain their original positions.
+/// Compact octave-style controls: one screen, real centers from 30 Hz to 15 kHz.
 nonisolated enum EQGainLimits {
-    static let frequencies: [Float] = [30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,500,1000,2000,4000,8000,20000]
+    static let frequencies: [Float] = [30,60,120,250,500,1000,2000,4000,8000,15000]
+    static let denseFrequencies: [Float] = [30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,500,1000,2000,4000,8000,20000]
     static let legacyFrequencies: [Float] = [30,62.5,125,250,500,1000,2000,4000,8000,20000]
     static let maximum: Float = 18
     static func range(at band: Int) -> ClosedRange<Float> { -12...(frequencies.indices.contains(band) && frequencies[band] <= 250 ? maximum : 12) }
@@ -12,10 +13,18 @@ nonisolated enum EQGainLimits {
         return max(range.lowerBound,min(range.upperBound,gain))
     }
     static func bandwidth(at band: Int) -> Float {
-        guard band > 0, band < frequencies.count - 1 else { return 1 }
-        // Neighbor-based octave widths: dense 10-Hz bands must not all be one octave wide.
-        guard frequencies[band] <= 250 else { return 1 }
-        return max(0.05,min(5,0.5 * log2((frequencies[band] + 10) / (frequencies[band] - 10))))
+        // Octave-style spacing: local AU and streamed PCM use the same width.
+        return 1
+    }
+    static func graphX(at band: Int, width: Double) -> Double {
+        14 + Double(band) * max(1, width - 28) / Double(frequencies.count - 1)
+    }
+    static func graphY(gain: Float, height: Double) -> Double {
+        14 + Double(18 - gain) / 30 * max(1, height - 28)
+    }
+    static func graphGain(y: Double, height: Double, at band: Int) -> Float {
+        let value = Float(18 - (y - 14) / max(1, height - 28) * 30)
+        return clean((value * 2).rounded() / 2, at: band)
     }
     static func resample(_ gains: [Float], from source: [Float], to target: [Float]) -> [Float] {
         guard gains.count == source.count, source.count > 1 else { return Array(repeating:0,count:target.count) }
@@ -29,7 +38,7 @@ nonisolated enum EQGainLimits {
         }
     }
     static func normalized(_ gains: [Float]) -> [Float] {
-        let expanded = gains.count == legacyFrequencies.count ? resample(gains,from:legacyFrequencies,to:frequencies) : gains
+        let expanded = gains.count == denseFrequencies.count ? resample(gains,from:denseFrequencies,to:frequencies) : gains
         return frequencies.indices.map { clean(expanded.indices.contains($0) ? expanded[$0] : 0,at:$0) }
     }
 }

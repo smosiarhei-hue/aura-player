@@ -1,3 +1,5 @@
+> EQ UI and frequency layout superseded by [compact curve EQ](compact-curve-eq.md). Historical implementation notes below.
+
 # Dense low-frequency equalizer and compact controls
 
 ## Current layout
