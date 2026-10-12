@@ -62,22 +62,23 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("Только для наушников", settings_content)
         self.assertIn("$player.eqHeadphonesOnly", settings_content)
 
-    def test_dolby_atmos_and_lossless_support(self):
+    def test_system_spatial_audio_and_lossless_support(self):
         content = self.playercore.read_text(encoding="utf-8")
         self.assertIn("var spatialAudioEnabled: Bool", content)
-        self.assertIn("var isDolbyAtmosAvailable: Bool", content)
-        self.assertIn("var isDolbyAtmosActive: Bool", content)
+        self.assertIn("var isSpatialOutputSupported: Bool", content)
+        self.assertIn("var spatialAudioStatusText: String", content)
         self.assertIn("func applySpatialAudioConfiguration()", content)
         self.assertIn("func handleSpatialPlaybackCapabilitiesChanged()", content)
         # Check stream beat tap spatialization
         streambeat_content = (self.repo_root / "Sonivo" / "streambeat.swift").read_text(encoding="utf-8")
         self.assertIn("item.allowedAudioSpatializationFormats = PlayerCore.shared.spatialAudioEnabled ? .monoStereoAndMultichannel : []", streambeat_content)
 
-    def test_dolby_atmos_and_lossless_ui(self):
+    def test_system_spatial_audio_and_lossless_ui(self):
         player_v2_content = (self.repo_root / "Sonivo" / "PlayerScreenV2.swift").read_text(encoding="utf-8")
         self.assertIn("qualityBadgeButton", player_v2_content)
         self.assertIn("SN.ink.opacity(0.50)", player_v2_content)
-        self.assertIn('return "Dolby Atmos"', player_v2_content)
+        self.assertNotIn('return "Dolby Atmos"', player_v2_content)
+        self.assertIn("player.spatialAudioStatusText", player_v2_content)
         self.assertIn('return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"', player_v2_content)
         self.assertIn("$player.spatialAudioEnabled", player_v2_content)
 

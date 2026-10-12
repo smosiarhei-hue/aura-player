@@ -141,8 +141,7 @@ final class ActivePlayerPresentation {
         get { legacy.spatialAudioEnabled }
         set { legacy.spatialAudioEnabled = newValue }
     }
-    var isDolbyAtmosAvailable: Bool { legacy.isDolbyAtmosAvailable }
-    var isDolbyAtmosActive: Bool { legacy.isDolbyAtmosActive }
+    var spatialAudioStatusText: String { legacy.spatialAudioStatusText }
 
     func togglePlay() { router.toggle() }
     func pause() { router.pause() }

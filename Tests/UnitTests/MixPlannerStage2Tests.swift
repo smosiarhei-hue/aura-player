@@ -20,13 +20,21 @@ struct MixPlannerStage2Tests {
         let plan = MixPlanner.plan(from: profile("a", lufs: -14),
                                    to: profile("b", lufs: -20),
                                    aMeta: meta("a"), bMeta: meta("b"),
-                                   settings: MixSettings(mode: .crossfade, crossfadeSeconds: 6))
+                                   settings: MixSettings(mode: .crossfade, crossfadeSeconds: 6, loudnessNormalization: true))
         #expect(plan.type == .crossfade)
         #expect(plan.bars == 6)
         #expect(plan.aOutStartSec == 160)
         #expect(plan.bInStartSec == 8)
         #expect(plan.gainOffsetBdB == 6)
         #expect(plan.fx.count == 2)
+    }
+
+    @Test("Default playback does not change source loudness")
+    func originalLevel() {
+        let plan = MixPlanner.plan(from: profile("a", lufs: -14), to: profile("b", lufs: -8),
+                                   aMeta: meta("a"), bMeta: meta("b"),
+                                   settings: MixSettings(mode: .crossfade))
+        #expect(plan.gainOffsetBdB == 0)
     }
 
     @Test("Gapless album and short tracks produce none")

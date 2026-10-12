@@ -157,11 +157,9 @@ class AntigravitySpecTests(unittest.TestCase):
 
         player_file = self.repo_root / "Sonivo" / "playercore.swift"
         player_content = player_file.read_text(encoding="utf-8")
-        # 3-phase DJ Mashup streaming gain shaping
-        self.assertIn("p < 0.45", player_content)
-        self.assertIn("p < 0.55", player_content)
-        self.assertIn("streamSourceVol = 0.75 + 0.25 * Float(cos(Double(s) * .pi * 0.5))", player_content)
-        self.assertIn("streamTargetVol = 0.70 * Float(sin(Double(s) * .pi * 0.5))", player_content)
+        # The live transition uses the same equal-power curve as the native engine.
+        self.assertIn("CrossfadeCurve.gains(progress: p)", player_content)
+        self.assertNotIn("legacyStreamingGainShaping", player_content)
         # Seamless stream player handoff without dropout
         self.assertIn("activeStreamingPlayer = incomingPlayer", player_content)
         self.assertIn("outgoingPlayer.pause()", player_content)

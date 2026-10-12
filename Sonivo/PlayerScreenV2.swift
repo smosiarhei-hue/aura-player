@@ -1030,19 +1030,10 @@ struct PlayerScreenV2: View {
         }
         .buttonStyle(.plain)
     }
-    private var qualityBadgeIcon: String {
-        let codec = player.currentCodec?.lowercased() ?? ""
-        if codec.contains("atmos") {
-            return "dot.radiowaves.left.and.right"
-        }
-        return "waveform"
-    }
+    private var qualityBadgeIcon: String { "waveform" }
     private var qualityBadgeLabel: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
-        if codec.contains("atmos") {
-            return "Dolby Atmos"
-        }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") || bitrate >= 1000 {
             return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
         }
@@ -2218,20 +2209,11 @@ struct PlayerQualityModalView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                if isTrueDolbyAtmos || (player.isDolbyAtmosActive && player.spatialAudioEnabled) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: 12, weight: .bold))
-                        Text(player.isDolbyAtmosActive ? "Dolby Atmos • пространственный выход" : "Источник Dolby Atmos")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
+                Text(player.spatialAudioStatusText)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(SN.amber)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(SN.amber.opacity(0.12))
-                    .clipShape(Capsule())
+                    .multilineTextAlignment(.center)
                     .padding(.top, 4)
-                }
             }
 
             Spacer(minLength: 12)
@@ -2282,11 +2264,6 @@ struct PlayerQualityModalView: View {
         .presentationCornerRadius(28)
     }
 
-    private var isTrueDolbyAtmos: Bool {
-        let codec = player.currentCodec?.lowercased() ?? ""
-        return codec.contains("atmos")
-    }
-
     private var qualitySettingsList: some View {
         List {
             Section {
@@ -2294,7 +2271,7 @@ struct PlayerQualityModalView: View {
             } header: {
                 Text("Пространственное аудио")
             } footer: {
-                Text("Воспроизводит многоканальное аудио и пространственный стерео-звук для наушников AirPods и совместимой акустики.")
+                Text("Разрешает системную обработку iOS. Режим «Фиксированное» или «Отслеживание головы» выбирается в Пункте управления. Собственного объёмного эффекта нет.")
             }
 
             Section {
@@ -2353,9 +2330,6 @@ struct PlayerQualityModalView: View {
     private var currentQualityTitle: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
-        if codec.contains("atmos") {
-            return "Dolby Atmos"
-        }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
             return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
         }
@@ -2367,9 +2341,6 @@ struct PlayerQualityModalView: View {
     private var currentQualityDescription: String {
         let codec = player.currentCodec?.lowercased() ?? ""
         let bitrate = player.currentBitrate ?? 0
-        if codec.contains("atmos") {
-            return "Аудио с объёмным пространственным звучанием Dolby Atmos воспроизводит трёхмерную звуковую сцену с эффектом полного присутствия."
-        }
         if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
             return "Аудио без потерь (Lossless) воспроизводится с оригинальным студийным качеством записи без потери деталей звука."
         }

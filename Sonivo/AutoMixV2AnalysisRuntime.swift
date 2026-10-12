@@ -102,7 +102,7 @@ final class AutoMixV2AnalysisRuntime {
                                            crossfadeSeconds: PlayerCore.shared.crossfadeDuration,
                                            skipTransitionsWithinAlbum: false,
                                            dontCutEndings: false,
-                                           loudnessNormalization: true,
+                                           loudnessNormalization: false,
                                            targetLUFS: -14)
                 let plan = MixPlanner.plan(from: a, to: b,
                                            aMeta: metadata(for: current, id: currentID),

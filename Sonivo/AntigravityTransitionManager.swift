@@ -20,46 +20,43 @@ enum AntigravityPhase: String, Sendable, Equatable {
 @MainActor
 final class AntigravityAudioFader {
     static let shared = AntigravityAudioFader()
+    private var activeRequestID: UUID?
 
     /// Выполняет кроссфейд звука:
     /// Спад громкости (1.0 -> 0.0 за 200 мс) -> Переключение потока -> Нарастание громкости (0.0 -> 1.0 за 300 мс)
     func performCrossfade(onSwitch: @escaping () async -> Void) async {
-        let initialVolume = PlayerCore.shared.volume
         let request = PlayerCore.shared.playbackRequestID
         guard PlayerCore.shared.isPlaying else { return }
-        defer { PlayerCore.shared.volume = initialVolume }
-        guard initialVolume > 0.05 else {
-            await onSwitch()
-            return
+        let identity = UUID()
+        activeRequestID = identity
+        var gainID = PlayerCore.shared.beginPlaybackFade(.wave)
+        defer {
+            PlayerCore.shared.endPlaybackFade(.wave, id: gainID)
+            if activeRequestID == identity { activeRequestID = nil }
         }
-
-        // Фаза спада громкости: 200 мс (8 шагов по 25 мс)
         let fadeOutSteps = 8
         for i in 1...fadeOutSteps {
             guard !Task.isCancelled, PlayerCore.shared.isPlaying,
                   PlayerCore.shared.playbackRequestID == request else { return }
-            let frac = 1.0 - (Float(i) / Float(fadeOutSteps))
-            PlayerCore.shared.volume = initialVolume * frac
-            try? await Task.sleep(nanoseconds: 25_000_000)
+            guard PlayerCore.shared.setPlaybackFade(.wave, id: gainID, gain: 1 - Float(i) / Float(fadeOutSteps)) else { return }
+            do { try await Task.sleep(nanoseconds: 25_000_000) } catch { return }
         }
-        guard PlayerCore.shared.playbackRequestID == request, PlayerCore.shared.isPlaying else { return }
-        PlayerCore.shared.volume = 0.0
-
-        // Переключение источника волны в момент нулевой громкости
+        guard !Task.isCancelled, PlayerCore.shared.playbackRequestID == request,
+              PlayerCore.shared.isPlaying else { return }
         await onSwitch()
-        guard PlayerCore.shared.isPlaying else { return }
+        guard activeRequestID == identity, !Task.isCancelled, PlayerCore.shared.isPlaying else { return }
+        // A new track invalidates the old fade. Never restore a captured, already-attenuated gain.
+        PlayerCore.shared.endPlaybackFade(.wave, id: gainID)
+        gainID = PlayerCore.shared.beginPlaybackFade(.wave)
+        guard PlayerCore.shared.setPlaybackFade(.wave, id: gainID, gain: 0) else { return }
         let switchedRequest = PlayerCore.shared.playbackRequestID
-
-        // Фаза нарастания громкости: 300 мс (12 шагов по 25 мс)
         let fadeInSteps = 12
         for i in 1...fadeInSteps {
             guard !Task.isCancelled, PlayerCore.shared.isPlaying,
                   PlayerCore.shared.playbackRequestID == switchedRequest else { return }
-            let frac = Float(i) / Float(fadeInSteps)
-            PlayerCore.shared.volume = initialVolume * frac
-            try? await Task.sleep(nanoseconds: 25_000_000)
+            guard PlayerCore.shared.setPlaybackFade(.wave, id: gainID, gain: Float(i) / Float(fadeInSteps)) else { return }
+            do { try await Task.sleep(nanoseconds: 25_000_000) } catch { return }
         }
-        PlayerCore.shared.volume = initialVolume
     }
 }
 

@@ -141,7 +141,7 @@ final class PlaybackAudioSessionCoordinator {
             .filter { $0.isSpatialAudioEnabled }
             .map(\.portName)
             .joined(separator: ", ")
-        let spatialState = spatialRoute.isEmpty ? "off-or-unsupported" : "enabled:\(spatialRoute)"
+        let spatialState = spatialRoute.isEmpty ? "unsupported-or-unavailable" : "capable:\(spatialRoute)"
 
         print("[Audio] session active actual=\(actualRate)Hz/\(actualBuffer)s route=\(route) spatial=\(spatialState)")
         Task {

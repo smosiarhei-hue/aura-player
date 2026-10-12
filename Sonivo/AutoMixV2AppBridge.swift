@@ -25,7 +25,6 @@ enum PlaybackOwner: String, Sendable {
 private func attachAppDSP(to engine: DualDeckAudioEngine) {
     VocalIsolationManager.shared.attach(to: engine.userEQUnit)
     engine.installMasterTap { buffer, _ in
-        VocalIsolationManager.processBuffer(buffer)
         SpectrumAnalyzer.ingest(buffer: buffer, sampleRate: buffer.format.sampleRate)
     }
 }

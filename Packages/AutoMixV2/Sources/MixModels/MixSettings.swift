@@ -21,7 +21,7 @@ public struct MixSettings: Sendable, Codable, Equatable {
         crossfadeSeconds: Double = 6,
         skipTransitionsWithinAlbum: Bool = true,
         dontCutEndings: Bool = false,
-        loudnessNormalization: Bool = true,
+        loudnessNormalization: Bool = false,
         targetLUFS: Float = -14
     ) {
         self.mode = mode

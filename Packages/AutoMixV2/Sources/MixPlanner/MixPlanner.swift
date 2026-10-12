@@ -69,7 +69,7 @@ public enum MixPlanner {
         case .echoFreeze:
             return planEchoFreeze(from: a, to: b, tempo: tempo, settings: settings, harmonic: harmonic)
         case .spaceReverb:
-            return planSpaceReverb(from: a, to: b, bars: 8.0, settings: settings, harmonic: harmonic)
+            return crossfade(a, b, settings, "System spatial audio: no synthetic room effect")
         case .energyWash:
             return planEnergyWash(from: a, to: b, settings: settings, harmonic: harmonic)
         }
@@ -331,43 +331,6 @@ public enum MixPlanner {
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
             loopBarsA: 0, fx: events,
             reason: "Beat Stutter (\(Int(bars)) тактов, \(harmonic.description))"
-        )
-    }
-
-    // 7. Архетип Space Reverb: растворение уходящего вокала в реверберации
-    private static func planSpaceReverb(from a: TrackProfile, to b: TrackProfile,
-                                        bars: Double = 8.0,
-                                        settings: MixSettings,
-                                        harmonic: HarmonicMatch) -> TransitionPlan {
-        let targetBPM: Float = b.bpm > 30 ? b.bpm : (a.bpm > 30 ? a.bpm : 120.0)
-        let seconds = BeatGridSynchronization.duration(bars: bars, bpm: targetBPM)
-        let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
-        let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
-        let rawIncoming = BeatGridSynchronization.incomingCue(profile: b, duration: seconds)
-        let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
-
-        let events: [FxEvent] = [
-            FxEvent(target: .a, kind: .volume, startBar: bars - 2.0, endBar: bars,
-                    fromValue: 0, toValue: -60, curve: .sCurve),
-            FxEvent(target: .a, kind: .reverbWash, startBar: bars - 2.0, endBar: bars,
-                    fromValue: 0, toValue: 90, curve: .sCurve),
-            FxEvent(target: .a, kind: .highPass, startBar: bars - 2.0, endBar: bars,
-                    fromValue: 20, toValue: 600, curve: .exp),
-            FxEvent(target: .a, kind: .bassKill, startBar: bars - 2.0, endBar: bars,
-                    fromValue: 0, toValue: 1, curve: .sCurve),
-            FxEvent(target: .b, kind: .volume, startBar: bars - 0.05, endBar: bars,
-                    fromValue: -40, toValue: 0, curve: .linear)
-        ]
-
-        return TransitionPlan(
-            type: .filterEcho,
-            archetype: .spaceReverb,
-            aOutStartSec: out, bInStartSec: incoming, bars: bars,
-            tempoTargetBPM: targetBPM, rateA: 1.0, rateB: 1.0,
-            pitchShiftCentsB: 0,
-            gainOffsetBdB: normalizationGain(profile: b, settings: settings),
-            loopBarsA: 0, fx: events,
-            reason: "Space Reverb (\(harmonic.description))"
         )
     }
 

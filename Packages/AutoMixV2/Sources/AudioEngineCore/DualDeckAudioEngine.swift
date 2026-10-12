@@ -221,9 +221,8 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             case .stutter:
                 slot.dryMixer.outputVolume = max(0, min(1, value))
             case .reverbWash:
-                slot.fxDelay.wetDryMix = min(90, max(0, value))
-                slot.fxDelay.feedback = min(80, max(0, param ?? 60))
-                slot.fxDelay.delayTime = bpm > 0 ? min(2, max(0.05, 60 / Double(bpm) * 0.375)) : 0.25
+                // Compatibility with older serialized plans only. No app-generated spatial room.
+                slot.fxDelay.wetDryMix = 0
             case .volume:
                 // value is a gain in dB, 0 dB down to -60 dB.
                 let gain: Float = value <= -55 ? 0.0 : pow(10.0, value / 20.0)

@@ -62,9 +62,9 @@ class SystemVolumeSyncTests(unittest.TestCase):
         self.assertNotIn('defaults.float(forKey: "player.volume")', CORE)
         self.assertNotIn('defaults.set(volume, forKey: "player.volume")', CORE)
         self.assertIn('defaults.removeObject(forKey: "player.volume")', CORE)
-        self.assertIn('volume = 1.0\n        engine.mainMixerNode.outputVolume = volume', CORE)
-        # Transitions still have an independent internal gain and stream headroom.
-        self.assertIn('streamingPlayer.volume = volume * Self.streamHeadroomCeiling', CORE)
+        self.assertIn('playbackGainState.resetAll()', CORE)
+        # Idle level stays unity; only explicitly owned temporary envelopes may attenuate.
+        self.assertIn('streamingPlayer.volume = volume', CORE)
         self.assertIn('engine.mainMixerNode.outputVolume = volume', CORE)
 
     def test_user_controls_cover_full_range_and_accessibility(self):

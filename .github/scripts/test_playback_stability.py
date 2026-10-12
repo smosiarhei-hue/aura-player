@@ -93,12 +93,12 @@ class PlaybackStabilityTests(unittest.TestCase):
         self.assertIn('transitionRequestID = UUID()', cancel)
 
     def test_crossfade_is_frozen_on_pause_and_supports_mixed_backends(self):
-        tick = block('private func tickTransition', 'private func legacyStreamingGainShaping')
+        tick = block('private func tickTransition', 'private func completeTransition')
         self.assertIn('guard isPlaying, let start', tick)
         prep = block('private func scheduleSimpleTransition', 'private func stopBeatLoop')
         self.assertNotIn('if isUsingStreamPlayer || nextTrack.isStream', prep)
         self.assertIn('if self.incomingIsStream', prep)
-        complete = block('private func completeTransition', 'private func applyReverbPreset')
+        complete = block('private func completeTransition', 'private func releaseActiveTimePitchToUnity')
         self.assertIn('if incomingIsStream', complete)
         self.assertNotIn('if nextTrack.isStream || incomingIsStream', complete)
         self.assertIn('nativeIncomingPosition', complete)

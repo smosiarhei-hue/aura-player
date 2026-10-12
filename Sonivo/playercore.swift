@@ -7,6 +7,7 @@ import Darwin
 import UIKit
 import Observation
 import StreamAudioProbe
+import AudioEngineCore
 
 enum AudioQuality: Int, CaseIterable, Identifiable, Sendable {
     case hiResLossless = 0
@@ -135,20 +136,38 @@ final class PlayerCore {
         }
         return (normalized(gains), enabled)
     }
-    // EQ boosts retain unity preamp by request. Flat/off and spatial passthrough stay unchanged.
-    private static let streamHeadroomCeiling: Float = 1.0
 
     private(set) var isPlaying = false
     private(set) var progress: Double = 0
     private(set) var currentTrack: Track?
     private(set) var streamDuration: Double = 0
     private(set) var playError: String?
-    // Internal gain for transitions and the sleep timer only. User volume belongs to iOS.
-    var volume: Float = 1.0 {
-        didSet {
-            streamingPlayer.volume = volume * Self.streamHeadroomCeiling
-            engine.mainMixerNode.outputVolume = volume
+    @ObservationIgnored private var playbackGainState = PlaybackGainState()
+    // Read-only: no persisted/app volume slider and no second multiplier of device volume.
+    var volume: Float { playbackGainState.gain }
+    func beginPlaybackFade(_ scope: PlaybackGainState.Scope) -> UUID {
+        let id = playbackGainState.begin(scope); applyPlaybackGain(); return id
+    }
+    @discardableResult func setPlaybackFade(_ scope: PlaybackGainState.Scope, id: UUID, gain: Float) -> Bool {
+        guard playbackGainState.update(scope, id: id, gain: gain) else { return false }
+        applyPlaybackGain(); return true
+    }
+    func endPlaybackFade(_ scope: PlaybackGainState.Scope, id: UUID) {
+        if playbackGainState.end(scope, id: id) { applyPlaybackGain() }
+    }
+    private func resetPlaybackFade(_ scope: PlaybackGainState.Scope) {
+        playbackGainState.reset(scope); applyPlaybackGain()
+    }
+    private func applyPlaybackGain() {
+        engine.mainMixerNode.outputVolume = volume
+        var outgoing: Float = 1, incoming: Float = 0
+        if isTransitioning, let start = transitionStartTime {
+            let elapsed = (transitionPausedAt ?? Date()).timeIntervalSince(start)
+            let gains = CrossfadeCurve.gains(progress: elapsed / max(0.001, transitionDuration))
+            outgoing = gains.outgoing; incoming = gains.incoming
         }
+        activeStreamingPlayer.volume = outgoing * volume
+        idleStreamingPlayer.volume = incomingIsStream ? incoming * volume : 0
     }
     var queue: [Track] = [] {
         didSet {
@@ -198,7 +217,7 @@ final class PlayerCore {
     }
 
     private(set) var isHeadphonesConnected: Bool = false
-    private(set) var isSpatialPlaybackActive: Bool = false
+    private(set) var isSpatialOutputSupported: Bool = false
 
     /// Permit system headphone spatialization; the app does not synthesize Dolby Atmos.
     var spatialAudioEnabled: Bool = true {
@@ -209,13 +228,10 @@ final class PlayerCore {
         }
     }
 
-    /// Headphone spatialization is not proof that the source contains Dolby Atmos.
-    var isDolbyAtmosAvailable: Bool {
-        spatialAudioEnabled && (currentCodec?.lowercased().contains("atmos") == true)
-    }
-
-    var isDolbyAtmosActive: Bool {
-        isDolbyAtmosAvailable && isSpatialPlaybackActive
+    /// Availability only. Fixed/head-tracked rendering remains a user choice in Control Center.
+    var spatialAudioStatusText: String {
+        if !spatialAudioEnabled { return "Пространственное аудио не запрашивается" }
+        return isSpatialOutputSupported ? "Выход поддерживает Spatial Audio • режим выбирает iOS" : "Spatial Audio разрешено • требуется совместимый выход"
     }
 
     private var shouldApplyUserEQ: Bool {
@@ -242,7 +258,7 @@ final class PlayerCore {
     func updateAudioRouteState() {
         let route = AVAudioSession.sharedInstance().currentRoute
         var hpConnected = false
-        var spatialActive = false
+        var spatialSupported = false
         for output in route.outputs {
             switch output.portType {
             case .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .usbAudio:
@@ -251,11 +267,11 @@ final class PlayerCore {
                 break
             }
             if output.isSpatialAudioEnabled {
-                spatialActive = true
+                spatialSupported = true
             }
         }
         self.isHeadphonesConnected = hpConnected
-        self.isSpatialPlaybackActive = spatialActive
+        self.isSpatialOutputSupported = spatialSupported
         applyEQ()
         applySpatialAudioConfiguration()
     }
@@ -263,6 +279,7 @@ final class PlayerCore {
     /// Rebuild invalidated CoreAudio objects, retaining queue/position but never auto-playing.
     func handleMediaServicesReset() {
         pause()
+        playbackGainState.resetAll()
         cancelTransition()
         streamMigrationTask?.cancel()
         cancelSleepTimer()
@@ -283,14 +300,11 @@ final class PlayerCore {
         playerB = AVAudioPlayerNode()
         timePitchA = AVAudioUnitTimePitch()
         timePitchB = AVAudioUnitTimePitch()
-        reverbA = AVAudioUnitReverb()
-        reverbB = AVAudioUnitReverb()
         eqNodeA = AVAudioUnitEQ(numberOfBands: Self.bandFrequencies.count)
         eqNodeB = AVAudioUnitEQ(numberOfBands: Self.bandFrequencies.count)
         looperPlayer = AVAudioPlayerNode()
         looperTimePitch = AVAudioUnitTimePitch()
         looperEQ = AVAudioUnitEQ(numberOfBands: Self.bandFrequencies.count)
-        looperReverb = AVAudioUnitReverb()
         vocalUnit = AVAudioUnitEQ(numberOfBands: 1)
         nativeEQRamp?.cancel()
         outputLimiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
@@ -380,15 +394,12 @@ final class PlayerCore {
     private var activePlayer: AVAudioPlayerNode
     @ObservationIgnored private var timePitchA = AVAudioUnitTimePitch()
     @ObservationIgnored private var timePitchB = AVAudioUnitTimePitch()
-    @ObservationIgnored private var reverbA = AVAudioUnitReverb()
-    @ObservationIgnored private var reverbB = AVAudioUnitReverb()
     @ObservationIgnored private var eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
     @ObservationIgnored private var eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
 
     @ObservationIgnored private var looperPlayer = AVAudioPlayerNode()
     @ObservationIgnored private var looperTimePitch = AVAudioUnitTimePitch()
     @ObservationIgnored private var looperEQ = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
-    @ObservationIgnored private var looperReverb = AVAudioUnitReverb()
     private var loopBuffer: AVAudioPCMBuffer?
     private var isLoopActive = false
 
@@ -535,7 +546,7 @@ final class PlayerCore {
                 }
             })
             p.automaticallyWaitsToMinimizeStalling = false
-            p.volume = volume * Self.streamHeadroomCeiling
+            p.volume = volume
 
             let interval = CMTime(seconds: 1.0 / 120.0, preferredTimescale: 2400)
             let timeObserver = p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
@@ -608,9 +619,6 @@ final class PlayerCore {
         engine.attach(eqNodeA)
         engine.attach(eqNodeB)
         engine.attach(looperEQ)
-        engine.attach(reverbA)
-        engine.attach(reverbB)
-        engine.attach(looperReverb)
 
         configureEQ(eqNodeA)
         configureEQ(eqNodeB)
@@ -618,24 +626,18 @@ final class PlayerCore {
         configureTimePitch(timePitchA)
         configureTimePitch(timePitchB)
         configureTimePitch(looperTimePitch)
-        configureReverb(reverbA)
-        configureReverb(reverbB)
-        configureReverb(looperReverb)
 
         engine.connect(playerA, to: timePitchA, format: nil)
         engine.connect(timePitchA, to: eqNodeA, format: nil)
-        engine.connect(eqNodeA, to: reverbA, format: nil)
-        engine.connect(reverbA, to: engine.mainMixerNode, format: nil)
+        engine.connect(eqNodeA, to: engine.mainMixerNode, format: nil)
 
         engine.connect(playerB, to: timePitchB, format: nil)
         engine.connect(timePitchB, to: eqNodeB, format: nil)
-        engine.connect(eqNodeB, to: reverbB, format: nil)
-        engine.connect(reverbB, to: engine.mainMixerNode, format: nil)
+        engine.connect(eqNodeB, to: engine.mainMixerNode, format: nil)
 
         engine.connect(looperPlayer, to: looperTimePitch, format: nil)
         engine.connect(looperTimePitch, to: looperEQ, format: nil)
-        engine.connect(looperEQ, to: looperReverb, format: nil)
-        engine.connect(looperReverb, to: engine.mainMixerNode, format: nil)
+        engine.connect(looperEQ, to: engine.mainMixerNode, format: nil)
 
         looperPlayer.volume = 0
 
@@ -677,11 +679,6 @@ final class PlayerCore {
         node.overlap = 8.0
     }
 
-    private func configureReverb(_ node: AVAudioUnitReverb) {
-        node.loadFactoryPreset(.largeHall2)
-        node.wetDryMix = 0
-    }
-
     private func loadSettings() {
         shuffle = defaults.bool(forKey: "player.shuffle")
         repeatMode = RepeatMode(rawValue: defaults.integer(forKey: "player.repeat")) ?? .off
@@ -706,9 +703,9 @@ final class PlayerCore {
         // Migrate the old app-volume preference: restoring it would multiply iOS volume
         // a second time. Never change the phone volume while loading player settings.
         defaults.removeObject(forKey: "player.volume")
-        volume = 1.0
+        playbackGainState.resetAll()
         engine.mainMixerNode.outputVolume = volume
-        streamingPlayer.volume = volume * Self.streamHeadroomCeiling
+        streamingPlayer.volume = volume
 
         eqGains = Self.persistedEQ().gains
         updateAudioRouteState()
@@ -879,8 +876,6 @@ final class PlayerCore {
     private var idlePlayer: AVAudioPlayerNode { (activePlayer === playerA) ? playerB : playerA }
     private var activeTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchA : timePitchB }
     private var idleTimePitch: AVAudioUnitTimePitch { (activePlayer === playerA) ? timePitchB : timePitchA }
-    private var activeReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbA : reverbB }
-    private var idleReverb: AVAudioUnitReverb { (activePlayer === playerA) ? reverbB : reverbA }
 
     private func setupNowPlayingSession() {
         SonivoDiagnostics.log("[NowPlaying] Configured MPNowPlayingInfoCenter.default()", tag: "NOWPLAYING")
@@ -1171,6 +1166,7 @@ final class PlayerCore {
     }
 
     func pause() {
+        resetPlaybackFade(.wave)
         invalidateQueueContinuation()
         generation += 1
         streamMigrationTask?.cancel()
@@ -1254,6 +1250,8 @@ final class PlayerCore {
             transitionStartTime = Date().addingTimeInterval(-frozen)
             transitionPausedAt = nil
         }
+        applyPlaybackGain()
+        if !isTransitioning { activePlayer.volume = 1; idlePlayer.volume = 0 }
         updateNowPlayingInfo()
         savePlaybackState()
     }
@@ -1345,12 +1343,13 @@ final class PlayerCore {
     }
 
     func stopAndClear() {
+        resetPlaybackFade(.wave)
         invalidateQueueContinuation()
         cancelSleepTimer()
         generation += 1
         streamMigrationTask?.cancel()
         sleepFadeRequestID = UUID()
-        if sleepFadeTask != nil { volume = 1 }
+        resetPlaybackFade(.sleep)
         sleepFadeTask?.cancel()
         sleepFadeTask = nil
         localSegmentTokens.removeAll()
@@ -1385,6 +1384,7 @@ final class PlayerCore {
     }
 
     private func start(at seconds: Double) {
+        resetPlaybackFade(.wave)
         cancelTransition()
         metadataTrack = nil
         incomingTrack = nil
@@ -1396,7 +1396,7 @@ final class PlayerCore {
         let token = generation
         streamMigrationTask?.cancel()
         sleepFadeRequestID = UUID()
-        if sleepFadeTask != nil { volume = 1 }
+        resetPlaybackFade(.sleep)
         sleepFadeTask?.cancel()
         sleepFadeTask = nil
         localSegmentTokens.removeAll()
@@ -1455,8 +1455,6 @@ final class PlayerCore {
         timePitchA.bypass = true
         timePitchB.rate = 1.0
         timePitchB.bypass = true
-        reverbA.wetDryMix = 0
-        reverbB.wetDryMix = 0
         applyEQ()
 
         Task { @MainActor in
@@ -1672,7 +1670,7 @@ final class PlayerCore {
         item.allowedAudioSpatializationFormats = spatialAudioEnabled ? .monoStereoAndMultichannel : []
         StreamBeatTap.shared.attach(to: item)
         activeStreamingPlayer.replaceCurrentItem(with: item)
-        activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
+        activeStreamingPlayer.volume = volume
         if seconds > 0 {
             activeStreamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
         }
@@ -1844,7 +1842,6 @@ final class PlayerCore {
         looperPlayer.stop()
         looperPlayer.volume = 0
         looperTimePitch.rate = 1.0
-        looperReverb.wetDryMix = 0
         loopBuffer = nil
         isLoopActive = false
     }
@@ -1872,18 +1869,19 @@ final class PlayerCore {
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
 
-        let sourceLevel: Float = Float(1.0 - p)
-        let targetLevel: Float = Float(p)
+        let gains = CrossfadeCurve.gains(progress: p)
+        let sourceLevel = gains.outgoing
+        let targetLevel = gains.incoming
 
         if isUsingStreamPlayer {
-            activeStreamingPlayer.volume = sourceLevel * volume * Self.streamHeadroomCeiling
+            activeStreamingPlayer.volume = sourceLevel * volume
             activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
         } else {
             activePlayer.volume = sourceLevel
         }
 
         if incomingIsStream {
-            idleStreamingPlayer.volume = targetLevel * volume * Self.streamHeadroomCeiling
+            idleStreamingPlayer.volume = targetLevel * volume
             idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
         } else {
             idlePlayer.volume = targetLevel
@@ -1897,26 +1895,6 @@ final class PlayerCore {
         if p >= 1.0, let incomingTrack {
             completeTransition(to: incomingTrack)
         }
-    }
-
-    // Reference 3-phase DJ Mashup streaming gain shaping specification
-    private func legacyStreamingGainShaping(p: Double) -> (source: Float, target: Float) {
-        var streamSourceVol: Float = Float(1.0 - p)
-        var streamTargetVol: Float = Float(p)
-        if p < 0.45 {
-            let s = p / 0.45
-            streamSourceVol = 0.75 + 0.25 * Float(cos(Double(s) * .pi * 0.5))
-            streamTargetVol = 0.70 * Float(sin(Double(s) * .pi * 0.5))
-        } else if p < 0.55 {
-            let s = (p - 0.45) / 0.10
-            streamSourceVol = 0.35 + 0.40 * Float(cos(Double(s) * .pi * 0.5))
-            streamTargetVol = 0.70 + 0.20 * Float(sin(Double(s) * .pi * 0.5))
-        } else {
-            let s = (p - 0.55) / 0.45
-            streamSourceVol = max(0.0, 0.35 * Float(cos(Double(s) * .pi * 0.5)))
-            streamTargetVol = 0.90 + 0.10 * Float(sin(Double(s) * .pi * 0.5))
-        }
-        return (streamSourceVol, streamTargetVol)
     }
 
     private func completeTransition(to nextTrack: Track) {
@@ -1941,7 +1919,7 @@ final class PlayerCore {
             activeStreamingPlayer = incomingPlayer
             idleStreamingPlayer = outgoingPlayer
 
-            activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
+            activeStreamingPlayer.volume = volume
             if activeStreamingPlayer.rate != 1.0 && isPlaying {
                 activeStreamingPlayer.rate = 1.0
             }
@@ -1984,8 +1962,6 @@ final class PlayerCore {
         incomingLaneReady = false
         prebufferedTrackId = nil
         plannedNextTrack = nil
-        reverbA.wetDryMix = 0
-        reverbB.wetDryMix = 0
         currentTrack = nextTrack
         metadataTrack = nil
         metadataSwapped = false
@@ -2021,27 +1997,6 @@ final class PlayerCore {
         updateNowPlayingInfo()
         savePlaybackState()
         scheduleTransitionIfNeeded()
-    }
-
-    private func applyReverbPreset(_ name: String) {
-        let preset: AVAudioUnitReverbPreset
-        switch name {
-        case "smallRoom": preset = .smallRoom
-        case "mediumRoom": preset = .mediumRoom
-        case "largeRoom": preset = .largeRoom
-        case "largeRoom2": preset = .largeRoom2
-        case "mediumHall": preset = .mediumHall
-        case "mediumHall2": preset = .mediumHall2
-        case "mediumHall3": preset = .mediumHall3
-        case "largeHall": preset = .largeHall
-        case "largeHall2": preset = .largeHall2
-        case "mediumChamber": preset = .mediumChamber
-        case "largeChamber": preset = .largeChamber
-        case "cathedral": preset = .cathedral
-        default: preset = .plate
-        }
-        reverbA.loadFactoryPreset(preset)
-        reverbB.loadFactoryPreset(preset)
     }
 
     private func releaseActiveTimePitchToUnity() {
@@ -2146,10 +2101,8 @@ final class PlayerCore {
         idlePlayer.stop()
         idlePlayer.volume = 0
         activePlayer.volume = 1
-        activeStreamingPlayer.volume = volume * Self.streamHeadroomCeiling
+        activeStreamingPlayer.volume = volume
         activeStreamingPlayer.rate = isUsingStreamPlayer && isPlaying ? 1.0 : 0
-        reverbA.wetDryMix = 0
-        reverbB.wetDryMix = 0
         incomingAudioFile = nil
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
@@ -2478,7 +2431,7 @@ final class PlayerCore {
     }
 
     func cancelSleepTimer() {
-        if sleepFadeTask != nil { volume = 1 }
+        resetPlaybackFade(.sleep)
         sleepFadeRequestID = UUID()
         sleepFadeTask?.cancel()
         sleepFadeTask = nil
@@ -2536,7 +2489,6 @@ final class PlayerCore {
             return
         }
 
-        let initialVolume = volume
         let fadeSteps = 15
         let fadeDuration = 1.5
         let stepDelay = fadeDuration / Double(fadeSteps)
@@ -2544,11 +2496,12 @@ final class PlayerCore {
         let fadeGeneration = generation
         let fadeID = UUID()
         sleepFadeRequestID = fadeID
+        let gainID = beginPlaybackFade(.sleep)
         sleepFadeTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
                 if self.sleepFadeRequestID == fadeID {
-                    self.volume = initialVolume
+                    self.endPlaybackFade(.sleep, id: gainID)
                     self.sleepFadeTask = nil
                 }
             }
@@ -2557,10 +2510,10 @@ final class PlayerCore {
                 catch { return }
                 guard !Task.isCancelled, self.generation == fadeGeneration, self.isPlaying else { return }
                 let fraction = Float(fadeSteps - step) / Float(fadeSteps)
-                self.volume = max(0.0, initialVolume * fraction)
+                guard self.setPlaybackFade(.sleep, id: gainID, gain: fraction) else { return }
             }
             self.pause()
-            self.volume = initialVolume
+            self.endPlaybackFade(.sleep, id: gainID)
             // Sleep timer always ends the session: the point of the feature is to hand the
             // phone (and the audio focus) back to whatever plays next.
             self.releaseAudioSessionIfIdle()
