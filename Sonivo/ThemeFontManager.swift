@@ -218,8 +218,7 @@ final class ThemeFontManager {
 
     var selectedTheme: AppThemeColor {
         didSet {
-            defaults.set(selectedTheme.rawValue, forKey: "settings.selectedTheme")
-        }
+            }
     }
 
     var appearance: AppAppearance {
@@ -235,8 +234,8 @@ final class ThemeFontManager {
         }
 
         self.selectedTheme = AppThemeColor.restored(from: defaults.string(forKey: "settings.selectedTheme"))
-        defaults.set(selectedTheme.rawValue, forKey: "settings.selectedTheme")
         self.appearance = AppAppearance(rawValue: defaults.string(forKey: "settings.appearance") ?? "") ?? .system
+        defaults.set(selectedTheme.rawValue, forKey: "settings.selectedTheme")
     }
 
     // Dynamic Colors

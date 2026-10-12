@@ -40,6 +40,10 @@ class ResonanceBrandTests(unittest.TestCase):
             self.assertIn(expected,s)
         self.assertIn('.preferredColorScheme(themeManager.appearance.colorScheme)',source('SonivoLaunchIntro.swift'))
         self.assertNotIn('removePersistentDomain',s)
+    def test_all_stored_properties_are_initialized_before_persisting_migration(self):
+        s=source('ThemeFontManager.swift').split('private init() {',1)[1]
+        self.assertLess(s.index('self.appearance ='),s.index('defaults.set(selectedTheme.rawValue'))
+
     def test_async_renderer_provider_captures_no_main_actor_state(self):
         s=source('ThemeFontManager.swift')
         provider=s.split('private nonisolated static func adaptive',1)[1].split('\n}\n',1)[0]
