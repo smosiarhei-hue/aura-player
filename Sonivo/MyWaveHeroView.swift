@@ -251,7 +251,7 @@ struct MyWaveHeroView: View {
 
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 26, weight: .black))
-                        .foregroundStyle(Color.black)
+                        .foregroundStyle(activeTrack == nil ? SN.onAccent : Color.black)
                 }
             }
             .buttonStyle(TactileButtonStyle(scale: 0.93))
@@ -305,7 +305,7 @@ struct MyWaveHeroView: View {
             } label: {
                 Text("Включить")
                     .font(SN.text(.caption2, .heavy))
-                    .foregroundStyle(Color.black)
+                    .foregroundStyle(activeTrack == nil ? SN.onAccent : Color.black)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(accentColor, in: Capsule())

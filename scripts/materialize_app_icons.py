@@ -15,6 +15,13 @@ def main() -> None:
         encoded = (SOURCE / f"{name}.b64").read_text(encoding="ascii").strip()
         (DESTINATION / name).write_bytes(base64.b64decode(encoded, validate=True))
 
+    ring_source = ROOT / "design" / "resonance" / "generated" / "ResonanceRingMask.png.b64"
+    ring_destination = ROOT / "Sonivo" / "assets.xcassets" / "ResonanceRingMask.imageset"
+    ring_destination.mkdir(parents=True, exist_ok=True)
+    (ring_destination / "ResonanceRingMask.png").write_bytes(
+        base64.b64decode(ring_source.read_text(encoding="ascii").strip(), validate=True)
+    )
+
 
 if __name__ == "__main__":
     main()

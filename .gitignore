@@ -31,3 +31,6 @@ tools/videoshot-studio/*.mp4
 
 # Generated project-local agent skills; exact versions and hashes are committed.
 /.agents/skills/
+
+# Generated brand bitmaps; materialize from versioned base64 before each build.
+/Sonivo/assets.xcassets/ResonanceRingMask.imageset/ResonanceRingMask.png

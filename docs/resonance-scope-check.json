@@ -1,0 +1,10 @@
+{
+  "base_commit": "6a56769c4fca93cec43c8f7741bbdb584663c945",
+  "unchanged_files": {
+    "Sonivo/playercore.swift": "83d68d44ff6faf2514658aabd3c7770c641e038cc1258fb357f3e27bc3843de5",
+    "Sonivo/PlayerScreenV2.swift": "a3ace4c81b262b4cebd7e156d055a3d1f2c2879079bc7d3fdd88465aff6b01db",
+    "Sonivo/BeatWaveMetalView.swift": "2186f20d71c3bc6e0ca7d861878467530765d7cf40a5b53afbc040d5d358b385",
+    "Sonivo/yandexmusicservice.swift": "617717aff9f5c63565a4574c1b92343ef4a4ca790593aa1fb0582239417356a8",
+    "Sonivo/AntigravityTransitionManager.swift": "994bf81fba8bc4e1f6f5252a691bba54b9e81b49e529800267d2427afb783c08"
+  }
+}

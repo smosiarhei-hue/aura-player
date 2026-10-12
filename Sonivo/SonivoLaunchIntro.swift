@@ -6,6 +6,7 @@ import QuartzCore
 struct SonivoLaunchHost: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var themeManager = ThemeFontManager.shared
     @State private var player = PlayerCore.shared
     @State private var session = SonivoLaunchSession()
     @State private var epoch: TimeInterval = 0
@@ -31,6 +32,7 @@ struct SonivoLaunchHost: View {
                     .zIndex(10)
             }
         }
+        .preferredColorScheme(themeManager.appearance.colorScheme)
         .task(id: scenePhase) {
             guard scenePhase == .active else {
                 if session.hasStarted { finish() }
@@ -41,7 +43,7 @@ struct SonivoLaunchHost: View {
             epoch = haptics.start(reduceMotion: reduceMotion)
             do {
                 if !reduceMotion {
-                    // Use the final existing 350 ms, not an extra startup delay.
+                    // Handoff overlaps the final part of the finite Resonance timeline.
                     let untilHandoff = max(0, epoch + SonivoLaunchMotion.fadeStart - CACurrentMediaTime())
                     try await Task.sleep(for: .seconds(untilHandoff))
                     try Task.checkCancellation()
@@ -59,6 +61,9 @@ struct SonivoLaunchHost: View {
             } catch {
                 haptics.stop()
             }
+        }
+        .task(id: session.isFinished) {
+            if session.isFinished { haptics.stop() }
         }
         .onChange(of: player.isPlaying) { _, playing in
             if playing { finish() }
@@ -79,14 +84,7 @@ struct SonivoLaunchHost: View {
     }
 }
 
-/// Anchors track the actual native text bounds rather than estimated glyph widths.
-nonisolated private struct SonivoLaunchFocusBounds: PreferenceKey {
-    static var defaultValue: [Int: Anchor<CGRect>] { [:] }
-    static func reduce(value: inout [Int: Anchor<CGRect>], nextValue: () -> [Int: Anchor<CGRect>]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
-    }
-}
-
+/// The native visual scene has no playback, network access or independent clocks.
 private struct SonivoLaunchIntro: View {
     let epoch: TimeInterval
     let reduceMotion: Bool
@@ -95,36 +93,47 @@ private struct SonivoLaunchIntro: View {
     let onSkip: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
-    @State private var measuredWordWidth: Double?
-    @State private var measuredGroupHeight: Double?
+    @State private var themeManager = ThemeFontManager.shared
 
     var body: some View {
         GeometryReader { geometry in
-            let unit = Double(min(1.3, min(geometry.size.width / 390, geometry.size.height / 844)))
-            // Include the focus corners in fitting, so the oversized opening is never cropped.
-            let wordWidth = (measuredWordWidth ?? 225 * unit) + SonivoLaunchMotion.focusPadding * 2
-            let groupHeight = (measuredGroupHeight ?? 118 * unit) + SonivoLaunchMotion.focusPadding * 2
-            let peak = max(1, min(2.2, min((Double(geometry.size.width) - 32) / wordWidth,
-                                          max(1, Double(geometry.size.height) - 140) / groupHeight)))
-            TimelineView(.animation(paused: reduceMotion || scenePhase != .active)) { _ in
+            let unit = min(1.3, min(geometry.size.width / 390, geometry.size.height / 844))
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || scenePhase != .active)) { _ in
                 let time = reduceMotion ? SonivoLaunchMotion.reducedPreviewTime
                     : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
                 ZStack {
-                    SN.bg.ignoresSafeArea()
-                    SonivoLaunchAtmosphere(time: time, reduced: reduceMotion,
-                                           increasedContrast: contrast == .increased)
-                    focusScene(time: time, unit: unit)
-                        .scaleEffect(reduceMotion ? 1 : SonivoLaunchMotion.zoom(at: time, peak: peak))
-                        .blur(radius: reduceMotion ? 0 : exitBlurRadius)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .offset(y: -24 * unit)
+                    themeManager.selectedTheme.darkCanvasColor.ignoresSafeArea()
+                    VStack(spacing: 18 * unit) {
+                        SonivoResonanceSymbol(time: time, theme: themeManager.selectedTheme,
+                                              reduceMotion: reduceMotion)
+                            .frame(width: 260 * unit, height: 264 * unit)
+                        Text("Sonivo")
+                            .font(brandFontName.map { Font.custom($0, fixedSize: 68 * unit) }
+                                  ?? .system(size: 68 * unit, weight: .regular, design: .serif))
+                            .foregroundStyle(Color(red: 0.94, green: 0.91, blue: 0.89))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.65)
+                            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.wordOpacity(at: time))
+                            .offset(y: reduceMotion ? 0 : 6 * (1 - SonivoLaunchMotion.wordOpacity(at: time)))
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            Text("Музыка, которую чувствуешь.")
+                                .font(.subheadline)
+                                .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
+                                .multilineTextAlignment(.center)
+                                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.taglineOpacity(at: time))
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .blur(radius: reduceMotion ? 0 : exitBlurRadius)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: -24 * unit)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Sonivo")
                     VStack {
                         Spacer()
                         Button("Пропустить", action: onSkip)
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(SN.inkMuted)
+                            .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
                             .frame(minWidth: 120, minHeight: 44)
                             .accessibilityHint("Сразу открыть приложение")
                             .padding(.bottom, 16)
@@ -134,97 +143,6 @@ private struct SonivoLaunchIntro: View {
             }
         }
         .accessibilityIdentifier("sonivo.launch.intro")
-    }
-
-    private func focusScene(time: Double, unit: Double) -> some View {
-        VStack(spacing: 22 * unit) {
-            focusedWord("Sonivo", index: 0, time: time, fontSize: 62 * unit)
-                .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { measuredWordWidth = $0 }
-            if !dynamicTypeSize.isAccessibilitySize {
-                HStack(spacing: 10 * unit) {
-                    focusedWord("Твоя", index: 1, time: time, fontSize: 24 * unit)
-                    focusedWord("музыка", index: 2, time: time, fontSize: 24 * unit)
-                }
-                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 1.04, duration: 0.24)))
-                .accessibilityHidden(true)
-            }
-        }
-        .onGeometryChange(for: Double.self) { Double($0.size.height) } action: { measuredGroupHeight = $0 }
-        .overlayPreferenceValue(SonivoLaunchFocusBounds.self) { anchors in
-            GeometryReader { resolver in
-                if !reduceMotion, let brandAnchor = anchors[0] {
-                    let brand = resolver[brandAnchor]
-                    let first = anchors[1].map { resolver[$0] } ?? brand
-                    let second = anchors[2].map { resolver[$0] } ?? brand
-                    let weights = dynamicTypeSize.isAccessibilitySize
-                        ? SonivoLaunchFocusWeights(brand: 1, first: 0, second: 0)
-                        : SonivoLaunchMotion.focusWeights(at: time)
-                    let bounds = blend(brand, first, second, weights: weights)
-                        .insetBy(dx: -SonivoLaunchMotion.focusPadding, dy: -6)
-                    cornerPath(in: bounds)
-                        .stroke(SN.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                        .shadow(color: SN.accent.opacity(0.35 + SonivoLaunchMotion.impact(at: time) * 0.20), radius: 4)
-                        .opacity(SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 0.12, duration: 0.20)))
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Sonivo")
-    }
-
-    private func focusedWord(_ text: String, index: Int, time: Double, fontSize: Double) -> some View {
-        let blur = reduceMotion || dynamicTypeSize.isAccessibilitySize ? 0 : SonivoLaunchMotion.blur(at: time, index: index)
-        // Capture plain values before the sendable visual-effect callback; no actor reads there.
-        let shaderTime = Float(SonivoLaunchMotion.surfaceTime(at: time))
-        let lightFlag: Float = colorScheme == .light ? 1 : 0
-        let materialEnabled = index == 0 && !reduceMotion && contrast != .increased
-        return Text(text)
-            .font(index == 0
-                  ? brandFontName.map { Font.custom($0, fixedSize: fontSize) }
-                    ?? .system(size: fontSize, weight: .bold)
-                  : .system(size: fontSize, weight: .semibold))
-            .foregroundStyle(SN.ink)
-            .fixedSize()
-            .visualEffect { content, proxy in
-                content.colorEffect(
-                    ShaderLibrary.sonivoLaunchChrome(
-                        .float2(Float(proxy.size.width), Float(proxy.size.height)),
-                        .float(shaderTime),
-                        .float(lightFlag)
-                    ),
-                    isEnabled: materialEnabled
-                )
-            }
-            .blur(radius: blur)
-            .anchorPreference(key: SonivoLaunchFocusBounds.self, value: .bounds) { [index: $0] }
-            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.easeOut(SonivoLaunchMotion.progress(time, from: 0.08, duration: 0.22)))
-    }
-
-    private func blend(_ a: CGRect, _ b: CGRect, _ c: CGRect, weights: SonivoLaunchFocusWeights) -> CGRect {
-        let wa = CGFloat(weights.brand), wb = CGFloat(weights.first), wc = CGFloat(weights.second)
-        return CGRect(x: a.minX * wa + b.minX * wb + c.minX * wc,
-                      y: a.minY * wa + b.minY * wb + c.minY * wc,
-                      width: a.width * wa + b.width * wb + c.width * wc,
-                      height: a.height * wa + b.height * wb + c.height * wc)
-    }
-    private func cornerPath(in rect: CGRect) -> Path {
-        let length = min(16, min(rect.width, rect.height) * 0.30)
-        return Path { p in
-            p.move(to: CGPoint(x: rect.minX, y: rect.minY + length))
-            p.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.minX + length, y: rect.minY))
-            p.move(to: CGPoint(x: rect.maxX - length, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + length))
-            p.move(to: CGPoint(x: rect.minX, y: rect.maxY - length))
-            p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-            p.addLine(to: CGPoint(x: rect.minX + length, y: rect.maxY))
-            p.move(to: CGPoint(x: rect.maxX - length, y: rect.maxY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - length))
-        }
     }
 }
 
@@ -247,24 +165,13 @@ private final class SonivoLaunchHaptics {
             engine.resetHandler = { [weak self] in Task { @MainActor in self?.stop() } }
             self.engine = engine
             try engine.start()
-            let events = zip(SonivoLaunchMotion.hapticOnsets, SonivoLaunchMotion.hapticStrengths).flatMap { onset, strength -> [CHHapticEvent] in
-                let impact = CHHapticEvent(eventType: .hapticTransient, parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: strength),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.45)
-                ], relativeTime: onset)
-                let body = CHHapticEvent(eventType: .hapticContinuous, parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: strength * 0.55),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.12)
-                ], relativeTime: onset + 0.02, duration: SonivoLaunchMotion.hapticBodyDuration)
-                return [impact, body]
-            }
-            let zoomTicks = zip(SonivoLaunchMotion.zoomTickOnsets, SonivoLaunchMotion.zoomTickStrengths).map { onset, strength in
+            let events = zip(SonivoLaunchMotion.hapticOnsets, SonivoLaunchMotion.hapticStrengths).map { onset, strength in
                 CHHapticEvent(eventType: .hapticTransient, parameters: [
                     CHHapticEventParameter(parameterID: .hapticIntensity, value: strength),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.16)
+                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.30)
                 ], relativeTime: onset)
             }
-            let pattern = try CHHapticPattern(events: events + zoomTicks, parameters: [])
+            let pattern = try CHHapticPattern(events: events, parameters: [])
             let player = try engine.makePlayer(with: pattern)
             self.player = player
             // A shared start offset, not two independent animation/haptic timers.

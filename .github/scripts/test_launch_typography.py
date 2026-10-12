@@ -28,8 +28,8 @@ class LaunchTypographyTests(unittest.TestCase):
             self.assertIn(required, tables)
         self.assertNotIn(b"fvar", tables)  # static 800 cut, not a per-frame variation mutation
         self.assertGreater(struct.unpack_from(">H", tables[b"maxp"], 4)[0], 6)
-        self.assertIn("SonivoLaunchDisplay".encode("utf-16-be"), tables[b"name"])
-        self.assertIn("SIL OPEN FONT LICENSE", (ROOT / "ThirdPartyNotices/Unbounded-OFL.txt").read_text())
+        self.assertIn("SonivoResonanceSerif".encode("utf-16-be"), tables[b"name"])
+        self.assertIn("SIL OPEN FONT LICENSE", (ROOT / "ThirdPartyNotices/InstrumentSerif-OFL.txt").read_text())
         self.assertIn("guard !didPrepare", source)
         self.assertIn("CTFontManagerRegisterGraphicsFont(font, nil)", source)
         self.assertNotIn("URLSession", source)
@@ -40,28 +40,21 @@ class LaunchTypographyTests(unittest.TestCase):
         self.assertLess(source.index("RootView(onExternalPlaybackOpen: finish)"), register)
         self.assertLess(source.index("guard session.begin("), register)
         self.assertLess(register, source.index("epoch = haptics.start"))
-        word = source[source.index("private func focusedWord"):source.index("private func blend")]
-        self.assertNotIn("prepare()", word)
-        self.assertIn("Font.custom($0, fixedSize: fontSize)", word)
-        self.assertIn("?? .system(size: fontSize, weight: .bold)", word)
+        scene = source[source.index("private struct SonivoLaunchIntro"):source.index("/// Dedicated")]
+        self.assertNotIn("prepare()", scene)
+        self.assertIn("Font.custom($0, fixedSize: 68 * unit)", scene)
+        self.assertIn("design: .serif", scene)
 
-    def test_chrome_is_word_only_premultiplied_sdr_and_respects_accessibility(self):
+    def test_new_scene_is_native_ring_not_chrome_or_true_focus(self):
         source = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
-        metal = (ROOT / "Sonivo/SonivoLaunchSurface.metal").read_text()
-        self.assertIn("ShaderLibrary.sonivoLaunchChrome", source)
-        self.assertIn("let materialEnabled = index == 0 && !reduceMotion && contrast != .increased", source)
-        self.assertIn("isEnabled: materialEnabled", source)
-        callback = source[source.index(".visualEffect {"):source.index(".blur(radius: blur)")]
-        for actor_read in ["colorScheme ==", "contrast !=", "reduceMotion", "surfaceTime(at: time)"]:
-            self.assertNotIn(actor_read, callback)
-        self.assertIn("source.a <= half(0.0)", metal)
-        self.assertIn("* source.a, source.a", metal)
-        self.assertIn("clamp(rgb, float3(0.0), float3(1.0))", metal)
-        self.assertIn("clamp(time, 0.0f, 4.2f)", metal)
-        self.assertNotIn("texture2d", metal)
-        self.assertNotIn("for (", metal)
-        self.assertNotIn("while (", metal)
-        self.assertIn(".blur(radius: blur)", source)  # True Focus, not slow-motion smear
+        symbol = (ROOT / "Sonivo/SonivoResonanceSymbol.swift").read_text()
+        for removed in ["sonivoLaunchChrome", "focusedWord", "SonivoLaunchFocusBounds"]:
+            self.assertNotIn(removed, source)
+        self.assertIn(".blur(radius: reduceMotion ? 0 : exitBlurRadius)", source)
+        self.assertIn(".mask {", symbol)
+        self.assertIn("lightProgress(at: time)", symbol)
+        self.assertIn("reduceMotion ? 1 : SonivoLaunchMotion.ringOpacity", symbol)
+        self.assertIn(".accessibilityHidden(true)", symbol)
 
     def test_atmosphere_uses_native_transforms_and_no_separate_clock(self):
         source = (ROOT / "Sonivo/SonivoLaunchAtmosphere.swift").read_text()

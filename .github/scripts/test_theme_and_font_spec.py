@@ -61,6 +61,8 @@ class ThemeAndFontSpecTests(unittest.TestCase):
     def test_settings_includes_font_and_theme_pickers(self):
         content = self.settings_file.read_text(encoding="utf-8")
         self.assertIn("AppCustomFont.allCases", content)
+        self.assertIn("SonivoAppearanceView()", content)
+        content += (self.repo_root / "Sonivo/SonivoAppearanceView.swift").read_text()
         self.assertIn("AppThemeColor.allCases", content)
         self.assertIn("themeManager.selectedFont", content)
         self.assertIn("themeManager.selectedTheme", content)

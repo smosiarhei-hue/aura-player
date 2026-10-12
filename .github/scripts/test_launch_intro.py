@@ -32,22 +32,31 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertIn('if !dynamicTypeSize.isAccessibilitySize',intro)
         self.assertIn('.accessibilityLabel("Sonivo")',intro)
         self.assertIn('Button("Пропустить"',intro)
-    def test_intro_is_large_then_standard_true_focus_not_old_letter_reveal(self):
+    def test_resonance_replaces_true_focus_with_finite_ring_and_word_reveal(self):
         model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        self.assertIn('static let duration = 4.20',model)
+        symbol=(ROOT/'Sonivo/SonivoResonanceSymbol.swift').read_text()
+        self.assertIn('static let duration = 4.80',model)
         self.assertIn('static let reducedDuration = 0.35',model)
-        for expected in ['focusedWord("Sonivo"','focusedWord("Твоя"','focusedWord("музыка"','.blur(radius: blur)','.anchorPreference(key: SonivoLaunchFocusBounds.self','.overlayPreferenceValue(SonivoLaunchFocusBounds.self)','cornerPath(in: bounds)','SonivoLaunchMotion.zoom(at: time, peak: peak)','measuredWordWidth','measuredGroupHeight','SonivoLaunchMotion.focusPadding * 2']:
+        for expected in ['SonivoResonanceSymbol(time: time', 'Text("Sonivo")', 'wordOpacity(at: time)',
+                         'taglineOpacity(at: time)', 'themeManager.selectedTheme.darkCanvasColor']:
             self.assertIn(expected,intro)
-        for removed in ['letterProgress','sweep(at:','soundMark(']:
+        for removed in ['focusedWord(', 'cornerPath(', 'SonivoLaunchFocusBounds', 'zoomTicks']:
             self.assertNotIn(removed,intro)
         self.assertIn('.frame(minWidth: 120, minHeight: 44)',intro)
         self.assertNotIn('UIScreen.main',intro)
-        self.assertIn('zoomTicks',intro)
-        self.assertIn('strength * 0.55',intro)
-    def test_focus_preferences_are_not_actor_isolated_shared_state(self):
+        self.assertIn('hapticTransient',intro)
+        self.assertNotIn('hapticContinuous',intro)
+        self.assertIn('Image("ResonanceRingMask")',symbol)
+        self.assertIn('AngularGradient',symbol)
+
+    def test_visual_scene_has_no_actor_unsafe_preference_or_shader_callback(self):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        self.assertIn('nonisolated private struct SonivoLaunchFocusBounds: PreferenceKey',intro)
-        self.assertIn('static var defaultValue: [Int: Anchor<CGRect>] { [:] }',intro)
-        self.assertNotIn('static var defaultValue: [Int: Anchor<CGRect>] =',intro)
+        symbol=(ROOT/'Sonivo/SonivoResonanceSymbol.swift').read_text()
+        for removed in ['PreferenceKey', 'overlayPreferenceValue', '.visualEffect']:
+            self.assertNotIn(removed,intro)
+        for forbidden in ['URLSession', 'AVPlayer', 'Timer.', 'repeatForever', 'Data(base64Encoded:']:
+            self.assertNotIn(forbidden,symbol)
+        self.assertIn('!reduceTransparency',symbol)
+        self.assertIn('contrast != .increased',symbol)
 if __name__=='__main__':unittest.main()

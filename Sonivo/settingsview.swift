@@ -89,54 +89,11 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    // Цветовая тема (Apple Crimson, Amber Sunset, Electric Violet, Neon Cyan, Emerald Glow, Cobalt Blue)
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(l10n.isRussian ? "Цветовая тема" : "Accent Theme")
-                            .font(SN.text(.subheadline, .medium))
-                            .foregroundStyle(.primary)
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 14) {
-                                ForEach(AppThemeColor.allCases) { theme in
-                                    Button {
-                                        Haptics.tap(.light)
-                                        themeManager.selectedTheme = theme
-                                    } label: {
-                                        VStack(spacing: 6) {
-                                            ZStack {
-                                                Circle()
-                                                    .fill(theme.color)
-                                                    .frame(width: 36, height: 36)
-                                                    .shadow(color: theme.color.opacity(0.35), radius: 4, y: 2)
-
-                                                if themeManager.selectedTheme == theme {
-                                                    Image(systemName: "checkmark")
-                                                        .font(.system(size: 14, weight: .bold))
-                                                        .foregroundStyle(.white)
-                                                }
-                                            }
-                                            .overlay(
-                                                Circle()
-                                                    .strokeBorder(
-                                                        themeManager.selectedTheme == theme ? Color.white : Color.clear,
-                                                        lineWidth: 2
-                                                    )
-                                            )
-
-                                            Text(theme.displayName)
-                                                .font(SN.text(.caption2, themeManager.selectedTheme == theme ? .bold : .regular))
-                                                .foregroundStyle(themeManager.selectedTheme == theme ? .primary : .secondary)
-                                                .lineLimit(1)
-                                        }
-                                        .frame(width: 76)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
+                    NavigationLink {
+                        SonivoAppearanceView()
+                    } label: {
+                        Label(l10n.isRussian ? "Оформление" : "Appearance", systemImage: "paintpalette")
                     }
-                    .padding(.vertical, 4)
 
                     // 5 Шрифтов: Neue Montreal, Satoshi, General Sans, Instrument Sans, PP Neue Machina
                     VStack(alignment: .leading, spacing: 10) {

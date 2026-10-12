@@ -9,8 +9,8 @@ class LaunchHomeRevealTests(unittest.TestCase):
         host = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
         motion = (ROOT / "Sonivo/SonivoLaunchMotion.swift").read_text()
         self.assertEqual(host.count("RootView(onExternalPlaybackOpen: finish)"), 1)
-        self.assertIn("static let duration = 4.20", motion)
-        self.assertIn("static let fadeStart = 3.85", motion)
+        self.assertIn("static let duration = 4.80", motion)
+        self.assertIn("static let fadeStart = 3.75", motion)
         self.assertIn("exitTransitionDuration = duration - fadeStart", motion)
         self.assertIn("epoch + SonivoLaunchMotion.fadeStart - CACurrentMediaTime()", host)
         self.assertIn("epoch + SonivoLaunchMotion.duration - CACurrentMediaTime()", host)
@@ -35,7 +35,7 @@ class LaunchHomeRevealTests(unittest.TestCase):
 
     def test_interruptions_are_immediate_and_do_not_force_navigation(self):
         host = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
-        finish = host[host.index("private func finish()"):host.index("/// Anchors")]
+        finish = host[host.index("private func finish()"):host.index("/// The native visual scene")]
         self.assertIn("transaction.disablesAnimations = true", finish)
         self.assertIn("withTransaction(transaction) { session.finish() }", finish)
         self.assertIn("haptics.stop()", finish)

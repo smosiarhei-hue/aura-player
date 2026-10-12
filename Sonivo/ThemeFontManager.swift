@@ -102,46 +102,103 @@ enum AppCustomFont: String, CaseIterable, Identifiable, Codable, Sendable {
 // MARK: - Темы оформления и акцентных цветов
 
 enum AppThemeColor: String, CaseIterable, Identifiable, Codable, Sendable {
-    case crimson = "crimson"
-    case sunset = "sunset"
-    case violet = "violet"
-    case cyan = "cyan"
-    case emerald = "emerald"
-    case cobalt = "cobalt"
+    case amethyst, cobalt, titanium, lime, mint, coral, silver
 
     var id: String { rawValue }
-
     var displayName: String {
         switch self {
-        case .crimson: return "Apple Crimson"
-        case .sunset: return "Amber Sunset"
-        case .violet: return "Electric Violet"
-        case .cyan: return "Neon Cyan"
-        case .emerald: return "Emerald Glow"
-        case .cobalt: return "Cobalt Blue"
+        case .amethyst: return "Аметист"
+        case .cobalt: return "Синий"
+        case .titanium: return "Титан"
+        case .lime: return "Лайм"
+        case .mint: return "Мятный"
+        case .coral: return "Коралл"
+        case .silver: return "Серебро"
         }
     }
-
-    var color: Color {
+    var accentHex: UInt32 {
         switch self {
-        case .crimson: return Color(hex: "#FF2D55") ?? .pink
-        case .sunset: return Color(hex: "#F59E0B") ?? .orange
-        case .violet: return Color(hex: "#8B5CF6") ?? .purple
-        case .cyan: return Color(hex: "#06B6D4") ?? .cyan
-        case .emerald: return Color(hex: "#10B981") ?? .green
-        case .cobalt: return Color(hex: "#2563EB") ?? .blue
+        case .amethyst: return 0x9875F5
+        case .cobalt: return 0x527CFF
+        case .titanium: return 0xF5A65B
+        case .lime: return 0xC5EF68
+        case .mint: return 0x69DFC2
+        case .coral: return 0xFF806D
+        case .silver: return 0xDCE3EF
         }
     }
-
-    var flameColor: Color {
+    // Darker companions keep small labels, switches and tinted icons legible on white.
+    var lightAccentHex: UInt32 {
         switch self {
-        case .crimson: return Color(hex: "#FF375F") ?? .red
-        case .sunset: return Color(hex: "#D97706") ?? .orange
-        case .violet: return Color(hex: "#6D28D9") ?? .indigo
-        case .cyan: return Color(hex: "#0891B2") ?? .teal
-        case .emerald: return Color(hex: "#059669") ?? .green
-        case .cobalt: return Color(hex: "#1D4ED8") ?? .blue
+        case .amethyst: return 0x6845B5
+        case .cobalt: return 0x2852BA
+        case .titanium: return 0x925019
+        case .lime: return 0x4A6810
+        case .mint: return 0x167260
+        case .coral: return 0xAC4030
+        case .silver: return 0x465163
         }
+    }
+    var darkCanvasHex: UInt32 {
+        switch self {
+        case .amethyst: return 0x0C0A12
+        case .cobalt: return 0x090D16
+        case .titanium: return 0x11100F
+        case .lime: return 0x0D1009
+        case .mint: return 0x071210
+        case .coral: return 0x140B0B
+        case .silver: return 0x0B0D11
+        }
+    }
+    var lightCanvasHex: UInt32 {
+        switch self {
+        case .amethyst: return 0xF8F6FC
+        case .cobalt: return 0xF5F7FC
+        case .titanium: return 0xFAF7F3
+        case .lime: return 0xF7FAF1
+        case .mint: return 0xF2FAF7
+        case .coral: return 0xFCF6F4
+        case .silver: return 0xF5F7FA
+        }
+    }
+    var swatchColor: Color { Color(uiColor: Self.uiColor(accentHex)) }
+    var color: Color { Self.adaptive(light: Self.uiColor(lightAccentHex), dark: Self.uiColor(accentHex)) }
+    var canvasColor: Color { Self.adaptive(light: Self.uiColor(lightCanvasHex), dark: Self.uiColor(darkCanvasHex)) }
+    var darkCanvasColor: Color { Color(uiColor: Self.uiColor(darkCanvasHex)) }
+    var flameColor: Color { color.opacity(0.78) }
+
+    /// One-time migration of the six previous accents; nothing else in defaults is reset.
+    static func restored(from saved: String?) -> AppThemeColor {
+        if let saved, let current = Self(rawValue: saved) { return current }
+        switch saved {
+        case "crimson": return .coral
+        case "sunset": return .titanium
+        case "violet": return .amethyst
+        case "cyan", "emerald": return .mint
+        default: return .amethyst
+        }
+    }
+    private nonisolated static func uiColor(_ hex: UInt32) -> UIColor {
+        UIColor(red: CGFloat((hex >> 16) & 255) / 255,
+                green: CGFloat((hex >> 8) & 255) / 255,
+                blue: CGFloat(hex & 255) / 255, alpha: 1)
+    }
+    // SwiftUI's AsyncRenderer may invoke this provider off MainActor. Capture values only.
+    private nonisolated static func adaptive(light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
+}
+
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var displayName: String {
+        switch self { case .system: "Система"; case .light: "Светлый"; case .dark: "Тёмный" }
+    }
+    var colorScheme: ColorScheme? {
+        switch self { case .system: nil; case .light: .light; case .dark: .dark }
     }
 }
 
@@ -165,6 +222,10 @@ final class ThemeFontManager {
         }
     }
 
+    var appearance: AppAppearance {
+        didSet { defaults.set(appearance.rawValue, forKey: "settings.appearance") }
+    }
+
     private init() {
         if let savedFont = UserDefaults.standard.string(forKey: "settings.selectedFont"),
            let font = AppCustomFont(rawValue: savedFont) {
@@ -173,16 +234,14 @@ final class ThemeFontManager {
             self.selectedFont = .neueMontreal
         }
 
-        if let savedTheme = UserDefaults.standard.string(forKey: "settings.selectedTheme"),
-           let theme = AppThemeColor(rawValue: savedTheme) {
-            self.selectedTheme = theme
-        } else {
-            self.selectedTheme = .crimson
-        }
+        self.selectedTheme = AppThemeColor.restored(from: defaults.string(forKey: "settings.selectedTheme"))
+        defaults.set(selectedTheme.rawValue, forKey: "settings.selectedTheme")
+        self.appearance = AppAppearance(rawValue: defaults.string(forKey: "settings.appearance") ?? "") ?? .system
     }
 
     // Dynamic Colors
     var accentColor: Color { selectedTheme.color }
+    var canvasColor: Color { selectedTheme.canvasColor }
     var flameColor: Color { selectedTheme.flameColor }
     var heartColor: Color { Color(hex: "#FF2D55") ?? .pink }
     var emberGradient: LinearGradient {

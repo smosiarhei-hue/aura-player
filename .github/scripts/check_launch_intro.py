@@ -10,46 +10,15 @@ import CoreText
 @main struct Checks {
     @MainActor static func main() {
         let fontName = SonivoLaunchTypography.prepare()
-        precondition(fontName == "SonivoLaunchDisplay", "Offline brand font did not register")
+        precondition(fontName == "SonivoResonanceSerif", "Offline brand font did not register")
         precondition(SonivoLaunchTypography.prepare() == fontName, "Font was not cached")
-        let font = CTFontCreateWithName(fontName! as CFString, 62, nil)
+        let font = CTFontCreateWithName(fontName! as CFString, 68, nil)
         var characters = Array("Sonivo".utf16)
         let glyphCount = characters.count
         var glyphs = [CGGlyph](repeating: 0, count: glyphCount)
         precondition(CTFontGetGlyphsForCharacters(font, &characters, &glyphs, glyphCount))
         precondition(glyphs.allSatisfy { $0 != 0 }, "Brand glyph fallback")
         precondition(CTFontCopyPostScriptName(font) as String == fontName!)
-        for time in [-100.0, 0, 0.7, 2.2, 4.2, 100, .nan, .infinity] {
-            let surface = SonivoLaunchMotion.surfaceTime(at: time)
-            let drift = SonivoLaunchMotion.atmosphereDrift(at: time)
-            precondition(surface.isFinite && surface >= 0 && surface <= 4.2)
-            precondition(drift.isFinite && abs(drift) <= 0.075)
-        }
-        precondition(abs(SonivoLaunchMotion.exitTransitionDuration - 0.35) < 1e-12)
-        precondition(SonivoLaunchMotion.exitProgress(at: 3.85) == 0)
-        precondition(SonivoLaunchMotion.exitProgress(at: 4.2) == 1)
-        precondition(SonivoLaunchMotion.exitProgress(at: .nan) == 0)
-        precondition(SonivoLaunchMotion.exitDefocusRadius <= 20)
-        for p in [-1.0, 0, 0.25, 0.5, 0.75, 1, 2, .nan, .infinity] {
-            let blur = SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: false)
-            precondition(blur.isFinite && blur >= 0 && blur <= 6)
-            precondition(SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: true) == 0)
-        }
-        precondition(SonivoLaunchMotion.homeRevealBlur(progress: 0, reduceMotion: false) == 0)
-        precondition(SonivoLaunchMotion.homeRevealBlur(progress: 1, reduceMotion: false) == 0)
-        var previousProgress = 0.0
-        var previousHomeBlur = 6.0
-        for frame in 0...120 {
-            let time = SonivoLaunchMotion.fadeStart + Double(frame) / 120 * SonivoLaunchMotion.exitTransitionDuration
-            let p = SonivoLaunchMotion.exitProgress(at: time)
-            precondition(p >= previousProgress && p <= 1)
-            if p > 0 {
-                let blur = SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: false)
-                precondition(blur <= previousHomeBlur)
-                previousHomeBlur = blur
-            }
-            previousProgress = p
-        }
         var session=SonivoLaunchSession()
         precondition(!session.begin(isActive:false,isPlaying:false))
         precondition(!session.hasStarted && !session.isFinished)
@@ -61,52 +30,49 @@ import CoreText
         precondition(!playback.begin(isActive:true,isPlaying:true) && playback.isFinished)
         var skipped=SonivoLaunchSession(); skipped.finish()
         precondition(!skipped.begin(isActive:true,isPlaying:false),"External playback/skip ignored")
-        precondition(SonivoLaunchMotion.duration==4.2 && SonivoLaunchMotion.reducedDuration<0.5)
-        precondition(SonivoLaunchMotion.hapticOnsets.count==4)
-        precondition(SonivoLaunchMotion.hapticOnsets.count==SonivoLaunchMotion.hapticStrengths.count)
-        precondition(SonivoLaunchMotion.zoomTickOnsets.count==SonivoLaunchMotion.zoomTickStrengths.count)
-        for onset in SonivoLaunchMotion.hapticOnsets + SonivoLaunchMotion.zoomTickOnsets {
-            precondition(onset>=0 && onset<SonivoLaunchMotion.fadeStart)
+        precondition(SonivoLaunchMotion.duration == 4.8 && SonivoLaunchMotion.reducedDuration < 0.5)
+        precondition(abs(SonivoLaunchMotion.exitTransitionDuration - 1.05) < 1e-12)
+        precondition(SonivoLaunchMotion.hapticOnsets.count == 2)
+        precondition(SonivoLaunchMotion.hapticOnsets.count == SonivoLaunchMotion.hapticStrengths.count)
+        for onset in SonivoLaunchMotion.hapticOnsets {
+            precondition(onset >= 0 && onset < SonivoLaunchMotion.fadeStart)
         }
-        for strength in SonivoLaunchMotion.hapticStrengths + SonivoLaunchMotion.zoomTickStrengths {
-            precondition(strength>0 && strength<=1)
+        for strength in SonivoLaunchMotion.hapticStrengths { precondition(strength > 0 && strength <= 0.4) }
+        for time in [-100.0, 0, 0.7, 2.2, 4.8, 100, .nan, .infinity] {
+            let surface = SonivoLaunchMotion.surfaceTime(at: time)
+            precondition(surface.isFinite && surface >= 0 && surface <= 4.8)
+            let values = [SonivoLaunchMotion.ringOpacity(at: time), SonivoLaunchMotion.wordOpacity(at: time),
+                          SonivoLaunchMotion.taglineOpacity(at: time), SonivoLaunchMotion.lightProgress(at: time),
+                          SonivoLaunchMotion.lightOpacity(at: time), SonivoLaunchMotion.exitProgress(at: time)]
+            for value in values { precondition(value.isFinite && value >= 0 && value <= 1) }
         }
-        for frame in 0...540 {
-            let time=Double(frame)/120
-            let focus=SonivoLaunchMotion.focusWeights(at:time)
-            precondition(abs(focus.brand+focus.first+focus.second-1)<1e-12)
-            for index in 0..<3 {
-                precondition(focus.value(for:index)>=0 && focus.value(for:index)<=1)
-                let blur=SonivoLaunchMotion.blur(at:time,index:index)
-                precondition(blur.isFinite && blur>=0 && blur<=5)
+        for fps in [30, 60, 120] {
+            var priorRing = 0.0, priorWord = 0.0, priorTagline = 0.0, priorExit = 0.0
+            for frame in 0...(fps * 6) {
+                let t = Double(frame) / Double(fps)
+                let ring = SonivoLaunchMotion.ringOpacity(at: t), word = SonivoLaunchMotion.wordOpacity(at: t)
+                let tagline = SonivoLaunchMotion.taglineOpacity(at: t), exit = SonivoLaunchMotion.exitProgress(at: t)
+                precondition(ring >= priorRing && word >= priorWord && tagline >= priorTagline && exit >= priorExit)
+                let scale = SonivoLaunchMotion.ringScale(at: t), blur = SonivoLaunchMotion.ringBlur(at: t)
+                precondition(scale >= 0.94 && scale <= 1 && blur >= 0 && blur <= 8)
+                priorRing=ring; priorWord=word; priorTagline=tagline; priorExit=exit
             }
-            let impact=SonivoLaunchMotion.impact(at:time)
-            precondition(impact.isFinite && impact>=0 && impact<=1)
         }
-        for (time,index) in [(0.70,0),(1.78,1),(2.56,2),(3.36,0)] {
-            precondition(SonivoLaunchMotion.blur(at:time,index:index)<1e-6,"Tactile lock cue misses clear text")
+        precondition(SonivoLaunchMotion.wordOpacity(at: 1.5) == 0)
+        precondition(SonivoLaunchMotion.taglineOpacity(at: 2.3) == 0)
+        precondition(SonivoLaunchMotion.lightOpacity(at: 2.5) == 0)
+        precondition(SonivoLaunchMotion.ringScale(at: SonivoLaunchMotion.reducedPreviewTime) == 1)
+        precondition(SonivoLaunchMotion.wordOpacity(at: SonivoLaunchMotion.reducedPreviewTime) == 1)
+        precondition(SonivoLaunchMotion.opacity(at: 0) == 1)
+        precondition(SonivoLaunchMotion.opacity(at: SonivoLaunchMotion.duration) == 0)
+        for p in [-1.0, 0, 0.25, 0.5, 0.75, 1, 2, .nan, .infinity] {
+            let blur = SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: false)
+            precondition(blur.isFinite && blur >= 0 && blur <= 6)
+            precondition(SonivoLaunchMotion.homeRevealBlur(progress: p, reduceMotion: true) == 0)
         }
-        for peak in [1.0,1.4,2.2,8.0] {
-            var previous=2.2
-            for frame in 0...540 {
-                let zoom=SonivoLaunchMotion.zoom(at:Double(frame)/120,peak:peak)
-                precondition(zoom>=1 && zoom<=2.2 && zoom<=previous+1e-12)
-                previous=zoom
-            }
-            precondition(previous==1,"Zoom did not settle to standard size")
-        }
-        precondition(SonivoLaunchMotion.zoom(at:0,peak:1.7)==1.7)
-        precondition(SonivoLaunchMotion.zoom(at:SonivoLaunchMotion.reducedPreviewTime,peak:1.7)==1)
-        precondition(SonivoLaunchMotion.blur(at:SonivoLaunchMotion.reducedPreviewTime,index:0)==0)
-        precondition(SonivoLaunchMotion.opacity(at:0)==1)
-        precondition(SonivoLaunchMotion.opacity(at:SonivoLaunchMotion.duration)==0)
-        precondition(SonivoLaunchMotion.progress(.nan,from:0,duration:1)==0)
-        precondition(SonivoLaunchMotion.focusWeights(at:.nan).brand==1)
-        for fps in [30,60,120] {
-            let time=Double(fps)*3.62/Double(fps)
-            precondition(SonivoLaunchMotion.zoom(at:time,peak:1.7)==1)
-        }
-        print("Sonivo launch True Focus/zoom, tactile cue timing, lifecycle, playback bypass, skip and reduced-motion checks passed")
+        precondition(SonivoLaunchMotion.homeRevealBlur(progress: 0, reduceMotion: false) == 0)
+        precondition(SonivoLaunchMotion.homeRevealBlur(progress: 1, reduceMotion: false) == 0)
+        print("Resonance font, finite choreography, haptics, lifecycle, bypass, skip and reduced-motion checks passed")
     }
 }
 '''

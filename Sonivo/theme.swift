@@ -31,10 +31,13 @@ enum SN {
             traits.userInterfaceStyle == .dark ? dark : light
         })
     }
-    static let bg       = surface(light: UIColor(red: 0.97, green: 0.97, blue: 0.98, alpha: 1), dark: .black)
     static let bgRaised = surface(light: .white, dark: UIColor(white: 0.07, alpha: 1))
     static let card     = surface(light: .white, dark: UIColor(white: 0.09, alpha: 1))
     static let coal     = surface(light: UIColor(white: 0.93, alpha: 1), dark: UIColor(white: 0.13, alpha: 1))
+    static var bg: Color { ThemeFontManager.shared.canvasColor }
+
+    /// White on the darker light-mode accent; black on the brighter dark-mode accent.
+    static let onAccent = surface(light: .white, dark: .black)
 
     // MARK: Ink — semantic labels keep the same hierarchy in both themes.
     static let ink       = Color(uiColor: .label)
