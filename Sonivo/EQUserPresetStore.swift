@@ -20,7 +20,7 @@ final class EQUserPresetStore {
             switch self {
             case .invalidName: return "Введи название от 1 до 64 символов."
             case .duplicateName: return "Пресет с таким названием уже есть. Выбери другое название."
-            case .invalidCurve: return "Нужны десять конечных значений: НЧ от −12 до +18 дБ, остальные от −12 до +12 дБ."
+            case .invalidCurve: return "Нужны 29 конечных значений: НЧ от −12 до +18 дБ, остальные от −12 до +12 дБ."
             case .invalidArchive: return "Сохранённые пресеты повреждены. Они не были перезаписаны."
             }
         }
@@ -38,7 +38,11 @@ final class EQUserPresetStore {
                 archiveIsValid = false
                 return
             }
-            presets = decoded
+            presets = decoded.map { SavedEQPreset(id:$0.id,name:$0.name,gains:EQGainLimits.normalized($0.gains)) }
+            if decoded.contains(where: { $0.gains.count == 10 }) {
+                if defaults.data(forKey:"eq.userPresets.dense29.backup") == nil { defaults.set(data,forKey:"eq.userPresets.dense29.backup") }
+                defaults.set(try JSONEncoder().encode(presets),forKey:key)
+            }
         } catch { archiveIsValid = false }
     }
 
@@ -51,7 +55,7 @@ final class EQUserPresetStore {
         guard !presets.contains(where: { Self.nameKey($0.name) == Self.nameKey(trimmed) }) else {
             throw SaveError.duplicateName
         }
-        let preset = SavedEQPreset(id: UUID(), name: trimmed, gains: gains)
+        let preset = SavedEQPreset(id: UUID(), name: trimmed, gains: EQGainLimits.normalized(gains))
         try persist(presets + [preset])
         return preset
     }
@@ -67,7 +71,12 @@ final class EQUserPresetStore {
         presets = next
     }
     private static func validGains(_ gains: [Float]) -> Bool {
-        gains.count == 10 && gains.enumerated().allSatisfy { $0.element.isFinite && EQGainLimits.range(at:$0.offset).contains($0.element) }
+        if gains.count == 10 {
+            return gains.enumerated().allSatisfy { $0.element.isFinite && (-12...($0.offset < 3 ? Float(18) : Float(12))).contains($0.element) }
+        }
+        return gains.count == EQGainLimits.frequencies.count && gains.enumerated().allSatisfy {
+            $0.element.isFinite && EQGainLimits.range(at:$0.offset).contains($0.element)
+        }
     }
     private static func nameKey(_ name: String) -> String {
         name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))

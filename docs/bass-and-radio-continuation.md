@@ -1,5 +1,7 @@
 # Stronger bass and queue continuation
 
+Historical ten-band stage. The current dense bass layout and compact controls supersede the EQ-layout details below; see `dense-bass-eq.md`. Radio continuation remains unchanged.
+
 ## EQ and native UI
 - Ten original frequency centers remain 30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000 Hz.
 - First three low-frequency controls allow -12…+18 dB; other bands remain -12…+12. Shared Swift gain limits cover normalization, native AU writes, preset validation and UI. Portable PCM DSP applies the same per-band bounds.

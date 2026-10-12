@@ -9,6 +9,22 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
+FREQUENCIES=list(range(30,251,10))+[500,1000,2000,4000,8000,20000]
+N=len(FREQUENCIES)
+LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
+def expanded(gains):
+    if len(gains) != 10: return list(gains)+[0]*(N-len(gains))
+    values=[x if math.isfinite(x) else 0 for x in gains]
+    result=[]
+    for f in FREQUENCIES:
+        upper=next((i for i,x in enumerate(LEGACY) if x>=f),9)
+        if upper==0: result.append(values[0]);continue
+        lower=upper-1
+        fraction=math.log(f/LEGACY[lower])/math.log(LEGACY[upper]/LEGACY[lower])
+        result.append(values[lower]+(values[upper]-values[lower])*fraction)
+    return result
+
+def array(gains):return (C.c_float*N)(*expanded(gains))
 
 
 class RealtimeEQTests(unittest.TestCase):
@@ -21,10 +37,10 @@ class RealtimeEQTests(unittest.TestCase):
 #include <stdlib.h>
 void *create(double rate,const float *g,int on) {
  SonivoRealtimeEQ *p=malloc(sizeof(*p)); SonivoEQInit(p);
- SonivoEQSet(p,g,10,on,SonivoEQPreamp(g,10,rate)); SonivoEQPrepare(p,rate); return p;
+ SonivoEQSet(p,g,SONIVO_EQ_BANDS,on,SonivoEQPreamp(g,SONIVO_EQ_BANDS,rate)); SonivoEQPrepare(p,rate); return p;
 }
 void update(void *p,const float *g,int on,double rate) {
- SonivoEQSet(p,g,10,on,SonivoEQPreamp(g,10,rate));
+ SonivoEQSet(p,g,SONIVO_EQ_BANDS,on,SonivoEQPreamp(g,SONIVO_EQ_BANDS,rate));
 }
 void process(void *p,float *buffer,unsigned channels,size_t frames,int interleaved) {
  float *ptrs[8]; size_t strides[8];
@@ -50,7 +66,7 @@ void destroy(void *p) { free(p); }
         cls.tmp.cleanup()
 
     def run_audio(self, samples, gains, rate=48000, on=True, channels=1, interleaved=True):
-        g=(C.c_float*10)(*gains); audio=(C.c_float*len(samples))(*samples)
+        g=array(gains); audio=(C.c_float*len(samples))(*samples)
         ptr=self.lib.create(rate,g,on)
         try: self.lib.process(ptr,audio,channels,len(samples)//channels,interleaved)
         finally: self.lib.destroy(ptr)
@@ -62,6 +78,16 @@ void destroy(void *p) { free(p); }
         rms=lambda x: math.sqrt(sum(y*y for y in x)/len(x))
         return 20*math.log10(rms(output[len(output)//2:])/rms(samples[len(samples)//2:]))
 
+    def test_dense_bass_centers_are_independently_adjustable(self):
+        for hz in [40,70,100,150,200,240]:
+            gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
+            self.assertAlmostEqual(self.response(gains,hz),6,delta=.08)
+        gains=[0]*N;gains[FREQUENCIES.index(100)]=6
+        self.assertLess(self.response(gains,80),1)
+        self.assertLess(self.response(gains,120),1)
+        edge=[0]*N;edge[FREQUENCIES.index(250)]=6
+        self.assertAlmostEqual(self.response(edge,250),6,delta=.08)
+        self.assertLess(self.response(edge,230),1)
     def test_flat_and_disabled_are_exact_bypass(self):
         samples=[.95*math.sin(n*.031) for n in range(5000)]
         exact=list((C.c_float*len(samples))(*samples))
@@ -69,8 +95,8 @@ void destroy(void *p) { free(p); }
         self.assertEqual(self.run_audio(samples,[12]*10,on=False),exact)
 
     def test_octave_peak_matches_requested_db(self):
-        gains=[0]*10;gains[5]=6
-        pre=self.lib.SonivoEQPreamp((C.c_float*10)(*gains),10,48000)
+        gains=[0]*N;gains[FREQUENCIES.index(1000)]=6
+        pre=self.lib.SonivoEQPreamp(array(gains),N,48000)
         self.assertAlmostEqual(self.response(gains,1000)-pre,6,delta=.06)
         self.assertLess(self.response(gains,100)-pre,.2)
 
@@ -88,7 +114,7 @@ void destroy(void *p) { free(p); }
 
     def test_overlapping_boosts_keep_unity_preamp_without_automatic_attenuation(self):
         gains=[12]*10
-        pre=self.lib.SonivoEQPreamp((C.c_float*10)(*gains),10,48000)
+        pre=self.lib.SonivoEQPreamp(array(gains),N,48000)
         self.assertEqual(pre,0)
         for frequency in [30,62.5,125,250,500,1000,2000,4000,8000,20000,22000]:
             self.assertGreater(self.response(gains,frequency),6)
@@ -96,11 +122,11 @@ void destroy(void *p) { free(p); }
     def test_gap_below_new_top_shelf_still_boosts_without_attenuation(self):
         # 16 kHz is no longer a band centre; shifting the shelf to 20 kHz changes its response.
         self.assertGreater(self.response([12]*10,16000),0)
-        self.assertEqual(self.lib.SonivoEQPreamp((C.c_float*10)(*([12]*10)),10,48000),0)
+        self.assertEqual(self.lib.SonivoEQPreamp(array([12]*10),N,48000),0)
 
     def test_bass_boost_does_not_turn_down_unaffected_midrange(self):
         gains=[6]+[0]*9
-        self.assertEqual(self.lib.SonivoEQPreamp((C.c_float*10)(*gains),10,48000),0)
+        self.assertEqual(self.lib.SonivoEQPreamp(array(gains),N,48000),0)
         self.assertAlmostEqual(self.response(gains,1000),0,delta=.1)
         self.assertGreater(self.response(gains,20),4)
 
@@ -150,19 +176,19 @@ void destroy(void *p) { free(p); }
 
     def test_sample_rates_and_invalid_gains_remain_finite(self):
         for rate in [8000,32000,44100,48000,96000]:
-            gains=[float('nan'),float('inf'),-float('inf'),12,-12,6,-6,12,12,12]
+            gains=[float('nan'),float('inf'),-float('inf'),12,-12,6,-6,12,12,12]+[0]*(N-10)
             output=self.run_audio([.5*math.sin(n*.37) for n in range(10000)],gains,rate)
             self.assertTrue(all(math.isfinite(x) for x in output))
-            sanitized=[0,0,0,12,-12,6,-6,12,12,12]
+            sanitized=[0,0,0,12,-12,6,-6,12,12,12]+[0]*(N-10)
             self.assertEqual(output,self.run_audio([.5*math.sin(n*.37) for n in range(10000)],sanitized,rate))
 
     def test_toggle_and_slider_updates_are_smooth_and_return_to_exact_bypass(self):
-        g=(C.c_float*10)(*[0]*10);ptr=self.lib.create(48000,g,0)
+        g=array([0]*N);ptr=self.lib.create(48000,g,0)
         last=0.;largest=0.
         try:
             for block in range(80):
-                if block==2:self.lib.update(ptr,(C.c_float*10)(*[12]*10),1,48000)
-                if block==12:self.lib.update(ptr,(C.c_float*10)(*[-12]*10),1,48000)
+                if block==2:self.lib.update(ptr,array([12]*N),1,48000)
+                if block==12:self.lib.update(ptr,array([-12]*N),1,48000)
                 if block==22:self.lib.update(ptr,g,0,48000)
                 raw=[.1*math.sin(2*math.pi*1000*(block*512+i)/48000) for i in range(512)]
                 audio=(C.c_float*512)(*raw);self.lib.process(ptr,audio,1,512,1)

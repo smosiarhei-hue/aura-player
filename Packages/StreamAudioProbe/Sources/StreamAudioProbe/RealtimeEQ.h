@@ -3,7 +3,7 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
-#define SONIVO_EQ_BANDS 10
+#define SONIVO_EQ_BANDS 29
 #define SONIVO_EQ_CHANNELS 8
 
 typedef struct { double b0, b1, b2, a1, a2; } SonivoEQCoefficients;

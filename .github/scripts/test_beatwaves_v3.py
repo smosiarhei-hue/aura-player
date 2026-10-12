@@ -25,11 +25,11 @@ class BeatWavesV3Tests(unittest.TestCase):
 
 typedef struct { SonivoRealtimeEQ eq; atomic_int done; } EQStress;
 static void *eqWrite(void *ptr) {
- EQStress *s=ptr;float gains[10];
+ EQStress *s=ptr;float gains[SONIVO_EQ_BANDS];
  for(unsigned i=0;i<100000;i++) {
   float g=i&1 ? 9 : 3;
-  for(unsigned b=0;b<10;b++) gains[b]=b&1 ? -g : g;
-  SonivoEQSet(&s->eq,gains,10,1,-g);
+  for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) gains[b]=b&1 ? -g : g;
+  SonivoEQSet(&s->eq,gains,SONIVO_EQ_BANDS,1,-g);
   if((i&255)==0) sched_yield();
  }
  atomic_store_explicit(&s->done,1,memory_order_release);return NULL;
@@ -37,7 +37,7 @@ static void *eqWrite(void *ptr) {
 static int eqSnapshotValid(SonivoRealtimeEQ *eq) {
  if(eq->appliedSequence==0) return 1;
  double g=fabs(eq->target[0].b0-coefficients(0,3,48000).b0)<1e-12 ? 3 : 9;
- for(unsigned b=0;b<10;b++) {
+ for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
   SonivoEQCoefficients expected=coefficients(b,b&1 ? -g : g,48000);
   SonivoEQCoefficients actual=eq->target[b];
   if(fabs(actual.b0-expected.b0)>1e-12 || fabs(actual.b1-expected.b1)>1e-12 ||

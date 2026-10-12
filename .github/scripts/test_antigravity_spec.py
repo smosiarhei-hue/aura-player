@@ -219,7 +219,7 @@ class AntigravitySpecTests(unittest.TestCase):
                           / "AudioEngineCore" / "DualDeckAudioEngine.swift")
         self.assertTrue(dual_deck_file.exists(), "DualDeckAudioEngine.swift missing")
         dual_content = dual_deck_file.read_text(encoding="utf-8")
-        self.assertIn("let userEQ = AVAudioUnitEQ(numberOfBands: 10)", dual_content)
+        self.assertIn("let userEQ = AVAudioUnitEQ(numberOfBands: 29)", dual_content)
         self.assertIn("public var userEQUnit", dual_content)
         self.assertIn("public func installMasterTap", dual_content)
 

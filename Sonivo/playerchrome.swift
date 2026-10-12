@@ -389,8 +389,8 @@ struct PlayerEQSheetView: View {
     @State private var presetError: String?
     @State private var deletingPreset: SavedEQPreset?
 
-    private let bandNames = ["Глубина", "Удар бочки", "Плотность", "Теплота", "Тело", "Голос", "Присутствие", "Детали", "Яркость", "Воздух"]
-    private let frequencyLabels = ["30 Гц · нижняя полка", "62,5 Гц", "125 Гц", "250 Гц", "500 Гц", "1 кГц", "2 кГц", "4 кГц", "8 кГц", "20 кГц · верхняя полка"]
+    private let bandNames = EQGainLimits.frequencies.map { $0 <= 250 ? "Низкие частоты" : "Частотная полоса" }
+    private let frequencyLabels = EQGainLimits.frequencies.map { "\(Int($0)) Гц" }
     private var primaryPresets: [EQPreset] { [EQPresets.flat, EQPresets.airPodsPro2Bass, EQPresets.bassBoost, EQPresets.subBassPower, EQPresets.bassTrebleBoost] }
     private var activePreset: EQPreset? { EQPresets.all.first { matches($0.gains) } }
     private var columns: [GridItem] {
@@ -545,7 +545,7 @@ struct PlayerEQSheetView: View {
                 Spacer()
                 Text("НЧ до +18 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
-            Text("30 Гц — 20 кГц • низкие полосы до +18 дБ, остальные ±12 дБ")
+            Text("30–250 Гц с шагом 10 Гц • дальше до 20 кГц")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
             Text("Выше +12 дБ возможны искажения. Начни с умеренной громкости; физический бас зависит от наушников. Системную громкость и ограничения iOS приложение не меняет.")
@@ -553,15 +553,15 @@ struct PlayerEQSheetView: View {
             Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(spacing: 0) {
-                        ForEach(0..<10, id: \.self) { index in
+                        ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
                             bandRow(index)
-                            if index < 9 { Divider().padding(.horizontal, 16) }
+                            if index < PlayerCore.bandFrequencies.count - 1 { Divider().padding(.horizontal, 16) }
                         }
                     }
                 } else {
                     ScrollView(.horizontal) {
-                        HStack(alignment: .top, spacing: 12) {
-                            ForEach(0..<10, id: \.self) { index in bandColumn(index) }
+                        HStack(alignment: .top, spacing: 4) {
+                            ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in bandColumn(index) }
                         }
                         .padding(16)
                     }
@@ -581,15 +581,16 @@ struct PlayerEQSheetView: View {
     }
 
     private func bandColumn(_ index: Int) -> some View {
-        let gain = PlayerCore.normalized(player.eqGains)[index]
-        let labels = ["30", "62,5", "125", "250", "500", "1k", "2k", "4k", "8k", "20k"]
+        let gain = player.eqGains.indices.contains(index) ? player.eqGains[index] : 0
+        let frequency = PlayerCore.bandFrequencies[index]
+        let label = frequency >= 1000 ? "\(Int(frequency / 1000))k" : "\(Int(frequency))"
         return VStack(spacing: 8) {
-            Text(labels[index]).font(.subheadline.weight(.semibold)).monospacedDigit()
-            Text(db(gain)).font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
+            Text(label).font(.subheadline.weight(.semibold)).monospacedDigit()
+            Text(String(format:"%+.1f",gain)).font(.caption.monospacedDigit()).lineLimit(1).foregroundStyle(SN.inkMuted)
             Text("+\(Int(EQGainLimits.range(at:index).upperBound))").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
             // Keep UIKit/SwiftUI's native adjustable control; rotate its layout, not a custom drag recognizer.
             Slider(value: Binding(
-                get: { Double(PlayerCore.normalized(player.eqGains)[index]) },
+                get: { Double(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0) },
                 set: { value in
                     var curve = PlayerCore.normalized(player.eqGains)
                     curve[index] = Float(value)
@@ -599,9 +600,9 @@ struct PlayerEQSheetView: View {
                 if !editing { player.saveEQ() }
             })
             .tint(SN.amber)
-            .frame(width: 260, height: 44)
+            .frame(width: 230, height: 44)
             .rotationEffect(.degrees(-90))
-            .frame(width: 60, height: 260)
+            .frame(width: 44, height: 230)
             .accessibilityLabel("\(bandNames[index]), \(frequencyLabels[index])")
             .accessibilityValue(db(gain))
             Text("−12").font(.caption.monospacedDigit()).foregroundStyle(SN.inkMuted)
@@ -612,10 +613,10 @@ struct PlayerEQSheetView: View {
                 player.saveEQ()
             }
             .font(.caption)
-            .frame(minWidth: 60, minHeight: 44)
-            .accessibilityLabel("Сбросить \(bandNames[index])")
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel("Сбросить \(frequencyLabels[index])")
         }
-        .frame(width: 68)
+        .frame(width: 44)
     }
 
     private var savedPresetsSection: some View {
@@ -659,7 +660,7 @@ struct PlayerEQSheetView: View {
     }
 
     private func bandRow(_ index: Int) -> some View {
-        let gain = PlayerCore.normalized(player.eqGains)[index]
+        let gain = player.eqGains.indices.contains(index) ? player.eqGains[index] : 0
         return VStack(alignment: .leading, spacing: 4) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline) {
@@ -673,7 +674,7 @@ struct PlayerEQSheetView: View {
                 }
             }
             Slider(value: Binding(
-                get: { Double(PlayerCore.normalized(player.eqGains)[index]) },
+                get: { Double(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0) },
                 set: { value in
                     var curve = PlayerCore.normalized(player.eqGains)
                     curve[index] = Float(value)
@@ -695,8 +696,8 @@ struct PlayerEQSheetView: View {
                     player.eqGains = curve
                     player.saveEQ()
                 }
-                .frame(minWidth: 60, minHeight: 44)
-                .accessibilityLabel("Сбросить \(bandNames[index])")
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityLabel("Сбросить \(frequencyLabels[index])")
                 Spacer()
                 Text("+\(Int(EQGainLimits.range(at:index).upperBound))")
             }
@@ -742,7 +743,7 @@ struct PlayerEQSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Бас начинается с посадки", systemImage: "earbuds")
                 .font(.subheadline.weight(.semibold))
-            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 30 Гц воздействует и на частоты ниже неё; 62,5 Гц отвечает за удар, 125 Гц — за плотность. Точная нижняя граница не заявлена Apple.")
+            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 30 Гц воздействует и на частоты ниже неё. Полосы 40–250 Гц позволяют отдельно настроить глубину, удар и плотность. Точная нижняя граница не заявлена Apple.")
             Text("20 кГц — номинальная верхняя полоса. Рабочая частота ограничена частотой дискретизации аудиовыхода; это не заявленный диапазон наушников.")
             Text("Защита EQ от перегрузки отключена. Сильное усиление может вызвать хрип и искажения. EQ не добавляет низкие частоты, которых нет в записи. Проверяй настройки сначала на небольшой громкости.")
         }
@@ -756,7 +757,7 @@ struct PlayerEQSheetView: View {
         if player.eqHeadphonesOnly && !player.isHeadphonesConnected { return "Приостановлен для динамика телефона" }
         if let reason = player.eqUnavailableReason { return reason }
         if player.isEQPreparingNativeStream { return "Ожидание воспроизводимого аудио" }
-        return "10 полос • обработка в реальном времени"
+        return "\(PlayerCore.bandFrequencies.count) полос • обработка в реальном времени"
     }
     private func applyPreset(_ preset: EQPreset) {
         player.eqGains = preset.gains

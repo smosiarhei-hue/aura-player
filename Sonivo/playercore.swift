@@ -92,7 +92,7 @@ nonisolated private final class RemoteFavoriteSnapshot: @unchecked Sendable {
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
-    nonisolated static let bandFrequencies: [Float] = [30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000]
+    nonisolated static let bandFrequencies: [Float] = EQGainLimits.frequencies
     nonisolated static let maximumEQGain: Float = EQGainLimits.maximum
     nonisolated static let eqEnabledKey = "eq.enabled"
     nonisolated static let eqGainsKey = "eq.gains"
@@ -112,29 +112,24 @@ final class PlayerCore {
            let decoded = try? JSONDecoder().decode([Float].self, from: data) {
             gains = decoded
         }
-        if !defaults.bool(forKey: "eq.octaveCurve.v2") {
-            let old: [Float] = [20, 40, 60, 90, 160, 400, 1000, 2500, 6000, 16000]
-            let curve = normalized(gains)
-            gains = bandFrequencies.map { frequency in
-                guard let upper = old.firstIndex(where: { $0 >= frequency }) else { return curve.last ?? 0 }
-                guard upper > 0 else { return curve[0] }
-                let lower = upper - 1
-                let fraction = log(frequency / old[lower]) / log(old[upper] / old[lower])
-                return curve[lower] + (curve[upper] - curve[lower]) * fraction
-            }
-            if let data = try? JSONEncoder().encode(gains) { defaults.set(data, forKey: eqGainsKey) }
-            defaults.set(true, forKey: "eq.octaveCurve.v2")
+        if !defaults.bool(forKey:"eq.octaveCurve.v2"), gains.count == 10 {
+            let old: [Float] = [20,40,60,90,160,400,1000,2500,6000,16000]
+            gains = EQGainLimits.resample(gains,from:old,to:EQGainLimits.legacyFrequencies)
         }
-        // Upgrade only exact old factory bass curves; never overwrite a custom curve.
-        if !defaults.bool(forKey: "eq.bassProfiles.v3") {
-            if gains == [6, 5, 3, 1, 0, 0, 0, 0, 0, 0] {
-                gains = [8, 6, 2, -2, -1, 0, 0, 0, 0, 0]
-            } else if gains == [5, 4, 2, 0, -1, 0, 1, 2, 4, 4] {
-                gains = [6, 4.5, 1.5, -1, -1, 0, 1, 2, 3, 3]
-            }
-            if let data = try? JSONEncoder().encode(gains) { defaults.set(data, forKey: eqGainsKey) }
-            defaults.set(true, forKey: "eq.bassProfiles.v3")
+        defaults.set(true,forKey:"eq.octaveCurve.v2")
+        // Historical exact factory remaps: never overwrite a custom curve with a factory preset.
+        if !defaults.bool(forKey:"eq.bassProfiles.v3"), gains.count == 10 {
+            if gains == [6,5,3,1,0,0,0,0,0,0] { gains = [8,6,2,-2,-1,0,0,0,0,0] }
+            else if gains == [5,4,2,0,-1,0,1,2,4,4] { gains = [6,4.5,1.5,-1,-1,0,1,2,3,3] }
         }
+        defaults.set(true,forKey:"eq.bassProfiles.v3")
+        if gains.count == 10 {
+            if defaults.data(forKey:"eq.gains.dense29.backup") == nil,
+               let original = defaults.data(forKey:eqGainsKey) { defaults.set(original,forKey:"eq.gains.dense29.backup") }
+            gains = EQGainLimits.normalized(gains)
+            if let data = try? JSONEncoder().encode(gains) { defaults.set(data,forKey:eqGainsKey) }
+        }
+        defaults.set(true,forKey:"eq.layout.dense29")
         return (normalized(gains), enabled)
     }
     // EQ boosts retain unity preamp by request. Flat/off and spatial passthrough stay unchanged.
@@ -667,7 +662,7 @@ final class PlayerCore {
         for (i, band) in node.bands.enumerated() {
             band.frequency = resolvedEQFrequency(at: i, sampleRate: sampleRate)
             band.filterType = i == 0 ? .lowShelf : (i == node.bands.count - 1 ? .highShelf : .parametric)
-            band.bandwidth = 1.0
+            band.bandwidth = EQGainLimits.bandwidth(at:i)
             band.bypass = false
             band.gain = 0
         }
@@ -787,10 +782,7 @@ final class PlayerCore {
 
     /// Always exactly `bandFrequencies.count` elements — the only safe basis for indexing.
     nonisolated static func normalized(_ gains: [Float]) -> [Float] {
-        let count = bandFrequencies.count
-        var out = Array(gains.prefix(count)).enumerated().map { EQGainLimits.clean($0.element,at:$0.offset) }
-        if out.count < count { out.append(contentsOf: Array(repeating: 0, count: count - out.count)) }
-        return out
+        EQGainLimits.normalized(gains)
     }
 
     /// Publishes transition FX offsets for the active/idle decks and repaints the graph.

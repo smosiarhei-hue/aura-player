@@ -14,7 +14,7 @@ final class StreamBeatTap {
     enum EQState { case idle, preparing, ready, unavailable, spatialPassthrough }
     private(set) var activeEQState: EQState = .idle
     private var outcomes: [ObjectIdentifier: EQState] = [:]
-    private var desiredGains = [Float](repeating: 0, count: 10)
+    private var desiredGains = [Float](repeating: 0, count: EQGainLimits.frequencies.count)
     private var desiredEnabled = false
     private var waitingSince: TimeInterval = 0
     private final class ProbeContext {

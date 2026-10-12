@@ -2,9 +2,9 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000};
+static const double frequencies[SONIVO_EQ_BANDS] = {30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 500, 1000, 2000, 4000, 8000, 20000};
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
-static double cleanGain(double gain, unsigned band) { return isfinite(gain) ? clamp(gain, -12, band < 3 ? 18 : 12) : 0; }
+static double cleanGain(double gain, unsigned band) { return isfinite(gain) ? clamp(gain, -12, frequencies[band] <= 250 ? 18 : 12) : 0; }
 static SonivoEQCoefficients identity(void) { return (SonivoEQCoefficients){1,0,0,0,0}; }
 static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate) {
     if (fabs(gain) < 0.00001) return identity();
@@ -22,8 +22,9 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
             a0=(A+1)-(A-1)*c+beta; a1=2*((A-1)-(A+1)*c); a2=(A+1)-(A-1)*c-beta;
         }
     } else {
-        // One-octave peaking filters match the native local EQ's bandwidth.
-        double alpha = sn * sinh(0.34657359027997265 * w / fmax(sn, 1e-9));
+        // Neighbor-based octave bandwidth matches the native local EQ (dense bass, wider upper bands).
+        double bandwidth = frequencies[band] <= 250 ? clamp(0.5 * log2((frequencies[band]+10) / (frequencies[band]-10)), 0.05, 5) : 1;
+        double alpha = sn * sinh(0.34657359027997265 * bandwidth * w / fmax(sn, 1e-9));
         b0=1+alpha*A; b1=-2*c; b2=1-alpha*A;
         a0=1+alpha/A; a1=-2*c; a2=1-alpha/A;
     }
