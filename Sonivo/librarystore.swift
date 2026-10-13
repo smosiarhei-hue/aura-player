@@ -471,17 +471,41 @@ final class LibraryStore {
     // MARK: - Save Online Track for Offline Playback
 
     func saveOnlineTrackLocally(track: Track) async {
-        guard track.isStream, let urlString = track.streamUrlString, let url = URL(string: urlString) else { return }
+        guard track.isStream else { return }
         lastError = nil
         lastImportMessage = nil
         importProgress = -1
         defer { importProgress = nil }
 
         do {
-            let (tmpUrl, _) = try await URLSession.shared.download(from: url)
+            let url: URL
+            let fileExtension: String
+            if let id = YandexMusicService.ymId(fromFileName: track.fileName) {
+                let quality = PlayerCore.shared.audioQuality
+                let info = try await YandexMusicService.shared.getStreamInfo(for: id, preferredQuality: quality, preferredBitrate: quality.targetBitrate)
+                url = info.url
+                fileExtension = info.codec.lowercased() == "flac" ? "flac" : (info.codec.lowercased() == "mp3" ? "mp3" : "m4a")
+            } else {
+                guard let value = track.streamUrlString, let direct = URL(string: value), ["https", "http", "file"].contains(direct.scheme ?? "") else { throw URLError(.badURL) }
+                url = direct
+                fileExtension = ["flac", "m4a", "aac", "mp3"].contains(url.pathExtension.lowercased()) ? url.pathExtension.lowercased() : "mp3"
+            }
+            let tmpUrl: URL
+            if url.isFileURL {
+                tmpUrl = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
+                try FileManager.default.copyItem(at: url, to: tmpUrl)
+            } else {
+                let (downloaded, response) = try await URLSession.shared.download(from: url)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    try? FileManager.default.removeItem(at: downloaded); throw URLError(.badServerResponse)
+                }
+                tmpUrl = downloaded
+            }
+            defer { try? FileManager.default.removeItem(at: tmpUrl) }
+            try Task.checkCancellation()
             let safeTitle = track.title.replacingOccurrences(of: "/", with: "-")
             let safeArtist = track.artist.replacingOccurrences(of: "/", with: "-")
-            let destName = "\(safeArtist) - \(safeTitle).mp3"
+            let destName = "\(safeArtist) - \(safeTitle).\(fileExtension)"
             let dest = musicDirectoryURL().appendingPathComponent(destName)
 
             if FileManager.default.fileExists(atPath: dest.path) {

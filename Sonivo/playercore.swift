@@ -1649,8 +1649,23 @@ final class PlayerCore {
         }
     }
 
+    /// Protect both audible and prepared decks when decoded encraw cache is pruned.
+    var protectedPlaybackURLs: Set<URL> {
+        var urls = Set([activeLocalURL, activeStreamURL, incomingAudioFile?.url].compactMap { $0 })
+        for player in [streamingPlayerA, streamingPlayerB] {
+            if let url = (player.currentItem?.asset as? AVURLAsset)?.url { urls.insert(url) }
+        }
+        return urls
+    }
+
     private func beginStream(_ url: URL, at seconds: Double, token: Int) {
         guard self.generation == token, isPlaying else { return }
+        if url.isFileURL, url.pathExtension.lowercased() == "flac", let track = currentTrack {
+            // Decoded encraw FLAC uses the existing native AVAudioFile/AVAudioEngine lane.
+            isStreamBuffering = false
+            startLocal(track, at: seconds, token: token, fileURL: url)
+            return
+        }
         localSegmentTokens.removeAll()
         playerA.stop()
         playerB.stop()
@@ -1679,8 +1694,8 @@ final class PlayerCore {
         self.lastNowPlayingSync = nil
         self.updateNowPlayingInfo()
 
-        // Ordinary playback stays streaming-only. Full-file downloads happen
-        // only after explicit vocal processing, never for EQ or spatial audio.
+        // Ordinary playback stays streaming-only for raw sources. Authorized encraw FLAC
+        // is materialized before this point; EQ/spatial toggles never initiate a download.
     }
 
     private func acceptsCachedPlayback(_ url: URL, for track: Track) -> Bool {
@@ -1763,6 +1778,13 @@ final class PlayerCore {
 
         if let streamURL {
             do {
+                if streamURL.isFileURL {
+                    let validated = try AVAudioFile(forReading: streamURL)
+                    guard validated.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                    guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
+                    self.startLocal(track, at: self.progress, token: token, isMigration: true, fileURL: streamURL)
+                    return
+                }
                 let ext = streamURL.pathExtension.isEmpty ? "mp3" : streamURL.pathExtension
                 let (temporaryURL, response) = try await URLSession.shared.download(from: streamURL)
                 defer { try? FileManager.default.removeItem(at: temporaryURL) }
@@ -1834,13 +1856,25 @@ final class PlayerCore {
                           self.isPlaying, self.currentTrack?.id == current.id, self.incomingTrack?.id == nextTrack.id,
                           self.isTransitioning else { return }
                     self.incomingQuality = resolvedQuality
-                    let item = AVPlayerItem(url: resolved)
-                    item.audioTimePitchAlgorithm = .timeDomain
-                    item.allowedAudioSpatializationFormats = self.spatialAudioEnabled ? .monoStereoAndMultichannel : []
-                    StreamBeatTap.shared.attach(to: item)
-                    targetStream.replaceCurrentItem(with: item)
-                    targetStream.volume = 0
-                    targetStream.playImmediately(atRate: 1)
+                    if resolved.isFileURL && resolved.pathExtension.lowercased() == "flac" {
+                        let file = try AVAudioFile(forReading: resolved)
+                        guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                        self.incomingIsStream = false
+                        self.incomingAudioFile = file
+                        self.incomingQuality = LocalAudioQualityReader.read(file)
+                        self.scheduleLocalSegment(file, on: targetNode, at: 0)
+                        targetNode.volume = 0
+                        if !self.engine.isRunning { try self.engine.start() }
+                        targetNode.play()
+                    } else {
+                        let item = AVPlayerItem(url: resolved)
+                        item.audioTimePitchAlgorithm = .timeDomain
+                        item.allowedAudioSpatializationFormats = self.spatialAudioEnabled ? .monoStereoAndMultichannel : []
+                        StreamBeatTap.shared.attach(to: item)
+                        targetStream.replaceCurrentItem(with: item)
+                        targetStream.volume = 0
+                        targetStream.playImmediately(atRate: 1)
+                    }
                 } else {
                     let file = try AVAudioFile(forReading: nextURL ?? nextTrack.url)
                     guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }

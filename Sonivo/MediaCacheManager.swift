@@ -28,10 +28,11 @@ final class MediaCacheManager {
     func clearGeneratedCache() async {
         guard !isClearing else { return }
         isClearing = true
-        await Task.detached(priority: .utility) {
-            Self.removeGeneratedCache()
+        let protected = PlayerCore.shared.protectedPlaybackURLs
+        totalBytes = await Task.detached(priority: .utility) {
+            Self.removeGeneratedCache(protecting: protected)
+            return Self.calculateCacheSize()
         }.value
-        totalBytes = 0
         isClearing = false
     }
 
@@ -47,7 +48,7 @@ final class MediaCacheManager {
             documents.appendingPathComponent("AIVideoShots", isDirectory: true),
             temporary.appendingPathComponent("profiles", isDirectory: true),
             temporary.appendingPathComponent("neuromix-profiles", isDirectory: true)
-        ]
+        ] + YandexLosslessAssetStore.temporaryDirectories
     }
 
     nonisolated private static var temporaryAudioFiles: [URL] {
@@ -103,10 +104,14 @@ final class MediaCacheManager {
         return total
     }
 
-    nonisolated private static func removeGeneratedCache() {
+    nonisolated private static func removeGeneratedCache(protecting protected: Set<URL>) {
         let manager = FileManager.default
         for directory in cacheDirectories {
-            try? manager.removeItem(at: directory)
+            if protected.contains(where: { $0.deletingLastPathComponent() == directory }) {
+                if let files = try? manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+                    for file in files where !protected.contains(file) { try? manager.removeItem(at: file) }
+                }
+            } else { try? manager.removeItem(at: directory) }
         }
         for file in temporaryAudioFiles {
             try? manager.removeItem(at: file)

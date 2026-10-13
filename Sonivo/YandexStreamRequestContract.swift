@@ -6,22 +6,23 @@ import CryptoKit
 nonisolated enum YandexStreamRequestContract {
     static let desktopClient = "YandexMusicDesktopAppWindows/5.95.0"
     static let codecs = ["flac", "flac-mp4", "aac-mp4", "he-aac-mp4", "aac", "he-aac", "mp3"]
-    static let transport = "raw" // Never pass encrypted encraw bytes to AVPlayer.
+    static let transport = "raw" // encraw is decoded before any native player sees it.
     private static let signingKey = "kzqU4XhfCaY6B6JTHODeq5"
 
-    static func signature(timestamp: Int, trackID: String, quality: String) -> String {
+    static func signature(timestamp: Int, trackID: String, quality: String, codecs: [String] = Self.codecs, transport: String = Self.transport) -> String {
         let message = "\(timestamp)\(trackID)\(quality)\(codecs.joined())\(transport)"
         let key = SymmetricKey(data: Data(signingKey.utf8))
         let value = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key)
         return String(Data(value).base64EncodedString().dropLast())
     }
-    static func request(base: String, trackID: String, timestamp: Int, quality: String) -> URLRequest? {
+    static func request(base: String, trackID: String, timestamp: Int, quality: String, codecs: [String] = Self.codecs, transport: String = Self.transport) -> URLRequest? {
+        guard ["raw", "encraw"].contains(transport), !codecs.isEmpty, codecs.allSatisfy(Self.codecs.contains), ["lossless", "hq", "nq"].contains(quality) else { return nil }
         guard var components = URLComponents(string: base + "/get-file-info") else { return nil }
         components.queryItems = [
             .init(name: "ts", value: String(timestamp)), .init(name: "trackId", value: trackID),
             .init(name: "quality", value: quality), .init(name: "codecs", value: codecs.joined(separator: ",")),
             .init(name: "transports", value: transport),
-            .init(name: "sign", value: signature(timestamp: timestamp, trackID: trackID, quality: quality))
+            .init(name: "sign", value: signature(timestamp: timestamp, trackID: trackID, quality: quality, codecs: codecs, transport: transport))
         ]
         // URLComponents permits literal + in a query. The API's form-style parser
         // treats it as a space, corrupting Base64 signatures and returning 403.
