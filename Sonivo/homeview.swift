@@ -13,6 +13,7 @@ struct HomeView: View {
     @State private var loadError: String?
     @State private var showSettings = false
     @State private var showPlayer = false
+    @Namespace private var playerTransition
 
     private var moodStation: YandexMusicService.StationOption { ym.waveMoodStation }
     private var moodColors: [Color] {
@@ -37,6 +38,7 @@ struct HomeView: View {
                         yandexTopBar
 
                         waveCenterStage
+                            .matchedTransitionSource(id: "player.home", in: playerTransition)
 
                         moodCardsSection
 
@@ -51,9 +53,9 @@ struct HomeView: View {
 
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showPlayer) {
+            .fullScreenCover(isPresented: $showPlayer) {
                 PlayerScreenV2(isPresented: $showPlayer)
-                    .modifier(PlayerSheetPresentation())
+                    .modifier(PlayerFullscreenPresentation(sourceID: "player.home", namespace: playerTransition))
             }
             .task { await load() }
             .task { await player.observeTimeline() }

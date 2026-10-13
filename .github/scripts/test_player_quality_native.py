@@ -10,7 +10,7 @@ class PlayerQualityNativeTests(unittest.TestCase):
         selection=service.split('func getStreamInfo',1)[1].split('// MARK: - Convert',1)[0]
         self.assertIn('PlaybackQualityFacts(codec: losslessInfo.codec, bitrate: losslessInfo.bitrate).isLossless',selection)
         self.assertIn('signedLossyFallback = losslessInfo',selection)
-        self.assertIn('if let fallback = signedLossyFallback { return fallback }',selection)
+        self.assertIn('if let fallback = signedLossyFallback {',selection)
         self.assertIn('flacs.max',selection)
         self.assertIn('preferredQuality == .lossless',selection)
     def test_unknown_or_lossy_quality_is_not_mislabelled_lossless_or_hires(self):
@@ -54,6 +54,8 @@ class PlayerQualityNativeTests(unittest.TestCase):
         precondition(PlaybackQualityFacts(codec: nil, bitrate: nil).badge == "Качество уточняется")
         precondition(PlaybackQualityFacts(codec: "alac", bitrate: 0).bitrate == nil)
         precondition(PlaybackQualityFacts(codec: "FLAC", bitrate: 1200).badge == "Lossless")
+        precondition(PlaybackQualityFacts(codec: "flac-mp4", bitrate: 0).isLossless)
+        precondition(PlaybackQualityFacts(codec: "aac-mp4", bitrate: 192).isLossy)
         '''
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'check.swift';p.write_text(source('PlaybackQualityFacts.swift')+'\n'+checks)

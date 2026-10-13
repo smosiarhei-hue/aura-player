@@ -108,66 +108,70 @@ struct PlayerScreenV2: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
-            let totalHeight = geo.size.height
-            let totalWidth = geo.size.width
-            let topInset = max(geo.safeAreaInsets.top, 50)
-            // Video is a background layer, never a different layout mode.
-            // Keep the same reserved artwork space as readiness/setting changes.
-            let standardArtworkStageHeight = min(totalWidth - 40, totalHeight * 0.44)
+        GeometryReader { safeGeometry in
+            let safeTop = safeGeometry.safeAreaInsets.top
+            let safeBottom = safeGeometry.safeAreaInsets.bottom
+            GeometryReader { geo in
+                let totalHeight = geo.size.height
+                let totalWidth = geo.size.width
+                let topInset = max(safeTop, 12)
+                // Video is a background layer, never a different layout mode.
+                // Keep the same reserved artwork space as readiness/setting changes.
+                let standardArtworkStageHeight = min(totalWidth - 40, totalHeight * 0.44)
 
-            ZStack(alignment: .top) {
-                background
-                    .frame(width: totalWidth, height: totalHeight)
-                    .clipped()
+                ZStack(alignment: .top) {
+                    background
+                        .frame(width: totalWidth, height: totalHeight)
+                        .clipped()
 
-                // Attach the native rendering layer during preparation too. Readiness
-                // only controls visibility; loop-item status must not recreate the layer.
-                if let videoLooperPlayer {
-                    VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
-                        .frame(width: totalWidth, height: totalHeight).clipped()
-                        .overlay(Color.black.opacity(0.32))
-                        .opacity(isFullScreenVideoShot ? 1 : 0)
-                        .allowsHitTesting(false).accessibilityHidden(true)
-                }
-
-                if showLyricsMode {
-                    lyricsPlayerLayout(
-                        width: totalWidth,
-                        height: totalHeight,
-                        topInset: topInset,
-                        safeAreaBottom: geo.safeAreaInsets.bottom
-                    )
-                    .transition(.opacity)
-                    .zIndex(2)
-                } else {
-                    VStack(spacing: 0) {
-                        topHeader
-                            .padding(.top, topInset)
-                            .padding(.horizontal, 20)
-                            .zIndex(3)
-
-                        ScrollView(.vertical) {
-                            VStack(spacing: 0) {
-                                artworkStage(width: totalWidth, height: standardArtworkStageHeight)
-                                    .frame(width: totalWidth, height: standardArtworkStageHeight)
-                                    .padding(.top, 12)
-                                lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .scrollIndicators(.hidden)
-                        .accessibilityLabel("Плеер и дополнительные действия")
+                    // Attach the native rendering layer during preparation too. Readiness
+                    // only controls visibility; loop-item status must not recreate the layer.
+                    if let videoLooperPlayer {
+                        VideoShotPlayerView(player: videoLooperPlayer, videoGravity: .resizeAspectFill)
+                            .frame(width: totalWidth, height: totalHeight).clipped()
+                            .overlay(Color.black.opacity(0.32))
+                            .opacity(isFullScreenVideoShot ? 1 : 0)
+                            .allowsHitTesting(false).accessibilityHidden(true)
                     }
-                    .transition(.opacity)
-                }
 
+                    if showLyricsMode {
+                        lyricsPlayerLayout(
+                            width: totalWidth,
+                            height: totalHeight,
+                            topInset: topInset,
+                            safeAreaBottom: safeBottom
+                        )
+                        .transition(.opacity)
+                        .zIndex(2)
+                    } else {
+                        VStack(spacing: 0) {
+                            topHeader
+                                .padding(.top, topInset)
+                                .padding(.horizontal, 20)
+                                .zIndex(3)
+
+                            ScrollView(.vertical) {
+                                VStack(spacing: 0) {
+                                    artworkStage(width: totalWidth, height: standardArtworkStageHeight)
+                                        .frame(width: totalWidth, height: standardArtworkStageHeight)
+                                        .padding(.top, 12)
+                                    lowerDeck(safeAreaBottom: safeBottom)
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .scrollIndicators(.hidden)
+                            .accessibilityLabel("Плеер и дополнительные действия")
+                        }
+                        .transition(.opacity)
+                    }
+
+                }
+                .frame(width: totalWidth, height: totalHeight, alignment: .top)
+                .animation(SN.slowSpring, value: showLyricsMode)
+                .environment(\.colorScheme, isFullScreenVideoShot ? .dark : preferredScheme)
             }
-            .frame(width: totalWidth, height: totalHeight, alignment: .top)
-            .animation(SN.slowSpring, value: showLyricsMode)
-            .environment(\.colorScheme, isFullScreenVideoShot ? .dark : preferredScheme)
+            .ignoresSafeArea(.container, edges: .all)
         }
-        .ignoresSafeArea()
         .background(SN.bg.ignoresSafeArea())
         .sheet(item: $activeModal) { modal in
             NavigationStack {
@@ -2235,6 +2239,12 @@ struct PlayerQualityModalView: View {
                 }
             } header: {
                 Text("Предпочитаемое качество звука")
+            }
+            Section("Диагностика") {
+                Button("Скопировать диагностику качества") {
+                    UIPasteboard.general.string = YandexMusicService.shared.streamQualityReport()
+                    Haptics.tap(.light)
+                }
             }
         }
         .navigationTitle("Качество звука")

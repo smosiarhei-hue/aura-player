@@ -7,6 +7,7 @@ nonisolated struct PlaybackQualityFacts: Equatable, Sendable {
 
     init(codec: String?, bitrate: Int?) {
         let normalized = codec?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .replacingOccurrences(of: "-mp4", with: "")
         self.codec = normalized?.isEmpty == false ? normalized : nil
         self.bitrate = bitrate.flatMap { $0 > 0 ? $0 : nil }
     }

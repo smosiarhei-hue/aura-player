@@ -420,6 +420,7 @@ final class PlayerCore {
     private var incomingAudioFile: AVAudioFile?
     private(set) var incomingTrack: Track?
     private(set) var metadataTrack: Track?
+    @ObservationIgnored private var cacheQualityInspections: [URL: (created: Date?, bytes: Int?, facts: PlaybackQualityFacts, preference: AudioQuality)] = [:]
     private var incomingQuality: PlaybackQualityFacts?
     private var metadataSwapped = false
     private var incomingStartPosition: Double = 0
@@ -1587,7 +1588,12 @@ final class PlayerCore {
                         return
                     } catch { }
                 }
-                guard self.generation == token else { return }
+                guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
+                // Network/API unavailable: preserve existing offline playback without deleting a file.
+                if let cached = self.findLocalOrCachedAudioFile(for: track, respectingQuality: false) {
+                    self.startLocal(track, at: seconds, token: token, fileURL: cached)
+                    return
+                }
                 self.isPlaying = false
                 self.transitionScheduled = false
                 self.playError = "Не удалось открыть поток трека"
@@ -1677,11 +1683,32 @@ final class PlayerCore {
         // only after explicit vocal processing, never for EQ or spatial audio.
     }
 
-    func findLocalOrCachedAudioFile(for track: Track) -> URL? {
+    private func acceptsCachedPlayback(_ url: URL, for track: Track) -> Bool {
+        guard track.isStream, audioQuality == .lossless || audioQuality == .hiResLossless || audioQuality == .hq else { return true }
+        let values = try? url.resourceValues(forKeys: [.creationDateKey, .fileSizeKey])
+        let prior = cacheQualityInspections[url]
+        let facts: PlaybackQualityFacts
+        if let prior, prior.created == values?.creationDate, prior.bytes == values?.fileSize {
+            facts = prior.facts
+        } else {
+            guard let file = try? AVAudioFile(forReading: url) else { return false }
+            facts = LocalAudioQualityReader.read(file)
+        }
+        let accepted = facts.isLossless || (audioQuality == .hq && (facts.bitrate ?? 0) >= 256)
+        if prior == nil || prior?.preference != audioQuality || prior?.facts != facts {
+            YandexMusicService.shared.recordCachedQuality(accepted: accepted, facts: facts)
+        }
+        if cacheQualityInspections.count > 32 { cacheQualityInspections.removeAll() }
+        cacheQualityInspections[url] = (values?.creationDate, values?.fileSize, facts, audioQuality)
+        return accepted
+    }
+
+    func findLocalOrCachedAudioFile(for track: Track, respectingQuality: Bool = true) -> URL? {
         if !track.isStream && track.url.isFileURL && FileManager.default.fileExists(atPath: track.url.path) {
             return track.url
         }
-        if let file = InternalAudioCache.fileURL(for: track.id) { return file }
+        if let file = InternalAudioCache.fileURL(for: track.id),
+           !respectingQuality || acceptsCachedPlayback(file, for: track) { return file }
         let ymID = Self.yandexTrackID(from: track)
         if !ymID.isEmpty {
             let encoded = Data(ymID.utf8).base64EncodedString()
@@ -1690,9 +1717,10 @@ final class PlayerCore {
                 .replacingOccurrences(of: "=", with: "")
             let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("tracks", isDirectory: true)
-            if let files = try? FileManager.default.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil),
-               let file = files.first(where: { $0.lastPathComponent.hasPrefix(encoded + ".") }) {
-                return file
+            if let files = try? FileManager.default.contentsOfDirectory(at: cachesDir, includingPropertiesForKeys: nil) {
+                for file in files.filter({ $0.lastPathComponent.hasPrefix(encoded + ".") }) {
+                    if !respectingQuality || acceptsCachedPlayback(file, for: track) { return file }
+                }
             }
         }
         return nil

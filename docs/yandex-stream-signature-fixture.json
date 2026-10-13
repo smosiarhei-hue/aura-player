@@ -1,0 +1,18 @@
+{
+  "timestamp": 1700000000,
+  "track_id": "123456789",
+  "quality": "lossless",
+  "client": "YandexMusicDesktopAppWindows/5.95.0",
+  "codecs": [
+    "flac",
+    "flac-mp4",
+    "aac-mp4",
+    "he-aac-mp4",
+    "aac",
+    "he-aac",
+    "mp3"
+  ],
+  "transport": "raw",
+  "signature": "k72m+ycmv8o4iDcoJF9GeCIKDZzSt8ILE4LrMnojoPc",
+  "reference": "https://github.com/MarshalX/yandex-music-api/blob/main/yandex_music/utils/sign_request.py"
+}

@@ -115,9 +115,9 @@ struct RootView: View {
                 restrictGuestPlayback()
             }
         }
-        .sheet(isPresented: $showPlayer) {
+        .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreenV2(isPresented: $showPlayer)
-                .modifier(PlayerSheetPresentation())
+                .modifier(PlayerFullscreenPresentation(sourceID: Self.playerZoomID, namespace: playerTransition))
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()

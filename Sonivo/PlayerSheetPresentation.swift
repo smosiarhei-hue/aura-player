@@ -1,13 +1,12 @@
 import SwiftUI
 
-/// System interactive sheet owns dismissal, inertia, cancellation and scroll handoff.
-struct PlayerSheetPresentation: ViewModifier {
+/// Full-screen native zoom presentation. iOS owns the interactive swipe dismissal.
+/// Kept in the historical presentation file; this no longer configures a sheet/detent.
+struct PlayerFullscreenPresentation: ViewModifier {
+    let sourceID: String
+    let namespace: Namespace.ID
+
     func body(content: Content) -> some View {
-        content
-            .presentationDetents([.large])
-            .presentationDragIndicator(.hidden) // Player header already has its own visual handle.
-            .presentationCornerRadius(32)
-            .presentationContentInteraction(.resizes)
-            .interactiveDismissDisabled(false)
+        content.navigationTransition(.zoom(sourceID: sourceID, in: namespace))
     }
 }

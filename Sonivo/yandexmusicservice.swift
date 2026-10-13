@@ -1090,37 +1090,56 @@ final class YandexMusicService {
     /// lossless/FLAC streams. The older /tracks/{id}/download-info list frequently omits FLAC
     /// entries entirely for third-party OAuth tokens, which is why Hi-Res Lossless selections
     /// were silently falling back to 320kbps mp3. This tries the real lossless master first.
-    private func getLosslessFileInfo(cleanId: String) async -> StreamInfo? {
-        guard !cleanId.isEmpty else { return nil }
-        let ts = Int(Date().timeIntervalSince1970)
-        let quality = "lossless"
-        let codecs = "flac,aac,he-aac,mp3"
-        let transports = "raw"
-        let codecsNoCommas = codecs.replacingOccurrences(of: ",", with: "")
-        let message = "\(ts)\(cleanId)\(quality)\(codecsNoCommas)\(transports)"
-        let key = SymmetricKey(data: Data("p93jhgh689SBReK6ghtw62".utf8))
-        let signature = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key)
-        let sign = String(Data(signature).base64EncodedString().dropLast())
+    private(set) var streamQualityLog: [String] = []
+    private func recordStreamQuality(_ message: String) {
+        streamQualityLog.append(message)
+        if streamQualityLog.count > 40 { streamQualityLog.removeFirst(streamQualityLog.count - 40) }
+        SonivoDiagnostics.log(message, tag: "STREAM_QUALITY")
+    }
+    func recordCachedQuality(accepted: Bool, facts: PlaybackQualityFacts) {
+        let codec = (facts.codec ?? "unknown").filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(24)
+        recordStreamQuality("cache accepted=\(accepted) codec=\(codec) bitrate=\(facts.bitrate ?? 0)")
+    }
+    func streamQualityReport() -> String {
+        let player = PlayerCore.shared
+        let facts = PlaybackQualityFacts(codec: player.currentCodec, bitrate: player.currentBitrate)
+        return """
+        Sonivo stream quality diagnostic
+        App: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")
+        Requested: \(player.audioQuality.label)
+        Received: \(facts.detail ?? "unknown")
+        Backend: \(player.usesStreamingBackend ? "stream" : "local/cache")
+        API client: \(YandexStreamRequestContract.desktopClient)
+        Raw transport only. No credentials or stream URLs in this report.
 
-        guard var comps = URLComponents(string: Self.apiBase + "/get-file-info") else { return nil }
-        comps.queryItems = [
-            URLQueryItem(name: "ts", value: String(ts)),
-            URLQueryItem(name: "trackId", value: cleanId),
-            URLQueryItem(name: "quality", value: quality),
-            URLQueryItem(name: "codecs", value: codecs),
-            URLQueryItem(name: "transports", value: transports),
-            URLQueryItem(name: "sign", value: sign)
-        ]
-        guard let url = comps.url else { return nil }
-
-        guard let (data, response) = try? await sessionData(for: authorizedRequest(url: url)) else { return nil }
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 { return nil }
+        \(streamQualityLog.suffix(24).joined(separator: "\n"))
+        """
+    }
+    private func getLosslessFileInfo(cleanId: String, quality: String = "lossless") async -> StreamInfo? {
+        guard !cleanId.isEmpty,
+              let request = YandexStreamRequestContract.request(base: Self.apiBase, trackID: cleanId,
+                   timestamp: Int(Date().timeIntervalSince1970), quality: quality) else { return nil }
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await sessionData(for: request)
+        } catch {
+            if !Task.isCancelled {
+                recordStreamQuality("get-file-info request failed; fallback required (authentication/network)")
+            }
+            return nil
+        }
+        if let http = response as? HTTPURLResponse {
+            recordStreamQuality("get-file-info quality=\(quality) HTTP=\(http.statusCode)")
+            guard http.statusCode == 200 else { return nil }
+        }
 
         struct FileInfoResponse: Decodable {
             struct Result: Decodable {
                 struct DownloadInfo: Decodable {
                     let codec: String?
                     let bitrate: Int?
+                    let transport: String?
                     let url: String?
                     let urls: [String]?
                 }
@@ -1133,10 +1152,16 @@ final class YandexMusicService {
               let info = parsed.result?.downloadInfo,
               let codec = info.codec,
               let urlString = info.url ?? info.urls?.first,
-              let streamURL = URL(string: urlString) else {
+              let streamURL = URL(string: urlString), streamURL.scheme == "https" else {
+            recordStreamQuality("get-file-info missing or invalid downloadInfo; fallback required")
             return nil
         }
-
+        guard info.transport == nil || info.transport == "raw" else {
+            recordStreamQuality("get-file-info requires unsupported encrypted transport; not played as raw audio")
+            return nil
+        }
+        let safeCodec = codec.filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(24)
+        recordStreamQuality("get-file-info codec=\(safeCodec) bitrate=\(info.bitrate ?? 0) kbps")
         return StreamInfo(url: streamURL, bitrate: info.bitrate ?? 0, codec: codec)
     }
 
@@ -1149,12 +1174,14 @@ final class YandexMusicService {
         // get-file-info endpoint). Try that first whenever lossless or automatic quality is
         // wanted, and only fall back to the legacy list below if this track truly has no
         // lossless master there.
+        recordStreamQuality("resolve requested=\(preferredQuality.rawValue) track=\(cleanId.filter(\.isNumber).prefix(20))")
         var signedLossyFallback: StreamInfo?
-        if preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto {
-            if let losslessInfo = await getLosslessFileInfo(cleanId: cleanId) {
+        if preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto || preferredQuality == .hq {
+            if let losslessInfo = await getLosslessFileInfo(cleanId: cleanId, quality: preferredQuality == .hq ? "hq" : "lossless") {
                 guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
                 SonivoDiagnostics.log("get-file-info delivered \(losslessInfo.codec) \(losslessInfo.bitrate)kbps for \(cleanId)", tag: "STREAM")
-                if PlaybackQualityFacts(codec: losslessInfo.codec, bitrate: losslessInfo.bitrate).isLossless {
+                if PlaybackQualityFacts(codec: losslessInfo.codec, bitrate: losslessInfo.bitrate).isLossless
+                    || (preferredQuality == .hq && losslessInfo.bitrate >= 256) {
                     return losslessInfo
                 }
                 // Signed "lossless" requests can return AAC/MP3. Check legacy FLAC first,
@@ -1166,7 +1193,11 @@ final class YandexMusicService {
         do {
             guard let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info") else { throw URLError(.badURL) }
             let req = authorizedRequest(url: downloadInfoListURL)
-            let (data, _) = try await sessionData(for: req)
+            let (data, response) = try await sessionData(for: req)
+            if let http = response as? HTTPURLResponse {
+                recordStreamQuality("legacy download-info HTTP=\(http.statusCode)")
+                guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+            }
 
             struct DownloadInfoEntry: Codable {
                 let codec: String
@@ -1183,6 +1214,11 @@ final class YandexMusicService {
                 throw URLError(.cannotFindHost)
             }
 
+            let variants = list.map { entry in
+                let label = entry.codec.filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(24)
+                return "\(label):\(entry.bitrateInKbps)"
+            }.joined(separator: ", ")
+            recordStreamQuality("legacy offered=[\(variants)]")
             let best: DownloadInfoEntry
             switch preferredQuality {
             case .hiResLossless, .lossless:
@@ -1237,11 +1273,16 @@ final class YandexMusicService {
             let getEndpoint = best.codec.lowercased() == "flac" ? "get-flac" : "get-mp3"
             let finalURLString = "https://" + host + "/" + getEndpoint + "/" + sign + "/" + ts + path
             guard let finalURL = URL(string: finalURLString) else { throw URLError(.badURL) }
+            let selectedCodec = best.codec.filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(24)
+            recordStreamQuality("legacy selected=\(selectedCodec):\(best.bitrateInKbps)")
             return StreamInfo(url: finalURL, bitrate: best.bitrateInKbps, codec: best.codec)
         } catch {
             guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
             if error is CancellationError { throw error }
-            if let fallback = signedLossyFallback { return fallback }
+            if let fallback = signedLossyFallback {
+                recordStreamQuality("legacy failed; retained signed fallback bitrate=\(fallback.bitrate)")
+                return fallback
+            }
             throw error
         }
     }
@@ -1643,7 +1684,12 @@ final class YandexMusicService {
         let result = try await URLSession.shared.data(for: request)
         try Task.checkCancellation()
         guard accountGeneration == generation else { throw CancellationError() }
-        if (result.1 as? HTTPURLResponse)?.statusCode == 401, token == activeToken { logout(); throw URLError(.userAuthenticationRequired) }
+        if (result.1 as? HTTPURLResponse)?.statusCode == 401, token == activeToken {
+            // File-info 401 can mean an invalid client/signature, not an invalid account token.
+            // The authenticated legacy request still validates the token before any fallback plays.
+            if original.url?.path == "/get-file-info" { return result }
+            logout(); throw URLError(.userAuthenticationRequired)
+        }
         return result
     }
 
@@ -1680,6 +1726,7 @@ final class YandexMusicService {
     }
 
     private func resetPersonalState() {
+        streamQualityLog.removeAll()
         accountSyncTask?.cancel(); accountSyncTask = nil; accountSyncGeneration = nil; accountSyncRequestID = UUID()
         waveSession.reset() // Discard the previous account's pending events before closing.
         endStationSession()

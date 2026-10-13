@@ -33,8 +33,9 @@ final class AutoMixV2YandexDownloadClient: YandexMusicDownloadClient, @unchecked
             let codec: YandexAudioCodec; let ext: String
             switch info.codec.lowercased() {
             case "flac": codec = .flac; ext = "flac"
+            case "flac-mp4": codec = .flac; ext = "m4a"
             case "mp3": codec = .mp3; ext = "mp3"
-            case "aac", "he-aac": codec = .aac; ext = "m4a"
+            case "aac", "he-aac", "aac-mp4", "he-aac-mp4": codec = .aac; ext = "m4a"
             default: throw TrackSourceError.noDownloadOption
             }
             return [YandexDownloadOption(url: info.url, codec: codec,

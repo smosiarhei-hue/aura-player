@@ -14,6 +14,7 @@ struct SonivoHomeRedesignedView: View {
     @State private var waveTopInset: CGFloat = 0
     @State private var showSettings = false
     @State private var showPlayer = false
+    @Namespace private var playerTransition
     @State private var showAIAssistant = false
     @State private var waveStore = WaveSettingsStore.shared
     @State private var themeManager = ThemeFontManager.shared
@@ -75,8 +76,8 @@ struct SonivoHomeRedesignedView: View {
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
             .fullScreenCover(isPresented: $showAIAssistant) { AIMusicAssistantView() }
-            .sheet(isPresented: $showPlayer) {
-                PlayerScreenV2(isPresented: $showPlayer).modifier(PlayerSheetPresentation())
+            .fullScreenCover(isPresented: $showPlayer) {
+                PlayerScreenV2(isPresented: $showPlayer).modifier(PlayerFullscreenPresentation(sourceID: "player.home", namespace: playerTransition))
             }
             .task { await player.observeTimeline() }
             .task { await load() }
@@ -111,6 +112,7 @@ struct SonivoHomeRedesignedView: View {
             onToggleWave: toggleWave,
             onShakeWave: { triggerShakeWave() }
         )
+        .matchedTransitionSource(id: "player.home", in: playerTransition)
         // The ribbons dissolve into the inherited light/dark theme on every edge.
         .frame(maxWidth: .infinity)
         .background(alignment: .top) {

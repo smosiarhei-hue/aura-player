@@ -270,7 +270,9 @@ enum SonivoPlay {
     static func download(_ item: YandexMusicService.YMTrackItem) {
         let service = YandexMusicService.shared
         Task {
-            guard let info = try? await service.getStreamInfo(for: item.id) else { return }
+            let quality = PlayerCore.shared.audioQuality
+            guard let info = try? await service.getStreamInfo(for: item.id, preferredQuality: quality,
+                                                             preferredBitrate: quality.targetBitrate) else { return }
             var track = service.convertToTrack(item)
             track.streamUrlString = info.url.absoluteString
             await LibraryStore.shared.saveOnlineTrackLocally(track: track)

@@ -1,0 +1,21 @@
+{
+  "repository": "MarshalX/yandex-music-api",
+  "commit": "9ca132e5c18a72aab779c1fc68c169380a9357d0",
+  "files": [
+    {
+      "path": "yandex_music/utils/sign_request.py",
+      "url": "https://github.com/MarshalX/yandex-music-api/blob/9ca132e5c18a72aab779c1fc68c169380a9357d0/yandex_music/utils/sign_request.py",
+      "sha256": "21fb6a874f5814a3cfaf2d9067aacf4ab17f948d0d57f234611039a34e165ac6"
+    },
+    {
+      "path": "yandex_music/_client/tracks.py",
+      "url": "https://github.com/MarshalX/yandex-music-api/blob/9ca132e5c18a72aab779c1fc68c169380a9357d0/yandex_music/_client/tracks.py",
+      "sha256": "849f68db1620f878449074b555e06a35767fc844a6e2902d27c8c167954dbc62"
+    },
+    {
+      "path": "yandex_music/track/file_download_info.py",
+      "url": "https://github.com/MarshalX/yandex-music-api/blob/9ca132e5c18a72aab779c1fc68c169380a9357d0/yandex_music/track/file_download_info.py",
+      "sha256": "637f7109d065c235a17d66b3a47093476f256f2be371b72515b766978b5d7860"
+    }
+  ]
+}

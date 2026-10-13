@@ -47,15 +47,26 @@ class PlayerTrackWaveTests(unittest.TestCase):
             self.assertLess(deck.index(first),deck.index(second))
         actions=screen.split('private var secondaryPlayerActions',1)[1].split('private var sleepTimerBottomButton',1)[0]
         for expected in ['AirPlayButtonView','sleepTimerBottomButton','"Эквалайзер"','"Очередь"']: self.assertIn(expected,actions)
-    def test_dismissal_is_system_sheet_at_every_player_entry_point(self):
+    def test_dismissal_is_native_fullscreen_zoom_at_every_player_entry_point(self):
         presentation=source('PlayerSheetPresentation.swift')
-        for token in ['.presentationDetents([.large])', '.presentationContentInteraction(.resizes)', '.interactiveDismissDisabled(false)']:
-            self.assertIn(token,presentation)
+        self.assertIn('struct PlayerFullscreenPresentation',presentation)
+        self.assertIn('.navigationTransition(.zoom(sourceID: sourceID, in: namespace))',presentation)
+        for token in ['presentationDetents', 'presentationCornerRadius', 'interactiveDismissDisabled(true)']:
+            self.assertNotIn(token,presentation)
         for name in ['sonivoapp.swift','SonivoHomeRedesignedView.swift','homeview.swift']:
             entry=source(name)
-            self.assertIn('.sheet(isPresented: $showPlayer)',entry)
-            self.assertIn('.modifier(PlayerSheetPresentation())',entry)
-            self.assertNotIn('.fullScreenCover(isPresented: $showPlayer)',entry)
+            self.assertIn('.fullScreenCover(isPresented: $showPlayer)',entry)
+            self.assertIn('.modifier(PlayerFullscreenPresentation(',entry)
+            self.assertIn('.matchedTransitionSource(',entry)
+            self.assertNotIn('.sheet(isPresented: $showPlayer)',entry)
+    def test_fullscreen_background_keeps_controls_below_system_safe_insets(self):
+        screen=source('PlayerScreenV2.swift')
+        self.assertIn('GeometryReader { safeGeometry in',screen)
+        self.assertIn('safeGeometry.safeAreaInsets.top',screen)
+        self.assertIn('safeGeometry.safeAreaInsets.bottom',screen)
+        self.assertIn('let topInset = max(safeTop, 12)',screen)
+        self.assertIn('.ignoresSafeArea(.container, edges: .all)',screen)
+        self.assertIn('lowerDeck(safeAreaBottom: safeBottom)',screen)
     def test_system_drag_does_not_install_competing_manual_gestures_or_stop_music(self):
         text=source('PlayerScreenV2.swift')
         for token in ['dismissOffsetY','dismissDragEligible','playerDismissGesture','dismissGestureActive']:
