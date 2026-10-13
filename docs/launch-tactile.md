@@ -8,13 +8,15 @@ Both visual and Core Haptics events share one monotonic epoch. Scheduled cues:
 
 | Seconds | Visual cue | Transient intensity / sharpness |
 | --- | --- | --- |
-| 1.12 | Ring fixation, recoil and outward light wave | 0.95 / 0.55 |
-| 1.53 | Wordmark settle / light sweep | 0.78 / 0.70 |
-| 2.30 | Home handoff begins | 0.50 / 0.35 |
+| 1.12 | Ring fixation, recoil and outward light wave | 1.00 / 0.65 |
+| 1.53 | Wordmark settle / light sweep | 0.95 / 0.75 |
+| 2.30 | Home handoff begins | 0.80 / 0.50 |
 
-The first two cues have short decaying continuous bodies (105 ms and 55 ms), not a continuously vibrating splash. Actual perceived strength depends on hardware and must be checked on an iPhone.
+A 980 ms shaped travel rumble starts at 80 ms during the close-up movement. The first two impacts have strong decaying bodies (260 ms and 140 ms); the full splash is not continuously vibrating. Intensity curves reset before each next impact. Actual perceived strength depends on hardware and must be checked on an iPhone.
 
 The Metal layer shader integrates 24 positions over a 1/60-second exposure along the same scale trajectory as the Swift model. This is directional motion exposure, not permanent Gaussian blur. Sampling is disabled after settling. RootView mounts immediately; the 450 ms handoff finishes before the three-second deadline. No music/audio session changes or network calls are introduced.
+
+The launch surface measures the full display, including the status-bar / Dynamic Island surroundings and home-indicator region. Only the Skip control retains the bottom safe-area inset. The system island and indicator remain system-owned; the app does not draw over the physical island.
 
 ## Accessibility and lifecycle
 

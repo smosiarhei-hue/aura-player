@@ -47,7 +47,7 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertNotIn('UIScreen.main',intro)
         self.assertIn('hapticTransient',intro)
         self.assertIn('hapticContinuous',intro)
-        self.assertIn('let tailDurations = [0.105, 0.055]',intro)
+        self.assertIn('let tailDurations = [0.260, 0.140]',intro)
         self.assertIn('CHHapticParameterCurve(parameterID: .hapticIntensityControl',intro)
         self.assertIn('Image("ResonanceLaunchLogo")',symbol)
         self.assertIn('sonivoLaunchRadialExposure',symbol)

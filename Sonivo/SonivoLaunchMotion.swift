@@ -10,8 +10,10 @@ nonisolated enum SonivoLaunchMotion {
     static let reducedPreviewTime = 1.95
     static let reducedDuration = 0.35
     static let hapticOnsets: [Double] = [1.12, 1.53, 2.30]
-    static let hapticStrengths: [Float] = [0.95, 0.78, 0.50]
-    static let hapticSharpnesses: [Float] = [0.55, 0.70, 0.35]
+    static let hapticStrengths: [Float] = [1.00, 0.95, 0.80]
+    static let hapticSharpnesses: [Float] = [0.65, 0.75, 0.50]
+    static let hapticTravelOnset = 0.08
+    static let hapticTravelDuration = 0.98
     static let shutterDuration = 1.0 / 60.0
 
     static func surfaceTime(at time: Double) -> Double {

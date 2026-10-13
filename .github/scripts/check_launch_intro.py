@@ -62,7 +62,10 @@ import CoreText
         precondition(SonivoLaunchMotion.taglineOpacity(at: 1.4) == 0)
         precondition(SonivoLaunchMotion.lightOpacity(at: 2.5) == 0)
         precondition(SonivoLaunchMotion.hapticSharpnesses.count == 3)
-        precondition(SonivoLaunchMotion.hapticStrengths[0] >= 0.9)
+        precondition(SonivoLaunchMotion.hapticStrengths[0] == 1)
+        precondition(SonivoLaunchMotion.hapticTravelOnset >= 0)
+        precondition(SonivoLaunchMotion.hapticTravelDuration > 0.5)
+        precondition(SonivoLaunchMotion.hapticTravelOnset + SonivoLaunchMotion.hapticTravelDuration + 0.004 < SonivoLaunchMotion.hapticOnsets[0])
         precondition(SonivoLaunchMotion.hapticOnsets[0] == 1.12)
         precondition(SonivoLaunchMotion.hapticOnsets[1] == 1.53)
         for t in stride(from: 0.0, through: 3.0, by: 1.0 / 120.0) {
