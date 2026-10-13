@@ -36,7 +36,7 @@ jobs:
           swift --version
 
       - name: Test scripts and IPA delivery safety
-        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+        run: python3 .github/scripts/run_ci_tests.py
 
       - name: Compute version
         run: |
