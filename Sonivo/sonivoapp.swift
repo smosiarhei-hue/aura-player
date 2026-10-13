@@ -56,6 +56,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
+    @AppStorage(MusicCatalogSource.storageKey) private var catalogSourceRaw = MusicCatalogSource.yandex.rawValue
     var onExternalPlaybackOpen: (() -> Void)? = nil
     @Environment(\.scenePhase) private var scenePhase
     @State private var player = PlayerCore.shared
@@ -95,7 +96,11 @@ struct RootView: View {
             }
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
             Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) {
-                if ym.isUserLoggedIn { SearchCatalogView() } else { SonivoLocalSearchView() }
+                if MusicCatalogSource.resolve(catalogSourceRaw) == .spotifyCatalog {
+                    SpotifyCatalogSearchView()
+                } else {
+                    if ym.isUserLoggedIn { SearchCatalogView() } else { SonivoLocalSearchView() }
+                }
             }
         }
         .accessibilityIdentifier("sonivo.root.tabs")

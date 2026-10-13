@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @AppStorage(MusicCatalogSource.storageKey) private var catalogSourceRaw = MusicCatalogSource.yandex.rawValue
     @State private var settings = SettingsStore.shared
     @State private var library = LibraryStore.shared
     @State private var player = PlayerCore.shared
@@ -22,6 +23,16 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("Источник поиска", selection: $catalogSourceRaw) {
+                        ForEach(MusicCatalogSource.allCases) { source in
+                            Text(source.title).tag(source.rawValue)
+                        }
+                    }
+                } header: { Text("Музыкальный каталог") } footer: {
+                    Text("Spotify через wolfXspotify — только поиск, превью и открытие в Spotify. Выбор не меняет текущий трек, очередь, аккаунт Яндекса или качество звука. Полные треки внутри Sonivo воспроизводятся через Яндекс Музыку или из медиатеки. Поисковые запросы Spotify отправляются неофициальному сервису spotify.xwolf.space; токены и данные аккаунта Яндекса ему не передаются.")
+                }
+
                 Section("Яндекс Музыка") {
                     if let user = ym.currentUser {
                         HStack(spacing: 14) {
