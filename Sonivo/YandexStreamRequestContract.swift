@@ -23,6 +23,10 @@ nonisolated enum YandexStreamRequestContract {
             .init(name: "transports", value: transport),
             .init(name: "sign", value: signature(timestamp: timestamp, trackID: trackID, quality: quality))
         ]
+        // URLComponents permits literal + in a query. The API's form-style parser
+        // treats it as a space, corrupting Base64 signatures and returning 403.
+        // Escape only literal + after query-item encoding; do not double-encode %.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         guard let url = components.url else { return nil }
         var request = URLRequest(url: url)
         request.setValue(desktopClient, forHTTPHeaderField: "X-Yandex-Music-Client")

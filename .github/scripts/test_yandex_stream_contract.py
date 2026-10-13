@@ -13,6 +13,12 @@ class YandexStreamContractTests(unittest.TestCase):
         self.assertIn('request.setValue(desktopClient, forHTTPHeaderField: "X-Yandex-Music-Client")',code)
         self.assertIn('static let transport = "raw"',code)
         self.assertIn('"flac-mp4"',code)
+    def test_base64_plus_is_escaped_for_server_form_parser(self):
+        code=source('YandexStreamRequestContract.swift')
+        self.assertIn('components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")',code)
+        fixture=json.loads((R/'docs/yandex-stream-signature-fixture.json').read_text())
+        self.assertIn('+',fixture['signature'])
+
     def test_modern_endpoint_keeps_authentication_and_logs_status_not_credentials(self):
         service=source('yandexmusicservice.swift')
         modern=service.split('private func getLosslessFileInfo',1)[1].split('func getStreamInfo',1)[0]
@@ -42,6 +48,9 @@ class YandexStreamContractTests(unittest.TestCase):
         checks=f'''
         let request = YandexStreamRequestContract.request(base: "https://api.music.yandex.net", trackID: "{f['track_id']}", timestamp: {f['timestamp']}, quality: "{f['quality']}")!
         precondition(request.value(forHTTPHeaderField: "X-Yandex-Music-Client") == "{f['client']}")
+        let wireQuery = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.percentEncodedQuery!
+        precondition(!wireQuery.contains("+"))
+        precondition(wireQuery.contains("%2B"))
         let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
         precondition(items.first(where: {{ $0.name == "sign" }})?.value == "{f['signature']}")
         precondition(items.first(where: {{ $0.name == "transports" }})?.value == "raw")
