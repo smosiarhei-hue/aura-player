@@ -21,6 +21,8 @@ final class YandexMusicService {
     @ObservationIgnored private var accountSyncTask: Task<Void, Never>?
     @ObservationIgnored private var accountSyncGeneration: UUID?
     @ObservationIgnored private var accountSyncRequestID = UUID()
+    // Only an uncached cold-start restore may block the launch scene.
+    private(set) var isRestoringInitialAccount = false
     private(set) var accountSyncMessage: String?
     private(set) var currentUser: YMUserProfile? = nil
     var isUserLoggedIn: Bool {
@@ -124,7 +126,14 @@ final class YandexMusicService {
             resetPersonalState()
             LibraryStore.shared.clearYandexAccountData()
         } else {
-            Task { await syncAccountData() }
+            isRestoringInitialAccount = currentUser == nil
+            let initialGeneration = accountGeneration
+            Task {
+                defer {
+                    if accountGeneration == initialGeneration { isRestoringInitialAccount = false }
+                }
+                await syncAccountData()
+            }
         }
     }
 
@@ -1793,6 +1802,7 @@ final class YandexMusicService {
     }
 
     private func resetPersonalState() {
+        isRestoringInitialAccount = false
         streamQualityLog.removeAll()
         accountSyncTask?.cancel(); accountSyncTask = nil; accountSyncGeneration = nil; accountSyncRequestID = UUID()
         waveSession.reset() // Discard the previous account's pending events before closing.

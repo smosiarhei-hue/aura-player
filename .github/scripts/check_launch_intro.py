@@ -19,6 +19,18 @@ import CoreText
         precondition(CTFontGetGlyphsForCharacters(font, &characters, &glyphs, glyphCount))
         precondition(glyphs.allSatisfy { $0 != 0 }, "Brand glyph fallback")
         precondition(CTFontCopyPostScriptName(font) as String == fontName!)
+        var startup = SonivoStartupGate()
+        precondition(startup.claim())
+        precondition(!startup.claim(), "Recreated host/resume replayed startup")
+        precondition(SonivoStartupGate.debounceSeconds == 0.30)
+        for restoring in [false, true] {
+            for scanning in [false, true] {
+                for cached in [false, true] {
+                    precondition(SonivoStartupGate.needsPreparation(restoringAccount: restoring,
+                        scanningLibrary: scanning, hasCachedTracks: cached) == (restoring || (scanning && !cached)))
+                }
+            }
+        }
         var session=SonivoLaunchSession()
         precondition(!session.begin(isActive:false,isPlaying:false))
         precondition(!session.hasStarted && !session.isFinished)

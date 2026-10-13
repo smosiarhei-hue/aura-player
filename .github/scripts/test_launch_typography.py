@@ -38,7 +38,7 @@ class LaunchTypographyTests(unittest.TestCase):
         source = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
         register = source.index("brandFontName = SonivoLaunchTypography.prepare()")
         self.assertLess(source.index("RootView(onExternalPlaybackOpen: finish)"), register)
-        self.assertLess(source.index("guard session.begin("), register)
+        self.assertLess(source.index("session.begin("), register)
         self.assertLess(register, source.index("epoch = haptics.start"))
         scene = source[source.index("private struct SonivoLaunchIntro"):source.index("/// Dedicated")]
         self.assertNotIn("prepare()", scene)

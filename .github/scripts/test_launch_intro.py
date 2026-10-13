@@ -6,15 +6,15 @@ class LaunchIntroTests(unittest.TestCase):
         app=(ROOT/'Sonivo/sonivoapp.swift').read_text()
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         self.assertIn('WindowGroup { SonivoLaunchHost() }',app)
-        self.assertLess(intro.index('RootView(onExternalPlaybackOpen: finish)'),intro.index('if !session.isFinished'))
-        self.assertIn('.allowsHitTesting(session.isFinished || revealingHome)',intro)
-        self.assertIn('.accessibilityHidden(!session.isFinished && !revealingHome)',intro)
+        self.assertLess(intro.index('RootView(onExternalPlaybackOpen: finish)'),intro.index('if isShowingIntro'))
+        self.assertIn('.allowsHitTesting(!isShowingIntro || revealingHome)',intro)
+        self.assertIn('.accessibilityHidden(isShowingIntro && !revealingHome)',intro)
         for bad in ['AVPlayer(', 'URLSession', 'Thread.sleep','Timer.scheduledTimer','DispatchQueue.main.asyncAfter','repeatForever']:
             self.assertNotIn(bad,intro)
     def test_background_and_external_playback_are_handled(self):
         app=(ROOT/'Sonivo/sonivoapp.swift').read_text()
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        for expected in ['.task(id: scenePhase)', 'if session.hasStarted { finish() }', '.onChange(of: player.isPlaying)', '.onDisappear { finish() }']:
+        for expected in ['.task(id: scenePhase)', 'if startupClaimed { finish() }', '.onChange(of: player.isPlaying)', '.onDisappear { finish() }']:
             self.assertIn(expected,intro)
         self.assertEqual(app.count('onExternalPlaybackOpen?(); showPlayer = true'),3)
         self.assertIn('session.begin(isActive: true, isPlaying: player.isPlaying)',intro)
@@ -51,6 +51,29 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertIn('CHHapticParameterCurve(parameterID: .hapticIntensityControl',intro)
         self.assertIn('Image("ResonanceLaunchLogo")',symbol)
         self.assertIn('sonivoLaunchRadialExposure',symbol)
+
+    def test_only_slow_uncached_startup_can_show_overlay(self):
+        host=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
+        model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
+        service=(ROOT/'Sonivo/yandexmusicservice.swift').read_text()
+        self.assertIn('session.hasStarted && !session.isFinished',host)
+        self.assertIn('SonivoLaunchLifetime.shared.claim()',host)
+        self.assertLess(host.index('SonivoLaunchLifetime.shared.claim()'),host.index('Task.sleep'))
+        self.assertLess(host.index('SonivoStartupGate.debounceSeconds'),host.index('session.begin('))
+        self.assertIn('guard scenePhase == .active, needsPreparation,',host)
+        self.assertIn('if !preparing, session.hasStarted { finish() }',host)
+        self.assertIn('if startupClaimed { finish() }',host)
+        self.assertIn('restoringAccount || (scanningLibrary && !hasCachedTracks)',model)
+        self.assertIn('guard !hasClaimed else { return false }',model)
+        self.assertNotIn('UserDefaults',model)
+        self.assertIn('isRestoringInitialAccount = currentUser == nil',service)
+        self.assertIn('if accountGeneration == initialGeneration { isRestoringInitialAccount = false }',service)
+        reset=service[service.index('private func resetPersonalState()'):]
+        self.assertIn('isRestoringInitialAccount = false',reset)
+        self.assertEqual(service.count('isRestoringInitialAccount = currentUser == nil'),1)
+        # Manual/account sync itself cannot re-arm the cold-start flag.
+        sync=service[service.index('func syncAccountData()'):service.index('private func resetPersonalState()')]
+        self.assertNotIn('isRestoringInitialAccount = true',sync)
 
     def test_visual_scene_has_no_actor_unsafe_preference_or_shader_callback(self):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()

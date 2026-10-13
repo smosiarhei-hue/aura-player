@@ -8,22 +8,31 @@ struct SonivoLaunchHost: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var themeManager = ThemeFontManager.shared
     @State private var player = PlayerCore.shared
+    @State private var service = YandexMusicService.shared
+    @State private var library = LibraryStore.shared
+    @State private var startupClaimed = false
     @State private var session = SonivoLaunchSession()
     @State private var epoch: TimeInterval = 0
     @State private var haptics = SonivoLaunchHaptics()
     @State private var brandFontName: String?
     @State private var revealingHome = false
 
+    private var needsPreparation: Bool {
+        SonivoStartupGate.needsPreparation(restoringAccount: service.isRestoringInitialAccount,
+            scanningLibrary: library.isScanning, hasCachedTracks: !library.tracks.isEmpty)
+    }
+    private var isShowingIntro: Bool { session.hasStarted && !session.isFinished }
+
     var body: some View {
         ZStack {
             RootView(onExternalPlaybackOpen: finish).tint(SN.accent)
                 .modifier(SonivoLaunchHomeReveal(
-                    progress: session.isFinished || revealingHome ? 1 : 0,
+                    progress: !isShowingIntro || revealingHome ? 1 : 0,
                     reduceMotion: reduceMotion
                 ))
-                .allowsHitTesting(session.isFinished || revealingHome)
-                .accessibilityHidden(!session.isFinished && !revealingHome)
-            if !session.isFinished {
+                .allowsHitTesting(!isShowingIntro || revealingHome)
+                .accessibilityHidden(isShowingIntro && !revealingHome)
+            if isShowingIntro {
                 SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion,
                                   brandFontName: brandFontName,
                                   exitBlurRadius: revealingHome ? SonivoLaunchMotion.exitDefocusRadius : 0)
@@ -35,13 +44,25 @@ struct SonivoLaunchHost: View {
         .preferredColorScheme(themeManager.appearance.colorScheme)
         .task(id: scenePhase) {
             guard scenePhase == .active else {
-                if session.hasStarted { finish() }
+                if startupClaimed { finish() }
                 return
             }
-            guard session.begin(isActive: true, isPlaying: player.isPlaying) else { return }
-            brandFontName = SonivoLaunchTypography.prepare()
-            epoch = haptics.start(reduceMotion: reduceMotion)
+            guard !session.isFinished, SonivoLaunchLifetime.shared.claim() else {
+                finish()
+                return
+            }
+            startupClaimed = true
             do {
+                // Root is already mounted and interactive. Fast cache/sync work never flashes an overlay.
+                try await Task.sleep(for: .seconds(SonivoStartupGate.debounceSeconds))
+                try Task.checkCancellation()
+                guard scenePhase == .active, needsPreparation,
+                      session.begin(isActive: true, isPlaying: player.isPlaying) else {
+                    finish()
+                    return
+                }
+                brandFontName = SonivoLaunchTypography.prepare()
+                epoch = haptics.start(reduceMotion: reduceMotion)
                 if !reduceMotion {
                     // Handoff overlaps the final part of the finite Resonance timeline.
                     let untilHandoff = max(0, epoch + SonivoLaunchMotion.fadeStart - CACurrentMediaTime())
@@ -59,11 +80,14 @@ struct SonivoLaunchHost: View {
                 guard !Task.isCancelled else { return }
                 finish()
             } catch {
-                haptics.stop()
+                finish()
             }
         }
         .task(id: session.isFinished) {
             if session.isFinished { haptics.stop() }
+        }
+        .onChange(of: needsPreparation) { _, preparing in
+            if !preparing, session.hasStarted { finish() }
         }
         .onChange(of: player.isPlaying) { _, playing in
             if playing { finish() }
