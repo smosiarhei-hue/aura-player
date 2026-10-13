@@ -79,7 +79,8 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("SN.ink.opacity(0.50)", player_v2_content)
         self.assertNotIn('return "Dolby Atmos"', player_v2_content)
         self.assertIn("player.spatialAudioStatusText", player_v2_content)
-        self.assertIn('return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"', player_v2_content)
+        self.assertIn('PlaybackQualityFacts(codec: player.currentCodec, bitrate: player.currentBitrate)', player_v2_content)
+        self.assertNotIn('return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"', player_v2_content)
         self.assertIn("$player.spatialAudioEnabled", player_v2_content)
 
         settings_content = (self.repo_root / "Sonivo" / "settingsview.swift").read_text(encoding="utf-8")

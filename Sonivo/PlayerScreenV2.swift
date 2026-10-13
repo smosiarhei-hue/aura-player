@@ -21,10 +21,6 @@ struct PlayerScreenV2: View {
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
     @State private var coverDragX: CGFloat = 0
-    @State private var dismissOffsetY: CGFloat = 0
-    @State private var playerScrollAtTop = true
-    @State private var dismissDragEligible: Bool?
-    @GestureState private var dismissGestureActive = false
     @State private var isCoverSwitching = false
     @State private var waveLoading = false
     @State private var waveActive = false
@@ -120,10 +116,6 @@ struct PlayerScreenV2: View {
             // Keep the same reserved artwork space as readiness/setting changes.
             let standardArtworkStageHeight = min(totalWidth - 40, totalHeight * 0.44)
 
-            let isPullingDown = dismissOffsetY > 0
-            let dismissScale = reduceMotion ? 1.0 : max(0.88, 1.0 - (dismissOffsetY / totalHeight) * 0.14)
-            let dismissCorner = max(0.0, min(42.0, (dismissOffsetY / 120.0) * 42.0))
-
             ZStack(alignment: .top) {
                 background
                     .frame(width: totalWidth, height: totalHeight)
@@ -153,9 +145,6 @@ struct PlayerScreenV2: View {
                         topHeader
                             .padding(.top, topInset)
                             .padding(.horizontal, 20)
-                            // The whole header, including spacer areas, is a dismissal surface.
-                            .contentShape(Rectangle())
-                            .simultaneousGesture(playerDismissGesture(requiresScrollTop: false))
                             .zIndex(3)
 
                         ScrollView(.vertical) {
@@ -163,18 +152,11 @@ struct PlayerScreenV2: View {
                                 artworkStage(width: totalWidth, height: standardArtworkStageHeight)
                                     .frame(width: totalWidth, height: standardArtworkStageHeight)
                                     .padding(.top, 12)
-                                    .contentShape(Rectangle())
-                                    .simultaneousGesture(playerDismissGesture(requiresScrollTop: true))
                                 lowerDeck(safeAreaBottom: geo.safeAreaInsets.bottom)
                             }
                             .frame(maxWidth: .infinity)
                         }
                         .scrollIndicators(.hidden)
-                        .onScrollGeometryChange(for: Bool.self) { geometry in
-                            geometry.contentOffset.y + geometry.contentInsets.top <= 1
-                        } action: { _, atTop in
-                            playerScrollAtTop = atTop
-                        }
                         .accessibilityLabel("Плеер и дополнительные действия")
                     }
                     .transition(.opacity)
@@ -184,21 +166,9 @@ struct PlayerScreenV2: View {
             .frame(width: totalWidth, height: totalHeight, alignment: .top)
             .animation(SN.slowSpring, value: showLyricsMode)
             .environment(\.colorScheme, isFullScreenVideoShot ? .dark : preferredScheme)
-            .offset(y: dismissOffsetY)
-            .scaleEffect(dismissScale, anchor: .bottom)
-            .clipShape(RoundedRectangle(cornerRadius: dismissCorner, style: .continuous))
-            .shadow(color: Color.black.opacity(isPullingDown ? 0.35 : 0.0), radius: 24, y: 12)
         }
         .ignoresSafeArea()
         .background(SN.bg.ignoresSafeArea())
-        .onChange(of: dismissGestureActive) { _, active in
-            guard !active else { return }
-            // GestureState also resets when the system cancels a drag without onEnded.
-            dismissDragEligible = nil
-            if isPresented && dismissOffsetY > 0 {
-                withAnimation(reduceMotion ? nil : SN.spring) { dismissOffsetY = 0 }
-            }
-        }
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
@@ -246,9 +216,6 @@ struct PlayerScreenV2: View {
             lyricsControlsHideTask?.cancel()
             lyricsControlsVisible = false
             coverDragX = 0
-            dismissOffsetY = 0
-            dismissDragEligible = nil
-            playerScrollAtTop = true
             if !isEnabled {
                 activeModal = nil
             }
@@ -277,34 +244,6 @@ struct PlayerScreenV2: View {
             waveLoading = false
             teardownVideoLooper()
         }
-    }
-
-    private func playerDismissGesture(requiresScrollTop: Bool) -> some Gesture {
-        DragGesture(minimumDistance: 15)
-            .updating($dismissGestureActive) { _, active, _ in active = true }
-            .onChanged { value in
-                // Latch eligibility at the start: scrolling back to the top mid-drag must not dismiss.
-                if dismissDragEligible == nil {
-                    dismissDragEligible = PlayerDismissPolicy.canBegin(
-                        x: Double(value.translation.width), y: Double(value.translation.height),
-                        requiresScrollTop: requiresScrollTop, isAtTop: playerScrollAtTop
-                    )
-                }
-                guard dismissDragEligible == true else { return }
-                dismissOffsetY = max(0, value.translation.height)
-            }
-            .onEnded { value in
-                let shouldClose = dismissDragEligible == true && PlayerDismissPolicy.shouldClose(
-                    x: Double(value.translation.width), y: Double(value.translation.height),
-                    predictedY: Double(value.predictedEndTranslation.height)
-                )
-                dismissDragEligible = nil
-                if shouldClose {
-                    close()
-                } else {
-                    withAnimation(reduceMotion ? nil : SN.spring) { dismissOffsetY = 0 }
-                }
-            }
     }
 
     private var isFullScreenVideoShot: Bool {
@@ -360,7 +299,6 @@ struct PlayerScreenV2: View {
                 .padding(.top, topInset)
                 .padding(.horizontal, 20)
                 .contentShape(Rectangle())
-                .simultaneousGesture(playerDismissGesture(requiresScrollTop: false))
 
             compactLyricsMetadata
                 .padding(.horizontal, 24)
@@ -863,15 +801,6 @@ struct PlayerScreenV2: View {
                 .foregroundStyle(SN.inkMuted)
             // Existing native actions remain below the primary track-wave button.
             HStack(spacing: 0) {
-                GlassIconButton(
-                    systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble",
-                    tint: showLyricsMode ? SN.amber : SN.inkMuted,
-                    accessibilityLabel: "Текст песни"
-                ) {
-                    withAnimation(SN.spring) { showLyricsMode.toggle() }
-                }
-                .frame(maxWidth: .infinity)
-
                 AirPlayButtonView()
                     .frame(width: tapSide, height: tapSide)
                     .glassCircle()
@@ -982,9 +911,21 @@ struct PlayerScreenV2: View {
                 .disabled(current == nil)
                 .accessibilityLabel(current.map(library.isTrackFavorite) == true ? "Убрать из избранного" : "В избранное")
 
+                lyricsToggleButton
                 moreMenuButton
             }
         }
+    }
+    private var lyricsToggleButton: some View {
+        GlassIconButton(
+            systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble",
+            tint: showLyricsMode ? SN.amber : SN.inkMuted,
+            accessibilityLabel: "Текст песни"
+        ) {
+            withAnimation(reduceMotion ? nil : SN.spring) { showLyricsMode.toggle() }
+        }
+        .disabled(track == nil)
+        .accessibilityValue(showLyricsMode ? "Открыт" : "Закрыт")
     }
     @ViewBuilder private var centerStatusLabel: some View {
         if aiVideoShotService.isGenerating && aiVideoShotService.currentTrackId == track?.id.uuidString {
@@ -1032,15 +973,7 @@ struct PlayerScreenV2: View {
     }
     private var qualityBadgeIcon: String { "waveform" }
     private var qualityBadgeLabel: String {
-        let codec = player.currentCodec?.lowercased() ?? ""
-        let bitrate = player.currentBitrate ?? 0
-        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") || bitrate >= 1000 {
-            return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
-        }
-        if bitrate >= 320 { return "HQ \(bitrate) kbps" }
-        if bitrate > 0 { return "\(bitrate) kbps" }
-        if !codec.isEmpty { return codec.uppercased() }
-        return player.audioQuality.badgeText
+        PlaybackQualityFacts(codec: player.currentCodec, bitrate: player.currentBitrate).badge
     }
     private var transportControls: some View {
         HStack(spacing: 0) {
@@ -2327,42 +2260,19 @@ struct PlayerQualityModalView: View {
         }
     }
 
-    private var currentQualityTitle: String {
-        let codec = player.currentCodec?.lowercased() ?? ""
-        let bitrate = player.currentBitrate ?? 0
-        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
-            return bitrate >= 1000 ? "Hi-Res Lossless" : "Lossless"
-        }
-        if bitrate >= 320 { return "Высокое качество (HQ)" }
-        if bitrate > 0 { return "Стандартное качество" }
-        return player.audioQuality.badgeText
+    private var currentQuality: PlaybackQualityFacts {
+        PlaybackQualityFacts(codec: player.currentCodec, bitrate: player.currentBitrate)
     }
-
+    private var currentQualityTitle: String { currentQuality.title }
     private var currentQualityDescription: String {
-        let codec = player.currentCodec?.lowercased() ?? ""
-        let bitrate = player.currentBitrate ?? 0
-        if codec.contains("flac") || codec.contains("alac") || codec.contains("wav") {
-            return "Аудио без потерь (Lossless) воспроизводится с оригинальным студийным качеством записи без потери деталей звука."
+        let requestedLossless = player.audioQuality == .lossless || player.audioQuality == .hiResLossless
+        if requestedLossless && currentQuality.isLossy {
+            return "Выбрано «Без потерь», но для текущего воспроизведения Lossless не получен. Используется источник с потерями. Это не Lossless."
         }
-        if bitrate >= 320 || codec.contains("mp3") || codec.contains("aac") {
-            return "Аудио высокого качества (HQ 320 кбит/с) обеспечивает кристальную чистоту звучания с оптимизированным битрейтом."
-        }
-        return "Качество звука настраивается автоматически или в соответствии с вашими предпочтениями."
+        return currentQuality.description
     }
+    private var currentQualityFormatDetail: String? { currentQuality.detail }
 
-    private var currentQualityFormatDetail: String? {
-        let codec = player.currentCodec?.uppercased() ?? ""
-        let bitrate = player.currentBitrate ?? 0
-        if codec.contains("FLAC") || codec.contains("ALAC") || codec.contains("WAV") {
-            let brText = bitrate > 0 ? "\(bitrate) кбит/с" : "до 1411 кбит/с"
-            return "Формат: \(codec) • \(brText) • 16/24 бит, 44,1 кГц"
-        }
-        if !codec.isEmpty {
-            let brText = bitrate > 0 ? "\(bitrate) кбит/с" : "320 кбит/с"
-            return "Формат: \(codec) • \(brText)"
-        }
-        return nil
-    }
 }
 
 // MARK: - Full-spectrum, physically damped player background

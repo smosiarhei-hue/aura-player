@@ -1149,82 +1149,101 @@ final class YandexMusicService {
         // get-file-info endpoint). Try that first whenever lossless or automatic quality is
         // wanted, and only fall back to the legacy list below if this track truly has no
         // lossless master there.
+        var signedLossyFallback: StreamInfo?
         if preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto {
             if let losslessInfo = await getLosslessFileInfo(cleanId: cleanId) {
                 guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
                 SonivoDiagnostics.log("get-file-info delivered \(losslessInfo.codec) \(losslessInfo.bitrate)kbps for \(cleanId)", tag: "STREAM")
-                return losslessInfo
+                if PlaybackQualityFacts(codec: losslessInfo.codec, bitrate: losslessInfo.bitrate).isLossless {
+                    return losslessInfo
+                }
+                // Signed "lossless" requests can return AAC/MP3. Check legacy FLAC first,
+                // but retain a playable answer if the legacy endpoint fails.
+                signedLossyFallback = losslessInfo
             }
         }
 
-        guard let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info") else { throw URLError(.badURL) }
-        let req = authorizedRequest(url: downloadInfoListURL)
-        let (data, _) = try await sessionData(for: req)
+        do {
+            guard let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info") else { throw URLError(.badURL) }
+            let req = authorizedRequest(url: downloadInfoListURL)
+            let (data, _) = try await sessionData(for: req)
 
-        struct DownloadInfoEntry: Codable {
-            let codec: String
-            let bitrateInKbps: Int
-            let downloadInfoUrl: String
-            let direct: Bool?
-        }
-        struct DownloadInfoResponse: Codable {
-            let result: [DownloadInfoEntry]?
-        }
-
-        let infoResp = try JSONDecoder().decode(DownloadInfoResponse.self, from: data)
-        guard let list = infoResp.result, !list.isEmpty else {
-            throw URLError(.cannotFindHost)
-        }
-
-        let best: DownloadInfoEntry
-        switch preferredQuality {
-        case .hiResLossless, .lossless:
-            let flacs = list.filter { $0.codec.lowercased() == "flac" }
-            if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
-                best = bestFlac
-            } else {
-                best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+            struct DownloadInfoEntry: Codable {
+                let codec: String
+                let bitrateInKbps: Int
+                let downloadInfoUrl: String
+                let direct: Bool?
             }
-        case .hq:
-            let hqs = list.filter { $0.bitrateInKbps >= 256 }
-            best = hqs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
-        case .economical:
-            best = list.min(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
-        case .auto:
-            if let preferred = preferredBitrate {
-                best = list.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
-            } else {
+            struct DownloadInfoResponse: Codable {
+                let result: [DownloadInfoEntry]?
+            }
+
+            let infoResp = try JSONDecoder().decode(DownloadInfoResponse.self, from: data)
+            guard let list = infoResp.result, !list.isEmpty else {
+                throw URLError(.cannotFindHost)
+            }
+
+            let best: DownloadInfoEntry
+            switch preferredQuality {
+            case .hiResLossless, .lossless:
                 let flacs = list.filter { $0.codec.lowercased() == "flac" }
                 if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
                     best = bestFlac
                 } else {
                     best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
                 }
+            case .hq:
+                let hqs = list.filter { $0.bitrateInKbps >= 256 }
+                best = hqs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+            case .economical:
+                best = list.min(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+            case .auto:
+                if let preferred = preferredBitrate {
+                    best = list.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
+                } else {
+                    let flacs = list.filter { $0.codec.lowercased() == "flac" }
+                    if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
+                        best = bestFlac
+                    } else {
+                        best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+                    }
+                }
             }
+
+            guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
+            if let fallback = signedLossyFallback,
+               !PlaybackQualityFacts(codec: best.codec, bitrate: best.bitrateInKbps).isLossless,
+               fallback.bitrate > best.bitrateInKbps {
+                return fallback
+            }
+            guard let xmlURL = URL(string: best.downloadInfoUrl) else { throw URLError(.badURL) }
+            let (xmlData, _) = try await URLSession.shared.data(from: xmlURL)
+            guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
+            guard let xmlString = String(data: xmlData, encoding: .utf8) else { throw URLError(.cannotDecodeRawData) }
+
+            let host = extractTag("host", from: xmlString)
+            let path = extractTag("path", from: xmlString)
+            let ts = extractTag("ts", from: xmlString)
+            let s = extractTag("s", from: xmlString)
+
+            guard !host.isEmpty, !path.isEmpty, !ts.isEmpty, !s.isEmpty else {
+                throw URLError(.cannotParseResponse)
+            }
+
+            let pathWithoutLeadingSlash = path.hasPrefix("/") ? String(path.dropFirst()) : path
+            let signRaw = Self.secretSalt + pathWithoutLeadingSlash + s
+            let sign = md5(signRaw)
+
+            let getEndpoint = best.codec.lowercased() == "flac" ? "get-flac" : "get-mp3"
+            let finalURLString = "https://" + host + "/" + getEndpoint + "/" + sign + "/" + ts + path
+            guard let finalURL = URL(string: finalURLString) else { throw URLError(.badURL) }
+            return StreamInfo(url: finalURL, bitrate: best.bitrateInKbps, codec: best.codec)
+        } catch {
+            guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
+            if error is CancellationError { throw error }
+            if let fallback = signedLossyFallback { return fallback }
+            throw error
         }
-
-        guard let xmlURL = URL(string: best.downloadInfoUrl) else { throw URLError(.badURL) }
-        let (xmlData, _) = try await URLSession.shared.data(from: xmlURL)
-        guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
-        guard let xmlString = String(data: xmlData, encoding: .utf8) else { throw URLError(.cannotDecodeRawData) }
-
-        let host = extractTag("host", from: xmlString)
-        let path = extractTag("path", from: xmlString)
-        let ts = extractTag("ts", from: xmlString)
-        let s = extractTag("s", from: xmlString)
-
-        guard !host.isEmpty, !path.isEmpty, !ts.isEmpty, !s.isEmpty else {
-            throw URLError(.cannotParseResponse)
-        }
-
-        let pathWithoutLeadingSlash = path.hasPrefix("/") ? String(path.dropFirst()) : path
-        let signRaw = Self.secretSalt + pathWithoutLeadingSlash + s
-        let sign = md5(signRaw)
-
-        let getEndpoint = best.codec.lowercased() == "flac" ? "get-flac" : "get-mp3"
-        let finalURLString = "https://" + host + "/" + getEndpoint + "/" + sign + "/" + ts + path
-        guard let finalURL = URL(string: finalURLString) else { throw URLError(.badURL) }
-        return StreamInfo(url: finalURL, bitrate: best.bitrateInKbps, codec: best.codec)
     }
 
     // MARK: - Convert YMTrackItem to App Track Model

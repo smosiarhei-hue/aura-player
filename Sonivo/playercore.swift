@@ -420,6 +420,7 @@ final class PlayerCore {
     private var incomingAudioFile: AVAudioFile?
     private(set) var incomingTrack: Track?
     private(set) var metadataTrack: Track?
+    private var incomingQuality: PlaybackQualityFacts?
     private var metadataSwapped = false
     private var incomingStartPosition: Double = 0
     private var generation = 0
@@ -1403,6 +1404,8 @@ final class PlayerCore {
         activeAudioFile = nil
         activeLocalURL = nil
         activeStreamURL = nil
+        currentCodec = nil
+        currentBitrate = nil
 
         // Guaranteed audio session activation and playback intent
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
@@ -1466,20 +1469,9 @@ final class PlayerCore {
                 self.activeAudioFile = audioFile
                 self.incomingAudioFile = nil
 
-                let ext = resolvedURL.pathExtension.lowercased()
-                if ext == "flac" || ext == "alac" || ext == "wav" {
-                    self.currentCodec = ext
-                    self.currentBitrate = 1411
-                } else if ext == "mp3" {
-                    self.currentCodec = "mp3"
-                    self.currentBitrate = 320
-                } else if ext == "m4a" || ext == "aac" {
-                    self.currentCodec = "aac"
-                    self.currentBitrate = 256
-                } else {
-                    self.currentCodec = ext.isEmpty ? nil : ext
-                    self.currentBitrate = 320
-                }
+                let facts = LocalAudioQualityReader.read(audioFile)
+                self.currentCodec = facts.codec
+                self.currentBitrate = facts.bitrate
 
                 if !self.engine.isRunning {
                     try self.engine.start()
@@ -1551,21 +1543,22 @@ final class PlayerCore {
         streamingPlayerA.pause()
         streamingPlayerB.pause()
 
+        let isCatalogTrack = YandexMusicService.ymId(fromFileName: track.fileName) != nil
         let url = track.url
-        if url.scheme == "http" || url.scheme == "https" {
+        if !isCatalogTrack, url.scheme == "http" || url.scheme == "https" {
             guard self.generation == token, self.currentTrack?.id == track.id else { return }
-            currentBitrate = 128
-            currentCodec = "mp3"
+            currentBitrate = nil
+            currentCodec = nil
             beginStream(url, at: seconds, token: token)
             return
         }
 
-        if let streamStr = track.streamUrlString,
+        if !isCatalogTrack, let streamStr = track.streamUrlString,
            let streamURL = URL(string: streamStr),
            streamURL.scheme == "http" || streamURL.scheme == "https" {
             guard self.generation == token, self.currentTrack?.id == track.id else { return }
-            currentBitrate = 128
-            currentCodec = "mp3"
+            currentBitrate = nil
+            currentCodec = nil
             beginStream(streamURL, at: seconds, token: token)
             return
         }
@@ -1622,31 +1615,30 @@ final class PlayerCore {
     }
 
     func selectQuality(_ q: AudioQuality) {
-        guard q != audioQuality else { return }
+        // An explicit tap also retries a previously unavailable requested quality.
         audioQuality = q
         reapplyStreamQuality()
     }
 
     private func reapplyStreamQuality() {
-        guard let track = currentTrack, track.isStream, isUsingStreamPlayer, isPlaying else { return }
+        guard let track = currentTrack, track.isStream, isPlaying else { return }
         let request = UUID()
         qualityRequestID = request
         cancelTransition()
         streamMigrationTask?.cancel()
         let ymID = Self.yandexTrackID(from: track)
         guard !ymID.isEmpty, track.fileName.hasPrefix("ym_") || ymID.allSatisfy(\.isNumber) else { return }
-        let pos = progress
         let token = generation
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
                 guard self.generation == token, self.qualityRequestID == request,
-                      self.currentTrack?.id == track.id, self.isUsingStreamPlayer, self.isPlaying else { return }
+                      self.currentTrack?.id == track.id, self.isPlaying else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
                 self.currentTrack?.streamUrlString = info.url.absoluteString
                 self.activeStreamURL = info.url
-                self.beginStream(info.url, at: pos, token: token)
+                self.beginStream(info.url, at: self.progress, token: token)
             } catch { }
         }
     }
@@ -1778,6 +1770,7 @@ final class PlayerCore {
         incomingIsStream = nextTrack.isStream
         transitionDuration = blendDuration
         incomingTrack = nextTrack
+        incomingQuality = nil
         metadataSwapped = false
         metadataTrack = nil
         incomingStartPosition = 0
@@ -1797,7 +1790,9 @@ final class PlayerCore {
             do {
                 if self.incomingIsStream {
                     let resolved: URL
-                    if let direct = nextTrack.streamUrlString.flatMap(URL.init(string:)),
+                    var resolvedQuality: PlaybackQualityFacts?
+                    let isCatalogTrack = YandexMusicService.ymId(fromFileName: nextTrack.fileName) != nil
+                    if !isCatalogTrack, let direct = nextTrack.streamUrlString.flatMap(URL.init(string:)),
                        direct.scheme == "http" || direct.scheme == "https" {
                         resolved = direct
                     } else {
@@ -1805,10 +1800,12 @@ final class PlayerCore {
                             for: Self.yandexTrackID(from: nextTrack), preferredQuality: self.audioQuality,
                             preferredBitrate: self.audioQuality.targetBitrate)
                         resolved = info.url
+                        resolvedQuality = PlaybackQualityFacts(codec: info.codec, bitrate: info.bitrate)
                     }
                     guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.incomingTrack?.id == nextTrack.id,
                           self.isTransitioning else { return }
+                    self.incomingQuality = resolvedQuality
                     let item = AVPlayerItem(url: resolved)
                     item.audioTimePitchAlgorithm = .timeDomain
                     item.allowedAudioSpatializationFormats = self.spatialAudioEnabled ? .monoStereoAndMultichannel : []
@@ -1822,6 +1819,7 @@ final class PlayerCore {
                     guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
                     self.incomingAudioFile = file
+                    self.incomingQuality = LocalAudioQualityReader.read(file)
                     self.scheduleLocalSegment(file, on: targetNode, at: 0)
                     targetNode.volume = 0
                     if !self.engine.isRunning { try self.engine.start() }
@@ -1963,6 +1961,10 @@ final class PlayerCore {
         prebufferedTrackId = nil
         plannedNextTrack = nil
         currentTrack = nextTrack
+        currentCodec = incomingQuality?.codec
+        currentBitrate = incomingQuality?.bitrate
+        incomingQuality = nil
+        activeStreamURL = isUsingStreamPlayer ? (activeStreamingPlayer.currentItem?.asset as? AVURLAsset)?.url : nil
         metadataTrack = nil
         metadataSwapped = false
         streamDuration = nextTrack.duration

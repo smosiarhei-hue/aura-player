@@ -53,10 +53,7 @@ struct HomeView: View {
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showPlayer) {
                 PlayerScreenV2(isPresented: $showPlayer)
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(38)
-                    .presentationBackground(.clear)
+                    .modifier(PlayerSheetPresentation())
             }
             .task { await load() }
             .task { await player.observeTimeline() }

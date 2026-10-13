@@ -135,7 +135,9 @@ class PlaybackStabilityTests(unittest.TestCase):
 
     def test_stream_quality_does_not_start_a_second_backend(self):
         quality = block('private func reapplyStreamQuality', 'private func beginStream')
-        self.assertIn('isUsingStreamPlayer, isPlaying', quality)
+        self.assertIn('track.isStream, isPlaying', quality)
+        self.assertIn('self.currentTrack?.id == track.id, self.isPlaying', quality)
+        self.assertIn('self.beginStream(info.url, at: self.progress, token: token)', quality)
         self.assertIn('self.qualityRequestID == request', quality)
         begin = block('private func beginStream', 'func findLocalOrCachedAudioFile')
         self.assertIn('playerA.stop()', begin)

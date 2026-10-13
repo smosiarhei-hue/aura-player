@@ -75,7 +75,9 @@ struct SonivoHomeRedesignedView: View {
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
             .fullScreenCover(isPresented: $showAIAssistant) { AIMusicAssistantView() }
-            .fullScreenCover(isPresented: $showPlayer) { PlayerScreenV2(isPresented: $showPlayer) }
+            .sheet(isPresented: $showPlayer) {
+                PlayerScreenV2(isPresented: $showPlayer).modifier(PlayerSheetPresentation())
+            }
             .task { await player.observeTimeline() }
             .task { await load() }
             .onAppear { updateAntigravityLifecycle(isOnMain: true) }
