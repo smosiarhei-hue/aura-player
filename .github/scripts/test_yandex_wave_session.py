@@ -75,6 +75,25 @@ class YandexWaveSessionTests(unittest.TestCase):
         self.assertIn('finishWaveBeforeLeaving()',core)
         self.assertIn('router.play(first, queue: available, radio: true)',source('sonivocatalog.swift'))
         self.assertIn('waveSession.close()',source('yandexmusicservice.swift'))
+    def test_recommendation_feedback_is_separate_from_favorites_and_precedes_skip(self):
+        service=source('yandexmusicservice.swift')
+        favorite=service.split('func reportWaveFavorite(',1)[1].split('func reportTrackStarted',1)[0]
+        self.assertIn('isFavorite ? "like" : "unlike"',favorite)
+        self.assertIn('isDisliked ? "dislike" : "undislike"',favorite)
+        self.assertNotIn('/users/',favorite)
+        self.assertIn('reportWaveFavorite(trackId: ymId, isFavorite: isFav)',source('librarystore.swift'))
+        self.assertIn('reportWaveFavorite(trackId: ymId, isFavorite: true)',source('librarystore.swift'))
+        core=source('playercore.swift')
+        self.assertIn('waveListening.trackID == id ? waveListening.seconds : 0',core)
+        player=source('PlayerScreenV2.swift').split('private var moreMenuButton',1)[1]
+        self.assertLess(player.index('player.reportWaveDislike(current, isDisliked: true)'),player.index('player.next()'))
+        self.assertIn('player.reportWaveDislike(current, isDisliked: false)',player)
+    def test_track_events_enforce_documented_required_fields(self):
+        s=source('YandexWaveSession.swift').split('func event(type:',1)[1]
+        self.assertIn('["trackFinished", "skip", "dislike"].contains(type)',s)
+        self.assertIn('let played = seconds ?? 0',s)
+        self.assertIn('played.isFinite ? played : 0',s)
+        self.assertIn('!trackID.isEmpty',s)
     def test_wave_errors_are_visible_and_geometry_unchanged(self):
         self.assertIn('waveService.waveError',source('MyWaveHeroView.swift'))
         player=source('PlayerScreenV2.swift')

@@ -70,3 +70,32 @@ Ordinary router/direct PlayerCore play exits radio; explicit wave play passes
 and preserves its pending outbox. Logout instead discards it, so no old account's
 event can be submitted with another account. A feedback 404 cannot block newer
 sessions indefinitely.
+
+## Published SessionEvent contract: explicit recommendation feedback
+
+Reference: https://ym.marshal.dev/api/#description/introduction and upstream
+`rotor/session_event.py`, `rotor/session_feedback.py` at the revision above.
+The existing settings/new-session/continuation pipeline is retained, not replaced
+with a random local playlist or an undocumented endpoint.
+
+- Favorites still update the separate `/users/{uid}/likes/tracks` collection API.
+  During a server wave, the same explicit user action also enqueues `like` or
+  `unlike` recommendation feedback synchronously with its original batch/session.
+  A collection response is not evidence that the recommender received feedback.
+- The player menu sends `dislike` **before Next** with the actual accumulated media
+  advancement, or `undislike` on undo. These events alone do not change favorites.
+  Recommendation feedback is a preference, not a promise that the server will
+  permanently ban every appearance of that track.
+- `trackFinished`, `skip`, and `dislike` always include finite nonnegative
+  `totalPlayedSeconds` (zero if no audio has advanced). Other supported track
+  events do not include that field. Invalid event kinds, empty IDs, and tracks
+  without a known wave batch are ignored rather than emitting invented feedback.
+- Pending preferences retain their original timestamp and party on retries.
+  A filter reseed does not redirect a playing track's feedback to the new session.
+  Account reset discards the outbox; local/AI modes remain separate.
+
+Executable Swift fixtures cover all four preference types, mandatory measured
+seconds, nil/NaN/infinity/negative time sanitization, invalid events and unknown
+tracks, old-session feedback after reseeding, and offline retry. Physical/live
+account QA is still needed for recommendation changes; deterministic tests do
+not predict Yandex's proprietary ranking.

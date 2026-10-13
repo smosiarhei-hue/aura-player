@@ -178,6 +178,9 @@ final class YandexWaveSession<Item: Decodable> {
     }
 
     func event(type: String, trackID: String, seconds: Double? = nil) {
+        // SessionEvent: these are track events, not collection mutations or playable-item events.
+        guard ["trackStarted", "trackFinished", "skip", "like", "unlike", "dislike", "undislike"].contains(type),
+              !trackID.isEmpty else { return }
         guard feedbacks.count < 256 else { log("Feedback queue full"); return }
         let context: (session: String, batch: String)
         if type == "trackStarted" {
@@ -190,7 +193,10 @@ final class YandexWaveSession<Item: Decodable> {
             context = (serverID, batch)
         }
         var event: [String: Any] = ["type": type, "timestamp": timestamp(), "trackId": trackID]
-        if let seconds { event["totalPlayedSeconds"] = max(0, seconds.isFinite ? seconds : 0) }
+        if ["trackFinished", "skip", "dislike"].contains(type) {
+            let played = seconds ?? 0
+            event["totalPlayedSeconds"] = max(0, played.isFinite ? played : 0)
+        }
         feedbacks.append(Feedback(session: context.session, body: ["event": event, "batchId": context.batch]))
         if type == "skip" || type == "trackFinished" { playingContexts.removeValue(forKey: trackID) }
         Task { await flushFeedback() }

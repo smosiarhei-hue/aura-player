@@ -240,6 +240,7 @@ final class LibraryStore {
         if let i = tracks.firstIndex(where: { $0.id == track.id || ($0.fileName == track.fileName && !track.fileName.isEmpty) }) {
             tracks[i].isFavorite.toggle()
             let isFav = tracks[i].isFavorite
+            YandexMusicService.shared.reportWaveFavorite(trackId: ymId, isFavorite: isFav)
             if isFav {
                 MoodRadioEngine.shared.recordFeedback(track: tracks[i], action: .like)
                 if !ymId.isEmpty {
@@ -255,6 +256,7 @@ final class LibraryStore {
             var newFavorite = track
             newFavorite.isFavorite = true
             tracks.insert(newFavorite, at: 0)
+            YandexMusicService.shared.reportWaveFavorite(trackId: ymId, isFavorite: true)
             MoodRadioEngine.shared.recordFeedback(track: newFavorite, action: .like)
             if !ymId.isEmpty {
                 Task { guard YandexMusicService.shared.accountGeneration == accountGeneration else { return }; await YandexMusicService.shared.likeTrackOnServer(trackId: ymId) }

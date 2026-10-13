@@ -89,6 +89,35 @@ nonisolated enum RepeatMode { case off, all, one }
         let skip = transport.requests.last { (body($0)["event"] as? [String:Any])?["type"] as? String == "skip" }!
         precondition(body(skip)["batchId"] as? String == "batch-A")
         precondition((body(skip)["event"] as! [String:Any])["totalPlayedSeconds"] as? Double == 7.25)
+        // SessionEvent preference events are distinct from collection mutations.
+        for kind in ["like", "unlike", "dislike", "undislike"] {
+            client.event(type:kind,trackID:"4",seconds:3.75)
+            await client.flushFeedback()
+            let sent = transport.requests.last { $0.url!.path.hasSuffix("/feedback") }!
+            let event = body(sent)["event"] as! [String:Any]
+            precondition(event["type"] as? String == kind && event["trackId"] as? String == "4")
+            precondition(body(sent)["batchId"] as? String == "batch-B")
+            precondition(sent.url!.path == "/rotor/session/session-A/feedback")
+            if kind == "dislike" { precondition(event["totalPlayedSeconds"] as? Double == 3.75) }
+            else { precondition(event["totalPlayedSeconds"] == nil) }
+            precondition(event["timestamp"] is String)
+        }
+        for seconds in [Double.nan, Double.infinity, -2] {
+            client.event(type:"dislike",trackID:"4",seconds:seconds)
+            await client.flushFeedback()
+            let sent = transport.requests.last { $0.url!.path.hasSuffix("/feedback") }!
+            precondition((body(sent)["event"] as! [String:Any])["totalPlayedSeconds"] as? Double == 0)
+        }
+        client.event(type:"dislike",trackID:"4")
+        await client.flushFeedback()
+        let zero = transport.requests.last { $0.url!.path.hasSuffix("/feedback") }!
+        precondition((body(zero)["event"] as! [String:Any])["totalPlayedSeconds"] as? Double == 0)
+        let feedbackCount = transport.requests.filter { $0.url!.path.hasSuffix("/feedback") }.count
+        client.event(type:"inventedEvent",trackID:"4")
+        client.event(type:"like",trackID:"")
+        client.event(type:"like",trackID:"not-in-this-wave")
+        await client.flushFeedback()
+        precondition(transport.requests.filter { $0.url!.path.hasSuffix("/feedback") }.count == feedbackCount)
         // Failed starts leave the previous session intact.
         transport.responses = [("{}",403)]
         do { _ = try await client.start(station:"genre:rock",settings:settings,history:[]); preconditionFailure("403 accepted") } catch {}
@@ -98,9 +127,18 @@ nonisolated enum RepeatMode { case off, all, one }
         precondition(client.serverID == "session-A")
         var unsupported = settings; unsupported["language"] = "without-words"
         do { _ = try await client.start(station:"user:onyourwave",settings:unsupported,history:[]); preconditionFailure("Invented setting accepted") } catch {}
+        client.event(type:"trackStarted",trackID:"4")
+        await client.flushFeedback()
+        transport.responses = [batch("session-reseed","batch-reseed",["9"])]
+        _ = try await client.start(station:"genre:rock",settings:settings,history:[])
+        client.event(type:"dislike",trackID:"4",seconds:4.5)
+        await client.flushFeedback()
+        let oldParty = transport.requests.last { $0.url!.path.hasSuffix("/feedback") }!
+        precondition(oldParty.url!.path == "/rotor/session/session-A/feedback")
+        precondition(body(oldParty)["batchId"] as? String == "batch-B")
         // Offline feedback remains in the outbox and keeps its original party.
         transport.failFeedback = true
-        client.event(type:"trackStarted",trackID:"4")
+        client.event(type:"trackStarted",trackID:"9")
         await client.flushFeedback()
         let before = transport.requests.count
         transport.failFeedback = false
@@ -109,7 +147,7 @@ nonisolated enum RepeatMode { case off, all, one }
         // A reset during a response invalidates it (logout/changed account).
         transport.responses = [batch(nil,"old",["8"])]
         transport.hook = { client.reset() }
-        do { _ = try await client.next(excluding:["1","2","3","4","5"]); preconditionFailure("Stale refill accepted") } catch {}
+        do { _ = try await client.next(excluding:["1","2","3","4","5","9"]); preconditionFailure("Stale refill accepted") } catch {}
         precondition(client.serverID == nil)
         transport.responses = [batch("new","b",["6"])]
         _ = try await client.start(station:"user:onyourwave",settings:settings,history:[])

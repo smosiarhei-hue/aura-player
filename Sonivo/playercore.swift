@@ -2366,6 +2366,12 @@ final class PlayerCore {
             YandexMusicService.shared.remember(key: track.id.uuidString, artist: track.artist, ymTrackId: id)
         }
     }
+    func reportWaveDislike(_ track: Track, isDisliked: Bool) {
+        let id = Self.yandexTrackID(from: track)
+        guard !id.isEmpty else { return }
+        let seconds = waveListening.trackID == id ? waveListening.seconds : 0
+        YandexMusicService.shared.reportWaveDislike(trackId: id, isDisliked: isDisliked, totalPlayedSeconds: seconds)
+    }
     func finishWaveBeforeLeaving() { reportWaveSkipIfNeeded() }
     private func reportWaveSkipIfNeeded() {
         guard let track = currentTrack, track.isStream else { return }

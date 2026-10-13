@@ -989,6 +989,16 @@ final class YandexMusicService {
         activeStationId = nil; waveError = nil; appliedWaveSettings = nil
         if discardFeedback { waveSession.reset() } else { waveSession.close() }
     }
+    /// Recommendation feedback is independent of /users/{uid}/likes/tracks collection edits.
+    /// Capture the original session/batch synchronously, before an async favorite request or Next.
+    func reportWaveFavorite(trackId: String, isFavorite: Bool) {
+        guard isUserLoggedIn, activeStationId != nil else { return }
+        waveSession.event(type: isFavorite ? "like" : "unlike", trackID: trackId)
+    }
+    func reportWaveDislike(trackId: String, isDisliked: Bool, totalPlayedSeconds: Double) {
+        guard isUserLoggedIn, activeStationId != nil else { return }
+        waveSession.event(type: isDisliked ? "dislike" : "undislike", trackID: trackId, seconds: totalPlayedSeconds)
+    }
     func reportTrackStarted(trackId: String) {
         waveSession.event(type: "trackStarted", trackID: trackId)
     }
@@ -1194,11 +1204,10 @@ final class YandexMusicService {
         let generation = accountGeneration
         let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
 
-        // The legacy /download-info endpoint stopped reliably returning FLAC entries for most
-        // third-party OAuth tokens (Yandex now gates real Hi-Res/Lossless behind the signed
-        // get-file-info endpoint). Try that first whenever lossless or automatic quality is
-        // wanted, and only fall back to the legacy list below if this track truly has no
-        // lossless master there.
+        // Ask the signed endpoint for the preferred source, then compare the authorized
+        // legacy variants. A lossy response does not prove the catalog lacks a FLAC master:
+        // availability can depend on the account, client, server and track. Never relabel
+        // AAC/MP3 as lossless simply because lossless was requested.
         recordStreamQuality("resolve requested=\(preferredQuality.rawValue) track=\(cleanId.filter(\.isNumber).prefix(20))")
         var signedLossyFallback: StreamInfo?
         if preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto || preferredQuality == .hq {

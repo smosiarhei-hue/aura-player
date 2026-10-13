@@ -1052,12 +1052,14 @@ struct PlayerScreenV2: View {
                     let disliked = UserTasteEngine.shared.isDisliked(track: current)
                     Button(role: disliked ? nil : .destructive) {
                         if disliked {
+                            player.reportWaveDislike(current, isDisliked: false)
                             UserTasteEngine.shared.removeDislike(track: current)
                             waveMessage = "Трек снова может появиться в волне"
                         } else {
+                            player.reportWaveDislike(current, isDisliked: true)
                             UserTasteEngine.shared.recordDislike(track: current)
                             MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
-                            waveMessage = "Трек исключён из Моей волны"
+                            waveMessage = "Дизлайк учтён для рекомендаций"
                             player.next()
                         }
                     } label: {
