@@ -88,6 +88,9 @@ class YandexWaveSessionTests(unittest.TestCase):
         player=source('PlayerScreenV2.swift').split('private var moreMenuButton',1)[1]
         self.assertLess(player.index('player.reportWaveDislike(current, isDisliked: true)'),player.index('player.next()'))
         self.assertIn('player.reportWaveDislike(current, isDisliked: false)',player)
+        presentation=source('ActivePlayerPresentation.swift')
+        self.assertIn('func reportWaveDislike(_ track: Track, isDisliked: Bool)',presentation)
+        self.assertIn('legacy.reportWaveDislike(track, isDisliked: isDisliked)',presentation)
     def test_track_events_enforce_documented_required_fields(self):
         s=source('YandexWaveSession.swift').split('func event(type:',1)[1]
         self.assertIn('["trackFinished", "skip", "dislike"].contains(type)',s)

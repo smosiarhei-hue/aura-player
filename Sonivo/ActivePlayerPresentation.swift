@@ -148,6 +148,9 @@ final class ActivePlayerPresentation {
     func resume() { router.play() }
     func previous() { router.previous() }
     func next() { router.next() }
+    func reportWaveDislike(_ track: Track, isDisliked: Bool) {
+        legacy.reportWaveDislike(track, isDisliked: isDisliked)
+    }
     func seek(to seconds: Double) { router.seek(to: seconds) }
     func play(_ track: Track) { router.play(track, queue: queue) }
     func removeFromQueue(_ track: Track) {
