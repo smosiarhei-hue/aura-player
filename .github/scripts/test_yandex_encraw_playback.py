@@ -82,7 +82,7 @@ actor FixtureDownload {
         let engine = AVAudioEngine(); let node = AVAudioPlayerNode()
         engine.attach(node); engine.connect(node, to: engine.mainMixerNode, format: pcm.format)
         try engine.enableManualRenderingMode(.offline, format: pcm.format, maximumFrameCount: 128)
-        try engine.start(); node.scheduleBuffer(pcm); node.play()
+        try engine.start(); node.scheduleBuffer(pcm, completionHandler: nil); node.play()
         let rendered = AVAudioPCMBuffer(pcmFormat: pcm.format, frameCapacity: 128)!
         let renderStatus = try engine.renderOffline(128, to: rendered)
         precondition(renderStatus == .success && rendered.frameLength == 128)
