@@ -1,37 +1,40 @@
 import SwiftUI
 
-/// The approved asymmetric silhouette is a bundled alpha mask, decoded by the asset system.
-/// Color and a single passing highlight are native gradients; no video or font decoding per frame.
+/// Bundled generated material, decoded by the asset system, not a played video.
+/// One finite temporal shader smears the actual scale trajectory, then becomes inactive.
 struct SonivoResonanceSymbol: View {
     let time: Double
-    let theme: AppThemeColor
+    let size: CGFloat
     let reduceMotion: Bool
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
+    private var enhancedMaterial: Bool { !reduceMotion && !reduceTransparency && contrast != .increased }
+    private var logo: some View {
+        Image("ResonanceLaunchLogo").resizable().scaledToFit()
+            .frame(width: size, height: size)
+    }
     var body: some View {
         ZStack {
-            LinearGradient(colors: [theme.swatchColor, theme.swatchColor,
-                                    theme.swatchColor.opacity(0.72)],
-                           startPoint: .top, endPoint: .bottom)
-            if !reduceMotion, !reduceTransparency, contrast != .increased {
-                AngularGradient(stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .clear, location: 0.42),
-                    .init(color: .white.opacity(0.78), location: 0.49),
-                    .init(color: .clear, location: 0.57),
-                    .init(color: .clear, location: 1)
-                ], center: .center,
-                   angle: .degrees(-130 + 240 * SonivoLaunchMotion.lightProgress(at: time)))
-                .opacity(SonivoLaunchMotion.lightOpacity(at: time))
+            logo
+                .layerEffect(ShaderLibrary.sonivoLaunchRadialExposure(
+                    .float2(Float(size), Float(size)), .float(Float(time)), .float(0)),
+                    maxSampleOffset: CGSize(width: size * 0.25, height: size * 0.25),
+                    isEnabled: !reduceMotion && time < 1.95)
+            if enhancedMaterial {
+                logo.blendMode(.screen).opacity(SonivoLaunchMotion.fixationFlash(at: time))
+                Ellipse()
+                    .stroke(Color(red: 1, green: 0.69, blue: 0.55), lineWidth: 1.3)
+                    .frame(width: size * 0.616, height: size * 0.672)
+                    .rotationEffect(.radians(-0.13))
+                    .scaleEffect(1 + 0.30 * SonivoLaunchMotion.waveProgress(at: time))
+                    .shadow(color: Color(red: 1, green: 0.59, blue: 0.42), radius: 9)
+                    .opacity(SonivoLaunchMotion.waveOpacity(at: time))
             }
         }
-        .mask {
-            Image("ResonanceRingMask").resizable().scaledToFit()
-        }
+        .frame(width: size, height: size)
         .opacity(reduceMotion ? 1 : SonivoLaunchMotion.ringOpacity(at: time))
         .scaleEffect(reduceMotion ? 1 : SonivoLaunchMotion.ringScale(at: time))
-        .blur(radius: reduceMotion ? 0 : SonivoLaunchMotion.ringBlur(at: time))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

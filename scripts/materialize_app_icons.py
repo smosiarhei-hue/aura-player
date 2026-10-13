@@ -22,6 +22,13 @@ def main() -> None:
         base64.b64decode(ring_source.read_text(encoding="ascii").strip(), validate=True)
     )
 
+    launch_source = ROOT / "design" / "resonance" / "generated" / "ResonanceLaunchLogo.png.b64"
+    launch_destination = ROOT / "Sonivo" / "assets.xcassets" / "ResonanceLaunchLogo.imageset"
+    launch_destination.mkdir(parents=True, exist_ok=True)
+    (launch_destination / "ResonanceLaunchLogo.png").write_bytes(
+        base64.b64decode(launch_source.read_text(encoding="ascii").strip(), validate=True)
+    )
+
 
 if __name__ == "__main__":
     main()

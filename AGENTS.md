@@ -4,6 +4,8 @@ Work only in `feature/modern-my-wave-home` unless the owner explicitly chooses a
 
 ## Skills
 
+- `.agents/skills/ui-ux-pro-max/SKILL.md`: UI/UX guidance and SwiftUI data. Restore with `python3 scripts/install_uiux_skill.py`, pinned in `agent_skills/ui-ux-pro-max.lock.json`; brand/reference and native scope take precedence.
+
 - `.agents/skills/hyperframes-creative/SKILL.md`: concept and typography. Read the relevant local references; do not mistake stylistic preferences for universal constraints.
 - `.agents/skills/hyperframes-animation/SKILL.md`: timing and motion vocabulary. Motion blur is not the same as inactive-word defocus.
 - `.agents/skills/animate/SKILL.md` and `review-animations/SKILL.md`: plan and review movement.

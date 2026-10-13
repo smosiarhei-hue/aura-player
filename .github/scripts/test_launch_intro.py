@@ -7,8 +7,8 @@ class LaunchIntroTests(unittest.TestCase):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         self.assertIn('WindowGroup { SonivoLaunchHost() }',app)
         self.assertLess(intro.index('RootView(onExternalPlaybackOpen: finish)'),intro.index('if !session.isFinished'))
-        self.assertIn('.allowsHitTesting(session.isFinished)',intro)
-        self.assertIn('.accessibilityHidden(!session.isFinished)',intro)
+        self.assertIn('.allowsHitTesting(session.isFinished || revealingHome)',intro)
+        self.assertIn('.accessibilityHidden(!session.isFinished && !revealingHome)',intro)
         for bad in ['AVPlayer(', 'URLSession', 'Thread.sleep','Timer.scheduledTimer','DispatchQueue.main.asyncAfter','repeatForever']:
             self.assertNotIn(bad,intro)
     def test_skip_background_and_external_playback_are_handled(self):
@@ -36,19 +36,21 @@ class LaunchIntroTests(unittest.TestCase):
         model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         symbol=(ROOT/'Sonivo/SonivoResonanceSymbol.swift').read_text()
-        self.assertIn('static let duration = 4.80',model)
+        self.assertIn('static let duration = 3.0',model)
         self.assertIn('static let reducedDuration = 0.35',model)
-        for expected in ['SonivoResonanceSymbol(time: time', 'Text("Sonivo")', 'wordOpacity(at: time)',
-                         'taglineOpacity(at: time)', 'themeManager.selectedTheme.darkCanvasColor']:
+        for expected in ['SonivoResonanceSymbol(time: time', 'SonivoLaunchWordmark(time: time',
+                         'taglineOpacity(at: time)']:
             self.assertIn(expected,intro)
         for removed in ['focusedWord(', 'cornerPath(', 'SonivoLaunchFocusBounds', 'zoomTicks']:
             self.assertNotIn(removed,intro)
         self.assertIn('.frame(minWidth: 120, minHeight: 44)',intro)
         self.assertNotIn('UIScreen.main',intro)
         self.assertIn('hapticTransient',intro)
-        self.assertNotIn('hapticContinuous',intro)
-        self.assertIn('Image("ResonanceRingMask")',symbol)
-        self.assertIn('AngularGradient',symbol)
+        self.assertIn('hapticContinuous',intro)
+        self.assertIn('let tailDurations = [0.105, 0.055]',intro)
+        self.assertIn('CHHapticParameterCurve(parameterID: .hapticIntensityControl',intro)
+        self.assertIn('Image("ResonanceLaunchLogo")',symbol)
+        self.assertIn('sonivoLaunchRadialExposure',symbol)
 
     def test_visual_scene_has_no_actor_unsafe_preference_or_shader_callback(self):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()

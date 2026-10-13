@@ -4,8 +4,8 @@
   "source_sha256": "498efd461f6ddfcb7a111bf9a565709d2085d48201d501ead960d93e84ffbb88",
   "derived_postscript_name": "SonivoResonanceSerif",
   "weight": 400,
-  "glyph_text": "Sonivo",
-  "derived_sha256": "4a0bb4fa71f3bcd08b331e72c0eb927e8c546d958d7e43d18ca940adbd771113",
+  "glyph_text": "SonivoSONIVO ",
+  "derived_sha256": "d2ddc5a61c913ced428422fe7ee6c9f71994b542179a5b3021d1e9b92965dd5f",
   "license": "SIL OFL 1.1",
   "registration": "once, offline, before launch animation; no runtime font download"
 }

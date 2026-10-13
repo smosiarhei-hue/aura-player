@@ -21,13 +21,14 @@ struct SonivoLaunchHost: View {
                     progress: session.isFinished || revealingHome ? 1 : 0,
                     reduceMotion: reduceMotion
                 ))
-                .allowsHitTesting(session.isFinished)
-                .accessibilityHidden(!session.isFinished)
+                .allowsHitTesting(session.isFinished || revealingHome)
+                .accessibilityHidden(!session.isFinished && !revealingHome)
             if !session.isFinished {
                 SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion,
                                   brandFontName: brandFontName,
                                   exitBlurRadius: revealingHome ? SonivoLaunchMotion.exitDefocusRadius : 0,
                                   onSkip: finish)
+                    .allowsHitTesting(!revealingHome)
                     .transition(.identity)
                     .zIndex(10)
             }
@@ -48,7 +49,7 @@ struct SonivoLaunchHost: View {
                     try await Task.sleep(for: .seconds(untilHandoff))
                     try Task.checkCancellation()
                     guard !session.isFinished, scenePhase == .active else { return }
-                    withAnimation(.timingCurve(0.23, 1, 0.32, 1,
+                    withAnimation(.timingCurve(0.77, 0, 0.175, 1,
                                               duration: SonivoLaunchMotion.exitTransitionDuration)) {
                         revealingHome = true
                     }
@@ -72,6 +73,9 @@ struct SonivoLaunchHost: View {
             // Respect an accessibility preference changed during the reveal immediately.
             if session.hasStarted { finish() }
         }
+        .onChange(of: SettingsStore.shared.hapticsEnabled) { _, enabled in
+            if !enabled { haptics.stop() }
+        }
         .onDisappear { finish() }
     }
 
@@ -93,8 +97,6 @@ private struct SonivoLaunchIntro: View {
     let onSkip: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var themeManager = ThemeFontManager.shared
-
     var body: some View {
         GeometryReader { geometry in
             let unit = min(1.3, min(geometry.size.width / 390, geometry.size.height / 844))
@@ -102,33 +104,22 @@ private struct SonivoLaunchIntro: View {
                 let time = reduceMotion ? SonivoLaunchMotion.reducedPreviewTime
                     : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
                 ZStack {
-                    themeManager.selectedTheme.darkCanvasColor.ignoresSafeArea()
-                    VStack(spacing: 18 * unit) {
-                        SonivoResonanceSymbol(time: time, theme: themeManager.selectedTheme,
-                                              reduceMotion: reduceMotion)
-                            .frame(width: 260 * unit, height: 264 * unit)
-                        Text("Sonivo")
-                            .font(brandFontName.map { Font.custom($0, fixedSize: 68 * unit) }
-                                  ?? .system(size: 68 * unit, weight: .regular, design: .serif))
-                            .foregroundStyle(Color(red: 0.94, green: 0.91, blue: 0.89))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.65)
-                            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.wordOpacity(at: time))
-                            .offset(y: reduceMotion ? 0 : 6 * (1 - SonivoLaunchMotion.wordOpacity(at: time)))
-                        if !dynamicTypeSize.isAccessibilitySize {
-                            Text("Музыка, которую чувствуешь.")
-                                .font(.subheadline)
-                                .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
-                                .multilineTextAlignment(.center)
-                                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.taglineOpacity(at: time))
-                        }
+                    Color(red: 16.0 / 255, green: 16.0 / 255, blue: 16.0 / 255).ignoresSafeArea()
+                    let symbolSize = min(geometry.size.width * 0.833, geometry.size.height * 0.385)
+                    SonivoResonanceSymbol(time: time, size: symbolSize, reduceMotion: reduceMotion)
+                        .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.4023)
+                    SonivoLaunchWordmark(time: time, width: geometry.size.width - 48 * unit,
+                                         unit: unit, brandFontName: brandFontName, reduceMotion: reduceMotion)
+                        .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.635)
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Text("Музыка, которую чувствуешь.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.taglineOpacity(at: time))
+                            .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.708)
                     }
-                    .padding(.horizontal, 24)
-                    .blur(radius: reduceMotion ? 0 : exitBlurRadius)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .offset(y: -24 * unit)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Sonivo")
                     VStack {
                         Spacer()
                         Button("Пропустить", action: onSkip)
@@ -142,6 +133,8 @@ private struct SonivoLaunchIntro: View {
                 .opacity(reduceMotion ? 1 : SonivoLaunchMotion.opacity(at: time))
             }
         }
+        .clipped() // Intentional close-up crop: no layout overflow or broken logo segments.
+        .accessibilityLabel("Sonivo")
         .accessibilityIdentifier("sonivo.launch.intro")
     }
 }
@@ -165,13 +158,34 @@ private final class SonivoLaunchHaptics {
             engine.resetHandler = { [weak self] in Task { @MainActor in self?.stop() } }
             self.engine = engine
             try engine.start()
-            let events = zip(SonivoLaunchMotion.hapticOnsets, SonivoLaunchMotion.hapticStrengths).map { onset, strength in
-                CHHapticEvent(eventType: .hapticTransient, parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: strength),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.30)
-                ], relativeTime: onset)
+            let events = zip(SonivoLaunchMotion.hapticOnsets, SonivoLaunchMotion.hapticStrengths)
+                .enumerated().map { index, cue in
+                    CHHapticEvent(eventType: .hapticTransient, parameters: [
+                        CHHapticEventParameter(parameterID: .hapticIntensity, value: cue.1),
+                        CHHapticEventParameter(parameterID: .hapticSharpness,
+                                               value: SonivoLaunchMotion.hapticSharpnesses[index])
+                    ], relativeTime: cue.0)
+                }
+            // Brief body/tail, not a continuously vibrating intro. Curves reset before the next cue.
+            let tailOnsets = [SonivoLaunchMotion.hapticOnsets[0] + 0.015,
+                              SonivoLaunchMotion.hapticOnsets[1] + 0.012]
+            let tailDurations = [0.105, 0.055]
+            let tailStrengths: [Float] = [0.44, 0.24]
+            let tails = tailOnsets.indices.map { index in
+                CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity, value: tailStrengths[index]),
+                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.18)
+                ], relativeTime: tailOnsets[index], duration: tailDurations[index])
             }
-            let pattern = try CHHapticPattern(events: events, parameters: [])
+            let curves = tailOnsets.indices.map { index in
+                CHHapticParameterCurve(parameterID: .hapticIntensityControl, controlPoints: [
+                    .init(relativeTime: 0, value: 1),
+                    .init(relativeTime: tailDurations[index] * 0.7, value: 0.35),
+                    .init(relativeTime: tailDurations[index], value: 0),
+                    .init(relativeTime: tailDurations[index] + 0.004, value: 1)
+                ], relativeTime: tailOnsets[index])
+            }
+            let pattern = try CHHapticPattern(events: events + tails, parameterCurves: curves)
             let player = try engine.makePlayer(with: pattern)
             self.player = player
             // A shared start offset, not two independent animation/haptic timers.

@@ -13,7 +13,7 @@ import CoreText
         precondition(fontName == "SonivoResonanceSerif", "Offline brand font did not register")
         precondition(SonivoLaunchTypography.prepare() == fontName, "Font was not cached")
         let font = CTFontCreateWithName(fontName! as CFString, 68, nil)
-        var characters = Array("Sonivo".utf16)
+        var characters = Array("SONIVO".utf16)
         let glyphCount = characters.count
         var glyphs = [CGGlyph](repeating: 0, count: glyphCount)
         precondition(CTFontGetGlyphsForCharacters(font, &characters, &glyphs, glyphCount))
@@ -30,17 +30,17 @@ import CoreText
         precondition(!playback.begin(isActive:true,isPlaying:true) && playback.isFinished)
         var skipped=SonivoLaunchSession(); skipped.finish()
         precondition(!skipped.begin(isActive:true,isPlaying:false),"External playback/skip ignored")
-        precondition(SonivoLaunchMotion.duration == 4.8 && SonivoLaunchMotion.reducedDuration < 0.5)
-        precondition(abs(SonivoLaunchMotion.exitTransitionDuration - 1.05) < 1e-12)
-        precondition(SonivoLaunchMotion.hapticOnsets.count == 2)
+        precondition(SonivoLaunchMotion.duration == 3.0 && SonivoLaunchMotion.reducedDuration < 0.5)
+        precondition(abs(SonivoLaunchMotion.exitTransitionDuration - 0.45) < 1e-12)
+        precondition(SonivoLaunchMotion.hapticOnsets.count == 3)
         precondition(SonivoLaunchMotion.hapticOnsets.count == SonivoLaunchMotion.hapticStrengths.count)
         for onset in SonivoLaunchMotion.hapticOnsets {
-            precondition(onset >= 0 && onset < SonivoLaunchMotion.fadeStart)
+            precondition(onset >= 0 && onset <= SonivoLaunchMotion.fadeStart)
         }
-        for strength in SonivoLaunchMotion.hapticStrengths { precondition(strength > 0 && strength <= 0.4) }
+        for strength in SonivoLaunchMotion.hapticStrengths { precondition(strength > 0 && strength <= 1) }
         for time in [-100.0, 0, 0.7, 2.2, 4.8, 100, .nan, .infinity] {
             let surface = SonivoLaunchMotion.surfaceTime(at: time)
-            precondition(surface.isFinite && surface >= 0 && surface <= 4.8)
+            precondition(surface.isFinite && surface >= 0 && surface <= 3.0)
             let values = [SonivoLaunchMotion.ringOpacity(at: time), SonivoLaunchMotion.wordOpacity(at: time),
                           SonivoLaunchMotion.taglineOpacity(at: time), SonivoLaunchMotion.lightProgress(at: time),
                           SonivoLaunchMotion.lightOpacity(at: time), SonivoLaunchMotion.exitProgress(at: time)]
@@ -54,13 +54,23 @@ import CoreText
                 let tagline = SonivoLaunchMotion.taglineOpacity(at: t), exit = SonivoLaunchMotion.exitProgress(at: t)
                 precondition(ring >= priorRing && word >= priorWord && tagline >= priorTagline && exit >= priorExit)
                 let scale = SonivoLaunchMotion.ringScale(at: t), blur = SonivoLaunchMotion.ringBlur(at: t)
-                precondition(scale >= 0.94 && scale <= 1 && blur >= 0 && blur <= 8)
+                precondition(scale >= 0.98 && scale <= 4.7 && blur == 0)
                 priorRing=ring; priorWord=word; priorTagline=tagline; priorExit=exit
             }
         }
-        precondition(SonivoLaunchMotion.wordOpacity(at: 1.5) == 0)
-        precondition(SonivoLaunchMotion.taglineOpacity(at: 2.3) == 0)
+        precondition(SonivoLaunchMotion.wordOpacity(at: 0.8) == 0)
+        precondition(SonivoLaunchMotion.taglineOpacity(at: 1.4) == 0)
         precondition(SonivoLaunchMotion.lightOpacity(at: 2.5) == 0)
+        precondition(SonivoLaunchMotion.hapticSharpnesses.count == 3)
+        precondition(SonivoLaunchMotion.hapticStrengths[0] >= 0.9)
+        precondition(SonivoLaunchMotion.hapticOnsets[0] == 1.12)
+        precondition(SonivoLaunchMotion.hapticOnsets[1] == 1.53)
+        for t in stride(from: 0.0, through: 3.0, by: 1.0 / 120.0) {
+            precondition(SonivoLaunchMotion.wordScale(at: t).isFinite)
+            precondition(SonivoLaunchMotion.wordScale(at: t) >= 0.98 && SonivoLaunchMotion.wordScale(at: t) <= 1.7)
+            precondition(SonivoLaunchMotion.waveOpacity(at: t) >= 0 && SonivoLaunchMotion.waveOpacity(at: t) <= 0.78)
+            precondition(SonivoLaunchMotion.fixationFlash(at: t) >= 0 && SonivoLaunchMotion.fixationFlash(at: t) <= 0.27)
+        }
         precondition(SonivoLaunchMotion.ringScale(at: SonivoLaunchMotion.reducedPreviewTime) == 1)
         precondition(SonivoLaunchMotion.wordOpacity(at: SonivoLaunchMotion.reducedPreviewTime) == 1)
         precondition(SonivoLaunchMotion.opacity(at: 0) == 1)

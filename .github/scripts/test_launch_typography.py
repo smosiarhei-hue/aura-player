@@ -42,17 +42,18 @@ class LaunchTypographyTests(unittest.TestCase):
         self.assertLess(register, source.index("epoch = haptics.start"))
         scene = source[source.index("private struct SonivoLaunchIntro"):source.index("/// Dedicated")]
         self.assertNotIn("prepare()", scene)
-        self.assertIn("Font.custom($0, fixedSize: 68 * unit)", scene)
-        self.assertIn("design: .serif", scene)
+        word = (ROOT / "Sonivo/SonivoLaunchWordmark.swift").read_text()
+        self.assertIn("Font.custom($0, fixedSize: 65 * unit)", word)
+        self.assertIn("design: .serif", word)
 
     def test_new_scene_is_native_ring_not_chrome_or_true_focus(self):
         source = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
         symbol = (ROOT / "Sonivo/SonivoResonanceSymbol.swift").read_text()
         for removed in ["sonivoLaunchChrome", "focusedWord", "SonivoLaunchFocusBounds"]:
             self.assertNotIn(removed, source)
-        self.assertIn(".blur(radius: reduceMotion ? 0 : exitBlurRadius)", source)
-        self.assertIn(".mask {", symbol)
-        self.assertIn("lightProgress(at: time)", symbol)
+        self.assertIn("SonivoLaunchWordmark(time: time", source)
+        self.assertIn('Image("ResonanceLaunchLogo")', symbol)
+        self.assertIn("sonivoLaunchRadialExposure", symbol)
         self.assertIn("reduceMotion ? 1 : SonivoLaunchMotion.ringOpacity", symbol)
         self.assertIn(".accessibilityHidden(true)", symbol)
 

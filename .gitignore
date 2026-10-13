@@ -34,3 +34,5 @@ tools/videoshot-studio/*.mp4
 
 # Generated brand bitmaps; materialize from versioned base64 before each build.
 /Sonivo/assets.xcassets/ResonanceRingMask.imageset/ResonanceRingMask.png
+
+/Sonivo/assets.xcassets/ResonanceLaunchLogo.imageset/ResonanceLaunchLogo.png
