@@ -90,7 +90,7 @@ actor FixtureDownload {
         let mp3 = PlaybackQualityFacts(codec: "mp3", bitrate: 192)
         let aac = PlaybackQualityFacts(codec: "aac-mp4", bitrate: 192)
         let lossless = PlaybackQualityFacts(codec: "flac-mp4", bitrate: 0)
-        precondition(aac.isPreferred(over: mp3) && !mp3.isPreferred(over: aac))
+        precondition(!aac.isPreferred(over: mp3) && !mp3.isPreferred(over: aac))
         precondition(lossless.isPreferred(over: PlaybackQualityFacts(codec: "mp3", bitrate: 320)))
         let backend = FixtureDownload(root.appendingPathComponent("fixture.enc"))
         let store = YandexLosslessAssetStore(directory: root.appendingPathComponent("decoded-cache"), downloadOverride: { try await backend.download($0) })

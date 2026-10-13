@@ -1102,6 +1102,10 @@ final class YandexMusicService {
     /// were silently falling back to 320kbps mp3. This tries the real lossless master first.
     @ObservationIgnored private let losslessAssets = YandexLosslessAssetStore()
     private(set) var streamQualityLog: [String] = []
+    func recordStreamPlaybackFailure(_ reason: String) {
+        // Called with fixed reason labels only, never NSError descriptions or media URLs.
+        recordStreamQuality("playback: " + reason)
+    }
     private func recordStreamQuality(_ message: String) {
         streamQualityLog.append(message)
         if streamQualityLog.count > 40 { streamQualityLog.removeFirst(streamQualityLog.count - 40) }
@@ -1130,8 +1134,10 @@ final class YandexMusicService {
         let generation = accountGeneration
         let requestedCodecs = transport == "encraw" ? ["flac", "flac-mp4"] : YandexStreamRequestContract.codecs
         guard !cleanId.isEmpty,
-              let request = YandexStreamRequestContract.request(base: Self.apiBase, trackID: cleanId,
+              var request = YandexStreamRequestContract.request(base: Self.apiBase, trackID: cleanId,
                    timestamp: Int(Date().timeIntervalSince1970), quality: quality, codecs: requestedCodecs, transport: transport) else { return nil }
+        // An optional quality probe must not leave every Play tap waiting indefinitely.
+        request.timeoutInterval = transport == "encraw" ? 6 : 12
         let data: Data
         let response: URLResponse
         do {
@@ -1200,7 +1206,7 @@ final class YandexMusicService {
         }
     }
 
-    func getStreamInfo(for trackId: String, preferredQuality: AudioQuality = .auto, preferredBitrate: Int? = nil) async throws -> StreamInfo {
+    func getStreamInfo(for trackId: String, preferredQuality: AudioQuality = .auto, preferredBitrate: Int? = nil, legacyOnly: Bool = false) async throws -> StreamInfo {
         let generation = accountGeneration
         let cleanId = trackId.replacingOccurrences(of: "ym_", with: "").replacingOccurrences(of: ".mp3", with: "")
 
@@ -1210,7 +1216,7 @@ final class YandexMusicService {
         // AAC/MP3 as lossless simply because lossless was requested.
         recordStreamQuality("resolve requested=\(preferredQuality.rawValue) track=\(cleanId.filter(\.isNumber).prefix(20))")
         var signedLossyFallback: StreamInfo?
-        if preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto || preferredQuality == .hq {
+        if !legacyOnly && (preferredQuality == .hiResLossless || preferredQuality == .lossless || preferredQuality == .auto || preferredQuality == .hq) {
             if let losslessInfo = await getLosslessFileInfo(cleanId: cleanId, quality: preferredQuality == .hq ? "hq" : "lossless") {
                 guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
                 SonivoDiagnostics.log("get-file-info delivered \(losslessInfo.codec) \(losslessInfo.bitrate)kbps for \(cleanId)", tag: "STREAM")
@@ -1226,7 +1232,7 @@ final class YandexMusicService {
 
         // Probe encrypted FLAC only after raw could not provide lossless. Do not download
         // encrypted AAC/MP3 merely to relabel it; retain the already playable raw fallback.
-        if preferredQuality == .lossless || preferredQuality == .hiResLossless || preferredQuality == .auto {
+        if !legacyOnly && (preferredQuality == .lossless || preferredQuality == .hiResLossless || preferredQuality == .auto) {
             if let decoded = await getLosslessFileInfo(cleanId: cleanId, transport: "encraw") {
                 guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
                 if PlaybackQualityFacts(codec: decoded.codec, bitrate: decoded.bitrate).isLossless { return decoded }
@@ -1235,7 +1241,8 @@ final class YandexMusicService {
 
         do {
             guard let downloadInfoListURL = URL(string: Self.apiBase + "/tracks/" + cleanId + "/download-info") else { throw URLError(.badURL) }
-            let req = authorizedRequest(url: downloadInfoListURL)
+            var req = authorizedRequest(url: downloadInfoListURL)
+            req.timeoutInterval = 15
             let (data, response) = try await sessionData(for: req)
             if let http = response as? HTTPURLResponse {
                 recordStreamQuality("legacy download-info HTTP=\(http.statusCode)")
@@ -1264,32 +1271,39 @@ final class YandexMusicService {
             }.joined(separator: ", ")
             recordStreamQuality("legacy offered=[\(variants)]")
             let best: DownloadInfoEntry
-            switch preferredQuality {
-            case .hiResLossless, .lossless:
-                let flacs = list.filter { $0.codec.lowercased() == "flac" }
-                if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
-                    best = bestFlac
-                } else {
-                    best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
-                }
-            case .hq:
-                let hqs = list.filter { $0.bitrateInKbps >= 256 }
-                best = hqs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
-            case .economical:
-                best = list.min(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
-            case .auto:
-                if let preferred = preferredBitrate {
-                    best = list.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
-                } else {
+            if legacyOnly {
+                // Recovery must not resolve the same rejected signed AAC/FLAC source again.
+                guard let mp3 = list.filter({ $0.codec.lowercased() == "mp3" })
+                    .max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) else { throw URLError(.cannotDecodeContentData) }
+                best = mp3
+                recordStreamQuality("recovery using legacy MP3")
+            } else {
+                switch preferredQuality {
+                case .hiResLossless, .lossless:
                     let flacs = list.filter { $0.codec.lowercased() == "flac" }
                     if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
                         best = bestFlac
                     } else {
                         best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
                     }
+                case .hq:
+                    let hqs = list.filter { $0.bitrateInKbps >= 256 }
+                    best = hqs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+                case .economical:
+                    best = list.min(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+                case .auto:
+                    if let preferred = preferredBitrate {
+                        best = list.min(by: { abs($0.bitrateInKbps - preferred) < abs($1.bitrateInKbps - preferred) }) ?? list[0]
+                    } else {
+                        let flacs = list.filter { $0.codec.lowercased() == "flac" }
+                        if let bestFlac = flacs.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) {
+                            best = bestFlac
+                        } else {
+                            best = list.max(by: { $0.bitrateInKbps < $1.bitrateInKbps }) ?? list[0]
+                        }
+                    }
                 }
             }
-
             guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
             if let fallback = signedLossyFallback,
                !PlaybackQualityFacts(codec: best.codec, bitrate: best.bitrateInKbps).isLossless,
@@ -1303,7 +1317,10 @@ final class YandexMusicService {
                 return StreamInfo(url: direct, bitrate: best.bitrateInKbps, codec: best.codec)
             }
             guard let xmlURL = URL(string: best.downloadInfoUrl) else { throw URLError(.badURL) }
-            let (xmlData, _) = try await URLSession.shared.data(from: xmlURL)
+            var xmlRequest = URLRequest(url: xmlURL)
+            xmlRequest.timeoutInterval = 15
+            let (xmlData, xmlResponse) = try await URLSession.shared.data(for: xmlRequest)
+            if let http = xmlResponse as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { throw URLError(.badServerResponse) }
             guard accountGeneration == generation, !Task.isCancelled else { throw CancellationError() }
             guard let xmlString = String(data: xmlData, encoding: .utf8) else { throw URLError(.cannotDecodeRawData) }
 

@@ -451,6 +451,10 @@ final class PlayerCore {
     var streamBufferFraction: Double = 0.0
     private(set) var isStreamBuffering = false
     @ObservationIgnored private var streamStatusObservers: [NSKeyValueObservation] = []
+    @ObservationIgnored private var streamItemStatusObserver: NSKeyValueObservation?
+    private var streamStartupTask: Task<Void, Never>?
+    private var streamRecoveryAttemptedToken: Int?
+    private var streamRecoveryInFlightToken: Int?
     private var failedPrebufferTrackId: UUID?
     private var lastPrebufferAttempt: Date?
 
@@ -599,14 +603,13 @@ final class PlayerCore {
 
         NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             let failedItem = notification.object as? AVPlayerItem
-            let message = failedItem?.error?.localizedDescription
             Task { @MainActor [weak self] in
                 guard let self, self.isUsingStreamPlayer, self.isPlaying else { return }
                 if let failedItem, failedItem !== self.activeStreamingPlayer.currentItem {
                     return
                 }
-                self.isPlaying = false
-                self.playError = message.map { "Ошибка потока: \($0)" } ?? "Не удалось воспроизвести трек"
+                guard let failedItem else { return }
+                self.recoverStreamStartup(failedItem, token: self.generation, reason: "failed-to-play")
             }
         }
     }
@@ -1441,6 +1444,8 @@ final class PlayerCore {
     }
 
     private func startLocal(_ track: Track, at seconds: Double, token: Int, isMigration: Bool = false, fileURL: URL? = nil) {
+        streamStartupTask?.cancel()
+        streamItemStatusObserver = nil
         let resolvedURL = fileURL ?? track.url
         if !isMigration {
             isUsingStreamPlayer = false
@@ -1575,10 +1580,11 @@ final class PlayerCore {
                 self.activeStreamURL = info.url
                 self.beginStream(info.url, at: seconds, token: token)
             } catch {
-                // Secondary attempt with fallback quality (standard MP3 / HQ) if Lossless was unavailable
-                if self.audioQuality != .standard {
+                guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
+                // standard aliases HQ; explicitly bypass signed sources for recovery.
+                if !(error is CancellationError) {
                     do {
-                        let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 320)
+                        let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 320, legacyOnly: true)
                         guard self.generation == token, self.currentTrack?.id == track.id else { return }
                         self.currentBitrate = fallbackInfo.bitrate
                         self.currentCodec = fallbackInfo.codec
@@ -1683,6 +1689,7 @@ final class PlayerCore {
         item.allowedAudioSpatializationFormats = spatialAudioEnabled ? .monoStereoAndMultichannel : []
         StreamBeatTap.shared.attach(to: item)
         activeStreamingPlayer.replaceCurrentItem(with: item)
+        observeStreamStartup(item, at: seconds, token: token)
         activeStreamingPlayer.volume = volume
         if seconds > 0 {
             activeStreamingPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
@@ -1696,6 +1703,68 @@ final class PlayerCore {
 
         // Ordinary playback stays streaming-only for raw sources. Authorized encraw FLAC
         // is materialized before this point; EQ/spatial toggles never initiate a download.
+    }
+
+    /// API success is not playback success: detect initial decoder failure as well as stalls.
+    private func observeStreamStartup(_ item: AVPlayerItem, at seconds: Double, token: Int) {
+        streamStartupTask?.cancel()
+        streamItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] observed, _ in
+            guard observed.status == .failed else { return }
+            Task { @MainActor [weak self] in
+                self?.recoverStreamStartup(item, token: token, reason: "item-status-failed")
+            }
+        }
+        streamStartupTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(12)) } catch { return }
+            guard let self, self.generation == token, self.isPlaying, self.isUsingStreamPlayer,
+                  self.activeStreamingPlayer.currentItem === item else { return }
+            let position = CMTimeGetSeconds(self.activeStreamingPlayer.currentTime())
+            guard !position.isFinite || position <= seconds + 0.05 else { return }
+            self.recoverStreamStartup(item, token: token, reason: "startup-timeout")
+        }
+    }
+
+    private func recoverStreamStartup(_ failedItem: AVPlayerItem, token: Int, reason: String) {
+        guard generation == token, isPlaying, isUsingStreamPlayer,
+              activeStreamingPlayer.currentItem === failedItem, let track = currentTrack else { return }
+        guard streamRecoveryInFlightToken != token else { return }
+        let service = YandexMusicService.shared
+        service.recordStreamPlaybackFailure(reason)
+        guard YandexMusicService.ymId(fromFileName: track.fileName) != nil,
+              streamRecoveryAttemptedToken != token else {
+            failStreamStartup(); return
+        }
+        streamRecoveryAttemptedToken = token
+        streamRecoveryInFlightToken = token
+        let account = service.accountGeneration
+        let position = max(0, progress.isFinite ? progress : 0)
+        let id = Self.yandexTrackID(from: track)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { if self.streamRecoveryInFlightToken == token { self.streamRecoveryInFlightToken = nil } }
+            do {
+                let info = try await service.getStreamInfo(for: id, preferredQuality: .hq, preferredBitrate: 320, legacyOnly: true)
+                guard self.generation == token, self.currentTrack?.id == track.id,
+                      service.accountGeneration == account, self.isPlaying,
+                      self.activeStreamingPlayer.currentItem === failedItem else { return }
+                self.currentCodec = info.codec; self.currentBitrate = info.bitrate
+                self.playError = nil
+                self.beginStream(info.url, at: position, token: token)
+            } catch {
+                guard self.generation == token, self.currentTrack?.id == track.id,
+                      service.accountGeneration == account, self.isPlaying,
+                      self.activeStreamingPlayer.currentItem === failedItem else { return }
+                if let cached = self.findLocalOrCachedAudioFile(for: track, respectingQuality: false) {
+                    self.startLocal(track, at: position, token: token, fileURL: cached)
+                } else { self.failStreamStartup() }
+            }
+        }
+    }
+    private func failStreamStartup() {
+        streamStartupTask?.cancel()
+        activeStreamingPlayer.pause()
+        isStreamBuffering = false; isPlaying = false; transitionScheduled = false
+        playError = "Не удалось запустить аудио. Повторите попытку и отправьте диагностику качества."
     }
 
     private func acceptsCachedPlayback(_ url: URL, for track: Track) -> Bool {

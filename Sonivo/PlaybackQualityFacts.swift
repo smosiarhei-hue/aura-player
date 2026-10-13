@@ -15,8 +15,9 @@ nonisolated struct PlaybackQualityFacts: Equatable, Sendable {
     func isPreferred(over other: PlaybackQualityFacts) -> Bool {
         if isLossless != other.isLossless { return isLossless }
         if (bitrate ?? 0) != (other.bitrate ?? 0) { return (bitrate ?? 0) > (other.bitrate ?? 0) }
-        let rank = ["aac": 3, "he-aac": 2, "mp3": 1]
-        return (rank[codec ?? ""] ?? 0) > (rank[other.codec ?? ""] ?? 0)
+        // Equal nominal bitrate is not evidence that a different signed container is
+        // playable. Keep the existing legacy source on ties; FLAC and higher bitrate win.
+        return false
     }
     var isLossless: Bool { ["flac", "alac", "pcm", "wav", "aiff"].contains(codec ?? "") }
     var isLossy: Bool { ["mp3", "aac", "he-aac", "opus", "ogg", "vorbis"].contains(codec ?? "") }

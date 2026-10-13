@@ -16,3 +16,25 @@ Source: https://ym.marshal.dev/api/ and pinned yandex-music 3.2.2 implementation
 A generated sine FLAC fixture is AES-CTR encrypted independently with Python cryptography. macOS CI verifies CommonCrypto decryption, an independent OpenSSL cross-chunk vector, native FLAC decode and offline AVAudioEngine rendering, missing/invalid key, wrong-key audio rejection, file-size limits, source ordering, account cache isolation and cancellation.
 
 Live tests with the authorized user token previously returned nq/AAC 192 in upstream itself. This feature supports lossless when returned by the authorized API; it does not guarantee the service supplies FLAC or unlock rights. Real API-issued encrypted FLAC still needs an on-device check once available. No API keys, account tokens or catalog audio are included in fixtures.
+
+## Playback recovery (physical report: 1.0.880 could not start songs)
+
+A source-ranking regression preferred signed AAC over the previously used legacy
+MP3 at equal bitrate, although response metadata is not evidence of native
+playability. Equal-rate comparisons now retain legacy; actual FLAC and genuinely
+higher bitrates still take priority. The physical failure cause is not established
+without a fresh device report, so this is a conservative recovery patch.
+
+The native player now observes AVPlayerItem.status failures and detects no initial
+media advancement after 12 seconds. One recovery per playback generation uses
+legacy MP3 only, without repeating signed/encraw requests or changing the saved
+quality preference. Concurrent failure callbacks cannot cancel an in-flight retry.
+Generation, track, account and item identity guard all asynchronous commits.
+If recovery also fails, stop buffering and show an error instead of a silent loop.
+
+Optional signed raw/encraw API probes have 12/6-second request timeouts; legacy
+metadata/XML have 15-second timeouts. Complete encraw FLAC materialization remains
+bounded by its separate download configuration. Real received quality stays visible.
+Swift fixtures execute the actual recovery method with an injected resolver and
+cover duplicate failures, one retry, stale item, changed track/generation/account,
+pause and offline failure. Device/account testing is still required.
