@@ -1549,7 +1549,8 @@ final class PlayerCore {
         streamingPlayerA.pause()
         streamingPlayerB.pause()
 
-        let isCatalogTrack = YandexMusicService.ymId(fromFileName: track.fileName) != nil
+        let ymID = Self.yandexTrackID(from: track)
+        let isCatalogTrack = YandexMusicService.ymId(fromFileName: track.fileName) != nil || !ymID.isEmpty
         let url = track.url
         if !isCatalogTrack, url.scheme == "http" || url.scheme == "https" {
             guard self.generation == token, self.currentTrack?.id == track.id else { return }
@@ -1569,7 +1570,6 @@ final class PlayerCore {
             return
         }
 
-        let ymID = Self.yandexTrackID(from: track)
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
