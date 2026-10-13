@@ -16,11 +16,11 @@ A 980 ms shaped travel rumble starts at 80 ms during the close-up movement. The 
 
 The Metal layer shader integrates 24 positions over a 1/60-second exposure along the same scale trajectory as the Swift model. This is directional motion exposure, not permanent Gaussian blur. Sampling is disabled after settling. RootView mounts immediately; the 450 ms handoff finishes before the three-second deadline. No music/audio session changes or network calls are introduced.
 
-The launch surface measures the full display, including the status-bar / Dynamic Island surroundings and home-indicator region. Only the Skip control retains the bottom safe-area inset. The system island and indicator remain system-owned; the app does not draw over the physical island.
+The launch surface measures the full display, including the status-bar / Dynamic Island surroundings and home-indicator region. The Skip button is removed at the user’s request; SONIVO and the tagline remain. The system island and indicator remain system-owned; the app does not draw over the physical island.
 
 ## Accessibility and lifecycle
 
-The existing haptics preference, unsupported hardware, Reduce Motion, skip, background, playback, deep links and view disappearance stop or bypass the pattern. Reduce Motion gets a brief static reveal without launch haptics. Reduce Transparency / increased contrast suppress decorative light effects. Core Haptics reset never replays the launch.
+The existing haptics preference, unsupported hardware, Reduce Motion, background, playback, deep links and view disappearance stop or bypass the pattern. Reduce Motion gets a brief static reveal without launch haptics. Reduce Transparency / increased contrast suppress decorative light effects. Core Haptics reset never replays the launch.
 
 ## Assets / verification
 

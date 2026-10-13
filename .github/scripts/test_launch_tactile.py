@@ -15,12 +15,14 @@ class LaunchTactileTests(unittest.TestCase):
         for token in ['audioContinuous','AVAudioSession','MusicHapticsManager','repeatForever','Timer.']:
             self.assertNotIn(token,host)
         self.assertIn('if !enabled { haptics.stop() }',host)
-    def test_full_display_surface_keeps_only_skip_in_safe_area(self):
+    def test_full_display_surface_has_no_skip_but_keeps_brand_and_tagline(self):
         host=(R/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        self.assertIn('GeometryReader { safeGeometry in',host)
-        self.assertIn('safeGeometry.safeAreaInsets.bottom',host)
-        self.assertIn('.padding(.bottom, safeBottom + 16)',host)
-        self.assertIn('.clipped()\n            .ignoresSafeArea(.container, edges: .all)',host)
+        self.assertIn('GeometryReader { geometry in',host)
+        self.assertIn('.clipped()\n        .ignoresSafeArea(.container, edges: .all)',host)
+        self.assertNotIn('Button("Пропустить"',host)
+        self.assertNotIn('onSkip',host)
+        self.assertIn('Text("Музыка, которую чувствуешь.")',host)
+        self.assertIn('SonivoLaunchWordmark(time: time',host)
         self.assertNotIn('UIScreen.main.bounds',host)
         self.assertNotIn('.statusBarHidden',host)
     def test_material_is_offline_with_alpha_and_not_a_video_player(self):

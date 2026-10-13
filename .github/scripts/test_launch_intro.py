@@ -11,10 +11,10 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertIn('.accessibilityHidden(!session.isFinished && !revealingHome)',intro)
         for bad in ['AVPlayer(', 'URLSession', 'Thread.sleep','Timer.scheduledTimer','DispatchQueue.main.asyncAfter','repeatForever']:
             self.assertNotIn(bad,intro)
-    def test_skip_background_and_external_playback_are_handled(self):
+    def test_background_and_external_playback_are_handled(self):
         app=(ROOT/'Sonivo/sonivoapp.swift').read_text()
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        for expected in ['Button("Пропустить"', '.task(id: scenePhase)', 'if session.hasStarted { finish() }', '.onChange(of: player.isPlaying)', '.onDisappear { finish() }']:
+        for expected in ['.task(id: scenePhase)', 'if session.hasStarted { finish() }', '.onChange(of: player.isPlaying)', '.onDisappear { finish() }']:
             self.assertIn(expected,intro)
         self.assertEqual(app.count('onExternalPlaybackOpen?(); showPlayer = true'),3)
         self.assertIn('session.begin(isActive: true, isPlaying: player.isPlaying)',intro)
@@ -26,12 +26,12 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertNotIn('audioContinuous',intro)
         self.assertNotIn('MusicHapticsManager',intro)
         self.assertIn('paused: reduceMotion || scenePhase != .active',intro)
-    def test_accessibility_sizes_keep_brand_and_skip_without_tagline_crowding(self):
+    def test_accessibility_sizes_keep_brand_without_tagline_crowding(self):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         self.assertIn('dynamicTypeSize',intro)
         self.assertIn('if !dynamicTypeSize.isAccessibilitySize',intro)
         self.assertIn('.accessibilityLabel("Sonivo")',intro)
-        self.assertIn('Button("Пропустить"',intro)
+        self.assertNotIn('Button("Пропустить"',intro)
     def test_resonance_replaces_true_focus_with_finite_ring_and_word_reveal(self):
         model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
@@ -43,7 +43,7 @@ class LaunchIntroTests(unittest.TestCase):
             self.assertIn(expected,intro)
         for removed in ['focusedWord(', 'cornerPath(', 'SonivoLaunchFocusBounds', 'zoomTicks']:
             self.assertNotIn(removed,intro)
-        self.assertIn('.frame(minWidth: 120, minHeight: 44)',intro)
+        self.assertNotIn('onSkip',intro)
         self.assertNotIn('UIScreen.main',intro)
         self.assertIn('hapticTransient',intro)
         self.assertIn('hapticContinuous',intro)

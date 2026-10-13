@@ -26,8 +26,7 @@ struct SonivoLaunchHost: View {
             if !session.isFinished {
                 SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion,
                                   brandFontName: brandFontName,
-                                  exitBlurRadius: revealingHome ? SonivoLaunchMotion.exitDefocusRadius : 0,
-                                  onSkip: finish)
+                                  exitBlurRadius: revealingHome ? SonivoLaunchMotion.exitDefocusRadius : 0)
                     .allowsHitTesting(!revealingHome)
                     .transition(.identity)
                     .zIndex(10)
@@ -94,52 +93,38 @@ private struct SonivoLaunchIntro: View {
     let reduceMotion: Bool
     let brandFontName: String?
     let exitBlurRadius: Double
-    let onSkip: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
-        // Capture the safe inset before expanding only the launch surface.
-        GeometryReader { safeGeometry in
-            let safeBottom = safeGeometry.safeAreaInsets.bottom
-            GeometryReader { geometry in
-                let unit = min(1.3, min(geometry.size.width / 390, geometry.size.height / 844))
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || scenePhase != .active)) { _ in
-                    let time = reduceMotion ? SonivoLaunchMotion.reducedPreviewTime
-                        : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
-                    ZStack {
-                        Color(red: 16.0 / 255, green: 16.0 / 255, blue: 16.0 / 255).ignoresSafeArea()
-                        let symbolSize = min(geometry.size.width * 0.833, geometry.size.height * 0.385)
-                        SonivoResonanceSymbol(time: time, size: symbolSize, reduceMotion: reduceMotion)
-                            .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.4023)
-                        SonivoLaunchWordmark(time: time, width: geometry.size.width - 48 * unit,
-                                             unit: unit, brandFontName: brandFontName, reduceMotion: reduceMotion)
-                            .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.635)
-                        if !dynamicTypeSize.isAccessibilitySize {
-                            Text("Музыка, которую чувствуешь.")
-                                .font(.subheadline)
-                                .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 24)
-                                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.taglineOpacity(at: time))
-                                .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.708)
-                        }
-                        VStack {
-                            Spacer()
-                            Button("Пропустить", action: onSkip)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
-                                .frame(minWidth: 120, minHeight: 44)
-                                .accessibilityHint("Сразу открыть приложение")
-                                .padding(.bottom, safeBottom + 16)
-                        }
+        GeometryReader { geometry in
+            let unit = min(1.3, min(geometry.size.width / 390, geometry.size.height / 844))
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || scenePhase != .active)) { _ in
+                let time = reduceMotion ? SonivoLaunchMotion.reducedPreviewTime
+                    : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
+                ZStack {
+                    Color(red: 16.0 / 255, green: 16.0 / 255, blue: 16.0 / 255).ignoresSafeArea()
+                    let symbolSize = min(geometry.size.width * 0.833, geometry.size.height * 0.385)
+                    SonivoResonanceSymbol(time: time, size: symbolSize, reduceMotion: reduceMotion)
+                        .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.4023)
+                    SonivoLaunchWordmark(time: time, width: geometry.size.width - 48 * unit,
+                                         unit: unit, brandFontName: brandFontName, reduceMotion: reduceMotion)
+                        .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.635)
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Text("Музыка, которую чувствуешь.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.taglineOpacity(at: time))
+                            .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.708)
                     }
-                    .opacity(reduceMotion ? 1 : SonivoLaunchMotion.opacity(at: time))
                 }
+                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.opacity(at: time))
             }
-            // Clip against full display bounds, never against the parent safe-area rectangle.
-            .clipped()
-            .ignoresSafeArea(.container, edges: .all)
         }
+        // Clip against full display bounds, never against the parent safe-area rectangle.
+        .clipped()
+        .ignoresSafeArea(.container, edges: .all)
         .accessibilityLabel("Sonivo")
         .accessibilityIdentifier("sonivo.launch.intro")
     }
