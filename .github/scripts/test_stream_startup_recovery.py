@@ -66,13 +66,21 @@ nonisolated enum AudioQuality { case hq }
     init() { activeStreamingPlayer.replaceCurrentItem(with:AVPlayerItem(url:URL(fileURLWithPath:"/tmp/generated-invalid-fixture"))) }
 }
 @main struct Checks {
+    @MainActor static func settle(_ core: PlayerCore) async throws {
+        // Await the real task boundary, not a wall-clock assumption on a loaded macOS runner.
+        for _ in 0..<500 {
+            if core.streamRecoveryInFlightToken == nil { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        preconditionFailure("Recovery fixture did not finish within five seconds")
+    }
     @MainActor static func main() async throws {
         let service=YandexMusicService.shared
         let core=PlayerCore(); let failed=core.activeStreamingPlayer.currentItem!
         core.recoverStreamStartup(failed,token:1,reason:"fixture")
         core.recoverStreamStartup(failed,token:1,reason:"duplicate-fixture")
         precondition(core.isPlaying)
-        try await Task.sleep(for:.milliseconds(100))
+        try await settle(core)
         precondition(service.calls == 1 && core.starts == 1 && core.currentBitrate == 192)
         core.recoverStreamStartup(failed,token:1,reason:"stale-item")
         precondition(core.isPlaying && service.calls == 1)
@@ -82,7 +90,12 @@ nonisolated enum AudioQuality { case hq }
             service.calls=0
             let stale=PlayerCore(); let old=stale.activeStreamingPlayer.currentItem!
             stale.recoverStreamStartup(old,token:1,reason:"fixture")
-            await Task.yield()
+            // Ensure the mock request started before changing its captured identity.
+            for _ in 0..<500 {
+                if service.calls == 1 { break }
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            precondition(service.calls == 1, "Recovery fixture request never started")
             switch change {
             case "generation": stale.generation += 1
             case "account": service.accountGeneration=UUID()
@@ -90,13 +103,13 @@ nonisolated enum AudioQuality { case hq }
             case "item": stale.activeStreamingPlayer.replaceCurrentItem(with:nil)
             default: stale.currentTrack=Track()
             }
-            try await Task.sleep(for:.milliseconds(100))
+            try await settle(stale)
             precondition(stale.starts == 0, "stale recovery committed")
         }
         service.shouldFail=true
         let unavailable=PlayerCore()
         unavailable.recoverStreamStartup(unavailable.activeStreamingPlayer.currentItem!,token:1,reason:"fixture")
-        try await Task.sleep(for:.milliseconds(100))
+        try await settle(unavailable)
         precondition(!unavailable.isPlaying && !unavailable.isStreamBuffering)
         print("Production recovery: single retry, duplicate/stale item, generation/account/pause/track guards and offline failure passed")
     }
