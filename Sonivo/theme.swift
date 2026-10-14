@@ -136,8 +136,8 @@ enum MusicHapticsIntensity: String, CaseIterable, Identifiable, Codable, Sendabl
 
     var scaleFactor: Float {
         switch self {
-        case .soft: return 0.45
-        case .medium: return 0.75
+        case .soft: return 0.35
+        case .medium: return 0.70
         case .strong: return 1.00
         }
     }
@@ -165,6 +165,9 @@ final class SettingsStore {
     var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
     var musicHapticsEnabled: Bool { didSet { defaults.set(musicHapticsEnabled, forKey: "settings.musicHaptics") } }
     var musicHapticsAutomatic: Bool { didSet { defaults.set(musicHapticsAutomatic, forKey: "settings.musicHapticsAutomatic") } }
+    var musicHapticsMode: MusicHapticsMode {
+        didSet { defaults.set(musicHapticsMode.rawValue, forKey: "settings.musicHapticsMode") }
+    }
     var musicHapticsIntensity: MusicHapticsIntensity {
         didSet { defaults.set(musicHapticsIntensity.rawValue, forKey: "settings.musicHapticsIntensity") }
     }
@@ -186,6 +189,7 @@ final class SettingsStore {
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
         musicHapticsEnabled = defaults.object(forKey: "settings.musicHaptics") as? Bool ?? true
         musicHapticsAutomatic = defaults.object(forKey: "settings.musicHapticsAutomatic") as? Bool ?? true
+        musicHapticsMode = MusicHapticsMode(rawValue: defaults.string(forKey: "settings.musicHapticsMode") ?? "") ?? .beat
         musicHapticsIntensity = MusicHapticsIntensity(
             rawValue: defaults.string(forKey: "settings.musicHapticsIntensity") ?? ""
         ) ?? .strong

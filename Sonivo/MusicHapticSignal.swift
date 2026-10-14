@@ -27,10 +27,23 @@ nonisolated struct MusicHapticTimeline {
     }
 }
 
+/// Persisted selection; kept with the pure signal model for deterministic fixtures.
+nonisolated enum MusicHapticsMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case beat, full
+    var id: String { rawValue }
+    var title: String { self == .beat ? "Под бит" : "Полное звучание" }
+    var detail: String {
+        self == .beat
+            ? "Короткие импульсы на подтверждённых ударах. Без постоянной вибрации."
+            : "Непрерывная сила следует громкости; бас, удары и высокие частоты меняют характер вибрации."
+    }
+}
+
 nonisolated struct MusicHapticOutput: Sendable {
     var kick: Float = 0
     var treble: Float = 0
-    var bass: Float = 0
+    var body: Float = 0
+    var bodySharpness: Float = 0.25
 }
 
 /// Single-actuator mix of measured PCM features; never synthesizes a beat grid.
@@ -45,7 +58,8 @@ nonisolated struct MusicHapticSignal {
 
     mutating func reset() { self=MusicHapticSignal() }
     private func unit(_ value: Float) -> Float { value.isFinite ? max(0,min(1,value)) : 0 }
-    mutating func process(_ frame: BeatWaveAudioFrame, ceiling: Float, automatic: Bool) -> MusicHapticOutput {
+    mutating func process(_ frame: BeatWaveAudioFrame, ceiling: Float, automatic: Bool,
+                          mode: MusicHapticsMode = .full) -> MusicHapticOutput {
         let time=frame.mediaTime ?? frame.capturedAt
         guard time.isFinite else { return MusicHapticOutput() }
         let dt=max(0.001,min(0.1,time-(previousTime ?? time-0.006)))
@@ -61,14 +75,22 @@ nonisolated struct MusicHapticSignal {
         meanRMS += (rms-meanRMS)*Float(1-exp(-dt/1.5))
         guard rms > 0.003 else { return MusicHapticOutput() }
         let relative=max(0.8,min(1.2,rms/max(0.02,meanRMS)))
-        let power=automatic ? min(1,sqrt(rms)*2.1*relative) : 1
+        // Perceptual compression opens the usable actuator range, while quiet PCM
+        // remains weaker and digital silence stays off. No second confidence gain.
+        let power=automatic ? min(1,pow(rms,0.35)*2.6*relative) : 1
         let strength=limit*power
         var output=MusicHapticOutput()
-        if isNewKick { output.kick=strength*unit(frame.kickConfidence) }
+        if isNewKick && unit(frame.kickConfidence) > 0 { output.kick=strength }
+        guard mode == .full else { return output }
         if flux > max(0.025,threshold*1.8), high > 0.04, time-lastTreble >= 0.055 {
-            output.treble=strength*min(0.35,flux*1.4); lastTreble=time
+            output.treble=strength; lastTreble=time
         }
-        output.bass=strength*min(0.45,(unit(frame.subBass)*0.6+unit(frame.bass)*0.4)*0.55)
+        // Full mode represents ALL audible PCM, not only low-frequency content.
+        // The chosen ceiling is applied once: never multiply three weak gains.
+        output.body=strength
+        let low=unit(frame.subBass)*0.6+unit(frame.bass)*0.4
+        let bright=high/(low+unit(frame.mids)+high+0.01)
+        output.bodySharpness=min(0.75,0.2+bright*0.55)
         return output
     }
 }

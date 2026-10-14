@@ -506,6 +506,11 @@ struct SettingsView: View {
                         .tint(settings.accentColor)
 
                     if settings.musicHapticsEnabled {
+                        Picker("Режим", selection: $settings.musicHapticsMode) {
+                            ForEach(MusicHapticsMode.allCases) { mode in Text(mode.title).tag(mode) }
+                        }
+                        .pickerStyle(.segmented)
+                        Text(settings.musicHapticsMode.detail).font(.footnote).foregroundStyle(.secondary)
                         Toggle("Подстраивать силу под звук", isOn: $settings.musicHapticsAutomatic)
                         Text(MusicHapticsManager.shared.supportsHaptics ? MusicHapticsManager.shared.synchronization : "Устройство не поддерживает музыкальную вибрацию")
                             .font(.footnote).foregroundStyle(.secondary)
@@ -533,7 +538,11 @@ struct SettingsView: View {
                 } header: {
                     Text("Музыкальная вибрация")
                 } footer: {
-                    Text("Сила следует громкости, басу и атакам реального звука. Работает при открытом приложении и доступных PCM-данных. Bluetooth и возможности устройства влияют на задержку; точность 99% не гарантируется.")
+                    Text("Сильная использует весь диапазон Core Haptics. Отключите автоподстройку для фиксированной силы. Нужны открытое приложение и доступные аудиоданные; ощущения и задержка зависят от устройства и аудиомаршрута.")
+                }
+                .onChange(of: settings.musicHapticsMode) { _, _ in
+                    MusicHapticsManager.shared.reset()
+                    MusicHapticsManager.shared.playPreview(intensity: settings.musicHapticsIntensity)
                 }
                 .onChange(of: settings.musicHapticsEnabled) { _, isEnabled in
                     if isEnabled {
