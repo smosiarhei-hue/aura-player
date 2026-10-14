@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SonivoLocalSearchView: View {
+    var isActive: Bool = true
     @State private var library = LibraryStore.shared
     @State private var query = ""
     private var tracks: [Track] { library.tracks.filter { !$0.isStream } }
@@ -25,7 +26,10 @@ struct SonivoLocalSearchView: View {
                 }
             }
             .navigationTitle("Поиск")
-            .searchable(text: $query, prompt: "По локальной музыке")
+            .safeAreaInset(edge: .top) {
+                SonivoSearchField(text: $query,isActive: isActive,prompt: "По локальной музыке")
+                    .padding(.horizontal,16).padding(.vertical,10).background(.ultraThinMaterial)
+            }
         }
     }
 }

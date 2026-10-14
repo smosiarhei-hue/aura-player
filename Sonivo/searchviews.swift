@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Tab 5: Поиск (глобальный, по всей базе)
 
 struct SearchCatalogView: View {
+    var isActive: Bool = true
     @State private var player = PlayerCore.shared
     @State private var library = LibraryStore.shared
     @State private var ym = YandexMusicService.shared
@@ -13,6 +14,12 @@ struct SearchCatalogView: View {
     @State private var suggestions: [String] = []
     @State private var isSearching = false
     @State private var didSearch = false
+    @State private var kind: YandexSearchKind = .all
+    @State private var noCorrect = false
+    @State private var page = 0
+    @State private var requestID = UUID()
+    @State private var errorMessage: String?
+    @State private var lastRequestWasMore = false
     @State private var searchTask: Task<Void, Never>? = nil
 
     private struct Genre: Identifiable {
@@ -30,15 +37,16 @@ struct SearchCatalogView: View {
     ]
 
     private var localResults: [Track] {
-        guard !searchText.isEmpty else { return [] }
-        return library.tracks.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText) ||
-            $0.artist.localizedCaseInsensitiveContains(searchText)
+        let words=YandexSearchContract.clean(searchText).split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return [] }
+        return library.tracks.filter { track in
+            let haystack=track.title+" "+track.artist+" "+track.album
+            return words.allSatisfy { haystack.localizedCaseInsensitiveContains($0) }
         }
     }
 
     private var isEmptyResult: Bool {
-        results.tracks.isEmpty && results.artists.isEmpty && results.albums.isEmpty && localResults.isEmpty
+        results.tracks.isEmpty && results.artists.isEmpty && results.albums.isEmpty && ((kind != .all && kind != .track) || localResults.isEmpty)
     }
 
     var body: some View {
@@ -55,16 +63,32 @@ struct SearchCatalogView: View {
                             genresGrid
                         } else {
                             if !suggestions.isEmpty { suggestionsRow }
-                            if !results.artists.isEmpty { artistsSection }
-                            if !results.albums.isEmpty { albumsSection }
+                            if let corrected=results.correctedQuery,!noCorrect {
+                                VStack(alignment: .leading,spacing: 6) {
+                                    Text("Яндекс ищет: «\(corrected)»").font(SN.text(.footnote)).foregroundStyle(SN.inkMuted)
+                                    Button("Искать исходный запрос") { noCorrect=true; performSearch(immediate: true) }
+                                        .font(SN.text(.footnote,.semibold)).tint(SN.amber)
+                                }.padding(.horizontal,16)
+                            }
+                            if results.bestType == "artist" && kind == .all && !results.artists.isEmpty { artistsSection }
                             if !results.tracks.isEmpty { tracksSection }
-                            if !localResults.isEmpty { localSection }
-
+                            if !results.artists.isEmpty && !(results.bestType == "artist" && kind == .all) { artistsSection }
+                            if !results.albums.isEmpty { albumsSection }
+                            if kind == .all || kind == .track { if !localResults.isEmpty { localSection } }
                             if isSearching {
-                                SonivoLoadingState(title: "Ищем музыку…")
+                                SonivoLoadingState(title: page == 0 ? "Ищем в Яндекс Музыке…" : "Загружаем ещё…")
+                            } else if let errorMessage {
+                                SonivoEmptyState(systemImage: "wifi.exclamationmark",title: "Поиск недоступен",
+                                    message: errorMessage,actionTitle: "Повторить",action: { performSearch(immediate: true,more: lastRequestWasMore) })
                             } else if didSearch && isEmptyResult {
                                 emptyState
                             }
+                            if results.hasNextPage && !isSearching && errorMessage == nil {
+                                Button("Показать ещё") { performSearch(immediate: true,more: true) }
+                                    .font(SN.text(.body,.semibold)).frame(maxWidth: .infinity,minHeight: 44)
+                                    .padding(.horizontal,16).tint(SN.amber)
+                            }
+
                         }
                     }
                     .padding(.top, 6)
@@ -75,11 +99,27 @@ struct SearchCatalogView: View {
             .navigationTitle("Поиск")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
-            .searchable(text: $searchText, prompt: "Треки, исполнители, альбомы")
-            .onSubmit(of: .search) { performSearch(immediate: true) }
+            .safeAreaInset(edge: .top,spacing: 0) {
+                VStack(spacing: 10) {
+                    SonivoSearchField(text: $searchText,isActive: isActive,prompt: "Название трека или исполнитель") {
+                        performSearch(immediate: true)
+                    }
+                    Picker("Что искать",selection: $kind) {
+                        ForEach(YandexSearchKind.allCases) { item in Text(item.title).tag(item) }
+                    }.pickerStyle(.segmented)
+                }.padding(.horizontal,16).padding(.vertical,10).background(.ultraThinMaterial)
+            }
+            .onChange(of: kind) { _, _ in performSearch(immediate: true) }
+            .onChange(of: isActive) { _, active in
+                if !active { searchTask?.cancel(); requestID=UUID(); isSearching=false }
+                else if !searchText.isEmpty && !didSearch { performSearch(immediate: true) }
+            }
+            .onDisappear { searchTask?.cancel(); requestID=UUID(); isSearching=false }
             .onChange(of: searchText) { _, newValue in
-                let query = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                searchTask?.cancel()
+                let query = YandexSearchContract.clean(newValue)
+                searchTask?.cancel(); requestID=UUID()
+                noCorrect=false; page=0; errorMessage=nil; suggestions=[]
+                results=YandexMusicService.GlobalSearchResults(); didSearch=false
                 if query.isEmpty {
                     results = YandexMusicService.GlobalSearchResults()
                     suggestions = []
@@ -98,7 +138,6 @@ struct SearchCatalogView: View {
                 ForEach(suggestions, id: \.self) { suggestion in
                     Button {
                         searchText = suggestion
-                        performSearch(immediate: true)
                     } label: {
                         Text(suggestion)
                             .font(SN.text(.caption, .medium))
@@ -118,7 +157,7 @@ struct SearchCatalogView: View {
 
     private var artistsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SonivoHeader(title: "Артисты")
+            SonivoHeader(title: results.bestType == "artist" && kind == .all ? "Исполнители · лучшее совпадение" : "Исполнители")
                 .padding(.horizontal, 16)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -250,7 +289,6 @@ struct SearchCatalogView: View {
                 ForEach(genres) { genre in
                     Button {
                         searchText = genre.id
-                        performSearch(immediate: true)
                     } label: {
                         ZStack(alignment: .bottomLeading) {
                             LinearGradient(colors: genre.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -331,26 +369,38 @@ struct SearchCatalogView: View {
         UserDefaults.standard.set(list, forKey: "sonivo_recent_searches")
     }
 
-    private func performSearch(immediate: Bool) {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func performSearch(immediate: Bool, more: Bool = false) {
+        let query=YandexSearchContract.clean(searchText)
+        searchTask?.cancel(); requestID=UUID()
         guard !query.isEmpty else { return }
-        saveSearchQuery(query)
-        searchTask?.cancel()
-
-        searchTask = Task { @MainActor in
-            if !immediate {
-                try? await Task.sleep(nanoseconds: 350_000_000)
-                guard !Task.isCancelled else { return }
-                guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+        let id=requestID, selectedKind=kind, exact=noCorrect
+        let nextPage=more ? page+1 : 0
+        if !more { page=0; results=YandexMusicService.GlobalSearchResults(); suggestions=[]; didSearch=false }
+        errorMessage=nil; lastRequestWasMore=more; isSearching=true
+        searchTask=Task { @MainActor in
+            do {
+                if !immediate { try await Task.sleep(for: .milliseconds(250)) }
+                try Task.checkCancellation()
+                async let hints = ym.searchSuggestions(query: more ? "" : query)
+                let found=try await ym.searchCatalog(query: query,kind: selectedKind,page: nextPage,noCorrect: exact)
+                guard !Task.isCancelled, requestID == id else { return }
+                if more {
+                    var trackIDs=Set(results.tracks.map(\.id)),artistIDs=Set(results.artists.map(\.id)),albumIDs=Set(results.albums.map(\.id))
+                    results.tracks += found.tracks.filter { trackIDs.insert($0.id).inserted }
+                    results.artists += found.artists.filter { artistIDs.insert($0.id).inserted }
+                    results.albums += found.albums.filter { albumIDs.insert($0.id).inserted }
+                    results.hasNextPage=found.hasNextPage
+                } else { results=found }
+                page=nextPage; didSearch=true; isSearching=false; saveSearchQuery(query)
+                let suggested=await hints
+                guard !Task.isCancelled, requestID == id else { return }
+                var seen=Set<String>()
+                suggestions=Array(suggested.filter { seen.insert($0).inserted }.prefix(8))
+            } catch {
+                guard !Task.isCancelled, requestID == id else { return }
+                errorMessage=(error as? YandexSearchError)?.errorDescription ?? "Не удалось выполнить поиск. Проверьте интернет и повторите."
+                didSearch=true; isSearching=false
             }
-
-            isSearching = true
-            suggestions = await ym.searchSuggestions(query: query)
-            let found = await ym.searchAllFixed(query: query)
-            guard !Task.isCancelled else { return }
-            results = found
-            didSearch = true
-            isSearching = false
         }
     }
 }

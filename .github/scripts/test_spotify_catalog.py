@@ -18,7 +18,7 @@ class SpotifyCatalogTests(unittest.TestCase):
         settings=(ROOT/'Sonivo/settingsview.swift').read_text()
         self.assertIn('Self(rawValue: raw) ?? .yandex',model)
         self.assertIn('MusicCatalogSource.resolve(catalogSourceRaw) == .spotifyCatalog',root)
-        self.assertIn('if ym.isUserLoggedIn { SearchCatalogView() } else { SonivoLocalSearchView() }',root)
+        self.assertIn('if ym.isUserLoggedIn { SearchCatalogView(isActive: tab == .search) } else { SonivoLocalSearchView(isActive: tab == .search) }',root)
         self.assertIn('Picker("Источник поиска", selection: $catalogSourceRaw)',settings)
         self.assertIn('MusicCatalogSource.yandex.rawValue',settings)
     @unittest.skipUnless(sys.platform=='darwin','Executable Foundation client fixture requires macOS Swift')

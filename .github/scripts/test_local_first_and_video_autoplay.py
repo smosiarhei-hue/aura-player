@@ -9,7 +9,7 @@ class LocalFirstAndVideoAutoplayTests(unittest.TestCase):
         root = source('sonivoapp.swift')
         self.assertIn('if ym.isUserLoggedIn { SonivoHomeRedesignedView() }', root)
         self.assertIn('else { SonivoLocalHomeView(', root)
-        self.assertIn('if ym.isUserLoggedIn { SearchCatalogView() } else { SonivoLocalSearchView() }', root)
+        self.assertIn('if ym.isUserLoggedIn { SearchCatalogView(isActive: tab == .search) } else { SonivoLocalSearchView(isActive: tab == .search) }', root)
         tabs = root.split('TabView(selection: $tab)', 1)[1].split('.accessibilityIdentifier', 1)[0]
         self.assertIn('if ym.isUserLoggedIn {\n                Tab(AppTab.browse.label', tabs)
         self.assertIn('.sheet(item: $rootSheet)', root)

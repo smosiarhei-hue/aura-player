@@ -2,6 +2,7 @@ import SwiftUI
 
 /// This screen never converts Spotify IDs into Yandex tracks or writes to the playback queue.
 struct SpotifyCatalogSearchView: View {
+    var isActive: Bool = true
     @State private var query = ""
     @State private var results: [SpotifyCatalogTrack] = []
     @State private var isLoading = false
@@ -46,7 +47,10 @@ struct SpotifyCatalogSearchView: View {
                 }
             }
             .navigationTitle("Spotify · каталог")
-            .searchable(text: $query, prompt: "Название трека или исполнитель")
+            .safeAreaInset(edge: .top) {
+                SonivoSearchField(text: $query,isActive: isActive,prompt: "Название трека или исполнитель")
+                    .padding(.horizontal,16).padding(.vertical,10).background(.ultraThinMaterial)
+            }
             .task(id: SearchRequest(query: query, retry: retry)) { await search() }
             .sheet(item: $selectedTrack) { track in SpotifyCatalogTrackSheet(track: track) }
         }

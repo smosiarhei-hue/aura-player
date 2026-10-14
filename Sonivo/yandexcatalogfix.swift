@@ -14,33 +14,50 @@ private struct YMCatalogSearchArtist: Decodable {
         let week: Int?
         let day: Int?
     }
-    let id: Int?
+    let id: String?
     let name: String?
     let coverUri: String?
     let cover: YMCatalogArtistCover?
     let ratings: Ratings?
     let likesCount: Int?
+    enum CodingKeys: String, CodingKey { case id, name, coverUri, cover, ratings, likesCount }
+    init(from decoder: Decoder) throws {
+        let c=try decoder.container(keyedBy: CodingKeys.self)
+        id=(try? c.decode(String.self,forKey: .id)) ?? (try? c.decode(Int.self,forKey: .id)).map(String.init)
+        name=try c.decodeIfPresent(String.self,forKey: .name)
+        coverUri=try c.decodeIfPresent(String.self,forKey: .coverUri)
+        cover=try c.decodeIfPresent(YMCatalogArtistCover.self,forKey: .cover)
+        ratings=try c.decodeIfPresent(Ratings.self,forKey: .ratings)
+        likesCount=try c.decodeIfPresent(Int.self,forKey: .likesCount)
+    }
 }
-
 private struct YMCatalogSearchResponse: Decodable {
     struct Result: Decodable {
+        struct Block<Item: Decodable>: Decodable {
+            let results: [Item]?
+            let total: Int?
+            let perPage: Int?
+        }
         struct BestBlock: Decodable {
             let type: String?
-            let text: String?
-        }
-        struct TracksBlock: Decodable {
-            let results: [YandexMusicService.YMTrackItem]?
-        }
-        struct ArtistsBlock: Decodable {
-            let results: [YMCatalogSearchArtist]?
-        }
-        struct AlbumsBlock: Decodable {
-            let results: [YandexMusicService.YMAlbumItem]?
+            let track: YandexMusicService.YMTrackItem?
+            let artist: YMCatalogSearchArtist?
+            let album: YandexMusicService.YMAlbumItem?
+            enum CodingKeys: String, CodingKey { case type, result }
+            init(from decoder: Decoder) throws {
+                let c=try decoder.container(keyedBy: CodingKeys.self)
+                type=try c.decodeIfPresent(String.self,forKey: .type)
+                track=type == "track" ? (try? c.decode(YandexMusicService.YMTrackItem.self,forKey: .result)) : nil
+                artist=type == "artist" ? (try? c.decode(YMCatalogSearchArtist.self,forKey: .result)) : nil
+                album=type == "album" ? (try? c.decode(YandexMusicService.YMAlbumItem.self,forKey: .result)) : nil
+            }
         }
         let best: BestBlock?
-        let tracks: TracksBlock?
-        let artists: ArtistsBlock?
-        let albums: AlbumsBlock?
+        let tracks: Block<YandexMusicService.YMTrackItem>?
+        let artists: Block<YMCatalogSearchArtist>?
+        let albums: Block<YandexMusicService.YMAlbumItem>?
+        let misspellCorrected: Bool?
+        let misspellResult: String?
     }
     let result: Result?
 }
@@ -95,122 +112,50 @@ extension YandexMusicService {
     }
 
     func searchAllFixed(query: String) async -> GlobalSearchResults {
-        let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return GlobalSearchResults() }
-
-        guard var components = URLComponents(string: Self.apiBase + "/search") else { return GlobalSearchResults() }
-        components.queryItems = [
-            URLQueryItem(name: "text", value: clean),
-            URLQueryItem(name: "type", value: "all"),
-            URLQueryItem(name: "page", value: "0"),
-            URLQueryItem(name: "nocorrect", value: "false")
-        ]
-
-        guard let url = components.url,
-              let pair = try? await sessionData(for: catalogRequest(url: url)),
-              let decoded = try? JSONDecoder().decode(YMCatalogSearchResponse.self, from: pair.0) else {
-            return GlobalSearchResults()
-        }
-
-        let normalized = clean.folding(
-            options: [.caseInsensitive, .diacriticInsensitive],
-            locale: .current
-        )
-
-        let rawTracks = Self.playable(decoded.result?.tracks?.results ?? [])
-        let indexedTracks = rawTracks.enumerated().map { ($0.offset, $0.element) }
-        let sortedIndexedTracks = indexedTracks.sorted { left, right in
-            // Priority 1: track belongs to an artist matching search query
-            let leftArtistExact = left.1.artists?.contains {
-                let an = ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                return an == normalized || an.hasPrefix(normalized)
-            } == true
-            let rightArtistExact = right.1.artists?.contains {
-                let an = ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                return an == normalized || an.hasPrefix(normalized)
-            } == true
-            if leftArtistExact != rightArtistExact { return leftArtistExact }
-
-            // Priority 2: exact title match
-            let leftTitle = left.1.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            let rightTitle = right.1.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            let leftExact = leftTitle == normalized
-            let rightExact = rightTitle == normalized
-            if leftExact != rightExact { return leftExact }
-
-            let leftStarts = leftTitle.hasPrefix(normalized)
-            let rightStarts = rightTitle.hasPrefix(normalized)
-            if leftStarts != rightStarts { return leftStarts }
-
-            // Priority 3: maintain Yandex's native popularity order
-            return left.0 < right.0
-        }
-        let tracks = sortedIndexedTracks.map { $0.1 }
-
-        let rawArtists = decoded.result?.artists?.results ?? []
-        struct IndexedArtist {
-            let brief: YMArtistBrief
-            let score: Int
-            let rank: Int
-            let origIndex: Int
-        }
-        var indexedArtists = rawArtists.enumerated().compactMap { idx, raw -> IndexedArtist? in
-            guard let id = raw.id, let name = raw.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            let nameFolded = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            var score = 0
-            if nameFolded == normalized {
-                score = 3
-            } else if nameFolded.hasPrefix(normalized) {
-                score = 2
-            } else if nameFolded.contains(normalized) {
-                score = 1
-            }
-            let monthRank = raw.ratings?.month ?? 999999
-            let brief = YMArtistBrief(
-                id: String(id),
-                name: name,
-                coverUri: raw.coverUri ?? raw.cover?.uri
-            )
-            return IndexedArtist(brief: brief, score: score, rank: monthRank, origIndex: idx)
-        }
-        indexedArtists.sort { left, right in
-            // Match quality first
-            if left.score != right.score { return left.score > right.score }
-            // Artist popularity: smaller month rank number means bigger superstar
-            if left.rank != right.rank { return left.rank < right.rank }
-            // Native Yandex search order
-            return left.origIndex < right.origIndex
-        }
-        let artists = indexedArtists.map { $0.brief }
-
-        var albums = (decoded.result?.albums?.results ?? []).filter { $0.id != 0 }
-        albums.sort { left, right in
-            let leftArtistExact = left.artists?.contains {
-                ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == normalized
-            } == true
-            let rightArtistExact = right.artists?.contains {
-                ($0.name ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == normalized
-            } == true
-            if leftArtistExact != rightArtistExact { return leftArtistExact }
-
-            let leftTitle = left.displayTitle.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            let rightTitle = right.displayTitle.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            let leftExact = leftTitle == normalized
-            let rightExact = rightTitle == normalized
-            if leftExact != rightExact { return leftExact }
-            return (left.year ?? 0) > (right.year ?? 0)
-        }
-
-        return GlobalSearchResults(
-            tracks: tracks,
-            artists: artists,
-            albums: albums,
-            suggestions: []
-        )
+        (try? await searchCatalog(query: query)) ?? GlobalSearchResults()
     }
 
-    /// Загружает страницу артиста. Если нестабильный brief-info изменил формат,
-    /// экран собирается из отдельного запроса треков и их альбомов.
+    /// Preserve native relevance. Do not rank artist-prefix matches above a requested song.
+    func searchCatalog(query: String, kind: YandexSearchKind = .all, page: Int = 0,
+                       noCorrect: Bool = false) async throws -> GlobalSearchResults {
+        let clean=YandexSearchContract.clean(query)
+        guard !clean.isEmpty else { return GlobalSearchResults() }
+        try Task.checkCancellation()
+        let generation=accountGeneration
+        let url=try YandexSearchContract.url(base: Self.apiBase,text: clean,kind: kind,page: page,noCorrect: noCorrect)
+        var request=catalogRequest(url: url); request.timeoutInterval=15
+        let (data,response)=try await sessionData(for: request)
+        try Task.checkCancellation()
+        guard generation == accountGeneration else { throw CancellationError() }
+        try YandexSearchContract.validate(response,bytes: data.count)
+        guard let result=try JSONDecoder().decode(YMCatalogSearchResponse.self,from: data).result else {
+            throw YandexSearchError.invalidResponse
+        }
+        var tracks=Self.playable(result.tracks?.results ?? [])
+        var rawArtists=result.artists?.results ?? []
+        var albums=(result.albums?.results ?? []).filter { $0.id != 0 }
+        // best.result may be returned separately from a category block.
+        if page == 0 {
+            if let track=result.best?.track,track.available != false,!tracks.contains(where: { $0.id == track.id }) { tracks.insert(track,at: 0) }
+            if let artist=result.best?.artist,!rawArtists.contains(where: { $0.id == artist.id }) { rawArtists.insert(artist,at: 0) }
+            if let album=result.best?.album,album.id != 0,!albums.contains(where: { $0.id == album.id }) { albums.insert(album,at: 0) }
+        }
+        var seenArtists=Set<String>(),seenAlbums=Set<Int>()
+        let artists=rawArtists.compactMap { raw -> YMArtistBrief? in
+            guard let id=raw.id,!id.isEmpty,let name=raw.name,!name.isEmpty,seenArtists.insert(id).inserted else { return nil }
+            return YMArtistBrief(id: id,name: name,coverUri: raw.coverUri ?? raw.cover?.uri)
+        }
+        albums=albums.filter { seenAlbums.insert($0.id).inserted }
+        let next=((kind == .all || kind == .track) && YandexSearchContract.hasNext(total: result.tracks?.total,perPage: result.tracks?.perPage,page: page))
+            || ((kind == .all || kind == .artist) && YandexSearchContract.hasNext(total: result.artists?.total,perPage: result.artists?.perPage,page: page))
+            || ((kind == .all || kind == .album) && YandexSearchContract.hasNext(total: result.albums?.total,perPage: result.albums?.perPage,page: page))
+        return GlobalSearchResults(tracks: kind == .all || kind == .track ? tracks : [],
+                                   artists: kind == .all || kind == .artist ? artists : [],
+                                   albums: kind == .all || kind == .album ? albums : [],suggestions: [],
+                                   correctedQuery: result.misspellCorrected == true ? result.misspellResult : nil,
+                                   bestType: result.best?.type,hasNextPage: next)
+    }
+
     func getArtistFixed(artistId: String) async throws -> YMArtistItem {
         if let brief = await loadArtistBrief(artistId: artistId) {
             var result = brief

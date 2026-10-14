@@ -301,105 +301,16 @@ final class YandexMusicService {
         var artists: [YMArtistBrief] = []
         var albums: [YMAlbumItem] = []
         var suggestions: [String] = []
+        var correctedQuery: String? = nil
+        var bestType: String? = nil
+        var hasNextPage = false
     }
 
     // MARK: - Global Search (треки + артисты + альбомы + подсказки)
 
     /// Глобальный поиск по всей базе Яндекс.Музыки.
     func searchAll(query: String) async -> GlobalSearchResults {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return GlobalSearchResults() }
-        guard var comps = URLComponents(string: Self.apiBase + "/search") else { return GlobalSearchResults() }
-        comps.queryItems = [
-            URLQueryItem(name: "text", value: query),
-            URLQueryItem(name: "type", value: "all"),
-            URLQueryItem(name: "page", value: "0"),
-            URLQueryItem(name: "nocorrect", value: "false")
-        ]
-        guard let url = comps.url,
-              let pair = try? await sessionData(for: authorizedRequest(url: url)) else {
-            return GlobalSearchResults()
-        }
-
-        struct Response: Decodable {
-            struct Result: Decodable {
-                struct TracksBlock: Decodable { let results: [YMTrackItem]? }
-                struct ArtistsBlock: Decodable {
-                    struct Raw: Decodable {
-                        let id: Int?
-                        let name: String?
-                        let coverUri: String?
-                        enum CodingKeys: String, CodingKey { case id, name, coverUri }
-                    }
-                    let results: [Raw]?
-                }
-                struct AlbumsBlock: Decodable { let results: [YMAlbumItem]? }
-                let tracks: TracksBlock?
-                let artists: ArtistsBlock?
-                let albums: AlbumsBlock?
-                let best: BestBlock?
-                struct BestBlock: Decodable {
-                    let type: String?
-                    let result: BestResult?
-                    struct BestResult: Decodable {
-                        let id: Int?
-                        let name: String?
-                    }
-                }
-            }
-            let result: Result?
-        }
-
-        guard let resp = try? JSONDecoder().decode(Response.self, from: pair.0) else {
-            return GlobalSearchResults()
-        }
-
-        var out = GlobalSearchResults()
-        let q = query.lowercased().trimmingCharacters(in: .whitespaces)
-
-        // Треки — точный ранкер
-        var tracks = Self.playable(resp.result?.tracks?.results ?? [])
-        tracks.sort { a, b in
-            let aArtistExact = a.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
-            let bArtistExact = b.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
-            if aArtistExact != bArtistExact { return aArtistExact }
-            let aTitleExact = a.title.lowercased() == q
-            let bTitleExact = b.title.lowercased() == q
-            if aTitleExact != bTitleExact { return aTitleExact }
-            let aTitleHas = a.title.lowercased().contains(q)
-            let bTitleHas = b.title.lowercased().contains(q)
-            if aTitleHas != bTitleHas { return aTitleHas }
-            return a.title.count < b.title.count
-        }
-        out.tracks = tracks
-
-        // Артисты
-        let rawArtists = resp.result?.artists?.results ?? []
-        var artists = rawArtists.compactMap { raw -> YMArtistItem.YMArtistBrief? in
-            guard let id = raw.id, let name = raw.name else { return nil }
-            return YMArtistItem.YMArtistBrief(id: String(id), name: name, coverUri: raw.coverUri)
-        }
-        artists.sort { a, b in
-            let aExact = a.name.lowercased() == q
-            let bExact = b.name.lowercased() == q
-            if aExact != bExact { return aExact }
-            return a.name.count < b.name.count
-        }
-        out.artists = artists
-
-        // Альбомы
-        var albums = (resp.result?.albums?.results ?? []).filter { $0.id != 0 }
-        albums.sort { a, b in
-            let aArtistExact = a.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
-            let bArtistExact = b.artists?.contains(where: { ($0.name ?? "").lowercased() == q }) == true
-            if aArtistExact != bArtistExact { return aArtistExact }
-            let aTitleExact = a.displayTitle.lowercased() == q
-            let bTitleExact = b.displayTitle.lowercased() == q
-            if aTitleExact != bTitleExact { return aTitleExact }
-            return (b.year ?? 0) > (a.year ?? 0)
-        }
-        out.albums = albums
-
-        return out
+        await searchAllFixed(query: query)
     }
 
     /// Подсказки для поиска (точность ввода).
@@ -418,8 +329,7 @@ final class YandexMusicService {
 
     /// Легаси-метод для обратной совместимости — теперь использует глобальный ранкер.
     func search(query: String, page: Int = 0) async throws -> [YMTrackItem] {
-        let all = await searchAll(query: query)
-        return all.tracks
+        try await searchCatalog(query: query,kind: .track,page: page).tracks
     }
 
     // MARK: - Страница артиста

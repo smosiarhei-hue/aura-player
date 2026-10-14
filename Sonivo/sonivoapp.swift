@@ -97,9 +97,9 @@ struct RootView: View {
             Tab(AppTab.library.label, systemImage: AppTab.library.icon, value: .library) { LibraryView() }
             Tab(AppTab.search.label, systemImage: AppTab.search.icon, value: .search, role: .search) {
                 if MusicCatalogSource.resolve(catalogSourceRaw) == .spotifyCatalog {
-                    SpotifyCatalogSearchView()
+                    SpotifyCatalogSearchView(isActive: tab == .search)
                 } else {
-                    if ym.isUserLoggedIn { SearchCatalogView() } else { SonivoLocalSearchView() }
+                    if ym.isUserLoggedIn { SearchCatalogView(isActive: tab == .search) } else { SonivoLocalSearchView(isActive: tab == .search) }
                 }
             }
         }
