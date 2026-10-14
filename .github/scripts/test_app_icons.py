@@ -9,11 +9,13 @@ import unittest
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-NAMES = ['SonivoMusic', 'SignatureS', 'SonivoWordmark', 'ClassicWave']
+BASE_NAMES = ['SonivoMusic', 'SignatureS', 'SonivoWordmark', 'ClassicWave']
+STYLES = ['MusicGraphite', 'MusicPrism', 'MusicSapphire', 'MusicNeon']
+NAMES = BASE_NAMES + STYLES
 
 class AppIconTests(unittest.TestCase):
     def test_native_packages_share_reference_appearance(self):
-        for name in NAMES:
+        for name in BASE_NAMES:
             package = ROOT/'Sonivo/AppIcons'/f'{name}.icon'
             icon = json.loads((package/'icon.json').read_text())
             self.assertEqual(icon['fill-specializations'][0]['value']['solid'], 'srgb:0.08627,0.08627,0.08627,1.00000')
@@ -26,6 +28,17 @@ class AppIconTests(unittest.TestCase):
                     svg = ET.parse(package/'Assets'/layer['image-name']).getroot()
                     self.assertEqual(svg.attrib['viewBox'], '0 0 1024 1024')
                     self.assertTrue(any(x.tag.endswith('path') for x in svg))
+    def test_new_styles_preserve_geometry_and_registration(self):
+        source=ROOT/"Sonivo/AppIcons/SonivoMusic.icon/Assets"
+        project=(ROOT/"project.yml").read_text()
+        for name in STYLES:
+            self.assertIn(name,project)
+            for asset in source.glob("*.svg"):
+                original=ET.parse(asset).getroot()
+                variant=ET.parse(ROOT/f"Sonivo/AppIcons/{name}.icon/Assets/{asset.name}").getroot()
+                self.assertEqual([p.attrib["d"] for p in original.iter() if p.tag.endswith("path")],
+                                 [p.attrib["d"] for p in variant.iter() if p.tag.endswith("path")])
+
     def test_music_contours_are_approved_sources(self):
         source = ROOT/'design/icon-composer/SonivoMusic.icon/Assets'
         destination = ROOT/'Sonivo/AppIcons/SonivoMusic.icon/Assets'

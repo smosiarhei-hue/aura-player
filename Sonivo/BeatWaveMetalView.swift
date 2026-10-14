@@ -192,7 +192,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
             let link=CADisplayLink(target: target,selector: #selector(BeatWaveDisplayLinkTarget.tick(_:)))
             linkTarget=target; displayLink=link
             link.add(to: .main,forMode: .common) // Keeps rendering during scroll tracking.
-            MusicHapticsManager.core.setBeatWaveOverride(true)
+            // Audio presentation owns haptics, not this view.
         }
         configureFrameRate()
     }
@@ -206,7 +206,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
     func stop() {
         displayLink?.invalidate(); displayLink=nil; linkTarget=nil
         previousTimestamp=nil; previousMediaTime=nil; presentation.reset(); motion.settle(); highlight.reset()
-        MusicHapticsManager.core.setBeatWaveOverride(false)
+        // No haptic ownership to release.
         (view?.layer as? CAMetalLayer)?.wantsExtendedDynamicRangeContent=false
     }
     fileprivate func tick(_ link: CADisplayLink) {
@@ -257,8 +257,7 @@ final class BeatWaveMetalRenderer: NSObject, @preconcurrency MTKViewDelegate {
                 diagnosticFrameAge=frame.capturedAt>0 ? age*1000 : 0; diagnosticClock="capture"
                 fresh=frame.capturedAt>0 && age>=(-displayLead) && age<outputDelay+0.4
             }
-            let newKick=motion.advance(delta: dt,frame: frame,hasFreshAudio: fresh)
-            if newKick { MusicHapticsManager.core.playBeatWaveKick(eventID: frame.kickEventID,strength: frame.kickConfidence) }
+            _ = motion.advance(delta: dt,frame: frame,hasFreshAudio: fresh)
         }
         highlight.advance(delta: dt,bass: motion.lowEnergy,kick: motion.impact)
         let paletteMix=1-exp(-dt/0.85)

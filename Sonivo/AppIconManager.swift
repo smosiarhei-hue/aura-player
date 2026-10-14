@@ -3,12 +3,19 @@ import UIKit
 import Observation
 
 enum SonivoAppIcon: String, CaseIterable, Identifiable {
-    case music, signature, wordmark, classic
+    case music, graphite, prism, sapphire, neon, signature, wordmark, classic
+
+    static let musicStyles: [Self] = [.music, .graphite, .prism, .sapphire, .neon]
+    static let otherMarks: [Self] = [.signature, .wordmark, .classic]
 
     var id: String { rawValue }
     var assetName: String {
         switch self {
         case .music: "SonivoMusic"
+        case .graphite: "MusicGraphite"
+        case .prism: "MusicPrism"
+        case .sapphire: "MusicSapphire"
+        case .neon: "MusicNeon"
         case .signature: "SignatureS"
         case .wordmark: "SonivoWordmark"
         case .classic: "ClassicWave"
@@ -20,7 +27,11 @@ enum SonivoAppIcon: String, CaseIterable, Identifiable {
 
     func title(russian: Bool) -> String {
         switch self {
-        case .music: russian ? "S + звук" : "S + Sound"
+        case .music: russian ? "Матовая" : "Matte"
+        case .graphite: russian ? "Графит" : "Graphite"
+        case .prism: russian ? "Призма" : "Prism"
+        case .sapphire: russian ? "Ледяной хром" : "Ice Chrome"
+        case .neon: russian ? "Неон" : "Neon"
         case .signature: russian ? "Фирменная S" : "Signature S"
         case .wordmark: "Sonivo"
         case .classic: russian ? "Классическая волна" : "Classic Wave"
@@ -29,7 +40,11 @@ enum SonivoAppIcon: String, CaseIterable, Identifiable {
 
     func detail(russian: Bool) -> String {
         switch self {
-        case .music: russian ? "Новый знак · по умолчанию" : "New mark · default"
+        case .music: russian ? "Белый знак · по умолчанию" : "White mark · default"
+        case .graphite: russian ? "Серебро и тёмное стекло" : "Silver and dark glass"
+        case .prism: russian ? "Цветное стекло" : "Chromatic glass"
+        case .sapphire: russian ? "Холодный блеск" : "Cool highlights"
+        case .neon: russian ? "Яркий градиент" : "Vivid gradient"
         case .signature: russian ? "Оригинальная буква" : "Original letter"
         case .wordmark: russian ? "Полная надпись" : "Full wordmark"
         case .classic: russian ? "Прежний знак в новом оформлении" : "Previous mark, new appearance"

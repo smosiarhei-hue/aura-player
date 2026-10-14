@@ -51,7 +51,7 @@ jobs:
             --compile native-icon-results/compiled \
             --platform iphoneos --minimum-deployment-target 26.0 \
             --target-device iphone --app-icon SonivoMusic \
-            --alternate-app-icon SignatureS --alternate-app-icon SonivoWordmark --alternate-app-icon ClassicWave \
+            --alternate-app-icon SignatureS --alternate-app-icon SonivoWordmark --alternate-app-icon ClassicWave --alternate-app-icon MusicGraphite --alternate-app-icon MusicPrism --alternate-app-icon MusicSapphire --alternate-app-icon MusicNeon \
             --output-partial-info-plist native-icon-results/compiled/icon-info.plist \
             --output-format human-readable-text --warnings --notices \
             2>&1 | tee native-icon-results/actool.log
@@ -69,7 +69,7 @@ jobs:
           fi
           "$TOOL" --version 2>&1 | tee native-icon-results/ictool-version.txt
           "$TOOL" --help > native-icon-results/ictool-help.txt 2>&1 || true
-          for ICON in SonivoMusic SignatureS SonivoWordmark ClassicWave; do
+          for ICON in SonivoMusic SignatureS SonivoWordmark ClassicWave MusicGraphite MusicPrism MusicSapphire MusicNeon; do
             mkdir -p "native-icon-results/$ICON"
             for RENDITION in Default Dark; do
               "$TOOL" "$GITHUB_WORKSPACE/Sonivo/AppIcons/$ICON.icon" \

@@ -164,6 +164,7 @@ final class SettingsStore {
     var hapticsEnabled: Bool { didSet { defaults.set(hapticsEnabled, forKey: "settings.haptics") } }
     var scrubHapticsEnabled: Bool { didSet { defaults.set(scrubHapticsEnabled, forKey: "settings.scrubHaptics") } }
     var musicHapticsEnabled: Bool { didSet { defaults.set(musicHapticsEnabled, forKey: "settings.musicHaptics") } }
+    var musicHapticsAutomatic: Bool { didSet { defaults.set(musicHapticsAutomatic, forKey: "settings.musicHapticsAutomatic") } }
     var musicHapticsIntensity: MusicHapticsIntensity {
         didSet { defaults.set(musicHapticsIntensity.rawValue, forKey: "settings.musicHapticsIntensity") }
     }
@@ -184,6 +185,7 @@ final class SettingsStore {
         hapticsEnabled = defaults.object(forKey: "settings.haptics") as? Bool ?? true
         scrubHapticsEnabled = defaults.object(forKey: "settings.scrubHaptics") as? Bool ?? true
         musicHapticsEnabled = defaults.object(forKey: "settings.musicHaptics") as? Bool ?? true
+        musicHapticsAutomatic = defaults.object(forKey: "settings.musicHapticsAutomatic") as? Bool ?? true
         musicHapticsIntensity = MusicHapticsIntensity(
             rawValue: defaults.string(forKey: "settings.musicHapticsIntensity") ?? ""
         ) ?? .strong

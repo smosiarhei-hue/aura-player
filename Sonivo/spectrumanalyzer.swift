@@ -120,6 +120,7 @@ final class SpectrumAnalyzer {
             guard snapshot.observedAt > analyzer.lastResetAt,
                   snapshot.beatWaveFrame.capturedAt >= analyzer.beatWaveFrame.capturedAt else { continue }
             analyzer.beatWaveFrame=snapshot.beatWaveFrame
+            MusicHapticsManager.shared.submit(snapshot.beatWaveFrame)
             pendingBeatWaveFrames.append(snapshot.beatWaveFrame)
             if pendingBeatWaveFrames.count>512 { pendingBeatWaveFrames.removeFirst(pendingBeatWaveFrames.count-512) }
             analyzer.lastAudioSampleTime=snapshot.beatWaveFrame.capturedAt
@@ -258,7 +259,7 @@ nonisolated private final class SpectrumDSP: @unchecked Sendable {
                 beatFrame.kickEventID = beatWaveDetector.eventID
                 beatFrame.kickEnvelope = beatWaveDetector.envelope
                 beatFrame.kickConfidence = beatWaveDetector.confidence
-                MusicHapticsManager.core.processRawBands(values)
+                // Haptics consume the timestamped presentation queue, not decode arrival.
             }
         }
         let now = Date()

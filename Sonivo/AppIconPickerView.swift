@@ -7,8 +7,9 @@ struct AppIconPickerView: View {
 
     var body: some View {
         Form {
+            ForEach(0..<2, id: \.self) { group in
             Section {
-                ForEach(SonivoAppIcon.allCases) { icon in
+                ForEach(group == 0 ? SonivoAppIcon.musicStyles : SonivoAppIcon.otherMarks) { icon in
                     Button {
                         manager.select(icon, russian: l10n.isRussian)
                     } label: {
@@ -46,7 +47,7 @@ struct AppIconPickerView: View {
                     }
                 }
             } header: {
-                Text(l10n.isRussian ? "Иконка на домашнем экране" : "Home Screen icon")
+                Text(group == 0 ? "S + звук" : (l10n.isRussian ? "Другие знаки" : "Other marks"))
             } footer: {
                 Text(manager.supportsAlternates
                     ? (l10n.isRussian
@@ -55,6 +56,7 @@ struct AppIconPickerView: View {
                     : (l10n.isRussian
                        ? "В этой установке приложения смена иконки недоступна."
                        : "This installation does not support alternate icons."))
+            }
             }
         }
         .modifier(SonivoSettingsFormStyle())

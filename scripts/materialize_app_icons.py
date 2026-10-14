@@ -16,7 +16,7 @@ def main() -> None:
         (DESTINATION / name).write_bytes(base64.b64decode(encoded, validate=True))
 
     # Settings thumbnails only. Home Screen icons are native Icon Composer documents.
-    for icon in ("SonivoMusic", "SignatureS", "SonivoWordmark", "ClassicWave"):
+    for icon in ("SonivoMusic", "SignatureS", "SonivoWordmark", "ClassicWave", "MusicGraphite", "MusicPrism", "MusicSapphire", "MusicNeon"):
         source = ROOT / "design" / "app-icon" / "previews" / f"{icon}.png.b64"
         destination = ROOT / "Sonivo" / "assets.xcassets" / f"AppIconPreview{icon}.imageset"
         destination.mkdir(parents=True, exist_ok=True)

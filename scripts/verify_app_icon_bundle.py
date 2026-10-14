@@ -10,7 +10,7 @@ def verify(app: Path) -> None:
     primary = icons.get("CFBundlePrimaryIcon", {})
     assert primary.get("CFBundleIconName") == "SonivoMusic", primary
     alternates = icons.get("CFBundleAlternateIcons", {})
-    expected = {"SignatureS", "SonivoWordmark", "ClassicWave"}
+    expected = {"SignatureS", "SonivoWordmark", "ClassicWave", "MusicGraphite", "MusicPrism", "MusicSapphire", "MusicNeon"}
     assert expected <= set(alternates), f"Missing alternates: {expected - set(alternates)}"
     for name in expected:
         assert alternates[name].get("CFBundleIconName") == name, alternates[name]

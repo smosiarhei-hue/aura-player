@@ -2,373 +2,213 @@ import Foundation
 import CoreHaptics
 import AVFoundation
 import UIKit
+import Observation
 
-/// Low-level nonisolated core engine for real-time audio haptic processing on audio threads.
+/// Hardware work is serialized, never performed inside the audio tap or a view.
 nonisolated final class MusicHapticsCore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.sonivo.musichaptics", qos: .userInteractive)
-    private let stateLock = NSLock()
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
     private var visualOverride = false
-    private var beatWaveOverride = false
-    private var lastBeatWaveEventID: UInt64 = 0
     private var engine: CHHapticEngine?
-    private var isEngineRunning = false
+    private var running = false
+    private var bassPlayer: (any CHHapticAdvancedPatternPlayer)?
+    private var lastBassUpdate: TimeInterval = 0
+    private var lastSignalAt: TimeInterval = 0
+    private var watchdog: DispatchSourceTimer?
 
-    // Multi-band flux and onset detection state
-    private var prevKick: Float = 0
-    private var prevBass: Float = 0
-    private var prevHiHat: Float = 0
-
-    private var kickThreshold: Float = 0.10
-    private var bassThreshold: Float = 0.09
-    private var hiHatThreshold: Float = 0.035
-
-    private var lastKickTime: TimeInterval = 0
-    private var lastBassTime: TimeInterval = 0
-    private var lastHiHatTime: TimeInterval = 0
-
-    // Cached latency compensation
-    private var lastLatencyCheckTime: TimeInterval = 0
-    private var cachedOutputDelay: TimeInterval = 0.025
-
-    init() {
-        queue.async { [weak self] in
-            self?.prepareEngine()
-        }
+    private func ticket() -> UInt64 { lock.lock(); defer { lock.unlock() }; return generation }
+    private func permits(_ value: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return generation == value && !visualOverride
     }
-
-    /// Avoid two competing haptic patterns during the fullscreen shader transition.
     func setVisualOverride(_ active: Bool) {
-        stateLock.lock()
-        visualOverride = active
-        stateLock.unlock()
+        lock.lock(); visualOverride=active; generation &+= 1; lock.unlock()
+        queue.async { [weak self] in self?.silence() }
     }
-
-    private var isVisualOverrideActive: Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return visualOverride
-    }
-
-    /// The hero's confirmed visual event owns haptics while it is running.
-    func setBeatWaveOverride(_ active: Bool) {
-        stateLock.lock(); beatWaveOverride = active; stateLock.unlock()
-    }
-    private var isBeatWaveOverrideActive: Bool {
-        stateLock.lock(); defer { stateLock.unlock() }; return beatWaveOverride
-    }
-
-    /// Called only for the SAME event ID that injected the visible spring impulse.
-    /// Presentation already accounts for the route estimate: do not add the delay twice.
-    func playBeatWaveKick(eventID: UInt64, strength: Float) {
-        queue.async { [weak self] in
-            guard let self, self.isBeatWaveOverrideActive, !self.isVisualOverrideActive,
-                  (UserDefaults.standard.object(forKey: "settings.musicHaptics") as? Bool ?? true),
-                  eventID > self.lastBeatWaveEventID,
-                  self.ensureEngineStarted(), let engine = self.engine else { return }
-            self.lastBeatWaveEventID = eventID
-            let setting = UserDefaults.standard.string(forKey: "settings.musicHapticsIntensity") ?? "strong"
-            let scale: Float = setting == "soft" ? 0.45 : (setting == "medium" ? 0.75 : 1)
-            let safeStrength = strength.isFinite ? max(0,min(1,strength)) : 0
-            let intensity = min(0.85,max(0.2,safeStrength)*scale)
-            let events = [
-                CHHapticEvent(eventType: .hapticTransient, parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity,value: intensity),
-                    CHHapticEventParameter(parameterID: .hapticSharpness,value: 0.25)
-                ],relativeTime: 0),
-                CHHapticEvent(eventType: .hapticContinuous, parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity,value: intensity*0.35),
-                    CHHapticEventParameter(parameterID: .hapticSharpness,value: 0.08)
-                ],relativeTime: 0.005,duration: 0.055)
-            ]
-            do {
-                let pattern = try CHHapticPattern(events: events,parameters: [])
-                let player = try engine.makePlayer(with: pattern)
-                try player.start(atTime: CHHapticTimeImmediate)
-            } catch { /* Hardware/session interruption: visuals keep working. */ }
-        }
-    }
-
-    /// Prepares low-latency CoreHaptics engine
-    private func prepareEngine() {
-        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+    private func startEngine() -> CHHapticEngine? {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return nil }
         do {
-            let hapticEngine = try CHHapticEngine()
-            hapticEngine.isAutoShutdownEnabled = true
-            hapticEngine.playsHapticsOnly = true
-            hapticEngine.resetHandler = { [weak self] in
-                self?.queue.async {
-                    try? self?.engine?.start()
-                    self?.isEngineRunning = true
+            if engine == nil {
+                let value=try CHHapticEngine()
+                value.playsHapticsOnly = true
+                value.isAutoShutdownEnabled=true
+                value.resetHandler = { [weak self] in
+                    self?.queue.async { [weak self] in self?.running=false; self?.bassPlayer=nil }
                 }
-            }
-            hapticEngine.stoppedHandler = { [weak self] _ in
-                self?.queue.async {
-                    self?.isEngineRunning = false
+                value.stoppedHandler = { [weak self] _ in
+                    self?.queue.async { [weak self] in self?.running=false; self?.bassPlayer=nil }
                 }
+                engine=value
             }
-            try hapticEngine.start()
-            isEngineRunning = true
-            engine = hapticEngine
-        } catch {
-            // Simulator or hardware unsupported
-        }
+            if !running { try engine?.start(); running=true }
+            return engine
+        } catch { running=false; return nil }
     }
-
-    private func ensureEngineStarted() -> Bool {
-        guard let engine else { return false }
-        if isEngineRunning { return true }
-        do {
-            try engine.start()
-            isEngineRunning = true
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    /// Calculates dynamic acoustic delay based on current audio route (Speakers, AirPods, Bluetooth)
-    private func computeOutputDelay() -> TimeInterval {
-        let now = CACurrentMediaTime()
-        if (now - lastLatencyCheckTime) > 1.0 {
-            lastLatencyCheckTime = now
-            let session = AVAudioSession.sharedInstance()
-            let latency = session.outputLatency + session.ioBufferDuration
-            // Subtract ~0.005s for Taptic Engine physical actuation rise time
-            cachedOutputDelay = max(0.0, latency - 0.005)
-        }
-        return cachedOutputDelay
-    }
-
-    /// Analyzes an un-smoothed 32-band spectrum snapshot from the audio tap on EVERY buffer.
-    /// Runs synchronously on the audio thread with minimal CPU cycles (pure arithmetic),
-    /// and dispatches haptic triggers to the interactive queue.
-    func processRawBands(_ values: [Float]) {
-        guard values.count >= 32, !isVisualOverrideActive, !isBeatWaveOverrideActive else { return }
-        guard UserDefaults.standard.bool(forKey: "settings.musicHaptics") else { return }
-
-        // 1. Compute instantaneous band energies (normalized 0...1)
-        // Sub/Bass: Bands 0..<4 (approx 30 Hz – 65 Hz)
-        let rawBass = (values[0] + values[1] + values[2] + values[3]) * 0.25
-        // Kick punch: Bands 3..<8 (approx 54 Hz – 144 Hz)
-        let rawKick = (values[3] + values[4] + values[5] + values[6] + values[7]) * 0.20
-        // Hi-Hat / Crisp Percussion: Bands 26..<32 (approx 6 kHz – 16 kHz)
-        let rawHiHat = (values[26] + values[27] + values[28] + values[29] + values[30] + values[31]) / 6.0
-
-        stateLock.lock()
-        // 2. Compute positive Spectral Flux (Half-Wave Rectification)
-        let dKick = max(0, rawKick - prevKick)
-        let dBass = max(0, rawBass - prevBass)
-        let dHiHat = max(0, rawHiHat - prevHiHat)
-
-        prevKick = rawKick
-        prevBass = rawBass
-        prevHiHat = rawHiHat
-
-        // 3. Update adaptive moving average thresholds
-        kickThreshold = kickThreshold * 0.90 + dKick * 0.10
-        bassThreshold = bassThreshold * 0.90 + dBass * 0.10
-        hiHatThreshold = hiHatThreshold * 0.90 + dHiHat * 0.10
-
-        let now = CACurrentMediaTime()
-
-        // 4. Onset tests
-        // Kick: sharp transient in 54-144 Hz with at least 105ms spacing
-        let isKick = (dKick > max(0.08, kickThreshold * 1.80))
-            && (rawKick > 0.15)
-            && ((now - lastKickTime) > 0.105)
-
-        // Hi-Hat: fast crisp transient in 6-16 kHz with at least 55ms spacing (allows 16th notes)
-        let isHiHat = (dHiHat > max(0.028, hiHatThreshold * 1.65))
-            && (rawHiHat > 0.04)
-            && ((now - lastHiHatTime) > 0.055)
-
-        // Bass: tonal attack or 808 drop in 30-65 Hz (suppressed if kick is dominant to avoid mud)
-        let isBass = !isKick
-            && (dBass > max(0.07, bassThreshold * 1.80))
-            && (rawBass > 0.16)
-            && ((now - lastBassTime) > 0.135)
-
-        if isKick { lastKickTime = now }
-        if isHiHat { lastHiHatTime = now }
-        if isBass { lastBassTime = now }
-
-        stateLock.unlock()
-
-        guard isKick || isHiHat || isBass else { return }
-
-        // 5. Read user intensity scale from UserDefaults
-        let intensityRaw = UserDefaults.standard.string(forKey: "settings.musicHapticsIntensity") ?? "strong"
-        let scaleFactor: Float
-        switch intensityRaw {
-        case "soft": scaleFactor = 0.45
-        case "medium": scaleFactor = 0.75
-        default: scaleFactor = 1.00
-        }
-
-        let kickIntensity = min(1.0, rawKick * 1.25) * scaleFactor
-        let hatIntensity = min(1.0, rawHiHat * 1.60) * scaleFactor
-        let bassIntensity = min(1.0, rawBass * 1.10) * scaleFactor
-
-        // 6. Schedule haptic playback on dedicated queue with acoustic latency compensation
-        queue.async { [weak self] in
+    private func armWatchdog() {
+        guard watchdog == nil else { return }
+        let timer=DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now()+0.05,repeating: .milliseconds(50))
+        timer.setEventHandler { [weak self] in
             guard let self else { return }
-            let delay = self.computeOutputDelay()
-            if delay > 0.005 {
-                self.queue.asyncAfter(deadline: .now() + delay) {
-                    self.fireEvents(kick: isKick ? kickIntensity : nil,
-                                   hiHat: isHiHat ? hatIntensity : nil,
-                                   bass: isBass ? bassIntensity : nil)
-                }
-            } else {
-                self.fireEvents(kick: isKick ? kickIntensity : nil,
-                               hiHat: isHiHat ? hatIntensity : nil,
-                               bass: isBass ? bassIntensity : nil)
-            }
+            if Date.timeIntervalSinceReferenceDate-self.lastSignalAt > 0.15 { self.silence() }
         }
+        watchdog=timer; timer.resume()
     }
-
-    /// Triggers distinct, physically separated Taptic Engine waveforms
-    private func fireEvents(kick: Float?, hiHat: Float?, bass: Float?) {
-        guard !isVisualOverrideActive, !isBeatWaveOverrideActive,
-              UserDefaults.standard.bool(forKey: "settings.musicHaptics"),
-              ensureEngineStarted(), let engine else { return }
-        var events = [CHHapticEvent]()
-
-        // A. Kick Drum Hit (Deep, Solid Mechanical Thump in the center of the palm)
-        if let kick {
-            let kickEvent = CHHapticEvent(
-                eventType: .hapticTransient,
-                parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: max(0.20, kick)),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.35)
-                ],
-                relativeTime: 0
-            )
-            events.append(kickEvent)
-        }
-
-        // B. Hi-Hat / Percussion (Ultra-sharp, delicate needle-click at the top edge)
-        if let hiHat {
-            let hatEvent = CHHapticEvent(
-                eventType: .hapticTransient,
-                parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: max(0.15, hiHat * 0.45)),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.98)
-                ],
-                relativeTime: 0
-            )
-            events.append(hatEvent)
-        }
-
-        // C. Bass / 808 Note Attack (Deep, warm, low-frequency subwoofer rumble)
-        if let bass {
-            let bassEvent = CHHapticEvent(
-                eventType: .hapticContinuous,
-                parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: max(0.20, bass * 0.85)),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.08)
-                ],
-                relativeTime: 0,
-                duration: 0.075
-            )
-            events.append(bassEvent)
-        }
-
-        guard !events.isEmpty else { return }
-
-        do {
-            let pattern = try CHHapticPattern(events: events, parameters: [])
-            let player = try engine.makePlayer(with: pattern)
-            try player.start(atTime: CHHapticTimeImmediate)
-        } catch {
-            // Silently recover if audio session interrupts
-        }
+    private func silence() {
+        try? bassPlayer?.stop(atTime: CHHapticTimeImmediate)
+        bassPlayer=nil; lastBassUpdate=0
+        watchdog?.cancel(); watchdog=nil
     }
-
-    /// Plays an instant, tactile sample sequence: Kick -> Hi-Hat -> Bass,
-    /// giving the user tactile feedback of the chosen strength in Settings.
-    func playPreview(intensity: MusicHapticsIntensity) {
+    func play(_ output: MusicHapticOutput) {
+        let epoch=ticket(), submitted=Date.timeIntervalSinceReferenceDate
         queue.async { [weak self] in
-            guard let self, self.ensureEngineStarted(), let engine = self.engine else { return }
-            let scale = intensity.scaleFactor
+            guard let self, self.permits(epoch), Date.timeIntervalSinceReferenceDate-submitted < 0.08 else { return }
+            guard output.kick > 0 || output.treble > 0 || output.bass > 0.005 else { self.silence(); return }
+            guard let engine=self.startEngine() else { return }
+            self.lastSignalAt=submitted
             do {
-                // 1. Kick thump at t = 0
-                let kick = CHHapticEvent(
-                    eventType: .hapticTransient,
-                    parameters: [
-                        CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.85 * scale),
-                        CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.35)
-                    ],
-                    relativeTime: 0
-                )
-                // 2. Hi-hat tick at t = 0.16s
-                let hat = CHHapticEvent(
-                    eventType: .hapticTransient,
-                    parameters: [
-                        CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.35 * scale),
-                        CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.98)
-                    ],
-                    relativeTime: 0.16
-                )
-                // 3. Bass rumble at t = 0.32s
-                let bass = CHHapticEvent(
-                    eventType: .hapticContinuous,
-                    parameters: [
-                        CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.70 * scale),
-                        CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.08)
-                    ],
-                    relativeTime: 0.32,
-                    duration: 0.08
-                )
-                let pattern = try CHHapticPattern(events: [kick, hat, bass], parameters: [])
-                let player = try engine.makePlayer(with: pattern)
-                try player.start(atTime: CHHapticTimeImmediate)
-            } catch {}
+                if output.bass > 0.005 {
+                    if self.bassPlayer == nil {
+                        let event=CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                            CHHapticEventParameter(parameterID: .hapticIntensity,value: 1),
+                            CHHapticEventParameter(parameterID: .hapticSharpness,value: 0.08)
+                        ],relativeTime: 0,duration: 1)
+                        let pattern=try CHHapticPattern(events: [event],parameters: [])
+                        let player=try engine.makeAdvancedPlayer(with: pattern)
+                        player.loopEnabled=true
+                        try player.sendParameters([CHHapticDynamicParameter(parameterID: .hapticIntensityControl,value: output.bass,relativeTime: 0)],atTime: CHHapticTimeImmediate)
+                        try player.start(atTime: CHHapticTimeImmediate)
+                        self.bassPlayer=player; self.lastBassUpdate=submitted
+                    } else if submitted-self.lastBassUpdate >= 0.04 {
+                        try self.bassPlayer?.sendParameters([CHHapticDynamicParameter(parameterID: .hapticIntensityControl,value: output.bass,relativeTime: 0)],atTime: CHHapticTimeImmediate)
+                        self.lastBassUpdate=submitted
+                    }
+                } else { self.silence() }
+                if self.bassPlayer != nil { self.armWatchdog() }
+                var events: [CHHapticEvent]=[]
+                for (strength,sharpness) in [(output.kick,Float(0.25)),(output.treble,Float(0.85))] where strength > 0 {
+                    events.append(CHHapticEvent(eventType: .hapticTransient,parameters: [
+                        CHHapticEventParameter(parameterID: .hapticIntensity,value: min(1,strength)),
+                        CHHapticEventParameter(parameterID: .hapticSharpness,value: sharpness)
+                    ],relativeTime: 0))
+                }
+                if !events.isEmpty {
+                    let player=try engine.makePlayer(with: CHHapticPattern(events: events,parameters: []))
+                    try player.start(atTime: CHHapticTimeImmediate)
+                }
+            } catch { self.silence(); self.running=false }
         }
     }
-
-    func reset() {
-        stateLock.lock()
-        prevKick = 0
-        prevBass = 0
-        prevHiHat = 0
-        kickThreshold = 0.10
-        bassThreshold = 0.09
-        hiHatThreshold = 0.035
-        lastKickTime = 0
-        lastBassTime = 0
-        lastHiHatTime = 0
-        stateLock.unlock()
-    }
-
-    func stop() {
-        reset()
+    func playPreview(scale: Float) {
+        let epoch=ticket()
         queue.async { [weak self] in
-            self?.engine?.stop()
-            self?.isEngineRunning = false
+            guard let self, self.permits(epoch), let engine=self.startEngine() else { return }
+            self.silence()
+            do {
+                let events=[CHHapticEvent(eventType: .hapticTransient,parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity,value: scale),
+                    CHHapticEventParameter(parameterID: .hapticSharpness,value: 0.25)
+                ],relativeTime: 0),CHHapticEvent(eventType: .hapticContinuous,parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity,value: scale*0.45),
+                    CHHapticEventParameter(parameterID: .hapticSharpness,value: 0.08)
+                ],relativeTime: 0.16,duration: 0.1)]
+                let player=try engine.makePlayer(with: CHHapticPattern(events: events,parameters: []))
+                try player.start(atTime: CHHapticTimeImmediate)
+            } catch { self.running=false }
+        }
+    }
+    func reset() { stop() }
+    func stop() {
+        lock.lock(); generation &+= 1; lock.unlock()
+        queue.async { [weak self] in
+            self?.silence(); self?.engine?.stop(); self?.running=false
         }
     }
 }
 
-/// Apple Music-grade hardware haptics engine (Taptic Engine) driven by real-time audio beats, bass, and percussion.
-/// Delivers separate, discernible tactile channels for Kick, Bass/808, and Hi-Hat/Treble,
-/// synchronized with acoustic output latency for deaf and hard-of-hearing music perception (iOS 18+).
-@MainActor
+/// Presentation clock owns vibration, independently of scrolling, Metal or refresh rate.
+@Observable @MainActor
 final class MusicHapticsManager {
     static let shared = MusicHapticsManager()
     nonisolated static let core = MusicHapticsCore()
-
+    private var timeline=MusicHapticTimeline()
+    private var signal=MusicHapticSignal()
+    private var poll: Task<Void,Never>?
+    private var lastClock: TimeInterval?
+    private var lastDueAt: TimeInterval = 0
+    private var previewUntil: TimeInterval = 0
+    private var delayCheckedAt: TimeInterval = 0
+    private var outputDelay: TimeInterval = 0
+    private(set) var synchronization = "Ожидание аудиоданных"
+    var supportsHaptics: Bool { CHHapticEngine.capabilitiesForHardware().supportsHaptics }
     private init() {}
 
+    func submit(_ frame: BeatWaveAudioFrame) {
+        guard supportsHaptics, SettingsStore.shared.musicHapticsEnabled,
+              UIApplication.shared.applicationState == .active, PlayerCore.shared.isPlaying else { return }
+        // Protected or unsupported streams without a PCM timestamp are not guessed.
+        guard !PlayerCore.shared.usesStreamingBackend || frame.mediaTime != nil else {
+            synchronization="Для этого потока нет таймкодов PCM"; return
+        }
+        timeline.push(frame)
+        if poll == nil {
+            poll=Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    self.tick()
+                    try? await Task.sleep(for: .milliseconds(8))
+                }
+            }
+        }
+    }
+    private func tick() {
+        guard UIApplication.shared.applicationState == .active, SettingsStore.shared.musicHapticsEnabled,
+              PlayerCore.shared.isPlaying else { stop(); return }
+        let now=Date.timeIntervalSinceReferenceDate
+        let deadline: TimeInterval
+        if PlayerCore.shared.usesStreamingBackend {
+            guard let clock=StreamBeatTap.shared.currentMediaClock(),clock.rate > 0 else {
+                Self.core.stop(); signal.reset(); lastDueAt=0; return
+            }
+            deadline=clock.time; synchronization="Синхронизация по таймкодам аудио"
+        } else {
+            if now-delayCheckedAt > 1 {
+                delayCheckedAt=now
+                let session=AVAudioSession.sharedInstance()
+                outputDelay=max(0,session.outputLatency+session.ioBufferDuration)
+            }
+            deadline=now-outputDelay; synchronization="Синхронизация по задержке аудиомаршрута"
+        }
+        if let previous=lastClock, deadline < previous-0.02 { reset(); return }
+        lastClock=deadline
+        let due=timeline.drain(at: deadline)
+        var mix=MusicHapticOutput()
+        var hasFresh=false
+        for frame in due {
+            let stamp=frame.mediaTime ?? frame.capturedAt
+            guard deadline-stamp < 0.08 else { signal.reset(); continue }
+            let output=signal.process(frame,ceiling: SettingsStore.shared.musicHapticsIntensity.scaleFactor,
+                                      automatic: SettingsStore.shared.musicHapticsAutomatic)
+            mix.kick=max(mix.kick,output.kick); mix.treble=max(mix.treble,output.treble); mix.bass=output.bass
+            hasFresh=true
+        }
+        if hasFresh {
+            lastDueAt=now
+            if now >= previewUntil { Self.core.play(mix) }
+        } else if now >= previewUntil && now-lastDueAt > 0.1 {
+            Self.core.stop(); signal.reset()
+            synchronization="Ожидание новых аудиоданных"
+        }
+    }
     func playPreview(intensity: MusicHapticsIntensity) {
-        Self.core.playPreview(intensity: intensity)
+        guard UIApplication.shared.applicationState == .active, supportsHaptics else { return }
+        previewUntil=Date.timeIntervalSinceReferenceDate+0.4
+        Self.core.stop(); Self.core.playPreview(scale: intensity.scaleFactor)
     }
-
     func stop() {
-        Self.core.stop()
+        poll?.cancel(); poll=nil; timeline.reset(); signal.reset(); lastClock=nil; lastDueAt=0
+        synchronization="Ожидание аудиоданных"; Self.core.stop()
     }
-
-    func reset() {
-        Self.core.reset()
-    }
+    func reset() { stop() }
 }

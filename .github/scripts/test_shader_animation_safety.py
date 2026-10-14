@@ -42,9 +42,9 @@ class ShaderAnimationSafetyTests(unittest.TestCase):
 
     def test_no_competing_music_haptics(self):
         music = (ROOT / 'Sonivo/MusicHapticsManager.swift').read_text()
-        self.assertIn('values.count >= 32, !isVisualOverrideActive', music)
-        self.assertIn('!isVisualOverrideActive, !isBeatWaveOverrideActive', music)
-        self.assertIn('ensureEngineStarted(), let engine', music)
+        self.assertIn('generation == value && !visualOverride', music)
+        self.assertIn('visualOverride=active; generation &+= 1', music)
+        self.assertIn('self.permits(epoch)', music)
         text = VIEW.read_text()
         self.assertIn('setVisualOverride(true)', text)
         self.assertIn('setVisualOverride(false)', text)
