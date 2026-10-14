@@ -46,10 +46,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          xcrun actool design/icon-composer/AppIcon.icon \
+          xcrun actool design/icon-composer/SonivoMusic.icon \
             --compile native-icon-results/compiled \
             --platform iphoneos --minimum-deployment-target 26.0 \
-            --target-device iphone --app-icon AppIcon \
+            --target-device iphone --app-icon SonivoMusic \
             --output-partial-info-plist native-icon-results/compiled/icon-info.plist \
             --output-format human-readable-text --warnings --notices \
             2>&1 | tee native-icon-results/actool.log
@@ -68,7 +68,7 @@ jobs:
           "$TOOL" --version 2>&1 | tee native-icon-results/ictool-version.txt
           "$TOOL" --help > native-icon-results/ictool-help.txt 2>&1 || true
           for RENDITION in Default Dark; do
-            "$TOOL" "$GITHUB_WORKSPACE/design/icon-composer/AppIcon.icon" \
+            "$TOOL" "$GITHUB_WORKSPACE/design/icon-composer/SonivoMusic.icon" \
               --export-image --output-file "$GITHUB_WORKSPACE/native-icon-results/$RENDITION.png" \
               --platform iOS --rendition "$RENDITION" --width 1024 --height 1024 --scale 1 \
               2>&1 | tee "native-icon-results/ictool-$RENDITION.log"

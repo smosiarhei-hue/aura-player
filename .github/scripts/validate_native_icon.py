@@ -5,12 +5,12 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGE = ROOT / 'design/icon-composer/AppIcon.icon'
+PACKAGE = ROOT / 'design/icon-composer/SonivoMusic.icon'
 icon = json.loads((PACKAGE / 'icon.json').read_text())
 assert len(icon['groups']) == 1
 assert icon['groups'][0]['lighting'] == 'combined'
 layers = icon['groups'][0]['layers']
-assert len(layers) == 2
+assert len(layers) == 3
 for layer in layers:
     name = layer['image-name']
     assert Path(name).name == name

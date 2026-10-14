@@ -1,11 +1,9 @@
-# Sonivo native icon validation
+# Sonivo Icon Composer candidates
 
-This is an isolated Icon Composer candidate. It does not replace the app's existing AppIcon.appiconset or change project.yml.
+`SonivoMusic.icon` is the current preview candidate: the original Sonivo S, an open rounded contour, and a five-bar waveform. `AppIcon.icon` retains the earlier full-wordmark candidate.
 
-The two original wordmark outlines share a 1024×1024 canvas and one Combined Liquid Glass group. The background is a native solid fill. Shadows and specular highlights are native group settings, not painted into the SVG files.
+The S is transformed uniformly from the original outlined source, not redrawn. All three foreground layers share a 1024x1024 canvas and a Combined native glass group. The charcoal background is a native solid fill. SVG artwork has no painted reflections, shadows, blur, alpha effects or corner masking.
 
-The Validate Native App Icon workflow runs Apple's actool and ictool on macOS and publishes compiled resources, logs and default/dark previews. A missing Apple tool, asset compilation error or rendering error fails validation; a flat fallback is never presented as a native preview.
+The macOS validation workflow compiles only the isolated candidate with Apple's actool and renders Default/Dark previews with the official Icon Composer ictool. It does not change project.yml or the app's production icon assets. No flat fallback is described as native.
 
-The manifest was constructed from observed Icon Composer files. It must pass native validation before production integration. CI rendering does not prove Home Screen appearance on a physical iPhone, including dynamic lighting, accessibility modes or small-size readability.
-
-The illustrative approved preview is not a native render. Commercial redistribution rights for the source lettering have not been verified and require review before release.
+CI rendering is not a physical iPhone Home Screen test. Validate dynamic lighting and small-size appearance on a device before release. Source-lettering redistribution rights require review before commercial distribution.

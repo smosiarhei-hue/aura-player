@@ -1,0 +1,138 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "blur-material": 0.1,
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "hidden": false,
+          "image-name": "10-original-S.svg",
+          "name": "Original Sonivo S",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "hidden": false,
+          "image-name": "20-sound-frame.svg",
+          "name": "Open sound contour",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "hidden": false,
+          "image-name": "30-wave.svg",
+          "name": "Audio waveform",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting": "combined",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.08
+      },
+      "name": "Sonivo Music Sign"
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}
