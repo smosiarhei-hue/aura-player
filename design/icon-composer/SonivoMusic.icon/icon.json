@@ -2,19 +2,19 @@
   "fill-specializations": [
     {
       "value": {
-        "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
+        "solid": "srgb:0.08627,0.08627,0.08627,1.00000"
       }
     },
     {
       "appearance": "dark",
       "value": {
-        "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
+        "solid": "srgb:0.08627,0.08627,0.08627,1.00000"
       }
     }
   ],
   "groups": [
     {
-      "blur-material": 0.1,
+      "blur-material": 0,
       "layers": [
         {
           "fill-specializations": [
@@ -36,7 +36,7 @@
               }
             }
           ],
-          "glass": true,
+          "glass": false,
           "hidden": false,
           "image-name": "10-original-S.svg",
           "name": "Original Sonivo S",
@@ -69,7 +69,7 @@
               }
             }
           ],
-          "glass": true,
+          "glass": false,
           "hidden": false,
           "image-name": "20-sound-frame.svg",
           "name": "Open sound contour",
@@ -102,7 +102,7 @@
               }
             }
           ],
-          "glass": true,
+          "glass": false,
           "hidden": false,
           "image-name": "30-wave.svg",
           "name": "Audio waveform",
@@ -119,12 +119,12 @@
       "lighting": "combined",
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.3
+        "opacity": 0.06
       },
-      "specular": true,
+      "specular": false,
       "translucency": {
-        "enabled": true,
-        "value": 0.08
+        "enabled": false,
+        "value": 0
       },
       "name": "Sonivo Music Sign"
     }
