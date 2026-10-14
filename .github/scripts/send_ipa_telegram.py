@@ -1,5 +1,5 @@
 # Path: .github/scripts/send_ipa_telegram.py
-"""Deliver an unsigned IPA without logging credentials or Telegram response bodies."""
+"""Deliver a small IPA or a build-link message; never log credentials or API bodies."""
 
 import http.client
 import json
@@ -24,7 +24,6 @@ MESSAGES = {
     "bot_as_chat": "TELEGRAM_CHAT_ID is the bot ID, not the destination chat ID.",
     "invalid_context": "Missing or invalid GitHub build context.",
     "missing_ipa": "The IPA file is missing or empty.",
-    "ipa_too_large": "IPA exceeds the 50 MB upload limit; download the GitHub Actions artifact.",
     "unauthorized": "Telegram rejected authentication. Check or rotate the GitHub bot token.",
     "forbidden": "Telegram denied delivery. Check whether the bot is blocked or lacks chat access.",
     "chat_not_found": "Telegram could not find the chat. Check its ID and start the bot first.",
@@ -33,7 +32,8 @@ MESSAGES = {
     "telegram_error": "Telegram returned an error; the response body was not logged.",
     "unconfirmed": "Delivery is unconfirmed. Check Telegram before retrying to avoid duplicates.",
     "internal_error": "Delivery failed locally; exception details were suppressed to protect secrets.",
-    "success": "Telegram confirmed the IPA document message. Installation requires signing.",
+    "success": "Telegram confirmed the IPA document message.",
+    "success_link": "Telegram confirmed the build-link message; the IPA exceeded the file upload limit.",
 }
 
 
@@ -64,20 +64,20 @@ def configuration(env):
     owner = repository.split("/")[0] if "/" in repository else ""
     repo_name = repository.split("/")[1] if "/" in repository else ""
     ota_url = f"https://{owner}.github.io/{repo_name}/"
+    branch = env.get("GITHUB_REF_NAME", "")
+    if not re.fullmatch(r"[A-Za-z0-9_.\-/]{1,160}", branch):
+        branch = "не указана"
+    caption = (f"Sonivo — новая сборка\n"
+               f"Версия: {version} (сборка #{build_num or run})\n"
+               f"Коммит: {sha[:7]}\nВетка: {branch}\n\n")
     if is_signed:
-        caption = (f"🚀 Sonivo — ГОТОВА К УСТАНОВКЕ!\n"
-                   f"Версия: {version} (сборка #{build_num})\n"
-                   f"Сертификат разработчика: активен до 05.12.2026\n\n"
-                   f"📲 Установка в 1 тап (как TestFlight):\n"
-                   f"{ota_url}\n\n"
-                   f"👉 Открой ссылку в Safari на iPhone и нажми «Установить».\n"
-                   f"Сборка: {build_url}")
+        caption += "Подписанная IPA.\n"
+        if env.get("OTA_PUBLISHED", "").lower() == "true":
+            caption += (f"📲 Установка: {ota_url}\n"
+                        "Откройте в Safari на iPhone. Устройство должно поддерживаться профилем сборки.\n")
     else:
-        caption = ("Sonivo — АКТУАЛЬНАЯ MAIN IPA без подписи.\n"
-                   "Содержит последние изменения основной ветки.\n"
-                   "Для установки требуется подпись.\n"
-                   f"Коммит main: {sha[:7]}\n"
-                   "Сборка: " + build_url)
+        caption += "IPA без подписи. Для установки требуется подпись.\n"
+    caption += "Сборка и файл IPA: " + build_url
     return token, chat, caption
 
 
@@ -96,11 +96,11 @@ def multipart(chat, caption, data, filename="Sonivo.ipa"):
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
-def post_document(token, body, content_type):
-    # Use a fixed host, TLS, no redirects, no automatic retries and no request logging.
+def post_request(token, method, body, content_type):
+    # Fixed TLS host, no redirects, retries or request logging.
     connection = http.client.HTTPSConnection("api.telegram.org", timeout=180)
     try:
-        connection.request("POST", f"/bot{token}/sendDocument", body=body,
+        connection.request("POST", f"/bot{token}/{method}", body=body,
                            headers={"Content-Type": content_type})
         response = connection.getresponse()
         return response.status, response.read(1_000_001)
@@ -108,7 +108,15 @@ def post_document(token, body, content_type):
         connection.close()
 
 
-def confirm_response(status, raw):
+def post_document(token, body, content_type):
+    return post_request(token, "sendDocument", body, content_type)
+
+
+def post_message(token, body, content_type):
+    return post_request(token, "sendMessage", body, content_type)
+
+
+def confirm_response(status, raw, *, document=True):
     try:
         payload = json.loads(raw)
     except (ValueError, UnicodeError):
@@ -131,27 +139,41 @@ def confirm_response(status, raw):
     if not isinstance(result, dict):
         raise DeliveryError("unconfirmed")
     message_id = result.get("message_id")
-    document = result.get("document")
-    if (type(message_id) is not int or message_id <= 0
-            or not isinstance(document, dict)
-            or not isinstance(document.get("file_id"), str)
-            or not document["file_id"]):
+    if type(message_id) is not int or message_id <= 0:
+        raise DeliveryError("unconfirmed")
+    if document:
+        attachment = result.get("document")
+        if (not isinstance(attachment, dict)
+                or not isinstance(attachment.get("file_id"), str)
+                or not attachment["file_id"]):
+            raise DeliveryError("unconfirmed")
+    elif not isinstance(result.get("text"), str) or not result["text"]:
         raise DeliveryError("unconfirmed")
 
 
-def deliver(env, path, transport=post_document):
+def deliver(env, path, transport=post_document, message_transport=post_message):
     token, chat, caption = configuration(env)
     if not path.is_file() or path.stat().st_size == 0:
         raise DeliveryError("missing_ipa")
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise DeliveryError("ipa_too_large")
-    body, content_type = multipart(chat, caption, path.read_bytes(), filename=path.name)
+    size = path.stat().st_size
+    link_only = size > MAX_FILE_BYTES
+    if link_only:
+        caption += (f"\n\nIPA: {size / 1_000_000:.2f} МБ. Файл не приложен: лимит загрузки бота — 50 МБ."
+                    " Скачайте IPA из сборки по ссылке выше.")
+        body = json.dumps({"chat_id": chat, "text": caption,
+                           "link_preview_options": {"is_disabled": True}}, ensure_ascii=False).encode("utf-8")
+        content_type = "application/json; charset=utf-8"
+        selected_transport = message_transport
+    else:
+        body, content_type = multipart(chat, caption, path.read_bytes(), filename=path.name)
+        selected_transport = transport
     try:
-        status, raw = transport(token, body, content_type)
+        status, raw = selected_transport(token, body, content_type)
     except Exception:
         # A timeout after upload does not prove that Telegram did not receive it.
         raise DeliveryError("unconfirmed") from None
-    confirm_response(status, raw)
+    confirm_response(status, raw, document=not link_only)
+    return "success_link" if link_only else "success"
 
 
 def record_status(code, env):
@@ -165,7 +187,7 @@ def record_status(code, env):
             output.write(f"## Telegram IPA delivery\n\n**{code}** — {message}\n")
 
 
-def main(env=None, path=None, transport=post_document):
+def main(env=None, path=None, transport=post_document, message_transport=post_message):
     env = os.environ if env is None else env
     if path is None:
         if Path("Sonivo.ipa").is_file():
@@ -175,8 +197,7 @@ def main(env=None, path=None, transport=post_document):
         else:
             path = Path("Sonivo.ipa")
     try:
-        deliver(env, path, transport)
-        code = "success"
+        code = deliver(env, path, transport, message_transport)
     except DeliveryError as error:
         code = error.args[0] if error.args[0] in MESSAGES else "internal_error"
     except Exception:
@@ -186,7 +207,7 @@ def main(env=None, path=None, transport=post_document):
     except OSError:
         print("Unable to persist safe delivery status.")
         return 1
-    return 0 if code == "success" else 1
+    return 0 if code in ("success", "success_link") else 1
 
 
 if __name__ == "__main__":

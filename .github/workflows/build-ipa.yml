@@ -261,6 +261,7 @@ jobs:
           if-no-files-found: error
 
       - name: Deploy OTA to GitHub Pages
+        id: ota
         if: env.HAS_SIGNING == 'true'
         env:
           GH_PAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -269,7 +270,7 @@ jobs:
           BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
         run: python3 .github/scripts/deploy_ota_pages.py
 
-      - name: Send current main IPA to configured Telegram chat
+      - name: Send IPA or installation link to configured Telegram chat
         if: >-
           github.repository == 'smosiarhei-hue/aura-player' &&
           (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.head_ref == 'feature/modern-my-wave-home' || github.ref == 'refs/heads/feature/modern-my-wave-home' || github.event_name == 'workflow_dispatch')
@@ -277,6 +278,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8559869613' }}
           IPA_IS_SIGNED: ${{ env.IPA_IS_SIGNED }}
+          OTA_PUBLISHED: ${{ steps.ota.outcome == 'success' }}
           MARKETING_VERSION: ${{ env.MARKETING_VERSION }}
           BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
         run: python3 .github/scripts/send_ipa_telegram.py
