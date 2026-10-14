@@ -104,7 +104,7 @@ struct RootView: View {
                 }
             }
         }
-        .modifier(SonivoCaptureBrand())
+        .modifier(SonivoLiveActivityLifecycle())
         .accessibilityIdentifier("sonivo.root.tabs")
         .tint(themeManager.accentColor).tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory {
@@ -112,8 +112,8 @@ struct RootView: View {
         }
         .sheet(item: $rootSheet) { sheet in
             switch sheet {
-            case .account: YandexAuthSheet(onLoggedIn: { tab = .home }).modifier(SonivoCaptureBrand())
-            case .settings: SettingsView().modifier(SonivoCaptureBrand())
+            case .account: YandexAuthSheet(onLoggedIn: { tab = .home })
+            case .settings: SettingsView()
             }
         }
         .onChange(of: ym.isRestoringInitialAccount) { _, restoring in

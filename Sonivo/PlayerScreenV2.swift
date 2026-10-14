@@ -173,15 +173,14 @@ struct PlayerScreenV2: View {
             .ignoresSafeArea(.container, edges: .all)
         }
         .background(SN.bg.ignoresSafeArea())
-        .modifier(SonivoCaptureBrand())
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
-                case .queue: QueueSheetView().modifier(SonivoCaptureBrand())
+                case .queue: QueueSheetView()
                 case .equalizer: PlayerEQSheetView()
                 case .sleepTimer: SleepTimerSheetView()
-                case .settings: SettingsView().modifier(SonivoCaptureBrand())
-                case .quality: PlayerQualityModalView(player: player, onDismiss: { activeModal = nil }).modifier(SonivoCaptureBrand())
+                case .settings: SettingsView()
+                case .quality: PlayerQualityModalView(player: player, onDismiss: { activeModal = nil })
                 case .artistSelection: artistSelectionSheet
                 case .lyrics:
                     LyricsView(lyrics: lyrics, isLoading: lyricsLoading, player: player)

@@ -41,15 +41,19 @@ class LiveActivityBrandTests(unittest.TestCase):
             bad=copy.deepcopy(valid)
             (bad[nested] if nested else bad)[key]=value
             with self.assertRaises(ValueError):validate_profile(bad,app,'app.example.sonivo','TEAM',now)
-    def test_branding_uses_real_safe_area_not_system_recording_or_post_capture_overlay(self):
+    def test_no_in_app_brand_bar_or_screenshot_trigger(self):
         text=source('Sonivo/SonivoCaptureBrand.swift')
-        self.assertIn('@Environment(\\.isSceneCaptured)',text)
-        self.assertIn('alwaysVisible || isCaptured',text)
-        self.assertIn('.safeAreaInset(edge: .top',text)
-        for bad in ['userDidTakeScreenshot','UIScreen.main.isCaptured','UIWindow(', 'ReplayKit','RPScreenRecorder','AVAudioSession']:self.assertNotIn(bad,text)
+        self.assertIn('struct SonivoLiveActivityLifecycle: ViewModifier',text)
+        for bad in ['safeAreaInset', 'SonivoCaptureBrandBar', 'isSceneCaptured', 'captureBrandVisible', 'userDidTakeScreenshot', 'UIWindow(', 'ReplayKit', 'RPScreenRecorder']:
+            self.assertNotIn(bad,text)
+        for file in ['Sonivo/sonivoapp.swift','Sonivo/PlayerScreenV2.swift','Sonivo/playerchrome.swift']:
+            self.assertNotIn('.modifier(SonivoCaptureBrand())',source(file))
+        self.assertIn('.modifier(SonivoLiveActivityLifecycle())',source('Sonivo/sonivoapp.swift'))
         appearance=source('Sonivo/SonivoAppearanceView.swift')
         self.assertIn('!SonivoLiveActivityController.isEmbedded',appearance)
-        self.assertIn('System recording indicators are unchanged',appearance)
+        self.assertNotIn('showCaptureBrand',appearance)
+        self.assertNotIn('Бренд на экране',appearance)
+        self.assertIn('A screenshot captures the existing interface',appearance)
     def test_activity_is_bounded_and_does_not_own_audio(self):
         text=source('Sonivo/SonivoLiveActivityController.swift')
         self.assertIn('UIApplication.shared.applicationState == .active',text)
