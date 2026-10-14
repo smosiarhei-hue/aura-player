@@ -28,7 +28,7 @@ class StreamStartupRecoveryTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform=='darwin','Executable production recovery fixture requires macOS AVFoundation')
     def test_production_recovery_guards_and_single_retry(self):
         c=source('playercore.swift')
-        recovery=c[c.index('    private func recoverStreamStartup'):c.index('    private func acceptsCachedPlayback')].replace('private func','func')
+        recovery=c[c.index('    private func recoverStreamStartup'):c.index('    private func skipFailedWaveTrack')].replace('private func','func')
         fixture=r'''
 import Foundation
 import AVFoundation
@@ -62,6 +62,7 @@ nonisolated enum AudioQuality { case hq }
         precondition(seconds == progress && token == generation); starts += 1
         activeStreamingPlayer.replaceCurrentItem(with:AVPlayerItem(url:url))
     }
+    func skipFailedWaveTrack() -> Bool { false } // Ordinary playlist fixture; Wave tested separately.
     RECOVERY
     init() { activeStreamingPlayer.replaceCurrentItem(with:AVPlayerItem(url:URL(fileURLWithPath:"/tmp/generated-invalid-fixture"))) }
 }

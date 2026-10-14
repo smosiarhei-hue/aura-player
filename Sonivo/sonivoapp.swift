@@ -22,6 +22,7 @@ struct SonivoApp: App {
     var body: some Scene {
         WindowGroup { SonivoLaunchHost() }
             .onChange(of: scenePhase) { _, phase in
+                if phase != .active { PlayerCore.shared.savePlaybackState() }
                 guard phase == .background else { return }
                 let lease = UIApplication.shared.beginBackgroundTask(withName: "Library metadata save", expirationHandler: nil)
                 Task { @MainActor in
@@ -114,7 +115,11 @@ struct RootView: View {
             case .settings: SettingsView()
             }
         }
+        .onChange(of: ym.isRestoringInitialAccount) { _, restoring in
+            if !restoring { player.restorePlaybackState() }
+        }
         .onChange(of: ym.isUserLoggedIn) { _, loggedIn in
+            if loggedIn { player.restorePlaybackState() }
             if !loggedIn {
                 if tab == .browse || tab == .radio { tab = .home }
                 restrictGuestPlayback()
@@ -126,7 +131,8 @@ struct RootView: View {
         }
         .onAppear {
             PlaybackAudioSessionCoordinator.shared.install()
-            if !ym.isUserLoggedIn { restrictGuestPlayback() }
+            player.restorePlaybackState()
+            if !ym.isUserLoggedIn && !ym.isRestoringInitialAccount { restrictGuestPlayback() }
             let active = (scenePhase == .active)
             player.setApplicationSceneActive(active)
             AutoMixV2NowPlayingCenter.shared.setApplicationSceneActive(active)

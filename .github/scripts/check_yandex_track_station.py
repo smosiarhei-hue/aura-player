@@ -49,6 +49,10 @@ nonisolated enum RepeatMode { case off, all, one }
 @MainActor final class Selector {
     var queue = [Track(id:1),Track(id:2),Track(id:3),Track(id:4),Track(id:5)]
     var currentTrack: Track? = Track(id:5)
+    var waveRecovery = WavePlaybackRecovery()
+    var restoredWaveStation: String?
+    var isYandexWavePlayback: Bool { YandexMusicService.shared.activeStationId != nil || restoredWaveStation != nil }
+    static func yandexTrackID(from track: Track) -> String { String(track.id) }
     var shuffle = false
     var repeatMode: RepeatMode = .off
     func effectiveQueue() -> [Track] { queue }
@@ -65,7 +69,7 @@ nonisolated enum RepeatMode { case off, all, one }
         let settings = ["diversity":"default","language":"any","moodEnergy":"all"]
         let transport = Transport()
         let client = YandexWaveSession<Item>(send: { try await transport.send($0) }, identity: { $0.id }, playable: { $0.available != false })
-        transport.responses = [batch("session-A","batch-A",["1","3","2","3"]),batch(nil,"batch-B",["2","4","5"]),batch(nil,"batch-C",["1","2","3","4","5"])]
+        transport.responses = [batch("session-A","batch-A",["1","3","2","3"]),batch(nil,"batch-B",["2","4","5"]),batch(nil,"batch-C",["1","2","3","4","5"]),batch(nil,"batch-D",["1","2","3","4","5"]),batch(nil,"batch-E",["1","2","3","4","5"])]
         let first = try await client.start(station:"track:1",settings:settings,history:["1"],seedTrack:"1")
         precondition(first.map(\.id) == ["3","2"])
         let startRequest = transport.requests.first { $0.url!.path == "/rotor/session/new" }!
@@ -175,6 +179,16 @@ nonisolated enum RepeatMode { case off, all, one }
         let cancelled = Task { @MainActor in try await client.start(station:"track:7",settings:settings,history:[]) }
         cancelled.cancel()
         do { _ = try await cancelled.value; preconditionFailure("Cancelled startup accepted") } catch {}
+        // All received IDs, not just playable items, advance the server exclusion queue.
+        transport.responses = [("{\"result\":{\"radioSessionId\":\"unavailable\",\"batchId\":\"u1\",\"sequence\":[{\"track\":{\"id\":\"20\",\"available\":false}}]}}",200),batch(nil,"u2",["20:99","21"])]
+        let drained = try await client.start(station:"user:onyourwave",settings:settings,history:[])
+        precondition(drained.map(\.id) == ["21"])
+        let unavailableRequest = transport.requests.last { $0.url!.path.hasSuffix("/tracks") }!
+        precondition(body(unavailableRequest)["queue"] as! [String] == ["20"])
+        transport.responses = [batch(nil,"u3",["21:555","22"])]
+        let aliases = try await client.next(excluding:["21"])
+        precondition(aliases.map(\.id) == ["22"])
+        precondition(client.serverID == "unavailable")
         // Actual production selector: five songs never wrap in radio, even with global shuffle/repeat.
         let selector = Selector()
         YandexMusicService.shared.activeStationId = "user:onyourwave"
@@ -189,7 +203,16 @@ nonisolated enum RepeatMode { case off, all, one }
                 selector.currentTrack = Track(id:5)
             }
         }
+        selector.currentTrack = Track(id:2)
+        selector.waveRecovery.prepare(context:"fixture")
+        precondition(selector.waveRecovery.fail("3"))
+        precondition(selector.waveRecovery.fail("4"))
+        precondition(selector.peekNext(auto:true)?.id == 5)
+        selector.currentTrack = Track(id:5)
         YandexMusicService.shared.activeStationId = nil
+        selector.restoredWaveStation = "user:onyourwave"
+        precondition(selector.peekNext(auto:true) == nil) // Restored Wave never wraps either.
+        selector.restoredWaveStation = nil
         selector.shuffle = false; selector.repeatMode = .off
         precondition(selector.peekNext(auto:false) == nil) // signed-in catalog playlist requests continuation
         YandexMusicService.shared.isUserLoggedIn = false
@@ -215,7 +238,7 @@ nonisolated enum RepeatMode { case off, all, one }
     with tempfile.TemporaryDirectory() as directory:
         p=Path(directory);(p/'Checks.swift').write_text(fixture)
         result=subprocess.run(['swiftc','-swift-version','6','-default-isolation','MainActor','-strict-concurrency=complete',
-            '-parse-as-library',str(root/'Sonivo/YandexWaveSession.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True,timeout=90)
+            '-parse-as-library',str(root/'Sonivo/YandexWaveSession.swift'),str(root/'Sonivo/PlaybackResumePolicy.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True,timeout=90)
         assert result.returncode == 0, result.stderr[:8000]
         result=subprocess.run([str(p/'checks')],capture_output=True,text=True,timeout=30)
         assert result.returncode == 0,result.stdout+result.stderr[:8000]

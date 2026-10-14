@@ -35,7 +35,7 @@ class PlayerTrackWaveTests(unittest.TestCase):
         self.assertIn('self.queueContinuationID == queueID',refill)
         self.assertIn('ym.accountGeneration == account',refill)
         self.assertNotIn('filterAndRankWave',refill)
-        self.assertIn('remainingAhead <= (ym.activeStationId == nil ? 0 : 5)',refill)
+        self.assertIn('remainingAhead <= (isYandexWavePlayback ? 5 : 0)',refill)
     def test_native_secondary_actions_are_below_primary_wave_and_scrollable(self):
         screen=source('PlayerScreenV2.swift')
         body=screen.split('var body: some View',1)[1].split('.sheet(item:',1)[0]

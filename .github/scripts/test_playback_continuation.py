@@ -10,7 +10,7 @@ class PlaybackContinuationTests(unittest.TestCase):
         refill=s.split('func refillQueueIfNeeded()',1)[1].split('private func flushListeningStats',1)[0]
         self.assertNotIn('playbackRequestID',refill)
         self.assertIn('self.queueContinuationID == queueID',refill)
-        self.assertIn('remainingAhead <= (ym.activeStationId == nil ? 0 : 5)',refill)
+        self.assertIn('remainingAhead <= (isYandexWavePlayback ? 5 : 0)',refill)
         self.assertIn('if duration > 0, progress >= duration - 0.1 { next(); return }',s)
     def test_compact_graph_and_consistent_limits(self):
         ui=(ROOT/'Sonivo/playerchrome.swift').read_text()

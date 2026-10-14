@@ -102,17 +102,27 @@ final class YandexWaveSession<Item: Decodable> {
                                   "includeTracksInResponse": true, "includeWaveModel": true, "interactive": true]
         if let seedTrack { body["trackToStartFrom"] = seedTrack }
         let response = try await data(request("/rotor/session/new", body: body))
-        let batch = try JSONDecoder().decode(Envelope.self, from: response).result
+        var batch = try JSONDecoder().decode(Envelope.self, from: response).result
         guard generation == operation, canCommit() else { throw CancellationError() }
-        guard let id = batch.radioSessionId, !id.isEmpty, batch.terminated != true else { throw Failure.badResponse }
-        let items = (batch.sequence ?? []).compactMap(\.track).filter(playable)
-        let excluded = Set(history)
-        guard items.contains(where: { !excluded.contains(identity($0)) }) else { throw Failure.badResponse }
-        self.station = station; serverID = id; terminal = false
-        issued = Array(history.suffix(1000)); batches = [:]
-        let accepted = accept(batch)
+        guard let id = batch.radioSessionId, !id.isEmpty, batch.unknownSession != true else { throw Failure.badResponse }
+        // Drain unavailable/duplicate batches locally before replacing the live session.
+        var candidateIssued = Array(history.suffix(1000))
+        var candidateBatches: [String: String] = [:]
+        var accepted: [Item] = []
+        for attempt in 0..<3 {
+            accepted = accept(batch, issued: &candidateIssued, batches: &candidateBatches)
+            if !accepted.isEmpty { break }
+            guard batch.terminated != true, attempt < 2 else { throw Failure.badResponse }
+            let payload = try await data(request("/rotor/session/\(id)/tracks",
+                body: ["queue": Array(candidateIssued.suffix(1000))]))
+            batch = try JSONDecoder().decode(Envelope.self, from: payload).result
+            guard generation == operation, canCommit() else { throw CancellationError() }
+            guard batch.unknownSession != true else { throw Failure.unknownSession }
+        }
+        guard generation == operation, canCommit(), !accepted.isEmpty else { throw CancellationError() }
+        self.station = station; serverID = id; terminal = batch.terminated == true
+        issued = candidateIssued; batches = candidateBatches
         unacknowledged = accepted
-        guard !accepted.isEmpty else { throw Failure.badResponse }
         var event: [String: Any] = ["type": "radioStarted", "timestamp": timestamp()]
         event["trackId"] = nil
         var feedback: [String: Any] = ["event": event, "from": "sonivo-ios"]
@@ -131,42 +141,56 @@ final class YandexWaveSession<Item: Decodable> {
             guard generation == operation else { throw CancellationError() }
         }
         guard let serverID else { return [] }
-        let excluded = Set(excluding)
-        unacknowledged.removeAll { excluded.contains(identity($0)) || !playable($0) }
+        let excluded = Set(excluding.map(Self.canonicalID))
+        unacknowledged.removeAll { excluded.contains(Self.canonicalID(identity($0))) || !playable($0) }
         if !unacknowledged.isEmpty { return unacknowledged }
         guard !terminal else { return [] }
         fetching = true
         defer { fetching = false }
         await flushFeedback()
         guard generation == operation else { throw CancellationError() }
-        var queue = issued
-        for id in excluding where !queue.contains(id) { queue.append(id) }
-        let response = try await data(request("/rotor/session/\(serverID)/tracks", body: ["queue": Array(queue.suffix(1000))]))
-        let batch = try JSONDecoder().decode(Envelope.self, from: response).result
-        guard generation == operation, self.serverID == serverID else { throw CancellationError() }
-        if batch.unknownSession == true {
-            terminal = true
-            feedbacks.removeAll { $0.session == serverID }
-            playingContexts = playingContexts.filter { $0.value.session != serverID }
-            throw Failure.unknownSession
+        for _ in 0..<3 {
+            var queue = issued
+            for id in excluding where !queue.contains(id) { queue.append(id) }
+            let response = try await data(request("/rotor/session/\(serverID)/tracks", body: ["queue": Array(queue.suffix(1000))]))
+            let batch = try JSONDecoder().decode(Envelope.self, from: response).result
+            guard generation == operation, self.serverID == serverID else { throw CancellationError() }
+            if batch.unknownSession == true {
+                terminal = true
+                feedbacks.removeAll { $0.session == serverID }
+                playingContexts = playingContexts.filter { $0.value.session != serverID }
+                throw Failure.unknownSession
+            }
+            var received = issued, contexts = batches
+            let accepted = accept(batch, issued: &received, batches: &contexts, excluding: excluded)
+            issued = received; batches = contexts
+            unacknowledged = accepted
+            if batch.terminated == true {
+                terminal = true
+                if accepted.isEmpty { throw Failure.terminated }
+            }
+            log("Next batch; accepted=\(accepted.count)")
+            if !accepted.isEmpty { return accepted }
         }
-        let accepted = accept(batch, excluding: excluded)
-        unacknowledged = accepted
-        if batch.terminated == true {
-            terminal = true
-            if accepted.isEmpty { throw Failure.terminated }
-        }
-        log("Next batch; accepted=\(accepted.count)")
-        return accepted
+        return [] // A server outage must never become an unbounded refill loop.
     }
 
-    private func accept(_ batch: Batch, excluding: Set<String> = []) -> [Item] {
-        var seen = Set(issued).union(excluding)
+    nonisolated static func canonicalID(_ id: String) -> String {
+        String(id.split(separator: ":", maxSplits: 1).first ?? Substring(id))
+    }
+
+    private func accept(_ batch: Batch, issued: inout [String], batches: inout [String: String],
+                        excluding: Set<String> = []) -> [Item] {
+        var seen = Set(issued.map(Self.canonicalID)).union(excluding)
         var accepted: [Item] = []
-        for item in (batch.sequence ?? []).compactMap(\.track) where playable(item) {
+        for item in (batch.sequence ?? []).compactMap(\.track) {
             let id = identity(item)
-            guard !id.isEmpty, seen.insert(id).inserted else { continue }
-            issued.append(id)
+            guard !id.isEmpty else { continue }
+            let fresh = seen.insert(Self.canonicalID(id)).inserted
+            // queue means ALL received IDs, including unavailable and disliked tracks.
+            // Otherwise Yandex can keep offering an item we silently discarded.
+            if !issued.contains(id) { issued.append(id) }
+            guard fresh, playable(item) else { continue }
             if let batchID = batch.batchId { batches[id] = batchID }
             accepted.append(item)
         }

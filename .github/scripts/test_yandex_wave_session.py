@@ -36,7 +36,7 @@ class YandexWaveSessionTests(unittest.TestCase):
         self.assertIn('if shuffle && !serverRadio',s)
         self.assertLess(s.index('if serverRadio { return nil }'),s.index('if repeatMode == .all'))
         finish=source('playercore.swift').split('private func handleTrackFinish()',1)[1].split('private var lastRefillCheck',1)[0]
-        self.assertIn('repeatMode == .one && YandexMusicService.shared.activeStationId == nil',finish)
+        self.assertIn('repeatMode == .one && !isYandexWavePlayback',finish)
     def test_events_have_per_track_party_and_outbox(self):
         s=source('YandexWaveSession.swift')
         for token in ['playingContexts','batches[trackID]','"event": event, "batchId": context.batch','totalPlayedSeconds','feedbacks.removeFirst()','Feedback pending']:

@@ -740,7 +740,7 @@ final class YandexMusicService {
         let settings = waveServerSettings
         guard isUserLoggedIn else { return [] }
         do {
-            let history = Array(recentYmIDs.prefix(Self.noRepeatWindow).reversed())
+            let history = waveQueueHistory()
             let items = try await waveSession.start(station: stationId, settings: settings,
                 history: history, seedTrack: seedID, canCommit: { [weak self] in
                     guard let self else { return false }
@@ -768,11 +768,18 @@ final class YandexMusicService {
         return await startYandexWave(stationId: "track:\(seedID)", seedID: seedID).map { convertToTrack($0) }
     }
 
+    private func waveQueueHistory() -> [String] {
+        var seen = Set<String>()
+        let played = Array(recentYmIDs.prefix(Self.noRepeatWindow).reversed())
+        let queued = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
+        return (played + queued).filter { seen.insert($0).inserted }
+    }
+
     func refillYandexWave() async -> [YMTrackItem] {
         guard activeStationId != nil, isUserLoggedIn else { return [] }
         let session = rotorSessionID
         do {
-            let history = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
+            let history = waveQueueHistory()
             let items = try await waveSession.next(excluding: history)
             guard rotorSessionID == session, !Task.isCancelled else { return [] }
             if items.isEmpty && waveSession.requiresRestart { return await renewExpiredWave(session: session) }
@@ -789,7 +796,7 @@ final class YandexMusicService {
     private func renewExpiredWave(session: UUID) async -> [YMTrackItem] {
         guard let station = activeStationId, rotorSessionID == session else { return [] }
         let account = accountGeneration
-        let history = PlayerCore.shared.queue.compactMap { Self.ymId(fromFileName: $0.fileName) }
+        let history = waveQueueHistory()
         do {
             let items = try await waveSession.start(station: station, settings: appliedWaveSettings ?? waveServerSettings,
                 history: history, canCommit: { [weak self] in

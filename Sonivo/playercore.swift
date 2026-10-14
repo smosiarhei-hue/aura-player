@@ -579,6 +579,7 @@ final class PlayerCore {
                         }
 
                         self.recordWavePlaybackTick()
+                        self.checkpointPlaybackProgress()
                         self.syncNowPlayingElapsedIfNeeded()
                         self.scheduleTransitionIfNeeded()
                         self.refillQueueIfNeeded()
@@ -716,36 +717,79 @@ final class PlayerCore {
         updateAudioRouteState()
     }
 
+    private var didRestorePlaybackState = false
+    private var lastPlaybackCheckpoint: Date?
+    private var restoredWaveStation: String?
+    private var waveRecovery = WavePlaybackRecovery()
+    private var isYandexWavePlayback: Bool {
+        YandexMusicService.shared.activeStationId != nil || restoredWaveStation != nil
+    }
+
+    private func checkpointTrack(_ track: Track) -> Track {
+        var copy = track
+        // Catalog URLs expire and can contain credentials. Resolve a fresh URL on resume.
+        if YandexMusicService.ymId(fromFileName: copy.fileName) != nil { copy.streamUrlString = nil }
+        if copy.id == currentTrack?.id, streamDuration.isFinite, streamDuration > 0 { copy.duration = streamDuration }
+        return copy
+    }
     func savePlaybackState() {
         guard let track = currentTrack else {
-            defaults.removeObject(forKey: "player.lastTrack")
-            defaults.removeObject(forKey: "player.lastProgress")
-            defaults.removeObject(forKey: "player.lastQueue")
+            guard didRestorePlaybackState else { return }
+            for key in ["player.lastTrack", "player.lastProgress", "player.lastQueue", "player.lastOwner", "player.lastWaveStation"] {
+                defaults.removeObject(forKey: key)
+            }
             return
         }
-        if let data = try? JSONEncoder().encode(track) {
+        if let data = try? JSONEncoder().encode(checkpointTrack(track)) {
             defaults.set(data, forKey: "player.lastTrack")
         }
-        defaults.set(progress, forKey: "player.lastProgress")
-        if !queue.isEmpty, let qData = try? JSONEncoder().encode(Array(queue.prefix(60))) {
-            defaults.set(qData, forKey: "player.lastQueue")
-        }
+        defaults.set(PlaybackResumePolicy.position(progress, duration: streamDuration > 0 ? streamDuration : (currentTrack?.duration ?? 0)), forKey: "player.lastProgress")
+        let range = PlaybackResumePolicy.queueRange(count: queue.count, currentIndex: queue.firstIndex { $0.id == track.id })
+        if !queue.isEmpty, let data = try? JSONEncoder().encode(Array(queue[range]).map(checkpointTrack)) {
+            defaults.set(data, forKey: "player.lastQueue")
+        } else { defaults.removeObject(forKey: "player.lastQueue") }
+        if track.isStream, let uid = YandexMusicService.shared.currentUser?.uid {
+            defaults.set(uid, forKey: "player.lastOwner")
+        } else { defaults.removeObject(forKey: "player.lastOwner") }
+        if let station = YandexMusicService.shared.activeStationId ?? restoredWaveStation {
+            defaults.set(station, forKey: "player.lastWaveStation")
+        } else { defaults.removeObject(forKey: "player.lastWaveStation") }
+        lastPlaybackCheckpoint = Date()
+    }
+
+    private func checkpointPlaybackProgress() {
+        guard currentTrack != nil, isPlaying else { return }
+        let now = Date()
+        guard lastPlaybackCheckpoint.map({ now.timeIntervalSince($0) >= 2 }) ?? true else { return }
+        // Full metadata only at track/queue boundaries, not 60/120 times per second.
+        defaults.set(PlaybackResumePolicy.position(progress, duration: streamDuration > 0 ? streamDuration : (currentTrack?.duration ?? 0)), forKey: "player.lastProgress")
+        lastPlaybackCheckpoint = now
     }
 
     func restorePlaybackState() {
-        guard let data = defaults.data(forKey: "player.lastTrack"),
-              let track = try? JSONDecoder().decode(Track.self, from: data) else { return }
-
+        guard !didRestorePlaybackState, !YandexMusicService.shared.isRestoringInitialAccount else { return }
+        didRestorePlaybackState = true
+        guard currentTrack == nil, !isPlaying,
+              let data = defaults.data(forKey: "player.lastTrack"),
+              let decoded = try? JSONDecoder().decode(Track.self, from: data) else { return }
+        let service = YandexMusicService.shared
+        if decoded.isStream {
+            guard service.isUserLoggedIn, let owner = defaults.object(forKey: "player.lastOwner") as? Int,
+                  owner == service.currentUser?.uid else { savePlaybackState(); return }
+        } else if !FileManager.default.fileExists(atPath: decoded.url.path) {
+            savePlaybackState(); return
+        }
+        let track = checkpointTrack(decoded)
         currentTrack = track
-        let savedProg = defaults.double(forKey: "player.lastProgress")
-        progress = max(0, min(savedProg, track.duration > 0 ? track.duration : savedProg))
-        pausedProgress = progress
-        streamDuration = track.duration
-
+        progress = PlaybackResumePolicy.position(defaults.double(forKey: "player.lastProgress"), duration: track.duration)
+        pausedProgress = progress; streamDuration = track.duration
+        isPlaying = false
         if let qData = defaults.data(forKey: "player.lastQueue"),
            let savedQueue = try? JSONDecoder().decode([Track].self, from: qData) {
-            queue = savedQueue
+            queue = savedQueue.filter { $0.isStream ? service.isUserLoggedIn : FileManager.default.fileExists(atPath: $0.url.path) }.map(checkpointTrack)
         }
+        if !queue.contains(where: { $0.id == track.id }) { queue.insert(track, at: 0) }
+        restoredWaveStation = track.isStream ? defaults.string(forKey: "player.lastWaveStation") : nil
         updateNowPlayingInfo()
     }
 
@@ -1151,12 +1195,15 @@ final class PlayerCore {
 
     func play(_ track: Track, newQueue: [Track]? = nil, radio: Bool = false) {
         guard !track.isStream || YandexMusicService.shared.isUserLoggedIn else { return }
+        didRestorePlaybackState = true
         invalidateQueueContinuation()
         flushListeningStats()
         reportWaveSkipIfNeeded()
         if !radio && YandexMusicService.shared.activeStationId != nil {
             YandexMusicService.shared.endStationSession()
         }
+        restoredWaveStation = nil
+        waveRecovery = WavePlaybackRecovery()
         if let q = newQueue, q != queue { queue = q }
         if !YandexMusicService.shared.isUserLoggedIn { queue.removeAll { $0.isStream } }
         currentTrack = track
@@ -1269,24 +1316,24 @@ final class PlayerCore {
             streamDuration = nextTrack.duration
             start(at: 0)
             refillQueueIfNeeded()
-        } else if let cur = currentTrack, (YandexMusicService.shared.activeStationId != nil || repeatMode != .one) {
-            let requestToken = generation
+        } else if let cur = currentTrack, (isYandexWavePlayback || repeatMode != .one) {
+            let requestToken = generation, requestQueue = queueContinuationID
             Task { @MainActor in
                 let wave = await self.loadQueueContinuation(seed:cur)
-                guard self.generation == requestToken, self.currentTrack?.id == cur.id else { return }
+                guard self.generation == requestToken, self.queueContinuationID == requestQueue, self.currentTrack?.id == cur.id else { return }
                 if let ready = self.peekNext(auto:true) {
                     self.currentTrack = ready; self.streamDuration = ready.duration
                     self.start(at:0); self.refillQueueIfNeeded(); return
                 }
                 let existing = Set(self.queue.map(\.id))
-                let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id }
+                let fresh = wave.filter { !existing.contains($0.id) && $0.id != cur.id && !self.waveRecovery.excludes(Self.yandexTrackID(from: $0)) }
                 if let first = fresh.first {
                     self.queue.append(contentsOf: fresh)
                     self.currentTrack = first
                     self.streamDuration = first.duration
                     self.start(at: 0)
                     self.refillQueueIfNeeded()
-                } else if YandexMusicService.shared.activeStationId != nil {
+                } else if self.isYandexWavePlayback {
                     self.pause()
                     self.playError = YandexMusicService.shared.waveError ?? "Ожидаем продолжение волны. Нажмите следующий, чтобы повторить запрос."
                 } else {
@@ -1343,6 +1390,8 @@ final class PlayerCore {
                 scheduleLocalSegment(file, on: activePlayer, at: clamped)
             }
         }
+        pausedProgress = clamped
+        savePlaybackState()
         lastNowPlayingSync = nil
         updateNowPlayingInfo()
     }
@@ -1373,6 +1422,10 @@ final class PlayerCore {
         activeAudioFile = nil
         incomingAudioFile = nil
         currentTrack = nil
+        didRestorePlaybackState = true
+        restoredWaveStation = nil
+        waveRecovery = WavePlaybackRecovery()
+        savePlaybackState()
         activeStreamURL = nil
         metadataTrack = nil
         incomingTrack = nil
@@ -1395,6 +1448,10 @@ final class PlayerCore {
         incomingTrack = nil
         guard let track = currentTrack else { return }
         waveListening.reset()
+        streamDuration = track.duration
+        progress = PlaybackResumePolicy.position(seconds, duration: track.duration)
+        pausedProgress = progress
+        savePlaybackState()
         playError = nil
         plannedNextTrack = nil
         generation += 1
@@ -1506,7 +1563,9 @@ final class PlayerCore {
                 self.lastNowPlayingSync = nil
                 self.updateNowPlayingInfo()
             } catch {
+                guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
                 self.activeAudioFile = nil
+                if track.isStream, self.skipFailedWaveTrack() { return }
                 self.isPlaying = false
                 self.playError = "Не удалось открыть аудио: \(error.localizedDescription)"
             }
@@ -1537,6 +1596,7 @@ final class PlayerCore {
     }
 
     private func startStream(_ track: Track, at seconds: Double, token: Int) {
+        let account = YandexMusicService.shared.accountGeneration
         isUsingStreamPlayer = true
         if engine.isRunning {
             engine.pause()
@@ -1553,7 +1613,7 @@ final class PlayerCore {
         let isCatalogTrack = YandexMusicService.ymId(fromFileName: track.fileName) != nil || !ymID.isEmpty
         let url = track.url
         if !isCatalogTrack, url.scheme == "http" || url.scheme == "https" {
-            guard self.generation == token, self.currentTrack?.id == track.id else { return }
+            guard YandexMusicService.shared.accountGeneration == account, self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
             currentBitrate = nil
             currentCodec = nil
             beginStream(url, at: seconds, token: token)
@@ -1563,7 +1623,7 @@ final class PlayerCore {
         if !isCatalogTrack, let streamStr = track.streamUrlString,
            let streamURL = URL(string: streamStr),
            streamURL.scheme == "http" || streamURL.scheme == "https" {
-            guard self.generation == token, self.currentTrack?.id == track.id else { return }
+            guard YandexMusicService.shared.accountGeneration == account, self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
             currentBitrate = nil
             currentCodec = nil
             beginStream(streamURL, at: seconds, token: token)
@@ -1573,19 +1633,19 @@ final class PlayerCore {
         Task {
             do {
                 let info = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: self.audioQuality, preferredBitrate: self.audioQuality.targetBitrate)
-                guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                guard YandexMusicService.shared.accountGeneration == account, self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
                 self.currentBitrate = info.bitrate
                 self.currentCodec = info.codec
                 self.currentTrack?.streamUrlString = info.url.absoluteString
                 self.activeStreamURL = info.url
                 self.beginStream(info.url, at: seconds, token: token)
             } catch {
-                guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
+                guard YandexMusicService.shared.accountGeneration == account, self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
                 // standard aliases HQ; explicitly bypass signed sources for recovery.
                 if !(error is CancellationError) {
                     do {
                         let fallbackInfo = try await YandexMusicService.shared.getStreamInfo(for: ymID, preferredQuality: .standard, preferredBitrate: 320, legacyOnly: true)
-                        guard self.generation == token, self.currentTrack?.id == track.id else { return }
+                        guard YandexMusicService.shared.accountGeneration == account, self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
                         self.currentBitrate = fallbackInfo.bitrate
                         self.currentCodec = fallbackInfo.codec
                         self.currentTrack?.streamUrlString = fallbackInfo.url.absoluteString
@@ -1594,15 +1654,17 @@ final class PlayerCore {
                         return
                     } catch { }
                 }
-                guard self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
+                guard YandexMusicService.shared.accountGeneration == account, self.generation == token, self.currentTrack?.id == track.id, self.isPlaying else { return }
                 // Network/API unavailable: preserve existing offline playback without deleting a file.
                 if let cached = self.findLocalOrCachedAudioFile(for: track, respectingQuality: false) {
                     self.startLocal(track, at: seconds, token: token, fileURL: cached)
                     return
                 }
+                if self.skipFailedWaveTrack() { return }
                 self.isPlaying = false
                 self.transitionScheduled = false
                 self.playError = "Не удалось открыть поток трека"
+                self.savePlaybackState()
             }
         }
     }
@@ -1763,8 +1825,27 @@ final class PlayerCore {
     private func failStreamStartup() {
         streamStartupTask?.cancel()
         activeStreamingPlayer.pause()
+        if skipFailedWaveTrack() { return }
         isStreamBuffering = false; isPlaying = false; transitionScheduled = false
         playError = "Не удалось запустить аудио. Повторите попытку и отправьте диагностику качества."
+    }
+
+    private func skipFailedWaveTrack() -> Bool {
+        let service = YandexMusicService.shared
+        guard isPlaying, isYandexWavePlayback, service.isUserLoggedIn,
+              let track = currentTrack, track.isStream else { return false }
+        let id = Self.yandexTrackID(from: track)
+        let station = service.activeStationId ?? restoredWaveStation ?? ""
+        waveRecovery.prepare(context: service.accountGeneration.uuidString + station)
+        guard waveRecovery.fail(id) else { return false }
+        activeStreamingPlayer.pause(); playerA.stop(); playerB.stop()
+        stopTimer(); anchorDate = nil; activeAudioFile = nil
+        isStreamBuffering = false
+        let seconds = waveListening.finish(trackID: id) ?? 0
+        service.reportSkip(trackId: id, totalPlayedSeconds: seconds)
+        SonivoDiagnostics.log("Unavailable Wave source skipped", tag: "WAVE")
+        next() // Native queue order; peekNext excludes failed IDs and never wraps Wave.
+        return true
     }
 
     private func acceptsCachedPlayback(_ url: URL, for track: Track) -> Bool {
@@ -2311,7 +2392,7 @@ final class PlayerCore {
             }
         }
 
-        if repeatMode == .one && YandexMusicService.shared.activeStationId == nil {
+        if repeatMode == .one && !isYandexWavePlayback {
             start(at: 0)
             finishBgTask()
             return
@@ -2321,18 +2402,18 @@ final class PlayerCore {
             start(at: 0)
             refillQueueIfNeeded()
             finishBgTask()
-        } else if let current = currentTrack, (YandexMusicService.shared.activeStationId != nil || repeatMode != .one) {
-            let requestToken = generation
+        } else if let current = currentTrack, (isYandexWavePlayback || repeatMode != .one) {
+            let requestToken = generation, requestQueue = queueContinuationID
             Task { @MainActor in
                 defer { finishBgTask() }
                 let wave = await self.loadQueueContinuation(seed:current)
-                guard self.generation == requestToken, self.currentTrack?.id == current.id, self.isPlaying else { return }
+                guard self.generation == requestToken, self.queueContinuationID == requestQueue, self.currentTrack?.id == current.id, self.isPlaying else { return }
                 if let ready = self.peekNext(auto:true) {
                     self.currentTrack = ready; self.streamDuration = ready.duration
                     self.start(at:0); self.refillQueueIfNeeded(); return
                 }
                 let existing = Set(self.queue.map(\.id))
-                let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id }
+                let fresh = wave.filter { !existing.contains($0.id) && $0.id != current.id && !self.waveRecovery.excludes(Self.yandexTrackID(from: $0)) }
                 guard !fresh.isEmpty else {
                     self.playError = YandexMusicService.shared.waveError ?? (YandexMusicService.ymId(fromFileName:current.fileName) == nil
                         ? "Очередь закончилась. Для радио нужен трек из подключённого каталога."
@@ -2360,10 +2441,13 @@ final class PlayerCore {
 
     private func loadQueueContinuation(seed: Track) async -> [Track] {
         let ym = YandexMusicService.shared
-        guard ym.activeStationId != nil || MoodRadioEngine.shared.isTrackWaveActive || (ym.isUserLoggedIn && YandexMusicService.ymId(fromFileName:seed.fileName) != nil) else { return [] }
+        guard isYandexWavePlayback || MoodRadioEngine.shared.isTrackWaveActive || (ym.isUserLoggedIn && YandexMusicService.ymId(fromFileName:seed.fileName) != nil) else { return [] }
         let key = queueContinuationID.uuidString + ym.accountGeneration.uuidString
+        let restoredStation = restoredWaveStation
         return await continuationLoader.load(key:key) {
-            if ym.activeStationId?.hasPrefix("track:") == true {
+            if ym.activeStationId == nil, let station = restoredStation {
+                return await ym.startYandexWave(stationId: station).map { ym.convertToTrack($0) }
+            } else if ym.activeStationId?.hasPrefix("track:") == true {
                 return await ym.refillYandexTrackWave(target:25)
             } else if ym.activeStationId != nil {
                 return await ym.refillYandexWave().map { ym.convertToTrack($0) }
@@ -2378,15 +2462,15 @@ final class PlayerCore {
 
     func refillQueueIfNeeded() {
         let ym = YandexMusicService.shared
-        guard isPlaying, !isRefillingWave, (ym.activeStationId != nil || repeatMode == .off), let current = currentTrack else { return }
+        guard isPlaying, !isRefillingWave, (isYandexWavePlayback || repeatMode == .off), let current = currentTrack else { return }
         let now = Date()
         if let last = lastRefillCheck, now.timeIntervalSince(last) < 4.0 { return }
         let q = effectiveQueue()
         guard let currentIndex = q.firstIndex(where: { $0.id == current.id }) else { return }
         let remainingAhead = q.count - 1 - currentIndex
         // Do not start a new station halfway through a finite playlist. Prepare it during its last song.
-        guard remainingAhead <= (ym.activeStationId == nil ? 0 : 5) else { return }
-        guard ym.activeStationId != nil || MoodRadioEngine.shared.isTrackWaveActive || (ym.isUserLoggedIn && YandexMusicService.ymId(fromFileName:(q.last ?? current).fileName) != nil) else { return }
+        guard remainingAhead <= (isYandexWavePlayback ? 5 : 0) else { return }
+        guard isYandexWavePlayback || MoodRadioEngine.shared.isTrackWaveActive || (ym.isUserLoggedIn && YandexMusicService.ymId(fromFileName:(q.last ?? current).fileName) != nil) else { return }
         lastRefillCheck = now; isRefillingWave = true
         let seed = q.last ?? current, queueID = queueContinuationID, account = ym.accountGeneration
         let sessionID = ym.rotorSessionID, stationBefore = ym.activeStationId
@@ -2399,10 +2483,11 @@ final class PlayerCore {
             guard startingStation || (ym.rotorSessionID == sessionID && ym.activeStationId == stationBefore) else { return }
             let existing = Set(self.queue.map(\.id))
             var seen = existing
-            let fresh = rawTracks.filter { $0.id != self.currentTrack?.id && seen.insert($0.id).inserted }
+            let fresh = rawTracks.filter { $0.id != self.currentTrack?.id && !self.waveRecovery.excludes(Self.yandexTrackID(from: $0)) && seen.insert($0.id).inserted }
             guard !fresh.isEmpty else { return }
             // Native server order, no local shuffle/reranking of a Yandex track station.
             self.queue.append(contentsOf:fresh)
+            self.savePlaybackState()
             self.playError = nil
             if let next = self.peekNext(auto:true) { self.preloadArtwork(for:next) }
         }
@@ -2434,6 +2519,7 @@ final class PlayerCore {
             YandexMusicService.shared.reportTrackStarted(trackId: id)
             YandexMusicService.shared.remember(key: track.id.uuidString, artist: track.artist, ymTrackId: id)
         }
+        waveRecovery.heard(seconds: waveListening.seconds)
     }
     func reportWaveDislike(_ track: Track, isDisliked: Bool) {
         let id = Self.yandexTrackID(from: track)
@@ -2484,7 +2570,7 @@ final class PlayerCore {
     private func peekNext(auto: Bool) -> Track? {
         let q = effectiveQueue()
         guard !q.isEmpty else { return nil }
-        let serverRadio = YandexMusicService.shared.activeStationId != nil
+        let serverRadio = isYandexWavePlayback
         if shuffle && !serverRadio {
             if q.count == 1 { return repeatMode == .off && auto ? nil : q[0] }
             let candidates = q.filter { $0.id != currentTrack?.id }
@@ -2492,7 +2578,12 @@ final class PlayerCore {
         }
         guard let cur = currentTrack, let idx = q.firstIndex(where: { $0.id == cur.id }) else { return q.first }
         let nextIdx = idx + 1
-        if nextIdx < q.count { return q[nextIdx] }
+        if nextIdx < q.count {
+            if serverRadio {
+                return q[nextIdx...].first { !waveRecovery.excludes(Self.yandexTrackID(from: $0)) }
+            }
+            return q[nextIdx]
+        }
         if serverRadio { return nil }
         if repeatMode == .all { return q.first }
         if !auto, (!YandexMusicService.shared.isUserLoggedIn || YandexMusicService.ymId(fromFileName:cur.fileName) == nil) { return q.first }
@@ -2524,6 +2615,7 @@ final class PlayerCore {
         guard isPlaying, !isUsingStreamPlayer else { return }
         progress = liveProgress()
         recordWavePlaybackTick()
+        checkpointPlaybackProgress()
         syncNowPlayingElapsedIfNeeded()
         scheduleTransitionIfNeeded()
         refillQueueIfNeeded()
