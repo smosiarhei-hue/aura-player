@@ -29,6 +29,8 @@ nonisolated enum YandexSearchContract {
                           URLQueryItem(name: "page",value: String(max(0,page))),
                           URLQueryItem(name: "nocorrect",value: noCorrect ? "true" : "false"),
                           URLQueryItem(name: "playlist-in-best",value: "false")]
+        // Form-style server query parsers otherwise treat a literal + as a space.
+        parts.percentEncodedQuery=parts.percentEncodedQuery?.replacingOccurrences(of: "+",with: "%2B")
         guard let url=parts.url else { throw URLError(.badURL) }
         return url
     }

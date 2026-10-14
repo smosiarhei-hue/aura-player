@@ -161,8 +161,8 @@ struct SearchCatalogView: View {
                 .padding(.horizontal, 16)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(results.artists.prefix(12)) { artist in
+                LazyHStack(spacing: 14) {
+                    ForEach(results.artists) { artist in
                         NavigationLink {
                             ArtistView(artistId: artist.id)
                         } label: {
@@ -194,8 +194,8 @@ struct SearchCatalogView: View {
                 .padding(.horizontal, 16)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(results.albums.prefix(12)) { album in
+                LazyHStack(spacing: 14) {
+                    ForEach(results.albums) { album in
                         NavigationLink {
                             AlbumView(albumId: String(album.id), title: album.displayTitle)
                         } label: {
@@ -335,7 +335,6 @@ struct SearchCatalogView: View {
                     ForEach(recentSearches, id: \.self) { item in
                         Button {
                             searchText = item
-                            performSearch(immediate: true)
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "magnifyingglass")

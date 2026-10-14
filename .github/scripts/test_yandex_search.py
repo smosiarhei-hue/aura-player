@@ -19,6 +19,8 @@ class YandexSearchTests(unittest.TestCase):
             self.assertIn(view+'(isActive: tab == .search)',root)
         ui=(ROOT/'Sonivo/searchviews.swift').read_text()
         self.assertNotIn('.searchable',ui)
+        self.assertNotIn("results.artists.prefix(12)",ui)
+        self.assertNotIn("results.albums.prefix(12)",ui)
         for text in ['requestID == id','searchTask?.cancel()','async let hints','kind: selectedKind,page: nextPage,noCorrect: exact','Искать исходный запрос','Показать ещё','Поиск недоступен','lastRequestWasMore=more']:
             self.assertIn(text,ui)
         self.assertLess(ui.index('results=found'),ui.index('let suggested=await hints'))
@@ -41,6 +43,7 @@ for kind in YandexSearchKind.allCases {
     let url=try YandexSearchContract.url(base:"https://api.music.yandex.net",text:"  AC/DC  +  & музыка \n ",kind:kind,page:2,noCorrect:true)
     let q=URLComponents(url:url,resolvingAgainstBaseURL:false)!.queryItems!
     check(q.first(where:{$0.name == "text"})!.value == "AC/DC + & музыка")
+    check(URLComponents(url:url,resolvingAgainstBaseURL:false)!.percentEncodedQuery!.contains("%2B"))
     check(q.first(where:{$0.name == "type"})!.value == kind.rawValue)
     check(q.first(where:{$0.name == "page"})!.value == "2")
     check(q.first(where:{$0.name == "nocorrect"})!.value == "true")
@@ -54,7 +57,7 @@ for status in [401,403,429,503] {
     do { try YandexSearchContract.validate(r,bytes:1); fatalError("HTTP failure accepted") } catch is YandexSearchError {}
 }
 let data=Data(#"{"result":{"misspellCorrected":true,"misspellResult":"Гражданская оборона","best":{"type":"track","result":{"id":"88","title":"Точное имя"}},"tracks":{"total":21,"perPage":20,"results":[{"id":"9","title":"Z first"},{"id":"2","title":"A second"}]},"artists":{"results":[{"id":42,"name":"Number"},{"id":"43","name":"String","cover":{"uri":"cover/%%"}}]}}}"#.utf8)
-let result=try JSONDecoder().decode(YMCatalogSearchResponse.self,from:data).result!
+private let result=try JSONDecoder().decode(YMCatalogSearchResponse.self,from:data).result!
 check(result.tracks!.results!.map(\.id) == ["9","2"])
 check(result.best!.track!.id == "88")
 check(result.artists!.results!.map(\.id) == ["42","43"])
