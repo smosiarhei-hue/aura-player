@@ -1,0 +1,66 @@
+name: Validate Native App Icon
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/modern-my-wave-home]
+    paths:
+      - design/icon-composer/**
+      - .github/workflows/validate-native-icon.yml
+      - .github/scripts/validate_native_icon.py
+permissions:
+  contents: read
+concurrency:
+  group: native-icon-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record Apple toolchain
+        run: |
+          mkdir -p native-icon-results/compiled
+          { sw_vers; xcodebuild -version; xcrun --sdk iphoneos --show-sdk-version; } | tee native-icon-results/toolchain.txt
+      - name: Validate layer structure
+        run: python3 .github/scripts/validate_native_icon.py
+      - name: Compile icon with Apple's asset compiler
+        shell: bash
+        run: |
+          set -o pipefail
+          xcrun actool design/icon-composer/AppIcon.icon \
+            --compile native-icon-results/compiled \
+            --platform iphoneos --minimum-deployment-target 26.0 \
+            --target-device iphone --app-icon AppIcon \
+            --output-partial-info-plist native-icon-results/compiled/icon-info.plist \
+            --output-format human-readable-text --warnings --notices \
+            2>&1 | tee native-icon-results/actool.log
+          test -s native-icon-results/compiled/Assets.car
+      - name: Render native Liquid Glass previews
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p native-icon-results
+          TOOL=$(find /Applications -type f -name ictool -print -quit 2>/dev/null || true)
+          if [ -z "$TOOL" ]; then
+            echo '::error::ictool is not installed on this runner; no native preview was generated.'
+            exit 1
+          fi
+          "$TOOL" --version 2>&1 | tee native-icon-results/ictool-version.txt
+          "$TOOL" --help > native-icon-results/ictool-help.txt 2>&1 || true
+          for RENDITION in Default Dark; do
+            "$TOOL" "$GITHUB_WORKSPACE/design/icon-composer/AppIcon.icon" \
+              --export-image --output-file "$GITHUB_WORKSPACE/native-icon-results/$RENDITION.png" \
+              --platform iOS --rendition "$RENDITION" --width 1024 --height 1024 --scale 1 \
+              2>&1 | tee "native-icon-results/ictool-$RENDITION.log"
+            test -s "native-icon-results/$RENDITION.png"
+            sips -g pixelWidth -g pixelHeight "native-icon-results/$RENDITION.png"
+          done
+      - name: Upload native compiler logs and previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sonivo-native-icon-validation
+          path: native-icon-results/
+          if-no-files-found: error

@@ -1,0 +1,42 @@
+{
+  "color-space-for-untagged-svg-colors": "srgb",
+  "fill": {
+    "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
+  },
+  "groups": [
+    {
+      "name": "Sonivo Wordmark",
+      "lighting": "combined",
+      "specular": true,
+      "blur-material": 0.05,
+      "translucency": {
+        "enabled": true,
+        "value": 0.08
+      },
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "layers": [
+        {
+          "name": "S",
+          "image-name": "10-S.svg",
+          "fill": {
+            "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+          },
+          "glass": true,
+          "opacity": 1
+        },
+        {
+          "name": "onivo",
+          "image-name": "20-onivo.svg",
+          "fill": {
+            "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+          },
+          "glass": true,
+          "opacity": 1
+        }
+      ]
+    }
+  ]
+}
