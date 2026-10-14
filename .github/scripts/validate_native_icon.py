@@ -14,6 +14,8 @@ assert len(layers) == 2
 for layer in layers:
     name = layer['image-name']
     assert Path(name).name == name
+    assert layer['position']['scale'] == 1
+    assert layer['position']['translation-in-points'] == [0, 0]
     svg = ET.parse(PACKAGE / 'Assets' / name).getroot()
     assert svg.attrib['viewBox'] == '0 0 1024 1024'
     assert {x.tag.rsplit('}', 1)[-1] for x in svg.iter()} <= {'svg', 'title', 'path'}
