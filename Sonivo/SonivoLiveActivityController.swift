@@ -8,7 +8,7 @@ final class SonivoLiveActivityController {
     static let shared = SonivoLiveActivityController()
     static let enabledKey = "appearance.liveActivityEnabled"
     static var isEmbedded: Bool { Bundle.main.object(forInfoDictionaryKey: "SonivoLiveActivityEmbedded") as? Bool == true }
-    private var current: Activity<SonivoActivityAttributes>?
+    private var currentID: String?
     private var desired: SonivoActivityAttributes.ContentState?
     private var previous: SonivoActivityAttributes.ContentState?
     private var revision = 0
@@ -22,7 +22,7 @@ final class SonivoLiveActivityController {
     func synchronize(track: Track?, playing: Bool, elapsed: Double, duration: Double) {
         let enabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
         guard Self.isEmbedded, enabled, ActivityAuthorizationInfo().areActivitiesEnabled, let track else {
-            guard current != nil || !Activity<SonivoActivityAttributes>.activities.isEmpty else { return }
+            guard currentID != nil || !Activity<SonivoActivityAttributes>.activities.isEmpty else { return }
             enqueue(nil); return
         }
         let seconds = elapsed.isFinite ? max(0, elapsed) : 0
@@ -60,32 +60,45 @@ final class SonivoLiveActivityController {
             defer { self.worker = nil }
             while true {
                 let version = self.revision, state = self.desired
-                let activities = Activity<SonivoActivityAttributes>.activities
-                if self.current == nil { self.current = activities.first }
-                for extra in activities where extra.id != self.current?.id {
-                    await extra.end(nil, dismissalPolicy: .immediate)
-                }
-                if let state {
-                    let content = ActivityContent(state: state, staleDate: state.isPlaying ? state.timelineEnd : nil)
-                    if let activity = self.current, activity.activityState == .dismissed, activity.content.state.playbackID == state.playbackID {
-                        // Respect a user dismissal until the next track; no automatic re-request.
-                    } else if let activity = self.current, activity.activityState == .active || activity.activityState == .stale {
-                        await activity.update(content)
-                    } else if state.isPlaying, UIApplication.shared.applicationState == .active {
-                        do {
-                            self.current = try Activity.request(attributes: SonivoActivityAttributes(brand: "Sonivo"),
-                                content: content, pushType: nil)
-                        } catch {
-                            SonivoDiagnostics.log("Live Activity request unavailable", tag: "UI")
-                            self.previous = nil // Allow a later foreground retry, never a tight loop.
-                        }
-                    } else { self.previous = nil }
-                } else {
-                    if let activity = self.current { await activity.end(nil, dismissalPolicy: .immediate) }
-                    self.current = nil
+                let foreground = UIApplication.shared.applicationState == .active
+                self.currentID = await SonivoActivityRuntime.apply(currentID: self.currentID, state: state,
+                                                                   canRequest: foreground)
+                if state != nil, self.currentID == nil {
+                    self.previous = nil // Retry on a later foreground/state event, never a tight loop.
                 }
                 if version == self.revision { break }
             }
         }
+    }
+}
+
+/// SDK Activity handles are non-Sendable. Resolve and use them wholly on the generic
+/// executor; only immutable state and IDs cross the UI actor boundary. One UI worker
+/// serializes all calls here. No preconcurrency imports or unchecked Sendable wrappers.
+nonisolated enum SonivoActivityRuntime {
+    @concurrent static func apply(currentID: String?, state: SonivoActivityAttributes.ContentState?,
+                                 canRequest: Bool) async -> String? {
+        let activities = Activity<SonivoActivityAttributes>.activities
+        let current = activities.first { $0.id == currentID } ?? activities.first
+        for extra in activities where extra.id != current?.id {
+            await extra.end(nil, dismissalPolicy: .immediate)
+        }
+        guard let state else {
+            if let current { await current.end(nil, dismissalPolicy: .immediate) }
+            return nil
+        }
+        if let current, current.activityState == .dismissed, current.content.state.playbackID == state.playbackID {
+            return current.id // Respect user dismissal until the next track.
+        }
+        let content = ActivityContent(state: state, staleDate: state.isPlaying ? state.timelineEnd : nil)
+        if let current, current.activityState == .active || current.activityState == .stale {
+            await current.update(content)
+            return current.id
+        }
+        guard state.isPlaying, canRequest else { return nil }
+        do {
+            return try Activity.request(attributes: SonivoActivityAttributes(brand: "Sonivo"),
+                                        content: content, pushType: nil).id
+        } catch { return nil }
     }
 }

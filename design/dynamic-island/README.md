@@ -12,7 +12,7 @@ Home/tab pages, root settings/auth sheets, the full player and its EQ/queue/sett
 
 `SonivoLiveActivity` is a WidgetKit extension. It provides compact, expanded and minimal states, selected brand geometry, accent and system-timer playback progress. Tapping opens `sonivo://player`. Playback controls are intentionally not fabricated in the extension: it displays playback status and opens the real player. ActivityKit presents content when/where iOS allows; it cannot replace the screen-recording or privacy indicators, force foreground placement, or pre-empt other activities.
 
-State contains a local playback UUID, generic source label, mark, accent, play state and timing only; no OAuth credentials, account identifiers, stream URL, track titles or artist data. The app serializes/coalesces updates, reconciles restored activities, ends on stopped playback/disabled setting, and requests new activities only while foregrounded. No push tokens, server, audio capture, custom audio clock or per-frame updates are introduced.
+State contains a local playback UUID, generic source label, mark, accent, play state and timing only; no OAuth credentials, account identifiers, stream URL, track titles or artist data. The UI actor passes only Sendable state and IDs to a concurrent SDK runtime; non-Sendable Activity handles never cross its boundary. A single UI worker serializes/coalesces updates, reconciles restored activities, ends on stopped playback/disabled setting, and requests new activities only while foregrounded. No push tokens, server, audio capture, custom audio clock or per-frame updates are introduced.
 
 ### Signing / install safety
 

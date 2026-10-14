@@ -1,7 +1,7 @@
 import ActivityKit
 import Foundation
 
-nonisolated struct SonivoActivityAttributes: ActivityAttributes {
+nonisolated struct SonivoActivityAttributes: ActivityAttributes, Sendable {
     nonisolated struct ContentState: Codable, Hashable, Sendable {
         let playbackID: String
         let source: String
