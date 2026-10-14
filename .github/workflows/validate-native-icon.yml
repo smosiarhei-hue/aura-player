@@ -24,6 +24,24 @@ jobs:
           { sw_vers; xcodebuild -version; xcrun --sdk iphoneos --show-sdk-version; } | tee native-icon-results/toolchain.txt
       - name: Validate layer structure
         run: python3 .github/scripts/validate_native_icon.py
+      - name: Install pinned official Apple Icon Composer
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="$RUNNER_TEMP/Icon-Composer-1.2.dmg"
+          curl --fail --location --retry 3 \
+            https://devimages-cdn.apple.com/design/resources/download/Icon-Composer-1.2.dmg -o "$DMG"
+          echo "dce4d78a615e543832fb2cdca3b28a31355cf21d57b6b4ab96f5b278ed7d5af6  $DMG" | shasum -a 256 -c -
+          MOUNT="$RUNNER_TEMP/icon-composer-dmg"
+          mkdir -p "$MOUNT"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT" || true' EXIT
+          APP="$RUNNER_TEMP/Icon Composer.app"
+          ditto "$MOUNT/Icon Composer.app" "$APP"
+          codesign --verify --deep --strict "$APP"
+          TOOL="$APP/Contents/Executables/ictool"
+          test -x "$TOOL"
+          echo "ICON_COMPOSER_TOOL=$TOOL" >> "$GITHUB_ENV"
       - name: Compile icon with Apple's asset compiler
         shell: bash
         run: |
@@ -42,8 +60,8 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p native-icon-results
-          TOOL=$(find /Applications -type f -name ictool -print -quit 2>/dev/null || true)
-          if [ -z "$TOOL" ]; then
+          TOOL="${ICON_COMPOSER_TOOL:-}"
+          if [ -z "$TOOL" ] || [ ! -x "$TOOL" ]; then
             echo '::error::ictool is not installed on this runner; no native preview was generated.'
             exit 1
           fi

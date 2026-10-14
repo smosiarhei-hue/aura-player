@@ -1,8 +1,5 @@
 {
   "color-space-for-untagged-svg-colors": "srgb",
-  "fill": {
-    "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
-  },
   "groups": [
     {
       "name": "Sonivo Wordmark",
@@ -37,6 +34,22 @@
           "opacity": 1
         }
       ]
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  },
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.06667,0.07451,0.08235,1.00000"
+      }
     }
   ]
 }

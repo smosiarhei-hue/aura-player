@@ -19,5 +19,6 @@ for layer in layers:
     assert {x.tag.rsplit('}', 1)[-1] for x in svg.iter()} <= {'svg', 'title', 'path'}
     assert all('filter' not in x.attrib for x in svg.iter())
     assert any(x.tag.endswith('path') for x in svg.iter())
-assert icon['fill']['solid'].split(',')[-1] == '1.00000'
+assert icon['supported-platforms']['squares'] == 'shared'
+assert icon['fill-specializations'][0]['value']['solid'].split(',')[-1] == '1.00000'
 print('Source integrity passed. This is not a native rendering or compilation result.')
