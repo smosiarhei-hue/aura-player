@@ -14,36 +14,6 @@
   ],
   "groups": [
     {
-      "name": "Background",
-      "lighting": "combined",
-      "blur-material": 0,
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0
-      },
-      "specular": false,
-      "translucency": {
-        "enabled": false,
-        "value": 0
-      },
-      "layers": [
-        {
-          "name": "Background",
-          "image-name": "00-background.svg",
-          "glass": false,
-          "hidden": false,
-          "opacity": 1,
-          "position": {
-            "scale": 1,
-            "translation-in-points": [
-              0,
-              0
-            ]
-          }
-        }
-      ]
-    },
-    {
       "blur-material": 0,
       "layers": [
         {
@@ -100,6 +70,36 @@
         "value": 0
       },
       "name": "MusicNeon"
+    },
+    {
+      "name": "Background",
+      "lighting": "combined",
+      "blur-material": 0,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      },
+      "layers": [
+        {
+          "name": "Background",
+          "image-name": "00-background.svg",
+          "glass": false,
+          "hidden": false,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ]
     }
   ],
   "supported-platforms": {

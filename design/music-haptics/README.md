@@ -10,7 +10,7 @@ intensity are derived from measured PCM features. No synthesized BPM fallback.
 Automatic strength is enabled by default; the existing Soft/Medium/Strong preference
 sets its ceiling. It is not a calibration of physical actuator force. Silence is gated,
 pauses/seeks invalidate queued commands, and a separate hardware-queue watchdog
-stops continuous vibration within 150 ms of the last received command even if the
+stops continuous vibration within 200 ms of the last received command even if the
 main actor stalls. Background playback deliberately has no music haptics.
 
 Limitations: unavailable/protected PCM streams cannot drive this feature. Bluetooth,

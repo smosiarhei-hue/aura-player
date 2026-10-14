@@ -33,6 +33,9 @@ class AppIconTests(unittest.TestCase):
         project=(ROOT/"project.yml").read_text()
         for name in STYLES:
             self.assertIn(name,project)
+            manifest=json.loads((ROOT/f"Sonivo/AppIcons/{name}.icon/icon.json").read_text())
+            self.assertEqual(manifest["groups"][-1]["name"],"Background")
+            self.assertNotEqual(manifest["groups"][0]["name"],"Background")
             for asset in source.glob("*.svg"):
                 original=ET.parse(asset).getroot()
                 variant=ET.parse(ROOT/f"Sonivo/AppIcons/{name}.icon/Assets/{asset.name}").getroot()
