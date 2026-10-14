@@ -1073,6 +1073,8 @@ final class PlayerCore {
 
     private func updateNowPlayingInfo() {
         refreshFavoriteCommandState()
+        SonivoLiveActivityController.shared.synchronize(track: currentTrack, playing: isPlaying,
+            elapsed: isUsingStreamPlayer ? progress : liveProgress(), duration: duration)
         guard let track = currentTrack else {
             publishNowPlaying(nil, state: .stopped)
             return

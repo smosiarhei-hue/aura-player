@@ -7,6 +7,9 @@ struct SonivoAppearanceView: View {
     @State private var l10n = SonivoL10n.shared
     @State private var iconManager = AppIconManager.shared
 
+    @AppStorage(SonivoCaptureBrand.visibleKey) private var showCaptureBrand = true
+    @AppStorage(SonivoLiveActivityController.enabledKey) private var liveActivityEnabled = true
+
     var body: some View {
         Form {
             Section(l10n.isRussian ? "Режим оформления" : "Appearance mode") {
@@ -67,6 +70,22 @@ struct SonivoAppearanceView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+            }
+            Section {
+                Toggle(l10n.isRussian ? "Бренд на экране" : "On-screen branding", isOn: $showCaptureBrand)
+                Toggle("Dynamic Island", isOn: $liveActivityEnabled)
+                    .disabled(!SonivoLiveActivityController.isEmbedded)
+            } header: {
+                Text(l10n.isRussian ? "Sonivo на экране" : "Sonivo on screen")
+            } footer: {
+                Text(l10n.isRussian
+                     ? "Фирменная строка видна до скриншота; при записи экрана появляется автоматически. Системный индикатор записи не меняется."
+                     : "Branding is visible before a screenshot and appears automatically during screen capture. System recording indicators are unchanged.")
+                if !SonivoLiveActivityController.isEmbedded {
+                    Text(l10n.isRussian
+                         ? "Для Dynamic Island требуется сборка с подписанным Live Activity-расширением. В этой сборке доступна фирменная строка внутри приложения."
+                         : "Dynamic Island requires a signed Live Activity extension. This build supports in-app branding.")
                 }
             }
         }

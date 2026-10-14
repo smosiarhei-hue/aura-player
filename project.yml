@@ -33,6 +33,7 @@ targets:
       - name: Materialize App Icon Variants
         script: |
           python3 "$SRCROOT/scripts/materialize_app_icons.py"
+          python3 "$SRCROOT/scripts/materialize_activity_brand.py"
         basedOnDependencyAnalysis: false
     sources:
       - path: Sonivo
@@ -64,7 +65,10 @@ targets:
       - path: Sonivo/AppIcons/MusicNeon.icon
         type: file
         buildPhase: resources
+      - path: SharedActivity
     dependencies:
+      - target: SonivoLiveActivity
+        embed: true
       - package: StreamAudioProbe
         product: StreamAudioProbe
       - package: AutoMixV2
@@ -99,6 +103,8 @@ targets:
       path: Sonivo/Info.plist
       properties:
         CFBundleDisplayName: Sonivo
+        NSSupportsLiveActivities: true
+        SonivoLiveActivityEmbedded: true
         CFBundleDevelopmentRegion: ru
         CADisableMinimumFrameDurationOnPhone: true
         CFBundleShortVersionString: "1.1.0"
@@ -119,6 +125,38 @@ targets:
             CFBundleURLSchemes:
               - sonivo
               - aurora
+  SonivoLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: SonivoLiveActivity
+        excludes: ["Info.plist"]
+      - path: SharedActivity
+    preBuildScripts:
+      - name: Materialize Activity Brand
+        script: python3 "$SRCROOT/scripts/materialize_activity_brand.py"
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smoze.sonivo.LiveActivity
+        DEVELOPMENT_TEAM: ""
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "2"
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        PROVISIONING_PROFILE_SPECIFIER: ""
+    info:
+      path: SonivoLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Sonivo
+        CFBundleShortVersionString: "1.1.0"
+        CFBundleVersion: "2"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
   SonivoUnitTests:
     type: bundle.unit-test
     platform: iOS
@@ -169,6 +207,10 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
 schemes:
+  SonivoLiveActivity:
+    build:
+      targets:
+        SonivoLiveActivity: all
   Sonivo:
     build:
       targets:

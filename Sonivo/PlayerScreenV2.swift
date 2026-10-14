@@ -173,14 +173,15 @@ struct PlayerScreenV2: View {
             .ignoresSafeArea(.container, edges: .all)
         }
         .background(SN.bg.ignoresSafeArea())
+        .modifier(SonivoCaptureBrand())
         .sheet(item: $activeModal) { modal in
             NavigationStack {
                 switch modal {
-                case .queue: QueueSheetView()
+                case .queue: QueueSheetView().modifier(SonivoCaptureBrand())
                 case .equalizer: PlayerEQSheetView()
                 case .sleepTimer: SleepTimerSheetView()
-                case .settings: SettingsView()
-                case .quality: PlayerQualityModalView(player: player, onDismiss: { activeModal = nil })
+                case .settings: SettingsView().modifier(SonivoCaptureBrand())
+                case .quality: PlayerQualityModalView(player: player, onDismiss: { activeModal = nil }).modifier(SonivoCaptureBrand())
                 case .artistSelection: artistSelectionSheet
                 case .lyrics:
                     LyricsView(lyrics: lyrics, isLoading: lyricsLoading, player: player)
@@ -813,13 +814,16 @@ struct PlayerScreenV2: View {
                 sleepTimerBottomButton
                     .frame(maxWidth: .infinity)
 
-                GlassIconButton(
-                    systemImage: "slider.vertical.3",
-                    tint: player.eqEnabled ? SN.amber : SN.inkMuted,
-                    accessibilityLabel: "Эквалайзер"
-                ) {
-                    openModal(.equalizer)
+                Button { openModal(.equalizer) } label: {
+                    SonivoEqualizerGlyph()
+                        .foregroundStyle(player.eqEnabled ? SN.accent : SN.inkMuted)
+                        .frame(width: SN.tapTarget, height: SN.tapTarget)
+                        .contentShape(Circle())
                 }
+                .buttonStyle(.plain)
+                .glassCircle()
+                .accessibilityLabel("Эквалайзер")
+                .accessibilityValue(player.eqEnabled ? "Включён" : "Выключен")
                 .frame(maxWidth: .infinity)
 
                 GlassIconButton(
@@ -1154,7 +1158,7 @@ struct PlayerScreenV2: View {
                     Label("Очередь", systemImage: "list.bullet")
                 }
                 Button { openModal(.equalizer) } label: {
-                    Label("Эквалайзер", systemImage: "slider.vertical.3")
+                    Label { Text("Эквалайзер") } icon: { SonivoEqualizerGlyph(size: 20).foregroundStyle(SN.accent) }
                 }
                 Button { openModal(.sleepTimer) } label: {
                     if let timerText = player.sleepTimerFormatted {

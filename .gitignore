@@ -39,3 +39,7 @@ tools/videoshot-studio/*.mp4
 
 # Settings thumbnails are decoded by materialize_app_icons.py.
 /Sonivo/assets.xcassets/AppIconPreview*.imageset/preview.png
+
+# Decode shared branding masks from versioned payloads.
+/SharedActivity/BrandAssets.xcassets/*.imageset/mask.png
+/activity-validation/

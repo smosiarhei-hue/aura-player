@@ -9,17 +9,22 @@ from pathlib import Path
 def patch_project(project_path: Path, bundle_id: str, team_id: str, identity: str, profile_uuid: str = "") -> str:
     content = project_path.read_text(encoding="utf-8")
 
-    # Replace bundle identifier
-    content = re.sub(
-        r"PRODUCT_BUNDLE_IDENTIFIER:\s*[A-Za-z0-9_.-]+",
-        f"PRODUCT_BUNDLE_IDENTIFIER: {bundle_id}",
-        content,
-    )
-    content = re.sub(
-        r"CFBundleURLName:\s*[A-Za-z0-9_.-]+",
-        f"CFBundleURLName: {bundle_id}",
-        content,
-    )
+    # Keep each nested bundle distinct. A widget must never share the app's ID.
+    def identifier(match):
+        old = match.group(1)
+        suffix = next(("." + part for part in ("LiveActivity", "UnitTests", "UITests") if old.endswith("." + part)), "")
+        return "PRODUCT_BUNDLE_IDENTIFIER: " + bundle_id + suffix
+    content = re.sub(r"PRODUCT_BUNDLE_IDENTIFIER:\s*([A-Za-z0-9_.-]+)", identifier, content)
+    content = re.sub(r"CFBundleURLName:\s*[A-Za-z0-9_.-]+", f"CFBundleURLName: {bundle_id}", content)
+    if profile_uuid:
+        # Per-target profile: command-line profile settings would incorrectly override the widget.
+        start = content.index("  Sonivo:\n")
+        end = re.search(r"^  [A-Za-z][A-Za-z0-9_]*:\n", content[start + 1:], re.MULTILINE)
+        stop = start + 1 + end.start() if end else len(content)
+        app = content[start:stop]
+        app = app.replace(f"PRODUCT_BUNDLE_IDENTIFIER: {bundle_id}\n",
+            f'PRODUCT_BUNDLE_IDENTIFIER: {bundle_id}\n        PROVISIONING_PROFILE_SPECIFIER: "{profile_uuid}"\n', 1)
+        content = content[:start] + app + content[stop:]
 
     # Enable signing in both root and target settings
     content = re.sub(

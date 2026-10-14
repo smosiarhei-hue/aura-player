@@ -458,6 +458,7 @@ struct PlayerEQSheetView: View {
                 deletingPreset = nil
             }
         }
+        .modifier(SonivoCaptureBrand())
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationBackground(SN.bg)
