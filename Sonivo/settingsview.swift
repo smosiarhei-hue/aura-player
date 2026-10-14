@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct SettingsView: View {
+    var category: SonivoSettingsCategory? = nil
+    @State private var showResetIndexConfirmation = false
+    @State private var showClearCacheConfirmation = false
     @AppStorage(MusicCatalogSource.storageKey) private var catalogSourceRaw = MusicCatalogSource.yandex.rawValue
     @State private var settings = SettingsStore.shared
     @State private var library = LibraryStore.shared
@@ -20,19 +23,89 @@ struct SettingsView: View {
     @State private var showEqualizerSheet = false
     @State private var isSyncingLikes = false
 
+    @ViewBuilder
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Picker("Источник поиска", selection: $catalogSourceRaw) {
-                        ForEach(MusicCatalogSource.allCases) { source in
-                            Text(source.title).tag(source.rawValue)
-                        }
-                    }
-                } header: { Text("Музыкальный каталог") } footer: {
-                    Text("Spotify через wolfXspotify — только поиск, превью и открытие в Spotify. Выбор не меняет текущий трек, очередь, аккаунт Яндекса или качество звука. Полные треки внутри Sonivo воспроизводятся через Яндекс Музыку или из медиатеки. Поисковые запросы Spotify отправляются неофициальному сервису spotify.xwolf.space; токены и данные аккаунта Яндекса ему не передаются.")
-                }
+        if category == nil {
+            NavigationStack { settingsForm }
+        } else {
+            settingsForm
+        }
+    }
 
+    private var settingsForm: some View {
+        Form {
+            if let category {
+                categoryContent(category)
+            } else {
+                overview
+            }
+        }
+        .modifier(SonivoSettingsFormStyle())
+        .accessibilityIdentifier("settings.screen." + (category?.rawValue ?? "overview"))
+        .navigationTitle(category?.title(russian: l10n.isRussian)
+                         ?? (l10n.isRussian ? "Настройки" : "Settings"))
+        .navigationBarTitleDisplayMode(category == nil ? .large : .inline)
+        .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
+        .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
+        .task { if category == .storage { await mediaCache.refresh() } }
+        .confirmationDialog("Сбросить индекс?", isPresented: $showResetIndexConfirmation, titleVisibility: .visible) {
+            Button("Сбросить", role: .destructive) { library.resetIndex() }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Список треков и локальные плейлисты будут сброшены. Импортированные файлы останутся на устройстве; их можно просканировать заново.")
+        }
+        .confirmationDialog("Очистить кэш?", isPresented: $showClearCacheConfirmation, titleVisibility: .visible) {
+            Button("Очистить", role: .destructive) { Task { await mediaCache.clearGeneratedCache() } }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Созданные видео будут удалены. Аудио и обложки загрузятся заново. Импортированные треки сохранятся.")
+        }
+    }
+
+    @ViewBuilder
+    private var overview: some View {
+        Section(l10n.isRussian ? "Музыка" : "Music") {
+            categoryLink(.music)
+            categoryLink(.playback)
+            categoryLink(.lyrics)
+        }
+        Section(l10n.isRussian ? "Приложение" : "App") {
+            categoryLink(.appearance)
+            categoryLink(.haptics)
+        }
+        Section(l10n.isRussian ? "Данные и информация" : "Data & information") {
+            categoryLink(.storage)
+            categoryLink(.about)
+        }
+    }
+
+    private func categoryLink(_ category: SonivoSettingsCategory) -> some View {
+        NavigationLink {
+            SettingsView(category: category)
+        } label: {
+            SettingsNavigationRow(symbol: category.symbol,
+                                  title: category.title(russian: l10n.isRussian),
+                                  subtitle: category.subtitle(russian: l10n.isRussian))
+        }
+        .accessibilityIdentifier("settings.category." + category.rawValue)
+    }
+
+    @ViewBuilder
+    private func categoryContent(_ category: SonivoSettingsCategory) -> some View {
+        switch category {
+        case .music: musicSettings
+        case .playback: playbackSettings
+        case .appearance: appearanceSettings
+        case .lyrics: lyricsSettings
+        case .lyricsSources: lyricsSourceSettings
+        case .haptics: hapticsSettings
+        case .storage: storageSettings
+        case .about: aboutSettings
+        }
+    }
+
+    @ViewBuilder
+    private var musicSettings: some View {
                 Section("Яндекс Музыка") {
                     if let user = ym.currentUser {
                         HStack(spacing: 14) {
@@ -58,7 +131,7 @@ struct SettingsView: View {
                         Button {
                             Task { isSyncingLikes = true; await ym.syncAccountData(); isSyncingLikes = false }
                         } label: {
-                            HStack { Image(systemName: "arrow.triangle.2.circlepath"); Text(isSyncingLikes ? "Синхронизация..." : "Синхронизировать медиатеку") }
+                            HStack { Image(systemName: "arrow.triangle.2.circlepath"); Text(isSyncingLikes ? "Синхронизация…" : "Синхронизировать медиатеку") }
                         }.disabled(isSyncingLikes)
                         if let message = ym.accountSyncMessage {
                             Text(message).font(.footnote).foregroundStyle(.secondary)
@@ -67,7 +140,7 @@ struct SettingsView: View {
                         Button(role: .destructive) { ym.logout() } label: { Text("Выйти из Яндекс Музыки") }
                     } else {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Войдите в свой Яндекс ID, чтобы слушать персональную Мою волну и синхронизировать любимую музыку.").font(SN.text(.footnote)).foregroundStyle(.secondary)
+                            Text("Войдите для Моей волны и синхронизации медиатеки.").font(SN.text(.footnote)).foregroundStyle(.secondary)
                             Button { showYandexAuthSheet = true } label: {
                                 HStack(spacing: 8) { Image(systemName: "person.badge.key.fill"); Text("Войти с Яндекс ID") }
                                     .frame(maxWidth: .infinity).padding(.vertical, 8)
@@ -76,21 +149,13 @@ struct SettingsView: View {
                     }
                 }
 
-                Section {
-                    Toggle("Видеошоты", isOn: $videoShotsEnabled)
-                } header: { Text("Внешний вид плеера") } footer: {
-                    Text(reduceMotion
-                         ? "Уменьшение движения включено: видеошоты не воспроизводятся автоматически."
-                         : "Автоматически показывать готовое видео трека без звука. Если видео отсутствует, останется обложка. Отключение применяется ко всем трекам.")
-                }
-
-                Section("Аккаунт") {
+                Section("Аккаунт Apple") {
                     if socialAuth.isSignedIn {
                         HStack(spacing: 12) {
                             Image(systemName: "person.crop.circle.fill").font(.title2)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(socialAuth.displayName ?? "Пользователь Apple").font(.subheadline.weight(.medium))
-                                Text("Избранное привязано к этому аккаунту").font(.caption2).foregroundStyle(.secondary)
+                                Text("Аккаунт для избранного").font(.caption2).foregroundStyle(.secondary)
                             }
                         }
                         Button("Выйти", role: .destructive) { socialAuth.signOut() }
@@ -100,15 +165,124 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Picker("Источник поиска", selection: $catalogSourceRaw) {
+                        ForEach(MusicCatalogSource.allCases) { source in
+                            Text(source.title).tag(source.rawValue)
+                        }
+                    }
+                } header: { Text("Музыкальный каталог") } footer: {
+                    Text("Spotify через wolfXspotify — только поиск, превью и открытие в Spotify. Выбор влияет только на поиск. Полные треки в Sonivo — из Яндекс Музыки или медиатеки. Запросы Spotify передаются неофициальному сервису spotify.xwolf.space, без токенов и данных Яндекса.")
+                }
+
+    }
+
+    @ViewBuilder
+    private var playbackSettings: some View {
+                Section {
+                    Button {
+                        showEqualizerSheet = true
+                    } label: {
+                        HStack {
+                            Label("Эквалайзер", systemImage: "slider.vertical.3")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text(eqSummary)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    Toggle("Только для наушников", isOn: $player.eqHeadphonesOnly)
+                        .tint(settings.accentColor)
+
+                    HStack {
+                        Label("Текущий вывод", systemImage: player.isHeadphonesConnected ? "headphones" : "iphone")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(eqRouteSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Звук")
+                } footer: {
+                    Text("10-полосный эквалайзер. В режиме «Только для наушников» динамик воспроизводит звук без EQ.")
+                }
+
+                Section {
+                    ForEach(AudioQuality.allCases) { quality in
+                        Button { player.selectQuality(quality) } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(quality.label).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                    Text(quality.detail).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if player.audioQuality == quality { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("Качество звука")
+                } footer: {
+                    Text("Выбранное качество — предпочтение. Доступный формат зависит от сервиса и трека; фактическое качество показано в плеере.")
+                }
+
+                Section {
+                    Toggle("Системное пространственное аудио", isOn: $player.spatialAudioEnabled)
+                        .tint(settings.accentColor)
+
+                    Text(player.spatialAudioStatusText)
+                        .font(SN.text(.footnote))
+                        .foregroundStyle(SN.inkMuted)
+                } header: {
+                    Text("Пространственный звук")
+                } footer: {
+                    Text("Работает через iOS на совместимых наушниках. Режим выбирается в Пункте управления. Стерео не становится Dolby Atmos; для защищённых и Dolby-потоков EQ может быть недоступен.")
+                }
+                Section {
+                    ForEach([TransitionMode.gapless, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
+                        Button { player.transitionMode = mode } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(mode.rawValue).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                    Text(mode.description).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if player.transitionMode == mode { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if player.transitionMode == .crossfade {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack { Text("Длительность кроссфейда"); Spacer(); Text(String(format: "%.1f сек", player.crossfadeDuration)).foregroundStyle(.secondary) }
+                            Slider(value: $player.crossfadeDuration, in: 1...12, step: 0.5).tint(settings.accentColor)
+                        }
+                    }
+                } header: {
+                    Text("Переходы между треками")
+                } footer: {
+                    Text("Gapless — без пауз. Кроссфейд — плавное смешивание конца и начала треков.")
+                }
+
+    }
+
+    @ViewBuilder
+    private var appearanceSettings: some View {
+                Section {
                     NavigationLink {
                         SonivoAppearanceView()
                     } label: {
-                        Label(l10n.isRussian ? "Оформление" : "Appearance", systemImage: "paintpalette")
+                        Label(l10n.isRussian ? "Тема и иконка" : "Theme & icon", systemImage: "paintpalette")
                     }
 
                     // 5 Шрифтов: Neue Montreal, Satoshi, General Sans, Instrument Sans, PP Neue Machina
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(l10n.isRussian ? "Шрифт приложения (5 вариантов)" : "Typography (5 Fonts)")
+                        Text(l10n.isRussian ? "Шрифт интерфейса" : "Interface font")
                             .font(SN.text(.subheadline, .medium))
                             .foregroundStyle(.primary)
                             .padding(.top, 4)
@@ -157,9 +331,9 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 4)
                 } header: {
-                    Text(l10n.isRussian ? "Оформление и шрифты" : "Theme & Typography")
+                    Text(l10n.isRussian ? "Внешний вид" : "Appearance")
                 } footer: {
-                    Text(l10n.isRussian ? "Выбранный шрифт и тема мгновенно применяются ко всем экранам, карточкам и элементам управления Sonivo." : "The selected font and theme color dynamically apply across all views and controls in Sonivo.")
+                    Text(l10n.isRussian ? "Тема и шрифт применяются сразу." : "Theme and font changes apply immediately.")
                 }
 
                 Section {
@@ -172,150 +346,22 @@ struct SettingsView: View {
                 } header: {
                     Text(l10n.isRussian ? "Язык интерфейса" : "Interface Language")
                 } footer: {
-                    Text(l10n.isRussian ? "Sonivo работает на русском языке по умолчанию. Доступно быстрое переключение на английский." : "Sonivo defaults to Russian with fast switching to English.")
+                    Text(l10n.isRussian ? "Язык меняется без перезапуска." : "Language changes without restarting.")
                 }
 
                 Section {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(l10n.isRussian ? "Плавность ProMotion (до 120 Гц)" : "ProMotion High Refresh Rate")
-                                .font(SN.text(.subheadline, .medium))
-                            Text(l10n.isRussian ? "Мягкая инерция пролистывания и плавная кинетика скролла без резких остановок" : "Smooth weighted scroll inertia and buttery deceleration")
-                                .font(SN.text(.caption2))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "waveform.path.badge.plus")
-                            .font(.title3)
-                            .foregroundStyle(themeManager.accentColor)
-                    }
-                } header: {
-                    Text(l10n.isRussian ? "Кинетика и пролистывание" : "Scroll Kinetics")
+                    Toggle("Видеошоты", isOn: $videoShotsEnabled)
+                } header: { Text("Видео в плеере") } footer: {
+                    Text(reduceMotion
+                         ? "В iOS включено уменьшение движения. Автовоспроизведение видео отключено."
+                         : "Видео трека без звука. Если видео нет, показывается обложка.")
                 }
 
-                Section {
-                    Button {
-                        showEqualizerSheet = true
-                    } label: {
-                        HStack {
-                            Label("Эквалайзер", systemImage: "slider.vertical.3")
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Text(eqSummary)
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
+    }
 
-                    Toggle("Только для наушников", isOn: $player.eqHeadphonesOnly)
-                        .tint(settings.accentColor)
-
-                    HStack {
-                        Label("Текущий вывод", systemImage: player.isHeadphonesConnected ? "headphones" : "iphone")
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Text(eqRouteSummary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Звук")
-                } footer: {
-                    Text("Нативный 10-полосный EQ работает локально. Режим «Только для наушников» при необходимости оставляет динамик телефона в Flat.")
-                }
-
-                Section {
-                    Toggle("Системное пространственное аудио", isOn: $player.spatialAudioEnabled)
-                        .tint(settings.accentColor)
-
-                    ForEach(AudioQuality.allCases) { quality in
-                        Button { player.selectQuality(quality) } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(quality.label).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                    Text(quality.detail).font(.caption2).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if player.audioQuality == quality { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
-                            }.contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                    }
-                } header: {
-                    Text("Качество звука и пространственное аудио")
-                } footer: {
-                    Text("Lossless — звук без потерь (FLAC). Пространственное звучание и отслеживание головы обрабатывает iOS на совместимых наушниках. Настройте режим в Пункте управления. Стереотрек не становится Dolby Atmos. Для защищённых и Dolby-потоков EQ может быть недоступен; исходный звук сохраняется.")
-                }
-
-                Section {
-                    ForEach([TransitionMode.gapless, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
-                        Button { player.transitionMode = mode } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(mode.rawValue).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                    Text(mode.description).font(.caption2).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if player.transitionMode == mode { Image(systemName: "checkmark").foregroundStyle(settings.accentColor) }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if player.transitionMode == .crossfade {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack { Text("Длительность кроссфейда"); Spacer(); Text(String(format: "%.1f сек", player.crossfadeDuration)).foregroundStyle(.secondary) }
-                            Slider(value: $player.crossfadeDuration, in: 1...12, step: 0.5).tint(settings.accentColor)
-                        }
-                    }
-                } header: {
-                    Text("Переходы между треками")
-                } footer: {
-                    Text("Gapless воспроизводит треки непрерывно в оригинальном качестве без искажений. Кроссфейд обеспечивает плавное затухание звука.")
-                }
-
-                Section {
-                    Toggle("Тактильные сигналы музыки", isOn: $settings.musicHapticsEnabled)
-                        .tint(settings.accentColor)
-
-                    if settings.musicHapticsEnabled {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Сила вибрации")
-                                Spacer()
-                                Text(settings.musicHapticsIntensity.title)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Picker("Сила вибрации", selection: $settings.musicHapticsIntensity) {
-                                ForEach(MusicHapticsIntensity.allCases) { item in
-                                    Text(item.title).tag(item)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .onChange(of: settings.musicHapticsIntensity) { _, newIntensity in
-                                MusicHapticsManager.shared.playPreview(intensity: newIntensity)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                } header: {
-                    Text("Универсальный доступ")
-                } footer: {
-                    Text("Тактильные сигналы музыки в стиле Apple Music (iOS 18+). Taptic Engine передает ритм через раздельные тактильные ощущения: глубокий удар бочки (кик), четкие тарелочки (хай-хэт) и мягкий резонанс баса (808). Специально для тактильного восприятия музыки и людей с нарушениями слуха.")
-                }
-                .onChange(of: settings.musicHapticsEnabled) { _, isEnabled in
-                    if isEnabled {
-                        MusicHapticsManager.shared.playPreview(intensity: settings.musicHapticsIntensity)
-                    }
-                }
-
-                Section("Тактильный отклик интерфейса") {
-                    Toggle("Вибрация при управлении", isOn: $settings.hapticsEnabled).tint(settings.accentColor)
-                    Toggle("Вибрация при перемотке", isOn: $settings.scrubHapticsEnabled).tint(settings.accentColor)
-                }
-
-                Section("Дизайн текста песен") {
+    @ViewBuilder
+    private var lyricsSettings: some View {
+                Section("Оформление текста") {
                     Picker("Оформление", selection: $settings.lyricsDesign) {
                         ForEach(LyricsDesign.allCases) { design in
                             Text(design.title).tag(design)
@@ -326,11 +372,35 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Apple Neural Engine", isOn: $settings.isNeuralEngineEnabled)
+                    Toggle("Анализ на устройстве", isOn: $settings.isNeuralEngineEnabled)
                         .tint(settings.accentColor)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack { Text("Размер шрифта"); Spacer(); Text("\(Int(settings.lyricsFontSize)) pt").foregroundStyle(.secondary) }
+                        Slider(value: $settings.lyricsFontSize, in: 36...60, step: 1).tint(settings.accentColor)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack { Text("Сдвиг текста"); Spacer(); Text(String(format: "%+.1f сек", settings.lyricsOffset)).foregroundStyle(.secondary) }
+                        Slider(value: $settings.lyricsOffset, in: -3...3, step: 0.1).tint(settings.accentColor)
+                    }
+                } header: {
+                    Text("Синхронизация")
+                } footer: {
+                    Text("Караоке доступно с таймкодами нужной версии песни. Без них показывается обычный текст. Авторазметка по длительности и автоматическая публикация распознанных слов отключены.")
+                }
+                Section {
+                    NavigationLink {
+                        SettingsView(category: .lyricsSources)
+                    } label: {
+                        SettingsNavigationRow(symbol: "link", title: "Источники текста", subtitle: "Musixmatch · дополнительные настройки")
+                    }
+                }
+    }
 
+    @ViewBuilder
+    private var lyricsSourceSettings: some View {
+                Section {
                     LabeledContent {
-                        Text(musixmatch.hasProxyURL ? "Прокси подключён" : (musixmatch.hasAPIKey ? "Прямой API" : "Не настроен"))
+                        Text(musixmatch.hasProxyURL ? "Через сервер" : (musixmatch.hasAPIKey ? "По API-ключу" : "Не настроен"))
                             .foregroundStyle((musixmatch.hasProxyURL || musixmatch.hasAPIKey) ? Color.green : Color.secondary)
                     } label: {
                         Label("Musixmatch RichSync", systemImage: "text.badge.checkmark")
@@ -350,11 +420,11 @@ struct SettingsView: View {
                         Button("Сохранить прокси") {
                             if musixmatch.saveProxyURL(musixmatchProxyInput) {
                                 musixmatchProxyInput = musixmatch.proxyBaseURLString
-                                musixmatchKeyMessage = "Прокси подключён. Ключ остаётся на сервере"
+                                musixmatchKeyMessage = "Адрес сохранён. API-ключ хранится на сервере."
                                 LyricsService.shared.invalidateCache()
                                 NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
                             } else {
-                                musixmatchKeyMessage = "Введите корректный HTTPS URL без query-параметров"
+                                musixmatchKeyMessage = "Укажите HTTPS-адрес без параметров запроса."
                             }
                         }
                         .disabled(musixmatchProxyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -374,12 +444,12 @@ struct SettingsView: View {
 
                     Divider()
 
-                    Text("Резервный прямой доступ")
+                    Text("Прямой доступ · резервный")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     SecureField(
-                        musixmatch.hasAPIKey ? "Partner API Key сохранён" : "Необязательный Musixmatch API Key",
+                        musixmatch.hasAPIKey ? "API-ключ сохранён" : "API-ключ Musixmatch (необязательно)",
                         text: $musixmatchKeyInput
                     )
                     .textInputAutocapitalization(.never)
@@ -389,11 +459,11 @@ struct SettingsView: View {
                         Button("Сохранить ключ") {
                             if musixmatch.saveAPIKey(musixmatchKeyInput) {
                                 musixmatchKeyInput = ""
-                                musixmatchKeyMessage = "Резервный ключ сохранён в Keychain"
+                                musixmatchKeyMessage = "API-ключ сохранён в защищённом хранилище."
                                 LyricsService.shared.invalidateCache()
                                 NotificationCenter.default.post(name: .didUpdateCustomLyrics, object: nil)
                             } else {
-                                musixmatchKeyMessage = "Введите действующий ключ"
+                                musixmatchKeyMessage = "Проверьте API-ключ."
                             }
                         }
                         .disabled(musixmatchKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -417,33 +487,72 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack { Text("Размер шрифта"); Spacer(); Text("\(Int(settings.lyricsFontSize)) pt").foregroundStyle(.secondary) }
-                        Slider(value: $settings.lyricsFontSize, in: 36...60, step: 1).tint(settings.accentColor)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack { Text("Сдвиг синхронизации"); Spacer(); Text(String(format: "%+.1f сек", settings.lyricsOffset)).foregroundStyle(.secondary) }
-                        Slider(value: $settings.lyricsOffset, in: -3...3, step: 0.1).tint(settings.accentColor)
-                    }
                 } header: {
-                    Text("Караоке (текст песни)")
+                    Text("Musixmatch")
                 } footer: {
-                    Text("Караоке включается только с таймкодами подходящей версии песни. Без таймкодов показывается обычный текст. Авторазметка по длительности и автоматическая публикация распознанных слов отключены.")
+                    Text("Подключение через HTTPS-сервер предпочтительно: API-ключ остаётся на сервере. Для прямого доступа ключ сохраняется в Keychain.")
                 }
+    }
 
-                Section("Медиатека") {
-                    LabeledContent("Всего треков в приложении", value: "\(library.tracks.count)")
-                    Button("Пересканировать память") { Task { await library.rescan() } }
-                    Button("Сбросить индекс медиатеки", role: .destructive) { library.resetIndex() }
+    @ViewBuilder
+    private var hapticsSettings: some View {
+                Section("Управление") {
+                    Toggle("При нажатиях", isOn: $settings.hapticsEnabled).tint(settings.accentColor)
+                    Toggle("При перемотке", isOn: $settings.scrubHapticsEnabled).tint(settings.accentColor)
                 }
 
                 Section {
-                    LabeledContent("Кэш аудио, обложек и видео", value: mediaCache.formattedSize)
+                    Toggle("Вибрация под музыку", isOn: $settings.musicHapticsEnabled)
+                        .tint(settings.accentColor)
+
+                    if settings.musicHapticsEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Сила вибрации")
+                                Spacer()
+                                Text(settings.musicHapticsIntensity.title)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Picker("Сила вибрации", selection: $settings.musicHapticsIntensity) {
+                                ForEach(MusicHapticsIntensity.allCases) { item in
+                                    Text(item.title).tag(item)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: settings.musicHapticsIntensity) { _, newIntensity in
+                                MusicHapticsManager.shared.playPreview(intensity: newIntensity)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("Музыкальная вибрация")
+                } footer: {
+                    Text("Передаёт ритм вибрацией. Ощущения зависят от устройства и трека.")
+                }
+                .onChange(of: settings.musicHapticsEnabled) { _, isEnabled in
+                    if isEnabled {
+                        MusicHapticsManager.shared.playPreview(intensity: settings.musicHapticsIntensity)
+                    }
+                }
+
+    }
+
+    @ViewBuilder
+    private var storageSettings: some View {
+                Section("Медиатека") {
+                    LabeledContent("Треки", value: "\(library.tracks.count)")
+                    Button("Обновить список треков") { Task { await library.rescan() } }
+                    Button("Сбросить индекс", role: .destructive) { showResetIndexConfirmation = true }
+                }
+
+                Section {
+                    LabeledContent("Размер кэша", value: mediaCache.formattedSize)
                     Button(role: .destructive) {
-                        Task { await mediaCache.clearGeneratedCache() }
+                        showClearCacheConfirmation = true
                     } label: {
                         HStack {
-                            Text(mediaCache.isClearing ? "Очистка…" : "Очистить сгенерированный кэш")
+                            Text(mediaCache.isClearing ? "Очистка…" : "Очистить кэш")
                             if mediaCache.isClearing {
                                 Spacer()
                                 ProgressView()
@@ -454,26 +563,37 @@ struct SettingsView: View {
                 } header: {
                     Text("Хранилище")
                 } footer: {
-                    Text("Личные импортированные треки не удаляются. Очищаются только повторно загружаемые аудиофайлы, обложки и AI-видео.")
+                    Text("Удаляются загруженное аудио, обложки и созданные видео. Импортированные треки сохраняются.")
                 }
 
+    }
+
+    @ViewBuilder
+    private var aboutSettings: some View {
                 Section("О приложении") {
                     LabeledContent("Название", value: "Sonivo")
                     LabeledContent("Версия", value: appVersion)
                     LabeledContent("Сборка", value: "Build #\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")")
                     LabeledContent("Дизайн", value: "Liquid Glass")
                 }
-            }
-            .navigationTitle("Настройки")
-            .scrollContentBackground(.hidden)
-            .background(SonivoScreenBackground(colors: [SN.bgRaised, SN.bg, SN.card], showsMesh: false))
-            .listRowBackground(SN.card.opacity(0.78))
-            .listRowSeparatorTint(SN.ink.opacity(0.10))
-            .tint(settings.accentColor)
-            .sheet(isPresented: $showYandexAuthSheet) { YandexAuthSheet() }
-            .sheet(isPresented: $showEqualizerSheet) { PlayerEQSheetView() }
-            .task { await mediaCache.refresh() }
-        }
+                Section {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(l10n.isRussian ? "Плавность интерфейса" : "Interface motion")
+                                .font(SN.text(.subheadline, .medium))
+                            Text(l10n.isRussian ? "Частота обновления зависит от устройства и настроек iOS." : "Refresh rate depends on your device and iOS settings.")
+                                .font(SN.text(.caption2))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "waveform.path.badge.plus")
+                            .font(.title3)
+                            .foregroundStyle(themeManager.accentColor)
+                    }
+                } header: {
+                    Text(l10n.isRussian ? "Интерфейс" : "Interface")
+                }
+
     }
 
     private var eqSummary: String {
@@ -484,10 +604,10 @@ struct SettingsView: View {
     }
 
     private var eqRouteSummary: String {
-        if player.isEQPreparingNativeStream { return "Поток кэшируется для нативного EQ" }
-        if player.isHeadphonesConnected { return "Наушники • EQ активен" }
-        if player.eqHeadphonesOnly { return "Динамик • Flat" }
-        return "Динамик • EQ активен"
+        if player.isEQPreparingNativeStream { return "Подготовка EQ" }
+        if player.isHeadphonesConnected { return player.isEQEffectivelyActive ? "Наушники · EQ" : "Наушники" }
+        if player.eqHeadphonesOnly { return "Динамик · без EQ" }
+        return player.isEQEffectivelyActive ? "Динамик · EQ" : "Динамик"
     }
 
     private var appVersion: String {

@@ -50,15 +50,14 @@ struct AppIconPickerView: View {
             } footer: {
                 Text(manager.supportsAlternates
                     ? (l10n.isRussian
-                       ? "Выбор сохраняется системой iOS. Система может показать подтверждение. Свет, оттенок и объём зависят от оформления домашнего экрана; миниатюры здесь плоские."
-                       : "iOS saves your selection and may show a confirmation. Home Screen appearance controls lighting, tint and depth; these thumbnails are flat.")
+                       ? "iOS сохраняет выбор и может показать подтверждение. Освещение и оттенок зависят от домашнего экрана; здесь показаны плоские миниатюры."
+                       : "iOS saves your choice and may show a confirmation. Home Screen settings control light and tint; these thumbnails are flat.")
                     : (l10n.isRussian
                        ? "В этой установке приложения смена иконки недоступна."
                        : "This installation does not support alternate icons."))
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(SN.bg)
+        .modifier(SonivoSettingsFormStyle())
         .navigationTitle(l10n.isRussian ? "Иконка приложения" : "App icon")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { manager.synchronize() }

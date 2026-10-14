@@ -38,7 +38,7 @@ class StaggeredLyricsDesignTests(unittest.TestCase):
 
     def test_settings_has_picker_and_live_preview(self):
         text = (ROOT / 'Sonivo/settingsview.swift').read_text()
-        self.assertIn('Section("Дизайн текста песен")', text)
+        self.assertIn('Section("Оформление текста")', text)
         self.assertIn('selection: $settings.lyricsDesign', text)
         self.assertIn('LyricsDesignPreview(design: settings.lyricsDesign)', text)
 

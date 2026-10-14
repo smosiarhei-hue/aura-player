@@ -50,8 +50,8 @@ struct SonivoAppearanceView: View {
                 Text(l10n.isRussian ? "Цвет приложения" : "App color")
             } footer: {
                 Text(l10n.isRussian
-                     ? "Цвет сохраняется и меняется без перезапуска. Фон плеера остаётся под цвет обложки. Иконка приложения выбирается отдельно."
-                     : "Your color is saved without restarting. The player keeps its artwork colors. Choose the app icon separately.")
+                     ? "Тема меняется сразу. Фон плеера подстраивается под обложку."
+                     : "Changes apply immediately. The player background follows its artwork.")
             }
             Section {
                 NavigationLink {
@@ -70,9 +70,8 @@ struct SonivoAppearanceView: View {
                 }
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(SN.bg)
-        .navigationTitle(l10n.isRussian ? "Оформление" : "Appearance")
+        .modifier(SonivoSettingsFormStyle())
+        .navigationTitle(l10n.isRussian ? "Тема и иконка" : "Theme & icon")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { iconManager.synchronize() }
     }
