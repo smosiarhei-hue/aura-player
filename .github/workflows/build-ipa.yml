@@ -199,6 +199,7 @@ jobs:
           APP=$(find derived/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
           test -n "$APP"
           echo "Found app: $APP"
+          python3 scripts/verify_app_icon_bundle.py "$APP"
 
           if [ "$HAS_SIGNING" = "true" ]; then
             echo "==> Embedding provisioning profile into app bundle..."

@@ -1,0 +1,72 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.08627,0.08627,0.08627,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.08627,0.08627,0.08627,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "blur-material": 0,
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": false,
+          "hidden": false,
+          "image-name": "S.svg",
+          "name": "S",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting": "combined",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.06
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      },
+      "name": "SignatureS"
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}

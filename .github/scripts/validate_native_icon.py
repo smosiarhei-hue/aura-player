@@ -24,3 +24,13 @@ for layer in layers:
 assert icon['supported-platforms']['squares'] == 'shared'
 assert icon['fill-specializations'][0]['value']['solid'].split(',')[-1] == '1.00000'
 print('Source integrity passed. This is not a native rendering or compilation result.')
+
+for name in ("SonivoMusic", "SignatureS", "SonivoWordmark", "ClassicWave"):
+    package = ROOT / "Sonivo" / "AppIcons" / f"{name}.icon"
+    manifest = json.loads((package / "icon.json").read_text())
+    for group in manifest["groups"]:
+        for layer in group["layers"]:
+            asset = package / "Assets" / layer["image-name"]
+            assert asset.is_file(), asset
+            assert ET.parse(asset).getroot().attrib["viewBox"] == "0 0 1024 1024"
+print("All four production icon packages have valid source structure.")

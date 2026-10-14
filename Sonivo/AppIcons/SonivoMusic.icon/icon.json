@@ -1,0 +1,138 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.08627,0.08627,0.08627,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.08627,0.08627,0.08627,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "blur-material": 0,
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": false,
+          "hidden": false,
+          "image-name": "10-original-S.svg",
+          "name": "10-original-S",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": false,
+          "hidden": false,
+          "image-name": "20-sound-frame.svg",
+          "name": "20-sound-frame",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": false,
+          "hidden": false,
+          "image-name": "30-wave.svg",
+          "name": "30-wave",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting": "combined",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.06
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      },
+      "name": "SonivoMusic"
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}

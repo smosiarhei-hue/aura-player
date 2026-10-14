@@ -36,3 +36,6 @@ tools/videoshot-studio/*.mp4
 /Sonivo/assets.xcassets/ResonanceRingMask.imageset/ResonanceRingMask.png
 
 /Sonivo/assets.xcassets/ResonanceLaunchLogo.imageset/ResonanceLaunchLogo.png
+
+# Settings thumbnails are decoded by materialize_app_icons.py.
+/Sonivo/assets.xcassets/AppIconPreview*.imageset/preview.png

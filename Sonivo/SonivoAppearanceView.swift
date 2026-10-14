@@ -5,6 +5,7 @@ struct SonivoAppearanceView: View {
     @State private var themeManager = ThemeFontManager.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var l10n = SonivoL10n.shared
+    @State private var iconManager = AppIconManager.shared
 
     var body: some View {
         Form {
@@ -49,14 +50,31 @@ struct SonivoAppearanceView: View {
                 Text(l10n.isRussian ? "Цвет приложения" : "App color")
             } footer: {
                 Text(l10n.isRussian
-                     ? "Цвет сохраняется и меняется без перезапуска. Фон плеера остаётся под цвет обложки. Фирменная иконка — коралловая."
-                     : "Your color is saved without restarting. The player keeps its artwork colors. The app icon stays coral.")
+                     ? "Цвет сохраняется и меняется без перезапуска. Фон плеера остаётся под цвет обложки. Иконка приложения выбирается отдельно."
+                     : "Your color is saved without restarting. The player keeps its artwork colors. Choose the app icon separately.")
+            }
+            Section {
+                NavigationLink {
+                    AppIconPickerView()
+                } label: {
+                    HStack(spacing: 14) {
+                        AppIconThumbnail(icon: iconManager.selected ?? .music)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(l10n.isRussian ? "Иконка приложения" : "App icon")
+                            Text(iconManager.selected?.title(russian: l10n.isRussian)
+                                 ?? (l10n.isRussian ? "Другая иконка" : "Other icon"))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
         }
         .scrollContentBackground(.hidden)
         .background(SN.bg)
         .navigationTitle(l10n.isRussian ? "Оформление" : "Appearance")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { iconManager.synchronize() }
     }
 
     private func select(_ theme: AppThemeColor) {

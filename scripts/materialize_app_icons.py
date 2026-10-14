@@ -15,6 +15,15 @@ def main() -> None:
         encoded = (SOURCE / f"{name}.b64").read_text(encoding="ascii").strip()
         (DESTINATION / name).write_bytes(base64.b64decode(encoded, validate=True))
 
+    # Settings thumbnails only. Home Screen icons are native Icon Composer documents.
+    for icon in ("SonivoMusic", "SignatureS", "SonivoWordmark", "ClassicWave"):
+        source = ROOT / "design" / "app-icon" / "previews" / f"{icon}.png.b64"
+        destination = ROOT / "Sonivo" / "assets.xcassets" / f"AppIconPreview{icon}.imageset"
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "preview.png").write_bytes(
+            base64.b64decode(source.read_text(encoding="ascii").strip(), validate=True)
+        )
+
     ring_source = ROOT / "design" / "resonance" / "generated" / "ResonanceRingMask.png.b64"
     ring_destination = ROOT / "Sonivo" / "assets.xcassets" / "ResonanceRingMask.imageset"
     ring_destination.mkdir(parents=True, exist_ok=True)
