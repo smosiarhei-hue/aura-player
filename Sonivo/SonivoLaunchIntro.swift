@@ -8,8 +8,6 @@ struct SonivoLaunchHost: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var themeManager = ThemeFontManager.shared
     @State private var player = PlayerCore.shared
-    @State private var service = YandexMusicService.shared
-    @State private var library = LibraryStore.shared
     @State private var startupClaimed = false
     @State private var session = SonivoLaunchSession()
     @State private var epoch: TimeInterval = 0
@@ -17,10 +15,6 @@ struct SonivoLaunchHost: View {
     @State private var brandFontName: String?
     @State private var revealingHome = false
 
-    private var needsPreparation: Bool {
-        SonivoStartupGate.needsPreparation(restoringAccount: service.isRestoringInitialAccount,
-            scanningLibrary: library.isScanning, hasCachedTracks: !library.tracks.isEmpty)
-    }
     private var isShowingIntro: Bool { session.hasStarted && !session.isFinished }
 
     var body: some View {
@@ -53,10 +47,10 @@ struct SonivoLaunchHost: View {
             }
             startupClaimed = true
             do {
-                // Root is already mounted and interactive. Fast cache/sync work never flashes an overlay.
-                try await Task.sleep(for: .seconds(SonivoStartupGate.debounceSeconds))
+                // Every cold launch gets the finite brand reveal, even with a warm
+                // library cache. Root and account restoration still start immediately.
                 try Task.checkCancellation()
-                guard scenePhase == .active, needsPreparation,
+                guard scenePhase == .active,
                       session.begin(isActive: true, isPlaying: player.isPlaying) else {
                     finish()
                     return
@@ -85,9 +79,6 @@ struct SonivoLaunchHost: View {
         }
         .task(id: session.isFinished) {
             if session.isFinished { haptics.stop() }
-        }
-        .onChange(of: needsPreparation) { _, preparing in
-            if !preparing, session.hasStarted { finish() }
         }
         .onChange(of: player.isPlaying) { _, playing in
             if playing { finish() }

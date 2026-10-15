@@ -22,15 +22,11 @@ import CoreText
         var startup = SonivoStartupGate()
         precondition(startup.claim())
         precondition(!startup.claim(), "Recreated host/resume replayed startup")
-        precondition(SonivoStartupGate.debounceSeconds == 0.30)
-        for restoring in [false, true] {
-            for scanning in [false, true] {
-                for cached in [false, true] {
-                    precondition(SonivoStartupGate.needsPreparation(restoringAccount: restoring,
-                        scanningLibrary: scanning, hasCachedTracks: cached) == (restoring || (scanning && !cached)))
-                }
-            }
-        }
+        // A new process has a fresh in-memory gate. Cache/account/network state
+        // cannot suppress the intro because it is not an input to this gate.
+        var nextProcess = SonivoStartupGate()
+        precondition(nextProcess.claim(), "New cold launch did not show intro")
+        precondition(!nextProcess.claim(), "Same-process resume replayed intro")
         var session=SonivoLaunchSession()
         precondition(!session.begin(isActive:false,isPlaying:false))
         precondition(!session.hasStarted && !session.isFinished)

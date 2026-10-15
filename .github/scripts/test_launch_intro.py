@@ -52,28 +52,21 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertIn('Image("ResonanceLaunchLogo")',symbol)
         self.assertIn('sonivoLaunchRadialExposure',symbol)
 
-    def test_only_slow_uncached_startup_can_show_overlay(self):
+    def test_every_cold_start_gets_intro_without_waiting_for_preparation(self):
         host=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
-        service=(ROOT/'Sonivo/yandexmusicservice.swift').read_text()
         self.assertIn('session.hasStarted && !session.isFinished',host)
         self.assertIn('SonivoLaunchLifetime.shared.claim()',host)
-        self.assertLess(host.index('SonivoLaunchLifetime.shared.claim()'),host.index('Task.sleep'))
-        self.assertLess(host.index('SonivoStartupGate.debounceSeconds'),host.index('session.begin('))
-        self.assertIn('guard scenePhase == .active, needsPreparation,',host)
-        self.assertIn('if !preparing, session.hasStarted { finish() }',host)
+        self.assertLess(host.index('session.begin('),host.index('Task.sleep'))
+        self.assertIn('guard scenePhase == .active,',host)
         self.assertIn('if startupClaimed { finish() }',host)
-        self.assertIn('restoringAccount || (scanningLibrary && !hasCachedTracks)',model)
+        for obsolete in ['needsPreparation', 'debounceSeconds', 'isRestoringInitialAccount',
+                         'library.isScanning', 'library.tracks']:
+            self.assertNotIn(obsolete,host)
+        self.assertNotIn('needsPreparation',model)
         self.assertIn('guard !hasClaimed else { return false }',model)
+        self.assertIn('static let shared = SonivoLaunchLifetime()',model)
         self.assertNotIn('UserDefaults',model)
-        self.assertIn('isRestoringInitialAccount = currentUser == nil',service)
-        self.assertIn('if accountGeneration == initialGeneration { isRestoringInitialAccount = false }',service)
-        reset=service[service.index('private func resetPersonalState()'):]
-        self.assertIn('isRestoringInitialAccount = false',reset)
-        self.assertEqual(service.count('isRestoringInitialAccount = currentUser == nil'),1)
-        # Manual/account sync itself cannot re-arm the cold-start flag.
-        sync=service[service.index('func syncAccountData()'):service.index('private func resetPersonalState()')]
-        self.assertNotIn('isRestoringInitialAccount = true',sync)
 
     def test_visual_scene_has_no_actor_unsafe_preference_or_shader_callback(self):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()

@@ -108,16 +108,12 @@ nonisolated struct SonivoLaunchSession {
 /// One startup decision per process, including recreated SwiftUI hosts. Never persisted to disk.
 nonisolated struct SonivoStartupGate {
     private(set) var hasClaimed = false
-    static let debounceSeconds = 0.30
     mutating func claim() -> Bool {
         guard !hasClaimed else { return false }
         hasClaimed = true
         return true
     }
-    static func needsPreparation(restoringAccount: Bool, scanningLibrary: Bool,
-                                 hasCachedTracks: Bool) -> Bool {
-        restoringAccount || (scanningLibrary && !hasCachedTracks)
-    }
+
 }
 
 @MainActor
