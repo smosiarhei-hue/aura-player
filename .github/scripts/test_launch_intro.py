@@ -21,7 +21,7 @@ class LaunchIntroTests(unittest.TestCase):
         self.assertNotIn('.onOpenURL',intro) # RootView keeps the existing external playback handlers.
     def test_haptics_and_animation_share_timeline_and_respect_preferences(self):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        for expected in ['accessibilityReduceMotion','SettingsStore.shared.hapticsEnabled','supportsHaptics','engine.playsHapticsOnly = true','SonivoLaunchMotion.hapticOnsets','SonivoLaunchMotion.hapticStrengths','CACurrentMediaTime() + lead','engine.currentTime + lead','CHHapticTimeImmediate','haptics.stop()']:
+        for expected in ['accessibilityReduceMotion','SettingsStore.shared.hapticsEnabled','supportsHaptics','engine.playsHapticsOnly = true','SonivoBrandLaunchMotion.hapticOnsets','SonivoBrandLaunchMotion.hapticStrengths','CACurrentMediaTime() + lead','engine.currentTime + lead','CHHapticTimeImmediate','haptics.stop()']:
             self.assertIn(expected,intro)
         self.assertNotIn('audioContinuous',intro)
         self.assertNotIn('MusicHapticsManager',intro)
@@ -29,28 +29,23 @@ class LaunchIntroTests(unittest.TestCase):
     def test_accessibility_sizes_keep_brand_without_tagline_crowding(self):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         self.assertIn('dynamicTypeSize',intro)
-        self.assertIn('if !dynamicTypeSize.isAccessibilitySize',intro)
+        self.assertIn('if !dynamicTypeSize.isAccessibilitySize',(ROOT/'Sonivo/SonivoBrandLaunchScene.swift').read_text())
         self.assertIn('.accessibilityLabel("Sonivo")',intro)
         self.assertNotIn('Button("Пропустить"',intro)
-    def test_resonance_replaces_true_focus_with_finite_ring_and_word_reveal(self):
-        model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
-        intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        symbol=(ROOT/'Sonivo/SonivoResonanceSymbol.swift').read_text()
-        self.assertIn('static let duration = 3.0',model)
-        self.assertIn('static let reducedDuration = 0.35',model)
-        for expected in ['SonivoResonanceSymbol(time: time', 'SonivoLaunchWordmark(time: time',
-                         'taglineOpacity(at: time)']:
-            self.assertIn(expected,intro)
-        for removed in ['focusedWord(', 'cornerPath(', 'SonivoLaunchFocusBounds', 'zoomTicks']:
-            self.assertNotIn(removed,intro)
-        self.assertNotIn('onSkip',intro)
-        self.assertNotIn('UIScreen.main',intro)
-        self.assertIn('hapticTransient',intro)
-        self.assertIn('hapticContinuous',intro)
-        self.assertIn('let tailDurations = [0.260, 0.140]',intro)
-        self.assertIn('CHHapticParameterCurve(parameterID: .hapticIntensityControl',intro)
-        self.assertIn('Image("ResonanceLaunchLogo")',symbol)
-        self.assertIn('sonivoLaunchRadialExposure',symbol)
+    def test_new_brand_scene_replaces_legacy_material_with_original_vectors(self):
+        host=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
+        scene=(ROOT/'Sonivo/SonivoBrandLaunchScene.swift').read_text()
+        motion=(ROOT/'Sonivo/SonivoBrandLaunchMotion.swift').read_text()
+        self.assertIn('SonivoBrandLaunchScene(time: time',host)
+        for old in ['SonivoResonanceSymbol(', 'SonivoLaunchWordmark(', 'SonivoLaunchTypography.prepare()']:
+            self.assertNotIn(old,host)
+        for expected in ['SonivoLaunchSignatureShape()', 'SonivoLaunchNameShape()', '.trim(from: 0',
+                         'SonivoBrandLaunchMotion.bar(time, index: index)', 'SN.accent']:
+            self.assertIn(expected,scene)
+        self.assertIn('static let duration = 4.2',motion)
+        self.assertIn('static let reducedDuration = 0.35',motion)
+        self.assertIn('CHHapticPattern(events: events, parameters: [])',host)
+        self.assertNotIn('.hapticContinuous',host)
 
     def test_every_cold_start_gets_intro_without_waiting_for_preparation(self):
         host=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()

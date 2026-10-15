@@ -3,26 +3,24 @@ from pathlib import Path
 import base64,json,hashlib,struct,unittest
 R=Path(__file__).resolve().parents[2]
 class LaunchTactileTests(unittest.TestCase):
-    def test_shared_timeline_uses_firm_bounded_cues_with_finite_strong_bodies(self):
-        motion=(R/'Sonivo/SonivoLaunchMotion.swift').read_text()
+    def test_shared_timeline_uses_medium_transients_without_continuous_bodies(self):
+        motion=(R/'Sonivo/SonivoBrandLaunchMotion.swift').read_text()
         host=(R/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        self.assertIn('hapticOnsets: [Double] = [1.12, 1.53, 2.30]',motion)
-        self.assertIn('hapticStrengths: [Float] = [1.00, 0.95, 0.80]',motion)
+        self.assertIn('hapticOnsets: [Double] = [0.82, 1.46, 1.72]',motion)
+        self.assertIn('hapticStrengths: [Float] = [0.50, 0.70, 0.55]',motion)
         for token in ['SettingsStore.shared.hapticsEnabled','supportsHaptics','engine.playsHapticsOnly = true',
-                      'CHHapticTimeImmediate','tailDurations = [0.260, 0.140]',
-                      'tailDurations[index] + 0.004','parameterCurves: [travelCurve] + curves', 'hapticTravelDuration', 'value: 1)']:
+                      'CHHapticTimeImmediate','CHHapticPattern(events: events, parameters: [])',
+                      'CACurrentMediaTime() + lead', 'engine.currentTime + lead']:
             self.assertIn(token,host)
-        for token in ['audioContinuous','AVAudioSession','MusicHapticsManager','repeatForever','Timer.']:
+        for token in ['.hapticContinuous','AVAudioSession','MusicHapticsManager','repeatForever','Timer.']:
             self.assertNotIn(token,host)
         self.assertIn('if !enabled { haptics.stop() }',host)
-    def test_full_display_surface_has_no_skip_but_keeps_brand_and_tagline(self):
+    def test_full_display_surface_keeps_original_brand_vectors_and_tagline(self):
         host=(R/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        self.assertIn('GeometryReader { geometry in',host)
+        scene=(R/'Sonivo/SonivoBrandLaunchScene.swift').read_text()
         self.assertIn('.clipped()\n        .ignoresSafeArea(.container, edges: .all)',host)
-        self.assertNotIn('Button("Пропустить"',host)
-        self.assertNotIn('onSkip',host)
-        self.assertIn('Text("Музыка, которую чувствуешь.")',host)
-        self.assertIn('SonivoLaunchWordmark(time: time',host)
+        self.assertIn('Text("Музыка, которую чувствуешь.")',scene)
+        self.assertIn('SonivoLaunchNameShape()',scene)
         self.assertNotIn('UIScreen.main.bounds',host)
         self.assertNotIn('.statusBarHidden',host)
     def test_material_is_offline_with_alpha_and_not_a_video_player(self):

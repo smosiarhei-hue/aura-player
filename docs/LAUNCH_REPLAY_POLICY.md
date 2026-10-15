@@ -1,6 +1,6 @@
 # Startup animation replay policy
 
-The approved finite 3-second Resonance intro appears on every new process launch,
+The approved finite 4.2-second S + sound intro appears on every new process launch,
 including offline launches, cached libraries and fast account restoration. It does
 not wait for network, scanning or synchronization and does not finish when those
 operations finish. RootView mounts immediately under the reveal.
@@ -14,3 +14,5 @@ existing short static 0.35-second presentation. Music haptics are unchanged.
 The startup gate and session lifecycle execute in the macOS Swift fixture; source
 checks cover mounting, no preparation gate, bypass and accessibility. This is not
 a claim of runtime animation smoothness on an iPhone.
+
+The new vector scene uses medium transient-only launch haptics, with peak API intensity 0.70. Music haptics remain unchanged.

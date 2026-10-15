@@ -12,7 +12,6 @@ struct SonivoLaunchHost: View {
     @State private var session = SonivoLaunchSession()
     @State private var epoch: TimeInterval = 0
     @State private var haptics = SonivoLaunchHaptics()
-    @State private var brandFontName: String?
     @State private var revealingHome = false
 
     private var isShowingIntro: Bool { session.hasStarted && !session.isFinished }
@@ -27,9 +26,7 @@ struct SonivoLaunchHost: View {
                 .allowsHitTesting(!isShowingIntro || revealingHome)
                 .accessibilityHidden(isShowingIntro && !revealingHome)
             if isShowingIntro {
-                SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion,
-                                  brandFontName: brandFontName,
-                                  exitBlurRadius: revealingHome ? SonivoLaunchMotion.exitDefocusRadius : 0)
+                SonivoLaunchIntro(epoch: epoch, reduceMotion: reduceMotion)
                     .allowsHitTesting(!revealingHome)
                     .transition(.identity)
                     .zIndex(10)
@@ -55,21 +52,20 @@ struct SonivoLaunchHost: View {
                     finish()
                     return
                 }
-                brandFontName = SonivoLaunchTypography.prepare()
                 epoch = haptics.start(reduceMotion: reduceMotion)
                 if !reduceMotion {
-                    // Handoff overlaps the final part of the finite Resonance timeline.
-                    let untilHandoff = max(0, epoch + SonivoLaunchMotion.fadeStart - CACurrentMediaTime())
+                    // Handoff overlaps the final part of the finite S + sound timeline.
+                    let untilHandoff = max(0, epoch + SonivoBrandLaunchMotion.fadeStart - CACurrentMediaTime())
                     try await Task.sleep(for: .seconds(untilHandoff))
                     try Task.checkCancellation()
                     guard !session.isFinished, scenePhase == .active else { return }
                     withAnimation(.timingCurve(0.77, 0, 0.175, 1,
-                                              duration: SonivoLaunchMotion.exitTransitionDuration)) {
+                                              duration: SonivoBrandLaunchMotion.exitTransitionDuration)) {
                         revealingHome = true
                     }
                 }
-                let remaining = reduceMotion ? SonivoLaunchMotion.reducedDuration
-                    : max(0, epoch + SonivoLaunchMotion.duration - CACurrentMediaTime())
+                let remaining = reduceMotion ? SonivoBrandLaunchMotion.reducedDuration
+                    : max(0, epoch + SonivoBrandLaunchMotion.duration - CACurrentMediaTime())
                 try await Task.sleep(for: .seconds(remaining))
                 guard !Task.isCancelled else { return }
                 finish()
@@ -106,35 +102,14 @@ struct SonivoLaunchHost: View {
 private struct SonivoLaunchIntro: View {
     let epoch: TimeInterval
     let reduceMotion: Bool
-    let brandFontName: String?
-    let exitBlurRadius: Double
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
         GeometryReader { geometry in
-            let unit = min(1.3, min(geometry.size.width / 390, geometry.size.height / 844))
             TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || scenePhase != .active)) { _ in
-                let time = reduceMotion ? SonivoLaunchMotion.reducedPreviewTime
+                let time = reduceMotion ? SonivoBrandLaunchMotion.reducedPreviewTime
                     : (epoch > 0 ? max(0, CACurrentMediaTime() - epoch) : 0)
-                ZStack {
-                    Color(red: 16.0 / 255, green: 16.0 / 255, blue: 16.0 / 255).ignoresSafeArea()
-                    let symbolSize = min(geometry.size.width * 0.833, geometry.size.height * 0.385)
-                    SonivoResonanceSymbol(time: time, size: symbolSize, reduceMotion: reduceMotion)
-                        .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.4023)
-                    SonivoLaunchWordmark(time: time, width: geometry.size.width - 48 * unit,
-                                         unit: unit, brandFontName: brandFontName, reduceMotion: reduceMotion)
-                        .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.635)
-                    if !dynamicTypeSize.isAccessibilitySize {
-                        Text("Музыка, которую чувствуешь.")
-                            .font(.subheadline)
-                            .foregroundStyle(Color(red: 0.73, green: 0.68, blue: 0.67))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                            .opacity(reduceMotion ? 1 : SonivoLaunchMotion.taglineOpacity(at: time))
-                            .position(x: geometry.size.width * 0.5, y: geometry.size.height * 0.708)
-                    }
-                }
-                .opacity(reduceMotion ? 1 : SonivoLaunchMotion.opacity(at: time))
+                SonivoBrandLaunchScene(time: time, reduceMotion: reduceMotion)
             }
         }
         // Clip against full display bounds, never against the parent safe-area rectangle.
@@ -164,49 +139,16 @@ private final class SonivoLaunchHaptics {
             engine.resetHandler = { [weak self] in Task { @MainActor in self?.stop() } }
             self.engine = engine
             try engine.start()
-            let events = zip(SonivoLaunchMotion.hapticOnsets, SonivoLaunchMotion.hapticStrengths)
+            let events = zip(SonivoBrandLaunchMotion.hapticOnsets, SonivoBrandLaunchMotion.hapticStrengths)
                 .enumerated().map { index, cue in
                     CHHapticEvent(eventType: .hapticTransient, parameters: [
                         CHHapticEventParameter(parameterID: .hapticIntensity, value: cue.1),
                         CHHapticEventParameter(parameterID: .hapticSharpness,
-                                               value: SonivoLaunchMotion.hapticSharpnesses[index])
+                                               value: SonivoBrandLaunchMotion.hapticSharpnesses[index])
                     ], relativeTime: cue.0)
                 }
-            // A finite, substantial travel rumble follows the close-up settling motion.
-            let travelOnset = SonivoLaunchMotion.hapticTravelOnset
-            let travelDuration = SonivoLaunchMotion.hapticTravelDuration
-            let travel = CHHapticEvent(eventType: .hapticContinuous, parameters: [
-                CHHapticEventParameter(parameterID: .hapticIntensity, value: 1),
-                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.25)
-            ], relativeTime: travelOnset, duration: travelDuration)
-            let travelCurve = CHHapticParameterCurve(parameterID: .hapticIntensityControl, controlPoints: [
-                .init(relativeTime: 0, value: 0.55),
-                .init(relativeTime: 0.14, value: 0.90),
-                .init(relativeTime: 0.46, value: 0.70),
-                .init(relativeTime: 0.82, value: 1),
-                .init(relativeTime: travelDuration, value: 0),
-                .init(relativeTime: travelDuration + 0.004, value: 1)
-            ], relativeTime: travelOnset)
-            // Strong decaying bodies give the fixation and wordmark real weight.
-            let tailOnsets = [SonivoLaunchMotion.hapticOnsets[0] + 0.015,
-                              SonivoLaunchMotion.hapticOnsets[1] + 0.012]
-            let tailDurations = [0.260, 0.140]
-            let tailStrengths: [Float] = [0.95, 0.80]
-            let tails = tailOnsets.indices.map { index in
-                CHHapticEvent(eventType: .hapticContinuous, parameters: [
-                    CHHapticEventParameter(parameterID: .hapticIntensity, value: tailStrengths[index]),
-                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.18)
-                ], relativeTime: tailOnsets[index], duration: tailDurations[index])
-            }
-            let curves = tailOnsets.indices.map { index in
-                CHHapticParameterCurve(parameterID: .hapticIntensityControl, controlPoints: [
-                    .init(relativeTime: 0, value: 1),
-                    .init(relativeTime: tailDurations[index] * 0.7, value: 0.35),
-                    .init(relativeTime: tailDurations[index], value: 0),
-                    .init(relativeTime: tailDurations[index] + 0.004, value: 1)
-                ], relativeTime: tailOnsets[index])
-            }
-            let pattern = try CHHapticPattern(events: [travel] + events + tails, parameterCurves: [travelCurve] + curves)
+            // Medium, transient-only cues: no continuous travel rumble or tails.
+            let pattern = try CHHapticPattern(events: events, parameters: [])
             let player = try engine.makePlayer(with: pattern)
             self.player = player
             // A shared start offset, not two independent animation/haptic timers.

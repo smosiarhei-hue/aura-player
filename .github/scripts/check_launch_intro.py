@@ -27,6 +27,22 @@ import CoreText
         var nextProcess = SonivoStartupGate()
         precondition(nextProcess.claim(), "New cold launch did not show intro")
         precondition(!nextProcess.claim(), "Same-process resume replayed intro")
+        precondition(SonivoBrandLaunchMotion.duration == 4.2)
+        precondition(SonivoBrandLaunchMotion.hapticOnsets.count == 3)
+        for strength in SonivoBrandLaunchMotion.hapticStrengths { precondition(strength > 0 && strength <= 0.70) }
+        for t in stride(from: 0.0, through: 4.2, by: 1.0 / 120.0) {
+            let values = [SonivoBrandLaunchMotion.signature(t), SonivoBrandLaunchMotion.contour(t),
+                          SonivoBrandLaunchMotion.name(t), SonivoBrandLaunchMotion.tagline(t),
+                          SonivoBrandLaunchMotion.opacity(t)]
+            for value in values { precondition(value.isFinite && value >= 0 && value <= 1) }
+            for index in 0..<5 {
+                let amount = SonivoBrandLaunchMotion.bar(t, index: index)
+                precondition(amount.isFinite && amount >= 0 && amount <= 1)
+            }
+            precondition(SonivoBrandLaunchMotion.pulse(t).isFinite)
+        }
+        precondition(SonivoBrandLaunchMotion.contour(1.46) > 0.999)
+        precondition(SonivoBrandLaunchMotion.opacity(4.2) == 0)
         var session=SonivoLaunchSession()
         precondition(!session.begin(isActive:false,isPlaying:false))
         precondition(!session.hasStarted && !session.isFinished)
@@ -99,7 +115,7 @@ import CoreText
 '''
     with tempfile.TemporaryDirectory() as d:
         p=Path(d);(p/'Checks.swift').write_text(code)
-        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/SonivoLaunchMotion.swift'),str(root/'Sonivo/SonivoLaunchTypography.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
+        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/SonivoLaunchMotion.swift'),str(root/'Sonivo/SonivoBrandLaunchMotion.swift'),str(root/'Sonivo/SonivoLaunchTypography.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
         assert built.returncode==0,built.stderr
         result=subprocess.run([str(p/'checks')],capture_output=True,text=True)
         assert result.returncode==0,result.stdout+result.stderr

@@ -7,13 +7,13 @@ ROOT = Path(__file__).resolve().parents[2]
 class LaunchHomeRevealTests(unittest.TestCase):
     def test_handoff_reuses_existing_final_interval_without_delaying_startup(self):
         host = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
-        motion = (ROOT / "Sonivo/SonivoLaunchMotion.swift").read_text()
+        motion = (ROOT / "Sonivo/SonivoBrandLaunchMotion.swift").read_text()
         self.assertEqual(host.count("RootView(onExternalPlaybackOpen: finish)"), 1)
-        self.assertIn("static let duration = 3.0", motion)
-        self.assertIn("static let fadeStart = 2.30", motion)
-        self.assertIn("exitTransitionDuration = 0.45", motion)
-        self.assertIn("epoch + SonivoLaunchMotion.fadeStart - CACurrentMediaTime()", host)
-        self.assertIn("epoch + SonivoLaunchMotion.duration - CACurrentMediaTime()", host)
+        self.assertIn("static let duration = 4.2", motion)
+        self.assertIn("static let fadeStart = 3.78", motion)
+        self.assertIn("exitTransitionDuration = 0.38", motion)
+        self.assertIn("epoch + SonivoBrandLaunchMotion.fadeStart - CACurrentMediaTime()", host)
+        self.assertIn("epoch + SonivoBrandLaunchMotion.duration - CACurrentMediaTime()", host)
         self.assertLess(host.index("RootView("), host.index("try await Task.sleep"))
         self.assertLess(host.index("try Task.checkCancellation()"), host.index("revealingHome = true"))
 
@@ -27,7 +27,7 @@ class LaunchHomeRevealTests(unittest.TestCase):
         self.assertIn("progress > 0, progress < 1", motion)
         self.assertIn("progress: !isShowingIntro || revealingHome ? 1 : 0", host)
         self.assertIn('static let exitDefocusRadius = 0.0', motion)
-        self.assertIn("duration: SonivoLaunchMotion.exitTransitionDuration", host)
+        self.assertIn("duration: SonivoBrandLaunchMotion.exitTransitionDuration", host)
         self.assertNotIn("AnimatableModifier", modifier)
         self.assertNotIn("TimelineView", modifier)
         self.assertNotIn("drawingGroup", modifier)

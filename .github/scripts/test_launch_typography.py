@@ -34,28 +34,30 @@ class LaunchTypographyTests(unittest.TestCase):
         self.assertIn("CTFontManagerRegisterGraphicsFont(font, nil)", source)
         self.assertNotIn("URLSession", source)
 
-    def test_font_registration_happens_before_the_shared_animation_clock(self):
-        source = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
-        register = source.index("brandFontName = SonivoLaunchTypography.prepare()")
-        self.assertLess(source.index("RootView(onExternalPlaybackOpen: finish)"), register)
-        self.assertLess(source.index("session.begin("), register)
-        self.assertLess(register, source.index("epoch = haptics.start"))
-        scene = source[source.index("private struct SonivoLaunchIntro"):source.index("/// Dedicated")]
-        self.assertNotIn("prepare()", scene)
-        word = (ROOT / "Sonivo/SonivoLaunchWordmark.swift").read_text()
-        self.assertIn("Font.custom($0, fixedSize: 65 * unit)", word)
-        self.assertIn("design: .serif", word)
+    def test_new_wordmark_uses_cached_offline_vectors_not_runtime_font_registration(self):
+        host = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
+        scene = (ROOT / "Sonivo/SonivoBrandLaunchScene.swift").read_text()
+        shapes = (ROOT / "Sonivo/SonivoBrandLaunchShapes.swift").read_text()
+        self.assertNotIn("SonivoLaunchTypography.prepare()", host)
+        self.assertLess(host.index("session.begin("), host.index("epoch = haptics.start"))
+        self.assertIn("SonivoLaunchNameShape()", scene)
+        self.assertEqual(shapes.count("private static let source: Path"), 2)
+        self.assertIn("source.boundingRect", shapes)
+        self.assertIn("SonivoLaunchSignatureShape: Shape", shapes)
+        for bad in ["Font.custom", "Data(base64Encoded:", "URLSession"]:
+            self.assertNotIn(bad, scene)
 
-    def test_new_scene_is_native_ring_not_chrome_or_true_focus(self):
-        source = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
-        symbol = (ROOT / "Sonivo/SonivoResonanceSymbol.swift").read_text()
-        for removed in ["sonivoLaunchChrome", "focusedWord", "SonivoLaunchFocusBounds"]:
-            self.assertNotIn(removed, source)
-        self.assertIn("SonivoLaunchWordmark(time: time", source)
-        self.assertIn('Image("ResonanceLaunchLogo")', symbol)
-        self.assertIn("sonivoLaunchRadialExposure", symbol)
-        self.assertIn("reduceMotion ? 1 : SonivoLaunchMotion.ringOpacity", symbol)
-        self.assertIn(".accessibilityHidden(true)", symbol)
+    def test_new_scene_is_native_vector_brand_not_the_legacy_ring(self):
+        host = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
+        scene = (ROOT / "Sonivo/SonivoBrandLaunchScene.swift").read_text()
+        self.assertIn("SonivoBrandLaunchScene(time: time", host)
+        for removed in ["sonivoLaunchChrome", "focusedWord", "SonivoLaunchFocusBounds",
+                        "SonivoResonanceSymbol(", "SonivoLaunchWordmark("]:
+            self.assertNotIn(removed, host)
+        self.assertIn("SonivoLaunchSignatureShape()", scene)
+        self.assertIn("SonivoLaunchSoundContour()", scene)
+        self.assertIn(".accessibilityHidden(true)", scene)
+        self.assertNotIn("TimelineView", scene)
 
     def test_atmosphere_uses_native_transforms_and_no_separate_clock(self):
         source = (ROOT / "Sonivo/SonivoLaunchAtmosphere.swift").read_text()
