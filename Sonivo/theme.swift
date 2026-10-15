@@ -247,9 +247,8 @@ enum Haptics {
 
 // MARK: - Liquid Glass surfaces
 //
-// Thin wrappers over the system material so every pill, chip and card in the
-// app shares the same glass and picks up lensing, specular highlights and
-// interactive press response from the OS instead of a hand-drawn imitation.
+// Shared OS glass with a static Metal highlight. No per-card animation clocks;
+// semantic colors, native lensing and interaction remain owned by the system.
 
 extension View {
     /// Rounded-rectangle glass card.
@@ -257,21 +256,25 @@ extension View {
         self
             .padding(padding)
             .glassEffect(.regular, in: .rect(cornerRadius: corner))
+            .sonivoMetal(corner: corner, emphasis: 0.25)
     }
 
     /// Glass capsule for pills, badges and toasts.
     func glassCapsule(interactive: Bool = false) -> some View {
         self.glassEffect(interactive ? .regular.interactive() : .regular, in: .capsule)
+            .sonivoMetal(corner: 999, emphasis: interactive ? 0.50 : 0.25)
     }
 
     /// Glass circle for 44pt icon controls.
     func glassCircle(interactive: Bool = true) -> some View {
         self.glassEffect(interactive ? .regular.interactive() : .regular, in: .circle)
+            .sonivoMetal(corner: 999)
     }
 
     /// Tinted glass for the one primary action on a screen.
     func glassProminent(_ tint: Color = SN.ember) -> some View {
         self.glassEffect(.regular.tint(tint).interactive(), in: .capsule)
+            .sonivoMetal(corner: 999, emphasis: 0.70)
     }
 }
 

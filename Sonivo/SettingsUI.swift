@@ -28,6 +28,7 @@ struct SettingsNavigationRow: View {
                 .frame(width: SN.tapTarget, height: SN.tapTarget)
                 .background(SN.accent.opacity(0.12),
                             in: RoundedRectangle(cornerRadius: SN.radiusSmall))
+                .sonivoMetal(corner: SN.radiusSmall, emphasis: 0.55)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)

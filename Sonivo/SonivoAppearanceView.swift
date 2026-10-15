@@ -9,6 +9,8 @@ struct SonivoAppearanceView: View {
 
     @AppStorage(SonivoLiveActivityController.enabledKey) private var liveActivityEnabled = true
 
+    @AppStorage(SonivoMetalSurface.enabledKey) private var liquidMetalEnabled = true
+
     var body: some View {
         Form {
             Section(l10n.isRussian ? "Режим оформления" : "Appearance mode") {
@@ -54,6 +56,15 @@ struct SonivoAppearanceView: View {
                 Text(l10n.isRussian
                      ? "Тема меняется сразу. Фон плеера подстраивается под обложку."
                      : "Changes apply immediately. The player background follows its artwork.")
+            }
+            Section {
+                Toggle(l10n.isRussian ? "Металлические блики" : "Metal highlights", isOn: $liquidMetalEnabled)
+            } header: {
+                Text(l10n.isRussian ? "Материалы интерфейса" : "Interface materials")
+            } footer: {
+                Text(l10n.isRussian
+                     ? "Тонкий блик на стеклянных кнопках и карточках. Во время воспроизведения блик на Play плавно движется. Эффект отключается при энергосбережении, перегреве и настройках доступности."
+                     : "A subtle rim on glass controls and cards. Play shimmers gently during playback. The effect turns off for Low Power Mode, elevated temperature and accessibility settings.")
             }
             Section {
                 NavigationLink {

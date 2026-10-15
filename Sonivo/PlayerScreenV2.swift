@@ -274,7 +274,7 @@ struct PlayerScreenV2: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(SN.ink)
                     .frame(width: 36, height: 36)
-                    .glassEffect(.regular.interactive(), in: .circle)
+                    .glassCircle()
             }
             .buttonStyle(TactileButtonStyle(scale: 0.90))
 
@@ -788,6 +788,7 @@ struct PlayerScreenV2: View {
             .padding(14)
             .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
             .glassEffect(.regular.tint(glassTint).interactive(), in: .rect(cornerRadius: SN.radius))
+            .sonivoMetal(corner: SN.radius, emphasis: 0.60)
             .contentShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -1008,6 +1009,7 @@ struct PlayerScreenV2: View {
                     Circle()
                         .fill(SN.ink)
                         .frame(width: 70, height: 70)
+                        .sonivoMetal(corner: 35, emphasis: 0.85, animated: player.isPlaying)
                         .shadow(color: SN.ink.opacity(0.20), radius: 14, y: 4)
                         .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
 
