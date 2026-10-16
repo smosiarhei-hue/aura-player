@@ -42,7 +42,7 @@ class LaunchIntroTests(unittest.TestCase):
         for expected in ['SonivoLaunchSignatureShape()', 'SonivoLaunchNameShape()', '.trim(from: 0',
                          'SonivoBrandLaunchMotion.bar(time, index: index)', 'SN.accent']:
             self.assertIn(expected,scene)
-        self.assertIn('static let duration = 4.2',motion)
+        self.assertIn('static let duration = 3.5',motion)
         self.assertIn('static let reducedDuration = 0.35',motion)
         self.assertIn('CHHapticPattern(events: events, parameters: [])',host)
         self.assertNotIn('.hapticContinuous',host)
@@ -50,7 +50,7 @@ class LaunchIntroTests(unittest.TestCase):
     def test_every_cold_start_gets_intro_without_waiting_for_preparation(self):
         host=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         model=(ROOT/'Sonivo/SonivoLaunchMotion.swift').read_text()
-        self.assertIn('session.hasStarted && !session.isFinished',host)
+        self.assertIn('session.shouldCoverHome(pendingDecision: launchDecisionPending',host)
         self.assertIn('SonivoLaunchLifetime.shared.claim()',host)
         self.assertLess(host.index('session.begin('),host.index('Task.sleep'))
         self.assertIn('guard scenePhase == .active,',host)

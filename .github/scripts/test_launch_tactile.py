@@ -6,7 +6,7 @@ class LaunchTactileTests(unittest.TestCase):
     def test_shared_timeline_uses_medium_transients_without_continuous_bodies(self):
         motion=(R/'Sonivo/SonivoBrandLaunchMotion.swift').read_text()
         host=(R/'Sonivo/SonivoLaunchIntro.swift').read_text()
-        self.assertIn('hapticOnsets: [Double] = [0.82, 1.46, 1.72]',motion)
+        self.assertIn('hapticOnsets: [Double] = [0.82, 1.46, 1.72].map { $0 / playbackRate }',motion)
         self.assertIn('hapticStrengths: [Float] = [0.50, 0.70, 0.55]',motion)
         for token in ['SettingsStore.shared.hapticsEnabled','supportsHaptics','engine.playsHapticsOnly = true',
                       'CHHapticTimeImmediate','CHHapticPattern(events: events, parameters: [])',

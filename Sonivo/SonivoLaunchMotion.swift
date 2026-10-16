@@ -102,6 +102,11 @@ nonisolated struct SonivoLaunchSession {
         hasStarted = true
         return true
     }
+    /// Cover the first render before the scene task starts, but never cover a
+    /// recreated host after this process already consumed its launch claim.
+    func shouldCoverHome(pendingDecision: Bool, isPlaying: Bool) -> Bool {
+        !isFinished && !isPlaying && (pendingDecision || hasStarted)
+    }
     mutating func finish() { isFinished = true }
 }
 
@@ -120,5 +125,6 @@ nonisolated struct SonivoStartupGate {
 final class SonivoLaunchLifetime {
     static let shared = SonivoLaunchLifetime()
     private var gate = SonivoStartupGate()
+    var hasClaimed: Bool { gate.hasClaimed }
     func claim() -> Bool { gate.claim() }
 }

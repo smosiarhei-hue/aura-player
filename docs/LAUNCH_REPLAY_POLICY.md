@@ -1,6 +1,6 @@
 # Startup animation replay policy
 
-The approved finite 4.2-second S + sound intro appears on every new process launch,
+The approved finite 3.5-second S + sound intro appears on every new process launch,
 including offline launches, cached libraries and fast account restoration. It does
 not wait for network, scanning or synchronization and does not finish when those
 operations finish. RootView mounts immediately under the reveal.
@@ -16,3 +16,9 @@ checks cover mounting, no preparation gate, bypass and accessibility. This is no
 a claim of runtime animation smoothness on an iPhone.
 
 The new vector scene uses medium transient-only launch haptics, with peak API intensity 0.70. Music haptics remain unchanged.
+
+First-frame fix: the in-memory pending-decision cover exists before the scene task
+starts. A recreated host after a consumed process claim does not show a new cover.
+The system launch color and native scene use the same opaque SonivoLaunchBackground
+asset. Root still mounts underneath immediately. Visuals and haptics both run at
+1.2× speed; total duration is 3.5 seconds instead of 4.2. Reduced Motion remains 0.35s.

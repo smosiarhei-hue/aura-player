@@ -10,7 +10,7 @@ struct SonivoBrandLaunchScene: View {
         GeometryReader { geometry in
             let width = min(geometry.size.width, 600)
             ZStack {
-                Color(red: 15.0 / 255, green: 15.0 / 255, blue: 18.0 / 255)
+                Color("SonivoLaunchBackground")
                 SonivoBrandLaunchMark(time: time, reduceMotion: reduceMotion)
                     .frame(width: width, height: width)
                     .position(x: geometry.size.width / 2, y: geometry.size.height * 0.44)

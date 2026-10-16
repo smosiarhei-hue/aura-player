@@ -10,3 +10,8 @@ Hardware strength varies by device. The video cannot demonstrate haptics.
 
 Reduce Motion: static final mark for 0.35 seconds, no launch haptics. Disabled haptics,
 unsupported devices, backgrounding, deep links, playback and cancellation are respected.
+
+Runtime update: the original approval preview above is retained at 4.2s. Native
+runtime is now uniformly 1.2× faster (3.5s). Haptic cue times are divided by the
+same rate, with unchanged medium intensities. An opaque pre-task launch cover and
+matching system launch color prevent the home screen appearing before the intro.

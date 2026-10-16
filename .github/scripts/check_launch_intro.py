@@ -27,10 +27,10 @@ import CoreText
         var nextProcess = SonivoStartupGate()
         precondition(nextProcess.claim(), "New cold launch did not show intro")
         precondition(!nextProcess.claim(), "Same-process resume replayed intro")
-        precondition(SonivoBrandLaunchMotion.duration == 4.2)
+        precondition(SonivoBrandLaunchMotion.duration == 3.5)
         precondition(SonivoBrandLaunchMotion.hapticOnsets.count == 3)
         for strength in SonivoBrandLaunchMotion.hapticStrengths { precondition(strength > 0 && strength <= 0.70) }
-        for t in stride(from: 0.0, through: 4.2, by: 1.0 / 120.0) {
+        for t in stride(from: 0.0, through: SonivoBrandLaunchMotion.duration, by: 1.0 / 120.0) {
             let values = [SonivoBrandLaunchMotion.signature(t), SonivoBrandLaunchMotion.contour(t),
                           SonivoBrandLaunchMotion.name(t), SonivoBrandLaunchMotion.tagline(t),
                           SonivoBrandLaunchMotion.opacity(t)]
@@ -41,8 +41,21 @@ import CoreText
             }
             precondition(SonivoBrandLaunchMotion.pulse(t).isFinite)
         }
-        precondition(SonivoBrandLaunchMotion.contour(1.46) > 0.999)
-        precondition(SonivoBrandLaunchMotion.opacity(4.2) == 0)
+        precondition(SonivoBrandLaunchMotion.contour(1.46 / SonivoBrandLaunchMotion.playbackRate) > 0.999)
+        precondition(SonivoBrandLaunchMotion.opacity(SonivoBrandLaunchMotion.duration) == 0)
+        // The first body render is covered before any asynchronous task runs.
+        var cover = SonivoLaunchSession()
+        precondition(cover.shouldCoverHome(pendingDecision: true, isPlaying: false))
+        precondition(!cover.shouldCoverHome(pendingDecision: false, isPlaying: false), "Recreated host flashed intro")
+        precondition(!cover.shouldCoverHome(pendingDecision: true, isPlaying: true), "Playback bypass blocked")
+        precondition(cover.begin(isActive: true, isPlaying: false))
+        precondition(cover.shouldCoverHome(pendingDecision: false, isPlaying: false))
+        cover.finish()
+        precondition(!cover.shouldCoverHome(pendingDecision: true, isPlaying: false), "Finished intro reappeared")
+        precondition(SonivoBrandLaunchMotion.opacity(0) == 1, "First frame was translucent")
+        for (index, designTime) in [0.82, 1.46, 1.72].enumerated() {
+            precondition(abs(SonivoBrandLaunchMotion.hapticOnsets[index] * SonivoBrandLaunchMotion.playbackRate - designTime) < 1e-9)
+        }
         var session=SonivoLaunchSession()
         precondition(!session.begin(isActive:false,isPlaying:false))
         precondition(!session.hasStarted && !session.isFinished)

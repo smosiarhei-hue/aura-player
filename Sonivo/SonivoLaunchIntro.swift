@@ -8,13 +8,17 @@ struct SonivoLaunchHost: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var themeManager = ThemeFontManager.shared
     @State private var player = PlayerCore.shared
+    // This state is initialized before the first body evaluation, not by .task.
+    @State private var launchDecisionPending = !SonivoLaunchLifetime.shared.hasClaimed
     @State private var startupClaimed = false
     @State private var session = SonivoLaunchSession()
     @State private var epoch: TimeInterval = 0
     @State private var haptics = SonivoLaunchHaptics()
     @State private var revealingHome = false
 
-    private var isShowingIntro: Bool { session.hasStarted && !session.isFinished }
+    private var isShowingIntro: Bool {
+        session.shouldCoverHome(pendingDecision: launchDecisionPending, isPlaying: player.isPlaying)
+    }
 
     var body: some View {
         ZStack {
@@ -52,6 +56,7 @@ struct SonivoLaunchHost: View {
                     finish()
                     return
                 }
+                launchDecisionPending = false
                 epoch = haptics.start(reduceMotion: reduceMotion)
                 if !reduceMotion {
                     // Handoff overlaps the final part of the finite S + sound timeline.
@@ -94,7 +99,10 @@ struct SonivoLaunchHost: View {
         // Skip/deep-link/background/playback interruptions never wait for the handoff.
         var transaction = Transaction()
         transaction.disablesAnimations = true
-        withTransaction(transaction) { session.finish() }
+        withTransaction(transaction) {
+            launchDecisionPending = false
+            session.finish()
+        }
     }
 }
 
