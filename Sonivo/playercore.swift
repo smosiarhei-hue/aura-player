@@ -887,9 +887,7 @@ final class PlayerCore {
                 let fraction = Float(step) / 8
                 for deck in nodes.indices {
                     let curve = zip(starting[deck], targets[deck]).map { $0 + ($1 - $0) * fraction }
-                    let gain = headrooms[deck] < startingPreamp[deck]
-                        ? headrooms[deck]
-                        : startingPreamp[deck] + (headrooms[deck] - startingPreamp[deck]) * fraction
+                    let gain = startingPreamp[deck] + (headrooms[deck] - startingPreamp[deck]) * fraction
                     self.writeBands(nodes[deck], curve, globalGain: gain)
                 }
                 do { try await Task.sleep(for: .milliseconds(5)) } catch { return }

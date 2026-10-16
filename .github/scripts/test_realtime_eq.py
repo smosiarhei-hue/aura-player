@@ -216,6 +216,17 @@ void destroy(void *p) { free(p); }
                 self.assertTrue(all(math.isfinite(x) and abs(x)<=.980001 for x in audio))
         finally:self.lib.destroy(ptr)
 
+    def test_headroom_attack_does_not_step_when_changing_an_active_curve(self):
+        ptr=self.lib.create(48000,array([0]*9+[-6]),1)
+        try:
+            warm=(C.c_float*48000)(*([.1]*48000));self.lib.process(ptr,warm,1,48000,1)
+            previous=warm[-1]
+            self.lib.update(ptr,array([18]+[0]*8+[-6]),1,48000)
+            audio=(C.c_float*2048)(*([.1]*2048));self.lib.process(ptr,audio,1,2048,1)
+            steps=[abs(audio[0]-previous)]+[abs(audio[i]-audio[i-1]) for i in range(1,len(audio))]
+            self.assertLess(max(steps),.005)
+        finally:self.lib.destroy(ptr)
+
     def test_preamp_invalid_input_and_rate_fallback_are_deterministic(self):
         for rate in [float('nan'),float('inf'),0,-1]:
             self.assertEqual(self.preamp([12]*N,rate),self.preamp([12]*N,48000))

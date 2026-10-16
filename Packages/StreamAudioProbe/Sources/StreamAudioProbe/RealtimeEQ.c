@@ -96,6 +96,7 @@ void SonivoEQPrepare(SonivoRealtimeEQ *eq,double rate) {
     eq->sampleRate=isfinite(rate) && rate>=8000?rate:48000;
     eq->coefficientAlpha=1-exp(-16/(eq->sampleRate*.030));
     eq->sampleAlpha=1-exp(-1/(eq->sampleRate*.025));
+    eq->headroomAttackAlpha=1-exp(-1/(eq->sampleRate*.001));
     eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.080));
     memset(eq->z1,0,sizeof(eq->z1)); memset(eq->z2,0,sizeof(eq->z2));
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) eq->current[b]=eq->target[b]=identity();
@@ -134,9 +135,10 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
             }
         }
         eq->wet+=((eq->wantsWet?1:0)-eq->wet)*eq->sampleAlpha;
-        // Reserve headroom before raising filters; restore level slowly afterwards.
-        if(targetGain<eq->preGain) eq->preGain=targetGain;
-        else eq->preGain+=(targetGain-eq->preGain)*eq->sampleAlpha;
+        // Fast but continuous 1 ms headroom attack; 25 ms level recovery.
+        // The linked peak guard catches any overshoot during this transition.
+        double headroomAlpha=targetGain<eq->preGain?eq->headroomAttackAlpha:eq->sampleAlpha;
+        eq->preGain+=(targetGain-eq->preGain)*headroomAlpha;
         double result[SONIVO_EQ_CHANNELS];
         for(unsigned ch=0;ch<count;ch++) {
             double dry=channels[ch][f*strides[ch]]; if(!isfinite(dry)) dry=0;

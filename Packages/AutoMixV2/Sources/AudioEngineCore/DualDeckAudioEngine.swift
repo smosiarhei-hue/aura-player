@@ -169,7 +169,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 owner.controlQueue.asyncAfter(deadline: .now() + .milliseconds(step * 5)) { [weak owner] in
                     guard let owner, owner.eqGeneration == generation else { return }
                     let fraction = Float(step) / 8
-                    owner.userEQ.globalGain = preamp < startPreamp ? preamp : startPreamp + (preamp-startPreamp)*fraction
+                    owner.userEQ.globalGain = startPreamp + (preamp-startPreamp)*fraction
                     for (index, band) in owner.userEQ.bands.enumerated() {
                         band.gain = starting[index] + (target[index]-starting[index])*fraction
                     }

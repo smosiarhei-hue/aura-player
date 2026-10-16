@@ -48,7 +48,8 @@ DualDeck gets the same Apple unit after user EQ. Native limiter behavior/ceiling
 is Apple's implementation, not asserted to equal the C 0.98 ceiling.
 
 - Band changes ramp over 40 ms; stream coefficients/wet state are smoothed.
-- Headroom attenuation is applied before raising filters; level recovery ramps.
+- Stream headroom uses a continuous 1 ms attack / 25 ms recovery; native headroom
+  ramps with the bands over 40 ms. Peak protection covers transition overshoot.
 - Flat/off steady states bypass DSP/protection and do not alter the signal.
 - Experimental engines receive changes only if instantiated; no hidden engine
   startup. New engine boot applies the headphones-only route policy as well.

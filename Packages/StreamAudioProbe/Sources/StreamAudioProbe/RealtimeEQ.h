@@ -12,7 +12,7 @@ typedef struct {
     atomic_int enabled, gains[SONIVO_EQ_BANDS], preamp;
     unsigned appliedSequence;
     double sampleRate, wet, preGain, targetPreGain, limiter;
-    double coefficientAlpha, sampleAlpha, releaseAlpha;
+    double coefficientAlpha, sampleAlpha, headroomAttackAlpha, releaseAlpha;
     SonivoEQCoefficients current[SONIVO_EQ_BANDS], target[SONIVO_EQ_BANDS];
     double z1[SONIVO_EQ_CHANNELS][SONIVO_EQ_BANDS], z2[SONIVO_EQ_CHANNELS][SONIVO_EQ_BANDS];
     int wantsWet, initialized;
