@@ -234,7 +234,7 @@ final class PlayerCore {
         return isSpatialOutputSupported ? "Выход поддерживает Spatial Audio • режим выбирает iOS" : "Spatial Audio разрешено • требуется совместимый выход"
     }
 
-    private var shouldApplyUserEQ: Bool {
+    var shouldApplyUserEQ: Bool {
         eqEnabled && (!eqHeadphonesOnly || isHeadphonesConnected)
     }
 
@@ -651,7 +651,7 @@ final class PlayerCore {
         vocalUnit.bands[0].bypass = true
         engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
         engine.attach(outputLimiter)
-        // User-requested unprotected output; keep graph wiring stable across route/reset changes.
+        // Flat playback bypasses protection; non-flat EQ enables the native peak limiter.
         outputLimiter.bypass = true
         engine.connect(vocalUnit, to: outputLimiter, format: nil)
         engine.connect(outputLimiter, to: engine.outputNode, format: nil)
@@ -862,18 +862,24 @@ final class PlayerCore {
         let user = normalizedUserGains
         let on = shouldApplyUserEQ
         StreamBeatTap.shared.updateEQ(gains: user, enabled: on)
+        // Publish only to existing experimental engines; never enable/start them here.
+        AutoMixV2Runtime.existing?.applyUserEQ(gains: user, enabled: on)
+        NeuroMixRuntime.existing?.applyUserEQ(gains: user, enabled: on)
         func compose(_ offset: [Float]) -> [Float] {
             Self.normalized((0..<Self.bandFrequencies.count).map { on ? user[$0] + offset[$0] : offset[$0] })
         }
         let targets = [compose(eqOffsetA), compose(eqOffsetB), compose(eqOffsetLooper)]
         let nodes = [eqNodeA, eqNodeB, looperEQ]
-        let rate = AVAudioSession.sharedInstance().sampleRate
-        let headrooms = targets.map { curve in
-            curve.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
+        let headrooms = zip(nodes, targets).map { node, curve in
+            let rate = node.inputFormat(forBus: 0).sampleRate
+            return curve.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
         }
         nativeEQRamp?.cancel()
         let starting = nodes.map { $0.bands.map(\.gain) }
         let startingPreamp = nodes.map(\.globalGain)
+        let needsProtection = targets.joined().contains { abs($0) > 0.001 }
+        // Keep the limiter active through the return-to-flat ramp as well.
+        outputLimiter.bypass = !(needsProtection || starting.joined().contains { abs($0) > 0.001 })
         // Parameter interpolation avoids abrupt clicks on toggle, route changes or sliders.
         nativeEQRamp = Task { @MainActor [weak self] in
             for step in 1...8 {
@@ -881,11 +887,14 @@ final class PlayerCore {
                 let fraction = Float(step) / 8
                 for deck in nodes.indices {
                     let curve = zip(starting[deck], targets[deck]).map { $0 + ($1 - $0) * fraction }
-                    let gain = startingPreamp[deck] + (headrooms[deck] - startingPreamp[deck]) * fraction
+                    let gain = headrooms[deck] < startingPreamp[deck]
+                        ? headrooms[deck]
+                        : startingPreamp[deck] + (headrooms[deck] - startingPreamp[deck]) * fraction
                     self.writeBands(nodes[deck], curve, globalGain: gain)
                 }
                 do { try await Task.sleep(for: .milliseconds(5)) } catch { return }
             }
+            self?.outputLimiter.bypass = !needsProtection
         }
     }
 

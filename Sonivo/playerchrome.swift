@@ -390,7 +390,7 @@ struct PlayerEQSheetView: View {
     @State private var deletingPreset: SavedEQPreset?
     @State private var selectedBand = 0
 
-    private let bandNames = EQGainLimits.frequencies.map { $0 <= 250 ? "Низкие частоты" : "Частотная полоса" }
+    private let bandNames = EQFrequencyRegion.bandTitles
     private let frequencyLabels = EQGainLimits.frequencies.map { "\(Int($0)) Гц" }
     private var primaryPresets: [EQPreset] { [EQPresets.flat, EQPresets.airPodsPro2Bass, EQPresets.bassBoost, EQPresets.subBassPower, EQPresets.bassTrebleBoost] }
     private var activePreset: EQPreset? { EQPresets.all.first { matches($0.gains) } }
@@ -505,7 +505,7 @@ struct PlayerEQSheetView: View {
             .tint(SN.ink)
             Text(activePreset?.name == EQPresets.airPodsPro2Bass.name
                  ? "AirPods Pro 2: мягкий глубокий низ без лишнего гула. Это профиль приложения, не калибровка Apple."
-                 : "Профили меняют частотный баланс, а не громкость iPhone.")
+                 : "Профили меняют баланс частот. Запас по уровню защищает усиленные полосы; громкость iPhone не меняется.")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -546,11 +546,22 @@ struct PlayerEQSheetView: View {
                 Spacer()
                 Text("НЧ до +18 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
-            Text("30, 60, 120 Гц → 15 кГц • все полосы на одном экране")
+            Text("10 полос · низкие, средние и высокие частоты")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
-            Text("Выше +12 дБ возможны искажения. Начни с умеренной громкости; физический бас зависит от наушников. Системную громкость и ограничения iOS приложение не меняет.")
+            Text("При усилении EQ автоматически оставляет запас по уровню. Начни с умеренной громкости: возможности наушников и ограничения iOS не меняются.")
                 .font(.caption).foregroundStyle(SN.inkMuted)
+            Picker("Диапазон частот", selection: Binding(
+                get: { EQFrequencyRegion.containing(selectedBand) },
+                set: { selectedBand = $0.indices.lowerBound }
+            )) {
+                ForEach(EQFrequencyRegion.allCases) { region in
+                    Text(region.title).tag(region)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(EQFrequencyRegion.containing(selectedBand).detail)
+                .font(.subheadline).foregroundStyle(SN.inkMuted)
             Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(spacing: 0) {
@@ -734,7 +745,7 @@ struct PlayerEQSheetView: View {
                 .font(.subheadline.weight(.semibold))
             Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 30 Гц воздействует и на частоты ниже неё. Полосы 60, 120 и 250 Гц позволяют отдельно настроить глубину, удар и плотность. Точная нижняя граница не заявлена Apple.")
             Text("15 кГц — номинальная верхняя полоса. Рабочая частота ограничена частотой дискретизации аудиовыхода; это не заявленный диапазон наушников.")
-            Text("Защита EQ от перегрузки отключена. Сильное усиление может вызвать хрип и искажения. EQ не добавляет низкие частоты, которых нет в записи. Проверяй настройки сначала на небольшой громкости.")
+            Text("Защита от цифровой перегрузки включается вместе с ненулевой кривой EQ. При усилении общая громкость может немного снизиться — это запас для чистого звука, а не изменение громкости iPhone. Flat и выключенный EQ сохраняют исходный сигнал. EQ не исправляет искажения самой записи или наушников.")
         }
         .font(.subheadline)
         .foregroundStyle(SN.inkMuted)

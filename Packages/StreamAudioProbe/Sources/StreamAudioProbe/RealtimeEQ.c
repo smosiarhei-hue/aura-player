@@ -31,11 +31,32 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     return (SonivoEQCoefficients){b0/a0,b1/a0,b2/a0,a1/a0,a2/a0};
 }
 
+// Control-thread response estimate; never called from SonivoEQProcess/consume.
+// Include DC/Nyquist plus a dense logarithmic grid. A 1 dB reserve covers grid
+// error; the linked peak guard below also catches transients/parameter ramps.
 float SonivoEQPreamp(const float *gains, size_t count, double rate) {
-    // Requested unprotected EQ: boosts no longer turn down the entire signal.
-    // Retain the API for both native AU and streamed PCM settings publishers.
-    (void)gains; (void)count; (void)rate;
-    return 0;
+    rate=isfinite(rate) && rate>=8000?rate:48000;
+    SonivoEQCoefficients k[SONIVO_EQ_BANDS];
+    int boost=0;
+    for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
+        double g=cleanGain(gains && b<count?gains[b]:0,b);
+        boost |= g>0;
+        k[b]=coefficients(b,g,rate);
+    }
+    if(!boost) return 0;
+    double peak=0;
+    for(unsigned i=0;i<=1025;i++) {
+        double hz=i==0?0:(i==1025?rate*.5:10*pow(rate*.05,(double)(i-1)/1023));
+        double w=6.283185307179586*hz/rate, c=cos(w), sn=sin(w);
+        double c2=cos(2*w), s2=sin(2*w), db=0;
+        for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
+            double nr=k[b].b0+k[b].b1*c+k[b].b2*c2, ni=-k[b].b1*sn-k[b].b2*s2;
+            double dr=1+k[b].a1*c+k[b].a2*c2, di=-k[b].a1*sn-k[b].a2*s2;
+            db+=10*log10(fmax(1e-30,(nr*nr+ni*ni)/fmax(1e-30,dr*dr+di*di)));
+        }
+        peak=fmax(peak,db);
+    }
+    return (float)-clamp(peak+1,0,48);
 }
 
 void SonivoEQInit(SonivoRealtimeEQ *eq) {
@@ -113,7 +134,9 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
             }
         }
         eq->wet+=((eq->wantsWet?1:0)-eq->wet)*eq->sampleAlpha;
-        eq->preGain+=(targetGain-eq->preGain)*eq->sampleAlpha;
+        // Reserve headroom before raising filters; restore level slowly afterwards.
+        if(targetGain<eq->preGain) eq->preGain=targetGain;
+        else eq->preGain+=(targetGain-eq->preGain)*eq->sampleAlpha;
         double result[SONIVO_EQ_CHANNELS];
         for(unsigned ch=0;ch<count;ch++) {
             double dry=channels[ch][f*strides[ch]]; if(!isfinite(dry)) dry=0;
@@ -121,8 +144,13 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
             for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) wet=filter(eq,ch,b,wet);
             result[ch]=dry*(1-eq->wet)+wet*eq->preGain*eq->wet;
         }
-        // No app peak limiter or hard clipper: Float32 peaks may exceed unity.
-        // Per-channel filters and numerical/format validity checks remain unchanged.
-        for(unsigned ch=0;ch<count;ch++) channels[ch][f*strides[ch]]=(float)result[ch];
+        // Zero-lookahead sample-peak safety, NOT a true-peak/loudness processor.
+        // One envelope for all channels preserves stereo/multichannel balance.
+        double peak=0;
+        for(unsigned ch=0;ch<count;ch++) peak=fmax(peak,fabs(result[ch]));
+        double required=peak>.98?.98/peak:1;
+        if(required<eq->limiter) eq->limiter=required;
+        else eq->limiter+=(required-eq->limiter)*eq->releaseAlpha;
+        for(unsigned ch=0;ch<count;ch++) channels[ch][f*strides[ch]]=(float)(result[ch]*eq->limiter);
     }
 }

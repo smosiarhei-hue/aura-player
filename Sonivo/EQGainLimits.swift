@@ -42,3 +42,18 @@ nonisolated enum EQGainLimits {
         return frequencies.indices.map { clean(expanded.indices.contains($0) ? expanded[$0] : 0,at:$0) }
     }
 }
+
+/// Categories select real bands; they never average or overwrite a saved curve.
+nonisolated enum EQFrequencyRegion: Int, CaseIterable, Identifiable {
+    case low, middle, high
+    var id: Int { rawValue }
+    var title: String { switch self { case .low: "Низкие"; case .middle: "Средние"; case .high: "Высокие" } }
+    var indices: ClosedRange<Int> { switch self { case .low: 0...3; case .middle: 4...6; case .high: 7...9 } }
+    var detail: String { switch self {
+        case .low: "30–250 Гц · глубина, удар и тепло"
+        case .middle: "500 Гц–2 кГц · инструменты, голос и разборчивость"
+        case .high: "4–15 кГц · атака, яркость и воздух"
+    } }
+    static func containing(_ band: Int) -> Self { band < 4 ? .low : (band < 7 ? .middle : .high) }
+    static let bandTitles = ["Саб-бас", "Глубина", "Удар", "Тепло", "Плотность", "Голос", "Разборчивость", "Атака", "Яркость", "Воздух"]
+}

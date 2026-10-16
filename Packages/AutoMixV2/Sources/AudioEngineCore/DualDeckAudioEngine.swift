@@ -3,6 +3,7 @@
 @preconcurrency import AVFAudio
 import Foundation
 import MixModels
+import AudioToolbox
 
 /// Invariant: graph, nodes, slots and fade state are accessed only on controlQueue.
 /// Public async methods enqueue commands; decoder queues never touch audio nodes.
@@ -17,6 +18,8 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
     private let deckA: DeckSlot
     private let deckB: DeckSlot
     private let userEQ: AVAudioUnitEQ
+    private let eqLimiter: AVAudioUnitEffect
+    private var eqGeneration: UInt64 = 0
     private var fade: FadeState?
 
     public init(preloadPolicy: PCMPreloadPolicy = PCMPreloadPolicy()) throws {
@@ -52,7 +55,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             engine.attach(userEQ)
             let frequencies: [Float] = [30, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000]
             for (index, band) in userEQ.bands.enumerated() {
-                band.frequency = frequencies[index]
+                band.frequency = min(frequencies[index], Float(format.sampleRate * 0.44))
                 band.bandwidth = 1
                 band.filterType = index == 0 ? .lowShelf : (index == frequencies.count - 1 ? .highShelf : .parametric)
                 band.gain = 0
@@ -60,10 +63,16 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             }
             userEQ.bypass = true
             engine.connect(engine.mainMixerNode, to: userEQ, format: format)
-            engine.connect(userEQ, to: engine.outputNode, format: format)
+            let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+                componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
+                componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
+            engine.attach(limiter)
+            limiter.bypass = true
+            engine.connect(userEQ, to: limiter, format: format)
+            engine.connect(limiter, to: engine.outputNode, format: format)
             a.gainMixer.outputVolume = 1
             b.gainMixer.outputVolume = 0
-            return (engine, format, a, b, userEQ)
+            return (engine, format, a, b, userEQ, limiter)
         }
         controlQueue = queue
         engine = graph.0
@@ -71,6 +80,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         deckA = graph.2
         deckB = graph.3
         userEQ = graph.4
+        eqLimiter = graph.5
         self.preloadPolicy = preloadPolicy
     }
     public func startEngine() async throws { try await command { try $0.startLocked() } }
@@ -142,13 +152,32 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
     }
     public func applyUserEQ(gains: [Float], enabled: Bool) async {
         await inspect { owner in
-            owner.userEQ.bypass = !enabled
-            let normalized = Array(gains.prefix(owner.userEQ.bands.count)).enumerated().map {
-                $0.element.isFinite ? max(-12,min($0.offset < 4 ? Float(18) : Float(12),$0.element)) : 0
+            let target = owner.userEQ.bands.indices.map { index -> Float in
+                guard enabled, index < gains.count, gains[index].isFinite else { return 0 }
+                return max(-12, min(index < 4 ? 18 : 12, gains[index]))
             }
-            owner.userEQ.globalGain = 0
-            for (index, band) in owner.userEQ.bands.enumerated() {
-                band.gain = enabled && index < normalized.count ? normalized[index] : 0
+            owner.eqGeneration &+= 1
+            let generation = owner.eqGeneration
+            let starting = owner.userEQ.bands.map(\.gain)
+            let preamp = EQHeadroom.preamp(gains: target, sampleRate: owner.outputFormat.sampleRate)
+            let startPreamp = owner.userEQ.globalGain
+            let active = target.contains { abs($0) > 0.001 }
+            owner.userEQ.bypass = false
+            owner.eqLimiter.bypass = !(active || starting.contains { abs($0) > 0.001 })
+            // Control-queue ramps; stale slider/preset updates cannot overwrite a new one.
+            for step in 1...8 {
+                owner.controlQueue.asyncAfter(deadline: .now() + .milliseconds(step * 5)) { [weak owner] in
+                    guard let owner, owner.eqGeneration == generation else { return }
+                    let fraction = Float(step) / 8
+                    owner.userEQ.globalGain = preamp < startPreamp ? preamp : startPreamp + (preamp-startPreamp)*fraction
+                    for (index, band) in owner.userEQ.bands.enumerated() {
+                        band.gain = starting[index] + (target[index]-starting[index])*fraction
+                    }
+                    if step == 8 {
+                        owner.userEQ.bypass = !active
+                        owner.eqLimiter.bypass = !active
+                    }
+                }
             }
         }
     }

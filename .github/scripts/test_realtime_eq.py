@@ -79,10 +79,13 @@ void destroy(void *p) { free(p); }
         rms=lambda x: math.sqrt(sum(y*y for y in x)/len(x))
         return 20*math.log10(rms(output[len(output)//2:])/rms(samples[len(samples)//2:]))
 
+    def preamp(self, gains, rate=48000):
+        return self.lib.SonivoEQPreamp(array(gains),N,rate)
+
     def test_compact_centers_are_real_independently_adjustable_filters(self):
         for hz in [60,120,250,500,1000,2000,4000,8000]:
             gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
-            self.assertAlmostEqual(self.response(gains,hz),6,delta=.08)
+            self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),6,delta=.08)
         gains=[0]*N;gains[FREQUENCIES.index(120)]=6
         self.assertLess(self.response(gains,30),1)
         self.assertLess(self.response(gains,500),1)
@@ -101,45 +104,41 @@ void destroy(void *p) { free(p); }
     def test_extended_bass_range_is_real_and_does_not_boost_high_band_limits(self):
         strong=[18,0,0,0,0,0,0,0,0,0]
         mild=[12,0,0,0,0,0,0,0,0,0]
-        self.assertGreater(self.response(strong,12)-self.response(mild,12),5)
-        self.assertAlmostEqual(self.response(strong,1000),0,delta=.1)
+        self.assertGreater((self.response(strong,12)-self.preamp(strong))-(self.response(mild,12)-self.preamp(mild)),5)
+        self.assertAlmostEqual(self.response(strong,1000)-self.preamp(strong),0,delta=.1)
         self.assertAlmostEqual(self.response([0]*5+[18]+[0]*4,1000),self.response([0]*5+[12]+[0]*4,1000),delta=.1)
         self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[18]*4+[12]*6)))
         gains=[0]*N;gains[3]=18
-        self.assertAlmostEqual(self.response(gains,250),18,delta=.1)
+        self.assertAlmostEqual(self.response(gains,250)-self.preamp(gains),18,delta=.1)
         gains[3]=24
-        self.assertAlmostEqual(self.response(gains,250),18,delta=.1)
+        self.assertAlmostEqual(self.response(gains,250)-self.preamp(gains),18,delta=.1)
     def test_shelves_control_bass_and_treble_without_edge_resonance(self):
         bass=[6]+[0]*9;treble=[0]*9+[6]
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)
         self.assertGreater(self.response(treble,22000)-self.response(treble,1000),5.5)
 
-    def test_overlapping_boosts_keep_unity_preamp_without_automatic_attenuation(self):
+    def test_overlapping_boosts_reserve_summed_response_headroom(self):
         gains=[12]*10
-        pre=self.lib.SonivoEQPreamp(array(gains),N,48000)
-        self.assertEqual(pre,0)
-        for frequency in [30,62.5,125,250,500,1000,2000,4000,8000,20000,22000]:
-            self.assertGreater(self.response(gains,frequency),6)
+        pre=self.preamp(gains)
+        self.assertLess(pre,-18) # Must account for overlapping bands, not just largest slider.
+        for frequency in [12,30,62.5,125,250,500,1000,2000,4000,8000,16000,22000]:
+            self.assertLessEqual(self.response(gains,frequency),-.90)
+        self.assertGreater(self.response(gains,16000)-pre,6)
 
-    def test_gap_below_new_top_shelf_still_boosts_without_attenuation(self):
-        # The last control is a real 15 kHz high shelf, not a cosmetic label.
-        self.assertGreater(self.response([12]*10,16000),0)
-        self.assertEqual(self.lib.SonivoEQPreamp(array([12]*10),N,48000),0)
-
-    def test_bass_boost_does_not_turn_down_unaffected_midrange(self):
+    def test_bass_preamp_preserves_relative_tone_not_artificial_loudness(self):
         gains=[6]+[0]*9
-        self.assertEqual(self.lib.SonivoEQPreamp(array(gains),N,48000),0)
-        self.assertAlmostEqual(self.response(gains,1000),0,delta=.1)
-        self.assertGreater(self.response(gains,20),4)
+        self.assertAlmostEqual(self.preamp(gains),-7,delta=.03)
+        self.assertAlmostEqual(self.response(gains,1000)-self.preamp(gains),0,delta=.1)
+        self.assertGreater(self.response(gains,20)-self.response(gains,1000),4)
+        self.assertEqual(self.preamp([-12]*10),0)
+        self.assertEqual(self.preamp([0]*10),0)
 
-    def test_high_level_eq_is_not_limited_or_clipped_by_app(self):
-        gains=[12]+[0]*9
-        low=[.06*math.sin(2*math.pi*20*n/48000) for n in range(12000)]
-        high=[x*10 for x in low]
-        a=self.run_audio(low,gains);b=self.run_audio(high,gains)
-        self.assertGreater(max(map(abs,b)),1.0)
-        self.assertTrue(all(math.isfinite(x) for x in b))
-        self.assertLess(max(abs(y-x*10) for x,y in zip(a,b)),1e-5)
+    def test_high_level_signal_has_linked_peak_protection(self):
+        samples=[2*math.sin(n*.13)+.4*math.sin(n*.023) for n in range(12000)]
+        output=self.run_audio(samples,[12]*10)
+        self.assertTrue(all(math.isfinite(x) for x in output))
+        self.assertLessEqual(max(map(abs,output)),.980001)
+        self.assertGreater(max(map(abs,output)),.5)
 
     def test_bass_profiles_emphasize_subbass_without_low_mid_mud(self):
         import re
@@ -153,11 +152,11 @@ void destroy(void *p) { free(p); }
             self.assertGreater(self.response(gains,20)-mid,4)
             self.assertGreater(self.response(gains,63)-mid,5)
             self.assertLess(self.response(gains,250)-mid,2)
-            # High-level multitone remains finite but is intentionally not peak-limited.
+            # High-level multitone stays finite and below the sample-peak ceiling.
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
             output=self.run_audio(signal,gains)
             self.assertTrue(all(math.isfinite(x) for x in output))
-            self.assertGreater(max(map(abs,output)),1.0)
+            self.assertLessEqual(max(map(abs,output)),.980001)
 
     def test_channels_do_not_crossmix_in_planar_or_interleaved_audio(self):
         for interleaved in [False,True]:
@@ -169,12 +168,12 @@ void destroy(void *p) { free(p); }
                 if ch==3:self.assertGreater(max(map(abs,data)),.01)
                 else:self.assertEqual(max(map(abs,data)),0)
 
-    def test_unlimited_output_preserves_stereo_ratio(self):
+    def test_peak_protection_preserves_stereo_ratio(self):
         samples=[]
         for n in range(5000):
             x=2*math.sin(n*.13); samples.extend([x,x*.25])
         output=self.run_audio(samples,[3]*10,channels=2)
-        self.assertGreater(max(map(abs,output)),1.0)
+        self.assertLessEqual(max(map(abs,output)),.980001)
         self.assertLess(max(abs(output[i+1]-output[i]*.25) for i in range(0,len(output),2)),1e-6)
 
     def test_sample_rates_and_invalid_gains_remain_finite(self):
@@ -200,6 +199,29 @@ void destroy(void *p) { free(p); }
             self.assertLess(largest,.05)
         finally:self.lib.destroy(ptr)
 
+    def test_hot_sweep_impulses_and_parameter_changes_stay_bounded(self):
+        for rate in [8000,32000,44100,48000,96000]:
+            frames=8192
+            signal=[.95*math.sin(2*math.pi*(20*n/rate + (rate*.42-20)*n*n/(2*rate*frames))) for n in range(frames)]
+            signal[0]=1;signal[4000]=-1
+            result=self.run_audio(signal,[18]*4+[12]*6,rate)
+            self.assertLessEqual(max(map(abs,result)),.980001)
+        ptr=self.lib.create(48000,array([0]*N),0)
+        try:
+            for block in range(120):
+                gains=[18 if i<4 else 12 for i in range(N)] if block%2 else [-12]*N
+                self.lib.update(ptr,array(gains),1,48000)
+                raw=[.85*math.sin((block*128+i)*.079) for i in range(128)]
+                audio=(C.c_float*128)(*raw);self.lib.process(ptr,audio,1,128,1)
+                self.assertTrue(all(math.isfinite(x) and abs(x)<=.980001 for x in audio))
+        finally:self.lib.destroy(ptr)
+
+    def test_preamp_invalid_input_and_rate_fallback_are_deterministic(self):
+        for rate in [float('nan'),float('inf'),0,-1]:
+            self.assertEqual(self.preamp([12]*N,rate),self.preamp([12]*N,48000))
+        self.assertEqual(self.lib.SonivoEQPreamp(None,0,48000),0)
+        self.assertEqual(self.preamp([float('nan')]*N),0)
+
     def test_stream_and_native_integration_safety(self):
         core=(ROOT/'Sonivo/playercore.swift').read_text()
         tap=(ROOT/'Sonivo/streambeat.swift').read_text()
@@ -208,10 +230,11 @@ void destroy(void *p) { free(p); }
         self.assertNotIn('VocalIsolationManager.processBuffer(buffer)',core)
         self.assertIn('engine.connect(vocalUnit, to: outputLimiter',core)
         self.assertIn('outputLimiter.bypass = true',core)
-        self.assertNotIn('outputLimiter.bypass = false',core)
+        self.assertIn('self?.outputLimiter.bypass = !needsProtection',core)
         render=(DSP/'RealtimeEQ.c').read_text().split('void SonivoEQProcess',1)[1]
-        self.assertNotIn('eq->limiter)',render)
-        self.assertNotIn('peak>.99',render)
+        self.assertIn('result[ch]*eq->limiter',render)
+        self.assertIn('peak>.98',render)
+        self.assertNotIn('SonivoEQPreamp(',render)
         self.assertIn('mode: .default',session);self.assertNotIn('.moviePlayback',session)
         self.assertIn('kAudioFormatEnhancedAC3',tap)
         self.assertIn('.spatialPassthrough',tap)

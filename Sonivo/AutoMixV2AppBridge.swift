@@ -60,6 +60,7 @@ final class AutoMixEngineSelectionStore {
 @MainActor
 final class NeuroMixRuntime {
     static let shared = NeuroMixRuntime()
+    private(set) static weak var existing: NeuroMixRuntime?
     private let source = LocalTrackSource()
     private let analyzer: TrackAnalyzer
     private let yandexClient = AutoMixV2YandexDownloadClient()
@@ -91,6 +92,17 @@ final class NeuroMixRuntime {
         } else {
             yandexSource = nil
         }
+        Self.existing = self
+    }
+
+    private var eqUpdateTask: Task<Void, Never>?
+    func applyUserEQ(gains: [Float], enabled: Bool) {
+        eqUpdateTask?.cancel()
+        guard let engine else { return }
+        eqUpdateTask = Task {
+            guard !Task.isCancelled else { return }
+            await engine.applyUserEQ(gains: gains, enabled: enabled)
+        }
     }
 
     func engineSelectionChanged(isEnabled: Bool) async {
@@ -110,7 +122,7 @@ final class NeuroMixRuntime {
             let audio = try DualDeckAudioEngine()
             engine = audio
             attachAppDSP(to: audio)
-            await audio.applyUserEQ(gains: PlayerCore.shared.eqGains, enabled: PlayerCore.shared.eqEnabled)
+            await audio.applyUserEQ(gains: PlayerCore.shared.eqGains, enabled: PlayerCore.shared.shouldApplyUserEQ)
             try await audio.prepare(.a, fileURL: firstURL)
             await audio.setGain(1, for: .a)
             try await audio.play(.a)
@@ -419,6 +431,7 @@ final class NeuroMixRuntime {
 @MainActor
 final class AutoMixV2Runtime {
     static let shared = AutoMixV2Runtime()
+    private(set) static weak var existing: AutoMixV2Runtime?
     private let localSource: LocalTrackSource
     private let yandexClient: AutoMixV2YandexDownloadClient
     private let compositeSource: CompositeTrackSource?
@@ -452,6 +465,7 @@ final class AutoMixV2Runtime {
         compositeSource = builtComposite
         coordinator = nil
         lastError = startupError
+        Self.existing = self
     }
     private func ensureCoordinator() -> PlaybackCoordinator? {
         if let coordinator { return coordinator }
@@ -465,7 +479,7 @@ final class AutoMixV2Runtime {
             let builtCoordinator = PlaybackCoordinator(source: compositeSource, engine: engine)
             builtCoordinator.applyUserEQ(
                 gains: PlayerCore.shared.eqGains,
-                enabled: PlayerCore.shared.eqEnabled
+                enabled: PlayerCore.shared.shouldApplyUserEQ
             )
             builtCoordinator.onChange = { [weak self] state in self?.apply(state) }
             coordinator = builtCoordinator
