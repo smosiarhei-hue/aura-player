@@ -1,8 +1,9 @@
 import Foundation
 
-/// Compact octave-style controls: one screen, real centers from 30 Hz to 15 kHz.
+/// Compact octave-style controls: one screen, real centers from 40 Hz to 15 kHz.
 nonisolated enum EQGainLimits {
-    static let frequencies: [Float] = [30,60,120,250,500,1000,2000,4000,8000,15000]
+    static let frequencies: [Float] = [40,60,120,250,500,1000,2000,4000,8000,15000]
+    static let previousCompactFrequencies: [Float] = [30,60,120,250,500,1000,2000,4000,8000,15000]
     static let denseFrequencies: [Float] = [30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,500,1000,2000,4000,8000,20000]
     static let legacyFrequencies: [Float] = [30,62.5,125,250,500,1000,2000,4000,8000,20000]
     static let maximum: Float = 18
@@ -50,7 +51,7 @@ nonisolated enum EQFrequencyRegion: Int, CaseIterable, Identifiable {
     var title: String { switch self { case .low: "Низкие"; case .middle: "Средние"; case .high: "Высокие" } }
     var indices: ClosedRange<Int> { switch self { case .low: 0...3; case .middle: 4...6; case .high: 7...9 } }
     var detail: String { switch self {
-        case .low: "30–250 Гц · глубина, удар и тепло"
+        case .low: "40–250 Гц · глубина, удар и тепло"
         case .middle: "500 Гц–2 кГц · инструменты, голос и разборчивость"
         case .high: "4–15 кГц · атака, яркость и воздух"
     } }

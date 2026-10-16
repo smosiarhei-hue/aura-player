@@ -2,7 +2,7 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {30, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000};
+static const double frequencies[SONIVO_EQ_BANDS] = {40, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000};
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
 static double cleanGain(double gain, unsigned band) { return isfinite(gain) ? clamp(gain, -12, frequencies[band] <= 250 ? 18 : 12) : 0; }
 static SonivoEQCoefficients identity(void) { return (SonivoEQCoefficients){1,0,0,0,0}; }
@@ -31,32 +31,11 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     return (SonivoEQCoefficients){b0/a0,b1/a0,b2/a0,a1/a0,a2/a0};
 }
 
-// Control-thread response estimate; never called from SonivoEQProcess/consume.
-// Include DC/Nyquist plus a dense logarithmic grid. A 1 dB reserve covers grid
-// error; the linked peak guard below also catches transients/parameter ramps.
+// Unity preamp by product policy: do not turn down the whole song whenever a
+// slider is boosted. The linked sample-peak guard handles actual overshoots.
 float SonivoEQPreamp(const float *gains, size_t count, double rate) {
-    rate=isfinite(rate) && rate>=8000?rate:48000;
-    SonivoEQCoefficients k[SONIVO_EQ_BANDS];
-    int boost=0;
-    for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
-        double g=cleanGain(gains && b<count?gains[b]:0,b);
-        boost |= g>0;
-        k[b]=coefficients(b,g,rate);
-    }
-    if(!boost) return 0;
-    double peak=0;
-    for(unsigned i=0;i<=1025;i++) {
-        double hz=i==0?0:(i==1025?rate*.5:10*pow(rate*.05,(double)(i-1)/1023));
-        double w=6.283185307179586*hz/rate, c=cos(w), sn=sin(w);
-        double c2=cos(2*w), s2=sin(2*w), db=0;
-        for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
-            double nr=k[b].b0+k[b].b1*c+k[b].b2*c2, ni=-k[b].b1*sn-k[b].b2*s2;
-            double dr=1+k[b].a1*c+k[b].a2*c2, di=-k[b].a1*sn-k[b].a2*s2;
-            db+=10*log10(fmax(1e-30,(nr*nr+ni*ni)/fmax(1e-30,dr*dr+di*di)));
-        }
-        peak=fmax(peak,db);
-    }
-    return (float)-clamp(peak+1,0,48);
+    (void)gains; (void)count; (void)rate;
+    return 0;
 }
 
 void SonivoEQInit(SonivoRealtimeEQ *eq) {
@@ -82,15 +61,32 @@ static void consume(SonivoRealtimeEQ *eq,int initial) {
     atomic_thread_fence(memory_order_acquire);
     if (seq!=atomic_load_explicit(&eq->sequence,memory_order_relaxed)) return;
     int nonflat=0;
-    for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
-        nonflat |= values[b]!=0;
-        eq->target[b]=coefficients(b,enabled?(double)values[b]/1000:0,eq->sampleRate);
-        if(initial) eq->current[b]=eq->target[b];
+    for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) nonflat |= values[b]!=0;
+    int wantsWet=enabled && nonflat;
+    int changed=wantsWet!=eq->wantsWet;
+    // Fade the complete protected EQ signal, not identity filters + a quickly
+    // released preamp: that combination used to restore 18+ dB in milliseconds.
+    if(wantsWet || initial) {
+        for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
+            eq->target[b]=coefficients(b,(double)values[b]/1000,eq->sampleRate);
+            if(initial || eq->wet==0) eq->current[b]=eq->target[b];
+        }
+        eq->targetPreGain=wantsWet?pow(10,(double)preamp/20000):1;
+        if(eq->wet==0) eq->preGain=eq->targetPreGain;
     }
-    eq->wantsWet=enabled && nonflat;
-    eq->targetPreGain=eq->wantsWet?pow(10,(double)preamp/20000):1;
+    if(changed && !initial) {
+        double attenuation=fabs(20*log10(fmax(eq->preGain,1e-12)));
+        double seconds=clamp(.35+attenuation/24,.35,2);
+        eq->wetStart=eq->wet;eq->wetTarget=wantsWet?1:0;
+        eq->wetPosition=0;eq->wetFrames=(size_t)ceil(eq->sampleRate*seconds);
+    }
+    eq->wantsWet=wantsWet;
     eq->appliedSequence=seq;
-    if (initial) { eq->wet=eq->wantsWet?1:0; eq->preGain=eq->wantsWet?pow(10,(double)preamp/20000):1; }
+    if(initial) {
+        eq->wet=eq->wetTarget=wantsWet?1:0;eq->wetStart=eq->wet;
+        eq->wetFrames=eq->wetPosition=0;
+        eq->preGain=eq->targetPreGain;
+    }
 }
 void SonivoEQPrepare(SonivoRealtimeEQ *eq,double rate) {
     eq->sampleRate=isfinite(rate) && rate>=8000?rate:48000;
@@ -134,7 +130,11 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
                 eq->current[b].a2+=(eq->target[b].a2-eq->current[b].a2)*a;
             }
         }
-        eq->wet+=((eq->wantsWet?1:0)-eq->wet)*eq->sampleAlpha;
+        if(eq->wetPosition<eq->wetFrames) {
+            double t=(double)++eq->wetPosition/(double)eq->wetFrames;
+            double eased=t*t*(3-2*t);
+            eq->wet=eq->wetStart+(eq->wetTarget-eq->wetStart)*eased;
+        } else eq->wet=eq->wetTarget;
         // Fast but continuous 1 ms headroom attack; 25 ms level recovery.
         // The linked peak guard catches any overshoot during this transition.
         double headroomAlpha=targetGain<eq->preGain?eq->headroomAttackAlpha:eq->sampleAlpha;

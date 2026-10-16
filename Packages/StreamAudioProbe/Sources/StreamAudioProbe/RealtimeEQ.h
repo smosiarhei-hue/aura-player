@@ -13,6 +13,8 @@ typedef struct {
     unsigned appliedSequence;
     double sampleRate, wet, preGain, targetPreGain, limiter;
     double coefficientAlpha, sampleAlpha, headroomAttackAlpha, releaseAlpha;
+    double wetStart, wetTarget;
+    size_t wetPosition, wetFrames;
     SonivoEQCoefficients current[SONIVO_EQ_BANDS], target[SONIVO_EQ_BANDS];
     double z1[SONIVO_EQ_CHANNELS][SONIVO_EQ_BANDS], z2[SONIVO_EQ_CHANNELS][SONIVO_EQ_BANDS];
     int wantsWet, initialized;

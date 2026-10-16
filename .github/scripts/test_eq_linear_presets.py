@@ -8,8 +8,8 @@ class LinearEQTests(unittest.TestCase):
         c=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.c').read_text()
         a=[float(x) for x in re.search(r'frequencies: \[Float\] = \[([^]]+)\]',swift)[1].split(',')]
         b=[float(x) for x in re.search(r'frequencies\[SONIVO_EQ_BANDS\] = \{([^}]+)\}',c)[1].split(',')]
-        self.assertEqual(a,b);self.assertEqual(a,[30,60,120,250,500,1000,2000,4000,8000,15000])
-        self.assertEqual((a[0],a[-1]),(30,15000))
+        self.assertEqual(a,b);self.assertEqual(a,[40,60,120,250,500,1000,2000,4000,8000,15000])
+        self.assertEqual((a[0],a[-1]),(40,15000))
         self.assertIn('validRate * 0.44',(ROOT/'Sonivo/playercore.swift').read_text())
         self.assertIn('rate * 0.44',c)
         dual=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()

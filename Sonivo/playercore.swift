@@ -857,10 +857,13 @@ final class PlayerCore {
     }
 
     @ObservationIgnored private var nativeEQRamp: Task<Void, Never>?
+    @ObservationIgnored private var nativeEQWasEnabled: Bool?
 
     private func applyEQ() {
         let user = normalizedUserGains
         let on = shouldApplyUserEQ
+        let stateChanged = nativeEQWasEnabled.map { $0 != on } ?? false
+        nativeEQWasEnabled = on
         StreamBeatTap.shared.updateEQ(gains: user, enabled: on)
         // Publish only to existing experimental engines; never enable/start them here.
         AutoMixV2Runtime.existing?.applyUserEQ(gains: user, enabled: on)
@@ -880,17 +883,23 @@ final class PlayerCore {
         let needsProtection = targets.joined().contains { abs($0) > 0.001 }
         // Keep the limiter active through the return-to-flat ramp as well.
         outputLimiter.bypass = !(needsProtection || starting.joined().contains { abs($0) > 0.001 })
-        // Parameter interpolation avoids abrupt clicks on toggle, route changes or sliders.
+        // Large headroom recovery must not restore 18+ dB in the old 40 ms ramp.
+        let levelChange = zip(startingPreamp, headrooms).map { abs($1 - $0) }.max() ?? 0
+        let duration = stateChanged ? max(350, min(2000, Int(350 + levelChange / 24 * 1000)))
+            : max(40, min(2000, Int(levelChange / 24 * 1000)))
+        let steps = max(8, duration / 10)
+        // New slider/toggle commands cancel the old ramp and resume at current values.
         nativeEQRamp = Task { @MainActor [weak self] in
-            for step in 1...8 {
+            for step in 1...steps {
                 guard !Task.isCancelled, let self else { return }
-                let fraction = Float(step) / 8
+                let t = Float(step) / Float(steps)
+                let fraction = t * t * (3 - 2 * t)
                 for deck in nodes.indices {
                     let curve = zip(starting[deck], targets[deck]).map { $0 + ($1 - $0) * fraction }
                     let gain = startingPreamp[deck] + (headrooms[deck] - startingPreamp[deck]) * fraction
                     self.writeBands(nodes[deck], curve, globalGain: gain)
                 }
-                do { try await Task.sleep(for: .milliseconds(5)) } catch { return }
+                do { try await Task.sleep(for: .milliseconds(duration / steps)) } catch { return }
             }
             self?.outputLimiter.bypass = !needsProtection
         }

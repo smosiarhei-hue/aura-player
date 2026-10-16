@@ -42,7 +42,7 @@ import AudioToolbox
         engine.connect(player, to: eq, format: format)
         engine.connect(eq, to: limiter, format: format)
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
-        let frequencies: [Float] = [30,60,120,250,500,1000,2000,4000,8000,15000]
+        let frequencies: [Float] = [40,60,120,250,500,1000,2000,4000,8000,15000]
         for (i, band) in eq.bands.enumerated() {
             band.frequency=frequencies[i]; band.bandwidth=1; band.gain=gains[i]; band.bypass=false
             band.filterType = i == 0 ? .lowShelf : (i == 9 ? .highShelf : .parametric)
@@ -87,7 +87,7 @@ import AudioToolbox
         precondition(abs(db - Double(6+EQHeadroom.preamp(gains:curve,sampleRate:48000))) < 0.6, "Native center gain incorrect: \(db)")
         for rate in [8000.0,32000,44100,48000,96000] {
             let pre=EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)
-            precondition(pre.isFinite && pre < -18 && pre >= -48)
+            precondition(pre.isFinite && pre == 0)
         }
         let hot=try render(gains:[Float](repeating:12,count:10),hz:60,amplitude:0.95)
         precondition(hot.allSatisfy { abs($0) <= 1.01 },"Native output overflow")

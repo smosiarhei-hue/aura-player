@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
-FREQUENCIES=[30,60,120,250,500,1000,2000,4000,8000,15000]
+FREQUENCIES=[40,60,120,250,500,1000,2000,4000,8000,15000]
 N=len(FREQUENCIES)
 LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
 def expanded(gains):
@@ -117,19 +117,13 @@ void destroy(void *p) { free(p); }
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)
         self.assertGreater(self.response(treble,22000)-self.response(treble,1000),5.5)
 
-    def test_overlapping_boosts_reserve_summed_response_headroom(self):
-        gains=[12]*10
-        pre=self.preamp(gains)
-        self.assertLess(pre,-18) # Must account for overlapping bands, not just largest slider.
-        for frequency in [12,30,62.5,125,250,500,1000,2000,4000,8000,16000,22000]:
-            self.assertLessEqual(self.response(gains,frequency),-.90)
-        self.assertGreater(self.response(gains,16000)-pre,6)
-
-    def test_bass_preamp_preserves_relative_tone_not_artificial_loudness(self):
-        gains=[6]+[0]*9
-        self.assertAlmostEqual(self.preamp(gains),-7,delta=.03)
-        self.assertAlmostEqual(self.response(gains,1000)-self.preamp(gains),0,delta=.1)
-        self.assertGreater(self.response(gains,20)-self.response(gains,1000),4)
+    def test_overlapping_boosts_do_not_apply_fixed_master_attenuation(self):
+        for gains in [[12]*10,[18,10,3,-3,0,0,0,0,3,6],[6]+[0]*9]:
+            self.assertEqual(self.preamp(gains),0)
+        # Low-level audio remains linear, without a static whole-song volume cut.
+        self.assertAlmostEqual(self.response([6]+[0]*9,1000),0,delta=.1)
+        self.assertGreater(self.response([6]+[0]*9,20),5)
+        self.assertGreater(self.response([12]*10,16000),6)
         self.assertEqual(self.preamp([-12]*10),0)
         self.assertEqual(self.preamp([0]*10),0)
 
@@ -188,14 +182,14 @@ void destroy(void *p) { free(p); }
         g=array([0]*N);ptr=self.lib.create(48000,g,0)
         last=0.;largest=0.
         try:
-            for block in range(80):
+            for block in range(240):
                 if block==2:self.lib.update(ptr,array([12]*N),1,48000)
                 if block==12:self.lib.update(ptr,array([-12]*N),1,48000)
                 if block==22:self.lib.update(ptr,g,0,48000)
                 raw=[.1*math.sin(2*math.pi*1000*(block*512+i)/48000) for i in range(512)]
                 audio=(C.c_float*512)(*raw);self.lib.process(ptr,audio,1,512,1)
                 for x in audio:largest=max(largest,abs(x-last));last=x
-                if block==79:self.assertEqual(list(audio),list((C.c_float*512)(*raw)))
+                if block==239:self.assertEqual(list(audio),list((C.c_float*512)(*raw)))
             self.assertLess(largest,.05)
         finally:self.lib.destroy(ptr)
 
@@ -214,6 +208,27 @@ void destroy(void *p) { free(p); }
                 raw=[.85*math.sin((block*128+i)*.079) for i in range(128)]
                 audio=(C.c_float*128)(*raw);self.lib.process(ptr,audio,1,128,1)
                 self.assertTrue(all(math.isfinite(x) and abs(x)<=.980001 for x in audio))
+        finally:self.lib.destroy(ptr)
+
+    def test_disabling_strong_bass_does_not_restore_a_fixed_master_cut(self):
+        gains=[18,10,3,-3,0,0,0,0,3,6]
+        ptr=self.lib.create(48000,array(gains),1)
+        try:
+            # Warm the actual filters at an unaffected midrange frequency.
+            warm=(C.c_float*48000)(*[.3*math.sin(2*math.pi*1000*n/48000) for n in range(48000)])
+            self.lib.process(ptr,warm,1,48000,1)
+            rms=lambda x: math.sqrt(sum(y*y for y in x)/len(x))
+            before=rms(list(warm)[-480:])
+            self.lib.update(ptr,array(gains),0,48000)
+            levels=[];last=[]
+            for block in range(240):
+                raw=[.3*math.sin(2*math.pi*1000*(block*480+n)/48000) for n in range(480)]
+                audio=(C.c_float*480)(*raw);self.lib.process(ptr,audio,1,480,1)
+                levels.append(rms(audio));last=list(audio)
+            self.assertLess(20*math.log10(levels[1]/before),.1)
+            self.assertLess(max(abs(20*math.log10(b/a)) for a,b in zip([before]+levels,levels)),.8)
+            self.assertLess(abs(20*math.log10(levels[-1]/before)),.3)
+            self.assertEqual(last,list((C.c_float*480)(*raw)))
         finally:self.lib.destroy(ptr)
 
     def test_headroom_attack_does_not_step_when_changing_an_active_curve(self):

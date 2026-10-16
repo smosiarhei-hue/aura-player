@@ -42,9 +42,16 @@ final class EQUserPresetStore {
                 archiveIsValid = false
                 return
             }
+            if decoded.contains(where: { $0.frequencies == EQGainLimits.previousCompactFrequencies }),
+               defaults.data(forKey:"eq.userPresets.40Hz.backup") == nil {
+                defaults.set(data,forKey:"eq.userPresets.40Hz.backup")
+            }
             presets = decoded.map { preset in
                 let source = preset.frequencies ?? (preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies)
-                let gains = EQGainLimits.normalized(EQGainLimits.resample(preset.gains,from:source,to:EQGainLimits.frequencies))
+                // A 30→40 Hz center change retains all ten manual slider values.
+                let gains = source == EQGainLimits.previousCompactFrequencies
+                    ? EQGainLimits.normalized(preset.gains)
+                    : EQGainLimits.normalized(EQGainLimits.resample(preset.gains,from:source,to:EQGainLimits.frequencies))
                 return SavedEQPreset(id:preset.id,name:preset.name,gains:gains,frequencies:EQGainLimits.frequencies)
             }
             if presets != decoded {
@@ -90,7 +97,7 @@ final class EQUserPresetStore {
         let trimmed = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= 64 else { return false }
         if let frequencies = preset.frequencies {
-            return frequencies == EQGainLimits.frequencies && validGains(preset.gains)
+            return (frequencies == EQGainLimits.frequencies || frequencies == EQGainLimits.previousCompactFrequencies) && validGains(preset.gains)
         }
         let source = preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies
         return preset.gains.count == source.count && preset.gains.enumerated().allSatisfy {

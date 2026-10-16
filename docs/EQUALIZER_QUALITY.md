@@ -8,7 +8,7 @@ No change to playback queues, Yandex requests, volume controls, icon selection,
 launch animation or music haptics. AutoMix/Neuro engine switches remain disabled.
 
 ## Controls and Apple API
-- Ten real filters: 30 / 60 / 120 / 250 / 500 / 1k / 2k / 4k / 8k / 15k Hz.
+- Ten real filters: 40 / 60 / 120 / 250 / 500 / 1k / 2k / 4k / 8k / 15k Hz.
 - Low: bands 0–3; middle: 4–6; high: 7–9. Category selection only selects a band;
   it never averages, resets or reshapes the user's curve. All ten controls remain
   visible, with native sliders and the accessible alternative layout.
@@ -26,42 +26,47 @@ Official documentation consulted:
 - https://developer.apple.com/documentation/avfaudio/avaudiouniteq/globalgain
 - https://developer.apple.com/documentation/mediatoolbox/mtaudioprocessingtap
 
-## Processing changes
-The previous implementation explicitly disabled both preamp attenuation and peak
-protection. Boosted neighboring bands can sum well above the largest slider gain.
+## Current level policy (user-requested revision)
 
-The control thread now scans the cascaded RBJ response (1024 logarithmic points
-plus DC/Nyquist), reserves the peak boost plus 1 dB, bounded to −48…0 dB. Both
-portable C and the independent Swift package implementation use this estimate.
-AVAudioUnitEQ's internal coefficients are not specified to be bit-identical to
-RBJ; the estimate alone is NOT a guarantee against every native/transient peak.
+Static headroom attenuation was rejected after listening feedback: a +18 dB
+manual bass curve made the rest of the song much quieter, and returning to dry
+sound restored a large amount of level too quickly. The current policy keeps
+**unity preamp (0 dB)** in both native and streamed paths, irrespective of boosts.
+It does not change iPhone system volume or apply another fixed playback gain.
 
-Stream processing therefore also uses a linked sample-peak safety envelope:
-0.98 ceiling, instantaneous attenuation, 80 ms release, one gain for all channels.
-It is NOT true-peak, a mastering limiter, a lookahead limiter or loudness leveling.
-Headroom reduces routine limiter activity; very hot inputs/transients can still
-trigger gain reduction. No per-channel hard clipping or stereo crossmixing.
+Protection is based on actual peaks instead of subtracting the maximum boost:
+- Stream: linked sample-peak envelope, 0.98 ceiling, instantaneous attenuation,
+  80 ms release, same gain for all channels. No per-channel hard clipping.
+- Local/DualDeck: downstream Apple PeakLimiter, enabled for non-flat EQ and
+  kept active through transitions. Its implementation/ceiling is Apple's, not
+  asserted to equal the portable C 0.98 ceiling.
+- This is NOT true-peak, loudness normalization, headphone calibration or a
+  promise of identical perceived loudness with arbitrary EQ settings.
+- Strong boosts can engage limiting frequently and reduce perceived dynamics or
+  the level of other frequencies. Unlimited bass, unchanged loudness and zero
+  distortion cannot all be guaranteed within the same digital/output ceiling.
 
-Native local audio keeps the existing Apple PeakLimiter node and enables it while
-non-flat EQ/transition offsets are active (including the return-to-flat ramp).
-DualDeck gets the same Apple unit after user EQ. Native limiter behavior/ceiling
-is Apple's implementation, not asserted to equal the C 0.98 ceiling.
+Stream toggles crossfade the complete protected EQ output to/from dry audio with
+an eased 350 ms transition at unity preamp. They do NOT combine an instant return
+to identity filters with a fast release of a large negative preamp. Rapid reversals
+resume from the current wet mix. Stable Flat/off remains exact bypass.
+Native toggle/route ramps are eased and at least 350 ms; obsolete ramps are
+cancelled/generation-guarded. Ordinary small slider moves retain shorter ramps.
 
-- Band changes ramp over 40 ms; stream coefficients/wet state are smoothed.
-- Stream headroom uses a continuous 1 ms attack / 25 ms recovery; native headroom
-  ramps with the bands over 40 ms. Peak protection covers transition overshoot.
-- Flat/off steady states bypass DSP/protection and do not alter the signal.
-- Experimental engines receive changes only if instantiated; no hidden engine
-  startup. New engine boot applies the headphones-only route policy as well.
-- Latest native package ramp generation wins over obsolete slider updates.
-- Stream DSP is allocation-/lock-/sleep-/dispatch-free in its render callback;
-  response scans run on the control path, not the audio render thread.
-- Unsupported/spatial bitstreams retain existing honest passthrough behavior.
-  No claim that a decoded-PCM tap can process every possible transport/format.
+The lowest shelf center is now **40 Hz**, not a cosmetic relabeling of 30 Hz.
+The stored compact ten-slider curve keeps every gain at the same index. Saved
+presets carrying the previous 30 Hz compact frequency metadata are recognized,
+backed up and migrated without reshaping gains or changing IDs/names. Truly
+historical 10/29-band layouts still use their original source grids/migration.
+
+Experimental engines receive EQ only if already instantiated, respecting the
+headphones-only policy; no engine is secretly enabled or started. Unsupported
+spatial/bitstream formats keep the existing honest passthrough behavior.
+Stream render code remains allocation-/lock-/sleep-/dispatch-free.
 
 ## Verification and limitations
 `test_realtime_eq.py` compiles/runs the actual C source: center/shelf response,
-overlapping boosts, high-level sweeps, impulses, rapid changes, planar/interleaved
+unity preamp/unaffected midrange, high-level sweeps, impulses, rapid changes, planar/interleaved
 8-channel isolation, stereo ratios, 8/32/44.1/48/96 kHz, invalid controls, exact
 flat/off bypass and transition continuity.
 `test_eq_native_dsp.py` additionally runs AVAudioUnitEQ and Apple's PeakLimiter
@@ -73,5 +78,5 @@ CI/offline rendering is not listening validation, real-time performance validati
 on an iPhone, headphone calibration or a proof of artifact-free sound for all
 material. Check quiet speech, bass-heavy tracks, route changes and maximum boosts
 on real hardware at a sensible listening volume. Bluetooth latency and hardware
-speaker/headphone limits cannot be fixed by an app EQ. Boosting may lower overall
-level to preserve headroom; system volume and system safety limits are untouched.
+speaker/headphone limits cannot be fixed by an app EQ. Peak limiting can reduce level during overload; there is no fixed preamp cut.
+System volume and system safety limits are untouched.
