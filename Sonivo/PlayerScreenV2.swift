@@ -258,10 +258,16 @@ struct PlayerScreenV2: View {
         // A spatially uniform cover tint over semantic light/dark background.
         // Never display a previous track's extracted palette while the new cover is loading.
         let coverColor = resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors.first : nil
+        if showLyricsMode, SettingsStore.shared.lyricsDesign == .typography {
+            return AnyView(Color(red: 0.047, green: 0.051, blue: 0.071)
+                .overlay(RadialGradient(colors: [SN.accent.opacity(0.16), .clear],
+                    center: .trailing, startRadius: 0, endRadius: 550))
+                .ignoresSafeArea().allowsHitTesting(false))
+        }
         let base = showLyricsMode ? Color.black : SN.bg
-        return base.overlay((coverColor ?? Color.clear).opacity(0.22))
+        return AnyView(base.overlay((coverColor ?? Color.clear).opacity(0.22))
             .ignoresSafeArea()
-            .allowsHitTesting(false)
+            .allowsHitTesting(false))
     }
 
     private var topHeader: some View {
@@ -314,10 +320,13 @@ struct PlayerScreenV2: View {
                 .clipped()
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    toggleLyricsControls()
+                    if SettingsStore.shared.lyricsDesign != .typography { toggleLyricsControls() }
                 }
 
-            if lyricsControlsVisible {
+            LyricsTypographyModeBar()
+                .padding(.horizontal, 24).padding(.vertical, 8)
+
+            if lyricsControlsVisible || SettingsStore.shared.lyricsDesign == .typography {
                 lyricsControlsDeck(safeAreaBottom: safeAreaBottom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
@@ -352,17 +361,25 @@ struct PlayerScreenV2: View {
 
             Spacer()
 
-            Color.clear.frame(width: 36, height: 36)
+            Button {
+                Haptics.tap(.light)
+                withAnimation(reduceMotion ? nil : SN.slowSpring) { showLyricsMode = false }
+            } label: {
+                Image(systemName: "rectangle.portrait")
+                    .foregroundStyle(SN.accent).frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Вернуться к обычному плееру")
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 40)
+        .frame(height: 44)
     }
 
     private var compactLyricsMetadata: some View {
         let current = track
         return HStack(spacing: 16) {
             artwork
-                .frame(width: 104, height: 104)
+                .frame(width: SettingsStore.shared.lyricsDesign == .typography ? 56 : 104,
+                       height: SettingsStore.shared.lyricsDesign == .typography ? 56 : 104)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .shadow(color: .black.opacity(0.30), radius: 12, y: 6)
 
@@ -410,6 +427,7 @@ struct PlayerScreenV2: View {
         VStack(spacing: 16) {
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
+            if SettingsStore.shared.lyricsDesign != .typography {
             FluidVolumeSlider()
                 .accessibilityElement(children: .contain)
 
@@ -441,6 +459,7 @@ struct PlayerScreenV2: View {
                 .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 24)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 18)
@@ -530,7 +549,10 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(.white.opacity(0.70))
                 Spacer()
             } else if let lyrics, !lyrics.lines.isEmpty {
-                if settings.lyricsDesign == .staggered {
+                if settings.lyricsDesign == .typography {
+                    TypographyLyricsView(lyrics: lyrics, player: player, showsSource: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if settings.lyricsDesign == .staggered {
                     StaggeredLyricsView(lyrics: lyrics, player: player, showsSource: false)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .offset(y: -textLift)
@@ -1511,7 +1533,10 @@ struct CoverLyricsScrollView: View {
 
     var body: some View {
         Group {
-            if settings.lyricsDesign == .staggered {
+            if settings.lyricsDesign == .typography {
+                TypographyLyricsView(lyrics: lyrics, player: player, showsSource: false, compact: true)
+                    .frame(maxWidth: side, maxHeight: side)
+            } else if settings.lyricsDesign == .staggered {
                 StaggeredLyricsView(lyrics: lyrics, player: player, fontSize: 28)
                     .frame(maxWidth: side, maxHeight: side)
             } else {

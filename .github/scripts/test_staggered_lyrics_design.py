@@ -28,13 +28,14 @@ def segments(text):
 
 
 class StaggeredLyricsDesignTests(unittest.TestCase):
-    def test_choice_is_persistent_and_keeps_existing_default(self):
+    def test_choice_is_persistent_and_keeps_existing_saved_choices(self):
         text = (ROOT / 'Sonivo/theme.swift').read_text()
         self.assertIn('enum LyricsDesign: String, CaseIterable, Identifiable', text)
         self.assertIn('case classic', text)
         self.assertIn('case staggered', text)
         self.assertIn('defaults.set(lyricsDesign.rawValue, forKey: "lyrics.design")', text)
-        self.assertIn('?? "") ?? .classic', text)
+        self.assertIn('?? "") ?? .typography', text)
+        self.assertIn('LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design")', text)
 
     def test_settings_has_picker_and_live_preview(self):
         text = (ROOT / 'Sonivo/settingsview.swift').read_text()

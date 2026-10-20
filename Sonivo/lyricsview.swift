@@ -11,7 +11,10 @@ struct LyricsView: View {
     @State private var showAddCustomLyrics = false
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        VStack(spacing: 0) {
+            LyricsTypographyModeBar()
+                .padding(.horizontal, 24).padding(.vertical, 12)
+            ZStack(alignment: .bottomTrailing) {
             Group {
                 if isLoading {
                     SonivoLoadingState(title: "Загрузка текста…")
@@ -25,6 +28,9 @@ struct LyricsView: View {
                            candidateTitle: lyricsTitle, candidateArtist: lyrics.artist) {
                         // Title mismatch guard during track transition
                         SonivoLoadingState(title: "Загрузка текста…")
+                    } else if settings.lyricsDesign == .typography {
+                        TypographyLyricsView(lyrics: lyrics, player: player,
+                            onEditLyrics: { showAddCustomLyrics = true })
                     } else if settings.lyricsDesign == .staggered {
                         StaggeredLyricsView(lyrics: lyrics, player: player,
                             onEditLyrics: { showAddCustomLyrics = true })
@@ -44,9 +50,12 @@ struct LyricsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Real-time Apple Music Sing style vocal isolation slider overlay
-            VocalIsolationControlView()
-                .padding(.trailing, 22)
-                .padding(.bottom, 38)
+            if settings.lyricsDesign != .typography {
+                VocalIsolationControlView()
+                    .padding(.trailing, 22)
+                    .padding(.bottom, 38)
+            }
+        }
         }
         .sheet(isPresented: $showAddCustomLyrics) {
             if let track = player.displayTrack {
@@ -55,8 +64,13 @@ struct LyricsView: View {
         }
         .background {
             ZStack {
-                Color.black.ignoresSafeArea()
-                if let img = player.displayTrack.flatMap({ LibraryStore.cachedArtworkImage(for: $0) }) {
+                Color(red: 0.047, green: 0.051, blue: 0.071).ignoresSafeArea()
+                if settings.lyricsDesign == .typography {
+                    RadialGradient(colors: [SN.accent.opacity(0.16), .clear],
+                        center: .trailing, startRadius: 0, endRadius: 550)
+                        .ignoresSafeArea()
+                }
+                if settings.lyricsDesign != .typography, let img = player.displayTrack.flatMap({ LibraryStore.cachedArtworkImage(for: $0) }) {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()

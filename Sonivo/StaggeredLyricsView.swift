@@ -290,7 +290,12 @@ struct LyricsDesignPreview: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if design == .staggered {
+            if design == .typography {
+                Text("Музыка —\nэто то, что мы чувствуем.")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(SN.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if design == .staggered {
                 TimelineView(.animation(minimumInterval: 1 / 30.0, paused: reduceMotion || scenePhase != .active)) { timeline in
                     let elapsed = reduceMotion ? 3 : max(0, timeline.date.timeIntervalSinceReferenceDate - start).truncatingRemainder(dividingBy: 3.2)
                     StaggeredLyricText(text: "Музыка оживает в каждой строке", revealElapsed: elapsed, fontSize: 24)
@@ -300,7 +305,7 @@ struct LyricsDesignPreview: View {
                     .font(.system(size: 24, weight: .bold)).foregroundStyle(.white)
                     .multilineTextAlignment(.center)
             }
-            Text(design == .staggered ? "Слова появляются по очереди, мягко и с размытием" : "Привычный текст и существующая караоке-подсветка")
+            Text(design == .typography ? "Крупные строки и ваш акцент. Подсветка слов — только с точными таймингами." : (design == .staggered ? "Слова появляются по очереди, мягко и с размытием" : "Привычный текст и существующая караоке-подсветка"))
                 .font(.caption).foregroundStyle(.white.opacity(0.65)).multilineTextAlignment(.center)
         }
         .padding(20)

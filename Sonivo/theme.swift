@@ -146,11 +146,13 @@ enum MusicHapticsIntensity: String, CaseIterable, Identifiable, Codable, Sendabl
 enum LyricsDesign: String, CaseIterable, Identifiable {
     case classic
     case staggered
+    case typography
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .classic: "Классический"
+        case .classic: "Строки"
         case .staggered: "Staggered — по словам"
+        case .typography: "Типографика"
         }
     }
 }
@@ -193,7 +195,7 @@ final class SettingsStore {
         musicHapticsIntensity = MusicHapticsIntensity(
             rawValue: defaults.string(forKey: "settings.musicHapticsIntensity") ?? ""
         ) ?? .strong
-        lyricsDesign = LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design") ?? "") ?? .classic
+        lyricsDesign = LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design") ?? "") ?? .typography
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
         // Full-track on-device transcription downloads the stream first.
