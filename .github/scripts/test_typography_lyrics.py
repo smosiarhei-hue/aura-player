@@ -28,7 +28,8 @@ class TypographyLyricsTests(unittest.TestCase):
         self.assertIn('LyricsPlaybackClock.time(',view)
         self.assertIn('LyricsPlaybackClock.seekTime(',view)
         self.assertIn('TypographyLyricsPolicy.matchedWords(for: line)',view)
-        self.assertIn('time >= words[pair.offset].startTime',view)
+        self.assertIn('(time - timing.start) / max(0.01, timing.end - timing.start)',view)
+        self.assertIn('copy.clip(to: Path(CGRect',view)
         self.assertIn('guard line.hasRealWordTimings',policy)
         self.assertIn('guard tokens == words.map',policy)
         for token in ['URLSession','AVAudioEngine','AVPlayer','TimelineView','player.resume()','player.play(','duration /','wordCount']:
@@ -46,7 +47,8 @@ class TypographyLyricsTests(unittest.TestCase):
             self.assertIn(token,view)
         self.assertNotIn('.lineLimit(1)',view)
         player=(ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
-        self.assertIn('lyricsControlsVisible || SettingsStore.shared.lyricsDesign == .typography',player)
+        self.assertIn('if lyricsControlsVisible {',player)
+        self.assertIn('Label("Показать управление", systemImage: "chevron.up")',player)
         self.assertIn('withAnimation(reduceMotion ? nil : SN.slowSpring) { showLyricsMode = false }',player)
 
     @unittest.skipUnless(platform.system()=='Darwin' and shutil.which('swiftc'), 'Native timing fixture executes on macOS')
@@ -62,8 +64,8 @@ import Foundation
   }
   precondition(active(0)==nil && active(1.99)==nil)
   precondition(active(2)==0 && active(3.99)==0)
-  precondition(active(4)==nil && active(7.99)==nil,"Instrumental gap must not sing")
-  precondition(active(8)==1 && active(9.99)==1 && active(10)==nil)
+  precondition(active(4)==0 && active(7.99)==0,"Selection must agree with Lines through instrumental gap")
+  precondition(active(8)==1 && active(9.99)==1 && active(10)==1 && active(12)==nil)
   precondition(active(.nan)==nil && active(.infinity)==nil && active(-1)==nil)
   precondition(TypographyLyricsPolicy.activeIndex(lines:lines,synchronized:false,time:3,duration:12)==nil)
   precondition(TypographyLyricsPolicy.activeIndex(lines:[],synchronized:true,time:3,duration:12)==nil)
@@ -81,6 +83,16 @@ import Foundation
   precondition(TypographyLyricsPolicy.matchedWords(for:LyricsLine(text:"Привет, мир!",startTime:1))==nil)
   let invalid=LyricsLine(text:"Broken",startTime:1,words:[LyricsWord(text:"Broken",startTime:2,endTime:1)])
   precondition(TypographyLyricsPolicy.matchedWords(for:invalid)==nil)
+  precondition(LyricsControlsPolicy.idleSeconds == 10)
+  for playing in [false,true] { for buffering in [false,true] {
+   for visible in [false,true] { for lyricsVisible in [false,true] {
+    for active in [false,true] { for voiceOver in [false,true] {
+     let expected=playing && !buffering && visible && lyricsVisible && active && !voiceOver
+     precondition(LyricsControlsPolicy.shouldAutoHide(isPlaying:playing,isBuffering:buffering,
+       visible:visible,lyricsVisible:lyricsVisible,sceneActive:active,voiceOver:voiceOver)==expected)
+    } }
+   } }
+  } }
   print("Typographic lyrics: boundaries, gaps, plain text, source words and Unicode passed")
  }
 }

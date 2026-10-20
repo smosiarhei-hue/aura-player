@@ -106,7 +106,8 @@ private struct DynamicWordLyrics: View {
             phrases: LyricPhrase.from(lines: lyrics.lines),
             currentTime: .constant(playbackTime),
             isPlaying: player.isPlaying,
-            fontSize: max(30, settings.lyricsFontSize * 0.82)
+            fontSize: max(30, settings.lyricsFontSize * 0.82),
+            sampleTime: { LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset) }
         )
         .padding(.horizontal, 24)
         .padding(.top, 56)
@@ -127,18 +128,8 @@ private struct SyncedLyrics: View {
     @State private var activeIndex: Int? = nil
 
     private func computeActiveIndex(at time: Double) -> Int? {
-        guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
-        let currentTime = max(0, time - LyricsPlaybackClock.routeLatency(for: player) + settings.lyricsOffset)
-        if let first = lyrics.lines.first, currentTime < first.startTime {
-            return nil
-        }
-        for (idx, line) in lyrics.lines.enumerated() {
-            let nextStart = (idx + 1 < lyrics.lines.count) ? lyrics.lines[idx + 1].startTime : (line.startTime + 20.0)
-            if currentTime >= line.startTime && currentTime < nextStart {
-                return idx
-            }
-        }
-        return lyrics.lines.count - 1
+        TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
+            time: LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset), duration: player.duration)
     }
 
     var body: some View {
@@ -276,6 +267,10 @@ private struct SyncedLyrics: View {
                         }
                     }
                 }
+            }
+            .onChange(of: settings.lyricsOffset) { _, _ in
+                activeIndex = computeActiveIndex(at: player.progress)
+                if let activeIndex, !isUserInteracting { proxy.scrollTo(activeIndex, anchor: .center) }
             }
             .onAppear {
                 let initial = computeActiveIndex(at: player.progress)

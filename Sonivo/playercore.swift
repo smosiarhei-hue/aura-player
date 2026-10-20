@@ -377,6 +377,25 @@ final class PlayerCore {
     var streamingPlayer: AVPlayer { activeStreamingPlayer }
     var usesStreamingBackend: Bool { isUsingStreamPlayer }
     var playbackRequestID: Int { generation }
+    @ObservationIgnored private var lyricsSeekTarget: (id: UUID, track: UUID?, generation: Int, seconds: Double)?
+
+    /// Display-only clock. AVPlayer already supplies presentation time; do not
+    /// extrapolate through a buffering stall or add a second Bluetooth delay.
+    var lyricsPresentationPosition: Double {
+        if let pending = lyricsSeekTarget, pending.track == currentTrack?.id, pending.generation == generation {
+            return pending.seconds
+        }
+        guard isPlaying else { return max(0, progress) }
+        if isUsingStreamPlayer {
+            guard activeStreamURL != nil, activeStreamingPlayer.currentItem?.status == .readyToPlay else {
+                return max(0, progress)
+            }
+            let seconds = CMTimeGetSeconds(activeStreamingPlayer.currentTime())
+            return seconds.isFinite && seconds >= 0 ? seconds : max(0, progress)
+        }
+        guard activeAudioFile != nil, activePlayer.isPlaying else { return max(0, progress) }
+        return liveProgress()
+    }
     private var streamingTimeObservers: [(AVPlayer, Any)] = []
     private var didInstallStreamingNotifications = false
     private var isUsingStreamPlayer = false
@@ -1425,7 +1444,14 @@ final class PlayerCore {
 
         if isUsingStreamPlayer {
             let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
-            activeStreamingPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
+            let seekID = UUID()
+            lyricsSeekTarget = (seekID, currentTrack?.id, generation, clamped)
+            activeStreamingPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.lyricsSeekTarget?.id == seekID else { return }
+                    self.lyricsSeekTarget = nil
+                }
+            }
         } else {
             pausedProgress = clamped
             anchorOffset = clamped

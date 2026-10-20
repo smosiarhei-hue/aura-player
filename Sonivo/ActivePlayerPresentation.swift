@@ -68,6 +68,7 @@ final class ActivePlayerPresentation {
     var progress: Double {
         legacy.progress
     }
+    var lyricsPresentationPosition: Double { legacy.lyricsPresentationPosition }
     var duration: Double {
         legacy.duration
     }

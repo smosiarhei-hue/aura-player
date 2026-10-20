@@ -179,8 +179,8 @@ struct StaggeredLyricsView: View {
     private var resolvedFontSize: CGFloat { fontSize ?? max(30, settings.lyricsFontSize * 0.82) }
 
     private func activeLine(at time: Double) -> Int? {
-        guard lyrics.isSynchronized, let first = lyrics.lines.first, time >= first.startTime else { return nil }
-        return lyrics.lines.indices.last { lyrics.lines[$0].startTime <= time }
+        TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
+            time: time, duration: player.duration)
     }
 
     private func lineDuration(at index: Int) -> Double {

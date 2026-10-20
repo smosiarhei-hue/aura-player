@@ -9,6 +9,9 @@ struct TypographyLyricsView: View {
     var compact = false
     var onEditLyrics: (() -> Void)? = nil
     @State private var settings = SettingsStore.shared
+    @State private var frameClock = LyricsDisplayClock()
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    @State private var thermal = ProcessInfo.processInfo.thermalState
     @State private var browsing = false
     @State private var browsingTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -18,9 +21,15 @@ struct TypographyLyricsView: View {
     private var playbackTime: Double {
         LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
     }
-    private var activeIndex: Int? {
-        TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
-            time: playbackTime, duration: player.duration)
+    private var activeIndex: Int? { frameClock.activeIndex }
+    private var frameLimit: Int {
+        if thermal == .critical { return 15 }
+        return lowPower || thermal == .serious ? 30 : 120
+    }
+    private func refreshFrame() {
+        let time = playbackTime
+        frameClock.sample(time: time, selection: TypographyLyricsPolicy.activeIndex(
+            lines: lyrics.lines, synchronized: lyrics.isSynchronized, time: time, duration: player.duration))
     }
 
     var body: some View {
@@ -74,18 +83,39 @@ struct TypographyLyricsView: View {
                 .onChange(of: lyrics) { _, _ in
                     browsingTask?.cancel()
                     browsing = false
+                    refreshFrame()
                     centerCurrent(proxy)
                 }
-                .onAppear { centerCurrent(proxy) }
+                .onAppear { refreshFrame(); centerCurrent(proxy) }
                 .onDisappear { browsingTask?.cancel() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase != .active {
                         browsingTask?.cancel()
                         browsing = false
                     }
-                    else if !browsing { centerCurrent(proxy) }
+                    else { refreshFrame(); if !browsing { centerCurrent(proxy) } }
                 }
             }
+        }
+        .background {
+            LyricsFrameDriver(clock: frameClock,
+                running: player.isPlaying && !player.isBuffering && lyrics.isSynchronized && scenePhase == .active && !reduceMotion,
+                frameLimit: frameLimit,
+                sampleTime: { LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset) },
+                selectLine: { time in TypographyLyricsPolicy.activeIndex(lines: lyrics.lines,
+                    synchronized: lyrics.isSynchronized, time: time, duration: player.duration) })
+                .frame(width: 0, height: 0).accessibilityHidden(true)
+        }
+        .onChange(of: player.isPlaying) { _, _ in refreshFrame() }
+        .onChange(of: player.isPlaying && !reduceMotion ? 0 : player.progress) { _, _ in refreshFrame() }
+        .onChange(of: player.isBuffering) { _, _ in refreshFrame() }
+        .onChange(of: settings.lyricsOffset) { _, _ in refreshFrame() }
+        .onChange(of: reduceMotion) { _, _ in refreshFrame() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
+            thermal = ProcessInfo.processInfo.thermalState
         }
         .task { await player.observeTimeline() }
     }
@@ -104,7 +134,7 @@ struct TypographyLyricsView: View {
                     player: player, offset: settings.lyricsOffset))
                 // Seeking a paused song must not unexpectedly start audio.
             } label: {
-                TypographyLyricText(line: line, time: playbackTime, active: selected,
+                TypographyLyricText(line: line, clock: frameClock, active: selected,
                     plain: false, fontSize: fontSize)
                     .padding(.vertical, 6).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
@@ -114,7 +144,7 @@ struct TypographyLyricsView: View {
             .accessibilityHint("Перемотать к этой строке")
             .accessibilityAddTraits(selected ? .isSelected : [])
         } else {
-            TypographyLyricText(line: line, time: 0, active: false, plain: true, fontSize: fontSize)
+            TypographyLyricText(line: line, clock: frameClock, active: false, plain: true, fontSize: fontSize)
                 .padding(.vertical, 6)
         }
     }
@@ -152,7 +182,18 @@ nonisolated private struct TypographyWordRenderer: TextRenderer {
                     copy.opacity *= 0.55 + 0.45 * reveal
                     copy.translateBy(x: 0, y: 4 * (1 - reveal))
                 }
-                copy.draw(run)
+                if active, let timing = run[TypographyWordAttribute.self] {
+                    var unsung = copy
+                    unsung.opacity *= 0.38
+                    unsung.draw(run)
+                    let sung = min(1, max(0, (time - timing.start) / max(0.01, timing.end - timing.start)))
+                    if sung > 0 {
+                        let rect = run.typographicBounds.rect
+                        copy.clip(to: Path(CGRect(x: rect.minX, y: rect.minY - 6,
+                            width: rect.width * sung, height: rect.height + 12)))
+                        copy.draw(run)
+                    }
+                } else { copy.draw(run) }
             }
         }
     }
@@ -160,20 +201,24 @@ nonisolated private struct TypographyWordRenderer: TextRenderer {
 
 private struct TypographyLyricText: View {
     let line: LyricsLine
-    let time: Double
+    let clock: LyricsDisplayClock
     let active: Bool
     let plain: Bool
     let fontSize: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
+    private var time: Double {
+        // Inactive and line-only rows do not subscribe to the 120 Hz time field.
+        active && TypographyLyricsPolicy.matchedWords(for: line) != nil ? clock.frameTime : 0
+    }
     private var rendered: Text {
         guard active, let words = TypographyLyricsPolicy.matchedWords(for: line) else {
             return Text(line.text).foregroundColor(active ? SN.accent : .white.opacity(plain ? 0.90 : (contrast == .increased ? 0.70 : 0.44)))
         }
         return TypographyLyricsPolicy.segments(line.text).enumerated().reduce(Text("")) { result, pair in
             // Accent follows genuine source starts; never distribute line time over words.
-            let color: Color = time >= words[pair.offset].startTime ? SN.accent : .white.opacity(0.90)
+            let color: Color = SN.accent
             return result + Text(pair.element).foregroundColor(color)
                 .customAttribute(TypographyWordAttribute(start: words[pair.offset].startTime,
                     end: words[pair.offset].endTime))

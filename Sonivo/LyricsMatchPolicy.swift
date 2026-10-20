@@ -117,7 +117,7 @@ enum LyricsPlaybackClock {
         player.usesStreamingBackend ? 0 : AVAudioSession.sharedInstance().outputLatency
     }
     static func time(for player: ActivePlayerPresentation, offset: Double) -> Double {
-        max(0, player.progress - routeLatency(for: player) + offset)
+        max(0, player.lyricsPresentationPosition - routeLatency(for: player) + offset)
     }
     static func seekTime(lineStart: Double, player: ActivePlayerPresentation, offset: Double) -> Double {
         max(0, lineStart - offset + routeLatency(for: player))

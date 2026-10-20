@@ -115,7 +115,7 @@ class AntigravitySpecTests(unittest.TestCase):
         player = self.player_view.read_text(encoding="utf-8")
         lyrics = self.lyrics_view.read_text(encoding="utf-8")
         inline_stage = player.split("private func inlineLyricsStage", 1)[1].split(
-            "private func toggleLyricsControls", 1
+            "private func revealLyricsControls", 1
         )[0]
         dynamic_stage = lyrics.split("private struct DynamicWordLyrics", 1)[1].split(
             "// MARK: - Synchronized Scrolling Lyrics", 1

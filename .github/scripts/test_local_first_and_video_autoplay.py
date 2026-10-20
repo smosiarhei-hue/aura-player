@@ -103,7 +103,8 @@ class LocalFirstAndVideoAutoplayTests(unittest.TestCase):
         self.assertIn('failureObservation?.cancel()', controller)
         self.assertNotIn('videoStatusPublisher', player)
         for event in ['player.isPlaying', 'scenePhase', 'isPresented']:
-            self.assertIn(f'.onChange(of: {event}) {{ _, _ in updateVideoPlayback() }}', player)
+            block = player.split(f'.onChange(of: {event})', 1)[1].split('.onChange(', 1)[0]
+            self.assertIn('updateVideoPlayback()', block)
         policy = source('VideoShotPlaybackPolicy.swift')
         for term in ['musicPlaying', 'sceneActive', 'playerVisible', '!lyricsVisible', '!reduceMotion']:
             self.assertIn(term, policy)

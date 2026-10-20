@@ -8,17 +8,10 @@ nonisolated enum TypographyLyricsPolicy {
         guard let index = lines.indices.last(where: {
             lines[$0].startTime.isFinite && lines[$0].startTime >= 0 && lines[$0].startTime <= time
         }) else { return nil }
-        let line = lines[index]
-        let next = lines.dropFirst(index + 1).first(where: {
-            $0.startTime.isFinite && $0.startTime > line.startTime
-        })?.startTime
-        let end: Double
-        if let explicit = line.endTime, explicit.isFinite, explicit > line.startTime {
-            end = min(explicit, next ?? explicit)
-        } else {
-            end = next ?? (duration.isFinite && duration > line.startTime ? duration : line.startTime + 12)
-        }
-        return time < end ? index : nil
+        // Retain this row until the next starts, as in classic Lines. Explicit
+        // word/line ends still bound the word sweep, not the scroll selection.
+        if duration.isFinite, duration > 0, time >= duration { return nil }
+        return index
     }
 
     static func segments(_ text: String) -> [String] {
@@ -42,5 +35,13 @@ nonisolated enum TypographyLyricsPolicy {
         let tokens = segments(line.text).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard tokens == words.map({ $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }) else { return nil }
         return words
+    }
+}
+
+nonisolated enum LyricsControlsPolicy {
+    static let idleSeconds: Double = 10
+    static func shouldAutoHide(isPlaying: Bool, isBuffering: Bool, visible: Bool,
+                               lyricsVisible: Bool, sceneActive: Bool, voiceOver: Bool) -> Bool {
+        isPlaying && !isBuffering && visible && lyricsVisible && sceneActive && !voiceOver
     }
 }

@@ -17,6 +17,7 @@ struct PlayerScreenV2: View {
     @State private var resolvingArtist = false
     @State private var showLyricsMode = false
     @State private var lyricsControlsVisible = false
+    @State private var lyricsVoiceOver = UIAccessibility.isVoiceOverRunning
     @State private var lyricsControlsHideTask: Task<Void, Never>?
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
@@ -200,8 +201,28 @@ struct PlayerScreenV2: View {
             isCoverSwitching = false
         }
         .task(id: videoLoadKey) { await loadVideoShot() }
-        .onChange(of: player.isPlaying) { _, _ in updateVideoPlayback() }
-        .onChange(of: scenePhase) { _, _ in updateVideoPlayback() }
+        .onChange(of: player.isPlaying) { _, playing in
+            updateVideoPlayback()
+            if showLyricsMode {
+                if !playing { lyricsControlsVisible = true }
+                scheduleLyricsControlsHide()
+            }
+        }
+        .onChange(of: player.isBuffering) { _, buffering in
+            if showLyricsMode {
+                if buffering { lyricsControlsVisible = true }
+                scheduleLyricsControlsHide()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+            lyricsVoiceOver = UIAccessibility.isVoiceOverRunning
+            if showLyricsMode { revealLyricsControls() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            updateVideoPlayback()
+            lyricsControlsHideTask?.cancel()
+            if phase == .active, showLyricsMode { revealLyricsControls() }
+        }
         .onChange(of: isPresented) { _, _ in updateVideoPlayback() }
         .onChange(of: isVideoShotEnabled) { _, enabled in
             if !enabled { teardownVideoLooper() }
@@ -218,7 +239,8 @@ struct PlayerScreenV2: View {
         .onChange(of: showLyricsMode) { _, isEnabled in
             updateVideoPlayback()
             lyricsControlsHideTask?.cancel()
-            lyricsControlsVisible = false
+            lyricsControlsVisible = isEnabled
+            if isEnabled { scheduleLyricsControlsHide() }
             coverDragX = 0
             if !isEnabled {
                 activeModal = nil
@@ -244,6 +266,7 @@ struct PlayerScreenV2: View {
         }
         .onDisappear {
             trackWaveTask?.cancel()
+            lyricsControlsHideTask?.cancel()
             trackWaveRequestID = UUID()
             waveLoading = false
             teardownVideoLooper()
@@ -320,22 +343,31 @@ struct PlayerScreenV2: View {
                 .clipped()
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    if SettingsStore.shared.lyricsDesign != .typography { toggleLyricsControls() }
+                    revealLyricsControls()
                 }
+                .simultaneousGesture(DragGesture(minimumDistance: 5)
+                    .onChanged { _ in lyricsControlsHideTask?.cancel() }
+                    .onEnded { _ in scheduleLyricsControlsHide() })
 
             LyricsTypographyModeBar()
                 .padding(.horizontal, 24).padding(.vertical, 8)
+                .simultaneousGesture(TapGesture().onEnded { scheduleLyricsControlsHide() })
 
-            if lyricsControlsVisible || SettingsStore.shared.lyricsDesign == .typography {
+            if lyricsControlsVisible {
                 lyricsControlsDeck(safeAreaBottom: safeAreaBottom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
-                Color.clear
-                    .frame(height: max(safeAreaBottom, 12))
+                Button(action: revealLyricsControls) {
+                    Label("Показать управление", systemImage: "chevron.up")
+                        .font(.subheadline.weight(.medium)).foregroundStyle(SN.accent)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .padding(.bottom, max(safeAreaBottom, 12))
+                .accessibilityHint("Показать перемотку, паузу и переключение треков")
             }
         }
         .frame(width: width, height: height, alignment: .top)
-        .animation(SN.spring, value: lyricsControlsVisible)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.30), value: lyricsControlsVisible)
         .environment(\.colorScheme, .dark)
     }
 
@@ -425,6 +457,17 @@ struct PlayerScreenV2: View {
 
     private func lyricsControlsDeck(safeAreaBottom: CGFloat) -> some View {
         VStack(spacing: 16) {
+            HStack {
+                Text(lyricsVoiceOver ? "Управление плеером" : (player.isBuffering ? "Ожидание воспроизведения" : (player.isPlaying ? "Скроется через 10 с без касаний" : "На паузе управление остаётся открытым")))
+                    .font(.caption).foregroundStyle(.white.opacity(0.60))
+                Spacer(minLength: 8)
+                Button("Скрыть") {
+                    lyricsControlsHideTask?.cancel()
+                    lyricsControlsVisible = false
+                }
+                .font(.caption.weight(.semibold)).tint(SN.accent)
+                .frame(minHeight: 44)
+            }
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
             if SettingsStore.shared.lyricsDesign != .typography {
@@ -461,8 +504,11 @@ struct PlayerScreenV2: View {
             .padding(.horizontal, 24)
             }
         }
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in lyricsControlsHideTask?.cancel() }
+            .onEnded { _ in scheduleLyricsControlsHide() })
         .padding(.horizontal, 24)
-        .padding(.top, 18)
+        .padding(.top, 8)
         .padding(.bottom, max(safeAreaBottom, 16))
         .frame(maxWidth: .infinity)
         .background {
@@ -561,7 +607,8 @@ struct PlayerScreenV2: View {
                         phrases: cachedPhrases.isEmpty ? LyricPhrase.from(lines: lyrics.lines) : cachedPhrases,
                         currentTime: .constant(playbackTime),
                         isPlaying: player.isPlaying,
-                        fontSize: max(30, settings.lyricsFontSize * 0.82)
+                        fontSize: max(30, settings.lyricsFontSize * 0.82),
+                        sampleTime: { LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset) }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 22)
@@ -590,27 +637,24 @@ struct PlayerScreenV2: View {
         .contentShape(Rectangle())
     }
 
-    private func toggleLyricsControls() {
+    private func revealLyricsControls() {
+        lyricsControlsVisible = true
+        scheduleLyricsControlsHide()
+    }
+
+    private var canAutoHideLyricsControls: Bool {
+        LyricsControlsPolicy.shouldAutoHide(isPlaying: player.isPlaying, isBuffering: player.isBuffering,
+            visible: lyricsControlsVisible, lyricsVisible: showLyricsMode,
+            sceneActive: scenePhase == .active, voiceOver: lyricsVoiceOver)
+    }
+
+    private func scheduleLyricsControlsHide() {
         lyricsControlsHideTask?.cancel()
-
-        if lyricsControlsVisible {
-            withAnimation(SN.spring) {
-                lyricsControlsVisible = false
-            }
-            return
-        }
-
-        withAnimation(SN.spring) {
-            lyricsControlsVisible = true
-        }
+        guard canAutoHideLyricsControls else { return }
         lyricsControlsHideTask = Task {
-            try? await Task.sleep(for: .seconds(3.5))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(SN.spring) {
-                    lyricsControlsVisible = false
-                }
-            }
+            do { try await Task.sleep(for: .seconds(LyricsControlsPolicy.idleSeconds)) } catch { return }
+            guard !Task.isCancelled, canAutoHideLyricsControls else { return }
+            lyricsControlsVisible = false
         }
     }
 
@@ -1517,18 +1561,8 @@ struct CoverLyricsScrollView: View {
     @State private var activeIndex: Int? = nil
 
     private func computeActiveIndex(at time: Double) -> Int? {
-        guard lyrics.isSynchronized, !lyrics.lines.isEmpty else { return nil }
-        let currentTime = max(0, time - LyricsPlaybackClock.routeLatency(for: player) + settings.lyricsOffset)
-        if let first = lyrics.lines.first, currentTime < first.startTime {
-            return nil
-        }
-        for (i, line) in lyrics.lines.enumerated() {
-            let nextStart = (i + 1 < lyrics.lines.count) ? lyrics.lines[i + 1].startTime : (line.startTime + 20.0)
-            if currentTime >= line.startTime && currentTime < nextStart {
-                return i
-            }
-        }
-        return lyrics.lines.count - 1
+        TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
+            time: LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset), duration: player.duration)
     }
 
     var body: some View {
@@ -1657,6 +1691,10 @@ struct CoverLyricsScrollView: View {
                         }
                     }
                 }
+            }
+            .onChange(of: settings.lyricsOffset) { _, _ in
+                activeIndex = computeActiveIndex(at: player.progress)
+                if let activeIndex, !isUserInteracting { proxy.scrollTo(activeIndex, anchor: .center) }
             }
             .onAppear {
                 let initial = computeActiveIndex(at: player.progress)

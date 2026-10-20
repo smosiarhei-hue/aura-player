@@ -254,16 +254,14 @@ struct KineticLyricsView: View {
     var isPlaying: Bool = true
     var fontSize: CGFloat = 26
     var onPhraseChange: ((LyricPhrase) -> Void)? = nil
-
-    // Hardware ProMotion clock anchor for continuous 120 Hz sub-pixel interpolation
-    @State private var anchorTimestamp: Double = CACurrentMediaTime()
+    var sampleTime: (() -> TimeInterval)? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        // Native 120 FPS timeline synchronizing directly with iPhone ProMotion display
-        TimelineView(.animation(paused: !isPlaying)) { _ in
-            let now = CACurrentMediaTime()
-            let dt = isPlaying ? max(0.0, min(0.025, now - anchorTimestamp)) : 0.0
-            let smoothTime = currentTime + dt
+        TimelineView(.animation(minimumInterval: 1 / 120.0,
+            paused: !isPlaying || reduceMotion || scenePhase != .active)) { _ in
+            let smoothTime = sampleTime?() ?? currentTime
             let (current, next) = findCurrentAndNextPhrase(at: smoothTime)
 
             ZStack {
@@ -300,10 +298,7 @@ struct KineticLyricsView: View {
                         .transition(.opacity)
                 }
             }
-            .animation(.easeInOut(duration: 0.28), value: current?.id)
-            .onChange(of: currentTime) { _, _ in
-                anchorTimestamp = CACurrentMediaTime()
-            }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.20), value: current?.id)
             .onChange(of: current?.id) { _, _ in
                 if let current {
                     onPhraseChange?(current)
@@ -312,45 +307,15 @@ struct KineticLyricsView: View {
         }
     }
 
-    /// Fast search to pinpoint active and next phrase with strict intro & instrumental break detection
+    /// Keep the selected phrase until the next source start, just like Lines.
     private func findCurrentAndNextPhrase(at time: TimeInterval) -> (current: LyricPhrase?, next: LyricPhrase?) {
         guard !phrases.isEmpty else { return (nil, nil) }
 
-        // 1. Интро: вокал еще не начался
-        if let first = phrases.first, time < first.timeRange.lowerBound {
-            return (nil, first)
+        guard let index = phrases.indices.last(where: { phrases[$0].timeRange.lowerBound <= time }) else {
+            return (nil, phrases.first)
         }
-
-        // 2. Поиск активной фразы во время пения
-        for (i, p) in phrases.enumerated() {
-            if p.timeRange.contains(time) {
-                let nxt = (i + 1 < phrases.count) ? phrases[i + 1] : nil
-                return (p, nxt)
-            }
-        }
-
-        // 3. Инструментальная пауза между фразами
-        for i in 0..<(phrases.count - 1) {
-            let cur = phrases[i]
-            let nxt = phrases[i + 1]
-            if time > cur.timeRange.upperBound && time < nxt.timeRange.lowerBound {
-                let gap = nxt.timeRange.lowerBound - cur.timeRange.upperBound
-                if gap <= 1.5 {
-                    // Короткая пауза на вдох: удерживаем текущую фразу
-                    return (cur, nxt)
-                } else {
-                    // Длинный проигрыш / дроп / соло: переключаем в режим ожидания следующей строки
-                    return (nil, nxt)
-                }
-            }
-        }
-
-        // 4. После последней фразы
-        if let last = phrases.last, time >= last.timeRange.lowerBound {
-            return (last, nil)
-        }
-
-        return (nil, nil)
+        let next = index + 1 < phrases.count ? phrases[index + 1] : nil
+        return (phrases[index], next)
     }
 }
 
