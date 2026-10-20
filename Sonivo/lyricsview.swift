@@ -127,6 +127,7 @@ private struct SyncedLyrics: View {
     @State private var interactionResetTask: Task<Void, Never>? = nil
     @State private var frameClock = LyricsDisplayClock()
     private var activeIndex: Int? { frameClock.activeIndex }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -255,9 +256,9 @@ private struct SyncedLyrics: View {
             }
             .onChange(of: activeIndex) { _, index in
                 if let index, !isUserInteracting {
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { proxy.scrollTo(index, anchor: .center) }
+                    LyricsFocusMotion.scroll(reduceMotion: reduceMotion) {
+                        proxy.scrollTo(index, anchor: .center)
+                    }
                 }
             }
             .onAppear {

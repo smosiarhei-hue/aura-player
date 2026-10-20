@@ -17,7 +17,7 @@ Approved direction: oversized left-aligned type on charcoal with a restrained us
 - Manual scrolling suspends auto-follow; “К текущей” resumes immediately, otherwise follow resumes five seconds after the drag ends. Tasks cancel on disappearance/background.
 - Native shaping retains punctuation, whitespace and Unicode. Text wraps, scales with Dynamic Type, supports VoiceOver and Increased Contrast, and disables movement with Reduce Motion.
 - All scrolling designs share LyricsClockSurface and a view-scoped CADisplayLink in common run-loop mode requests the actual window screen’s maximum, up to 120 Hz. It samples, but never extrapolates or advances, audio time. Only the current timed-word row observes frameTime; list selection changes only at a line boundary. Each real timed word becomes fully emphasized exactly at its source start, without fade-in, blur, rise, sweep completion or implicit animation. The same immediate onset is used by Classic dynamic and synchronized Staggered renderers; decorative stagger is confined to untimed previews.
-- Automatic focus scrolls without a spring/ease-out settling delay; cover-row emphasis has no opacity animation. Manual “К текущей”/tap navigation may still animate independently of highlighting.
+- Automatic focus uses a shared 240 ms zero-bounce smooth viewport transition. Selection/word onset updates immediately and word leaves suppress implicit animation, so motion does not shift timestamps. Reduce Motion scrolls immediately; cover-row emphasis has no opacity animation. Manual “К текущей”/tap navigation may still animate independently of highlighting.
 - The display link invalidates on pause, buffering, inactive scene, Reduce Motion, detachment and dismantling. Low Power / serious thermal cap at 30 Hz, critical thermal at 15 Hz. Reduced-motion lyrics still receive actual source time from audio progress updates. Apple/iOS retains final refresh-rate control; 120 Hz is a request, not a measured guarantee.
 - No source network request, transcription, audio-session activation, queue or EQ modification is introduced.
 
@@ -45,3 +45,8 @@ Frame-rate and clock guards plus the executed Swift fixture cover selection boun
 - https://developer.apple.com/documentation/avfaudio/avaudioplayernode/playertime(fornodetime:)
 
 CI executes additional real Swift fixtures for LRC units/offset signs, syllables, leading words, repeated tags, malformed timestamps, Unicode, 44.1/48/96 kHz native sample positions and a fixed upstream-compatible HMAC signature.
+
+## Typography / luminous text study
+- Active typographic words use a crisp white fill with one restrained accent-colored halo; future words remain dim. Increased Contrast disables the halo. This is an SDR HDR-style treatment, **not** actual EDR/HDR luminance output.
+- Source clocks, parsers and provider offsets are unchanged by this visual pass. No fade-in or delayed transaction is added to word highlighting.
+- Candidate fonts are preview-only: Inter Tight, Manrope, Onest, Golos Text, Montserrat and Rubik (Google Fonts, SIL OFL). No font family is bundled/selected in production before user approval.

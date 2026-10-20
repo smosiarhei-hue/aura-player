@@ -14,7 +14,7 @@ class LyricsPipelineAuditTests(unittest.TestCase):
             self.assertIn('LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics)',view)
             self.assertIn('frameClock.activeIndex',view)
             self.assertNotIn('.onChange(of: player.progress)',view)
-            self.assertIn('transaction.disablesAnimations = true',view)
+            self.assertIn('LyricsFocusMotion.scroll(reduceMotion: reduceMotion)',view)
         row=source('PlayerScreenV2.swift').split('private struct CoverLyricLineRow',1)[1].split('private struct LyricsLineButtonStyle',1)[0]
         self.assertNotIn('.animation(',row)
         inline=source('PlayerScreenV2.swift').split('private func inlineLyricsStage',1)[1].split('private var closeLyricsButton',1)[0]
@@ -46,6 +46,20 @@ class LyricsPipelineAuditTests(unittest.TestCase):
         for token in ['HMAC<SHA256>', 'base64EncodedString()', 'name: "format", value: "LRC"', 'name: "timeStamp"', 'name: "sign"']:
             self.assertIn(token,request)
         self.assertNotIn('dropLast',request)
+
+    def test_viewport_motion_never_animates_source_highlighting(self):
+        motion=source('LyricsFocusMotion.swift')
+        self.assertIn('duration: Double = 0.24',motion)
+        self.assertIn('extraBounce: 0',motion)
+        self.assertIn('if reduceMotion',motion)
+        self.assertIn('transaction.disablesAnimations = true',motion)
+        for forbidden in ['Task.sleep', 'frameTime', 'startTime', 'player.seek', 'offset:']:
+            self.assertNotIn(forbidden,motion)
+        view=source('TypographyLyricsView.swift')
+        self.assertIn('highContrast: contrast == .increased',view)
+        self.assertIn('glow.opacity(0.32)',view)
+        self.assertIn('.transaction { $0.animation = nil }',view)
+        self.assertIn('!LyricsTimingStandard.hasStarted(time: time, start: timing.start)',view)
 
     @unittest.skipUnless(platform.system()=='Darwin' and shutil.which('swiftc'),'Actual Swift parser/audio/signature fixtures run on macOS')
     def test_actual_lrc_samples_and_signed_request(self):

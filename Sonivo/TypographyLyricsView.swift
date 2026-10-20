@@ -125,9 +125,9 @@ struct TypographyLyricsView: View {
     private func centerCurrent(_ proxy: ScrollViewProxy) {
         guard scenePhase == .active, let index = activeIndex else { return }
         let anchor = UnitPoint(x: 0.5, y: 0.32)
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { proxy.scrollTo(lyrics.lines[index].id, anchor: anchor) }
+        LyricsFocusMotion.scroll(reduceMotion: reduceMotion) {
+            proxy.scrollTo(lyrics.lines[index].id, anchor: anchor)
+        }
     }
 }
 
@@ -139,6 +139,8 @@ nonisolated private struct TypographyWordAttribute: TextAttribute {
 nonisolated private struct TypographyWordRenderer: TextRenderer {
     let time: Double
     let active: Bool
+    let glow: Color
+    let highContrast: Bool
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {
@@ -147,6 +149,10 @@ nonisolated private struct TypographyWordRenderer: TextRenderer {
                 if active, let timing = run[TypographyWordAttribute.self],
                    !LyricsTimingStandard.hasStarted(time: time, start: timing.start) {
                     copy.opacity *= 0.38
+                } else if active && !highContrast {
+                    // SDR glow styling, not a claim of EDR/HDR display headroom.
+                    // A crisp white glyph is drawn once; only its halo is softened.
+                    copy.addFilter(.shadow(color: glow.opacity(0.32), radius: 5))
                 }
                 // At the actual source start the entire word is immediately legible.
                 // No fade-in, transform, blur, sweep completion or delayed transaction.
@@ -170,11 +176,11 @@ private struct TypographyLyricText: View {
     }
     private var rendered: Text {
         guard active, let words = TypographyLyricsPolicy.matchedWords(for: line) else {
-            return Text(line.text).foregroundColor(active ? SN.accent : .white.opacity(plain ? 0.90 : (contrast == .increased ? 0.70 : 0.44)))
+            return Text(line.text).foregroundColor(active ? .white : .white.opacity(plain ? 0.90 : (contrast == .increased ? 0.70 : 0.44)))
         }
         return TypographyLyricsPolicy.segments(line.text).enumerated().reduce(Text("")) { result, pair in
             // Accent follows genuine source starts; never distribute line time over words.
-            let color: Color = SN.accent
+            let color: Color = .white
             return result + Text(pair.element).foregroundColor(color)
                 .customAttribute(TypographyWordAttribute(start: words[pair.offset].startTime,
                     end: words[pair.offset].endTime))
@@ -185,7 +191,7 @@ private struct TypographyLyricText: View {
         rendered
             .font(.system(size: fontSize, weight: .bold, design: .default))
             .tracking(-0.7).lineSpacing(4)
-            .textRenderer(TypographyWordRenderer(time: time, active: active))
+            .textRenderer(TypographyWordRenderer(time: time, active: active, glow: SN.accent, highContrast: contrast == .increased))
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)

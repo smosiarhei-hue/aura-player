@@ -30,7 +30,7 @@ class TypographyLyricsTests(unittest.TestCase):
         self.assertIn('TypographyLyricsPolicy.matchedWords(for: line)',view)
         self.assertIn('LyricsTimingStandard.hasStarted(time: time, start: timing.start)',view)
         renderer=view.split('struct TypographyWordRenderer',1)[1].split('private struct TypographyLyricText',1)[0]
-        for delayed in ['copy.clip', 'translateBy', 'addFilter', 'pow(', 'timing.end -']:
+        for delayed in ['copy.clip', 'translateBy', 'pow(', 'timing.end -']:
             self.assertNotIn(delayed,renderer)
         self.assertIn('.transaction { $0.animation = nil }',view)
         self.assertIn('guard line.hasRealWordTimings',policy)

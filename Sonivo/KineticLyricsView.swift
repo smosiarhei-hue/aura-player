@@ -177,12 +177,15 @@ struct KineticWordView: View {
     let word: LyricWord
     let currentTime: TimeInterval
     let fontSize: CGFloat
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Text(word.text)
             .font(.system(size: fontSize, weight: .bold, design: .default))
             .foregroundStyle(LyricsTimingStandard.hasStarted(time: currentTime, start: word.startTime)
                 ? Color.white : Color.white.opacity(0.32))
+            .shadow(color: contrast != .increased && LyricsTimingStandard.hasStarted(time: currentTime, start: word.startTime)
+                ? SN.accent.opacity(0.28) : .clear, radius: 5)
             .lineLimit(1)
             .minimumScaleFactor(0.70)
             .transaction { $0.animation = nil }

@@ -1516,6 +1516,7 @@ struct CoverLyricsScrollView: View {
     @State private var interactionResetTask: Task<Void, Never>? = nil
     @State private var frameClock = LyricsDisplayClock()
     private var activeIndex: Int? { frameClock.activeIndex }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -1635,9 +1636,9 @@ struct CoverLyricsScrollView: View {
             }
             .onChange(of: activeIndex) { _, index in
                 if let index, !isUserInteracting {
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { proxy.scrollTo(index, anchor: .center) }
+                    LyricsFocusMotion.scroll(reduceMotion: reduceMotion) {
+                        proxy.scrollTo(index, anchor: .center)
+                    }
                 }
             }
             .onAppear {

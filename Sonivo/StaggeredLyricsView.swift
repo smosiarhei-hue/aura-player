@@ -237,9 +237,9 @@ struct StaggeredLyricsView: View {
 
     private func centerCurrentLine(proxy: ScrollViewProxy) {
         guard let activeIndex else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { proxy.scrollTo(activeIndex, anchor: .center) }
+        LyricsFocusMotion.scroll(reduceMotion: reduceMotion) {
+            proxy.scrollTo(activeIndex, anchor: .center)
+        }
     }
 }
 
