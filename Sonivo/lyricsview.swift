@@ -125,12 +125,8 @@ private struct SyncedLyrics: View {
     @State private var settings = SettingsStore.shared
     @State private var isUserInteracting = false
     @State private var interactionResetTask: Task<Void, Never>? = nil
-    @State private var activeIndex: Int? = nil
-
-    private func computeActiveIndex(at time: Double) -> Int? {
-        TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
-            time: LyricsPlaybackClock.time(for: player), duration: player.duration)
-    }
+    @State private var frameClock = LyricsDisplayClock()
+    private var activeIndex: Int? { frameClock.activeIndex }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -257,25 +253,18 @@ private struct SyncedLyrics: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
-            .onChange(of: player.progress) { _, newProgress in
-                let newIndex = computeActiveIndex(at: newProgress)
-                if newIndex != activeIndex {
-                    activeIndex = newIndex
-                    if let newIndex, !isUserInteracting {
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
-                            proxy.scrollTo(newIndex, anchor: .center)
-                        }
-                    }
+            .onChange(of: activeIndex) { _, index in
+                if let index, !isUserInteracting {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { proxy.scrollTo(index, anchor: .center) }
                 }
             }
             .onAppear {
-                let initial = computeActiveIndex(at: player.progress)
-                activeIndex = initial
-                if let initial {
-                    proxy.scrollTo(initial, anchor: .center)
-                }
+                if let activeIndex { proxy.scrollTo(activeIndex, anchor: .center) }
             }
         }
+        .background { LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics) }
     }
 }
 

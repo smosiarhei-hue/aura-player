@@ -27,13 +27,9 @@ final class LyricsService {
         let duration: Double?
     }
 
-    /// Hybrid parallel priority:
-    /// 0. User custom lyrics (plain or dynamic LRC)
-    /// 1. Musixmatch RichSync (real word/character timing)
-    /// 2. Synchronized LRC (Yandex, Musixmatch or LRCLIB)
-    /// 3. Authoritative full text (Yandex Music official)
-    /// 4. LRCLIB plain text
-    /// 5. Embedded static lyrics
+    /// Parallel retrieval, deterministic recording-aware selection:
+    /// user text → Yandex LRC by exact track ID → verified RichSync/subtitles
+    /// → verified LRCLIB → official/plain text. No estimated word timings.
     func fetchLyrics(for track: Track) async throws -> Lyrics {
         let key = cacheKey(for: track)
 
@@ -54,29 +50,25 @@ final class LyricsService {
         async let geniusTask = fetchGeniusLyrics(for: track)
 
         let yandexLyrics = await yandexTask
+        // Exact catalog track ID wins over third-party timestamps for another edit.
+        // Do not wait for unrelated plain-text sources before displaying valid LRC.
+        if let yandexLyrics, yandexLyrics.isSynchronized {
+            cache[key] = yandexLyrics
+            return yandexLyrics
+        }
         let musixmatchResult = await musixmatchTask
         let lrcResult = await lrcTask
-        let geniusResult = await geniusTask
         let musixmatchLyrics = musixmatchResult.flatMap {
             LyricsMatchPolicy.agreesWithOfficialText($0, official: yandexLyrics) ? $0 : nil
         }
         let lrcLyrics = lrcResult.flatMap {
             LyricsMatchPolicy.agreesWithOfficialText($0, official: yandexLyrics) ? $0 : nil
         }
-        let geniusLyrics = geniusResult.flatMap {
-            LyricsMatchPolicy.agreesWithOfficialText($0, official: yandexLyrics) ? $0 : nil
-        }
 
-        // 1. Genuine Musixmatch RichSync drives the existing per-character vocal sweep.
+        // Verified source words are a fallback when catalog LRC is unavailable.
         if let musixmatchLyrics, musixmatchLyrics.hasDynamicWordTimings {
             cache[key] = musixmatchLyrics
             return musixmatchLyrics
-        }
-
-        // 2. If Yandex has synchronized lyrics, prioritize it
-        if let yandexLyrics, yandexLyrics.isSynchronized {
-            cache[key] = yandexLyrics
-            return yandexLyrics
         }
 
         // 3. Musixmatch line-synchronized subtitle fallback.
@@ -97,6 +89,10 @@ final class LyricsService {
             return yandexLyrics
         }
 
+        let geniusResult = await geniusTask
+        let geniusLyrics = geniusResult.flatMap {
+            LyricsMatchPolicy.agreesWithOfficialText($0, official: yandexLyrics) ? $0 : nil
+        }
         // 6. Genius full text lyrics
         if let geniusLyrics, !geniusLyrics.lines.isEmpty {
             cache[key] = geniusLyrics
@@ -143,6 +139,10 @@ final class LyricsService {
         guard !ymId.isEmpty else { return nil }
 
         let cleanId = ymId.contains(":") ? (ymId.components(separatedBy: ":").first ?? ymId) : ymId
+        if let synchronized = await fetchYandexSynchronizedLyrics(track: track, trackID: cleanId) {
+            return synchronized
+        }
+        guard !Task.isCancelled else { return nil }
         guard let url = URL(string: YandexMusicService.apiBase + "/tracks/\(cleanId)/supplement") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -192,6 +192,34 @@ final class LyricsService {
         }
 
         return nil
+    }
+
+    private func fetchYandexSynchronizedLyrics(track: Track, trackID: String) async -> Lyrics? {
+        guard let request = YandexLyricsRequest.request(base: YandexMusicService.apiBase,
+            trackID: trackID, token: YandexMusicService.shared.token,
+            timestamp: Int(Date().timeIntervalSince1970)) else { return nil }
+        struct Response: Decodable {
+            struct Result: Decodable { let downloadUrl: String? }
+            let result: Result?
+        }
+        guard let (data, response) = try? await YandexMusicService.shared.sessionData(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              !Task.isCancelled,
+              let payload = try? JSONDecoder().decode(Response.self, from: data),
+              let rawURL = payload.result?.downloadUrl,
+              let url = URL(string: rawURL), url.scheme == "https", url.host != nil else { return nil }
+        // CDN download intentionally has NO OAuth header. Never log/store signed URLs.
+        var download = URLRequest(url: url)
+        download.timeoutInterval = 12
+        guard let (body, result) = try? await URLSession.shared.data(for: download),
+              (result as? HTTPURLResponse)?.statusCode == 200,
+              !Task.isCancelled, body.count <= 2_000_000,
+              let text = String(data: body, encoding: .utf8) else { return nil }
+        let parsed = LRCParser.parse(text, sourceName: "Яндекс Музыка")
+        let lyrics = LyricsMatchPolicy.validatedTimings(Lyrics(title: track.title, artist: track.artist,
+            lines: parsed.lines, isSyllable: parsed.isSyllable, offset: parsed.offset,
+            sourceName: parsed.sourceName), duration: track.duration)
+        return lyrics.isSynchronized ? lyrics : nil
     }
 
     private func searchYandexTrackId(for track: Track) async -> String? {

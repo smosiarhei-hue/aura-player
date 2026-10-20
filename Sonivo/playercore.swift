@@ -284,6 +284,7 @@ final class PlayerCore {
         streamMigrationTask?.cancel()
         cancelSleepTimer()
         localSegmentTokens.removeAll()
+        lyricsLocalSegments.removeAll()
         for (player, token) in streamingTimeObservers { player.removeTimeObserver(token) }
         streamingTimeObservers.removeAll()
         streamStatusObservers.removeAll()
@@ -394,7 +395,14 @@ final class PlayerCore {
             return seconds.isFinite && seconds >= 0 ? seconds : max(0, progress)
         }
         guard activeAudioFile != nil, activePlayer.isPlaying else { return max(0, progress) }
-        return liveProgress()
+        let key = ObjectIdentifier(activePlayer)
+        guard let segment = lyricsLocalSegments[key], localSegmentTokens[key] == segment.token,
+              let render = activePlayer.lastRenderTime,
+              let audioTime = activePlayer.playerTime(forNodeTime: render),
+              let position = LyricsTimingStandard.localPosition(segmentStart: segment.start,
+                  sampleTime: Double(audioTime.sampleTime), sampleRate: audioTime.sampleRate,
+                  duration: duration) else { return max(0, progress) }
+        return position
     }
     private var streamingTimeObservers: [(AVPlayer, Any)] = []
     private var didInstallStreamingNotifications = false
@@ -445,6 +453,7 @@ final class PlayerCore {
     private var incomingStartPosition: Double = 0
     private var generation = 0
     private var localSegmentTokens: [ObjectIdentifier: UUID] = [:]
+    @ObservationIgnored private var lyricsLocalSegments: [ObjectIdentifier: (token: UUID, start: Double)] = [:]
     private var activeLocalURL: URL?
     private var transitionPreparationTask: Task<Void, Never>?
     private var transitionRequestID = UUID()
@@ -1480,6 +1489,7 @@ final class PlayerCore {
         sleepFadeTask?.cancel()
         sleepFadeTask = nil
         localSegmentTokens.removeAll()
+        lyricsLocalSegments.removeAll()
         activeLocalURL = nil
         activeStreamingPlayer.pause()
         activeStreamingPlayer.replaceCurrentItem(with: nil)
@@ -1535,6 +1545,7 @@ final class PlayerCore {
         sleepFadeTask?.cancel()
         sleepFadeTask = nil
         localSegmentTokens.removeAll()
+        lyricsLocalSegments.removeAll()
         activeAudioFile = nil
         activeLocalURL = nil
         activeStreamURL = nil
@@ -1654,6 +1665,7 @@ final class PlayerCore {
         let rate = file.processingFormat.sampleRate
         let offset = max(0, min(AVAudioFramePosition(seconds * rate), file.length - 1))
         let count = AVAudioFrameCount(min(file.length - offset, AVAudioFramePosition(UInt32.max)))
+        lyricsLocalSegments[key] = (segmentToken, Double(offset) / rate)
         node.scheduleSegment(file, startingFrame: offset, frameCount: count, at: nil,
                              completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor in
@@ -1808,6 +1820,7 @@ final class PlayerCore {
             return
         }
         localSegmentTokens.removeAll()
+        lyricsLocalSegments.removeAll()
         playerA.stop()
         playerB.stop()
         stopBeatLoop()
@@ -2278,6 +2291,7 @@ final class PlayerCore {
             activeAudioFile = nil
             activeLocalURL = nil
             localSegmentTokens.removeAll()
+            lyricsLocalSegments.removeAll()
         }
 
         lastNowPlayingSync = nil

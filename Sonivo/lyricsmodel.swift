@@ -85,7 +85,7 @@ extension Lyrics {
 
 // MARK: - High-Precision LRC Parser (line-level + syllable/word-level timestamps + offset)
 
-enum LRCParser {
+nonisolated enum LRCParser {
     // [mm:ss.xx] or [mm:ss.xxx] or [mm:ss:xx] or [mm:ss]
     private static let lineTimeRegex = try? NSRegularExpression(
         pattern: #"\[(\d{1,2}):(\d{1,2}(?:[.:]\d{1,3})?)\]"#
@@ -132,7 +132,8 @@ enum LRCParser {
             guard !timeMatches.isEmpty else { continue }
 
             let content = lineTimeRegex.stringByReplacingMatches(in: raw, range: range, withTemplate: "")
-            let parsed = parseContent(content, globalOffset: globalOffsetSeconds)
+            let firstLineStart = timeMatches.first.map { timestamp(from: raw, match: $0) } ?? 0
+            let parsed = parseContent(content, lineStart: firstLineStart, globalOffset: globalOffsetSeconds)
             let cleanText = parsed.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanText.isEmpty else { continue }
             // Filter out empty instrumental markers that create gaps in text
@@ -149,7 +150,13 @@ enum LRCParser {
                 let rawTime = minutes * 60.0 + seconds
                 let time = max(0, rawTime - globalOffsetSeconds)
 
-                lines.append(LyricsLine(text: cleanText, startTime: time, endTime: nil, words: parsed.words))
+                // Repeated [line] tags reuse the same enhanced text. Shift genuine
+                // absolute word timestamps by this occurrence's source delta only.
+                let delta = rawTime - firstLineStart
+                let words = delta == 0 ? parsed.words : parseContent(content, lineStart: firstLineStart,
+                    globalOffset: globalOffsetSeconds, occurrenceShift: delta).words
+                let sourceStart = min(time, words?.first?.startTime ?? time)
+                lines.append(LyricsLine(text: cleanText, startTime: sourceStart, endTime: nil, words: words))
             }
         }
 
@@ -170,47 +177,58 @@ enum LRCParser {
         return Lyrics(title: nil, artist: nil, lines: lines, isSyllable: isSyllable, offset: globalOffsetSeconds, sourceName: sourceName)
     }
 
-    private static func parseContent(_ content: String, globalOffset: TimeInterval) -> (text: String, words: [LyricsWord]?) {
+    private static func parseContent(_ content: String, lineStart: Double,
+                                     globalOffset: TimeInterval, occurrenceShift: Double = 0) -> (text: String, words: [LyricsWord]?) {
         guard let wordTimeRegex else { return (content.trimmingCharacters(in: .whitespacesAndNewlines), nil) }
         let ns = content as NSString
-        let range = NSRange(location: 0, length: ns.length)
-        let matches = wordTimeRegex.matches(in: content, range: range)
-        guard !matches.isEmpty else {
-            return (content.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        let matches = wordTimeRegex.matches(in: content, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return (content.trimmingCharacters(in: .whitespacesAndNewlines), nil) }
+        var fragments: [LyricsWord] = []
+        let leading = ns.substring(to: matches[0].range.location)
+        var plain = leading
+        if !leading.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fragments.append(LyricsWord(text: leading, startTime: max(0, lineStart + occurrenceShift - globalOffset),
+                endTime: max(0, timestamp(from: content, match: matches[0]) + occurrenceShift - globalOffset)))
         }
-
-        var words: [LyricsWord] = []
-        var plain = ""
-
-        // Leading text before first timestamp tag
-        let firstTagLocation = matches[0].range.location
-        if firstTagLocation > 0 {
-            plain += ns.substring(with: NSRange(location: 0, length: firstTagLocation))
+        for (index, match) in matches.enumerated() {
+            let begin = match.range.location + match.range.length
+            let finish = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
+            let text = ns.substring(with: NSRange(location: begin, length: max(0, finish - begin)))
+            plain += text
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let start = max(0, timestamp(from: content, match: match) + occurrenceShift - globalOffset)
+            // An empty terminal tag is a real end boundary, not another word.
+            let end = index + 1 < matches.count
+                ? max(0, timestamp(from: content, match: matches[index + 1]) + occurrenceShift - globalOffset)
+                : start + 2
+            fragments.append(LyricsWord(text: text, startTime: start, endTime: end))
         }
+        let clean = plain.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (clean, mergeSourceFragments(fragments, text: clean))
+    }
 
-        for (i, match) in matches.enumerated() {
-            let textStart = match.range.location + match.range.length
-            let textEnd = (i + 1 < matches.count) ? matches[i + 1].range.location : ns.length
-            let wordText = ns.substring(with: NSRange(location: textStart, length: max(0, textEnd - textStart)))
-            plain += wordText
-
-            let start = max(0, timestamp(from: content, match: match) - globalOffset)
-            let cleanWord = wordText.trimmingCharacters(in: .whitespaces)
-            if !cleanWord.isEmpty {
-                words.append(LyricsWord(text: wordText, startTime: start, endTime: start))
+    /// Enhanced LRC may time syllables rather than words. Preserve the first real
+    /// syllable onset of each displayed word; never distribute time over letters.
+    private static func mergeSourceFragments(_ fragments: [LyricsWord], text: String) -> [LyricsWord]? {
+        guard !fragments.isEmpty, fragments.allSatisfy({ $0.startTime.isFinite && $0.endTime.isFinite
+            && $0.startTime >= 0 && $0.endTime > $0.startTime }) else { return nil }
+        let actual = fragments.flatMap { fragment in
+            fragment.text.filter { !$0.isWhitespace }.map {
+                (character: $0, start: fragment.startTime, end: fragment.endTime)
             }
         }
-
-        guard !words.isEmpty else {
-            return (plain.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        guard actual.map(\.character) == Array(text.filter { !$0.isWhitespace }) else { return nil }
+        var cursor = 0
+        var words: [LyricsWord] = []
+        for token in text.split(whereSeparator: \.isWhitespace) {
+            let count = token.count
+            guard count > 0, cursor + count <= actual.count else { return nil }
+            words.append(LyricsWord(text: String(token), startTime: actual[cursor].start,
+                endTime: actual[cursor + count - 1].end))
+            cursor += count
         }
-
-        let fixed: [LyricsWord] = words.enumerated().map { i, w in
-            let end = (i + 1 < words.count) ? words[i + 1].startTime : (w.startTime + 2.0)
-            return LyricsWord(text: w.text, startTime: w.startTime, endTime: max(end, w.startTime + 0.10))
-        }
-
-        return (plain.trimmingCharacters(in: .whitespacesAndNewlines), fixed)
+        let line = LyricsLine(text: text, startTime: 0, words: words)
+        return cursor == actual.count && line.hasRealWordTimings ? words : nil
     }
 
     private static func timestamp(from text: String, match: NSTextCheckingResult) -> TimeInterval {

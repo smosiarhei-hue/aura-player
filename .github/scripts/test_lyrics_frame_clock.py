@@ -21,11 +21,13 @@ class LyricsFrameClockTests(unittest.TestCase):
         view=source('TypographyLyricsView.swift')
         self.assertIn('active && TypographyLyricsPolicy.matchedWords(for: line) != nil ? clock.frameTime : 0',view)
         self.assertIn('private var activeIndex: Int? { frameClock.activeIndex }',view)
-        self.assertIn('running: player.isPlaying && !player.isBuffering && lyrics.isSynchronized && scenePhase == .active && !reduceMotion',view)
+        surface=source('LyricsDisplayClock.swift')
+        self.assertIn('player.isPlaying && !player.isBuffering && lyrics.isSynchronized && scenePhase == .active && !reduceMotion',surface)
+        self.assertIn('LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics)',view)
         for token in ['thermal == .critical','lowPower || thermal == .serious ? 30 : 120',
                       'NSProcessInfoPowerStateDidChange','thermalStateDidChangeNotification',
-                      '.onChange(of: player.isPlaying && !reduceMotion ? 0 : player.progress)']:
-            self.assertIn(token,view)
+                      '.onChange(of: running ? 0 : player.progress)']:
+            self.assertIn(token,surface)
         self.assertNotIn('currentTime +',view)
 
     def test_exact_audio_clock_and_seek_target_no_predicted_stall_time(self):
@@ -44,7 +46,8 @@ class LyricsFrameClockTests(unittest.TestCase):
         self.assertNotIn('anchorTimestamp',kinetic)
         self.assertNotIn('currentTime + dt',kinetic)
         for file in ['TypographyLyricsView.swift','lyricsview.swift','PlayerScreenV2.swift','StaggeredLyricsView.swift']:
-            self.assertIn('TypographyLyricsPolicy.activeIndex(',source(file))
+            self.assertIn('LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics)',source(file))
+        self.assertIn('TypographyLyricsPolicy.activeIndex(',source('LyricsDisplayClock.swift'))
 
     def test_controls_cancel_on_interaction_and_never_auto_hide_during_pause(self):
         player=source('PlayerScreenV2.swift')

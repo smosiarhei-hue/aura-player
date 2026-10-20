@@ -10,13 +10,14 @@ Approved direction: oversized left-aligned type on charcoal with a restrained us
 - No made-up translation, lossless badge, artist, song title or lyric is added to production. The approved mockup used illustrative content.
 
 ## Timing and interaction
-- Real playback time uses LyricsPlaybackClock, without manual shift, route-latency subtraction, wall-clock lookahead or entrance delay. Source-defined LRC offset metadata is still parsed normally; this is not a user calibration. Streaming samples AVPlayer.currentTime() directly; native-file playback reads the existing live playback anchor. A generation/track/request-checked pending seek target prevents stale pre-seek time. An unready/empty stream or inactive native node never supplies a previous track’s time.
+- Real playback time uses LyricsPlaybackClock, without manual shift, route-latency subtraction, wall-clock lookahead or entrance delay. Source-defined LRC offset metadata is still parsed normally; this is not a user calibration. Streaming samples AVPlayer.currentTime() directly; native-file playback reads AVAudioPlayerNode.playerTime(forNodeTime:) plus the scheduled segment’s source-frame offset. It does not use Date-based elapsed time. Segment-token matching prevents a previous node/seek from supplying stale time. A generation/track/request-checked pending seek target prevents stale pre-seek time. An unready/empty stream or inactive native node never supplies a previous track’s time.
 - Only validated, text-matching provider word timestamps may color individual words. Missing/mismatched/invalid words fall back to whole-line emphasis, never estimated per-word timing.
 - All line-based surfaces share TypographyLyricsPolicy.activeIndex. Selection remains on the current row until the next source start, matching Lines; word ends do not prematurely clear scroll focus. Plain lyrics remain readable and untimed. Classic dynamic phrases also retain selection until the next source start and no longer add a fabricated 25 ms prediction.
 - Tapping a synchronized lyric seeks through the existing player router; a paused song stays paused.
 - Manual scrolling suspends auto-follow; “К текущей” resumes immediately, otherwise follow resumes five seconds after the drag ends. Tasks cancel on disappearance/background.
 - Native shaping retains punctuation, whitespace and Unicode. Text wraps, scales with Dynamic Type, supports VoiceOver and Increased Contrast, and disables movement with Reduce Motion.
-- One view-scoped CADisplayLink in common run-loop mode requests the actual window screen’s maximum, up to 120 Hz. It samples, but never extrapolates or advances, audio time. Only the current timed-word row observes frameTime; list selection changes only at a line boundary. Each real timed word becomes fully emphasized exactly at its source start, without fade-in, blur, rise, sweep completion or implicit animation. The same immediate onset is used by Classic dynamic and synchronized Staggered renderers; decorative stagger is confined to untimed previews.
+- All scrolling designs share LyricsClockSurface and a view-scoped CADisplayLink in common run-loop mode requests the actual window screen’s maximum, up to 120 Hz. It samples, but never extrapolates or advances, audio time. Only the current timed-word row observes frameTime; list selection changes only at a line boundary. Each real timed word becomes fully emphasized exactly at its source start, without fade-in, blur, rise, sweep completion or implicit animation. The same immediate onset is used by Classic dynamic and synchronized Staggered renderers; decorative stagger is confined to untimed previews.
+- Automatic focus scrolls without a spring/ease-out settling delay; cover-row emphasis has no opacity animation. Manual “К текущей”/tap navigation may still animate independently of highlighting.
 - The display link invalidates on pause, buffering, inactive scene, Reduce Motion, detachment and dismantling. Low Power / serious thermal cap at 30 Hz, critical thermal at 15 Hz. Reduced-motion lyrics still receive actual source time from audio progress updates. Apple/iOS retains final refresh-rate control; 120 Hz is a request, not a measured guarantee.
 - No source network request, transcription, audio-session activation, queue or EQ modification is introduced.
 
@@ -28,3 +29,19 @@ Approved direction: oversized left-aligned type on charcoal with a restrained us
 - https://developer.apple.com/documentation/avfoundation/avplayer/currenttime()
 
 Frame-rate and clock guards plus the executed Swift fixture cover selection boundaries, zero-shift clock behavior and exact word onsets, gap focus parity, exact text matching, and all pause/buffering/visibility/VoiceOver auto-hide combinations. Physical-device validation of frame cadence and source-provider vocal accuracy is still required.
+
+## Full pipeline audit
+- Yandex now requests `/tracks/{id}/lyrics?format=LRC&timeStamp=…&sign=…`, then downloads the returned HTTPS `downloadUrl` without forwarding OAuth. The supplement remains a fallback. API contract checked against the upstream implementation below; availability still depends on account/track rights.
+- After explicit user custom lyrics, catalog-ID synchronized text has priority over title-matched third-party timing. Existing title/artist/duration checks are retained for fallback providers; no stretching or guessed offset is introduced.
+- Enhanced LRC syllables merge into displayed words using the first actual syllable timestamp; terminal tags retain their end boundary. Repeated line tags relocate the same source word timestamps to each occurrence. Original punctuation, Unicode, source offsets (once only), and plain fallback remain intact.
+- Only active timed-word rows observe frameTime. Scrolling line lists no longer use queued periodic progress callbacks to select rows. The whole player no longer samples playback time unconditionally when rendering Typography.
+- Local LYRICS diagnostics record chosen source, source offsets, line/first-word boundaries and long (>150 ms, rate-limited) display-frame gaps. They contain no lyric body, OAuth token, key or signed URL. A boundary record is not a measurement of audible vocal accuracy.
+- No EQ, playback ownership, queue, audio-session activation, icon, launch, signing or music-haptics behavior is changed. Hardware/display cadence and provider vocal alignment still require a device test with the specific recording.
+
+### Upstream/API references
+- https://github.com/MarshalX/yandex-music-api/blob/main/yandex_music/_client/tracks.py (`tracks_lyrics`)
+- https://github.com/MarshalX/yandex-music-api/blob/main/yandex_music/utils/sign_request.py (`get_sign_request`)
+- https://github.com/MarshalX/yandex-music-api/blob/main/yandex_music/track/track_lyrics.py (`download_url`, `fetch_lyrics`)
+- https://developer.apple.com/documentation/avfaudio/avaudioplayernode/playertime(fornodetime:)
+
+CI executes additional real Swift fixtures for LRC units/offset signs, syllables, leading words, repeated tags, malformed timestamps, Unicode, 44.1/48/96 kHz native sample positions and a fixed upstream-compatible HMAC signature.

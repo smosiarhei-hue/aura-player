@@ -136,7 +136,7 @@ class LyricsMatchSafetyTests(unittest.TestCase):
             self.assertNotIn(obsolete, clock)
         for filename in ['lyricsview.swift', 'PlayerScreenV2.swift', 'StaggeredLyricsView.swift']:
             source = (ROOT / 'Sonivo' / filename).read_text()
-            self.assertIn('LyricsPlaybackClock.time(', source)
+            self.assertIn('LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics)', source)
             self.assertIn('LyricsPlaybackClock.seekTime(', source)
         staggered = (ROOT / 'Sonivo/StaggeredLyricsView.swift').read_text()
         self.assertIn('LyricsTimingStandard.hasStarted(time: time, start: $0)', staggered)

@@ -10,8 +10,6 @@ struct TypographyLyricsView: View {
     var onEditLyrics: (() -> Void)? = nil
     @State private var settings = SettingsStore.shared
     @State private var frameClock = LyricsDisplayClock()
-    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
-    @State private var thermal = ProcessInfo.processInfo.thermalState
     @State private var browsing = false
     @State private var browsingTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -22,10 +20,6 @@ struct TypographyLyricsView: View {
         LyricsPlaybackClock.time(for: player)
     }
     private var activeIndex: Int? { frameClock.activeIndex }
-    private var frameLimit: Int {
-        if thermal == .critical { return 15 }
-        return lowPower || thermal == .serious ? 30 : 120
-    }
     private func refreshFrame() {
         let time = playbackTime
         frameClock.sample(time: time, selection: TypographyLyricsPolicy.activeIndex(
@@ -97,26 +91,7 @@ struct TypographyLyricsView: View {
                 }
             }
         }
-        .background {
-            LyricsFrameDriver(clock: frameClock,
-                running: player.isPlaying && !player.isBuffering && lyrics.isSynchronized && scenePhase == .active && !reduceMotion,
-                frameLimit: frameLimit,
-                sampleTime: { LyricsPlaybackClock.time(for: player) },
-                selectLine: { time in TypographyLyricsPolicy.activeIndex(lines: lyrics.lines,
-                    synchronized: lyrics.isSynchronized, time: time, duration: player.duration) })
-                .frame(width: 0, height: 0).accessibilityHidden(true)
-        }
-        .onChange(of: player.isPlaying) { _, _ in refreshFrame() }
-        .onChange(of: player.isPlaying && !reduceMotion ? 0 : player.progress) { _, _ in refreshFrame() }
-        .onChange(of: player.isBuffering) { _, _ in refreshFrame() }
-        .onChange(of: reduceMotion) { _, _ in refreshFrame() }
-        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
-            lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
-        }
-        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
-            thermal = ProcessInfo.processInfo.thermalState
-        }
-        .task { await player.observeTimeline() }
+        .background { LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics) }
     }
 
     @ViewBuilder
@@ -150,12 +125,9 @@ struct TypographyLyricsView: View {
     private func centerCurrent(_ proxy: ScrollViewProxy) {
         guard scenePhase == .active, let index = activeIndex else { return }
         let anchor = UnitPoint(x: 0.5, y: 0.32)
-        if reduceMotion { proxy.scrollTo(lyrics.lines[index].id, anchor: anchor) }
-        else {
-            withAnimation(.easeInOut(duration: 0.38)) {
-                proxy.scrollTo(lyrics.lines[index].id, anchor: anchor)
-            }
-        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { proxy.scrollTo(lyrics.lines[index].id, anchor: anchor) }
     }
 }
 

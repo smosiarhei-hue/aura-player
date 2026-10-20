@@ -28,7 +28,7 @@ final class LyricsDisplayClock {
 @MainActor private final class LyricsDisplayTarget: NSObject {
     weak var owner: LyricsFrameDriver.Coordinator?
     init(_ owner: LyricsFrameDriver.Coordinator) { self.owner = owner }
-    @objc func tick(_ link: CADisplayLink) { owner?.tick() }
+    @objc func tick(_ link: CADisplayLink) { owner?.tick(at: link.timestamp) }
 }
 
 /// Requests ProMotion on the actual window screen. This link never advances time
@@ -75,6 +75,8 @@ struct LyricsFrameDriver: UIViewRepresentable {
         private var link: CADisplayLink?
         private var target: LyricsDisplayTarget?
         private var requestedFPS = 0
+        private var lastFrameTimestamp: CFTimeInterval?
+        private var lastGapWarning: CFTimeInterval = 0
 
         func refresh(_ view: UIView) {
             guard running, let screen = view.window?.windowScene?.screen else { stop(); return }
@@ -92,9 +94,16 @@ struct LyricsFrameDriver: UIViewRepresentable {
                     minimum: Float(min(60, desired)), maximum: Float(desired), preferred: Float(desired))
             }
         }
-        func tick() {
+        func tick(at timestamp: CFTimeInterval) {
             guard running, let sampleTime else { return }
             let time = sampleTime()
+            // Local evidence of a stalled UI, not an invented source/vocal offset.
+            if let previous = lastFrameTimestamp, timestamp - previous > 0.15,
+               timestamp - lastGapWarning > 10 {
+                lastGapWarning = timestamp
+                SonivoDiagnostics.log("Lyrics display gap: ms=\(Int((timestamp - previous) * 1000)), position=\(time)", tag: "LYRICS")
+            }
+            lastFrameTimestamp = timestamp
             clock?.sample(time: time, selection: selectLine?(time))
         }
         func stop() {
@@ -102,6 +111,59 @@ struct LyricsFrameDriver: UIViewRepresentable {
             link = nil
             target = nil
             requestedFPS = 0
+            lastFrameTimestamp = nil
         }
+    }
+}
+
+/// One scheduling/lifecycle policy for Typography, Lines and Staggered. Progress
+/// notifications refresh only stopped/reduced-motion views; running text samples
+/// the actual audio source on display frames, never queued periodic-observer time.
+struct LyricsClockSurface: View {
+    let clock: LyricsDisplayClock
+    let player: ActivePlayerPresentation
+    let lyrics: Lyrics
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    @State private var thermal = ProcessInfo.processInfo.thermalState
+
+    private var frameLimit: Int {
+        if thermal == .critical { return 15 }
+        return lowPower || thermal == .serious ? 30 : 120
+    }
+    private var running: Bool {
+        player.isPlaying && !player.isBuffering && lyrics.isSynchronized && scenePhase == .active && !reduceMotion
+    }
+    private func refresh() {
+        let time = LyricsPlaybackClock.time(for: player)
+        clock.sample(time: time, selection: TypographyLyricsPolicy.activeIndex(lines: lyrics.lines,
+            synchronized: lyrics.isSynchronized, time: time, duration: player.duration))
+    }
+    var body: some View {
+        LyricsFrameDriver(clock: clock, running: running, frameLimit: frameLimit,
+            sampleTime: { LyricsPlaybackClock.time(for: player) },
+            selectLine: { time in TypographyLyricsPolicy.activeIndex(lines: lyrics.lines,
+                synchronized: lyrics.isSynchronized, time: time, duration: player.duration) })
+            .frame(width: 0, height: 0).accessibilityHidden(true)
+            .onAppear { refresh() }
+            .onChange(of: lyrics) { _, _ in refresh() }
+            .onChange(of: clock.activeIndex) { _, index in
+                guard let index, lyrics.lines.indices.contains(index) else { return }
+                let line = lyrics.lines[index]
+                SonivoDiagnostics.log("Lyrics boundary: source=\(lyrics.sourceName), backend=\(player.usesStreamingBackend ? "stream" : "native"), row=\(index), clock=\(clock.frameTime), lineStart=\(line.startTime), firstWord=\(line.words?.first?.startTime ?? line.startTime)", tag: "LYRICS")
+            }
+            .onChange(of: player.currentTrack?.id) { _, _ in refresh() }
+            .onChange(of: player.isPlaying) { _, _ in refresh() }
+            .onChange(of: player.isBuffering) { _, _ in refresh() }
+            .onChange(of: running ? 0 : player.progress) { _, _ in refresh() }
+            .onChange(of: reduceMotion) { _, _ in refresh() }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+                lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+            }
+            .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
+                thermal = ProcessInfo.processInfo.thermalState
+            }
     }
 }

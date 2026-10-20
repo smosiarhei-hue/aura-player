@@ -74,7 +74,8 @@ class StaggeredLyricsDesignTests(unittest.TestCase):
         live = text.split('if let time = currentTime', 1)[1].split('} else {', 1)[0]
         for delayed in ['reveal(', 'translateBy', 'blur(', 'clip(']:
             self.assertNotIn(delayed, live)
-        self.assertIn('LyricsPlaybackClock.time(for: player)', text)
+        self.assertIn('LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics)', text)
+        self.assertIn('currentTime: isActive && line.hasRealWordTimings ? clock.frameTime : 0', text)
         self.assertIn('LyricsPlaybackClock.seekTime(', text)
 
     def test_long_short_and_empty_lines_have_bounded_timing(self):
@@ -108,7 +109,7 @@ class StaggeredLyricsDesignTests(unittest.TestCase):
         self.assertIn('onDisappear { interactionResetTask?.cancel() }', text)
         self.assertIn('if !isUserInteracting { centerCurrentLine', text)
         self.assertIn('Button("К текущей")', text)
-        self.assertIn('activeIndex = nil', text)
+        self.assertIn('private var activeIndex: Int? { frameClock.activeIndex }', text)
 
 
 if __name__ == '__main__':

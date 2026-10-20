@@ -51,6 +51,14 @@ nonisolated enum LyricsTimingStandard {
     static func position(_ source: Double) -> Double {
         source.isFinite ? max(0, source) : 0
     }
+    static func localPosition(segmentStart: Double, sampleTime: Double,
+                              sampleRate: Double, duration: Double) -> Double? {
+        guard segmentStart.isFinite, segmentStart >= 0, sampleTime.isFinite, sampleTime >= 0,
+              sampleRate.isFinite, sampleRate > 0 else { return nil }
+        let position = segmentStart + sampleTime / sampleRate
+        guard position.isFinite else { return nil }
+        return duration.isFinite && duration > 0 ? min(position, duration) : position
+    }
     static func hasStarted(time: Double, start: Double) -> Bool {
         time.isFinite && start.isFinite && start >= 0 && time >= start
     }

@@ -150,19 +150,12 @@ struct StaggeredLyricsView: View {
     @State private var settings = SettingsStore.shared
     @State private var isUserInteracting = false
     @State private var interactionResetTask: Task<Void, Never>?
-    @State private var activeIndex: Int?
+    @State private var frameClock = LyricsDisplayClock()
+    private var activeIndex: Int? { frameClock.activeIndex }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
-    private var playbackTime: Double {
-        LyricsPlaybackClock.time(for: player)
-    }
     private var resolvedFontSize: CGFloat { fontSize ?? max(30, settings.lyricsFontSize * 0.82) }
-
-    private func activeLine(at time: Double) -> Int? {
-        TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
-            time: time, duration: player.duration)
-    }
 
     private func lineDuration(at index: Int) -> Double {
         let line = lyrics.lines[index]
@@ -184,10 +177,8 @@ struct StaggeredLyricsView: View {
                                     lineStart: line.startTime))
                                 if !player.isPlaying { player.resume() }
                             } label: {
-                                StaggeredLyricText(text: line.text, words: line.hasRealWordTimings ? line.words : nil,
-                                    currentTime: playbackTime, revealElapsed: max(0, playbackTime - line.startTime),
-                                    availableDuration: lineDuration(at: index), isActive: index == activeIndex,
-                                    fontSize: resolvedFontSize)
+                                StaggeredSourceLyricRow(line: line, clock: frameClock,
+                                    isActive: index == activeIndex, fontSize: resolvedFontSize)
                                     .padding(.vertical, 8)
                                     .contentShape(Rectangle())
                             }
@@ -233,34 +224,38 @@ struct StaggeredLyricsView: View {
                     .padding(10).background(.ultraThinMaterial, in: Capsule()).padding(16)
                 }
             }
-            .onChange(of: player.progress) { _, _ in updateActiveLine(proxy: proxy) }
-            .onChange(of: lyrics) { _, _ in
-                interactionResetTask?.cancel()
-                isUserInteracting = false
-                activeIndex = nil
-                updateActiveLine(proxy: proxy)
+            .onChange(of: activeIndex) { _, _ in
+                if !isUserInteracting { centerCurrentLine(proxy: proxy) }
             }
-            .onAppear { updateActiveLine(proxy: proxy) }
             .onDisappear { interactionResetTask?.cancel() }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { interactionResetTask?.cancel() }
             }
         }
-    }
-
-    private func updateActiveLine(proxy: ScrollViewProxy) {
-        let next = activeLine(at: playbackTime)
-        guard next != activeIndex else { return }
-        activeIndex = next
-        if !isUserInteracting { centerCurrentLine(proxy: proxy) }
+        .background { LyricsClockSurface(clock: frameClock, player: player, lyrics: lyrics) }
     }
 
     private func centerCurrentLine(proxy: ScrollViewProxy) {
         guard let activeIndex else { return }
-        if reduceMotion { proxy.scrollTo(activeIndex, anchor: .center) }
-        else { withAnimation(.easeInOut(duration: 0.40)) { proxy.scrollTo(activeIndex, anchor: .center) } }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { proxy.scrollTo(activeIndex, anchor: .center) }
     }
 }
+
+private struct StaggeredSourceLyricRow: View {
+    let line: LyricsLine
+    let clock: LyricsDisplayClock
+    let isActive: Bool
+    let fontSize: CGFloat
+    var body: some View {
+        StaggeredLyricText(text: line.text, words: line.hasRealWordTimings ? line.words : nil,
+            currentTime: isActive && line.hasRealWordTimings ? clock.frameTime : 0,
+            isActive: isActive, fontSize: fontSize)
+            .transaction { $0.animation = nil }
+    }
+}
+
 
 struct LyricsDesignPreview: View {
     let design: LyricsDesign
