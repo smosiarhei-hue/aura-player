@@ -10,6 +10,7 @@ final class PlaybackAudioSessionCoordinator {
     static let shared = PlaybackAudioSessionCoordinator()
 
     private var installed = false
+    private var ownership = SonivoPlaybackOwnership()
     private var wasPlayingBeforeInterruption = false
     private var observers: [NSObjectProtocol] = []
 
@@ -31,11 +32,18 @@ final class PlaybackAudioSessionCoordinator {
                 switch type {
                 case .began:
                     self.wasPlayingBeforeInterruption = PlayerCore.shared.isPlaying
+                    self.ownership.interruptionBegan()
+                    UIApplication.shared.endReceivingRemoteControlEvents()
+                    PlayerCore.shared.relinquishSystemPlaybackSurface()
+                    AutoMixV2NowPlayingCenter.shared.relinquishForOtherPlayback()
                     PlayerCore.shared.pause()
                 case .ended:
                     PlaybackAudioSessionCoordinator.shared.prepare()
                     let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-                    if shouldResume && self.wasPlayingBeforeInterruption {
+                    self.ownership.interruptionEnded()
+                    if SonivoPlaybackOwnership.mayResume(systemShouldResume: shouldResume,
+                        wasPlaying: self.wasPlayingBeforeInterruption,
+                        otherAudioPlaying: AVAudioSession.sharedInstance().isOtherAudioPlaying) {
                         PlayerCore.shared.resume()
                     }
                     self.wasPlayingBeforeInterruption = false
@@ -107,6 +115,16 @@ final class PlaybackAudioSessionCoordinator {
         configure(activate: true)
     }
 
+    /// Reading this can latch a handoff, but never activates a session or opens UI.
+    func allowsSystemPlaybackPublication() -> Bool {
+        let hadIntent = ownership.hasPlaybackIntent
+        let allowed = ownership.allowsPublication(otherAudioPlaying: AVAudioSession.sharedInstance().isOtherAudioPlaying)
+        if hadIntent, !ownership.hasPlaybackIntent {
+            UIApplication.shared.endReceivingRemoteControlEvents()
+        }
+        return allowed
+    }
+
     /// Releases audio focus so other apps can resume. Callers must only reach this while
     /// Sonivo itself is silent.
     func deactivateWhenIdle() {
@@ -130,6 +148,10 @@ final class PlaybackAudioSessionCoordinator {
             report(error, step: step.rawValue)
         }
 
+        if activate, result.isActive {
+            if !ownership.hasPlaybackIntent { UIApplication.shared.beginReceivingRemoteControlEvents() }
+            ownership.activated()
+        }
         guard usesV2, (activate ? result.isActive : true) else { return }
 
         let actualRate = session.sampleRate

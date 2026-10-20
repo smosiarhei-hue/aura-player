@@ -16,7 +16,8 @@ class LaunchIntroTests(unittest.TestCase):
         intro=(ROOT/'Sonivo/SonivoLaunchIntro.swift').read_text()
         for expected in ['.task(id: scenePhase)', 'if startupClaimed { finish() }', '.onChange(of: player.isPlaying)', '.onDisappear { finish() }']:
             self.assertIn(expected,intro)
-        self.assertEqual(app.count('onExternalPlaybackOpen?(); showPlayer = true'),3)
+        self.assertEqual(app.count('onExternalPlaybackOpen?(); showPlayer = true'),2)
+        self.assertIn('SonivoExternalPlaybackRoute.accepts(url)',app)
         self.assertIn('session.begin(isActive: true, isPlaying: player.isPlaying)',intro)
         self.assertNotIn('.onOpenURL',intro) # RootView keeps the existing external playback handlers.
     def test_haptics_and_animation_share_timeline_and_respect_preferences(self):

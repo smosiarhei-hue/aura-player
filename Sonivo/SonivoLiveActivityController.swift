@@ -19,7 +19,16 @@ final class SonivoLiveActivityController {
         synchronize(track: core.currentTrack, playing: core.isPlaying, elapsed: core.progress, duration: core.duration)
     }
 
+    func endForPlaybackHandoff() {
+        guard currentID != nil || !Activity<SonivoActivityAttributes>.activities.isEmpty else { return }
+        enqueue(nil)
+    }
+
     func synchronize(track: Track?, playing: Bool, elapsed: Double, duration: Double) {
+        guard PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication() else {
+            endForPlaybackHandoff()
+            return
+        }
         let enabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
         guard Self.isEmbedded, enabled, ActivityAuthorizationInfo().areActivitiesEnabled, let track else {
             guard currentID != nil || !Activity<SonivoActivityAttributes>.activities.isEmpty else { return }

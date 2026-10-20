@@ -147,11 +147,18 @@ struct RootView: View {
             player.setApplicationSceneActive(active)
             AutoMixV2NowPlayingCenter.shared.setApplicationSceneActive(active)
             AutoMixV2NowPlayingCenter.shared.setFullPlayerVisible(showPlayer)
-            if active, presentedIsPlaying { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }
-        .onOpenURL { _ in onExternalPlaybackOpen?(); showPlayer = true }
-        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in onExternalPlaybackOpen?(); showPlayer = true }
-        .onContinueUserActivity("com.apple.mediaitem") { _ in onExternalPlaybackOpen?(); showPlayer = true }
+        .onOpenURL { url in
+            guard SonivoExternalPlaybackRoute.accepts(url) else { return }
+            onExternalPlaybackOpen?(); showPlayer = true
+        }
+        .onContinueUserActivity("com.apple.mediaitem") { activity in
+            guard PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication() else { return }
+            let ownURL = activity.webpageURL.map(SonivoExternalPlaybackRoute.accepts) ?? false
+            let ownTrack = player.currentTrack.map { activity.targetContentIdentifier == $0.id.uuidString } ?? false
+            guard ownURL || ownTrack else { return }
+            onExternalPlaybackOpen?(); showPlayer = true
+        }
         .onChange(of: player.isPlaying) { _, playing in
             if playing { PlaybackAudioSessionCoordinator.shared.activateForPlayback() }
         }

@@ -121,7 +121,8 @@ class PlaybackStabilityTests(unittest.TestCase):
         self.assertIn('player.removeTimeObserver(token)', reset)
         self.assertNotIn('resume()', reset)
         session = source('playbackaudiosession.swift')
-        self.assertIn('shouldResume && self.wasPlayingBeforeInterruption', session)
+        self.assertIn('SonivoPlaybackOwnership.mayResume(systemShouldResume: shouldResume', session)
+        self.assertIn('otherAudioPlaying: AVAudioSession.sharedInstance().isOtherAudioPlaying', session)
         self.assertIn('PlayerCore.shared.handleMediaServicesReset()', session)
 
     def test_old_sleep_fade_and_wave_refill_do_not_pause_or_start_new_track(self):

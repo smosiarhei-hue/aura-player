@@ -83,9 +83,23 @@ final class AutoMixV2NowPlayingCenter {
         }
     }
 
+    func relinquishForOtherPlayback() {
+        clearOnlyIfOwned()
+        artworkTask?.cancel()
+        artworkTask = nil
+    }
+
     private func refresh() async {
+        guard PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication() else {
+            relinquishForOtherPlayback()
+            return
+        }
         guard let snapshot = await selectedSnapshot() else {
             clearOnlyIfOwned()
+            return
+        }
+        guard PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication() else {
+            relinquishForOtherPlayback()
             return
         }
         let track = snapshot.track

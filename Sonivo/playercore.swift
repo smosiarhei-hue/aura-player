@@ -488,7 +488,6 @@ final class PlayerCore {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshFavoriteCommandState() }
         }
-        UIApplication.shared.beginReceivingRemoteControlEvents()
     }
 
     private func removeLegacyUnboundedStreamCacheIfNeeded() {
@@ -949,10 +948,29 @@ final class PlayerCore {
     func activateNowPlayingSessionIfNeeded() {
     }
 
+    @ObservationIgnored private var ownsSystemNowPlaying = false
+
+    func relinquishSystemPlaybackSurface() {
+        publishNowPlaying(nil, state: .stopped)
+        SonivoLiveActivityController.shared.endForPlaybackHandoff()
+    }
+
     private func publishNowPlaying(_ info: [String: Any]?, state: MPNowPlayingPlaybackState) {
         let defaultCenter = MPNowPlayingInfoCenter.default()
+        guard let info else {
+            guard ownsSystemNowPlaying else { return }
+            defaultCenter.nowPlayingInfo = nil
+            defaultCenter.playbackState = .stopped
+            ownsSystemNowPlaying = false
+            return
+        }
+        guard PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication() else {
+            relinquishSystemPlaybackSurface()
+            return
+        }
         defaultCenter.nowPlayingInfo = info
         defaultCenter.playbackState = state
+        ownsSystemNowPlaying = true
     }
 
     func setApplicationSceneActive(_ active: Bool) {
@@ -1089,6 +1107,10 @@ final class PlayerCore {
 
     private func updateNowPlayingInfo() {
         refreshFavoriteCommandState()
+        guard PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication() else {
+            relinquishSystemPlaybackSurface()
+            return
+        }
         SonivoLiveActivityController.shared.synchronize(track: currentTrack, playing: isPlaying,
             elapsed: isUsingStreamPlayer ? progress : liveProgress(), duration: duration)
         guard let track = currentTrack else {
@@ -1159,8 +1181,11 @@ final class PlayerCore {
                 guard let self, self.currentTrack?.id == track.id else { return }
                 self.remoteArtworkCache[track.id] = image
                 LibraryStore.cacheArtworkImage(image, for: track)
-                guard !self.applicationIsActive else { return }
-                var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                guard !self.applicationIsActive,
+                      PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication(),
+                      self.ownsSystemNowPlaying,
+                      var current = MPNowPlayingInfoCenter.default().nowPlayingInfo,
+                      current[MPNowPlayingInfoPropertyExternalContentIdentifier] as? String == track.id.uuidString else { return }
                 current[MPMediaItemPropertyArtwork] = Self.nowPlayingArtwork(from: image)
                 self.publishNowPlaying(current, state: self.isPlaying ? .playing : .paused)
             }
@@ -1185,6 +1210,10 @@ final class PlayerCore {
     }
 
     private func syncNowPlayingElapsedIfNeeded() {
+        guard PlaybackAudioSessionCoordinator.shared.allowsSystemPlaybackPublication() else {
+            relinquishSystemPlaybackSurface()
+            return
+        }
         guard !applicationIsActive else { return }
         guard currentTrack != nil else { return }
         let now = Date()
