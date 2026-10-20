@@ -174,9 +174,9 @@ final class SettingsStore {
         didSet { defaults.set(musicHapticsIntensity.rawValue, forKey: "settings.musicHapticsIntensity") }
     }
 
-    var lyricsDesign: LyricsDesign {
-        didSet { defaults.set(lyricsDesign.rawValue, forKey: "lyrics.design") }
-    }
+    // One standard lyric experience. Legacy enum cases remain source-compatible,
+    // but saved classic/staggered preferences can no longer restore a hidden mode.
+    let lyricsDesign: LyricsDesign = .typography
 
     // Karaoke lyrics & AI alignment
     var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
@@ -194,7 +194,7 @@ final class SettingsStore {
         musicHapticsIntensity = MusicHapticsIntensity(
             rawValue: defaults.string(forKey: "settings.musicHapticsIntensity") ?? ""
         ) ?? .strong
-        lyricsDesign = LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design") ?? "") ?? .typography
+        defaults.removeObject(forKey: "lyrics.design")
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
         // The standard clock ignores and removes legacy manual calibration.
         defaults.removeObject(forKey: "lyrics.offset")

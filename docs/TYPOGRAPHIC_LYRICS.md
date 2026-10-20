@@ -1,12 +1,13 @@
 # Sonivo · typographic lyrics
 
-Approved direction: oversized left-aligned type on charcoal with a restrained user-accent glow, a quiet surrounding lyric context, and an immediate Typography / Lines selector. This is native SwiftUI, not an embedded video or a replacement playback engine.
+Approved direction: oversized left-aligned type on charcoal with a restrained user-accent glow, a quiet surrounding lyric context, with a single standard text experience. This is native SwiftUI, not an embedded video or a replacement playback engine.
 
 ## Surfaces and preferences
 - Full-screen player, lyrics sheet and cover share TypographyLyricsView.
 - The full lyric player initially reveals its transport/timeline, with smaller cover metadata and an explicit “Закрыть текст” action in the lower controls. The top chevron only collapses the whole player. After 10 idle seconds it can collapse, leaving persistent “Показать управление” and “Закрыть текст” actions. Touching or dragging the panel cancels the deadline and starts a fresh 10-second idle period after release. Paused, buffering, inactive or VoiceOver states never auto-hide. The standard player and its artwork background are unchanged.
-- Typography is the default only when no recognized design is saved. Existing classic/staggered selections and custom lyrics, font size and source caches remain intact. Legacy manual calibration is removed on startup; there is no timing slider or hidden calibration menu.
-- The segmented control persists the same settings key as Settings → Lyrics. Aa changes the existing size setting; all existing designs remain available in Settings.
+- Typography is the only visible lyric renderer. Legacy classic/staggered mode preferences are removed on startup; custom lyrics, font size, and source caches remain intact. Legacy manual calibration is also removed; there is no timing slider or hidden calibration menu.
+- No Typography / Lines selector, mode menu or inline Aa menu remains. Font size stays in Settings → Lyrics. Onest Bold is shared by all text surfaces.
+- Opening and closing the lyric stage share one 380 ms zero-bounce native smooth opacity/16 pt transition. Revealing/hiding lower controls uses 300 ms smooth motion. Reduce Motion disables these transitions. No timers or frame-by-frame layout state are added; Info.plist keeps ProMotion enabled and iOS controls actual display cadence.
 - No made-up translation, lossless badge, artist, song title or lyric is added to production. The approved mockup used illustrative content.
 
 ## Timing and interaction

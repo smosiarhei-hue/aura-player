@@ -28,30 +28,25 @@ def segments(text):
 
 
 class StaggeredLyricsDesignTests(unittest.TestCase):
-    def test_choice_is_persistent_and_keeps_existing_saved_choices(self):
+    def test_legacy_preferences_migrate_to_standard_typography(self):
         text = (ROOT / 'Sonivo/theme.swift').read_text()
-        self.assertIn('enum LyricsDesign: String, CaseIterable, Identifiable', text)
-        self.assertIn('case classic', text)
-        self.assertIn('case staggered', text)
-        self.assertIn('defaults.set(lyricsDesign.rawValue, forKey: "lyrics.design")', text)
-        self.assertIn('?? "") ?? .typography', text)
-        self.assertIn('LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design")', text)
+        self.assertIn('let lyricsDesign: LyricsDesign = .typography', text)
+        self.assertIn('defaults.removeObject(forKey: "lyrics.design")', text)
+        self.assertNotIn('defaults.set(lyricsDesign.rawValue', text)
 
-    def test_settings_has_picker_and_live_preview(self):
+    def test_settings_has_no_obsolete_mode_picker(self):
         text = (ROOT / 'Sonivo/settingsview.swift').read_text()
-        self.assertIn('Section("Оформление текста")', text)
-        self.assertIn('selection: $settings.lyricsDesign', text)
-        self.assertIn('LyricsDesignPreview(design: settings.lyricsDesign)', text)
+        self.assertNotIn('selection: $settings.lyricsDesign', text)
+        self.assertNotIn('LyricsDesignPreview(', text)
+        self.assertIn('$settings.lyricsFontSize', text)
 
-    def test_new_design_is_available_in_all_lyrics_surfaces(self):
-        player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()
-        fullscreen = (ROOT / 'Sonivo/lyricsview.swift').read_text()
-        self.assertIn('settings.lyricsDesign == .staggered', fullscreen)
-        self.assertIn('StaggeredLyricsView(lyrics: lyrics, player: player', fullscreen)
-        self.assertGreaterEqual(player.count('settings.lyricsDesign == .staggered'), 2)
-        self.assertIn('showsSource: false', player)
-        self.assertIn('private var classicBody: some View', player)
-        self.assertIn('KineticLyricsView(', player)
+    def test_all_visible_surfaces_use_standard_typography(self):
+        for name in ['PlayerScreenV2.swift', 'lyricsview.swift']:
+            text = (ROOT / 'Sonivo' / name).read_text()
+            self.assertIn('TypographyLyricsView(lyrics: lyrics, player: player', text)
+            self.assertNotIn('settings.lyricsDesign ==', text)
+            self.assertNotIn('StaggeredLyricsView(lyrics: lyrics', text)
+            self.assertNotIn('LyricsTypographyModeBar', text)
 
     def test_word_reveal_uses_native_text_layout_and_accessibility(self):
         text = (ROOT / 'Sonivo/StaggeredLyricsView.swift').read_text()

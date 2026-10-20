@@ -199,34 +199,3 @@ private struct TypographyLyricText: View {
             .accessibilityLabel(line.text)
     }
 }
-
-struct LyricsTypographyModeBar: View {
-    @State private var settings = SettingsStore.shared
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Picker("Вид текста", selection: $settings.lyricsDesign) {
-                Text("Типографика").tag(LyricsDesign.typography)
-                Text("Строки").tag(LyricsDesign.classic)
-                if settings.lyricsDesign == .staggered {
-                    Text("Staggered").tag(LyricsDesign.staggered)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(minHeight: 44)
-            Menu {
-                ForEach([36, 44, 52, 60], id: \.self) { size in
-                    Button("\(size) pt", systemImage: Int(settings.lyricsFontSize) == size ? "checkmark" : "textformat.size") {
-                        settings.lyricsFontSize = Double(size)
-                    }
-                }
-            } label: {
-                Text("Aa").font(.headline).foregroundStyle(SN.accent)
-                    .frame(width: 48, height: 44)
-                    .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 15))
-            }
-            .accessibilityLabel("Размер текста")
-        }
-        .tint(SN.accent)
-    }
-}

@@ -120,7 +120,7 @@ class AntigravitySpecTests(unittest.TestCase):
         dynamic_stage = lyrics.split("private struct DynamicWordLyrics", 1)[1].split(
             "// MARK: - Synchronized Scrolling Lyrics", 1
         )[0]
-        self.assertIn("let textLift = min(72, height * 0.09)", inline_stage)
+        self.assertIn("TypographyLyricsView(lyrics: lyrics, player: player, showsSource: true)", inline_stage)
         self.assertNotIn("RichSync", inline_stage)
         self.assertNotIn("sourceName", inline_stage)
         self.assertNotIn("Источник:", dynamic_stage)
@@ -247,7 +247,7 @@ class AntigravitySpecTests(unittest.TestCase):
 
         lyrics_view = self.repo_root / "Sonivo" / "lyricsview.swift"
         lv_content = lyrics_view.read_text(encoding="utf-8")
-        self.assertIn("VocalIsolationControlView()", lv_content)
+        self.assertNotIn("VocalIsolationControlView()", lv_content)  # Standard typography has no floating legacy slider.
 
     def test_dify_models_and_service(self):
         dify_models = self.repo_root / "Sonivo" / "Dify" / "DifyModels.swift"

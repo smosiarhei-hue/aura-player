@@ -361,15 +361,6 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var lyricsSettings: some View {
-                Section("Оформление текста") {
-                    Picker("Оформление", selection: $settings.lyricsDesign) {
-                        ForEach(LyricsDesign.allCases) { design in
-                            Text(design.title).tag(design)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    LyricsDesignPreview(design: settings.lyricsDesign)
-                }
 
                 Section {
                     Toggle("Анализ на устройстве", isOn: $settings.isNeuralEngineEnabled)

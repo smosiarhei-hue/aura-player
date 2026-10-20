@@ -14,13 +14,13 @@ class TypographyLyricsTests(unittest.TestCase):
         theme=(ROOT/'Sonivo/theme.swift').read_text()
         self.assertEqual(player.count('TypographyLyricsView(lyrics: lyrics'),2)
         self.assertIn('TypographyLyricsView(lyrics: lyrics',sheet)
-        self.assertIn('LyricsTypographyModeBar()',sheet)
-        self.assertIn('LyricsTypographyModeBar()',player)
+        self.assertNotIn('LyricsTypographyModeBar',sheet)
+        self.assertNotIn('LyricsTypographyModeBar',player)
         self.assertIn('case typography',theme)
         self.assertIn('case classic',theme)
         self.assertIn('case staggered',theme)
-        self.assertIn('LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design")',theme)
-        self.assertIn('defaults.set(lyricsDesign.rawValue, forKey: "lyrics.design")',theme)
+        self.assertIn('let lyricsDesign: LyricsDesign = .typography',theme)
+        self.assertIn('defaults.removeObject(forKey: "lyrics.design")',theme)
 
     def test_native_display_never_invents_timing_or_changes_audio(self):
         view=(ROOT/'Sonivo/TypographyLyricsView.swift').read_text()
@@ -45,8 +45,7 @@ class TypographyLyricsTests(unittest.TestCase):
                       'Button("К текущей")','onDisappear { browsingTask?.cancel() }',
                       'scenePhase == .active','if !browsing { centerCurrent(proxy) }',
                       '.fixedSize(horizontal: false, vertical: true)', '.accessibilityLabel(line.text)',
-                      'Text("Типографика").tag(LyricsDesign.typography)',
-                      'Text("Строки").tag(LyricsDesign.classic)', 'SN.accent']:
+                      'SN.accent']:
             self.assertIn(token,view)
         self.assertNotIn('.lineLimit(1)',view)
         player=(ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
@@ -79,7 +78,7 @@ class TypographyLyricsTests(unittest.TestCase):
         player=(ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
         sheet=(ROOT/'Sonivo/lyricsview.swift').read_text()
         self.assertIn('LyricsView(lyrics: lyrics, isLoading: lyricsLoading, player: player)',player)
-        self.assertIn('DynamicWordLyrics(lyrics: lyrics, player: player)',sheet)
+        self.assertIn('TypographyLyricsView(lyrics: lyrics, player: player,',sheet)
 
     @unittest.skipUnless(platform.system()=='Darwin' and shutil.which('swiftc'), 'Native timing fixture executes on macOS')
     def test_actual_swift_source_timings_and_unicode(self):
