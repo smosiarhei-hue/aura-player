@@ -60,7 +60,7 @@ class StaggeredLyricsDesignTests(unittest.TestCase):
         self.assertIn('copy.translateBy', text)
         self.assertIn('.blur(radius:', text)
         self.assertIn('accessibilityReduceMotion', text)
-        self.assertIn('if reduceMotion || !isActive', text)
+        self.assertIn('reduceMotion || !isActive ? 1', text)
         self.assertIn('.accessibilityLabel(text)', text)
         self.assertNotIn('WKWebView', text)
         self.assertNotIn('URLSession', text)
@@ -69,9 +69,12 @@ class StaggeredLyricsDesignTests(unittest.TestCase):
         text = (ROOT / 'Sonivo/StaggeredLyricsView.swift').read_text()
         self.assertIn('line.hasRealWordTimings ? line.words : nil', text)
         self.assertIn('let timingsMatch', text)
-        self.assertIn('(time - start) / (end - start)', text)
-        self.assertIn('run.typographicBounds.rect', text)
-        self.assertIn('LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)', text)
+        self.assertIn('if let time = currentTime', text)
+        self.assertIn('LyricsTimingStandard.hasStarted(time: time, start: $0)', text)
+        live = text.split('if let time = currentTime', 1)[1].split('} else {', 1)[0]
+        for delayed in ['reveal(', 'translateBy', 'blur(', 'clip(']:
+            self.assertNotIn(delayed, live)
+        self.assertIn('LyricsPlaybackClock.time(for: player)', text)
         self.assertIn('LyricsPlaybackClock.seekTime(', text)
 
     def test_long_short_and_empty_lines_have_bounded_timing(self):

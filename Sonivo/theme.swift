@@ -180,7 +180,6 @@ final class SettingsStore {
 
     // Karaoke lyrics & AI alignment
     var lyricsFontSize: Double { didSet { defaults.set(lyricsFontSize, forKey: "lyrics.fontSize") } }
-    var lyricsOffset: Double { didSet { defaults.set(lyricsOffset, forKey: "lyrics.offset") } }
     var isNeuralEngineEnabled: Bool { didSet { defaults.set(isNeuralEngineEnabled, forKey: "lyrics.neuralEngineEnabled") } }
 
     var accentColor: Color { SN.amber }
@@ -197,7 +196,8 @@ final class SettingsStore {
         ) ?? .strong
         lyricsDesign = LyricsDesign(rawValue: defaults.string(forKey: "lyrics.design") ?? "") ?? .typography
         lyricsFontSize = defaults.object(forKey: "lyrics.fontSize") as? Double ?? 46
-        lyricsOffset = defaults.object(forKey: "lyrics.offset") as? Double ?? 0
+        // The standard clock ignores and removes legacy manual calibration.
+        defaults.removeObject(forKey: "lyrics.offset")
         // Full-track on-device transcription downloads the stream first.
         // Keep it opt-in so ordinary playback never consumes storage silently.
         isNeuralEngineEnabled = defaults.object(forKey: "lyrics.neuralEngineEnabled") as? Bool ?? false

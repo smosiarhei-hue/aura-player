@@ -357,13 +357,17 @@ struct PlayerScreenV2: View {
                 lyricsControlsDeck(safeAreaBottom: safeAreaBottom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
-                Button(action: revealLyricsControls) {
-                    Label("Показать управление", systemImage: "chevron.up")
-                        .font(.subheadline.weight(.medium)).foregroundStyle(SN.accent)
-                        .frame(maxWidth: .infinity, minHeight: 48)
+                HStack(spacing: 16) {
+                    Button(action: revealLyricsControls) {
+                        Label("Показать управление", systemImage: "chevron.up")
+                            .font(.subheadline.weight(.medium)).foregroundStyle(SN.accent)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .accessibilityHint("Показать перемотку, паузу и переключение треков")
+                    closeLyricsButton
                 }
+                .padding(.horizontal, 24)
                 .padding(.bottom, max(safeAreaBottom, 12))
-                .accessibilityHint("Показать перемотку, паузу и переключение треков")
             }
         }
         .frame(width: width, height: height, alignment: .top)
@@ -380,10 +384,11 @@ struct PlayerScreenV2: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: 36, height: 36)
+                    .frame(width: 44, height: 44)
                     .background(Color.white.opacity(0.12), in: Circle())
             }
             .buttonStyle(TactileButtonStyle(scale: 0.90))
+            .accessibilityLabel("Свернуть плеер")
 
             Spacer()
 
@@ -393,14 +398,7 @@ struct PlayerScreenV2: View {
 
             Spacer()
 
-            Button {
-                Haptics.tap(.light)
-                withAnimation(reduceMotion ? nil : SN.slowSpring) { showLyricsMode = false }
-            } label: {
-                Image(systemName: "rectangle.portrait")
-                    .foregroundStyle(SN.accent).frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Вернуться к обычному плееру")
+            Color.clear.frame(width: 44, height: 44)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 44)
@@ -471,37 +469,16 @@ struct PlayerScreenV2: View {
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
             if SettingsStore.shared.lyricsDesign != .typography {
-            FluidVolumeSlider()
-                .accessibilityElement(children: .contain)
-
-            HStack(spacing: 0) {
-                GlassIconButton(
-                    systemImage: "quote.bubble.fill",
-                    tint: SN.amber,
-                    accessibilityLabel: "Вернуться к обычному плееру"
-                ) {
-                    Haptics.tap(.light)
-                    withAnimation(SN.slowSpring) {
-                        showLyricsMode = false
-                    }
-                }
-                .frame(maxWidth: .infinity)
-
+                FluidVolumeSlider().accessibilityElement(children: .contain)
+            }
+            HStack(spacing: 16) {
+                closeLyricsButton
+                Spacer(minLength: 0)
                 AirPlayButtonView()
-                    .frame(width: tapSide, height: tapSide)
-                    .glassCircle()
-                    .frame(maxWidth: .infinity)
-
-                GlassIconButton(
-                    systemImage: "list.bullet",
-                    tint: SN.inkMuted,
-                    accessibilityLabel: "Очередь"
-                ) {
+                    .frame(width: tapSide, height: tapSide).glassCircle()
+                GlassIconButton(systemImage: "list.bullet", tint: SN.inkMuted, accessibilityLabel: "Очередь") {
                     openModal(.queue)
                 }
-                .frame(maxWidth: .infinity)
-            }
-            .padding(.horizontal, 24)
             }
         }
         .simultaneousGesture(DragGesture(minimumDistance: 0)
@@ -582,7 +559,7 @@ struct PlayerScreenV2: View {
     @ViewBuilder
     private func inlineLyricsStage(width: CGFloat, height: CGFloat) -> some View {
         let settings = SettingsStore.shared
-        let playbackTime = LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
+        let playbackTime = LyricsPlaybackClock.time(for: player)
         let textLift = min(72, height * 0.09)
 
         VStack(spacing: 0) {
@@ -608,7 +585,7 @@ struct PlayerScreenV2: View {
                         currentTime: .constant(playbackTime),
                         isPlaying: player.isPlaying,
                         fontSize: max(30, settings.lyricsFontSize * 0.82),
-                        sampleTime: { LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset) }
+                        sampleTime: { LyricsPlaybackClock.time(for: player) }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 22)
@@ -635,6 +612,19 @@ struct PlayerScreenV2: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
+    }
+
+    private var closeLyricsButton: some View {
+        Button {
+            lyricsControlsHideTask?.cancel()
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.20)) { showLyricsMode = false }
+        } label: {
+            Label("Закрыть текст", systemImage: "quote.bubble")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(SN.accent)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Вернуться к обычному плееру, музыка продолжит играть")
     }
 
     private func revealLyricsControls() {
@@ -759,7 +749,7 @@ struct PlayerScreenV2: View {
 
     private var currentLyricsPair: (current: String, next: String?) {
         guard let lines = lyrics?.lines, !lines.isEmpty else { return ("Слова песни", nil) }
-        let targetTime = LyricsPlaybackClock.time(for: player, offset: SettingsStore.shared.lyricsOffset)
+        let targetTime = LyricsPlaybackClock.time(for: player)
         var lineIndex = 0
         for (i, line) in lines.enumerated() { if line.startTime <= targetTime { lineIndex = i } else { break } }
         return (lines[lineIndex].text, lineIndex + 1 < lines.count ? lines[lineIndex + 1].text : nil)
@@ -1196,30 +1186,6 @@ struct PlayerScreenV2: View {
                     Label("Текст песни", systemImage: "quote.bubble")
                 }
 
-                Menu {
-                    Button {
-                        SettingsStore.shared.lyricsOffset -= 0.25
-                        showOffsetMessage()
-                    } label: {
-                        Label("Текст спешит (-0.25 с)", systemImage: "minus.circle")
-                    }
-                    Button {
-                        SettingsStore.shared.lyricsOffset += 0.25
-                        showOffsetMessage()
-                    } label: {
-                        Label("Текст отстаёт (+0.25 с)", systemImage: "plus.circle")
-                    }
-                    Button {
-                        SettingsStore.shared.lyricsOffset = 0.0
-                        showOffsetMessage()
-                    } label: {
-                        Label("Сброс на 0.0 с", systemImage: "arrow.uturn.backward")
-                    }
-                } label: {
-                    let ms = Int(SettingsStore.shared.lyricsOffset * 1000)
-                    let sign = ms > 0 ? "+" : ""
-                    Label("Синхронизация текста (\(sign)\(ms) мс)", systemImage: "clock.arrow.circlepath")
-                }
 
                 Button { openModal(.queue) } label: {
                     Label("Очередь", systemImage: "list.bullet")
@@ -1538,15 +1504,7 @@ struct PlayerScreenV2: View {
         }
     }
 
-    private func showOffsetMessage() {
-        let ms = Int(SettingsStore.shared.lyricsOffset * 1000)
-        let sign = ms > 0 ? "+" : ""
-        waveMessage = "⏱ Калибровка текста: \(sign)\(ms) мс"
-        Task {
-            try? await Task.sleep(for: .seconds(2.0))
-            waveMessage = nil
-        }
-    }
+
 }
 
 // MARK: - Cover Lyrics Continuous Scroll View (Сплошной текст с плавной автопрокруткой)
@@ -1562,7 +1520,7 @@ struct CoverLyricsScrollView: View {
 
     private func computeActiveIndex(at time: Double) -> Int? {
         TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
-            time: LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset), duration: player.duration)
+            time: LyricsPlaybackClock.time(for: player), duration: player.duration)
     }
 
     var body: some View {
@@ -1593,7 +1551,7 @@ struct CoverLyricsScrollView: View {
                                 interactionResetTask?.cancel()
                                 isUserInteracting = false
                                 if lyrics.isSynchronized {
-                                    player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime, player: player, offset: settings.lyricsOffset))
+                                    player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime))
                                     if !player.isPlaying {
                                         player.resume()
                                     }
@@ -1691,10 +1649,6 @@ struct CoverLyricsScrollView: View {
                         }
                     }
                 }
-            }
-            .onChange(of: settings.lyricsOffset) { _, _ in
-                activeIndex = computeActiveIndex(at: player.progress)
-                if let activeIndex, !isUserInteracting { proxy.scrollTo(activeIndex, anchor: .center) }
             }
             .onAppear {
                 let initial = computeActiveIndex(at: player.progress)

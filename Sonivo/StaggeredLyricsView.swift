@@ -61,41 +61,22 @@ nonisolated struct StaggeredLyricsRenderer: TextRenderer {
         for line in layout {
             for run in line {
                 let attribute = run[StaggeredWordAttribute.self]
-                let progress: Double
-                if reduceMotion || !isActive {
-                    progress = 1
-                } else if let time = currentTime, let start = attribute?.startTime, let end = attribute?.endTime {
-                    // Real vocals drive each entrance. Never add index*80ms delay
-                    // on top of a provider's genuine word timing.
-                    progress = StaggeredLyricsMath.reveal(elapsed: time - start, index: 0,
-                        duration: min(0.14, max(0.04, (end - start) * 0.40)), delay: 0)
-                } else {
-                    progress = StaggeredLyricsMath.reveal(elapsed: elapsed,
-                        index: attribute?.index ?? 0, duration: duration, delay: delay)
-                }
                 var copy = context
-                copy.opacity *= isActive ? (0.22 + 0.78 * progress) : inactiveOpacity
-                if isActive && !reduceMotion {
-                    copy.translateBy(x: 0, y: -14 * (1 - progress))
-                    copy.addFilter(.blur(radius: 5 * (1 - progress)))
-                }
-                if isActive, let time = currentTime,
-                   let start = attribute?.startTime, let end = attribute?.endTime, end > start {
-                    // Real source word timings retain the karaoke sweep. Stagger delay
-                    // is a visual entrance, never substituted for an audio timestamp.
-                    var unsung = copy
-                    unsung.opacity *= 0.34
-                    unsung.draw(run)
-                    let sung = min(1, max(0, (time - start) / (end - start)))
-                    if sung > 0 {
-                        let rect = run.typographicBounds.rect
-                        copy.clip(to: Path(CGRect(x: rect.minX, y: rect.minY - 6,
-                                                 width: rect.width * sung, height: rect.height + 12)))
-                        copy.draw(run)
-                    }
+                if let time = currentTime {
+                    // Synchronized text is immediate. Decorative stagger is confined
+                    // to the untimed preview and can never delay source vocals.
+                    let started = attribute?.startTime.map { LyricsTimingStandard.hasStarted(time: time, start: $0) } ?? true
+                    copy.opacity *= isActive ? (started ? 1 : 0.34) : inactiveOpacity
                 } else {
-                    copy.draw(run)
+                    let progress = reduceMotion || !isActive ? 1 : StaggeredLyricsMath.reveal(
+                        elapsed: elapsed, index: attribute?.index ?? 0, duration: duration, delay: delay)
+                    copy.opacity *= isActive ? (0.22 + 0.78 * progress) : inactiveOpacity
+                    if isActive && !reduceMotion {
+                        copy.translateBy(x: 0, y: -14 * (1 - progress))
+                        copy.addFilter(.blur(radius: 5 * (1 - progress)))
+                    }
                 }
+                copy.draw(run)
             }
         }
     }
@@ -174,7 +155,7 @@ struct StaggeredLyricsView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private var playbackTime: Double {
-        LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
+        LyricsPlaybackClock.time(for: player)
     }
     private var resolvedFontSize: CGFloat { fontSize ?? max(30, settings.lyricsFontSize * 0.82) }
 
@@ -200,7 +181,7 @@ struct StaggeredLyricsView: View {
                                 interactionResetTask?.cancel()
                                 isUserInteracting = false
                                 player.seek(to: LyricsPlaybackClock.seekTime(
-                                    lineStart: line.startTime, player: player, offset: settings.lyricsOffset))
+                                    lineStart: line.startTime))
                                 if !player.isPlaying { player.resume() }
                             } label: {
                                 StaggeredLyricText(text: line.text, words: line.hasRealWordTimings ? line.words : nil,
@@ -253,7 +234,6 @@ struct StaggeredLyricsView: View {
                 }
             }
             .onChange(of: player.progress) { _, _ in updateActiveLine(proxy: proxy) }
-            .onChange(of: settings.lyricsOffset) { _, _ in updateActiveLine(proxy: proxy) }
             .onChange(of: lyrics) { _, _ in
                 interactionResetTask?.cancel()
                 isUserInteracting = false

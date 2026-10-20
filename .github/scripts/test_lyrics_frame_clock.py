@@ -24,7 +24,7 @@ class LyricsFrameClockTests(unittest.TestCase):
         self.assertIn('running: player.isPlaying && !player.isBuffering && lyrics.isSynchronized && scenePhase == .active && !reduceMotion',view)
         for token in ['thermal == .critical','lowPower || thermal == .serious ? 30 : 120',
                       'NSProcessInfoPowerStateDidChange','thermalStateDidChangeNotification',
-                      '.onChange(of: settings.lyricsOffset)', '.onChange(of: player.isPlaying && !reduceMotion ? 0 : player.progress)']:
+                      '.onChange(of: player.isPlaying && !reduceMotion ? 0 : player.progress)']:
             self.assertIn(token,view)
         self.assertNotIn('currentTime +',view)
 
@@ -38,7 +38,7 @@ class LyricsFrameClockTests(unittest.TestCase):
         for forbidden in ['activateForPlayback','progress =','seek(to:','Date()']:
             self.assertNotIn(forbidden,clock)
         self.assertIn('self.lyricsSeekTarget?.id == seekID',core)
-        self.assertIn('player.lyricsPresentationPosition - routeLatency(for: player) + offset',source('LyricsMatchPolicy.swift'))
+        self.assertIn('LyricsTimingStandard.position(player.lyricsPresentationPosition)',source('LyricsMatchPolicy.swift'))
         kinetic=source('KineticLyricsView.swift')
         self.assertIn('let smoothTime = sampleTime?() ?? currentTime',kinetic)
         self.assertNotIn('anchorTimestamp',kinetic)

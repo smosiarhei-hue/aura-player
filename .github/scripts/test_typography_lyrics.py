@@ -28,8 +28,11 @@ class TypographyLyricsTests(unittest.TestCase):
         self.assertIn('LyricsPlaybackClock.time(',view)
         self.assertIn('LyricsPlaybackClock.seekTime(',view)
         self.assertIn('TypographyLyricsPolicy.matchedWords(for: line)',view)
-        self.assertIn('(time - timing.start) / max(0.01, timing.end - timing.start)',view)
-        self.assertIn('copy.clip(to: Path(CGRect',view)
+        self.assertIn('LyricsTimingStandard.hasStarted(time: time, start: timing.start)',view)
+        renderer=view.split('struct TypographyWordRenderer',1)[1].split('private struct TypographyLyricText',1)[0]
+        for delayed in ['copy.clip', 'translateBy', 'addFilter', 'pow(', 'timing.end -']:
+            self.assertNotIn(delayed,renderer)
+        self.assertIn('.transaction { $0.animation = nil }',view)
         self.assertIn('guard line.hasRealWordTimings',policy)
         self.assertIn('guard tokens == words.map',policy)
         for token in ['URLSession','AVAudioEngine','AVPlayer','TimelineView','player.resume()','player.play(','duration /','wordCount']:
@@ -49,7 +52,34 @@ class TypographyLyricsTests(unittest.TestCase):
         player=(ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
         self.assertIn('if lyricsControlsVisible {',player)
         self.assertIn('Label("Показать управление", systemImage: "chevron.up")',player)
-        self.assertIn('withAnimation(reduceMotion ? nil : SN.slowSpring) { showLyricsMode = false }',player)
+        self.assertEqual(player.count('Label("Закрыть текст", systemImage: "quote.bubble")'),1)
+        self.assertEqual(player.count('                closeLyricsButton'),2)
+        header=player.split('private var lyricsTopHeader',1)[1].split('private func lyricsControlsDeck',1)[0]
+        self.assertNotIn('showLyricsMode = false',header)
+        self.assertIn('accessibilityLabel("Свернуть плеер")',header)
+
+    def test_standard_clock_removes_old_calibration_and_all_word_entrance_delays(self):
+        for filename in ['theme.swift','settingsview.swift','lyricsview.swift','PlayerScreenV2.swift',
+                         'TypographyLyricsView.swift','StaggeredLyricsView.swift']:
+            text=(ROOT/'Sonivo'/filename).read_text()
+            self.assertNotIn('lyricsOffset',text)
+            self.assertNotIn('Сдвиг текста',text)
+        theme=(ROOT/'Sonivo/theme.swift').read_text()
+        self.assertIn('defaults.removeObject(forKey: "lyrics.offset")',theme)
+        clock=(ROOT/'Sonivo/LyricsMatchPolicy.swift').read_text().split('enum LyricsPlaybackClock',1)[1]
+        self.assertIn('LyricsTimingStandard.position(lineStart)',clock)
+        for delayed in ['routeLatency','outputLatency','offset:', 'Task.sleep', 'Date()']:
+            self.assertNotIn(delayed,clock)
+        kinetic=(ROOT/'Sonivo/KineticLyricsView.swift').read_text()
+        word=kinetic.split('struct KineticWordView',1)[1].split('// MARK:',1)[0]
+        self.assertIn('LyricsTimingStandard.hasStarted(time: currentTime, start: word.startTime)',word)
+        for delayed in ['.animation(', 'LinearGradient(', 'var progress:', '.mask(']:
+            self.assertNotIn(delayed,word)
+        # Explicit player injection must not be lost when simplifying clock calls.
+        player=(ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
+        sheet=(ROOT/'Sonivo/lyricsview.swift').read_text()
+        self.assertIn('LyricsView(lyrics: lyrics, isLoading: lyricsLoading, player: player)',player)
+        self.assertIn('DynamicWordLyrics(lyrics: lyrics, player: player)',sheet)
 
     @unittest.skipUnless(platform.system()=='Darwin' and shutil.which('swiftc'), 'Native timing fixture executes on macOS')
     def test_actual_swift_source_timings_and_unicode(self):
@@ -83,6 +113,22 @@ import Foundation
   precondition(TypographyLyricsPolicy.matchedWords(for:LyricsLine(text:"Привет, мир!",startTime:1))==nil)
   let invalid=LyricsLine(text:"Broken",startTime:1,words:[LyricsWord(text:"Broken",startTime:2,endTime:1)])
   precondition(TypographyLyricsPolicy.matchedWords(for:invalid)==nil)
+  // Standard time never shifts source timestamps, including after a backward seek.
+  for value: Double in [0, 0.001, 1.5, 123.456, 9, 2] {
+   precondition(LyricsTimingStandard.position(value) == value)
+  }
+  for value: Double in [-1, .nan, .infinity, -.infinity] {
+   precondition(LyricsTimingStandard.position(value) == 0)
+  }
+  precondition(!LyricsTimingStandard.hasStarted(time: 1.999999, start: 2))
+  precondition(LyricsTimingStandard.hasStarted(time: 2, start: 2))
+  precondition(LyricsTimingStandard.hasStarted(time: 2.000001, start: 2))
+  precondition(!LyricsTimingStandard.hasStarted(time: 1, start: 2), "Backward seek must unhighlight future words")
+  precondition(LyricsTimingStandard.hasStarted(time: 0, start: 0))
+  precondition(!LyricsTimingStandard.hasStarted(time: .nan, start: 0))
+  precondition(!LyricsTimingStandard.hasStarted(time: .infinity, start: 0))
+  precondition(!LyricsTimingStandard.hasStarted(time: 2, start: -.infinity))
+  precondition(!LyricsTimingStandard.hasStarted(time: 2, start: -1))
   precondition(LyricsControlsPolicy.idleSeconds == 10)
   for playing in [false,true] { for buffering in [false,true] {
    for visible in [false,true] { for lyricsVisible in [false,true] {

@@ -1,7 +1,7 @@
 import SwiftUI
 import AVFoundation
 
-// MARK: - Synchronized Karaoke Lyrics View (Apple Music Style, 120 FPS ProMotion, Syllable Sweep)
+// MARK: - Synchronized lyrics using source timestamps
 
 struct LyricsView: View {
     let lyrics: Lyrics?
@@ -88,7 +88,7 @@ struct LyricsView: View {
     }
 }
 
-// MARK: - RichSync / Enhanced LRC word sweep
+// MARK: - RichSync / Enhanced LRC word starts
 
 /// Connects genuine source word timings to the existing 120 Hz kinetic lyric renderer.
 /// Line-only lyrics continue through SyncedLyrics unchanged.
@@ -98,7 +98,7 @@ private struct DynamicWordLyrics: View {
     @State private var settings = SettingsStore.shared
 
     private var playbackTime: TimeInterval {
-        LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
+        LyricsPlaybackClock.time(for: player)
     }
 
     var body: some View {
@@ -107,7 +107,7 @@ private struct DynamicWordLyrics: View {
             currentTime: .constant(playbackTime),
             isPlaying: player.isPlaying,
             fontSize: max(30, settings.lyricsFontSize * 0.82),
-            sampleTime: { LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset) }
+            sampleTime: { LyricsPlaybackClock.time(for: player) }
         )
         .padding(.horizontal, 24)
         .padding(.top, 56)
@@ -129,7 +129,7 @@ private struct SyncedLyrics: View {
 
     private func computeActiveIndex(at time: Double) -> Int? {
         TypographyLyricsPolicy.activeIndex(lines: lyrics.lines, synchronized: lyrics.isSynchronized,
-            time: LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset), duration: player.duration)
+            time: LyricsPlaybackClock.time(for: player), duration: player.duration)
     }
 
     var body: some View {
@@ -142,7 +142,7 @@ private struct SyncedLyrics: View {
                             interactionResetTask?.cancel()
                             isUserInteracting = false
                             if lyrics.isSynchronized {
-                                player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime, player: player, offset: settings.lyricsOffset))
+                                player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime))
                                 if !player.isPlaying {
                                     player.resume()
                                 }
@@ -268,10 +268,6 @@ private struct SyncedLyrics: View {
                     }
                 }
             }
-            .onChange(of: settings.lyricsOffset) { _, _ in
-                activeIndex = computeActiveIndex(at: player.progress)
-                if let activeIndex, !isUserInteracting { proxy.scrollTo(activeIndex, anchor: .center) }
-            }
             .onAppear {
                 let initial = computeActiveIndex(at: player.progress)
                 activeIndex = initial
@@ -304,7 +300,7 @@ private struct LyricsLineView: View {
             .lineSpacing(6)
             .frame(maxWidth: .infinity, alignment: .center)
             .contentShape(Rectangle())
-            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isActive)
+            .transaction { $0.animation = nil }
     }
 }
 

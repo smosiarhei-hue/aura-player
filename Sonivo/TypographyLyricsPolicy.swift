@@ -45,3 +45,13 @@ nonisolated enum LyricsControlsPolicy {
         isPlaying && !isBuffering && visible && lyricsVisible && sceneActive && !voiceOver
     }
 }
+
+/// Source timestamps are the sole authority. Invalid values never reach the UI.
+nonisolated enum LyricsTimingStandard {
+    static func position(_ source: Double) -> Double {
+        source.isFinite ? max(0, source) : 0
+    }
+    static func hasStarted(time: Double, start: Double) -> Bool {
+        time.isFinite && start.isFinite && start >= 0 && time >= start
+    }
+}

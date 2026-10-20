@@ -171,78 +171,21 @@ struct LyricsFlowLayout: Layout {
     }
 }
 
-// MARK: - 3. 120 Hz Smooth Syllable Karaoke Highlight Word View (Vibrant White Sweep, No Cursor Stick)
+// MARK: - 3. Source-timed word highlight (no entrance delay)
 
 struct KineticWordView: View {
     let word: LyricWord
     let currentTime: TimeInterval
     let fontSize: CGFloat
 
-    var progress: CGFloat {
-        if currentTime <= word.startTime { return 0 }
-        if currentTime >= word.endTime { return 1 }
-        let dur = max(0.04, word.endTime - word.startTime)
-        return min(1.0, max(0.0, CGFloat((currentTime - word.startTime) / dur)))
-    }
-
-    var isActivelySinging: Bool {
-        progress > 0.001 && progress < 0.999
-    }
-
     var body: some View {
-        ZStack(alignment: .leading) {
-            // 1. Не спетый текст: полупрозрачный белый, стандартный Apple SF Pro Bold
-            Text(word.text)
-                .font(.system(size: fontSize, weight: .bold, design: .default))
-                .foregroundStyle(Color.white.opacity(0.32))
-
-            // 2. Спетый текст: чистый белый с мягкой тенью
-            if progress > 0 {
-                Text(word.text)
-                    .font(.system(size: fontSize, weight: .bold, design: .default))
-                    .foregroundStyle(Color.white)
-                    .shadow(color: Color.black.opacity(0.40), radius: 2, y: 1.5)
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .white, location: 0.0),
-                                .init(color: .white, location: max(0.0, progress - 0.015)),
-                                .init(color: .white, location: progress),
-                                .init(color: .clear, location: min(1.0, progress + 0.005)),
-                                .init(color: .clear, location: 1.0)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            }
-
-            // 3. Ядерный белый луч по тексту во время пения (без палочек)
-            if isActivelySinging {
-                Text(word.text)
-                    .font(.system(size: fontSize, weight: .bold, design: .default))
-                    .foregroundStyle(Color.white)
-                    .shadow(color: Color.white, radius: 4)
-                    .shadow(color: Color.white.opacity(0.90), radius: 8)
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: max(0.0, progress - 0.22)),
-                                .init(color: .white, location: max(0.0, progress - 0.03)),
-                                .init(color: .white, location: progress),
-                                .init(color: .white, location: min(1.0, progress + 0.03)),
-                                .init(color: .clear, location: min(1.0, progress + 0.22))
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            }
-        }
-        .lineLimit(1)
-        .minimumScaleFactor(0.70)
-        .scaleEffect(isActivelySinging ? 1.025 : 1.0, anchor: .leading)
-        .animation(.spring(response: 0.20, dampingFraction: 0.85), value: isActivelySinging)
+        Text(word.text)
+            .font(.system(size: fontSize, weight: .bold, design: .default))
+            .foregroundStyle(LyricsTimingStandard.hasStarted(time: currentTime, start: word.startTime)
+                ? Color.white : Color.white.opacity(0.32))
+            .lineLimit(1)
+            .minimumScaleFactor(0.70)
+            .transaction { $0.animation = nil }
     }
 }
 
@@ -273,7 +216,7 @@ struct KineticLyricsView: View {
                         baseFontSize: fontSize
                     )
                     .id(phrase.id)
-                    .transition(.opacity)
+                    .transition(.identity)
                 } else if let next {
                     // Музыкальная пауза / интро: отображаем аккуратную плашку подготовки к следующей строке
                     VStack(spacing: 8) {
@@ -289,16 +232,16 @@ struct KineticLyricsView: View {
                             .minimumScaleFactor(0.70)
                             .padding(.horizontal, 16)
                     }
-                    .transition(.opacity)
+                    .transition(.identity)
                 } else {
                     Text("SONIVO")
                         .font(.system(size: 24, weight: .bold, design: .default))
                         .tracking(3.0)
                         .foregroundStyle(Color.white.opacity(0.35))
-                        .transition(.opacity)
+                        .transition(.identity)
                 }
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.20), value: current?.id)
+            .transaction { $0.animation = nil }
             .onChange(of: current?.id) { _, _ in
                 if let current {
                     onPhraseChange?(current)
@@ -366,7 +309,7 @@ private struct KineticPhraseStage: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .minimumScaleFactor(0.70)
                     .padding(.horizontal, 16)
-                    .transition(.opacity)
+                    .transition(.identity)
             }
         }
     }

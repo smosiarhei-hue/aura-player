@@ -1,5 +1,4 @@
 import Foundation
-import AVFoundation
 
 /// Conservative source identity: never select an unrelated first search result.
 nonisolated enum LyricsMatchPolicy {
@@ -109,17 +108,14 @@ nonisolated enum LyricsMatchPolicy {
     }
 }
 
-/// AVPlayer's presentation time is already its playback clock. Do not subtract
-/// Bluetooth output latency a second time; native audio-engine render time needs it.
+/// Standard source synchronization: no manual shift, route compensation,
+/// wall-clock lookahead, or animation delay is applied to provider timestamps.
 @MainActor
 enum LyricsPlaybackClock {
-    static func routeLatency(for player: ActivePlayerPresentation) -> Double {
-        player.usesStreamingBackend ? 0 : AVAudioSession.sharedInstance().outputLatency
+    static func time(for player: ActivePlayerPresentation) -> Double {
+        LyricsTimingStandard.position(player.lyricsPresentationPosition)
     }
-    static func time(for player: ActivePlayerPresentation, offset: Double) -> Double {
-        max(0, player.lyricsPresentationPosition - routeLatency(for: player) + offset)
-    }
-    static func seekTime(lineStart: Double, player: ActivePlayerPresentation, offset: Double) -> Double {
-        max(0, lineStart - offset + routeLatency(for: player))
+    static func seekTime(lineStart: Double) -> Double {
+        LyricsTimingStandard.position(lineStart)
     }
 }

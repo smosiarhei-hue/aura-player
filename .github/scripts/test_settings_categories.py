@@ -16,7 +16,7 @@ class SettingsCategoriesTests(unittest.TestCase):
         self.assertIn('if category == nil {\n            NavigationStack',self.settings)
         self.assertEqual(self.settings.count('NavigationStack {'),1)
     def test_existing_controls_keep_their_bindings(self):
-        for binding in ['catalogSourceRaw','videoShotsEnabled','musixmatchProxyInput','musixmatchKeyInput','l10n.language','settings.lyricsDesign','settings.isNeuralEngineEnabled','settings.lyricsFontSize','settings.lyricsOffset','settings.hapticsEnabled','settings.scrubHapticsEnabled','settings.musicHapticsEnabled','settings.musicHapticsIntensity','player.eqHeadphonesOnly','player.spatialAudioEnabled','player.crossfadeDuration']:
+        for binding in ['catalogSourceRaw','videoShotsEnabled','musixmatchProxyInput','musixmatchKeyInput','l10n.language','settings.lyricsDesign','settings.isNeuralEngineEnabled','settings.lyricsFontSize','settings.hapticsEnabled','settings.scrubHapticsEnabled','settings.musicHapticsEnabled','settings.musicHapticsIntensity','player.eqHeadphonesOnly','player.spatialAudioEnabled','player.crossfadeDuration']:
             self.assertIn('$'+binding,self.settings)
         for action in ['await ym.syncAccountData()', 'ym.logout()', 'socialAuth.signOut()', 'await library.rescan()', 'library.resetIndex()', 'await mediaCache.clearGeneratedCache()', 'player.selectQuality(quality)', 'player.transitionMode = mode', 'MusicHapticsManager.shared.playPreview', 'musixmatch.saveProxyURL', 'musixmatch.removeProxyURL', 'musixmatch.saveAPIKey', 'musixmatch.removeAPIKey']:
             self.assertIn(action,self.settings)

@@ -19,7 +19,7 @@ struct TypographyLyricsView: View {
     @ScaledMetric(relativeTo: .largeTitle) private var typeScale: CGFloat = 1
 
     private var playbackTime: Double {
-        LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset)
+        LyricsPlaybackClock.time(for: player)
     }
     private var activeIndex: Int? { frameClock.activeIndex }
     private var frameLimit: Int {
@@ -101,7 +101,7 @@ struct TypographyLyricsView: View {
             LyricsFrameDriver(clock: frameClock,
                 running: player.isPlaying && !player.isBuffering && lyrics.isSynchronized && scenePhase == .active && !reduceMotion,
                 frameLimit: frameLimit,
-                sampleTime: { LyricsPlaybackClock.time(for: player, offset: settings.lyricsOffset) },
+                sampleTime: { LyricsPlaybackClock.time(for: player) },
                 selectLine: { time in TypographyLyricsPolicy.activeIndex(lines: lyrics.lines,
                     synchronized: lyrics.isSynchronized, time: time, duration: player.duration) })
                 .frame(width: 0, height: 0).accessibilityHidden(true)
@@ -109,7 +109,6 @@ struct TypographyLyricsView: View {
         .onChange(of: player.isPlaying) { _, _ in refreshFrame() }
         .onChange(of: player.isPlaying && !reduceMotion ? 0 : player.progress) { _, _ in refreshFrame() }
         .onChange(of: player.isBuffering) { _, _ in refreshFrame() }
-        .onChange(of: settings.lyricsOffset) { _, _ in refreshFrame() }
         .onChange(of: reduceMotion) { _, _ in refreshFrame() }
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
             lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -130,8 +129,7 @@ struct TypographyLyricsView: View {
                 browsingTask?.cancel()
                 browsing = false
                 Haptics.tap(.light)
-                player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime,
-                    player: player, offset: settings.lyricsOffset))
+                player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime))
                 // Seeking a paused song must not unexpectedly start audio.
             } label: {
                 TypographyLyricText(line: line, clock: frameClock, active: selected,
@@ -169,31 +167,18 @@ nonisolated private struct TypographyWordAttribute: TextAttribute {
 nonisolated private struct TypographyWordRenderer: TextRenderer {
     let time: Double
     let active: Bool
-    let reduceMotion: Bool
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {
             for run in line {
                 var copy = context
-                if active, !reduceMotion, let timing = run[TypographyWordAttribute.self], time >= timing.start {
-                    let duration = min(0.18, max(0.04, (timing.end - timing.start) * 0.4))
-                    let fraction = min(1, max(0, (time - timing.start) / duration))
-                    let reveal = 1 - pow(1 - fraction, 3)
-                    copy.opacity *= 0.55 + 0.45 * reveal
-                    copy.translateBy(x: 0, y: 4 * (1 - reveal))
+                if active, let timing = run[TypographyWordAttribute.self],
+                   !LyricsTimingStandard.hasStarted(time: time, start: timing.start) {
+                    copy.opacity *= 0.38
                 }
-                if active, let timing = run[TypographyWordAttribute.self] {
-                    var unsung = copy
-                    unsung.opacity *= 0.38
-                    unsung.draw(run)
-                    let sung = min(1, max(0, (time - timing.start) / max(0.01, timing.end - timing.start)))
-                    if sung > 0 {
-                        let rect = run.typographicBounds.rect
-                        copy.clip(to: Path(CGRect(x: rect.minX, y: rect.minY - 6,
-                            width: rect.width * sung, height: rect.height + 12)))
-                        copy.draw(run)
-                    }
-                } else { copy.draw(run) }
+                // At the actual source start the entire word is immediately legible.
+                // No fade-in, transform, blur, sweep completion or delayed transaction.
+                copy.draw(run)
             }
         }
     }
@@ -205,7 +190,6 @@ private struct TypographyLyricText: View {
     let active: Bool
     let plain: Bool
     let fontSize: CGFloat
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var time: Double {
@@ -229,12 +213,11 @@ private struct TypographyLyricText: View {
         rendered
             .font(.system(size: fontSize, weight: .bold, design: .default))
             .tracking(-0.7).lineSpacing(4)
-            .textRenderer(TypographyWordRenderer(time: time, active: active, reduceMotion: reduceMotion))
+            .textRenderer(TypographyWordRenderer(time: time, active: active))
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .offset(y: reduceMotion || active || plain ? 0 : 5)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: active)
+            .transaction { $0.animation = nil }
             .accessibilityLabel(line.text)
     }
 }

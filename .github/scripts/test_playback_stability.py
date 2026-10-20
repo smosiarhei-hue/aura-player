@@ -79,7 +79,7 @@ class PlaybackStabilityTests(unittest.TestCase):
         local = block('private func startLocal', 'private func scheduleLocalSegment')
         self.assertIn('self.streamingPlayerA.replaceCurrentItem(with: nil)', local)
         self.assertIn('self.streamingPlayerB.replaceCurrentItem(with: nil)', local)
-        self.assertIn('player.usesStreamingBackend ? 0', source('LyricsMatchPolicy.swift'))
+        self.assertIn('LyricsTimingStandard.position(player.lyricsPresentationPosition)', source('LyricsMatchPolicy.swift'))
         self.assertIn('PlayerCore.shared.usesStreamingBackend', source('streambeat.swift'))
 
     def test_crossfade_network_response_cannot_resurrect_canceled_deck(self):
