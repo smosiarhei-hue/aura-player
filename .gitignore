@@ -43,3 +43,6 @@ tools/videoshot-studio/*.mp4
 # Decode shared branding masks from versioned payloads.
 /SharedActivity/BrandAssets.xcassets/*.imageset/mask.png
 /activity-validation/
+
+# Licensed karaoke font materialized from the checked payload by the app pre-build phase.
+/Sonivo/KaraokeFonts/Onest-Bold.ttf

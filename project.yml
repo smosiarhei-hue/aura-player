@@ -34,6 +34,7 @@ targets:
         script: |
           python3 "$SRCROOT/scripts/materialize_app_icons.py"
           python3 "$SRCROOT/scripts/materialize_activity_brand.py"
+          python3 "$SRCROOT/scripts/materialize_karaoke_font.py"
         basedOnDependencyAnalysis: false
     sources:
       - path: Sonivo
@@ -41,6 +42,10 @@ targets:
           - "Info.plist"
           - "PlayerScreen.swift"
           - "AppIcons"
+          - "KaraokeFonts"
+      - path: Sonivo/KaraokeFonts
+        type: folder
+        buildPhase: resources
       - path: Sonivo/AppIcons/SonivoMusic.icon
         type: file
         buildPhase: resources
@@ -106,6 +111,8 @@ targets:
         NSSupportsLiveActivities: true
         SonivoLiveActivityEmbedded: true
         CFBundleDevelopmentRegion: ru
+        UIAppFonts:
+          - KaraokeFonts/Onest-Bold.ttf
         CADisableMinimumFrameDurationOnPhone: true
         CFBundleShortVersionString: "1.1.0"
         CFBundleVersion: "2"

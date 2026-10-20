@@ -278,7 +278,7 @@ private struct LyricsLineView: View {
 
     var body: some View {
         Text(line.text)
-            .font(.system(size: 32, weight: .heavy, design: .default))
+            .font(KaraokeTypography.font(size: 32))
             .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.35))
             .blur(radius: (reduceMotion || isActive) ? 0 : 0.6)
             .scaleEffect(reduceMotion ? 1.0 : (isActive ? 1.03 : 1.0), anchor: .center)
@@ -328,7 +328,7 @@ private struct StaticLyricsList: View {
                 }
                 ForEach(lyrics.lines) { line in
                     Text(line.text)
-                        .font(.system(size: 26, weight: .bold, design: .default))
+                        .font(KaraokeTypography.font(size: 26))
                         .foregroundStyle(Color.white.opacity(0.88))
                         .multilineTextAlignment(.center)
                         .lineLimit(nil)

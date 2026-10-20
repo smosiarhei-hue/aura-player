@@ -111,7 +111,7 @@ struct StaggeredLyricText: View {
     var body: some View {
         let timing = StaggeredLyricsMath.timing(wordCount: segments.count, availableDuration: availableDuration)
         renderedText
-            .font(.system(size: fontSize, weight: .bold, design: .default))
+            .font(KaraokeTypography.font(size: fontSize))
             .foregroundStyle(.white)
             .multilineTextAlignment(.center)
             .lineSpacing(6)
@@ -267,7 +267,7 @@ struct LyricsDesignPreview: View {
         VStack(spacing: 8) {
             if design == .typography {
                 Text("Музыка —\nэто то, что мы чувствуем.")
-                    .font(.system(size: 30, weight: .bold))
+                    .font(KaraokeTypography.font(size: 30))
                     .foregroundStyle(SN.accent)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if design == .staggered {
@@ -277,7 +277,7 @@ struct LyricsDesignPreview: View {
                 }
             } else {
                 Text("Музыка оживает в каждой строке")
-                    .font(.system(size: 24, weight: .bold)).foregroundStyle(.white)
+                    .font(KaraokeTypography.font(size: 24)).foregroundStyle(.white)
                     .multilineTextAlignment(.center)
             }
             Text(design == .typography ? "Крупные строки и ваш акцент. Подсветка слов — только с точными таймингами." : (design == .staggered ? "Слова появляются по очереди, мягко и с размытием" : "Привычный текст и существующая караоке-подсветка"))

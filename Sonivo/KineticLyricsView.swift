@@ -181,7 +181,7 @@ struct KineticWordView: View {
 
     var body: some View {
         Text(word.text)
-            .font(.system(size: fontSize, weight: .bold, design: .default))
+            .font(KaraokeTypography.font(size: fontSize))
             .foregroundStyle(LyricsTimingStandard.hasStarted(time: currentTime, start: word.startTime)
                 ? Color.white : Color.white.opacity(0.32))
             .shadow(color: contrast != .increased && LyricsTimingStandard.hasStarted(time: currentTime, start: word.startTime)
@@ -227,7 +227,7 @@ struct KineticLyricsView: View {
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(0.35))
                         Text(next.text)
-                            .font(.system(size: fontSize * 0.88, weight: .bold, design: .default))
+                            .font(KaraokeTypography.font(size: fontSize * 0.88))
                             .foregroundStyle(Color.white.opacity(0.42))
                             .multilineTextAlignment(.center)
                             .lineLimit(nil)
@@ -290,7 +290,7 @@ private struct KineticPhraseStage: View {
                 .padding(.horizontal, 12)
             } else {
                 Text(phrase.text)
-                    .font(.system(size: baseFontSize, weight: .bold, design: .default))
+                    .font(KaraokeTypography.font(size: baseFontSize))
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.40), radius: 3, y: 1.5)
                     .multilineTextAlignment(.center)
@@ -302,10 +302,10 @@ private struct KineticPhraseStage: View {
                     .padding(.horizontal, 12)
             }
 
-            // Следующая строка (превью): шрифт SF Pro Bold, приглушенный цвет, без точек
+            // Следующая строка (превью): шрифт Onest Bold, приглушенный цвет, без точек
             if let next = nextPhrase, !next.text.isEmpty {
                 Text(next.text)
-                    .font(.system(size: baseFontSize * 0.78, weight: .bold, design: .default))
+                    .font(KaraokeTypography.font(size: baseFontSize * 0.78))
                     .foregroundStyle(Color.white.opacity(0.42))
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)

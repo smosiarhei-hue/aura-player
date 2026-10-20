@@ -1672,7 +1672,7 @@ private struct CoverLyricLineRow: View {
     var body: some View {
         Button(action: onSelect) {
             Text(text)
-                .font(.system(size: 28, weight: .heavy, design: .default))
+                .font(KaraokeTypography.font(size: 28))
                 .foregroundStyle(textColor)
                 .shadow(color: shadowColor, radius: 4, y: 1.5)
                 .multilineTextAlignment(.center)

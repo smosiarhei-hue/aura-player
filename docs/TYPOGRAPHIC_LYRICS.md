@@ -49,4 +49,4 @@ CI executes additional real Swift fixtures for LRC units/offset signs, syllables
 ## Typography / luminous text study
 - Active typographic words use a crisp white fill with one restrained accent-colored halo; future words remain dim. Increased Contrast disables the halo. This is an SDR HDR-style treatment, **not** actual EDR/HDR luminance output.
 - Source clocks, parsers and provider offsets are unchanged by this visual pass. No fade-in or delayed transaction is added to word highlighting.
-- Candidate fonts are preview-only: Inter Tight, Manrope, Onest, Golos Text, Montserrat and Rubik (Google Fonts, SIL OFL). No font family is bundled/selected in production before user approval.
+- Initial preview candidates: Inter Tight, Manrope, Onest, Golos Text, Montserrat and Rubik (Google Fonts, SIL OFL). The user subsequently approved the proposed direction: production lyric text uses Onest Bold (study 03), registered through UIAppFonts; other families remain preview-only.

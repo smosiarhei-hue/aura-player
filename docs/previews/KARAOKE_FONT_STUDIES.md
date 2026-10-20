@@ -1,6 +1,6 @@
 # Sonivo karaoke typography study
 
-`karaoke-font-studies.svg` is a self-contained outlined-vector design board, not an iOS screenshot. All six lyric samples use 50 px / weight 700 at identical sizes. The application font remains the existing system font until user approval. Illustrative content is not production track data.
+`karaoke-font-studies.svg` is a self-contained outlined-vector design board, not an iOS screenshot. All six lyric samples use 50 px / weight 700 at identical sizes. The user approved the proposed direction; production lyrics now use study 03, Onest Bold. Other variants remain preview-only. Illustrative content is not production track data.
 
 Candidates (Google Fonts, SIL Open Font License):
 - Inter Tight — https://fonts.google.com/specimen/Inter+Tight

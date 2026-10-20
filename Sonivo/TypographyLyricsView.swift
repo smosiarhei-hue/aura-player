@@ -189,7 +189,7 @@ private struct TypographyLyricText: View {
 
     var body: some View {
         rendered
-            .font(.system(size: fontSize, weight: .bold, design: .default))
+            .font(KaraokeTypography.font(size: fontSize))
             .tracking(-0.7).lineSpacing(4)
             .textRenderer(TypographyWordRenderer(time: time, active: active, glow: SN.accent, highContrast: contrast == .increased))
             .multilineTextAlignment(.leading)
