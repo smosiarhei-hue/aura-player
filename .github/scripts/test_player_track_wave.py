@@ -47,11 +47,12 @@ class PlayerTrackWaveTests(unittest.TestCase):
             self.assertLess(deck.index(first),deck.index(second))
         actions=screen.split('private var secondaryPlayerActions',1)[1].split('private var sleepTimerBottomButton',1)[0]
         for expected in ['AirPlayButtonView','sleepTimerBottomButton','"Эквалайзер"','"Очередь"']: self.assertIn(expected,actions)
-    def test_dismissal_is_native_fullscreen_zoom_at_every_player_entry_point(self):
+    def test_dismissal_is_explicit_fullscreen_at_every_player_entry_point(self):
         presentation=source('PlayerSheetPresentation.swift')
         self.assertIn('struct PlayerFullscreenPresentation',presentation)
-        self.assertIn('.navigationTransition(.zoom(sourceID: sourceID, in: namespace))',presentation)
-        for token in ['presentationDetents', 'presentationCornerRadius', 'interactiveDismissDisabled(true)']:
+        self.assertIn('content.interactiveDismissDisabled(true)',presentation)
+        self.assertNotIn('.navigationTransition(.zoom',presentation)
+        for token in ['presentationDetents', 'presentationCornerRadius']:
             self.assertNotIn(token,presentation)
         for name in ['sonivoapp.swift','SonivoHomeRedesignedView.swift','homeview.swift']:
             entry=source(name)
@@ -101,7 +102,7 @@ class PlayerTrackWaveTests(unittest.TestCase):
         block=text.split('private var background:',1)[1].split('private var topHeader:',1)[0]
         self.assertIn('resolvedArtworkPaletteTrackID == track?.id',block)
         self.assertIn('base.overlay((coverColor ?? Color.clear).opacity(0.22))',block)
-        self.assertIn('if showLyricsMode {',block)
+        self.assertIn('? dominantArtworkColor : nil',block)
         normal_player = block.split('let base =',1)[1]
         for forbidden in ['LinearGradient','RadialGradient','PlayerMusicReactiveBackdrop','VideoShotPlayerView','TimelineView','Image(uiImage:']:
             self.assertNotIn(forbidden,normal_player)

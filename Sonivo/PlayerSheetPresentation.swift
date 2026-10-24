@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// Full-screen native zoom presentation. iOS owns the interactive swipe dismissal.
-/// Kept in the historical presentation file; this no longer configures a sheet/detent.
+/// Native full-screen presentation. Only the explicit close control/header drag dismisses.
+/// The former whole-screen zoom recognizer could steal artwork and slider gestures.
 struct PlayerFullscreenPresentation: ViewModifier {
     let sourceID: String
     let namespace: Namespace.ID
 
     func body(content: Content) -> some View {
-        content.navigationTransition(.zoom(sourceID: sourceID, in: namespace))
+        content.interactiveDismissDisabled(true)
     }
 }

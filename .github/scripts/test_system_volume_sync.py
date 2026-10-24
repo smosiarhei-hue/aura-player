@@ -68,7 +68,10 @@ class SystemVolumeSyncTests(unittest.TestCase):
         self.assertIn('engine.mainMixerNode.outputVolume = volume', CORE)
 
     def test_user_controls_cover_full_range_and_accessibility(self):
-        self.assertEqual(UI.count('value.location.x / max(width, 1)'), 2)
+        self.assertEqual(UI.count('PlayerInteractionPolicy.draggedFraction(start: volumeStartFraction,'), 2)
+        self.assertNotIn('value.location.x', UI)
+        self.assertIn('DragGesture(minimumDistance: 10)', UI)
+        self.assertIn('guard isDragging, !volumeRejected else { return }', UI)
         self.assertIn('volumeManager.volume + step', UI)
         self.assertIn('volumeManager.volume - step', UI)
         self.assertIn('.onAppear { volumeManager.refreshFromSystem() }', UI)

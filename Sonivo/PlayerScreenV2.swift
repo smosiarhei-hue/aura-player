@@ -23,6 +23,9 @@ struct PlayerScreenV2: View {
     @State private var lyricsLoading = false
     @State private var coverDragX: CGFloat = 0
     @State private var isCoverSwitching = false
+    @State private var coverSwitchTask: Task<Void, Never>?
+    @State private var coverSwitchGeneration = UUID()
+    @State private var dominantArtworkColor: Color?
     @State private var waveLoading = false
     @State private var waveActive = false
     @State private var waveMessage: String?
@@ -197,9 +200,6 @@ struct PlayerScreenV2: View {
             async let l: () = loadLyrics()
             _ = await (p, l)
         }
-        .onChange(of: player.currentTrack?.id) { _, _ in
-            isCoverSwitching = false
-        }
         .task(id: videoLoadKey) { await loadVideoShot() }
         .onChange(of: player.isPlaying) { _, playing in
             updateVideoPlayback()
@@ -267,6 +267,10 @@ struct PlayerScreenV2: View {
         .onDisappear {
             trackWaveTask?.cancel()
             lyricsControlsHideTask?.cancel()
+            coverSwitchTask?.cancel()
+            coverSwitchGeneration = UUID()
+            isCoverSwitching = false
+            coverDragX = 0
             trackWaveRequestID = UUID()
             waveLoading = false
             teardownVideoLooper()
@@ -280,13 +284,7 @@ struct PlayerScreenV2: View {
     private var background: some View {
         // A spatially uniform cover tint over semantic light/dark background.
         // Never display a previous track's extracted palette while the new cover is loading.
-        let coverColor = resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors.first : nil
-        if showLyricsMode {
-            return AnyView(Color(red: 0.047, green: 0.051, blue: 0.071)
-                .overlay(RadialGradient(colors: [SN.accent.opacity(0.16), .clear],
-                    center: .trailing, startRadius: 0, endRadius: 550))
-                .ignoresSafeArea().allowsHitTesting(false))
-        }
+        let coverColor = resolvedArtworkPaletteTrackID == track?.id ? dominantArtworkColor : nil
         let base = showLyricsMode ? Color.black : SN.bg
         return AnyView(base.overlay((coverColor ?? Color.clear).opacity(0.22))
             .ignoresSafeArea()
@@ -319,6 +317,16 @@ struct PlayerScreenV2: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 40)
+        .contentShape(Rectangle())
+        .simultaneousGesture(headerCloseGesture)
+    }
+
+    private var headerCloseGesture: some Gesture {
+        DragGesture(minimumDistance: 24).onEnded { value in
+            guard PlayerDismissPolicy.shouldClose(x: Double(value.translation.width),
+                y: Double(value.translation.height), predictedY: Double(value.predictedEndTranslation.height)) else { return }
+            close()
+        }
     }
 
     private func lyricsPlayerLayout(
@@ -329,6 +337,7 @@ struct PlayerScreenV2: View {
     ) -> some View {
         VStack(spacing: 0) {
             lyricsTopHeader
+                .simultaneousGesture(headerCloseGesture)
                 .padding(.top, topInset)
                 .padding(.horizontal, 20)
                 .contentShape(Rectangle())
@@ -513,34 +522,19 @@ struct PlayerScreenV2: View {
         .rotationEffect(.degrees(tiltAngle))
         .contentShape(Rectangle())
         .gesture(
-            showLyricsMode ? nil : DragGesture(minimumDistance: 15)
+            showLyricsMode ? nil : DragGesture(minimumDistance: 18)
                 .onChanged { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    coverDragX = value.translation.width
+                    guard !isCoverSwitching, PlayerInteractionPolicy.horizontalIntent(
+                        x: Double(value.translation.width), y: Double(value.translation.height)) else { return }
+                    coverDragX = max(-width * 0.7, min(width * 0.7, value.translation.width))
                 }
                 .onEnded { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { coverDragX = 0 }
-                        return
-                    }
-                    let threshold: CGFloat = 55
-                    let projected = value.predictedEndTranslation.width
-                    if (value.translation.width < -threshold || projected < -100), !isCoverSwitching {
-                        Haptics.tap(.light)
-                        nextTrack()
-                        coverDragX = width * 0.40
-                        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
-                            coverDragX = 0
-                        }
-                    } else if (value.translation.width > threshold || projected > 100), !isCoverSwitching {
-                        Haptics.tap(.light)
-                        previousTrack()
-                        coverDragX = -width * 0.40
-                        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
-                            coverDragX = 0
-                        }
+                    guard !isCoverSwitching else { return }
+                    if let direction = PlayerInteractionPolicy.trackDirection(
+                        x: Double(value.translation.width), y: Double(value.translation.height), width: Double(width)) {
+                        animateTrackSwipe(direction: direction, width: width)
                     } else {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { coverDragX = 0 }
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.9)) { coverDragX = 0 }
                     }
                 }
         )
@@ -1204,11 +1198,14 @@ struct PlayerScreenV2: View {
     }
 
     private func updatePalette(from image: UIImage, trackID: UUID) async {
-        let hexes = await Task.detached(priority: .utility) { LibraryStore.artworkPalette(from: image) }.value
+        let (hexes, tone) = await Task.detached(priority: .utility) {
+            (LibraryStore.artworkPalette(from: image), PlayerArtworkTone.extract(image))
+        }.value
         guard !Task.isCancelled, track?.id == trackID, paletteTrackId == trackID else { return }
         let colors = hexes.compactMap(Color.init(hex:)); guard !colors.isEmpty else { return }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.85)) {
             artworkPaletteColors = colors
+            dominantArtworkColor = tone.map { Color(.sRGB, red: Double($0.x), green: Double($0.y), blue: Double($0.z), opacity: 1) }
             resolvedArtworkPaletteTrackID = trackID
         }
     }
@@ -1397,8 +1394,41 @@ struct PlayerScreenV2: View {
         player.next()
         releaseCoverSwitchLock()
     }
+    private func animateTrackSwipe(direction: Int, width: CGFloat) {
+        guard !isCoverSwitching, track != nil else { return }
+        isCoverSwitching = true
+        coverSwitchTask?.cancel()
+        let generation = UUID()
+        coverSwitchGeneration = generation
+        Haptics.tap(.light)
+        let requestedTrackID = player.currentTrack?.id
+        let sign: CGFloat = direction > 0 ? -1 : 1
+        withAnimation(reduceMotion ? nil : .easeIn(duration: 0.18)) { coverDragX = reduceMotion ? 0 : sign * width }
+        coverSwitchTask = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(reduceMotion ? 0 : 180)) } catch { return }
+            guard !Task.isCancelled, coverSwitchGeneration == generation, isPresented else { return }
+            guard player.currentTrack?.id == requestedTrackID else {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { coverDragX = 0 }
+                isCoverSwitching = false
+                return
+            }
+            PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+            if direction > 0 { player.next() } else { player.previous() }
+            var transaction = Transaction(); transaction.disablesAnimations = true
+            withTransaction(transaction) { coverDragX = reduceMotion ? 0 : -sign * width * 0.65 }
+            do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+            guard !Task.isCancelled, coverSwitchGeneration == generation else { return }
+            withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.92)) { coverDragX = 0 }
+            do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
+            guard coverSwitchGeneration == generation else { return }
+            isCoverSwitching = false
+        }
+    }
     private func releaseCoverSwitchLock() {
+        let generation = UUID()
+        coverSwitchGeneration = generation
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
+            guard coverSwitchGeneration == generation else { return }
             isCoverSwitching = false
         }
     }
@@ -1656,6 +1686,10 @@ struct PlayerTimelineSection<Center: View>: View {
     @Bindable var player: ActivePlayerPresentation
     @State private var isScrubbing = false
     @State private var scrubProgress = 0.0
+    @State private var scrubStartFraction = 0.0
+    @State private var scrubTrackID: UUID?
+    @State private var scrubRejected = false
+    @GestureState private var scrubContact = false
     @State private var pendingSeekProgress: Double?
     @State private var lastFeedbackProgress = 0.0
     private let feedback = UISelectionFeedbackGenerator()
@@ -1710,13 +1744,23 @@ struct PlayerTimelineSection<Center: View>: View {
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 0)
+                    DragGesture(minimumDistance: 10)
+                        .updating($scrubContact) { _, state, _ in state = true }
                         .onChanged { value in
+                            guard !scrubRejected, player.duration > 0 else { return }
                             if !isScrubbing {
+                                guard PlayerInteractionPolicy.horizontalIntent(x: Double(value.translation.width), y: Double(value.translation.height)) else {
+                                    scrubRejected = true; return
+                                }
+                                scrubStartFraction = min(1, max(0, effectiveProgress / duration))
+                                scrubTrackID = player.currentTrack?.id
+                                lastFeedbackProgress = scrubStartFraction
                                 isScrubbing = true
                                 feedback.prepare()
                             }
-                            let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
+                            guard scrubTrackID == player.currentTrack?.id else { return }
+                            let f = PlayerInteractionPolicy.draggedFraction(start: scrubStartFraction,
+                                translation: Double(value.translation.width), width: Double(geo.size.width))
                             scrubProgress = f * duration
                             if abs(f - lastFeedbackProgress) > 0.04 {
                                 Haptics.scrubTick(feedback)
@@ -1724,17 +1768,15 @@ struct PlayerTimelineSection<Center: View>: View {
                             }
                         }
                         .onEnded { value in
-                            let f = min(1, max(0, value.location.x / max(geo.size.width, 1)))
+                            defer { isScrubbing = false; scrubRejected = false }
+                            guard isScrubbing, !scrubRejected, scrubTrackID == player.currentTrack?.id, player.duration > 0 else { return }
+                            let f = PlayerInteractionPolicy.draggedFraction(start: scrubStartFraction,
+                                translation: Double(value.translation.width), width: Double(geo.size.width))
                             let target = f * duration
                             pendingSeekProgress = target
                             player.seek(to: target)
-                            withAnimation(.smooth(duration: 0.18)) {
-                                isScrubbing = false
-                            }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                                if pendingSeekProgress == target {
-                                    pendingSeekProgress = nil
-                                }
+                                if pendingSeekProgress == target { pendingSeekProgress = nil }
                             }
                         }
                 )
@@ -1769,8 +1811,12 @@ struct PlayerTimelineSection<Center: View>: View {
                     .foregroundStyle(SN.inkMuted)
             }
         }
+        .onChange(of: scrubContact) { _, active in
+            if !active { isScrubbing = false; scrubRejected = false }
+        }
         .onChange(of: player.currentTrack?.id) { _, _ in
             isScrubbing = false
+            scrubRejected = scrubContact
             pendingSeekProgress = nil
         }
         .onChange(of: player.progress) { _, newProgress in
@@ -1946,6 +1992,9 @@ struct InvisibleVolumeView: UIViewRepresentable {
 struct FluidVolumeSlider: View {
     @State private var volumeManager = SystemVolumeManager.shared
     @State private var isDragging = false
+    @State private var volumeStartFraction = 0.0
+    @State private var volumeRejected = false
+    @GestureState private var volumeContact = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -1985,21 +2034,28 @@ struct FluidVolumeSlider: View {
                 .frame(maxHeight: .infinity, alignment: .center)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 0)
+                    DragGesture(minimumDistance: 10)
+                        .updating($volumeContact) { _, state, _ in state = true }
                         .onChanged { value in
+                            guard !volumeRejected else { return }
                             if !isDragging {
+                                guard PlayerInteractionPolicy.horizontalIntent(x: Double(value.translation.width), y: Double(value.translation.height)) else {
+                                    volumeRejected = true; return
+                                }
+                                volumeStartFraction = Double(volumeManager.volume)
                                 isDragging = true
                                 Haptics.tap(.light)
                             }
-                            let fraction = Float(max(0.0, min(1.0, value.location.x / max(width, 1))))
-                            volumeManager.setVolume(fraction)
+                            let fraction = PlayerInteractionPolicy.draggedFraction(start: volumeStartFraction,
+                                translation: Double(value.translation.width), width: Double(width))
+                            volumeManager.setVolume(Float(fraction))
                         }
                         .onEnded { value in
-                            let fraction = Float(max(0.0, min(1.0, value.location.x / max(width, 1))))
-                            volumeManager.setVolume(fraction)
-                            withAnimation(.smooth(duration: 0.18)) {
-                                isDragging = false
-                            }
+                            defer { isDragging = false; volumeRejected = false }
+                            guard isDragging, !volumeRejected else { return }
+                            let fraction = PlayerInteractionPolicy.draggedFraction(start: volumeStartFraction,
+                                translation: Double(value.translation.width), width: Double(width))
+                            volumeManager.setVolume(Float(fraction))
                         }
                 )
             }
@@ -2014,6 +2070,9 @@ struct FluidVolumeSlider: View {
         .frame(height: 44)
         .accessibilityElement(children: .combine)
         .onAppear { volumeManager.refreshFromSystem() }
+        .onChange(of: volumeContact) { _, active in
+            if !active { isDragging = false; volumeRejected = false }
+        }
         .accessibilityLabel("Громкость")
         .accessibilityValue("\(Int(volumeManager.volume * 100))%")
         .accessibilityAdjustableAction { direction in

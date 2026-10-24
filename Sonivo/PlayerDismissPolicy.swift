@@ -9,6 +9,6 @@ nonisolated enum PlayerDismissPolicy {
     static func shouldClose(x: Double, y: Double, predictedY: Double) -> Bool {
         guard canBegin(x: x, y: y, requiresScrollTop: false, isAtTop: true),
               predictedY.isFinite else { return false }
-        return y > 110 || predictedY > 240
+        return y >= 120 && y > abs(x) * 1.8
     }
 }
