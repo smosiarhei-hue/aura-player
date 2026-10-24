@@ -57,7 +57,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let frequencies: [Float] = [40, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000]
             for (index, band) in userEQ.bands.enumerated() {
                 band.frequency = min(frequencies[index], Float(format.sampleRate * 0.44))
-                band.bandwidth = 1
+                band.bandwidth = index == 1 ? 0.75 : 1
                 band.filterType = index == 0 ? .lowShelf : (index == frequencies.count - 1 ? .highShelf : .parametric)
                 band.gain = 0
                 band.bypass = false
@@ -68,6 +68,9 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
                 componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
             engine.attach(limiter)
+            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.012, 0)
+            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.060, 0)
+            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
             limiter.bypass = true
             engine.connect(userEQ, to: limiter, format: format)
             engine.connect(limiter, to: engine.outputNode, format: format)
@@ -166,7 +169,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             owner.userEQEnabled = enabled
             let change = abs(preamp - startPreamp)
             let duration = stateChanged ? max(350, min(2000, Int(350 + change / 24 * 1000)))
-                : max(40, min(2000, Int(change / 24 * 1000)))
+                : max(90, min(2000, Int(change / 24 * 1000)))
             let steps = max(8, duration / 10)
             let active = target.contains { abs($0) > 0.001 }
             owner.userEQ.bypass = false

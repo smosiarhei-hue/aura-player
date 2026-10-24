@@ -23,12 +23,34 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
         }
     } else {
         // One-octave parametric width matches the native local EQ.
-        double bandwidth = 1;
+        // 60 Hz sits only 0.585 octaves above the bass shelf. A narrower
+        // bell prevents the two controls from piling up a broad low-mid hump.
+        double bandwidth = band == 1 ? .75 : 1;
         double alpha = sn * sinh(0.34657359027997265 * bandwidth * w / fmax(sn, 1e-9));
         b0=1+alpha*A; b1=-2*c; b2=1-alpha*A;
         a0=1+alpha/A; a1=-2*c; a2=1-alpha/A;
     }
     return (SonivoEQCoefficients){b0/a0,b1/a0,b2/a0,a1/a0,a2/a0};
+}
+
+// Theoretical small-signal cascade response, before dynamic peak protection.
+// UI/control-thread only. Same coefficients as the audio renderer, no copied math.
+void SonivoEQResponse(const float *gains,size_t count,double sampleRate,float *output,size_t points) {
+    if(!output || !points) return;
+    double rate=isfinite(sampleRate) && sampleRate>=8000?sampleRate:48000;
+    SonivoEQCoefficients k[SONIVO_EQ_BANDS];
+    for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) k[b]=coefficients(b,cleanGain(gains && b<count?gains[b]:0,b),rate);
+    double top=fmin(20000,rate*.44);
+    for(size_t i=0;i<points;i++) {
+        double hz=20*pow(top/20,points>1?(double)i/(points-1):0);
+        double w=6.283185307179586*hz/rate,c=cos(w),s=sin(w),c2=cos(2*w),s2=sin(2*w),db=0;
+        for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
+            double nr=k[b].b0+k[b].b1*c+k[b].b2*c2,ni=-k[b].b1*s-k[b].b2*s2;
+            double dr=1+k[b].a1*c+k[b].a2*c2,di=-k[b].a1*s-k[b].a2*s2;
+            db+=10*log10(fmax(nr*nr+ni*ni,1e-30)/fmax(dr*dr+di*di,1e-30));
+        }
+        output[i]=(float)db;
+    }
 }
 
 // Unity preamp by product policy: do not turn down the whole song whenever a
@@ -68,8 +90,11 @@ static void consume(SonivoRealtimeEQ *eq,int initial) {
     // released preamp: that combination used to restore 18+ dB in milliseconds.
     if(wantsWet || initial) {
         for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
-            eq->target[b]=coefficients(b,(double)values[b]/1000,eq->sampleRate);
-            if(initial || eq->wet==0) eq->current[b]=eq->target[b];
+            eq->targetDB[b]=(double)values[b]/1000;
+            eq->target[b]=coefficients(b,eq->targetDB[b],eq->sampleRate);
+            if(initial || eq->wet==0) {
+                eq->gainDB[b]=eq->targetDB[b];eq->current[b]=eq->target[b];
+            }
         }
         eq->targetPreGain=wantsWet?pow(10,(double)preamp/20000):1;
         if(eq->wet==0) eq->preGain=eq->targetPreGain;
@@ -93,10 +118,13 @@ void SonivoEQPrepare(SonivoRealtimeEQ *eq,double rate) {
     eq->coefficientAlpha=1-exp(-16/(eq->sampleRate*.030));
     eq->sampleAlpha=1-exp(-1/(eq->sampleRate*.025));
     eq->headroomAttackAlpha=1-exp(-1/(eq->sampleRate*.001));
-    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.080));
+    // Hold across a complete 20 Hz cycle; no gain recovery between bass peaks.
+    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.200));
+    eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.050);eq->peakHold=0;
     memset(eq->z1,0,sizeof(eq->z1)); memset(eq->z2,0,sizeof(eq->z2));
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) eq->current[b]=eq->target[b]=identity();
     eq->wet=0;eq->preGain=1;eq->limiter=1;eq->rampCounter=0;
+    memset(eq->gainDB,0,sizeof(eq->gainDB));memset(eq->targetDB,0,sizeof(eq->targetDB));
     consume(eq,1);eq->initialized=1;
 }
 static double filter(SonivoRealtimeEQ *eq,unsigned ch,unsigned b,double x) {
@@ -122,12 +150,16 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
     for(size_t f=0;f<frames;f++) {
         if((eq->rampCounter++ & 15)==0) {
             for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
-                double a=eq->coefficientAlpha;
-                eq->current[b].b0+=(eq->target[b].b0-eq->current[b].b0)*a;
-                eq->current[b].b1+=(eq->target[b].b1-eq->current[b].b1)*a;
-                eq->current[b].b2+=(eq->target[b].b2-eq->current[b].b2)*a;
-                eq->current[b].a1+=(eq->target[b].a1-eq->current[b].a1)*a;
-                eq->current[b].a2+=(eq->target[b].a2-eq->current[b].a2)*a;
+                // Smooth physical gain, not arbitrary denominator coefficients.
+                // Each intermediate filter is a valid RBJ design; recompute only
+                // while moving (16-sample control cadence, no allocations/locks).
+                double delta=eq->targetDB[b]-eq->gainDB[b];
+                if(fabs(delta)>1e-5) {
+                    eq->gainDB[b]+=delta*eq->coefficientAlpha;
+                    eq->current[b]=coefficients(b,eq->gainDB[b],eq->sampleRate);
+                } else if(eq->gainDB[b]!=eq->targetDB[b]) {
+                    eq->gainDB[b]=eq->targetDB[b];eq->current[b]=eq->target[b];
+                }
             }
         }
         if(eq->wetPosition<eq->wetFrames) {
@@ -139,20 +171,32 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
         // The linked peak guard catches any overshoot during this transition.
         double headroomAlpha=targetGain<eq->preGain?eq->headroomAttackAlpha:eq->sampleAlpha;
         eq->preGain+=(targetGain-eq->preGain)*headroomAlpha;
-        double result[SONIVO_EQ_CHANNELS];
+        double result[SONIVO_EQ_CHANNELS], original[SONIVO_EQ_CHANNELS];
         for(unsigned ch=0;ch<count;ch++) {
             double dry=channels[ch][f*strides[ch]]; if(!isfinite(dry)) dry=0;
             double wet=dry;
             for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) wet=filter(eq,ch,b,wet);
-            result[ch]=dry*(1-eq->wet)+wet*eq->preGain*eq->wet;
+            original[ch]=dry;
+            result[ch]=wet*eq->preGain;
         }
         // Zero-lookahead sample-peak safety, NOT a true-peak/loudness processor.
         // One envelope for all channels preserves stereo/multichannel balance.
         double peak=0;
         for(unsigned ch=0;ch<count;ch++) peak=fmax(peak,fabs(result[ch]));
         double required=peak>.98?.98/peak:1;
-        if(required<eq->limiter) eq->limiter=required;
-        else eq->limiter+=(required-eq->limiter)*eq->releaseAlpha;
-        for(unsigned ch=0;ch<count;ch++) channels[ch][f*strides[ch]]=(float)(result[ch]*eq->limiter);
+        if(required<=eq->limiter) {
+            eq->limiter=required;eq->peakHold=eq->peakHoldFrames;
+        } else if(eq->peakHold) {
+            eq->peakHold--;
+        } else {
+            eq->limiter+=(required-eq->limiter)*eq->releaseAlpha;
+        }
+        // Protect the wet path BEFORE mixing. Disabling EQ releases into the
+        // unchanged dry signal, not a dry signal held down by the old limiter.
+        // No delay line, no new audio/lyrics synchronization offset.
+        for(unsigned ch=0;ch<count;ch++) {
+            double protectedWet=result[ch]*eq->limiter;
+            channels[ch][f*strides[ch]]=(float)(original[ch]*(1-eq->wet)+protectedWet*eq->wet);
+        }
     }
 }

@@ -248,6 +248,46 @@ void destroy(void *p) { free(p); }
         self.assertEqual(self.lib.SonivoEQPreamp(None,0,48000),0)
         self.assertEqual(self.preamp([float('nan')]*N),0)
 
+    def test_held_peak_envelope_reduces_sustained_bass_harmonics(self):
+        rate=48000;hz=40
+        output=self.run_audio([.8*math.sin(2*math.pi*hz*n/rate) for n in range(rate*2)],[12]+[0]*9)
+        tail=output[-24000:]
+        def amplitude(harmonic):
+            w=2*math.pi*hz*harmonic/rate
+            a=sum(x*math.cos(w*n) for n,x in enumerate(tail))
+            b=sum(x*math.sin(w*n) for n,x in enumerate(tail))
+            return 2*math.hypot(a,b)/len(tail)
+        thd=math.sqrt(sum(amplitude(h)**2 for h in range(2,11)))/amplitude(1)
+        self.assertLess(thd,.0015, "Limiter modulates sustained 40 Hz bass")
+        self.assertLessEqual(max(map(abs,output)),.980001)
+
+    def test_response_preview_uses_actual_cascade_coefficients(self):
+        response=self.lib.SonivoEQResponse
+        response.argtypes=[C.POINTER(C.c_float),C.c_size_t,C.c_double,C.POINTER(C.c_float),C.c_size_t]
+        values=(C.c_float*121)();gains=[0]*N;gains[5]=6;gains[1]=4
+        response(array(gains),N,48000,values,len(values))
+        for index in [10,35,68,95,110]:
+            hz=20*1000**(index/120)
+            self.assertAlmostEqual(values[index],self.response(gains,hz),delta=.08)
+        response(array([0]*N),N,48000,values,len(values))
+        self.assertTrue(all(abs(x)<1e-6 for x in values))
+
+    def test_disabling_an_actually_limited_signal_reaches_dry_without_boundary_jump(self):
+        gains=[12]+[0]*9;rate=48000
+        ptr=self.lib.create(rate,array(gains),1)
+        try:
+            warm=(C.c_float*48000)(*[.8*math.sin(2*math.pi*40*n/rate) for n in range(48000)])
+            self.lib.process(ptr,warm,1,48000,1)
+            self.lib.update(ptr,array(gains),0,rate)
+            previous=warm[-1];max_step=0
+            for block in range(100):
+                raw=[.8*math.sin(2*math.pi*40*(48000+block*480+n)/rate) for n in range(480)]
+                audio=(C.c_float*480)(*raw);self.lib.process(ptr,audio,1,480,1)
+                for sample in audio: max_step=max(max_step,abs(sample-previous));previous=sample
+            self.assertLess(max_step,.02)
+            self.assertEqual(list(audio),list((C.c_float*480)(*raw)))
+        finally:self.lib.destroy(ptr)
+
     def test_stream_and_native_integration_safety(self):
         core=(ROOT/'Sonivo/playercore.swift').read_text()
         tap=(ROOT/'Sonivo/streambeat.swift').read_text()

@@ -27,7 +27,7 @@ import CoreText
         var nextProcess = SonivoStartupGate()
         precondition(nextProcess.claim(), "New cold launch did not show intro")
         precondition(!nextProcess.claim(), "Same-process resume replayed intro")
-        precondition(SonivoBrandLaunchMotion.duration == 3.5)
+        precondition(SonivoBrandLaunchMotion.duration == 1.5)
         precondition(SonivoBrandLaunchMotion.hapticOnsets.count == 3)
         for strength in SonivoBrandLaunchMotion.hapticStrengths { precondition(strength > 0 && strength <= 0.70) }
         for t in stride(from: 0.0, through: SonivoBrandLaunchMotion.duration, by: 1.0 / 120.0) {

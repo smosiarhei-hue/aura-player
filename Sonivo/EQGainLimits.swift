@@ -14,8 +14,8 @@ nonisolated enum EQGainLimits {
         return max(range.lowerBound,min(range.upperBound,gain))
     }
     static func bandwidth(at band: Int) -> Float {
-        // Octave-style spacing: local AU and streamed PCM use the same width.
-        return 1
+        // Match streamed PCM and native AU; reduce 40/60 Hz overlap.
+        return band == 1 ? 0.75 : 1
     }
     static func graphX(at band: Int, width: Double) -> Double {
         14 + Double(band) * max(1, width - 28) / Double(frequencies.count - 1)

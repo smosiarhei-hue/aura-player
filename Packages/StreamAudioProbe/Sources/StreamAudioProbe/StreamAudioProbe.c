@@ -171,6 +171,9 @@ int SonivoStreamProbeEQReady(MTAudioProcessingTapRef tap) {
     Probe *p=MTAudioProcessingTapGetStorage(tap);
     return p?atomic_load_explicit(&p->eqReady,memory_order_acquire):-1;
 }
+void SonivoStreamEQResponse(const float *gains,size_t count,double sampleRate,float *output,size_t points) {
+    SonivoEQResponse(gains,count,sampleRate,output,points);
+}
 float SonivoStreamEQPreamp(const float *gains,size_t count,double sampleRate) {
     return SonivoEQPreamp(gains,count,sampleRate);
 }

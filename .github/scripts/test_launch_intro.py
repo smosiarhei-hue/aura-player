@@ -43,7 +43,7 @@ class LaunchIntroTests(unittest.TestCase):
         for expected in ['SonivoLaunchSignatureShape()', 'SonivoLaunchNameShape()', '.trim(from: 0',
                          'SonivoBrandLaunchMotion.bar(time, index: index)', 'SN.accent']:
             self.assertIn(expected,scene)
-        self.assertIn('static let duration = 3.5',motion)
+        self.assertIn('static let duration = 1.5',motion)
         self.assertIn('static let reducedDuration = 0.35',motion)
         self.assertIn('CHHapticPattern(events: events, parameters: [])',host)
         self.assertNotIn('.hapticContinuous',host)

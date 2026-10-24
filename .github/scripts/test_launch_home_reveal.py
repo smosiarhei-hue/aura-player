@@ -9,7 +9,7 @@ class LaunchHomeRevealTests(unittest.TestCase):
         host = (ROOT / "Sonivo/SonivoLaunchIntro.swift").read_text()
         motion = (ROOT / "Sonivo/SonivoBrandLaunchMotion.swift").read_text()
         self.assertEqual(host.count("RootView(onExternalPlaybackOpen: finish)"), 1)
-        self.assertIn("static let duration = 3.5", motion)
+        self.assertIn("static let duration = 1.5", motion)
         self.assertIn("static let fadeStart = 3.78 / playbackRate", motion)
         self.assertIn("exitTransitionDuration = 0.38 / playbackRate", motion)
         self.assertIn("epoch + SonivoBrandLaunchMotion.fadeStart - CACurrentMediaTime()", host)

@@ -192,7 +192,7 @@ enum EQPresets {
     static let dance = EQPreset(name: "Танцевальная музыка", gains: [5, 4, 2, 0, -1, 0, 2, 3, 3, 2])
     // Taste profiles, not device calibration. Strong sub-bass without a 250 Hz hump.
     static let airPodsPro2Bass = EQPreset(name: "AirPods Pro 2", gains: [6, 4.5, 1.5, -1, -0.5, 0, 0, 0, 0, 0])
-    static let subBassPower = EQPreset(name: "Мощный саббас", gains: [14, 10, 5, -2, -1, 0, 0, 0, 0, 0])
+    static let subBassPower = EQPreset(name: "Мощный саббас", gains: [9, 5, 2, -1, -0.5, 0, 0, 0, 0, 0])
     static let bassBoost = EQPreset(name: "Глубокий бас", gains: [8, 6, 2, -2, -1, 0, 0, 0, 0, 0])
     static let bassTrebleBoost = EQPreset(name: "Усиление НЧ и ВЧ", gains: [6, 4.5, 1.5, -1, -1, 0, 1, 2, 3, 3])
 

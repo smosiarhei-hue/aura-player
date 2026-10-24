@@ -44,9 +44,15 @@ import AudioToolbox
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
         let frequencies: [Float] = [40,60,120,250,500,1000,2000,4000,8000,15000]
         for (i, band) in eq.bands.enumerated() {
-            band.frequency=frequencies[i]; band.bandwidth=1; band.gain=gains[i]; band.bypass=false
+            band.frequency=frequencies[i]; band.bandwidth = i == 1 ? 0.75 : 1; band.gain=gains[i]; band.bypass=false
             band.filterType = i == 0 ? .lowShelf : (i == 9 ? .highShelf : .parametric)
         }
+        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.012, 0)
+        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.060, 0)
+        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
+        var decay: AudioUnitParameterValue = 0
+        precondition(AudioUnitGetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, &decay) == noErr)
+        precondition(abs(decay - 0.060) < 0.0001)
         eq.globalGain=EQHeadroom.preamp(gains:gains,sampleRate:48000)
         eq.bypass = !enabled
         limiter.bypass = !enabled || !gains.contains { $0 != 0 }
@@ -85,6 +91,12 @@ import AudioToolbox
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
         let db=20*log10(rms/(0.01/sqrt(2)))
         precondition(abs(db - Double(6+EQHeadroom.preamp(gains:curve,sampleRate:48000))) < 0.6, "Native center gain incorrect: \(db)")
+        for (band,hz) in [(1,60.0),(2,120.0),(7,4000.0),(8,8000.0)] {
+            var curve=flat;curve[band]=6
+            let rendered=try render(gains:curve,hz:hz,amplitude:0.01)
+            let rms=sqrt(rendered.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
+            precondition(abs(20*log10(rms/(0.01/sqrt(2)))-6)<0.6, "Native band response mismatch")
+        }
         for rate in [8000.0,32000,44100,48000,96000] {
             let pre=EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)
             precondition(pre.isFinite && pre == 0)

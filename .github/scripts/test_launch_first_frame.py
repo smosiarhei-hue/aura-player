@@ -24,11 +24,15 @@ class LaunchFirstFrameTests(unittest.TestCase):
         self.assertAlmostEqual(float(c['blue']),18/255)
     def test_speed_up_shares_visual_and_haptic_clock(self):
         s=(R/'Sonivo/SonivoBrandLaunchMotion.swift').read_text()
-        self.assertIn('static let duration = 3.5',s)
-        self.assertIn('static let playbackRate = 1.2',s)
+        self.assertIn('static let duration = 1.5',s)
+        self.assertIn('static let playbackRate = 2.8',s)
         self.assertIn('[0.82, 1.46, 1.72].map { $0 / playbackRate }',s)
         self.assertEqual(s.count('progress(t * playbackRate,'),5)
         self.assertIn('let t = time * playbackRate',s)
         self.assertIn('static let reducedDuration = 0.35',s)
         self.assertIn('[0.50, 0.70, 0.55]',s)
+        # All visual stages and tactile cues complete before the shorter handoff.
+        self.assertLess(2.17/2.8,3.78/2.8)
+        self.assertLessEqual((3.78+0.38)/2.8,1.5)
+
 if __name__=='__main__':unittest.main()

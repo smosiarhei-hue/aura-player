@@ -13,6 +13,8 @@ typedef struct {
     unsigned appliedSequence;
     double sampleRate, wet, preGain, targetPreGain, limiter;
     double coefficientAlpha, sampleAlpha, headroomAttackAlpha, releaseAlpha;
+    double gainDB[SONIVO_EQ_BANDS], targetDB[SONIVO_EQ_BANDS];
+    size_t peakHold, peakHoldFrames;
     double wetStart, wetTarget;
     size_t wetPosition, wetFrames;
     SonivoEQCoefficients current[SONIVO_EQ_BANDS], target[SONIVO_EQ_BANDS];
@@ -25,5 +27,6 @@ void SonivoEQPrepare(SonivoRealtimeEQ *eq, double sampleRate);
 // One control-thread writer, atomic mailbox; the render thread never waits for it.
 void SonivoEQSet(SonivoRealtimeEQ *eq, const float *gains, size_t count, int enabled, float preamp);
 void SonivoEQProcess(SonivoRealtimeEQ *eq, float **channels, const size_t *strides, unsigned count, size_t frames);
+void SonivoEQResponse(const float *gains, size_t count, double sampleRate, float *output, size_t points);
 float SonivoEQPreamp(const float *gains, size_t count, double sampleRate);
 #endif

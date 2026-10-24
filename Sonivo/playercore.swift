@@ -678,6 +678,10 @@ final class PlayerCore {
         vocalUnit.bands[0].bypass = true
         engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
         engine.attach(outputLimiter)
+        // Explicit native envelope within Apple's documented parameter ranges.
+        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.012, 0)
+        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.060, 0)
+        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
         // Flat playback bypasses protection; non-flat EQ enables the native peak limiter.
         outputLimiter.bypass = true
         engine.connect(vocalUnit, to: outputLimiter, format: nil)
@@ -913,7 +917,7 @@ final class PlayerCore {
         // Large headroom recovery must not restore 18+ dB in the old 40 ms ramp.
         let levelChange = zip(startingPreamp, headrooms).map { abs($1 - $0) }.max() ?? 0
         let duration = stateChanged ? max(350, min(2000, Int(350 + levelChange / 24 * 1000)))
-            : max(40, min(2000, Int(levelChange / 24 * 1000)))
+            : max(90, min(2000, Int(levelChange / 24 * 1000)))
         let steps = max(8, duration / 10)
         // New slider/toggle commands cancel the old ramp and resume at current values.
         nativeEQRamp = Task { @MainActor [weak self] in

@@ -25,5 +25,8 @@ void SonivoStreamProbeSetEQ(MTAudioProcessingTapRef _Nonnull tap, const float * 
                            size_t count, int enabled);
 // 0 preparing, 1 Float32 PCM ready, -1 unsupported. Original audio is always retained.
 int SonivoStreamProbeEQReady(MTAudioProcessingTapRef _Nonnull tap);
+// Theoretical log-spaced 20 Hz–min(20 kHz, .44*rate) response, before limiting.
+void SonivoStreamEQResponse(const float * _Nonnull gains, size_t count, double sampleRate,
+                            float * _Nonnull output, size_t points);
 float SonivoStreamEQPreamp(const float * _Nonnull gains, size_t count, double sampleRate);
 #endif

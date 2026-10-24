@@ -389,6 +389,8 @@ struct PlayerEQSheetView: View {
     @State private var presetError: String?
     @State private var deletingPreset: SavedEQPreset?
     @State private var selectedBand = 0
+    @State private var isAdjustingEQ = false
+    @Environment(\.accessibilityReduceMotion) private var reduceEQMotion
 
     private let bandNames = EQFrequencyRegion.bandTitles
     private let frequencyLabels = EQGainLimits.frequencies.map { "\(Int($0)) Гц" }
@@ -505,7 +507,7 @@ struct PlayerEQSheetView: View {
             .tint(SN.ink)
             Text(activePreset?.name == EQPresets.airPodsPro2Bass.name
                  ? "AirPods Pro 2: мягкий глубокий низ без лишнего гула. Это профиль приложения, не калибровка Apple."
-                 : "Профили меняют баланс частот. Запас по уровню защищает усиленные полосы; громкость iPhone не меняется.")
+                 : "Профили меняют баланс частот, не системную громкость. Начни с небольшого усиления: так сохраняется больше динамики.")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -544,13 +546,18 @@ struct PlayerEQSheetView: View {
             HStack {
                 Text("Точная настройка").font(.headline)
                 Spacer()
-                Text("НЧ до +18 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
+                Text("40 Гц–15 кГц").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
             Text("10 полос · низкие, средние и высокие частоты")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
-            Text("EQ не снижает общий уровень заранее. Защита приглушает только перегружающиеся пики; при сильном усилении звук может сжиматься. Переключение — плавное.")
+            Text("Без постоянного снижения громкости. Плавные фильтры и защита пиков; сильное усиление может уменьшать динамику.")
                 .font(.caption).foregroundStyle(SN.inkMuted)
+            if player.eqGains.contains(where: { $0 >= 8 }) {
+                Label("Большое усиление может сжимать динамику. Для более чистого звука попробуй +3…+6 дБ.", systemImage: "waveform.path.badge.minus")
+                    .font(.caption).foregroundStyle(SN.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Picker("Диапазон частот", selection: Binding(
                 get: { EQFrequencyRegion.containing(selectedBand) },
                 set: { selectedBand = $0.indices.lowerBound }
@@ -572,7 +579,7 @@ struct PlayerEQSheetView: View {
                     }
                 } else {
                     VStack(spacing: 12) {
-                        CompactEQCurve(gains: player.eqGains, selectedBand: $selectedBand,
+                        CompactEQCurve(gains: player.eqGains, selectedBand: $selectedBand, isInteracting: isAdjustingEQ,
                                        onChange: setBandGain, onEnd: { player.saveEQ() })
                             .frame(height: 240)
                             .accessibilityHidden(true)
@@ -592,6 +599,21 @@ struct PlayerEQSheetView: View {
                             }
                         }
                         bandRow(selectedBand)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Суммарная АЧХ · модель PCM 48 кГц")
+                                .font(.caption).foregroundStyle(SN.inkMuted)
+                            EQFrequencyResponseShape(vector: EQCurveVector(player.eqGains))
+                                .stroke(SN.amber.opacity(0.8), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                                .background(alignment: .center) { Rectangle().fill(SN.ink.opacity(0.12)).frame(height: 1) }
+                                .frame(height: 88)
+                                .animation(reduceEQMotion || isAdjustingEQ ? nil : .smooth(duration: 0.24), value: player.eqGains)
+                                .accessibilityHidden(true)
+                            HStack { Text("20 Гц"); Spacer(); Text("±36 дБ"); Spacer(); Text("20 кГц") }
+                                .font(.caption2.monospacedDigit()).foregroundStyle(SN.inkMuted)
+                            Text("Сумма фильтров до защиты пиков, не измерение наушников.")
+                                .font(.caption2).foregroundStyle(SN.inkMuted)
+                        }
+                        .padding(.horizontal, 16).padding(.bottom, 12)
                     }
                     .padding(12)
                 }
@@ -681,6 +703,7 @@ struct PlayerEQSheetView: View {
                     player.eqGains = curve
                 }
             ), in: Double(EQGainLimits.range(at:index).lowerBound)...Double(EQGainLimits.range(at:index).upperBound), step: 0.5, onEditingChanged: { editing in
+                isAdjustingEQ = editing
                 if !editing { player.saveEQ() }
             })
             .tint(SN.amber)
@@ -781,6 +804,8 @@ struct PlayerEQSheetView: View {
 private struct CompactEQCurve: View {
     let gains: [Float]
     @Binding var selectedBand: Int
+    var isInteracting: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onChange: (Int, Float) -> Void
     let onEnd: () -> Void
     @State private var draggingBand: Int?
@@ -789,19 +814,6 @@ private struct CompactEQCurve: View {
         let gain = EQGainLimits.clean(gains.indices.contains(index) ? gains[index] : 0, at: index)
         return CGPoint(x: EQGainLimits.graphX(at: index, width: Double(size.width)),
                        y: EQGainLimits.graphY(gain: gain, height: Double(size.height)))
-    }
-    private func curve(size: CGSize) -> Path {
-        let points = EQGainLimits.frequencies.indices.map { point($0, size: size) }
-        var path = Path()
-        guard let first = points.first else { return path }
-        path.move(to: first)
-        // Horizontal tangents stay within the two adjacent values; no overshoot above gain limits.
-        for index in 1..<points.count {
-            let a = points[index - 1], b = points[index]
-            let midX = (a.x + b.x) / 2
-            path.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
-        }
-        return path
     }
     var body: some View {
         GeometryReader { geometry in
@@ -813,15 +825,18 @@ private struct CompactEQCurve: View {
                     path.addLine(to: CGPoint(x: size.width - 14, y: zeroY))
                 }
                 .stroke(SN.ink.opacity(0.15), lineWidth: 1)
-                curve(size: size)
+                EQControlCurveShape(vector: EQCurveVector(gains))
                     .stroke(LinearGradient(colors: [SN.amber, SN.amber.opacity(0.7), SN.amber],
                                            startPoint: .leading, endPoint: .trailing),
                             style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                 ForEach(EQGainLimits.frequencies.indices, id: \.self) { index in
                     Circle().fill(SN.card)
                         .overlay(Circle().stroke(SN.amber, lineWidth: index == selectedBand ? 3 : 2))
                         .frame(width: index == selectedBand ? 18 : 12, height: index == selectedBand ? 18 : 12)
                         .position(point(index, size: size))
+                        .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
+                        .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: selectedBand)
                 }
             }
             .contentShape(Rectangle())

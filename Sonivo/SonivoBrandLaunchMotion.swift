@@ -3,8 +3,8 @@ import Foundation
 /// New S + sound reveal. One finite clock for vector motion and medium tactile cues.
 nonisolated enum SonivoBrandLaunchMotion {
     // Uniform speed-up keeps every visual/haptic cue phase-locked.
-    static let playbackRate = 1.2
-    static let duration = 3.5
+    static let playbackRate = 2.8
+    static let duration = 1.5
     static let fadeStart = 3.78 / playbackRate
     static let exitTransitionDuration = 0.38 / playbackRate
     static let reducedPreviewTime = 2.4 / playbackRate
