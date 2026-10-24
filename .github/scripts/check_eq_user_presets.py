@@ -73,7 +73,10 @@ __PERSISTED_EQ_BODY__
         precondition(secondLoad.presets == migrated.presets)
         precondition(defaults.data(forKey:"eq.userPresets.compact10.backup") != nil)
         precondition(EQGainLimits.frequencies == [40,60,120,250,500,1000,2000,4000,8000,15000])
-        precondition(EQGainLimits.bandwidth(at:1) == 1)
+        precondition(EQGainLimits.bandwidth(at:1) == 0.75)
+        for band in EQGainLimits.frequencies.indices where band != 1 {
+            precondition(EQGainLimits.bandwidth(at:band) == 1)
+        }
         // Metadata distinguishes a new 10-value curve from the historical 10-value layout.
         let canonical = try secondLoad.save(name:"250 Гц", gains:[0,0,0,18,0,0,0,0,0,0])
         precondition(canonical.frequencies == EQGainLimits.frequencies)

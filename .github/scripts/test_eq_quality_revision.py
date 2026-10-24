@@ -19,6 +19,7 @@ class EQQualityRevisionTests(unittest.TestCase):
                 self.assertIn(value,text)
         self.assertIn('band == 1 ? 0.75 : 1',(R/'Sonivo/EQGainLimits.swift').read_text())
         self.assertIn('index == 1 ? 0.75 : 1',dual)
+        self.assertIn('EQGainLimits.bandwidth(at:1) == 0.75',(R/'.github/scripts/check_eq_user_presets.py').read_text())
     def test_geometry_animates_without_animating_the_audio_controls(self):
         shapes=(R/'Sonivo/EQResponseShapes.swift').read_text()
         ui=(R/'Sonivo/playerchrome.swift').read_text()
