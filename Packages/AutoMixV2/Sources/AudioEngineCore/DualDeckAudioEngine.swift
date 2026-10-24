@@ -35,7 +35,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let engine = AVAudioEngine()
             let a = DeckSlot(deck: .a, capacity: preloadPolicy.initialChunksPerDeck)
             let b = DeckSlot(deck: .b, capacity: preloadPolicy.initialChunksPerDeck)
-            let userEQ = AVAudioUnitEQ(numberOfBands: 10)
+            let userEQ = AVAudioUnitEQ(numberOfBands: 6)
             for slot in [a, b] {
                 engine.attach(slot.player)
                 engine.attach(slot.timePitch)
@@ -54,10 +54,10 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 slot.resetFX()
             }
             engine.attach(userEQ)
-            let frequencies: [Float] = [40, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000]
+            let frequencies: [Float] = [60, 150, 400, 1000, 2400, 15000]
             for (index, band) in userEQ.bands.enumerated() {
                 band.frequency = min(frequencies[index], Float(format.sampleRate * 0.44))
-                band.bandwidth = index == 1 ? 0.75 : 1
+                band.bandwidth = 1
                 band.filterType = index == 0 ? .lowShelf : (index == frequencies.count - 1 ? .highShelf : .parametric)
                 band.gain = 0
                 band.bypass = false
@@ -158,7 +158,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         await inspect { owner in
             let target = owner.userEQ.bands.indices.map { index -> Float in
                 guard enabled, index < gains.count, gains[index].isFinite else { return 0 }
-                return max(-12, min(index < 4 ? 18 : 12, gains[index]))
+                return max(-15, min(15, gains[index]))
             }
             owner.eqGeneration &+= 1
             let generation = owner.eqGeneration

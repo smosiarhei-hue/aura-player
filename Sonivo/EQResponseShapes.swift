@@ -1,13 +1,13 @@
 import SwiftUI
 import StreamAudioProbe
 
-/// Fixed-size vector: SwiftUI interpolates all ten controls with one render clock.
+/// Fixed-size vector: SwiftUI interpolates all six controls with one render clock.
 /// Rendered geometry is independent of the control/audio state (no DSP commands per frame).
 nonisolated struct EQCurveVector: VectorArithmetic {
     var values: [Double]
     init(_ gains: [Float]) { values = EQGainLimits.normalized(gains).map(Double.init) }
     private init(values: [Double]) { self.values = values }
-    static var zero: Self { Self(values: Array(repeating: 0, count: 10)) }
+    static var zero: Self { Self(values: Array(repeating: 0, count: EQGainLimits.frequencies.count)) }
     static func + (lhs: Self, rhs: Self) -> Self { Self(values: zip(lhs.values, rhs.values).map { $0 + $1 }) }
     static func - (lhs: Self, rhs: Self) -> Self { Self(values: zip(lhs.values, rhs.values).map { $0 - $1 }) }
     mutating func scale(by rhs: Double) { values = values.map { $0 * rhs } }

@@ -216,6 +216,14 @@ enum Haptics {
         UIImpactFeedbackGenerator(style: style).impactOccurred()
     }
 
+    private static let eqGenerator = UIImpactFeedbackGenerator(style: .rigid)
+    /// Discrete, rate-limited manual EQ feedback, not the music vibration engine.
+    static func eqAdjustment(intensity: Float) {
+        guard SettingsStore.shared.hapticsEnabled, intensity.isFinite else { return }
+        eqGenerator.prepare()
+        eqGenerator.impactOccurred(intensity: CGFloat(max(0, min(1, intensity))))
+    }
+
     static func success() {
         guard SettingsStore.shared.hapticsEnabled else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.success)

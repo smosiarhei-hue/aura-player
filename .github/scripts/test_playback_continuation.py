@@ -19,8 +19,8 @@ class PlaybackContinuationTests(unittest.TestCase):
         self.assertIn('EQGainLimits.range(at:index)',ui)
         self.assertIn('EQPresets.subBassPower',ui)
         limits=(ROOT/'Sonivo/EQGainLimits.swift').read_text()
-        self.assertIn('frequencies[band] <= 250 ? maximum : 12',limits)
-        self.assertIn('maximum: Float = 18',limits)
+        self.assertIn('-maximum...maximum',limits)
+        self.assertIn('maximum: Float = 15',limits)
     @unittest.skipUnless(sys.platform=='darwin','Swift Foundation concurrency executable runs on macOS CI')
     def test_real_loader_singleflight_retry_and_cancel(self):
         main=r'''

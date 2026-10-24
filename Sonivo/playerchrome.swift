@@ -390,6 +390,7 @@ struct PlayerEQSheetView: View {
     @State private var deletingPreset: SavedEQPreset?
     @State private var selectedBand = 0
     @State private var isAdjustingEQ = false
+    @State private var adjustmentFeedback = EQAdjustmentFeedback()
     @Environment(\.accessibilityReduceMotion) private var reduceEQMotion
 
     private let bandNames = EQFrequencyRegion.bandTitles
@@ -442,7 +443,7 @@ struct PlayerEQSheetView: View {
                 } catch { presetError = error.localizedDescription }
             }
         } message: {
-            Text("Сохраняются значения всех десяти полос. Системная громкость не меняется.")
+            Text("Сохраняются значения всех шести полос. Системная громкость не меняется.")
         }
         .alert("Не удалось сохранить", isPresented: Binding(
             get: { presetError != nil }, set: { if !$0 { presetError = nil } }
@@ -546,9 +547,9 @@ struct PlayerEQSheetView: View {
             HStack {
                 Text("Точная настройка").font(.headline)
                 Spacer()
-                Text("40 Гц–15 кГц").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
+                Text("±15 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
-            Text("10 полос · низкие, средние и высокие частоты")
+            Text("6 полос · низкие, средние и высокие частоты")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
             Text("Без постоянного снижения громкости. Плавные фильтры и защита пиков; сильное усиление может уменьшать динамику.")
@@ -580,16 +581,16 @@ struct PlayerEQSheetView: View {
                 } else {
                     VStack(spacing: 12) {
                         CompactEQCurve(gains: player.eqGains, selectedBand: $selectedBand, isInteracting: isAdjustingEQ,
-                                       onChange: setBandGain, onEnd: { player.saveEQ() })
+                                       onChange: { setBandGain($0, $1) }, onReset: { setBandGain($0, 0, feedback: false) }, onEnd: { player.saveEQ() })
                             .frame(height: 240)
                             .accessibilityHidden(true)
                         Text("Двойной тап по точке — 0 дБ")
                             .font(.caption).foregroundStyle(SN.inkMuted)
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5), spacing: 4) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: EQGainLimits.frequencies.count), spacing: 4) {
                             ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
                                 Button { selectedBand = index } label: {
-                                    Text(compactFrequency(index))
-                                        .font(.caption.weight(.semibold)).monospacedDigit()
+                                    Text(compactFrequency(index) + (PlayerCore.bandFrequencies[index] >= 1000 ? "Гц" : " Гц"))
+                                        .font(.caption2.weight(.semibold)).monospacedDigit()
                                         .frame(maxWidth: .infinity, minHeight: 44)
                                         .background(selectedBand == index ? SN.amber.opacity(0.16) : Color.clear,
                                                     in: RoundedRectangle(cornerRadius: 12))
@@ -633,14 +634,20 @@ struct PlayerEQSheetView: View {
 
     private func compactFrequency(_ index: Int) -> String {
         let frequency = PlayerCore.bandFrequencies[index]
-        return frequency >= 1000 ? "\(Int(frequency / 1000))к" : "\(Int(frequency))"
+        if frequency < 1000 { return "\(Int(frequency))" }
+        return frequency.truncatingRemainder(dividingBy: 1000) == 0
+            ? "\(Int(frequency / 1000))к" : String(format: "%.1fк", frequency / 1000).replacingOccurrences(of: ".", with: ",")
     }
 
-    private func setBandGain(_ index: Int, _ gain: Float) {
+    private func setBandGain(_ index: Int, _ gain: Float, feedback: Bool = true) {
         guard PlayerCore.bandFrequencies.indices.contains(index) else { return }
         var curve = PlayerCore.normalized(player.eqGains)
+        let oldGain = curve[index]
         curve[index] = EQGainLimits.clean((gain * 2).rounded() / 2, at: index)
         player.eqGains = curve
+        if feedback, let strength = adjustmentFeedback.intensity(from: oldGain, to: curve[index], at: ProcessInfo.processInfo.systemUptime) {
+            Haptics.eqAdjustment(intensity: strength)
+        }
     }
 
     private var savedPresetsSection: some View {
@@ -700,9 +707,7 @@ struct PlayerEQSheetView: View {
             Slider(value: Binding(
                 get: { Double(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0) },
                 set: { value in
-                    var curve = PlayerCore.normalized(player.eqGains)
-                    curve[index] = Float(value)
-                    player.eqGains = curve
+                    setBandGain(index, Float(value))
                 }
             ), in: Double(EQGainLimits.range(at:index).lowerBound)...Double(EQGainLimits.range(at:index).upperBound), step: 0.5, onEditingChanged: { editing in
                 isAdjustingEQ = editing
@@ -713,7 +718,7 @@ struct PlayerEQSheetView: View {
             .accessibilityLabel("\(bandNames[index]), \(frequencyLabels[index])")
             .accessibilityValue(db(gain))
             HStack {
-                Text("−12")
+                Text("−15")
                 Spacer()
                 Button("0 дБ") {
                     var curve = PlayerCore.normalized(player.eqGains)
@@ -768,7 +773,7 @@ struct PlayerEQSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Бас начинается с посадки", systemImage: "earbuds")
                 .font(.subheadline.weight(.semibold))
-            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 40 Гц воздействует и на частоты ниже неё. Полосы 60, 120 и 250 Гц позволяют отдельно настроить глубину, удар и плотность. Точная нижняя граница не заявлена Apple.")
+            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 60 Гц воздействует и на частоты ниже неё. Полосы 150 и 400 Гц помогают настроить удар и плотность. Точная нижняя граница не заявлена Apple.")
             Text("15 кГц — номинальная верхняя полоса. Рабочая частота ограничена частотой дискретизации аудиовыхода; это не заявленный диапазон наушников.")
             Text("Постоянного ослабления общей громкости нет. Защита пиков работает при ненулевой кривой EQ и может кратковременно снижать уровень при перегрузке. Flat и выключенный EQ сохраняют исходный сигнал. EQ не исправляет искажения записи или наушников.")
         }
@@ -809,6 +814,7 @@ private struct CompactEQCurve: View {
     var isInteracting: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onChange: (Int, Float) -> Void
+    let onReset: (Int) -> Void
     let onEnd: () -> Void
     @State private var draggingBand: Int?
 
@@ -824,7 +830,7 @@ private struct CompactEQCurve: View {
     private func resetPoint(at location: CGPoint, size: CGSize) {
         guard let index = hitBand(location, size: size) else { return }
         selectedBand = index
-        onChange(index, 0)
+        onReset(index)
         onEnd()
         Haptics.tap(.light)
     }

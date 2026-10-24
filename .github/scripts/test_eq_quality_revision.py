@@ -17,9 +17,9 @@ class EQQualityRevisionTests(unittest.TestCase):
         for text in [core,dual]:
             for value in ['kLimiterParam_AttackTime','kLimiterParam_DecayTime','kLimiterParam_PreGain','0.012','0.060']:
                 self.assertIn(value,text)
-        self.assertIn('band == 1 ? 0.75 : 1',(R/'Sonivo/EQGainLimits.swift').read_text())
-        self.assertIn('index == 1 ? 0.75 : 1',dual)
-        self.assertIn('EQGainLimits.bandwidth(at:1) == 0.75',(R/'.github/scripts/check_eq_user_presets.py').read_text())
+        self.assertIn('return 1',(R/'Sonivo/EQGainLimits.swift').read_text())
+        self.assertIn('band.bandwidth = 1',dual)
+        self.assertIn('EQGainLimits.bandwidth(at:band) == 1',(R/'.github/scripts/check_eq_user_presets.py').read_text())
     def test_geometry_animates_without_animating_the_audio_controls(self):
         shapes=(R/'Sonivo/EQResponseShapes.swift').read_text()
         ui=(R/'Sonivo/playerchrome.swift').read_text()
@@ -36,7 +36,7 @@ class EQQualityRevisionTests(unittest.TestCase):
     def test_double_tap_resets_only_hit_node_and_does_not_conflict_with_drag(self):
         ui=(R/'Sonivo/playerchrome.swift').read_text().split('private struct CompactEQCurve:',1)[1]
         for expected in ['SpatialTapGesture(count: 2)', '.exclusively(before: DragGesture(minimumDistance: 3)',
-                         'guard let index = hitBand(location, size: size)', 'onChange(index, 0)', 'onEnd()']:
+                         'guard let index = hitBand(location, size: size)', 'onReset(index)', 'onEnd()']:
             self.assertIn(expected,ui)
         reset=ui.split('private func resetPoint(',1)[1].split('var body:',1)[0]
         self.assertNotIn('EQPresets.flat',reset)
@@ -44,3 +44,24 @@ class EQQualityRevisionTests(unittest.TestCase):
         fixture=(R/'.github/scripts/check_eq_user_presets.py').read_text()
         self.assertIn('graphHitBand(x:x,y:y',fixture)
         self.assertIn('graphHitBand(x:.nan',fixture)
+
+    def test_six_band_reference_and_symmetric_gain_range_have_real_filters(self):
+        limits=(R/'Sonivo/EQGainLimits.swift').read_text()
+        header=(R/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.h').read_text()
+        self.assertIn('[60,150,400,1000,2400,15000]',limits)
+        self.assertIn('static let maximum: Float = 15',limits)
+        self.assertIn('-maximum...maximum',limits)
+        self.assertIn('#define SONIVO_EQ_BANDS 6',header)
+        self.assertIn('eq.gains.reference6.backup',(R/'Sonivo/playercore.swift').read_text())
+        self.assertIn('eq.userPresets.reference6.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
+    def test_manual_haptics_are_shared_by_graph_and_slider_and_obey_settings(self):
+        ui=(R/'Sonivo/playerchrome.swift').read_text()
+        self.assertIn('setBandGain(index, Float(value))',ui)
+        self.assertIn('adjustmentFeedback.intensity(from: oldGain',ui)
+        theme=(R/'Sonivo/theme.swift').read_text().split('static func eqAdjustment(',1)[1].split('static func success()',1)[0]
+        self.assertIn('SettingsStore.shared.hapticsEnabled',theme)
+        self.assertIn('impactOccurred(intensity:',theme)
+        policy=(R/'Sonivo/EQAdjustmentFeedback.swift').read_text()
+        self.assertIn('time - lastPulse >= 0.060',policy)
+        self.assertIn('abs(gain) / EQGainLimits.maximum',policy)
+        self.assertNotIn('PlayerCore',policy)

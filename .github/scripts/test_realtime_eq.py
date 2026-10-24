@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
-FREQUENCIES=[40,60,120,250,500,1000,2000,4000,8000,15000]
+FREQUENCIES=[60,150,400,1000,2400,15000]
 N=len(FREQUENCIES)
 LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
 def expanded(gains):
@@ -83,17 +83,17 @@ void destroy(void *p) { free(p); }
         return self.lib.SonivoEQPreamp(array(gains),N,rate)
 
     def test_compact_centers_are_real_independently_adjustable_filters(self):
-        for hz in [60,120,250,500,1000,2000,4000,8000]:
+        for hz in FREQUENCIES[1:-1]:
             gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
             self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),6,delta=.08)
-        gains=[0]*N;gains[FREQUENCIES.index(120)]=6
+        gains=[0]*N;gains[FREQUENCIES.index(150)]=6
         self.assertLess(self.response(gains,30),1)
-        self.assertLess(self.response(gains,500),1)
+        self.assertLess(self.response(gains,600),1)
     def test_flat_and_disabled_are_exact_bypass(self):
         samples=[.95*math.sin(n*.031) for n in range(5000)]
         exact=list((C.c_float*len(samples))(*samples))
-        self.assertEqual(self.run_audio(samples,[0]*10),exact)
-        self.assertEqual(self.run_audio(samples,[12]*10,on=False),exact)
+        self.assertEqual(self.run_audio(samples,[0]*N),exact)
+        self.assertEqual(self.run_audio(samples,[12]*N,on=False),exact)
 
     def test_octave_peak_matches_requested_db(self):
         gains=[0]*N;gains[FREQUENCIES.index(1000)]=6
@@ -102,34 +102,34 @@ void destroy(void *p) { free(p); }
         self.assertLess(self.response(gains,100)-pre,.2)
 
     def test_extended_bass_range_is_real_and_does_not_boost_high_band_limits(self):
-        strong=[18,0,0,0,0,0,0,0,0,0]
-        mild=[12,0,0,0,0,0,0,0,0,0]
-        self.assertGreater((self.response(strong,12)-self.preamp(strong))-(self.response(mild,12)-self.preamp(mild)),5)
-        self.assertAlmostEqual(self.response(strong,1000)-self.preamp(strong),0,delta=.1)
-        self.assertAlmostEqual(self.response([0]*5+[18]+[0]*4,1000),self.response([0]*5+[12]+[0]*4,1000),delta=.1)
-        self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[18]*4+[12]*6)))
-        gains=[0]*N;gains[3]=18
-        self.assertAlmostEqual(self.response(gains,250)-self.preamp(gains),18,delta=.1)
-        gains[3]=24
-        self.assertAlmostEqual(self.response(gains,250)-self.preamp(gains),18,delta=.1)
+        for band,hz in [(1,150),(2,400),(3,1000),(4,2400)]:
+            gains=[0]*N;gains[band]=15
+            self.assertAlmostEqual(self.response(gains,hz),15,delta=.1)
+            gains[band]=24
+            self.assertAlmostEqual(self.response(gains,hz),15,delta=.1)
+            gains[band]=-24
+            self.assertAlmostEqual(self.response(gains,hz),-15,delta=.1)
+        strong=[15]+[0]*(N-1);mild=[9]+[0]*(N-1)
+        self.assertGreater(self.response(strong,12)-self.response(mild,12),5.5)
+        self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[15]*N)))
     def test_shelves_control_bass_and_treble_without_edge_resonance(self):
-        bass=[6]+[0]*9;treble=[0]*9+[6]
+        bass=[6]+[0]*(N-1);treble=[0]*(N-1)+[6]
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)
         self.assertGreater(self.response(treble,22000)-self.response(treble,1000),5.5)
 
     def test_overlapping_boosts_do_not_apply_fixed_master_attenuation(self):
-        for gains in [[12]*10,[18,10,3,-3,0,0,0,0,3,6],[6]+[0]*9]:
+        for gains in [[12]*N,[12,0,0,0,0,3],[6]+[0]*(N-1)]:
             self.assertEqual(self.preamp(gains),0)
         # Low-level audio remains linear, without a static whole-song volume cut.
-        self.assertAlmostEqual(self.response([6]+[0]*9,1000),0,delta=.1)
-        self.assertGreater(self.response([6]+[0]*9,20),5)
-        self.assertGreater(self.response([12]*10,16000),6)
-        self.assertEqual(self.preamp([-12]*10),0)
-        self.assertEqual(self.preamp([0]*10),0)
+        self.assertAlmostEqual(self.response([6]+[0]*(N-1),1000),0,delta=.1)
+        self.assertGreater(self.response([6]+[0]*(N-1),20),5)
+        self.assertGreater(self.response([12]*N,16000),6)
+        self.assertEqual(self.preamp([-12]*N),0)
+        self.assertEqual(self.preamp([0]*N),0)
 
     def test_high_level_signal_has_linked_peak_protection(self):
         samples=[2*math.sin(n*.13)+.4*math.sin(n*.023) for n in range(12000)]
-        output=self.run_audio(samples,[12]*10)
+        output=self.run_audio(samples,[12]*N)
         self.assertTrue(all(math.isfinite(x) for x in output))
         self.assertLessEqual(max(map(abs,output)),.980001)
         self.assertGreater(max(map(abs,output)),.5)
@@ -144,7 +144,7 @@ void destroy(void *p) { free(p); }
             gains=migrated_factory(gains)
             mid=self.response(gains,500)
             self.assertGreater(self.response(gains,20)-mid,4)
-            self.assertGreater(self.response(gains,63)-mid,5)
+            self.assertGreater(self.response(gains,63)-mid,2.5)
             self.assertLess(self.response(gains,250)-mid,2)
             # High-level multitone stays finite and below the sample-peak ceiling.
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
@@ -156,7 +156,7 @@ void destroy(void *p) { free(p); }
         for interleaved in [False,True]:
             frames=1024;channels=8;samples=[0.]*(frames*channels)
             samples[3 if interleaved else 3*frames]=.3
-            output=self.run_audio(samples,[4]*10,channels=channels,interleaved=interleaved)
+            output=self.run_audio(samples,[4]*N,channels=channels,interleaved=interleaved)
             for ch in range(channels):
                 data=output[ch::channels] if interleaved else output[ch*frames:(ch+1)*frames]
                 if ch==3:self.assertGreater(max(map(abs,data)),.01)
@@ -166,16 +166,16 @@ void destroy(void *p) { free(p); }
         samples=[]
         for n in range(5000):
             x=2*math.sin(n*.13); samples.extend([x,x*.25])
-        output=self.run_audio(samples,[3]*10,channels=2)
+        output=self.run_audio(samples,[3]*N,channels=2)
         self.assertLessEqual(max(map(abs,output)),.980001)
         self.assertLess(max(abs(output[i+1]-output[i]*.25) for i in range(0,len(output),2)),1e-6)
 
     def test_sample_rates_and_invalid_gains_remain_finite(self):
         for rate in [8000,32000,44100,48000,96000]:
-            gains=[float('nan'),float('inf'),-float('inf'),12,-12,6,-6,12,12,12]+[0]*(N-10)
+            gains=[float('nan'),float('inf'),-float('inf'),15,-15,6]
             output=self.run_audio([.5*math.sin(n*.37) for n in range(10000)],gains,rate)
             self.assertTrue(all(math.isfinite(x) for x in output))
-            sanitized=[0,0,0,12,-12,6,-6,12,12,12]+[0]*(N-10)
+            sanitized=[0,0,0,15,-15,6]
             self.assertEqual(output,self.run_audio([.5*math.sin(n*.37) for n in range(10000)],sanitized,rate))
 
     def test_toggle_and_slider_updates_are_smooth_and_return_to_exact_bypass(self):
@@ -198,12 +198,12 @@ void destroy(void *p) { free(p); }
             frames=8192
             signal=[.95*math.sin(2*math.pi*(20*n/rate + (rate*.42-20)*n*n/(2*rate*frames))) for n in range(frames)]
             signal[0]=1;signal[4000]=-1
-            result=self.run_audio(signal,[18]*4+[12]*6,rate)
+            result=self.run_audio(signal,[15]*N,rate)
             self.assertLessEqual(max(map(abs,result)),.980001)
         ptr=self.lib.create(48000,array([0]*N),0)
         try:
             for block in range(120):
-                gains=[18 if i<4 else 12 for i in range(N)] if block%2 else [-12]*N
+                gains=[15 for i in range(N)] if block%2 else [-12]*N
                 self.lib.update(ptr,array(gains),1,48000)
                 raw=[.85*math.sin((block*128+i)*.079) for i in range(128)]
                 audio=(C.c_float*128)(*raw);self.lib.process(ptr,audio,1,128,1)
@@ -211,7 +211,7 @@ void destroy(void *p) { free(p); }
         finally:self.lib.destroy(ptr)
 
     def test_disabling_strong_bass_does_not_restore_a_fixed_master_cut(self):
-        gains=[18,10,3,-3,0,0,0,0,3,6]
+        gains=[12,0,0,0,0,3]
         ptr=self.lib.create(48000,array(gains),1)
         try:
             # Warm the actual filters at an unaffected midrange frequency.
@@ -232,11 +232,11 @@ void destroy(void *p) { free(p); }
         finally:self.lib.destroy(ptr)
 
     def test_headroom_attack_does_not_step_when_changing_an_active_curve(self):
-        ptr=self.lib.create(48000,array([0]*9+[-6]),1)
+        ptr=self.lib.create(48000,array([0]*(N-1)+[-6]),1)
         try:
             warm=(C.c_float*48000)(*([.1]*48000));self.lib.process(ptr,warm,1,48000,1)
             previous=warm[-1]
-            self.lib.update(ptr,array([18]+[0]*8+[-6]),1,48000)
+            self.lib.update(ptr,array([15]+[0]*(N-2)+[-6]),1,48000)
             audio=(C.c_float*2048)(*([.1]*2048));self.lib.process(ptr,audio,1,2048,1)
             steps=[abs(audio[0]-previous)]+[abs(audio[i]-audio[i-1]) for i in range(1,len(audio))]
             self.assertLess(max(steps),.005)
@@ -250,7 +250,7 @@ void destroy(void *p) { free(p); }
 
     def test_held_peak_envelope_reduces_sustained_bass_harmonics(self):
         rate=48000;hz=40
-        output=self.run_audio([.8*math.sin(2*math.pi*hz*n/rate) for n in range(rate*2)],[12]+[0]*9)
+        output=self.run_audio([.8*math.sin(2*math.pi*hz*n/rate) for n in range(rate*2)],[12]+[0]*(N-1))
         tail=output[-24000:]
         def amplitude(harmonic):
             w=2*math.pi*hz*harmonic/rate
@@ -264,7 +264,7 @@ void destroy(void *p) { free(p); }
     def test_response_preview_uses_actual_cascade_coefficients(self):
         response=self.lib.SonivoEQResponse
         response.argtypes=[C.POINTER(C.c_float),C.c_size_t,C.c_double,C.POINTER(C.c_float),C.c_size_t]
-        values=(C.c_float*121)();gains=[0]*N;gains[5]=6;gains[1]=4
+        values=(C.c_float*121)();gains=[0]*N;gains[3]=6;gains[1]=4
         response(array(gains),N,48000,values,len(values))
         for index in [10,35,68,95,110]:
             hz=20*1000**(index/120)
@@ -273,7 +273,7 @@ void destroy(void *p) { free(p); }
         self.assertTrue(all(abs(x)<1e-6 for x in values))
 
     def test_disabling_an_actually_limited_signal_reaches_dry_without_boundary_jump(self):
-        gains=[12]+[0]*9;rate=48000
+        gains=[12]+[0]*(N-1);rate=48000
         ptr=self.lib.create(rate,array(gains),1)
         try:
             warm=(C.c_float*48000)(*[.8*math.sin(2*math.pi*40*n/rate) for n in range(48000)])

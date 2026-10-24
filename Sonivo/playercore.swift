@@ -109,6 +109,7 @@ final class PlayerCore {
         let defaults = UserDefaults.standard
         let enabled = (defaults.object(forKey: eqEnabledKey) as? Bool) ?? true
         var gains: [Float] = []
+        let originalArchive = defaults.data(forKey: eqGainsKey)
         if let data = defaults.data(forKey: eqGainsKey),
            let decoded = try? JSONDecoder().decode([Float].self, from: data) {
             gains = decoded
@@ -127,12 +128,26 @@ final class PlayerCore {
                 if defaults.data(forKey:"eq.gains.compact10.backup") == nil,
                    let original = defaults.data(forKey:eqGainsKey) { defaults.set(original,forKey:"eq.gains.compact10.backup") }
                 let source = gains.count == 10 ? EQGainLimits.legacyFrequencies : EQGainLimits.denseFrequencies
-                gains = EQGainLimits.normalized(EQGainLimits.resample(gains,from:source,to:EQGainLimits.frequencies))
+                gains = EQGainLimits.resample(gains,from:source,to:EQGainLimits.compact10Frequencies)
                 if let data = try? JSONEncoder().encode(gains) { defaults.set(data,forKey:eqGainsKey) }
             }
             defaults.set(true,forKey:"eq.octaveCurve.v2")
             defaults.set(true,forKey:"eq.bassProfiles.v3")
             defaults.set(true,forKey:"eq.layout.compact10")
+        }
+        // One-time reference-grid migration, after historical 10/29-band upgrades.
+        // Never overwrite a custom curve with a factory preset. Retain the original archive.
+        if !defaults.bool(forKey: "eq.layout.reference6"),
+           [EQGainLimits.frequencies.count, EQGainLimits.compact10Frequencies.count, EQGainLimits.denseFrequencies.count].contains(gains.count) {
+            if gains.count != EQGainLimits.frequencies.count,
+               defaults.data(forKey: "eq.gains.reference6.backup") == nil, let originalArchive {
+                defaults.set(originalArchive, forKey: "eq.gains.reference6.backup")
+            }
+            gains = EQGainLimits.normalized(gains)
+            if let data = try? JSONEncoder().encode(gains) {
+                defaults.set(data, forKey: eqGainsKey)
+                defaults.set(true, forKey: "eq.layout.reference6")
+            }
         }
         return (normalized(gains), enabled)
     }

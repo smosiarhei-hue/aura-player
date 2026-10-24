@@ -24,7 +24,7 @@ final class EQUserPresetStore {
             switch self {
             case .invalidName: return "Введи название от 1 до 64 символов."
             case .duplicateName: return "Пресет с таким названием уже есть. Выбери другое название."
-            case .invalidCurve: return "Нужны 10 конечных значений: НЧ от −12 до +18 дБ, остальные от −12 до +12 дБ."
+            case .invalidCurve: return "Нужны 6 конечных значений: от −15 до +15 дБ для каждой полосы."
             case .invalidArchive: return "Сохранённые пресеты повреждены. Они не были перезаписаны."
             }
         }
@@ -46,10 +46,15 @@ final class EQUserPresetStore {
                defaults.data(forKey:"eq.userPresets.40Hz.backup") == nil {
                 defaults.set(data,forKey:"eq.userPresets.40Hz.backup")
             }
+            if decoded.contains(where: { $0.frequencies != EQGainLimits.frequencies }),
+               defaults.data(forKey: "eq.userPresets.reference6.backup") == nil {
+                defaults.set(data, forKey: "eq.userPresets.reference6.backup")
+            }
             presets = decoded.map { preset in
                 let source = preset.frequencies ?? (preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies)
-                // A 30→40 Hz center change retains all ten manual slider values.
-                let gains = source == EQGainLimits.previousCompactFrequencies
+                // Historical 30→40 metadata kept the ten gain values. Then resample
+                // the old compact curve onto the approved six-band grid.
+                let gains = source == EQGainLimits.frequencies || source == EQGainLimits.previousCompactFrequencies
                     ? EQGainLimits.normalized(preset.gains)
                     : EQGainLimits.normalized(EQGainLimits.resample(preset.gains,from:source,to:EQGainLimits.frequencies))
                 return SavedEQPreset(id:preset.id,name:preset.name,gains:gains,frequencies:EQGainLimits.frequencies)
@@ -97,7 +102,11 @@ final class EQUserPresetStore {
         let trimmed = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= 64 else { return false }
         if let frequencies = preset.frequencies {
-            return (frequencies == EQGainLimits.frequencies || frequencies == EQGainLimits.previousCompactFrequencies) && validGains(preset.gains)
+            let known = frequencies == EQGainLimits.frequencies || frequencies == EQGainLimits.compact10Frequencies || frequencies == EQGainLimits.previousCompactFrequencies
+            if frequencies == EQGainLimits.frequencies { return validGains(preset.gains) }
+            return known && preset.gains.count == frequencies.count && preset.gains.enumerated().allSatisfy {
+                $0.element.isFinite && (-12...(frequencies[$0.offset] <= 250 ? Float(18) : Float(12))).contains($0.element)
+            }
         }
         let source = preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies
         return preset.gains.count == source.count && preset.gains.enumerated().allSatisfy {

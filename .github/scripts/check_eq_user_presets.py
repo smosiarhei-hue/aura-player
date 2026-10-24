@@ -11,128 +11,121 @@ import Foundation
     @MainActor static func persisted(defaults: UserDefaults) -> (gains: [Float], enabled: Bool) {
 __PERSISTED_EQ_BODY__
     }
-    @MainActor static func checkPersisted(defaults: UserDefaults) {
-        defaults.removeObject(forKey:"eq.layout.compact10")
-        defaults.set(true,forKey:"eq.octaveCurve.v2")
-        defaults.set(true,forKey:"eq.bassProfiles.v3")
-        let dense = EQGainLimits.denseFrequencies.map { $0 == 120 ? Float(6) : 0 }
-        defaults.set(try! JSONEncoder().encode(dense),forKey:"eq.gains")
-        let first = persisted(defaults:defaults)
-        precondition(first.gains.count == 10 && first.gains[2] == 6)
-        precondition(defaults.data(forKey:"eq.gains.compact10.backup") != nil)
-        precondition(persisted(defaults:defaults).gains == first.gains)
-        let canonical: [Float] = [0,0,0,18,0,0,0,0,0,0]
-        defaults.set(try! JSONEncoder().encode(canonical),forKey:"eq.gains")
-        precondition(persisted(defaults:defaults).gains == canonical,"New 10-band settings must not be migrated twice")
-        defaults.removeObject(forKey:"eq.layout.compact10")
-        let old: [Float] = [6,4,2,0,0,0,0,0,0,0]
-        defaults.set(try! JSONEncoder().encode(old),forKey:"eq.gains")
-        let upgraded = persisted(defaults:defaults).gains
-        precondition(upgraded == EQGainLimits.normalized(EQGainLimits.resample(old,from:EQGainLimits.legacyFrequencies,to:EQGainLimits.frequencies)))
-        precondition(persisted(defaults:defaults).gains == upgraded)
-    }
-
     @MainActor static func main() throws {
-        let suite="sonivo-eq-tests-\(UUID().uuidString)"
+        let suite="sonivo-eq-six-tests-\(UUID().uuidString)"
         let defaults=UserDefaults(suiteName:suite)!
         defer { defaults.removePersistentDomain(forName:suite) }
+        func rejects(_ action: () throws -> Void) {
+            do { try action(); fatalError("Invalid input accepted") } catch { }
+        }
+        precondition(EQGainLimits.frequencies == [60,150,400,1000,2400,15000])
+        for band in EQGainLimits.frequencies.indices {
+            precondition(EQGainLimits.range(at:band) == (-15...15))
+            precondition(EQGainLimits.bandwidth(at:band) == 1)
+        }
         let store=EQUserPresetStore(defaults:defaults)
-        let gains = EQGainLimits.normalized([12,6,3,0,-1,-2,0,2,4,-12])
+        let gains: [Float] = [12,6,-1,2,4,-15]
         let saved=try store.save(name:"  Мой бас  ",gains:gains)
         precondition(saved.name=="Мой бас" && saved.gains==gains)
         let reloaded=EQUserPresetStore(defaults:defaults)
         precondition(reloaded.presets==[saved],"Preset did not survive relaunch")
-        func rejects(_ action: () throws -> Void) {
-            do { try action(); fatalError("Invalid input accepted") } catch { }
-        }
+        let fractional: [Float] = [1.234567,-4.001,0.00013,-0.731,3.147,-9.201]
+        let fractionalPreset=try reloaded.save(name:"Fractional",gains:fractional)
+        precondition(EQUserPresetStore(defaults:defaults).presets.last==fractionalPreset,"Canonical curve changed on load")
+        try reloaded.delete(id:fractionalPreset.id)
+
         rejects { _ = try reloaded.save(name:"мой бас",gains:gains) }
         rejects { _ = try reloaded.save(name:" ",gains:gains) }
         rejects { _ = try reloaded.save(name:String(repeating:"x",count:65),gains:gains) }
         rejects { _ = try reloaded.save(name:"bad count",gains:[0]) }
-        var bad=gains; bad[0] = .nan
+        var bad=gains;bad[0] = .nan
         rejects { _ = try reloaded.save(name:"nan",gains:bad) }
         bad[0] = .infinity
         rejects { _ = try reloaded.save(name:"inf",gains:bad) }
-        bad[0] = 18.5
-        rejects { _ = try reloaded.save(name:"range",gains:bad) }
-        precondition(reloaded.presets==[saved],"Rejection changed saved preset")
-        let strong = EQGainLimits.frequencies.map { $0 <= 250 ? Float(18) : Float(12) }
-        let strongPreset = try reloaded.save(name:"Сильный",gains:strong)
+        for value in [Float(-15.5),Float(15.5)] {
+            bad=gains;bad[5]=value
+            rejects { _ = try reloaded.save(name:"range",gains:bad) }
+        }
+        precondition(reloaded.presets==[saved])
+        let strong = [Float](repeating:15,count:6)
+        let strongPreset=try reloaded.save(name:"Сильный",gains:strong)
         precondition(EQUserPresetStore(defaults:defaults).presets.contains(strongPreset))
-        var high = strong; high[4] = 12.5
-        rejects { _ = try reloaded.save(name:"High invalid",gains:high) }
-        try reloaded.delete(id:strongPreset.id)
-        try reloaded.delete(id:saved.id)
+        try reloaded.delete(id:strongPreset.id);try reloaded.delete(id:saved.id)
         precondition(EQUserPresetStore(defaults:defaults).presets.isEmpty)
-        let legacy = SavedEQPreset(id:UUID(),name:"Старый",gains:[6,4,2,0,0,0,0,0,0,0])
-        defaults.set(try JSONEncoder().encode([legacy]),forKey:"eq.userPresets.v1")
-        let migrated = EQUserPresetStore(defaults:defaults)
-        precondition(migrated.presets[0].id == legacy.id && migrated.presets[0].gains.count == 10)
-        precondition(migrated.presets[0].gains == EQGainLimits.normalized(EQGainLimits.resample(legacy.gains,from:EQGainLimits.legacyFrequencies,to:EQGainLimits.frequencies)))
-        let secondLoad = EQUserPresetStore(defaults:defaults)
-        precondition(secondLoad.presets == migrated.presets)
+        // Exercise every historical format, including both explicit compact metadata layouts.
+        let old: [Float] = [6,4,2,0,0,0,0,0,0,0]
+        for source in [EQGainLimits.legacyFrequencies,EQGainLimits.previousCompactFrequencies,EQGainLimits.compact10Frequencies,EQGainLimits.denseFrequencies] {
+            let values=source.count==29 ? source.map { $0 == 120 ? Float(6) : 0 } : old
+            let legacy=SavedEQPreset(id:UUID(),name:"Старый",gains:values,frequencies:source==EQGainLimits.legacyFrequencies || source.count==29 ? nil : source)
+            let data=try JSONEncoder().encode([legacy]);defaults.set(data,forKey:"eq.userPresets.v1")
+            defaults.removeObject(forKey:"eq.userPresets.reference6.backup")
+            let migrated=EQUserPresetStore(defaults:defaults)
+            let effectiveSource=source==EQGainLimits.previousCompactFrequencies ? EQGainLimits.compact10Frequencies : source
+            precondition(migrated.presets.count==1)
+            precondition(migrated.presets[0].id==legacy.id && migrated.presets[0].name==legacy.name)
+            precondition(migrated.presets[0].gains==EQGainLimits.normalized(EQGainLimits.resample(values,from:effectiveSource,to:EQGainLimits.frequencies)))
+            precondition(migrated.presets[0].frequencies==EQGainLimits.frequencies)
+            precondition(EQUserPresetStore(defaults:defaults).presets==migrated.presets)
+            precondition(defaults.data(forKey:"eq.userPresets.reference6.backup")==data)
+        }
         precondition(defaults.data(forKey:"eq.userPresets.compact10.backup") != nil)
-        precondition(EQGainLimits.frequencies == [40,60,120,250,500,1000,2000,4000,8000,15000])
-        precondition(EQGainLimits.bandwidth(at:1) == 0.75)
-        for band in EQGainLimits.frequencies.indices where band != 1 {
-            precondition(EQGainLimits.bandwidth(at:band) == 1)
-        }
-        // Metadata distinguishes a new 10-value curve from the historical 10-value layout.
-        let canonical = try secondLoad.save(name:"250 Гц", gains:[0,0,0,18,0,0,0,0,0,0])
-        precondition(canonical.frequencies == EQGainLimits.frequencies)
-        precondition(EQUserPresetStore(defaults:defaults).presets.last == canonical)
-        let dense = SavedEQPreset(id:UUID(),name:"Плотная сетка",gains:EQGainLimits.denseFrequencies.map { $0 == 120 ? Float(6) : 0 })
-        defaults.set(try JSONEncoder().encode([dense]),forKey:"eq.userPresets.v1")
-        let denseStore = EQUserPresetStore(defaults:defaults)
-        precondition(denseStore.presets[0].id == dense.id && denseStore.presets[0].gains[2] == 6)
-        precondition(denseStore.presets[0].gains.count == 10)
-        precondition(EQUserPresetStore(defaults:defaults).presets == denseStore.presets)
-        let oldCompact = SavedEQPreset(id:UUID(),name:"Моя ручная кривая",gains:strong,frequencies:EQGainLimits.previousCompactFrequencies)
-        defaults.set(try JSONEncoder().encode([oldCompact]),forKey:"eq.userPresets.v1")
-        let updatedCompact = EQUserPresetStore(defaults:defaults)
-        precondition(updatedCompact.presets[0].gains == strong,"30→40 must preserve every manual gain")
-        precondition(updatedCompact.presets[0].id == oldCompact.id)
-        precondition(updatedCompact.presets[0].frequencies == EQGainLimits.frequencies)
-        precondition(EQUserPresetStore(defaults:defaults).presets == updatedCompact.presets)
-        let unknown = SavedEQPreset(id:UUID(),name:"Unknown",gains:gains,frequencies:[1,2,3])
-        let unknownData = try JSONEncoder().encode([unknown])
-        defaults.set(unknownData,forKey:"eq.userPresets.v1")
+        let unknown=SavedEQPreset(id:UUID(),name:"Unknown",gains:gains,frequencies:[1,2,3])
+        let unknownData=try JSONEncoder().encode([unknown]);defaults.set(unknownData,forKey:"eq.userPresets.v1")
         rejects { _ = try EQUserPresetStore(defaults:defaults).save(name:"not overwrite unknown",gains:gains) }
-        precondition(defaults.data(forKey:"eq.userPresets.v1") == unknownData)
-        checkPersisted(defaults:defaults)
-        for width in [216.0, 256, 303, 350, 568] {
-            let xs = EQGainLimits.frequencies.indices.map { EQGainLimits.graphX(at:$0,width:width) }
-            precondition(xs.first == 14 && abs(xs.last! - (width - 14)) < 0.00001)
+        precondition(defaults.data(forKey:"eq.userPresets.v1")==unknownData)
+        // Runtime curve migration is backed up once and never reinterpreted on relaunch.
+        defaults.set(true,forKey:"eq.layout.compact10")
+        let oldData=try JSONEncoder().encode(old)
+        defaults.set(oldData,forKey:"eq.gains")
+        let runtime=persisted(defaults:defaults)
+        precondition(runtime.gains==EQGainLimits.normalized(EQGainLimits.resample(old,from:EQGainLimits.compact10Frequencies,to:EQGainLimits.frequencies)))
+        precondition(defaults.data(forKey:"eq.gains.reference6.backup")==oldData)
+        precondition(persisted(defaults:defaults).gains==runtime.gains)
+        // Explicitly exercise pre-compact dense and legacy routes as well.
+        for count in [10,29] {
+            defaults.removeObject(forKey:"eq.layout.compact10");defaults.removeObject(forKey:"eq.layout.reference6")
+            defaults.set(true,forKey:"eq.octaveCurve.v2");defaults.set(true,forKey:"eq.bassProfiles.v3")
+            let source=count==10 ? EQGainLimits.legacyFrequencies : EQGainLimits.denseFrequencies
+            let values=source.map { $0 <= 150 ? Float(6) : 0 }
+            defaults.set(try JSONEncoder().encode(values),forKey:"eq.gains")
+            let middle=EQGainLimits.resample(values,from:source,to:EQGainLimits.compact10Frequencies)
+            let first=persisted(defaults:defaults)
+            precondition(first.gains==EQGainLimits.normalized(middle))
+            precondition(persisted(defaults:defaults).gains==first.gains)
+        }
+        defaults.set(try JSONEncoder().encode(gains),forKey:"eq.gains")
+        precondition(persisted(defaults:defaults).gains==gains,"Six-value curve was migrated twice")
+        // Symmetric graph limits and exact half-dB round trips; reset only hits one node.
+        for width in [216.0,256,303,350,568] {
+            let xs=EQGainLimits.frequencies.indices.map { EQGainLimits.graphX(at:$0,width:width) }
+            precondition(xs.first==14 && abs(xs.last!-(width-14))<0.00001)
             precondition(zip(xs,xs.dropFirst()).allSatisfy { $0 < $1 })
-        }
-        for index in EQGainLimits.frequencies.indices {
-            for gain in stride(from:Float(-12),through:EQGainLimits.range(at:index).upperBound,by:0.5) {
-                let y = EQGainLimits.graphY(gain:gain,height:240)
-                precondition(y >= 14 && y <= 226)
-                precondition(EQGainLimits.graphGain(y:y,height:240,at:index) == gain)
-            }
-            precondition(EQGainLimits.graphGain(y:-100,height:240,at:index) == EQGainLimits.range(at:index).upperBound)
-            precondition(EQGainLimits.graphGain(y:999,height:240,at:index) == -12)
-        }
-        for width in [216.0, 350, 568] {
-            let gains: [Float] = [12,6,0,-4,0,2,-2,4,6,8]
             for band in EQGainLimits.frequencies.indices {
-                let x=EQGainLimits.graphX(at:band,width:width)
-                let y=EQGainLimits.graphY(gain:gains[band],height:240)
-                precondition(EQGainLimits.graphHitBand(x:x,y:y,width:width,height:240,gains:gains) == band)
+                for gain in stride(from:Float(-15),through:15,by:0.5) {
+                    let y=EQGainLimits.graphY(gain:gain,height:240)
+                    precondition(y>=14 && y<=226)
+                    precondition(EQGainLimits.graphGain(y:y,height:240,at:band)==gain)
+                }
+                let x=EQGainLimits.graphX(at:band,width:width),y=EQGainLimits.graphY(gain:gains[band],height:240)
+                precondition(EQGainLimits.graphHitBand(x:x,y:y,width:width,height:240,gains:gains)==band)
                 var reset=gains;reset[band]=0
-                precondition(zip(gains,reset).enumerated().allSatisfy { index,pair in index == band ? pair.1 == 0 : pair.0 == pair.1 })
+                precondition(zip(gains,reset).enumerated().allSatisfy { index,pair in index==band ? pair.1==0 : pair.0==pair.1 })
             }
-            precondition(EQGainLimits.graphHitBand(x:-100,y:0,width:width,height:240,gains:gains) == nil)
-            precondition(EQGainLimits.graphHitBand(x:0,y:999,width:width,height:240,gains:gains) == nil)
-            precondition(EQGainLimits.graphHitBand(x:.nan,y:0,width:width,height:240,gains:gains) == nil)
+            precondition(EQGainLimits.graphHitBand(x:-100,y:0,width:width,height:240,gains:gains)==nil)
+            precondition(EQGainLimits.graphHitBand(x:.nan,y:0,width:width,height:240,gains:gains)==nil)
         }
-        let broken=Data("broken archive".utf8)
-        defaults.set(broken,forKey:"eq.userPresets.v1")
-        let corrupt=EQUserPresetStore(defaults:defaults)
-        rejects { _ = try corrupt.save(name:"not overwrite",gains:gains) }
+        precondition(EQGainLimits.graphY(gain:0,height:240)==120)
+        var feedback=EQAdjustmentFeedback()
+        let light=feedback.intensity(from:0,to:0.5,at:1)!
+        precondition(feedback.intensity(from:0.5,to:1,at:1.01)==nil,"Haptic throttle bypassed")
+        let strongPulse=feedback.intensity(from:14,to:15,at:1.1)!
+        precondition(strongPulse>light && strongPulse<=1)
+        precondition(feedback.intensity(from:15,to:15,at:2)==nil)
+        precondition(feedback.intensity(from:0,to:.nan,at:3)==nil)
+        let broken=Data("broken archive".utf8);defaults.set(broken,forKey:"eq.userPresets.v1")
+        rejects { _ = try EQUserPresetStore(defaults:defaults).save(name:"not overwrite",gains:gains) }
         precondition(defaults.data(forKey:"eq.userPresets.v1")==broken)
-        print("Named EQ preset save/relaunch/delete/invalid-input/archive checks passed")
+        print("Six-band presets, historical migrations, backups, graph and haptic policy checks passed")
     }
 }
 '''
@@ -142,7 +135,7 @@ __PERSISTED_EQ_BODY__
     main=main.replace('__PERSISTED_EQ_BODY__',body)
     with tempfile.TemporaryDirectory() as d:
         p=Path(d);(p/'Checks.swift').write_text(main)
-        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/EQGainLimits.swift'),str(root/'Sonivo/EQUserPresetStore.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
+        built=subprocess.run(['swiftc','-swift-version','6',str(root/'Sonivo/EQGainLimits.swift'),str(root/'Sonivo/EQUserPresetStore.swift'),str(root/'Sonivo/EQAdjustmentFeedback.swift'),str(p/'Checks.swift'),'-o',str(p/'checks')],capture_output=True,text=True)
         assert built.returncode==0,built.stderr
         result=subprocess.run([str(p/'checks')],capture_output=True,text=True)
         assert result.returncode==0,result.stdout+result.stderr

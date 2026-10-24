@@ -2,9 +2,9 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {40, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000};
+static const double frequencies[SONIVO_EQ_BANDS] = {60, 150, 400, 1000, 2400, 15000};
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
-static double cleanGain(double gain, unsigned band) { return isfinite(gain) ? clamp(gain, -12, frequencies[band] <= 250 ? 18 : 12) : 0; }
+static double cleanGain(double gain, unsigned band) { (void)band; return isfinite(gain) ? clamp(gain, -15, 15) : 0; }
 static SonivoEQCoefficients identity(void) { return (SonivoEQCoefficients){1,0,0,0,0}; }
 static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate) {
     if (fabs(gain) < 0.00001) return identity();
@@ -22,10 +22,8 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
             a0=(A+1)-(A-1)*c+beta; a1=2*((A-1)-(A+1)*c); a2=(A+1)-(A-1)*c-beta;
         }
     } else {
-        // One-octave parametric width matches the native local EQ.
-        // 60 Hz sits only 0.585 octaves above the bass shelf. A narrower
-        // bell prevents the two controls from piling up a broad low-mid hump.
-        double bandwidth = band == 1 ? .75 : 1;
+        // One-octave parametric width matches all native local EQ bands.
+        double bandwidth = 1;
         double alpha = sn * sinh(0.34657359027997265 * bandwidth * w / fmax(sn, 1e-9));
         b0=1+alpha*A; b1=-2*c; b2=1-alpha*A;
         a0=1+alpha/A; a1=-2*c; a2=1-alpha/A;
@@ -186,6 +184,11 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
         double required=peak>.98?.98/peak:1;
         if(required<=eq->limiter) {
             eq->limiter=required;eq->peakHold=eq->peakHoldFrames;
+        } else if(required < 1 && required <= eq->limiter * 1.005) {
+            // Refresh the hold near a recurring crest, even if its required gain
+            // is fractionally above the held transient value. This avoids a
+            // periodic hold/release cycle on a steady bass tone (<=0.043 dB margin).
+            eq->peakHold=eq->peakHoldFrames;
         } else if(eq->peakHold) {
             eq->peakHold--;
         } else {
