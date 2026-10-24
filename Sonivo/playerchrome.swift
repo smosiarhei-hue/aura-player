@@ -583,6 +583,8 @@ struct PlayerEQSheetView: View {
                                        onChange: setBandGain, onEnd: { player.saveEQ() })
                             .frame(height: 240)
                             .accessibilityHidden(true)
+                        Text("Двойной тап по точке — 0 дБ")
+                            .font(.caption).foregroundStyle(SN.inkMuted)
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5), spacing: 4) {
                             ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
                                 Button { selectedBand = index } label: {
@@ -815,6 +817,17 @@ private struct CompactEQCurve: View {
         return CGPoint(x: EQGainLimits.graphX(at: index, width: Double(size.width)),
                        y: EQGainLimits.graphY(gain: gain, height: Double(size.height)))
     }
+    private func hitBand(_ location: CGPoint, size: CGSize) -> Int? {
+        EQGainLimits.graphHitBand(x: Double(location.x), y: Double(location.y),
+                                 width: Double(size.width), height: Double(size.height), gains: gains)
+    }
+    private func resetPoint(at location: CGPoint, size: CGSize) {
+        guard let index = hitBand(location, size: size) else { return }
+        selectedBand = index
+        onChange(index, 0)
+        onEnd()
+        Haptics.tap(.light)
+    }
     var body: some View {
         GeometryReader { geometry in
             let size = geometry.size
@@ -840,15 +853,14 @@ private struct CompactEQCurve: View {
                 }
             }
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
+            // Double tap wins over dragging. A small drag threshold prevents
+            // either tap from moving the gain before the reset is recognized.
+            .gesture(SpatialTapGesture(count: 2)
+                .onEnded { value in resetPoint(at: value.location, size: size) }
+                .exclusively(before: DragGesture(minimumDistance: 3)
                 .onChanged { value in
                     if draggingBand == nil {
-                        let closest = EQGainLimits.frequencies.indices.min {
-                            abs(point($0, size: size).x - value.startLocation.x) < abs(point($1, size: size).x - value.startLocation.x)
-                        } ?? 0
-                        let start = point(closest, size: size)
-                        guard abs(start.x - value.startLocation.x) <= 24,
-                              abs(start.y - value.startLocation.y) <= 24 else { return }
+                        guard let closest = hitBand(value.startLocation, size: size) else { return }
                         draggingBand = closest
                         selectedBand = closest
                     }
@@ -859,7 +871,10 @@ private struct CompactEQCurve: View {
                 .onEnded { _ in
                     if draggingBand != nil { onEnd() }
                     draggingBand = nil
-                })
+                }))
+            .simultaneousGesture(SpatialTapGesture(count: 1).onEnded { value in
+                if let index = hitBand(value.location, size: size) { selectedBand = index }
+            })
         }
     }
 }

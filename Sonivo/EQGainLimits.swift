@@ -23,6 +23,20 @@ nonisolated enum EQGainLimits {
     static func graphY(gain: Float, height: Double) -> Double {
         14 + Double(18 - gain) / 30 * max(1, height - 28)
     }
+    /// Shared point hit test for drag, selection and double-tap reset.
+    /// Choose the nearest visible node in two dimensions; never reset empty chart space.
+    static func graphHitBand(x: Double, y: Double, width: Double, height: Double, gains: [Float]) -> Int? {
+        guard x.isFinite, y.isFinite, width.isFinite, height.isFinite, width > 28, height > 28 else { return nil }
+        let curve = normalized(gains)
+        func distanceSquared(_ band: Int) -> Double {
+            let dx = graphX(at: band, width: width) - x
+            let dy = graphY(gain: curve[band], height: height) - y
+            return dx * dx + dy * dy
+        }
+        guard let closest = frequencies.indices.min(by: { distanceSquared($0) < distanceSquared($1) }),
+              distanceSquared(closest) <= 24 * 24 else { return nil }
+        return closest
+    }
     static func graphGain(y: Double, height: Double, at band: Int) -> Float {
         let value = Float(18 - (y - 14) / max(1, height - 28) * 30)
         return clean((value * 2).rounded() / 2, at: band)

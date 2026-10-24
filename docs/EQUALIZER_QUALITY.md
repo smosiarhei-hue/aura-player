@@ -98,3 +98,15 @@ Real iPhone/headphone listening remains necessary at a sensible volume.
 - https://developer.apple.com/documentation/avfaudio/avaudiouniteq/globalgain
 - https://developer.apple.com/documentation/mediatoolbox/mtaudioprocessingtap
 - Apple AudioUnitParameters.h, AUPeakLimiter global parameter definitions.
+
+
+## Point gestures
+The screenshot reference has outer controls at 60 Hz and 15 kHz. Sonivo intentionally
+retains 40 Hz and 15 kHz, with ten controls (not the reference's six); this gesture
+revision does not change the filter frequencies. Shelves affect frequencies beyond
+their nominal centers; these are not absolute playback cutoffs.
+Double-tapping a visible node sets only that band's gain to 0 dB and saves immediately.
+An exclusive double-tap/drag gesture uses a 3 pt movement threshold to avoid gain
+movement on either tap. A single tap only selects; dragging retains direct editing.
+Hit testing uses nearest-point 2D distance within 24 pt, rejecting empty space and
+invalid coordinates. The existing native 0 dB button remains available to VoiceOver.

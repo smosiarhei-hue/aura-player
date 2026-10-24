@@ -32,3 +32,15 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('reduceMotion || isInteracting || draggingBand != nil ? nil',ui)
         self.assertIn('Суммарная АЧХ · модель PCM 48 кГц',ui)
         self.assertIn('не измерение наушников',ui)
+
+    def test_double_tap_resets_only_hit_node_and_does_not_conflict_with_drag(self):
+        ui=(R/'Sonivo/playerchrome.swift').read_text().split('private struct CompactEQCurve:',1)[1]
+        for expected in ['SpatialTapGesture(count: 2)', '.exclusively(before: DragGesture(minimumDistance: 3)',
+                         'guard let index = hitBand(location, size: size)', 'onChange(index, 0)', 'onEnd()']:
+            self.assertIn(expected,ui)
+        reset=ui.split('private func resetPoint(',1)[1].split('var body:',1)[0]
+        self.assertNotIn('EQPresets.flat',reset)
+        self.assertNotIn('for index',reset)
+        fixture=(R/'.github/scripts/check_eq_user_presets.py').read_text()
+        self.assertIn('graphHitBand(x:x,y:y',fixture)
+        self.assertIn('graphHitBand(x:.nan',fixture)

@@ -114,6 +114,19 @@ __PERSISTED_EQ_BODY__
             precondition(EQGainLimits.graphGain(y:-100,height:240,at:index) == EQGainLimits.range(at:index).upperBound)
             precondition(EQGainLimits.graphGain(y:999,height:240,at:index) == -12)
         }
+        for width in [216.0, 350, 568] {
+            let gains: [Float] = [12,6,0,-4,0,2,-2,4,6,8]
+            for band in EQGainLimits.frequencies.indices {
+                let x=EQGainLimits.graphX(at:band,width:width)
+                let y=EQGainLimits.graphY(gain:gains[band],height:240)
+                precondition(EQGainLimits.graphHitBand(x:x,y:y,width:width,height:240,gains:gains) == band)
+                var reset=gains;reset[band]=0
+                precondition(zip(gains,reset).enumerated().allSatisfy { index,pair in index == band ? pair.1 == 0 : pair.0 == pair.1 })
+            }
+            precondition(EQGainLimits.graphHitBand(x:-100,y:0,width:width,height:240,gains:gains) == nil)
+            precondition(EQGainLimits.graphHitBand(x:0,y:999,width:width,height:240,gains:gains) == nil)
+            precondition(EQGainLimits.graphHitBand(x:.nan,y:0,width:width,height:240,gains:gains) == nil)
+        }
         let broken=Data("broken archive".utf8)
         defaults.set(broken,forKey:"eq.userPresets.v1")
         let corrupt=EQUserPresetStore(defaults:defaults)
