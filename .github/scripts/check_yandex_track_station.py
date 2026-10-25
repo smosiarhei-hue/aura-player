@@ -75,7 +75,8 @@ nonisolated enum RepeatMode { case off, all, one }
         let startRequest = transport.requests.first { $0.url!.path == "/rotor/session/new" }!
         precondition(startRequest.httpMethod == "POST")
         precondition(body(startRequest)["queue"] as! [String] == ["1"])
-        precondition(body(startRequest)["seeds"] as! [String] == ["track:1","settingDiversity:default"])
+        precondition(body(startRequest)["seeds"] as! [String] == ["track:1"])
+        precondition(!transport.requests.contains { $0.url!.path == "/rotor/wave/settings" }, "Base station startup unnecessarily depends on settings metadata")
         let more = try await client.next(excluding:["1","3","2"])
         precondition(more.map(\.id) == ["4","5"])
         precondition(client.serverID == "session-A")
@@ -189,6 +190,35 @@ nonisolated enum RepeatMode { case off, all, one }
         let aliases = try await client.next(excluding:["21"])
         precondition(aliases.map(\.id) == ["22"])
         precondition(client.serverID == "unavailable")
+        // Upstream parity: explicit filters use metadata serialized seeds, never invented parameters.
+        let metadataBefore = transport.requests.filter { $0.url!.path == "/rotor/wave/settings" }.count
+        var discover = settings; discover["diversity"] = "discover"
+        transport.responses = [batch("discover-session","discover-batch",["30","31"])]
+        _ = try await client.start(station:"user:onyourwave",settings:discover,history:["22"])
+        let discoverRequest = transport.requests.last { $0.url!.path == "/rotor/session/new" }!
+        precondition(body(discoverRequest)["seeds"] as! [String] == ["user:onyourwave","settingDiversity:discover"])
+        precondition(transport.requests.filter { $0.url!.path == "/rotor/wave/settings" }.count == metadataBefore + 1)
+        // Track radio keeps the playing seed in history, without trackToStartFrom/replaying it.
+        transport.responses = [batch("track-session","track-batch",["22","32","33"])]
+        let trackRadio = try await client.start(station:"track:22",settings:settings,history:["22"])
+        precondition(trackRadio.map(\.id) == ["32","33"])
+        let trackRequest = transport.requests.last { $0.url!.path == "/rotor/session/new" }!
+        precondition(body(trackRequest)["seeds"] as! [String] == ["track:22"])
+        precondition(body(trackRequest)["trackToStartFrom"] == nil)
+        // Upstream batch_id is optional: membership and feedback still work without inventing one.
+        transport.responses = [("{\"result\":{\"radioSessionId\":\"no-batch\",\"sequence\":[{\"track\":{\"id\":\"34\",\"available\":true}}]}}",200)]
+        let noBatch = try await client.start(station:"user:onyourwave",settings:settings,history:[])
+        precondition(noBatch.map(\.id) == ["34"])
+        client.event(type:"trackStarted",trackID:"34")
+        client.event(type:"skip",trackID:"34",seconds:5.25)
+        await client.flushFeedback()
+        let withoutBatch = transport.requests.last { (body($0)["event"] as? [String:Any])?["type"] as? String == "skip" }!
+        precondition(withoutBatch.url!.path == "/rotor/session/no-batch/feedback")
+        precondition(body(withoutBatch)["batchId"] == nil)
+        precondition((body(withoutBatch)["event"] as! [String:Any])["trackId"] as? String == "34")
+        let acknowledged = transport.requests.count
+        await client.flushFeedback()
+        precondition(transport.requests.count == acknowledged, "Acknowledged optional-batch event remained pending")
         // Actual production selector: five songs never wrap in radio, even with global shuffle/repeat.
         let selector = Selector()
         YandexMusicService.shared.activeStationId = "user:onyourwave"

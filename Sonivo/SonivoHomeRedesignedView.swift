@@ -331,11 +331,12 @@ struct SonivoHomeRedesignedView: View {
 
     private func toggleWave() {
         Haptics.tap(.medium)
-        if player.isPlaying {
+        let sameStation = ym.activeStationId == moodStation.stationId
+        if sameStation && player.isPlaying {
             player.pause()
         } else {
-            if ym.activeStationId != nil, ym.waveError != nil { player.next() }
-            else { SonivoPlay.wave(moodStation, forceFresh: true) }
+            if sameStation, ym.waveError != nil { player.next() }
+            else { SonivoPlay.wave(moodStation) }
             showPlayer = true
         }
     }

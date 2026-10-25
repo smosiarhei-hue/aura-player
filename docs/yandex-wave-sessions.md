@@ -99,3 +99,16 @@ seconds, nil/NaN/infinity/negative time sanitization, invalid events and unknown
 tracks, old-session feedback after reseeding, and offline retry. Physical/live
 account QA is still needed for recommendation changes; deterministic tests do
 not predict Yandex's proprietary ranking.
+
+
+## Upstream parity audit: My Wave and Track Radio
+
+Rechecked upstream `9ca132e5c18a72aab779c1fc68c169380a9357d0` (the current main at audit time), especially `_client/rotor_sessions.py`, `_client/wave.py`, `rotor/rotor_session.py`, and `rotor/session_feedback.py`. This Swift adapter reproduces the relevant wire contracts; it does not embed the Python client or claim to reproduce Yandex's private recommendation algorithm.
+
+- Base/default mode calls `rotor_session_new` with `user:onyourwave` or `track:<id>` directly. No redundant settings metadata request is needed for the normal/default/any/all configuration. Explicit non-default filters are still validated against server options and use only their returned serialized seeds.
+- Track radio changes upcoming recommendations while the seed song continues. It passes `track:<id>` in seeds and the current/history IDs in queue; it does not request `trackToStartFrom` for a song already playing.
+- Optional `batchId`: all accepted tracks retain membership even when a server batch has no ID. Playback events are sent to the proper session, omitting the absent optional field rather than discarding events or inventing an identifier. Existing batch IDs and old-session in-flight contexts remain intact.
+- Normal play of the same paused station resumes the existing queue/session without a new request. Explicit refresh/shake still starts a new session. Switching from another station or a finite playlist actually plays the new wave's first server-selected track. The My Wave control pauses only its selected station, not unrelated playback.
+- Same session continuation, ordered batches, listening-time events, collection-independent preference feedback, bounded history, offline retry and account/request cancellation guards are retained. No chart/local ranking fallback is introduced.
+
+Validation: source regression checks plus executable Swift client fixtures on macOS for base/custom seeds, track-radio seed history, optional batch IDs and event acknowledgement. Live account/recommendation quality and long-form background playback still require signed-in device QA; no credentials were taken from source or printed for this audit.

@@ -218,6 +218,13 @@ enum SonivoPlay {
         let request = UUID()
         catalogRequestID = request
         let initialPlaybackRequest = PlayerCore.shared.playbackRequestID
+        // A normal tap on the same paused station resumes its existing server queue.
+        // Refresh/shake explicitly passes forceFresh and creates a new session.
+        if !forceFresh, service.activeStationId == station.stationId,
+           service.waveError == nil, PlayerCore.shared.currentTrack != nil {
+            if !PlayerCore.shared.isPlaying { router.play() }
+            return
+        }
 
         if station.stationId == "app:recap" {
             service.endStationSession()
@@ -244,11 +251,9 @@ enum SonivoPlay {
                 .filter { !UserTasteEngine.shared.isDisliked(track: $0) }
             guard let first = available.first else { return }
             MoodRadioEngine.shared.deactivateLocalWave()
-            if !forceFresh, let current = PlayerCore.shared.currentTrack {
-                ActivePlayerPresentation.shared.replaceUpcomingQueue(with: available.filter { $0.id != current.id })
-            } else {
-                router.play(first, queue: available, radio: true)
-            }
+            // Starting another station must actually play its server-selected first track,
+            // not silently label the previous playlist/track radio as My Wave.
+            router.play(first, queue: available, radio: true)
         }
     }
 

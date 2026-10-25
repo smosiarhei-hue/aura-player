@@ -39,7 +39,7 @@ class YandexWaveSessionTests(unittest.TestCase):
         self.assertIn('repeatMode == .one && !isYandexWavePlayback',finish)
     def test_events_have_per_track_party_and_outbox(self):
         s=source('YandexWaveSession.swift')
-        for token in ['playingContexts','batches[trackID]','"event": event, "batchId": context.batch','totalPlayedSeconds','feedbacks.removeFirst()','Feedback pending']:
+        for token in ['playingContexts','batches[trackID]','payload["batchId"] = batchID','totalPlayedSeconds','feedbacks.removeFirst()','Feedback pending']:
             self.assertIn(token,s)
         service=source('yandexmusicservice.swift')
         self.assertNotIn('lastBatchId',service)

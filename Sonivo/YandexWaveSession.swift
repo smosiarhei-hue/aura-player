@@ -28,14 +28,15 @@ final class YandexWaveSession<Item: Decodable> {
     private(set) var serverID: String?
     private(set) var generation = UUID()
     private var issued: [String] = []
-    private var batches: [String: String] = [:]
+    struct BatchContext { let id: String? }
+    private var batches: [String: BatchContext] = [:]
     private var fetching = false
     private var unacknowledged: [Item] = []
     private var feedbacks: [Feedback] = []
     private var draining = false
     private var terminal = false
     var requiresRestart: Bool { terminal && unacknowledged.isEmpty }
-    private var playingContexts: [String: (session: String, batch: String)] = [:]
+    private var playingContexts: [String: (session: String, batch: String?)] = [:]
 
     init(send: @escaping (URLRequest) async throws -> (Data, URLResponse),
          identity: @escaping (Item) -> String, playable: @escaping (Item) -> Bool,
@@ -69,6 +70,10 @@ final class YandexWaveSession<Item: Decodable> {
 
     /// Use serializedSeed supplied by Yandex, not invented settings/query fields.
     private func seeds(station: String, settings: [String: String]) async throws -> [String] {
+        // Upstream rotor_session_new accepts the base seed directly. Standard settings
+        // need no metadata request; explicit filters still use server serializedSeed values.
+        let standard = ["diversity": "default", "language": "any", "moodEnergy": "all"]
+        if settings.allSatisfy({ standard[$0.key] == $0.value }) { return [station] }
         var components = URLComponents(string: "https://api.music.yandex.net/rotor/wave/settings")!
         components.queryItems = [URLQueryItem(name: "seeds", value: station)]
         var settingsRequest = request("/rotor/wave/settings")
@@ -107,7 +112,7 @@ final class YandexWaveSession<Item: Decodable> {
         guard let id = batch.radioSessionId, !id.isEmpty, batch.unknownSession != true else { throw Failure.badResponse }
         // Drain unavailable/duplicate batches locally before replacing the live session.
         var candidateIssued = Array(history.suffix(1000))
-        var candidateBatches: [String: String] = [:]
+        var candidateBatches: [String: BatchContext] = [:]
         var accepted: [Item] = []
         for attempt in 0..<3 {
             accepted = accept(batch, issued: &candidateIssued, batches: &candidateBatches)
@@ -179,7 +184,7 @@ final class YandexWaveSession<Item: Decodable> {
         String(id.split(separator: ":", maxSplits: 1).first ?? Substring(id))
     }
 
-    private func accept(_ batch: Batch, issued: inout [String], batches: inout [String: String],
+    private func accept(_ batch: Batch, issued: inout [String], batches: inout [String: BatchContext],
                         excluding: Set<String> = []) -> [Item] {
         var seen = Set(issued.map(Self.canonicalID)).union(excluding)
         var accepted: [Item] = []
@@ -191,7 +196,9 @@ final class YandexWaveSession<Item: Decodable> {
             // Otherwise Yandex can keep offering an item we silently discarded.
             if !issued.contains(id) { issued.append(id) }
             guard fresh, playable(item) else { continue }
-            if let batchID = batch.batchId { batches[id] = batchID }
+            // batchId is optional in upstream RotorSession / SessionFeedback.
+            // Retain membership even without it, so real playback events are not dropped.
+            batches[id] = BatchContext(id: batch.batchId)
             accepted.append(item)
         }
         if issued.count > 1000 {
@@ -206,22 +213,24 @@ final class YandexWaveSession<Item: Decodable> {
         guard ["trackStarted", "trackFinished", "skip", "like", "unlike", "dislike", "undislike"].contains(type),
               !trackID.isEmpty else { return }
         guard feedbacks.count < 256 else { log("Feedback queue full"); return }
-        let context: (session: String, batch: String)
+        let context: (session: String, batch: String?)
         if type == "trackStarted" {
             guard let serverID, let batch = batches[trackID] else { return }
-            context = (serverID, batch); playingContexts[trackID] = context
+            context = (serverID, batch.id); playingContexts[trackID] = context
         } else if let playing = playingContexts[trackID] {
             context = playing
         } else {
             guard let serverID, let batch = batches[trackID] else { return }
-            context = (serverID, batch)
+            context = (serverID, batch.id)
         }
         var event: [String: Any] = ["type": type, "timestamp": timestamp(), "trackId": trackID]
         if ["trackFinished", "skip", "dislike"].contains(type) {
             let played = seconds ?? 0
             event["totalPlayedSeconds"] = max(0, played.isFinite ? played : 0)
         }
-        feedbacks.append(Feedback(session: context.session, body: ["event": event, "batchId": context.batch]))
+        var payload: [String: Any] = ["event": event]
+        if let batchID = context.batch { payload["batchId"] = batchID }
+        feedbacks.append(Feedback(session: context.session, body: payload))
         if type == "skip" || type == "trackFinished" { playingContexts.removeValue(forKey: trackID) }
         Task { await flushFeedback() }
     }

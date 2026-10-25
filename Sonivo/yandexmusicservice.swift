@@ -667,7 +667,7 @@ final class YandexMusicService {
     }
 
     static let rotorStations: [StationOption] = [
-        StationOption(id: "wave", title: "Моя волна", subtitle: "Бесконечный поток без повторов", stationId: "user:onyourwave", gradient: ["#FBBF24", "#EA580C"], icon: "waveform.badge.sparkles"),
+        StationOption(id: "wave", title: "Моя волна", subtitle: "Персональные рекомендации Яндекса", stationId: "user:onyourwave", gradient: ["#FBBF24", "#EA580C"], icon: "waveform.badge.sparkles"),
         StationOption(id: "energy", title: "Энергия", subtitle: "Для тренировок и движения", stationId: "activity:workout", gradient: ["#F97316", "#B91C1C"], icon: "bolt.heart.fill"),
         StationOption(id: "relax", title: "Релакс", subtitle: "Спокойное на фон", stationId: "mood:calm", gradient: ["#FCD34D", "#B45309"], icon: "leaf.fill"),
         StationOption(id: "hits", title: "Главные хиты", subtitle: "Топовое прямо сейчас", stationId: "genre:pop", gradient: ["#FB923C", "#9A3412"], icon: "flame.fill"),
@@ -765,7 +765,9 @@ final class YandexMusicService {
 
     func startYandexTrackStation(seedID: String, target: Int) async -> [Track] {
         guard !seedID.isEmpty, target > 0 else { return [] }
-        return await startYandexWave(stationId: "track:\(seedID)", seedID: seedID).map { convertToTrack($0) }
+        // The seed selects recommendations; the already-playing song is not a
+        // trackToStartFrom request and must not be restarted/reissued by the server.
+        return await startYandexWave(stationId: "track:\(seedID)").map { convertToTrack($0) }
     }
 
     private func waveQueueHistory() -> [String] {
