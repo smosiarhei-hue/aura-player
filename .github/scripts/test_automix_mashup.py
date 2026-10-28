@@ -38,6 +38,11 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("resolveMashupBlend", player)
         self.assertIn("MashupBlendScheduler.schedule", player)
         self.assertIn("incomingStartPosition + elapsed", player)
+        # Stream intro seek must use completion-handler overload (Swift 6 async seek needs await).
+        self.assertIn(
+            "targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in }",
+            player,
+        )
 
     def test_blend_scheduler_exists(self):
         scheduler = (

@@ -2158,7 +2158,7 @@ final class PlayerCore {
         let analysis = AutoMixV2AnalysisRuntime.shared
         let outProfile = analysis.currentProfile.flatMap { mashupProfileMatches($0, track: outgoing) ? $0 : nil }
         let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
-        if let outProfile, let inProfile,
+        if outProfile != nil, inProfile != nil,
            let plan = analysis.transitionPlan,
            plan.type != .none,
            MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
@@ -2270,7 +2270,9 @@ final class PlayerCore {
                         targetStream.playImmediately(atRate: 1)
                         if startAt > 0.25 {
                             let seekTime = CMTime(seconds: startAt, preferredTimescale: 600)
-                            targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)
+                            // Completion-handler seek (same as other PlayerCore paths) — avoids the
+                            // Swift 6 async AVPlayer.seek overload that requires await.
+                            targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
                         }
                     }
                 } else {
