@@ -904,7 +904,61 @@ final class PlayerCore {
         let zero = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
         eqOffsetA = zero
         eqOffsetB = zero
+        StreamBeatTap.shared.clearItemEQOverrides()
         applyEQ()
+    }
+
+    /// Compose user EQ + mashup offsets. Enables the stream probe when offsets are audible
+    /// even if the user EQ toggle is off (same semantics as native deck offsets).
+    private func mashupComposedGains(offset: [Float]) -> (gains: [Float], enabled: Bool) {
+        let user = normalizedUserGains
+        let on = shouldApplyUserEQ
+        let gains = Self.normalized((0..<Self.bandFrequencies.count).map {
+            on ? user[$0] + offset[$0] : offset[$0]
+        })
+        let shaped = gains.contains { abs($0) > 0.01 }
+        return (gains, on || shaped)
+    }
+
+    /// Publish mashup envelopes to stream taps and/or native EQ decks for any mix of backends.
+    /// Writes immediately (no multi-hundred-ms ramp) so 30 Hz transition ticks stay click-free.
+    private func applyMashupTransitionEQ(progress: Double) {
+        let shaped = MashupLiveEQEnvelope.offsets(progress: progress)
+        let activeOff = Self.normalized(shaped.outgoing)
+        let idleOff = Self.normalized(shaped.incoming)
+        if activePlayer === playerA {
+            eqOffsetA = activeOff
+            eqOffsetB = idleOff
+        } else {
+            eqOffsetB = activeOff
+            eqOffsetA = idleOff
+        }
+
+        let out = mashupComposedGains(offset: activeOff)
+        let incoming = mashupComposedGains(offset: idleOff)
+
+        // Native decks: only touch audible engine lanes (stream-only mashup skips these).
+        if !isUsingStreamPlayer {
+            let rate = activePlayer === playerA ? eqNodeA.inputFormat(forBus: 0).sampleRate : eqNodeB.inputFormat(forBus: 0).sampleRate
+            let preamp = out.gains.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
+            writeBands(activePlayer === playerA ? eqNodeA : eqNodeB, out.gains, globalGain: preamp)
+            outputLimiter.bypass = false
+        }
+        if !incomingIsStream {
+            let node = idlePlayer === playerA ? eqNodeA : eqNodeB
+            let rate = node.inputFormat(forBus: 0).sampleRate
+            let preamp = incoming.gains.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
+            writeBands(node, incoming.gains, globalGain: preamp)
+            outputLimiter.bypass = false
+        }
+
+        // Streaming decks: per-item MTAudioProcessingTap EQ (Yandex / online).
+        if isUsingStreamPlayer, let item = activeStreamingPlayer.currentItem {
+            StreamBeatTap.shared.setItemEQOverride(for: item, gains: out.gains, enabled: out.enabled)
+        }
+        if incomingIsStream, let item = idleStreamingPlayer.currentItem {
+            StreamBeatTap.shared.setItemEQOverride(for: item, gains: incoming.gains, enabled: incoming.enabled)
+        }
     }
 
     @ObservationIgnored private var nativeEQRamp: Task<Void, Never>?
@@ -2217,14 +2271,11 @@ final class PlayerCore {
             idlePlayer.volume = targetLevel
         }
 
-        // AutoMix Mashup: keep equal-power volumes, shape bass/vocal via per-deck EQ offsets.
-        // Stream AVPlayer path has no dual EQ graph — badge still updates for UI continuity.
+        // AutoMix Mashup: equal-power volumes + bass-swap / vocal pocket on both
+        // native decks and stream MTAudioProcessingTap probes (per AVPlayerItem).
         if transitionMode == .automix {
             AutoMixDJEngine.shared.markMashupProgress(p)
-            if !isUsingStreamPlayer || !incomingIsStream {
-                let shaped = MashupLiveEQEnvelope.offsets(progress: p)
-                setTransitionEQOffsets(active: shaped.outgoing, idle: shaped.incoming)
-            }
+            applyMashupTransitionEQ(progress: p)
         }
 
         if !metadataSwapped, let incomingTrack, transitionDuration * (1.0 - p) <= 0.25 {
@@ -2321,11 +2372,17 @@ final class PlayerCore {
 
         isTransitioning = false
         transitionScheduled = false
+        // Drop mashup EQ on both native decks and stream taps so the new track is clean.
+        resetTransitionEQOffsets()
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.statusBadge = nil
         AutoMixDJEngine.shared.resetDrop()
         AutoMixDJEngine.shared.isPostMixActive = true
-        SonivoDiagnostics.log("[AutoMix] Transition completed: now playing \(nextTrack.title)", tag: "AUTOMIX")
+        SonivoDiagnostics.log(
+            "[AutoMix] Transition completed (\(transitionMode == .automix ? "mashup" : "crossfade")): now playing \(nextTrack.title)",
+            tag: "AUTOMIX"
+        )
 
         if !isUsingStreamPlayer {
             startTimer()

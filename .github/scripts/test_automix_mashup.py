@@ -29,8 +29,17 @@ class AutoMixMashupTests(unittest.TestCase):
 
         player = (ROOT / "Sonivo/playercore.swift").read_text()
         self.assertIn("transitionMode == .crossfade || transitionMode == .automix", player)
-        self.assertIn("MashupLiveEQEnvelope.offsets", player)
+        self.assertIn("applyMashupTransitionEQ(progress: p)", player)
+        self.assertIn("setItemEQOverride", player)
+        self.assertIn("clearItemEQOverrides", player)
         self.assertIn("CrossfadeCurve.gains(progress: p)", player)
+
+        tap = (ROOT / "Sonivo/streambeat.swift").read_text()
+        self.assertIn("itemEQOverrides", tap)
+        self.assertIn("func setItemEQOverride", tap)
+        self.assertIn("func clearItemEQOverrides", tap)
+        # Shared updateEQ must remain download-free (realtime-eq contract).
+        self.assertNotIn("download", tap.split("func updateEQ", 1)[1].split("func setItemEQOverride", 1)[0])
 
         settings = (ROOT / "Sonivo/settingsview.swift").read_text()
         self.assertIn("TransitionMode.automix", settings)

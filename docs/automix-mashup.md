@@ -23,12 +23,23 @@
 3. **Live PlayerCore** — режим `AutoMix Mashup`: equal-power громкости + `MashupLiveEQEnvelope` (bass swap / vocal pocket) через `setTransitionEQOffsets`. Не ломает CI equal-power контракт в `AutoMixDJEngine.computeVolumesAndEQ`.
 4. Настройки снова показывают AutoMix Mashup.
 
+## Streaming
+
+Yandex / online tracks use dual `AVPlayer` + `StreamBeatTap` (`MTAudioProcessingTap`).
+AutoMix Mashup now publishes **per-item EQ overrides** during the transition:
+
+- Outgoing stream item → bass kill / HPF proxy
+- Incoming stream item → bass restore + vocal pocket
+- Mixed stream↔local uses stream overrides on the AVPlayer side and native `eqOffset*` on the engine side
+- Overrides clear on complete/cancel so the next track is clean
+
+Dolby / spatial-passthrough items cannot take PCM EQ (existing StreamBeatTap rule); those fall back to equal-power volumes only.
+
 ## Что ещё не включено
 
 - Force-disabled AutoMix V2 / Neuro ownership пока **не** переключали: полный beatmatch + echo на DualDeck ждёт отдельного безопасного включения.
-- Stream↔stream mashup EQ ограничен (AVPlayer без dual EQ); badge обновляется, EQ shaping — на local/engine lane.
 - `tapeStop` / `beatStutter` в planner по-прежнему не выбираются матрицей архетипов.
 
 ## Как слушать
 
-Настройки → Переходы → **AutoMix Mashup**. Играть локальные/cached треки (лучше всего слышен bass-swap). Длительность слайдера удлиняется ×1.35 для mashup-окна.
+Настройки → Переходы → **AutoMix Mashup**. Работает на локальных и стриминговых треках (Yandex). Длительность слайдера удлиняется ×1.35 для mashup-окна.

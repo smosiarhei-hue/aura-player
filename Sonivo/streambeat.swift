@@ -16,6 +16,8 @@ final class StreamBeatTap {
     private var outcomes: [ObjectIdentifier: EQState] = [:]
     private var desiredGains = [Float](repeating: 0, count: EQGainLimits.frequencies.count)
     private var desiredEnabled = false
+    /// Per-item mashup/transition EQ. Overrides the shared user curve for that AVPlayerItem only.
+    private var itemEQOverrides: [ObjectIdentifier: (gains: [Float], enabled: Bool)] = [:]
     private var waitingSince: TimeInterval = 0
     private final class ProbeContext {
         weak var item: AVPlayerItem?
@@ -39,12 +41,38 @@ final class StreamBeatTap {
     func updateEQ(gains: [Float], enabled: Bool) {
         desiredGains = gains
         desiredEnabled = enabled
-        for probe in probes.values { publishEQ(to: probe.tap) }
+        for (key, probe) in probes {
+            publishEQ(to: probe.tap, itemKey: key)
+        }
     }
 
-    private func publishEQ(to tap: MTAudioProcessingTap) {
-        desiredGains.withUnsafeBufferPointer {
-            SonivoStreamProbeSetEQ(tap, $0.baseAddress!, $0.count, desiredEnabled ? 1 : 0)
+    /// AutoMix mashup / transition shaping for one stream deck. Pass `nil` gains to clear.
+    func setItemEQOverride(for item: AVPlayerItem, gains: [Float]?, enabled: Bool?) {
+        let key = ObjectIdentifier(item)
+        if let gains, let enabled {
+            itemEQOverrides[key] = (EQGainLimits.normalized(gains), enabled)
+        } else {
+            itemEQOverrides.removeValue(forKey: key)
+        }
+        if let probe = probes[key] {
+            publishEQ(to: probe.tap, itemKey: key)
+        }
+    }
+
+    func clearItemEQOverrides() {
+        guard !itemEQOverrides.isEmpty else { return }
+        itemEQOverrides.removeAll()
+        for (key, probe) in probes {
+            publishEQ(to: probe.tap, itemKey: key)
+        }
+    }
+
+    private func publishEQ(to tap: MTAudioProcessingTap, itemKey: ObjectIdentifier? = nil) {
+        let override = itemKey.flatMap { itemEQOverrides[$0] }
+        let gains = override?.gains ?? desiredGains
+        let enabled = override?.enabled ?? desiredEnabled
+        gains.withUnsafeBufferPointer {
+            SonivoStreamProbeSetEQ(tap, $0.baseAddress!, $0.count, enabled ? 1 : 0)
         }
     }
 
@@ -72,7 +100,7 @@ final class StreamBeatTap {
                     return
                 }
                 guard let tap = SonivoStreamProbeCreate() else { self.outcomes[key] = .unavailable; return }
-                self.publishEQ(to: tap)
+                self.publishEQ(to: tap, itemKey: key)
                 let input = AVMutableAudioMixInputParameters(track: track)
                 input.audioTapProcessor = tap
                 let mix = AVMutableAudioMix()
@@ -96,6 +124,7 @@ final class StreamBeatTap {
                 let retained = Set(self.probes.keys).union(self.attachments.keys)
                 let currentID = PlayerCore.shared.streamingPlayer.currentItem.map { ObjectIdentifier($0) }
                 self.outcomes = self.outcomes.filter { retained.contains($0.key) || $0.key == currentID }
+                self.itemEQOverrides = self.itemEQOverrides.filter { retained.contains($0.key) || $0.key == currentID }
                 if self.outcomes.isEmpty && self.probes.isEmpty && self.attachments.isEmpty {
                     self.activeEQState = .idle
                     self.pollingTask = nil
@@ -115,7 +144,10 @@ final class StreamBeatTap {
                         self.logProbeDiagnostics(probe)
                         let readiness = SonivoStreamProbeEQReady(probe.tap)
                         if readiness == 1 {
-                            if !probe.didPrepare { self.publishEQ(to: probe.tap); probe.didPrepare = true }
+                            if !probe.didPrepare {
+                                self.publishEQ(to: probe.tap, itemKey: key)
+                                probe.didPrepare = true
+                            }
                             self.outcomes[key] = .ready
                         } else if readiness < 0 || (item.status == .readyToPlay &&
                                   Date.timeIntervalSinceReferenceDate - self.waitingSince > 3) {
