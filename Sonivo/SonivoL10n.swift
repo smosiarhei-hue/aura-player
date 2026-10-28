@@ -64,6 +64,29 @@ final class SonivoL10n {
     var radio: String { isRussian ? "Радио" : "Radio" }
     var radioSubtitle: String { isRussian ? "Музыка без границ. Новые открытия каждый день." : "Music without borders. New discoveries every day." }
     var languageSwitchLabel: String { isRussian ? "Язык: Русский" : "Language: English" }
+    /// Shining player badge when AutoMix Mashup fires.
+    var automix: String { isRussian ? "Автомикс" : "Automix" }
+
+    /// Localize live mashup phase codes from `MashupLiveStyle.phaseLabel`.
+    func automixPhase(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("BEATMATCH") {
+            let bpm = raw.split(separator: " ").dropFirst().joined(separator: " ")
+            if isRussian {
+                return bpm.isEmpty ? "Битматч" : "Битматч \(bpm)"
+            }
+            return raw
+        }
+        if !isRussian { return raw }
+        switch raw {
+        case "BASS SWAP": return "Смена баса"
+        case "VOCAL × INSTR", "VOCAL HOLD": return "Вокал × инструмент"
+        case "HANDOFF": return "Перехват"
+        case "VOCAL POCKET": return "Вокальный карман"
+        case "SOFT REVEAL": return "Мягкое раскрытие"
+        default: return raw
+        }
+    }
 
     func songsCount(_ n: Int) -> String {
         if !isRussian { return "\(n) \(n == 1 ? "song" : "songs")" }
