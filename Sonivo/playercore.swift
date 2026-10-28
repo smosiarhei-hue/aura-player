@@ -8,6 +8,8 @@ import UIKit
 import Observation
 import StreamAudioProbe
 import AudioEngineCore
+import MixModels
+import MixPlanner
 
 enum AudioQuality: Int, CaseIterable, Identifiable, Sendable {
     case hiResLossless = 0
@@ -2121,19 +2123,86 @@ final class PlayerCore {
         guard transitionMode == .crossfade || transitionMode == .automix,
               !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
 
-        // Mashup windows are a bit longer so bass-swap / vocal pocket have room to breathe.
-        let blend = transitionMode == .automix
-            ? max(4, crossfadeDuration * 1.35)
-            : max(1, crossfadeDuration)
-        scheduleSimpleTransition(current: current, blendDuration: blend)
-    }
-
-    private func scheduleSimpleTransition(current: Track, blendDuration: Double) {
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let totalDur = duration
-        let cue = max(0, totalDur - blendDuration)
-        guard totalDur > 5, currentPos >= cue, let nextTrack = peekNext(auto: true) else { return }
+        guard totalDur > 5, let nextTrack = peekNext(auto: true) else { return }
 
+        if transitionMode == .automix {
+            let blend = resolveMashupBlend(outgoing: current, incoming: nextTrack, duration: totalDur)
+            guard currentPos >= blend.outgoingCueSec else { return }
+            scheduleSimpleTransition(
+                current: current,
+                nextTrack: nextTrack,
+                blendDuration: blend.blendDurationSec,
+                incomingStart: blend.incomingStartSec,
+                mashupBadge: blend.reason
+            )
+        } else {
+            let blendDuration = max(1, crossfadeDuration)
+            let cue = max(0, totalDur - blendDuration)
+            guard currentPos >= cue else { return }
+            scheduleSimpleTransition(
+                current: current,
+                nextTrack: nextTrack,
+                blendDuration: blendDuration,
+                incomingStart: 0,
+                mashupBadge: nil
+            )
+        }
+    }
+
+    /// Prefer analysed TrackProfile cues from AutoMixV2 analysis when present;
+    /// otherwise structural heuristics (outro ≥75%, intro lead) — not fixed end-seconds.
+    private func resolveMashupBlend(outgoing: Track, incoming: Track, duration totalDur: Double) -> LiveMashupBlend {
+        let preferred = max(MashupBlendScheduler.minimumBlendSec, crossfadeDuration * 1.35)
+        let analysis = AutoMixV2AnalysisRuntime.shared
+        let outProfile = analysis.currentProfile.flatMap { mashupProfileMatches($0, track: outgoing) ? $0 : nil }
+        let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
+        if let outProfile, let inProfile,
+           let plan = analysis.transitionPlan,
+           plan.type != .none,
+           MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
+            let blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
+            let cue = min(max(plan.aOutStartSec, totalDur * MashupBlendScheduler.minimumPlayedFraction),
+                          max(0, totalDur - MashupBlendScheduler.minimumBlendSec))
+            let inStart = max(0, plan.bInStartSec)
+            return LiveMashupBlend(
+                outgoingCueSec: cue,
+                blendDurationSec: blend,
+                incomingStartSec: inStart,
+                reason: plan.reason
+            )
+        }
+        let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
+        return MashupBlendScheduler.schedule(
+            outgoingDuration: totalDur,
+            incomingDuration: incomingDur,
+            preferredBlendSec: preferred,
+            outgoing: outProfile,
+            incoming: inProfile
+        )
+    }
+
+    private func mashupProfileMatches(_ profile: TrackProfile, track: Track) -> Bool {
+        if track.isStream {
+            guard let raw = YandexMusicService.ymId(fromFileName: track.fileName) else { return false }
+            return profile.trackID.raw == raw
+        }
+        return profile.trackID.raw == track.id.uuidString
+    }
+
+    private func clampMashupBlendDuration(_ value: Double) -> Double {
+        min(MashupBlendScheduler.maximumBlendSec,
+            max(MashupBlendScheduler.minimumBlendSec, value))
+    }
+
+    private func scheduleSimpleTransition(
+        current: Track,
+        nextTrack: Track,
+        blendDuration: Double,
+        incomingStart: Double,
+        mashupBadge: String?
+    ) {
         transitionScheduled = true
         isTransitioning = true
         incomingIsStream = nextTrack.isStream
@@ -2142,12 +2211,15 @@ final class PlayerCore {
         incomingQuality = nil
         metadataSwapped = false
         metadataTrack = nil
-        incomingStartPosition = 0
+        incomingStartPosition = max(0, incomingStart)
         let mashup = transitionMode == .automix
         AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || mashup
         AutoMixDJEngine.shared.activeStrategyName = mashup ? "MASHUP" : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
         AutoMixDJEngine.shared.statusBadge = mashup ? "BASS SWAP" : nil
+        if mashup, let mashupBadge, !mashupBadge.isEmpty {
+            SonivoDiagnostics.log("[Mashup] blend \(mashupBadge)", tag: "AUDIO")
+        }
 
         let transitionID = UUID()
         transitionRequestID = transitionID
@@ -2156,6 +2228,7 @@ final class PlayerCore {
         incomingIsStream = nextURL == nil && (nextTrack.isStream || nextTrack.streamUrlString != nil)
         let targetStream = idleStreamingPlayer
         let targetNode = idlePlayer
+        let startAt = incomingStartPosition
         transitionPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -2183,7 +2256,7 @@ final class PlayerCore {
                         self.incomingIsStream = false
                         self.incomingAudioFile = file
                         self.incomingQuality = LocalAudioQualityReader.read(file)
-                        self.scheduleLocalSegment(file, on: targetNode, at: 0)
+                        self.scheduleLocalSegment(file, on: targetNode, at: startAt)
                         targetNode.volume = 0
                         if !self.engine.isRunning { try self.engine.start() }
                         targetNode.play()
@@ -2195,6 +2268,10 @@ final class PlayerCore {
                         targetStream.replaceCurrentItem(with: item)
                         targetStream.volume = 0
                         targetStream.playImmediately(atRate: 1)
+                        if startAt > 0.25 {
+                            let seekTime = CMTime(seconds: startAt, preferredTimescale: 600)
+                            targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)
+                        }
                     }
                 } else {
                     let file = try AVAudioFile(forReading: nextURL ?? nextTrack.url)
@@ -2203,7 +2280,7 @@ final class PlayerCore {
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
                     self.incomingAudioFile = file
                     self.incomingQuality = LocalAudioQualityReader.read(file)
-                    self.scheduleLocalSegment(file, on: targetNode, at: 0)
+                    self.scheduleLocalSegment(file, on: targetNode, at: startAt)
                     targetNode.volume = 0
                     if !self.engine.isRunning { try self.engine.start() }
                     targetNode.play()
@@ -2298,7 +2375,9 @@ final class PlayerCore {
     }
 
     private func completeTransition(to nextTrack: Track) {
-        let nativeIncomingPosition = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
+        let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
+        // Local incoming was scheduled at incomingStartPosition; wall-clock elapsed alone would jump back to 0.
+        let nativeIncomingPosition = max(0, incomingStartPosition + elapsed)
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil

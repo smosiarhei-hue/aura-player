@@ -34,6 +34,21 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("setItemEQOverride", player)
         self.assertIn("clearItemEQOverrides", player)
         self.assertIn("CrossfadeCurve.gains(progress: p)", player)
+        # Auto blend-point detection (outro/intro), not fixed end-seconds alone.
+        self.assertIn("resolveMashupBlend", player)
+        self.assertIn("MashupBlendScheduler.schedule", player)
+        self.assertIn("incomingStartPosition + elapsed", player)
+
+    def test_blend_scheduler_exists(self):
+        scheduler = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupBlendScheduler.swift"
+        ).read_text()
+        self.assertIn("enum MashupBlendScheduler", scheduler)
+        self.assertIn("minimumPlayedFraction", scheduler)
+        self.assertIn("heuristicCues", scheduler)
+        self.assertIn("LiveMashupBlend", scheduler)
+        tests = (ROOT / "Tests/UnitTests/MashupBlendSchedulerTests.swift").read_text()
+        self.assertIn("MashupBlendSchedulerTests", tests)
 
         presentation = (ROOT / "Sonivo/ActivePlayerPresentation.swift").read_text()
         self.assertIn("mashupPhaseLabel", presentation)

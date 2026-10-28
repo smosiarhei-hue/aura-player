@@ -22,6 +22,7 @@
 2. **`DualDeck.setPitchCents`** + **`MixPlanRealtimeTransitionRunner`** — runner для DualDeck (готов к V2 ownership).
 3. **Live PlayerCore** — режим `AutoMix Mashup`: equal-power громкости + `MashupLiveEQEnvelope` (bass swap / vocal pocket) через `setTransitionEQOffsets`. Не ломает CI equal-power контракт в `AutoMixDJEngine.computeVolumesAndEQ`.
 4. Настройки снова показывают AutoMix Mashup.
+5. **`MashupBlendScheduler`** — автодетект blend points: cue по outro (`mixOut`, ≥75% трека), вход B по `mixIn` / intro lead; длина окна следует хвосту outro, а не только слайдеру «N секунд до конца». Live путь берёт `TransitionPlan` / `TrackProfile` из analysis runtime, если есть, иначе structural heuristic.
 
 ## Streaming
 
@@ -42,4 +43,4 @@ Dolby / spatial-passthrough items cannot take PCM EQ (existing StreamBeatTap rul
 
 ## Как слушать
 
-Настройки → Переходы → **AutoMix Mashup**. Работает на локальных и стриминговых треках (Yandex). Длительность слайдера удлиняется ×1.35 для mashup-окна.
+Настройки → Переходы → **AutoMix Mashup**. Работает на локальных и стриминговых треках (Yandex). Слайдер задаёт preferred-окно (×1.35), но старт сведения — по detected mixOut / intro, не `duration − N`.
