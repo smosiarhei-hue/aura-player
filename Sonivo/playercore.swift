@@ -2399,7 +2399,9 @@ final class PlayerCore {
         let sourceLevel = gains.outgoing
         let targetLevel = gains.incoming
 
-        let beatRates = mashup ? activeMashupStyle.playbackRates(progress: p) : (1 as Float, 1 as Float)
+        let beatRates: (outgoing: Float, incoming: Float) = mashup
+            ? activeMashupStyle.playbackRates(progress: p)
+            : (outgoing: 1, incoming: 1)
 
         if isUsingStreamPlayer {
             activeStreamingPlayer.volume = sourceLevel * volume
