@@ -7,7 +7,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case gapless = "Gapless (Без пауз)"
     case crossfade = "Кроссфейд"
     case off = "Выключено"
-    case automix = "AutoMix (Отключено)"
+    case automix = "AutoMix Mashup"
 
     var id: String { rawValue }
 
@@ -20,7 +20,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
         case .off:
             return "Стандартное раздельное воспроизведение треков."
         case .automix:
-            return "Отключено для сохранения оригинального звучания."
+            return "DJ mashup: equal-power кроссфейд плюс bass-swap, vocal pocket и мягкий HPF на уходящем треке."
         }
     }
 }
@@ -49,7 +49,7 @@ final class AutoMixDJEngine {
     private init() {}
 
     func notifyDrop(targetTrack: Track?) {
-        // AutoMix Drop Hard Cut completely disabled to preserve audio continuity
+        // Hard-cut drop stays disabled; mashup uses continuous bass-swap envelopes instead.
     }
 
     func resetDrop() {
@@ -66,6 +66,16 @@ final class AutoMixDJEngine {
         let outVol = Float(cos(p * (.pi / 2)))
         let inVol = Float(sin(p * (.pi / 2)))
         return (outVol, inVol, 0.0, 0.0, 1.0)
+    }
+
+    /// UI badge for the active mashup window (EQ shaping lives in PlayerCore offsets).
+    func markMashupProgress(_ progress: Double) {
+        isTransitionActive = true
+        transitionProgress = max(0, min(1, progress))
+        activeStrategyName = "MASHUP"
+        statusBadge = progress < 0.45 ? "BASS SWAP" : (progress < 0.85 ? "VOCAL POCKET" : "DROP IN")
+        dropProgress = progress
+        isPostMixActive = progress >= 0.85
     }
 }
 

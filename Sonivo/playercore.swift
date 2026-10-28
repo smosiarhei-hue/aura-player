@@ -739,9 +739,14 @@ final class PlayerCore {
         spatialAudioEnabled = defaults.object(forKey: "player.spatialAudioEnabled") as? Bool ?? true
 
         if let modeStr = defaults.string(forKey: "player.transitionMode"),
-           let mode = TransitionMode(rawValue: modeStr),
-           mode != .automix {
-            transitionMode = mode
+           let mode = TransitionMode(rawValue: modeStr) {
+            // Migrate the old disabled label if a stale raw value is still stored.
+            if modeStr == "AutoMix (Отключено)" {
+                transitionMode = .automix
+                defaults.set(TransitionMode.automix.rawValue, forKey: "player.transitionMode")
+            } else {
+                transitionMode = mode
+            }
         } else {
             transitionMode = .gapless
             defaults.set(TransitionMode.gapless.rawValue, forKey: "player.transitionMode")
@@ -2059,9 +2064,14 @@ final class PlayerCore {
     }
 
     private func scheduleTransitionIfNeeded() {
-        guard transitionMode == .crossfade, !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
+        guard transitionMode == .crossfade || transitionMode == .automix,
+              !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
 
-        scheduleSimpleTransition(current: current, blendDuration: max(1, crossfadeDuration))
+        // Mashup windows are a bit longer so bass-swap / vocal pocket have room to breathe.
+        let blend = transitionMode == .automix
+            ? max(4, crossfadeDuration * 1.35)
+            : max(1, crossfadeDuration)
+        scheduleSimpleTransition(current: current, blendDuration: blend)
     }
 
     private func scheduleSimpleTransition(current: Track, blendDuration: Double) {
@@ -2079,9 +2089,11 @@ final class PlayerCore {
         metadataSwapped = false
         metadataTrack = nil
         incomingStartPosition = 0
-        AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade
-        AutoMixDJEngine.shared.activeStrategyName = transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS"
+        let mashup = transitionMode == .automix
+        AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || mashup
+        AutoMixDJEngine.shared.activeStrategyName = mashup ? "MASHUP" : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.statusBadge = mashup ? "BASS SWAP" : nil
 
         let transitionID = UUID()
         transitionRequestID = transitionID
@@ -2166,7 +2178,10 @@ final class PlayerCore {
         incomingLaneReady = false
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.statusBadge = nil
+        AutoMixDJEngine.shared.activeStrategyName = transitionMode == .automix ? "MASHUP" : "GAPLESS"
         AutoMixDJEngine.shared.resetDrop()
+        resetTransitionEQOffsets()
     }
 
     private func startTransitionTimer() {
@@ -2200,6 +2215,16 @@ final class PlayerCore {
             idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
         } else {
             idlePlayer.volume = targetLevel
+        }
+
+        // AutoMix Mashup: keep equal-power volumes, shape bass/vocal via per-deck EQ offsets.
+        // Stream AVPlayer path has no dual EQ graph — badge still updates for UI continuity.
+        if transitionMode == .automix {
+            AutoMixDJEngine.shared.markMashupProgress(p)
+            if !isUsingStreamPlayer || !incomingIsStream {
+                let shaped = MashupLiveEQEnvelope.offsets(progress: p)
+                setTransitionEQOffsets(active: shaped.outgoing, idle: shaped.incoming)
+            }
         }
 
         if !metadataSwapped, let incomingTrack, transitionDuration * (1.0 - p) <= 0.25 {

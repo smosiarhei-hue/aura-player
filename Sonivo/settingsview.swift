@@ -243,7 +243,7 @@ struct SettingsView: View {
                     Text("Работает через iOS на совместимых наушниках. Режим выбирается в Пункте управления. Стерео не становится Dolby Atmos; для защищённых и Dolby-потоков EQ может быть недоступен.")
                 }
                 Section {
-                    ForEach([TransitionMode.gapless, TransitionMode.crossfade, TransitionMode.off], id: \.rawValue) { mode in
+                    ForEach([TransitionMode.gapless, TransitionMode.crossfade, TransitionMode.automix, TransitionMode.off], id: \.rawValue) { mode in
                         Button { player.transitionMode = mode } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -257,16 +257,20 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    if player.transitionMode == .crossfade {
+                    if player.transitionMode == .crossfade || player.transitionMode == .automix {
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack { Text("Длительность кроссфейда"); Spacer(); Text(String(format: "%.1f сек", player.crossfadeDuration)).foregroundStyle(.secondary) }
+                            HStack {
+                                Text(player.transitionMode == .automix ? "Длительность mashup" : "Длительность кроссфейда")
+                                Spacer()
+                                Text(String(format: "%.1f сек", player.crossfadeDuration)).foregroundStyle(.secondary)
+                            }
                             Slider(value: $player.crossfadeDuration, in: 1...12, step: 0.5).tint(settings.accentColor)
                         }
                     }
                 } header: {
                     Text("Переходы между треками")
                 } footer: {
-                    Text("Gapless — без пауз. Кроссфейд — плавное смешивание конца и начала треков.")
+                    Text("Gapless — без пауз. Кроссфейд — плавное смешивание. AutoMix Mashup — DJ bass-swap и vocal pocket поверх equal-power кроссфейда.")
                 }
 
     }

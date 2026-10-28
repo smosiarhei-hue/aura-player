@@ -227,6 +227,15 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         }
     }
 
+    /// Harmonic key correction in cents (±200 ≈ ±2 semitones, Camelot neighbor).
+    public func setPitchCents(_ cents: Float, for deck: Deck) async {
+        await inspect { owner in
+            let slot = owner.slot(for: deck)
+            let clamped = min(200, max(-200, cents.isFinite ? cents : 0))
+            slot.timePitch.pitch = clamped
+        }
+    }
+
     /// Applies one DJ FX event to a deck.
     ///
     /// Semantics are taken verbatim from the stage-4 implementation so that moving the FX
