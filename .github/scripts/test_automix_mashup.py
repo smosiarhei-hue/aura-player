@@ -36,11 +36,13 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("setItemEQOverride", player)
         self.assertIn("clearItemEQOverrides", player)
         self.assertIn("CrossfadeCurve.gains(progress: p)", player)
-        # Per-pair algorithmic mashup (not one shared envelope).
+        # Per-pair beatmatch mashup (BPM rates + vocal↔instrumental), not FX-only.
         self.assertIn("resolveMashupStyle", player)
         self.assertIn("activeMashupStyle.volumes", player)
+        self.assertIn("activeMashupStyle.playbackRates", player)
         self.assertIn("MashupLiveStyle.resolve", player)
         self.assertIn("applyMashupTimePitch", player)
+        self.assertIn("playImmediately(atRate: startRate)", player)
         # Auto blend-point detection (outro/intro), not fixed end-seconds alone.
         self.assertIn("resolveMashupBlend", player)
         self.assertIn("MashupBlendScheduler.schedule", player)
@@ -86,7 +88,8 @@ class AutoMixMashupTests(unittest.TestCase):
         # Duration slider is crossfade-only; mashup auto-adjusts from blend detection.
         self.assertIn("player.transitionMode == .crossfade", settings)
         self.assertNotIn("Длительность mashup", settings)
-        self.assertIn("outro/intro", settings)
+        self.assertIn("beatmatch", settings.lower())
+        self.assertIn("вокал", settings.lower())
 
         runner = (ROOT / "Sonivo/MixPlanRealtimeTransitionRunner.swift").read_text()
         self.assertIn("MashupTransitionExecutor", runner)
@@ -100,12 +103,17 @@ class AutoMixMashupTests(unittest.TestCase):
         ).read_text()
         self.assertIn("struct MashupLiveStyle", style)
         self.assertIn("func volumes(progress", style)
+        self.assertIn("func playbackRates(progress", style)
+        self.assertIn("isBeatmatched", style)
+        self.assertIn("tempoMatch", style)
         self.assertIn("static func resolve", style)
         self.assertIn("fromPlan", style)
+        self.assertIn("BEATMATCH", style)
 
         analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
         self.assertIn("transitionMode == .automix", analysis)
         self.assertIn("shouldAnalyse", analysis)
+        self.assertIn("allowDownload", analysis)
 
     def test_drop_swap_plan_still_encodes_mashup_fx(self):
         planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
@@ -116,13 +124,12 @@ class AutoMixMashupTests(unittest.TestCase):
 
     def test_docs_describe_auto_duration_and_live_eq(self):
         docs = (ROOT / "docs/automix-mashup.md").read_text()
-        self.assertIn("Vocal↔instrumental layering", docs)
-        self.assertIn("слайдер длительности скрыт", docs)
-        self.assertIn("автоматическая", docs)
-        self.assertIn("MashupLiveEQEnvelope", docs)
+        self.assertIn("инструментал B под вокал A", docs)
+        self.assertIn("Beatmatch", docs)
         self.assertIn("MashupLiveStyle", docs)
         self.assertIn("под каждую пару", docs)
-        self.assertNotIn("force-enable", docs.lower())
+        self.assertIn("rateA", docs)
+        self.assertIn("force-disabled", docs)
 
 
 if __name__ == "__main__":

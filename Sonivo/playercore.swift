@@ -2240,6 +2240,16 @@ final class PlayerCore {
         AutoMixDJEngine.shared.activeStrategyName = mashup ? "MASHUP" : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
         AutoMixDJEngine.shared.statusBadge = mashup ? activeMashupStyle.phaseLabel(progress: 0) : nil
+        AutoMixDJEngine.shared.currentBPM = mashup ? Double(activeMashupStyle.targetBPM) : 0
+        // Lock outgoing tempo immediately so B can meet A on the grid.
+        if mashup {
+            let rates = activeMashupStyle.playbackRates(progress: 0)
+            if isUsingStreamPlayer {
+                activeStreamingPlayer.rate = rates.outgoing
+            } else {
+                applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+            }
+        }
         if mashup, let mashupBadge, !mashupBadge.isEmpty {
             SonivoDiagnostics.log("[Mashup] \(activeMashupStyle.reason) · \(mashupBadge)", tag: "AUDIO")
         }
@@ -2290,7 +2300,9 @@ final class PlayerCore {
                         StreamBeatTap.shared.attach(to: item)
                         targetStream.replaceCurrentItem(with: item)
                         targetStream.volume = 0
-                        targetStream.playImmediately(atRate: 1)
+                        // Start B already at beatmatched rate so the instrumental bed locks to A.
+                        let startRate = max(0.84, min(1.16, activeMashupStyle.rateB))
+                        targetStream.playImmediately(atRate: startRate)
                         if startAt > 0.25 {
                             let seekTime = CMTime(seconds: startAt, preferredTimescale: 600)
                             // Completion-handler seek (same as other PlayerCore paths) — avoids the
@@ -2312,14 +2324,30 @@ final class PlayerCore {
                 }
                 self.incomingLaneReady = true
                 self.transitionStartTime = Date()
-                // Seed mashup EQ immediately so the first audible frames already bass-swap,
-                // including stream taps that attached during prepare.
+                // Seed beatmatch + mashup EQ so the first frames already lock tempo / vocal bed.
                 if self.transitionMode == .automix {
                     if self.isUsingStreamPlayer, let item = self.activeStreamingPlayer.currentItem {
                         StreamBeatTap.shared.attach(to: item)
                     }
+                    let rates = self.activeMashupStyle.playbackRates(progress: 0)
+                    if self.isUsingStreamPlayer {
+                        self.activeStreamingPlayer.rate = rates.outgoing
+                    } else {
+                        self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+                    }
+                    if self.incomingIsStream {
+                        self.idleStreamingPlayer.rate = rates.incoming
+                    } else {
+                        self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
+                    }
                     self.applyMashupTransitionEQ(progress: 0)
                     AutoMixDJEngine.shared.markMashupProgress(0)
+                    AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
+                    AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
+                    SonivoDiagnostics.log(
+                        "[Mashup] beatmatch A×\(String(format: "%.3f", rates.outgoing)) B×\(String(format: "%.3f", rates.incoming)) @\(Int(self.activeMashupStyle.targetBPM)) BPM · \(self.activeMashupStyle.reason)",
+                        tag: "AUDIO"
+                    )
                 }
                 self.startTransitionTimer()
                 self.transitionPreparationTask = nil
@@ -2371,40 +2399,41 @@ final class PlayerCore {
         let sourceLevel = gains.outgoing
         let targetLevel = gains.incoming
 
+        let beatRates = mashup ? activeMashupStyle.playbackRates(progress: p) : (1 as Float, 1 as Float)
+
         if isUsingStreamPlayer {
             activeStreamingPlayer.volume = sourceLevel * volume
-            // Micro rate move only while mashup is active; keep play/pause otherwise.
             if mashup {
-                let rate = Float(1.0 + Double(activeMashupStyle.outgoingRateDelta) * (1 - p))
-                activeStreamingPlayer.rate = isPlaying ? max(0.92, min(1.08, rate)) : 0
+                // Hold beatmatched tempo for A (not cosmetic ±1% wiggles).
+                activeStreamingPlayer.rate = isPlaying ? beatRates.outgoing : 0
             } else {
                 activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
             }
         } else {
             activePlayer.volume = sourceLevel
             if mashup {
-                applyMashupTimePitch(progress: p, outgoing: true)
+                applyMashupTimePitch(progress: p, outgoing: true, rate: beatRates.outgoing)
             }
         }
 
         if incomingIsStream {
             idleStreamingPlayer.volume = targetLevel * volume
             if mashup {
-                let rate = Float(1.0 + Double(activeMashupStyle.incomingRateDelta) * (1 - p))
-                idleStreamingPlayer.rate = isPlaying ? max(0.92, min(1.08, rate)) : 0
+                idleStreamingPlayer.rate = isPlaying ? beatRates.incoming : 0
             } else {
                 idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
             }
         } else {
             idlePlayer.volume = targetLevel
             if mashup {
-                applyMashupTimePitch(progress: p, outgoing: false)
+                applyMashupTimePitch(progress: p, outgoing: false, rate: beatRates.incoming)
             }
         }
 
-        // AutoMix Mashup: per-pair volume curve + vocal↔instrumental EQ.
+        // AutoMix Mashup: beatmatch + vocal↔instrumental layering on the beat grid.
         if mashup {
             AutoMixDJEngine.shared.markMashupProgress(p)
+            AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
             AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
             applyMashupTransitionEQ(progress: p)
         }
@@ -2419,17 +2448,16 @@ final class PlayerCore {
         }
     }
 
-    /// Soft pitch/rate automation on native decks for the active mashup style.
-    private func applyMashupTimePitch(progress: Double, outgoing: Bool) {
+    /// Beatmatch rate + Camelot pitch on native decks for the active mashup pair.
+    private func applyMashupTimePitch(progress: Double, outgoing: Bool, rate: Float) {
         let node = outgoing ? activeTimePitch : idleTimePitch
-        let cents = outgoing ? activeMashupStyle.outgoingPitchCents : activeMashupStyle.incomingPitchCents
-        let rateDelta = outgoing ? activeMashupStyle.outgoingRateDelta : activeMashupStyle.incomingRateDelta
-        let p = min(1, max(0, progress))
-        let fade = Float(outgoing ? (1 - p) : p)
-        node.bypass = abs(cents) < 0.5 && abs(rateDelta) < 0.001
-        if !node.bypass {
-            node.pitch = cents * fade
-            node.rate = max(0.92, min(1.08, 1.0 + rateDelta * (outgoing ? Float(1 - p) : Float(1 - abs(0.5 - p) * 2))))
+        let cents = outgoing ? 0 : activeMashupStyle.pitchCents(progress: progress)
+        let needsPitch = abs(cents) >= 0.5
+        let needsRate = abs(rate - 1) >= 0.002
+        node.bypass = !(needsPitch || needsRate)
+        if needsRate || needsPitch {
+            node.rate = rate
+            node.pitch = cents
         }
     }
 

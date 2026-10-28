@@ -131,10 +131,12 @@ final class AutoMixV2AnalysisRuntime {
         lastError = nil
         analysisTask?.cancel()
 
+        // Mashup needs real BPM/grid for beatmatch — allow download when AutoMix Mashup is on.
         let allowDownload = AutoMixEngineSelectionStore.shared.isV2Enabled
+            || PlayerCore.shared.transitionMode == .automix
         analysisTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            pipelineStatus = "Анализ текущего трека"
+            pipelineStatus = allowDownload ? "Анализ / подготовка BPM пары" : "Анализ текущего трека"
             do {
                 let currentFile = try await self.resolveFile(for: current, id: currentID, allowDownload: allowDownload)
                 let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)

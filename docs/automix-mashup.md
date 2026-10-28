@@ -1,39 +1,32 @@
 # AutoMix Mashup
 
-## Сопоставление с DJ-практикой
+## Что это
 
-| Приём DJ | Где в Sonivo | Статус |
-|---|---|---|
-| Per-pair algorithmic plan | `MixPlanner` + `MashupLiveStyle.resolve` | Live |
-| Asymmetric vocal↔instrumental volumes | `MashupLiveStyle.volumes` (не equal-power) | Live |
-| Bass swap | MixPlanner `dropSwap` / live EQ | Live EQ + DualDeck FX |
-| Vocal↔instrumental layering | Outgoing vocal hold + incoming instrumental bed → vocal swap | Live EQ |
-| Vocal pocket | `vocalDucking` / live presence duck | Live EQ + DualDeck FX |
-| High-pass riser | `highPass` / live body→mid cut | Live EQ proxy + DualDeck |
-| Mid duck / soft reveal | Live mid duck on A + LPF→open on B | Live EQ proxy |
-| Rate / pitch micro-moves | Native `AVAudioUnitTimePitch` + stream rate | Live |
-| Echo-out / full beatmatch | DualDeck executor | DualDeck (V2 runner) |
+Не «просто эффекты». Live AutoMix Mashup **сводит два трека**:
 
-Источник планов: `Packages/AutoMixV2/.../MixPlanner.swift`.
-Прототип web mashup: `Sonivo/incoming/src/audio/engine.ts`.
+1. Анализирует пару (BPM / сетка / mixIn·mixOut / дропы).
+2. **Beatmatch** — держит `rateA` / `rateB` к общему tempo на всём окне сведения.
+3. Стартует B с `bInStartSec` (intro / pre-drop), A — с outro cue.
+4. Кладет **инструментал B под вокал A**, затем handoff: бас B + вокал B, A уходит.
 
 ## Алгоритм под каждую пару
 
-1. **`AutoMixV2AnalysisRuntime`** крутится и при live **AutoMix Mashup** (не только при V2 ownership): профилирует current/next, если есть локальный/кэш файл.
-2. **`MixPlanner.plan`** выбирает архетип (`dropSwap`, `seamlessLoop`, `echoFreeze`, `energyWash`, …) по BPM/ключу/сетке.
-3. **`MashupLiveStyle.resolve`** превращает план/профили (или duration-heuristic) в тайминги: bass swap, vocal hold, vocal pocket, асимметричные громкости, глубины EQ, лёгкий rate/pitch.
-4. **`MashupBlendScheduler`** задаёт cue (`mixOut` ≥75%) и длину окна по outro/intro — **слайдер длительности скрыт**.
-5. Live `tickTransition` применяет style volumes + `MashupLiveEQEnvelope(style:)` + micro time-pitch.
+| Шаг | Где |
+|---|---|
+| Анализ current/next (в т.ч. download при Mashup) | `AutoMixV2AnalysisRuntime` |
+| Архетип + tempoMatch | `MixPlanner` / `BeatGridSynchronization` |
+| rateA/rateB, handoff, vocal bed | `MashupLiveStyle.resolve` |
+| Cue / длина окна | `MashupBlendScheduler` |
+| Live volumes + EQ + rates | `PlayerCore.tickTransition` |
 
-Equal-power контракт в `AutoMixDJEngine.computeVolumesAndEQ` **не трогаем** (CI). Обычный кроссфейд по-прежнему на `CrossfadeCurve`.
+Бейджи: `BEATMATCH xxx` → `BASS SWAP` → `VOCAL × INSTR` → `HANDOFF` → `VOCAL POCKET` → `SOFT REVEAL`.
 
-## Streaming
+Пока BPM ещё не посчитан (холодный старт / нет файла), style без beatmatch (`rate=1`) и reason `Waiting for BPM analysis` — после анализа следующей пары включается настоящий lock.
 
-Yandex / dual `AVPlayer` + `StreamBeatTap`:
-- per-item EQ overrides по style envelope
-- асимметричные volume curves + лёгкий rate
-- без полного download для анализа в mashup-only (только cache/local); V2 ownership по-прежнему может качать
+## DualDeck V2
+
+Полный echo / DualDeck ownership по-прежнему force-disabled. Live путь уже делает beatmatch + vocal↔instrumental на AVAudioEngine / AVPlayer.
 
 ## Как слушать
 
-Настройки → Переходы → **AutoMix Mashup**. Длительность сведения **автоматическая** под каждую пару; слайдер «N секунд» только у обычного кроссфейда.
+Настройки → Переходы → **AutoMix Mashup**. Слайдер длительности только у кроссфейда; mashup сам выбирает окно по outro/intro и плану.
