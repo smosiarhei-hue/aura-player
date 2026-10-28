@@ -2300,8 +2300,8 @@ final class PlayerCore {
                         StreamBeatTap.shared.attach(to: item)
                         targetStream.replaceCurrentItem(with: item)
                         targetStream.volume = 0
-                        // Start B already at beatmatched rate so the instrumental bed locks to A.
-                        let startRate = max(0.84, min(1.16, activeMashupStyle.rateB))
+                        // Start near natural tempo; tickTransition accel-ramps into rateB.
+                        let startRate = activeMashupStyle.playbackRates(progress: 0).incoming
                         targetStream.playImmediately(atRate: startRate)
                         if startAt > 0.25 {
                             let seekTime = CMTime(seconds: startAt, preferredTimescale: 600)

@@ -105,7 +105,11 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("enum MashupLiveEQEnvelope", runner)
         self.assertIn("MashupLiveStyle", runner)
         self.assertIn("inVocalPocket", runner)
-        self.assertIn("outHPFBody", runner)
+        self.assertIn("dropSwap", runner)
+        self.assertIn("seamlessLoop", runner)
+        self.assertIn("echoFreeze", runner)
+        self.assertIn("energyWash", runner)
+        self.assertIn("tapeStop", runner)
 
         style = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
@@ -113,11 +117,21 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("struct MashupLiveStyle", style)
         self.assertIn("func volumes(progress", style)
         self.assertIn("func playbackRates(progress", style)
+        self.assertIn("func pitchCents(progress", style)
+        self.assertIn("smoothstep", style)
+        self.assertIn("tempoLockUntil", style)
         self.assertIn("isBeatmatched", style)
         self.assertIn("tempoMatch", style)
         self.assertIn("static func resolve", style)
         self.assertIn("fromPlan", style)
-        self.assertIn("BEATMATCH", style)
+        self.assertIn("TEMPO LOCK", style)
+        self.assertIn("KEY SHIFT", style)
+        self.assertIn("TEMPO SETTLE", style)
+
+        l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
+        self.assertIn("TEMPO LOCK", l10n)
+        self.assertIn("KEY SHIFT", l10n)
+        self.assertIn("Темпо-лок", l10n)
 
         analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
         self.assertIn("transitionMode == .automix", analysis)
@@ -134,10 +148,11 @@ class AutoMixMashupTests(unittest.TestCase):
     def test_docs_describe_auto_duration_and_live_eq(self):
         docs = (ROOT / "docs/automix-mashup.md").read_text()
         self.assertIn("инструментал B под вокал A", docs)
-        self.assertIn("Beatmatch", docs)
+        self.assertIn("Accel", docs)
+        self.assertIn("Key shift", docs)
         self.assertIn("MashupLiveStyle", docs)
         self.assertIn("под каждую пару", docs)
-        self.assertIn("rateA", docs)
+        self.assertIn("MashupLiveEQEnvelope", docs)
         self.assertIn("force-disabled", docs)
 
 

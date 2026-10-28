@@ -70,6 +70,20 @@ final class SonivoL10n {
     /// Localize live mashup phase codes from `MashupLiveStyle.phaseLabel`.
     func automixPhase(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("TEMPO LOCK") {
+            let bpm = raw.split(separator: " ").dropFirst(2).joined(separator: " ")
+            if isRussian {
+                return bpm.isEmpty ? "Темпо-лок" : "Темпо-лок \(bpm)"
+            }
+            return raw
+        }
+        if raw.hasPrefix("KEY SHIFT") {
+            let cents = raw.split(separator: " ").dropFirst(2).joined(separator: " ")
+            if isRussian {
+                return cents.isEmpty ? "Сдвиг тональности" : "Тональность \(cents)"
+            }
+            return raw
+        }
         if raw.hasPrefix("BEATMATCH") {
             let bpm = raw.split(separator: " ").dropFirst().joined(separator: " ")
             if isRussian {
@@ -84,6 +98,7 @@ final class SonivoL10n {
         case "HANDOFF": return "Перехват"
         case "VOCAL POCKET": return "Вокальный карман"
         case "SOFT REVEAL": return "Мягкое раскрытие"
+        case "TEMPO SETTLE": return "Темп в норму"
         default: return raw
         }
     }

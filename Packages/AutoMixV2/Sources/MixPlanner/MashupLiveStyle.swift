@@ -1,7 +1,7 @@
 // Path: Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift
 //
-// Per-pair live mashup: real BPM beatmatch (rateA/rateB) + vocal↔instrumental
-// layering timed to the MixPlanner handoff — not cosmetic EQ-only effects.
+// Per-pair live mashup: real BPM beatmatch with accel/decel into the grid,
+// Camelot key ramp, and vocal↔instrumental layering — not a flat crossfade.
 
 import Foundation
 import MixModels
@@ -23,10 +23,10 @@ public struct MashupLiveStyle: Sendable, Equatable {
     public var vocalPocketDepth: Float
     public var hpfDepth: Float
     public var bodyLift: Float
-    /// Held playback rates during the mashup window (1.0 = natural tempo).
+    /// Locked playback rates during the mashup hold (1.0 = natural tempo).
     public var rateA: Float
     public var rateB: Float
-    /// Camelot key compensation on B (cents), held then released.
+    /// Camelot key compensation on B (cents), ramped in then released.
     public var pitchCentsB: Float
     public var targetBPM: Float
     public var isBeatmatched: Bool
@@ -108,32 +108,72 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return fromDurations(outgoingDuration: outgoingDuration, incomingDuration: incomingDuration)
     }
 
-    // MARK: - Beatmatch rates during the window
+    // MARK: - Beatmatch rates (accel → lock → decel)
 
-    /// Hold `rateA`/`rateB` for most of the blend, settle both to 1.0 in the last stretch
-    /// (same idea as MixPlanner `rateRamp` into natural tempo after the handoff).
+    /// Progress where both decks finish accelerating into the locked grid.
+    public var tempoLockUntil: Double {
+        min(0.28, max(0.10, bassSwapAt * 0.72))
+    }
+
+    /// Progress where post-handoff settle (decel to natural tempo) begins.
+    public var settleStart: Double {
+        max(handoffAt + 0.08, min(0.88, max(0.62, vocalPocketUntil - 0.08)))
+    }
+
+    /// Smoothstep 0…1 for DJ-feel accel/decel (no linear jumps).
+    public static func smoothstep(_ t: Double) -> Float {
+        let x = min(1, max(0, t))
+        return Float(x * x * (3 - 2 * x))
+    }
+
+    /// Accel from natural tempo into `rateA`/`rateB`, hold the grid, then
+    /// decelerate back to 1.0 after the musical handoff (MixPlanner `rateRamp`).
     public func playbackRates(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
-        let settleStart = max(handoffAt, 0.72)
-        let settle: Float
-        if p <= settleStart {
-            settle = 0
+        let lockAt = tempoLockUntil
+        let settleAt = settleStart
+
+        let out: Float
+        let inn: Float
+        if p < lockAt {
+            // Accel / decelerate into the shared grid from natural 1.0.
+            let t = Self.smoothstep(p / max(0.001, lockAt))
+            out = 1 + (rateA - 1) * t
+            inn = 1 + (rateB - 1) * t
+        } else if p < settleAt {
+            inn = rateB
+            // Archetype spice: slight outgoing slowdown into handoff (tape feel).
+            if (archetypeName == "tapeStop" || archetypeName == "echoFreeze"),
+               p > handoffAt - 0.12 {
+                let brake = Self.smoothstep((p - (handoffAt - 0.12)) / 0.12)
+                out = rateA + (max(0.88, rateA - 0.06) - rateA) * brake
+            } else {
+                out = rateA
+            }
         } else {
-            settle = Float(min(1, (p - settleStart) / max(0.001, 1 - settleStart)))
+            let t = Self.smoothstep((p - settleAt) / max(0.001, 1 - settleAt))
+            out = rateA + (1 - rateA) * t
+            inn = rateB + (1 - rateB) * t
         }
-        let out = rateA + (1 - rateA) * settle
-        let inn = rateB + (1 - rateB) * settle
         return (
             max(0.84, min(1.16, out)),
             max(0.84, min(1.16, inn))
         )
     }
 
+    /// Ramp Camelot pitch in, hold through vocal×instrumental, ease out after handoff.
     public func pitchCents(progress: Double) -> Float {
+        guard abs(pitchCentsB) >= 0.5 else { return 0 }
         let p = min(1, max(0, progress))
-        // Keep key shift until handoff, then ease out.
-        if p <= handoffAt { return pitchCentsB }
-        let t = Float((p - handoffAt) / max(0.001, 1 - handoffAt))
+        let rampInEnd = min(0.22, max(0.08, tempoLockUntil))
+        let holdEnd = max(rampInEnd + 0.05, handoffAt)
+        if p < rampInEnd {
+            return pitchCentsB * Self.smoothstep(p / max(0.001, rampInEnd))
+        }
+        if p <= holdEnd {
+            return pitchCentsB
+        }
+        let t = Self.smoothstep((p - holdEnd) / max(0.001, 1 - holdEnd))
         return pitchCentsB * (1 - t)
     }
 
@@ -144,43 +184,53 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let hold = min(0.72, max(0.18, outgoingVolumeHold))
         let lag = min(0.55, max(0.05, incomingVolumeLag))
         let handoff = min(0.85, max(hold, handoffAt))
+        // Stronger mid bed so the instrumental under A is audible, not a whisper.
+        let bedPeak: Float = isBeatmatched ? 0.58 : 0.48
+        let preHandoffPeak: Float = isBeatmatched ? 0.88 : 0.78
 
         let out: Float
         if p <= hold {
-            // Keep A loud so vocals stay on top of the beatmatched bed.
-            out = 1.0 - Float(p / max(hold, 0.001)) * 0.10
+            // Keep A vocals dominant while B instrumental locks underneath.
+            out = 1.0 - Float(p / max(hold, 0.001)) * 0.06
         } else if p <= handoff {
-            let t = (p - hold) / max(0.001, handoff - hold)
-            out = max(0.35, 0.90 * Float(cos(t * .pi / 2)))
+            let t = Self.smoothstep((p - hold) / max(0.001, handoff - hold))
+            out = max(0.42, 0.94 * (1 - t * 0.55))
         } else {
-            let t = (p - handoff) / max(0.001, 1 - handoff)
-            out = max(0, 0.35 * Float(cos(t * .pi / 2)))
+            let t = Self.smoothstep((p - handoff) / max(0.001, 1 - handoff))
+            out = max(0, 0.42 * (1 - t))
         }
 
         let inVol: Float
         if p <= lag {
-            // Quiet instrumental bed under A vocals (same BPM when beatmatched).
-            inVol = Float(p / max(lag, 0.001)) * 0.32
+            inVol = bedPeak * 0.55 * Self.smoothstep(p / max(lag, 0.001))
         } else if p <= handoff {
-            let t = (p - lag) / max(0.001, handoff - lag)
-            inVol = min(0.85, 0.32 + 0.53 * Float(sin(t * .pi / 2)))
+            let t = Self.smoothstep((p - lag) / max(0.001, handoff - lag))
+            inVol = bedPeak * 0.55 + (preHandoffPeak - bedPeak * 0.55) * t
         } else {
-            let t = (p - handoff) / max(0.001, 1 - handoff)
-            inVol = min(1, 0.85 + 0.15 * Float(sin(t * .pi / 2)))
+            let t = Self.smoothstep((p - handoff) / max(0.001, 1 - handoff))
+            inVol = min(1, preHandoffPeak + (1 - preHandoffPeak) * t)
         }
         return (out, inVol)
     }
 
     public func phaseLabel(progress: Double) -> String {
         let p = min(1, max(0, progress))
-        if isBeatmatched, p < min(0.22, bassSwapAt) {
+        if isBeatmatched, p < tempoLockUntil {
+            return String(format: "TEMPO LOCK %.0f", targetBPM)
+        }
+        if abs(pitchCentsB) >= 20, p < min(0.24, max(tempoLockUntil, bassSwapAt * 0.85)) {
+            let sign = pitchCentsB >= 0 ? "+" : ""
+            return String(format: "KEY SHIFT %@%.0f¢", sign, pitchCentsB)
+        }
+        if isBeatmatched, p < min(0.28, bassSwapAt) {
             return String(format: "BEATMATCH %.0f", targetBPM)
         }
         if p < bassSwapAt { return "BASS SWAP" }
         if p < vocalHoldUntil { return "VOCAL × INSTR" }
         if p < handoffAt { return "HANDOFF" }
         if p < vocalPocketUntil { return "VOCAL POCKET" }
-        return "SOFT REVEAL"
+        if p < settleStart { return "SOFT REVEAL" }
+        return "TEMPO SETTLE"
     }
 
     // MARK: - Plan / profile
@@ -274,16 +324,16 @@ public struct MashupLiveStyle: Sendable, Equatable {
         switch archetype {
         case .dropSwap, .beatStutter, .tapeStop:
             return MashupLiveStyle(
-                bassSwapAt: 0.28,
-                vocalHoldUntil: 0.50,
-                vocalPocketUntil: 0.78,
+                bassSwapAt: 0.26,
+                vocalHoldUntil: 0.48,
+                vocalPocketUntil: 0.80,
                 handoffAt: 0.48,
-                outgoingVolumeHold: 0.40,
-                incomingVolumeLag: 0.14,
-                bassDepth: 1.2,
-                vocalPocketDepth: 1.25,
-                hpfDepth: 1.1,
-                bodyLift: 1.2,
+                outgoingVolumeHold: 0.42,
+                incomingVolumeLag: 0.12,
+                bassDepth: 1.35,
+                vocalPocketDepth: 1.35,
+                hpfDepth: 1.2,
+                bodyLift: 1.3,
                 rateA: 1, rateB: 1, pitchCentsB: 0, targetBPM: 0,
                 isBeatmatched: false,
                 reason: archetype.rawValue,
@@ -291,16 +341,16 @@ public struct MashupLiveStyle: Sendable, Equatable {
             )
         case .seamlessLoop:
             return MashupLiveStyle(
-                bassSwapAt: 0.40,
-                vocalHoldUntil: 0.58,
-                vocalPocketUntil: 0.86,
+                bassSwapAt: 0.38,
+                vocalHoldUntil: 0.56,
+                vocalPocketUntil: 0.88,
                 handoffAt: 0.52,
                 outgoingVolumeHold: 0.50,
-                incomingVolumeLag: 0.20,
-                bassDepth: 0.9,
-                vocalPocketDepth: 1.1,
-                hpfDepth: 0.75,
-                bodyLift: 1.3,
+                incomingVolumeLag: 0.18,
+                bassDepth: 1.0,
+                vocalPocketDepth: 1.15,
+                hpfDepth: 0.85,
+                bodyLift: 1.35,
                 rateA: 1, rateB: 1, pitchCentsB: 0, targetBPM: 0,
                 isBeatmatched: false,
                 reason: archetype.rawValue,
@@ -313,11 +363,11 @@ public struct MashupLiveStyle: Sendable, Equatable {
                 vocalPocketUntil: 0.90,
                 handoffAt: 0.72,
                 outgoingVolumeHold: 0.60,
-                incomingVolumeLag: 0.55,
-                bassDepth: 1.05,
-                vocalPocketDepth: 0.7,
-                hpfDepth: 1.25,
-                bodyLift: 0.65,
+                incomingVolumeLag: 0.50,
+                bassDepth: 1.15,
+                vocalPocketDepth: 0.85,
+                hpfDepth: 1.35,
+                bodyLift: 0.75,
                 rateA: 1, rateB: 1, pitchCentsB: 0, targetBPM: 0,
                 isBeatmatched: false,
                 reason: archetype.rawValue,
@@ -325,16 +375,16 @@ public struct MashupLiveStyle: Sendable, Equatable {
             )
         case .energyWash:
             return MashupLiveStyle(
-                bassSwapAt: 0.34,
+                bassSwapAt: 0.32,
                 vocalHoldUntil: 0.46,
-                vocalPocketUntil: 0.76,
+                vocalPocketUntil: 0.78,
                 handoffAt: 0.50,
-                outgoingVolumeHold: 0.34,
-                incomingVolumeLag: 0.12,
-                bassDepth: 0.75,
-                vocalPocketDepth: 0.9,
-                hpfDepth: 0.85,
-                bodyLift: 0.95,
+                outgoingVolumeHold: 0.36,
+                incomingVolumeLag: 0.10,
+                bassDepth: 0.95,
+                vocalPocketDepth: 1.05,
+                hpfDepth: 1.05,
+                bodyLift: 1.1,
                 rateA: 1, rateB: 1, pitchCentsB: 0, targetBPM: 0,
                 isBeatmatched: false,
                 reason: archetype.rawValue,

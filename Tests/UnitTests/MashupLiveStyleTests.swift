@@ -5,8 +5,8 @@ import Testing
 
 @Suite("Mashup Live Style")
 struct MashupLiveStyleTests {
-    @Test("Beatmatched plan holds rateB during the window then settles")
-    func beatmatchRatesHoldThenSettle() {
+    @Test("Beatmatched plan accel into rateB, holds, then settles")
+    func beatmatchRatesAccelHoldSettle() {
         let plan = TransitionPlan(
             type: .beatmatchedShort,
             archetype: .dropSwap,
@@ -31,28 +31,56 @@ struct MashupLiveStyleTests {
         )
         #expect(style.isBeatmatched)
         #expect(abs(style.rateB - 1.06) < 0.001)
-        let early = style.playbackRates(progress: 0.2)
-        #expect(abs(early.incoming - 1.06) < 0.01)
+
+        // Accel from natural tempo — not a hard jump to rateB.
+        let start = style.playbackRates(progress: 0)
+        #expect(abs(start.incoming - 1.0) < 0.02)
+        #expect(abs(start.outgoing - 1.0) < 0.02)
+
+        let midLock = style.playbackRates(progress: 0.35)
+        #expect(abs(midLock.incoming - 1.06) < 0.01)
+
         let late = style.playbackRates(progress: 0.98)
         #expect(abs(late.incoming - 1.0) < 0.05)
-        #expect(style.phaseLabel(progress: 0.05).contains("BEATMATCH"))
+        #expect(style.phaseLabel(progress: 0.05).contains("TEMPO LOCK"))
+    }
+
+    @Test("Pitch cents ramp in, hold through handoff, ease out")
+    func pitchCentsRamp() {
+        var style = MashupLiveStyle.fallback
+        style.pitchCentsB = 100
+        style.handoffAt = 0.50
+        style.bassSwapAt = 0.28
+        style.isBeatmatched = true
+        style.targetBPM = 124
+        style.rateB = 1.04
+
+        let early = style.pitchCents(progress: 0.02)
+        #expect(abs(early) < 40)
+        let locked = style.pitchCents(progress: 0.30)
+        #expect(abs(locked - 100) < 1)
+        let late = style.pitchCents(progress: 0.95)
+        #expect(abs(late) < abs(locked))
+        #expect(style.phaseLabel(progress: 0.22).contains("KEY SHIFT"))
     }
 
     @Test("Vocal bed volumes keep A louder while B instrumental sneaks in")
     func vocalInstrumentalVolumes() {
-        let style = MashupLiveStyle.resolve(
+        var style = MashupLiveStyle.resolve(
             plan: nil,
             outgoing: nil,
             incoming: nil,
             outgoingDuration: 210,
             incomingDuration: 200
         )
+        style.isBeatmatched = true
         let early = style.volumes(progress: 0.12)
         let mid = style.volumes(progress: 0.42)
         let late = style.volumes(progress: 0.92)
         #expect(early.outgoing > early.incoming)
         #expect(early.outgoing > 0.85)
-        #expect(mid.outgoing > mid.incoming * 0.7)
+        #expect(mid.incoming > 0.35) // audible instrumental bed, not a whisper
+        #expect(mid.outgoing > mid.incoming * 0.55)
         #expect(late.incoming > late.outgoing)
     }
 
