@@ -492,6 +492,8 @@ final class PlayerCore {
     private var transitionDuration: Double = 3.0
     private var transitionTimer: Timer?
     private var rateReleaseTimer: Timer?
+    /// Per-pair algorithmic mashup style (archetype + profile cues).
+    private var activeMashupStyle = MashupLiveStyle.fallback
 
     var streamBufferFraction: Double = 0.0
     private(set) var isStreamBuffering = false
@@ -925,7 +927,7 @@ final class PlayerCore {
     /// Publish mashup envelopes to stream taps and/or native EQ decks for any mix of backends.
     /// Writes immediately (no multi-hundred-ms ramp) so 30 Hz transition ticks stay click-free.
     private func applyMashupTransitionEQ(progress: Double) {
-        let shaped = MashupLiveEQEnvelope.offsets(progress: progress)
+        let shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: activeMashupStyle)
         let activeOff = Self.normalized(shaped.outgoing)
         let idleOff = Self.normalized(shaped.incoming)
         if activePlayer === playerA {
@@ -2130,12 +2132,14 @@ final class PlayerCore {
         if transitionMode == .automix {
             let blend = resolveMashupBlend(outgoing: current, incoming: nextTrack, duration: totalDur)
             guard currentPos >= blend.outgoingCueSec else { return }
+            let style = resolveMashupStyle(outgoing: current, incoming: nextTrack, duration: totalDur)
             scheduleSimpleTransition(
                 current: current,
                 nextTrack: nextTrack,
                 blendDuration: blend.blendDurationSec,
                 incomingStart: blend.incomingStartSec,
-                mashupBadge: blend.reason
+                mashupBadge: "\(style.archetypeName) · \(blend.reason)",
+                mashupStyle: style
             )
         } else {
             let blendDuration = max(1, crossfadeDuration)
@@ -2146,9 +2150,25 @@ final class PlayerCore {
                 nextTrack: nextTrack,
                 blendDuration: blendDuration,
                 incomingStart: 0,
-                mashupBadge: nil
+                mashupBadge: nil,
+                mashupStyle: nil
             )
         }
+    }
+
+    private func resolveMashupStyle(outgoing: Track, incoming: Track, duration totalDur: Double) -> MashupLiveStyle {
+        let analysis = AutoMixV2AnalysisRuntime.shared
+        let outProfile = analysis.currentProfile.flatMap { mashupProfileMatches($0, track: outgoing) ? $0 : nil }
+        let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
+        let plan = (outProfile != nil && inProfile != nil) ? analysis.transitionPlan : nil
+        let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
+        return MashupLiveStyle.resolve(
+            plan: plan,
+            outgoing: outProfile,
+            incoming: inProfile,
+            outgoingDuration: totalDur,
+            incomingDuration: incomingDur
+        )
     }
 
     /// Prefer analysed TrackProfile cues from AutoMixV2 analysis when present;
@@ -2202,7 +2222,8 @@ final class PlayerCore {
         nextTrack: Track,
         blendDuration: Double,
         incomingStart: Double,
-        mashupBadge: String?
+        mashupBadge: String?,
+        mashupStyle: MashupLiveStyle?
     ) {
         transitionScheduled = true
         isTransitioning = true
@@ -2213,13 +2234,14 @@ final class PlayerCore {
         metadataSwapped = false
         metadataTrack = nil
         incomingStartPosition = max(0, incomingStart)
+        activeMashupStyle = mashupStyle ?? .fallback
         let mashup = transitionMode == .automix
         AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || mashup
         AutoMixDJEngine.shared.activeStrategyName = mashup ? "MASHUP" : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
-        AutoMixDJEngine.shared.statusBadge = mashup ? "BASS SWAP" : nil
+        AutoMixDJEngine.shared.statusBadge = mashup ? activeMashupStyle.phaseLabel(progress: 0) : nil
         if mashup, let mashupBadge, !mashupBadge.isEmpty {
-            SonivoDiagnostics.log("[Mashup] blend \(mashupBadge)", tag: "AUDIO")
+            SonivoDiagnostics.log("[Mashup] \(activeMashupStyle.reason) · \(mashupBadge)", tag: "AUDIO")
         }
 
         let transitionID = UUID()
@@ -2342,28 +2364,48 @@ final class PlayerCore {
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
 
-        let gains = CrossfadeCurve.gains(progress: p)
+        let mashup = transitionMode == .automix
+        let gains = mashup
+            ? activeMashupStyle.volumes(progress: p)
+            : CrossfadeCurve.gains(progress: p)
         let sourceLevel = gains.outgoing
         let targetLevel = gains.incoming
 
         if isUsingStreamPlayer {
             activeStreamingPlayer.volume = sourceLevel * volume
-            activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+            // Micro rate move only while mashup is active; keep play/pause otherwise.
+            if mashup {
+                let rate = Float(1.0 + Double(activeMashupStyle.outgoingRateDelta) * (1 - p))
+                activeStreamingPlayer.rate = isPlaying ? max(0.92, min(1.08, rate)) : 0
+            } else {
+                activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+            }
         } else {
             activePlayer.volume = sourceLevel
+            if mashup {
+                applyMashupTimePitch(progress: p, outgoing: true)
+            }
         }
 
         if incomingIsStream {
             idleStreamingPlayer.volume = targetLevel * volume
-            idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
+            if mashup {
+                let rate = Float(1.0 + Double(activeMashupStyle.incomingRateDelta) * (1 - p))
+                idleStreamingPlayer.rate = isPlaying ? max(0.92, min(1.08, rate)) : 0
+            } else {
+                idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
+            }
         } else {
             idlePlayer.volume = targetLevel
+            if mashup {
+                applyMashupTimePitch(progress: p, outgoing: false)
+            }
         }
 
-        // AutoMix Mashup: equal-power volumes + vocal↔instrumental EQ envelopes
-        // (bass swap / HPF riser / vocal pocket / soft reveal) on native + stream items.
-        if transitionMode == .automix {
+        // AutoMix Mashup: per-pair volume curve + vocal↔instrumental EQ.
+        if mashup {
             AutoMixDJEngine.shared.markMashupProgress(p)
+            AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
             applyMashupTransitionEQ(progress: p)
         }
 
@@ -2374,6 +2416,20 @@ final class PlayerCore {
 
         if p >= 1.0, let incomingTrack {
             completeTransition(to: incomingTrack)
+        }
+    }
+
+    /// Soft pitch/rate automation on native decks for the active mashup style.
+    private func applyMashupTimePitch(progress: Double, outgoing: Bool) {
+        let node = outgoing ? activeTimePitch : idleTimePitch
+        let cents = outgoing ? activeMashupStyle.outgoingPitchCents : activeMashupStyle.incomingPitchCents
+        let rateDelta = outgoing ? activeMashupStyle.outgoingRateDelta : activeMashupStyle.incomingRateDelta
+        let p = min(1, max(0, progress))
+        let fade = Float(outgoing ? (1 - p) : p)
+        node.bypass = abs(cents) < 0.5 && abs(rateDelta) < 0.001
+        if !node.bypass {
+            node.pitch = cents * fade
+            node.rate = max(0.92, min(1.08, 1.0 + rateDelta * (outgoing ? Float(1 - p) : Float(1 - abs(0.5 - p) * 2))))
         }
     }
 
@@ -2465,6 +2521,10 @@ final class PlayerCore {
         transitionScheduled = false
         // Drop mashup EQ on both native decks and stream taps so the new track is clean.
         resetTransitionEQOffsets()
+        activeMashupStyle = .fallback
+        idleTimePitch.rate = 1.0
+        idleTimePitch.pitch = 0
+        idleTimePitch.bypass = true
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
         AutoMixDJEngine.shared.statusBadge = nil
@@ -2602,6 +2662,7 @@ final class PlayerCore {
         AutoMixDJEngine.shared.statusBadge = nil
         AutoMixDJEngine.shared.resetDrop()
         AutoMixDJEngine.shared.isPostMixActive = false
+        activeMashupStyle = .fallback
         resetTransitionEQOffsets()
     }
 

@@ -20,7 +20,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
         case .off:
             return "Стандартное раздельное воспроизведение треков."
         case .automix:
-            return "DJ mashup: equal-power кроссфейд плюс vocal↔instrumental слой, bass-swap, HPF riser и soft reveal. Длительность — по outro/intro."
+            return "DJ mashup под каждую пару треков: анализ outro/intro, архетип сведения и vocal↔instrumental слой. Длительность подстраивается сама."
         }
     }
 }

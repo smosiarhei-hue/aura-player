@@ -270,7 +270,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Переходы между треками")
                 } footer: {
-                    Text("Gapless — без пауз. Кроссфейд — плавное смешивание по слайдеру. AutoMix Mashup — DJ vocal↔instrumental слой поверх equal-power; длительность сведения сама подстраивается под outro/intro.")
+                    Text("Gapless — без пауз. Кроссфейд — плавное смешивание по слайдеру. AutoMix Mashup — алгоритм под каждую пару (архетип, vocal↔instrumental, cue по outro/intro); длительность без слайдера.")
                 }
 
     }
