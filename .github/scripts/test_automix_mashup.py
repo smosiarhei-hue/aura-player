@@ -30,9 +30,17 @@ class AutoMixMashupTests(unittest.TestCase):
         player = (ROOT / "Sonivo/playercore.swift").read_text()
         self.assertIn("transitionMode == .crossfade || transitionMode == .automix", player)
         self.assertIn("applyMashupTransitionEQ(progress: p)", player)
+        self.assertIn("applyMashupTransitionEQ(progress: 0)", player)
         self.assertIn("setItemEQOverride", player)
         self.assertIn("clearItemEQOverrides", player)
         self.assertIn("CrossfadeCurve.gains(progress: p)", player)
+
+        presentation = (ROOT / "Sonivo/ActivePlayerPresentation.swift").read_text()
+        self.assertIn("mashupPhaseLabel", presentation)
+        badge = (ROOT / "Sonivo/Dify/AIDJTransitionBadgeView.swift").read_text()
+        self.assertIn("phaseLabel", badge)
+        screen = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
+        self.assertIn("player.mashupPhaseLabel", screen)
 
         tap = (ROOT / "Sonivo/streambeat.swift").read_text()
         self.assertIn("itemEQOverrides", tap)

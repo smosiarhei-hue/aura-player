@@ -2,16 +2,23 @@ import SwiftUI
 
 struct AIDJTransitionBadgeView: View {
     let incomingTrack: Track?
+    var phaseLabel: String?
 
-    init(incomingTrack: Track? = nil) {
+    init(incomingTrack: Track? = nil, phaseLabel: String? = nil) {
         self.incomingTrack = incomingTrack
+        self.phaseLabel = phaseLabel
     }
 
     @State private var pulse = false
 
+    private var title: String {
+        if let phaseLabel, !phaseLabel.isEmpty { return phaseLabel }
+        return "Automix"
+    }
+
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: "waveform")
+            Image(systemName: phaseLabel == nil ? "waveform" : "metronome.fill")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(
                     LinearGradient(
@@ -22,7 +29,7 @@ struct AIDJTransitionBadgeView: View {
                 )
                 .opacity(pulse ? 1.0 : 0.75)
 
-            Text("Automix")
+            Text(title)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(
                     LinearGradient(
@@ -32,6 +39,7 @@ struct AIDJTransitionBadgeView: View {
                     )
                 )
                 .shadow(color: Color.white.opacity(0.55), radius: 6, x: 0, y: 0)
+                .lineLimit(1)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5.5)

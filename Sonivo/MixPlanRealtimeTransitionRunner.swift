@@ -37,6 +37,8 @@ final class DualDeckMashupAudioAdapter: MashupTransitionAudio {
 /// Live PlayerCore mashup EQ offsets (6 bands: 60, 150, 400, 1000, 2400, 15000).
 /// Volumes stay on CrossfadeCurve; this only shapes bass swap + vocal pocket + soft HPF proxy.
 enum MashupLiveEQEnvelope {
+    static let bandCount = 6
+
     static func offsets(progress: Double) -> (outgoing: [Float], incoming: [Float]) {
         let p = min(1, max(0, progress))
         let outBass = Float(-32 * min(1, p / 0.40))
@@ -47,6 +49,12 @@ enum MashupLiveEQEnvelope {
             [outBass, outBass * 0.75, outBody, 0, 0, 0],
             [inBass, inBass * 0.75, 0, inVocal, 0, 0]
         )
+    }
+
+    /// True when either deck still has audible mashup shaping.
+    static func isAudible(progress: Double) -> Bool {
+        let shaped = offsets(progress: progress)
+        return shaped.outgoing.contains { abs($0) > 0.01 } || shaped.incoming.contains { abs($0) > 0.01 }
     }
 }
 

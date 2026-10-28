@@ -2210,6 +2210,15 @@ final class PlayerCore {
                 }
                 self.incomingLaneReady = true
                 self.transitionStartTime = Date()
+                // Seed mashup EQ immediately so the first audible frames already bass-swap,
+                // including stream taps that attached during prepare.
+                if self.transitionMode == .automix {
+                    if self.isUsingStreamPlayer, let item = self.activeStreamingPlayer.currentItem {
+                        StreamBeatTap.shared.attach(to: item)
+                    }
+                    self.applyMashupTransitionEQ(progress: 0)
+                    AutoMixDJEngine.shared.markMashupProgress(0)
+                }
                 self.startTransitionTimer()
                 self.transitionPreparationTask = nil
             } catch {
@@ -2508,10 +2517,10 @@ final class PlayerCore {
         incomingAudioFile = nil
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
+        AutoMixDJEngine.shared.statusBadge = nil
         AutoMixDJEngine.shared.resetDrop()
         AutoMixDJEngine.shared.isPostMixActive = false
         resetTransitionEQOffsets()
-        applyEQ()
     }
 
     func setOutgoingPlaybackRate(_ rate: Float) {

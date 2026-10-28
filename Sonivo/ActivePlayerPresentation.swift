@@ -65,6 +65,11 @@ final class ActivePlayerPresentation {
     var isTransitionActive: Bool {
         AutoMixDJEngine.shared.isTransitionActive
     }
+    /// Live mashup phase for the player badge (nil during plain crossfade).
+    var mashupPhaseLabel: String? {
+        guard AutoMixDJEngine.shared.isTransitionActive else { return nil }
+        return AutoMixDJEngine.shared.statusBadge
+    }
     var progress: Double {
         legacy.progress
     }

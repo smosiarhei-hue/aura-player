@@ -964,8 +964,11 @@ struct PlayerScreenV2: View {
             .glassCapsule(interactive: false)
             .transition(.opacity)
         } else if player.isTransitionActive {
-            AIDJTransitionBadgeView(incomingTrack: player.incomingTrack)
-                .transition(.opacity)
+            AIDJTransitionBadgeView(
+                incomingTrack: player.incomingTrack,
+                phaseLabel: player.mashupPhaseLabel
+            )
+            .transition(.opacity)
         } else {
             qualityBadgeButton
                 .transition(.opacity)
