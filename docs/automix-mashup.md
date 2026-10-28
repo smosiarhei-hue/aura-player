@@ -6,9 +6,11 @@
 |---|---|---|
 | Equal-power crossfade | `CrossfadeCurve` + live `tickTransition` | Live |
 | Bass swap (убрать бас уходящего, ввести бас входящего) | MixPlanner `dropSwap` / `seamlessLoop`; live `MashupLiveEQEnvelope` | Live EQ + DualDeck FX |
-| Vocal pocket (приглушить вокал входящего до дропа) | `vocalDucking` в плане; live mid-band duck | Live EQ + DualDeck FX |
-| High-pass riser на уходящем | `highPass` FX; live soft body cut | Live EQ proxy + DualDeck |
-| Low-pass reveal на входящем | `lowPass` FX | DualDeck (V2 runner) |
+| Vocal↔instrumental layering | Live envelope: outgoing vocal hold + incoming instrumental body; then vocal swap | Live EQ |
+| Vocal pocket (приглушить вокал входящего до дропа) | `vocalDucking` в плане; live mid/presence duck | Live EQ + DualDeck FX |
+| High-pass riser на уходящем | `highPass` FX; live progressive body→mid cut | Live EQ proxy + DualDeck |
+| Mid duck / soft reveal | Live mid duck on A + LPF→open on B | Live EQ proxy |
+| Low-pass reveal на входящем | `lowPass` FX; live soft air/presence open | Live EQ proxy + DualDeck (V2) |
 | Echo-out хвост | `echoOut` FX | DualDeck (V2 runner) |
 | Beatmatch / rate ramp | `rateA`/`rateB` + `rateRamp` | DualDeck (V2 runner) |
 | Camelot key shift | `pitchShiftCentsB` → `setPitchCents` | DualDeck (V2 runner) |
@@ -20,17 +22,17 @@
 
 1. **`MashupTransitionExecutor`** — исполняет полный `TransitionPlan` на протоколе `MashupTransitionAudio` (тики по тактам, EffectAutomation).
 2. **`DualDeck.setPitchCents`** + **`MixPlanRealtimeTransitionRunner`** — runner для DualDeck (готов к V2 ownership).
-3. **Live PlayerCore** — режим `AutoMix Mashup`: equal-power громкости + `MashupLiveEQEnvelope` (bass swap / vocal pocket) через `setTransitionEQOffsets`. Не ломает CI equal-power контракт в `AutoMixDJEngine.computeVolumesAndEQ`.
-4. Настройки снова показывают AutoMix Mashup.
-5. **`MashupBlendScheduler`** — автодетект blend points: cue по outro (`mixOut`, ≥75% трека), вход B по `mixIn` / intro lead; длина окна следует хвосту outro, а не только слайдеру «N секунд до конца». Live путь берёт `TransitionPlan` / `TrackProfile` из analysis runtime, если есть, иначе structural heuristic.
+3. **Live PlayerCore** — режим `AutoMix Mashup`: equal-power громкости + расширенный `MashupLiveEQEnvelope` (bass swap, vocal hold↔pocket, HPF riser, mid duck, soft reveal) через per-deck / per-item EQ. Не ломает CI equal-power контракт в `AutoMixDJEngine.computeVolumesAndEQ`.
+4. Настройки снова показывают AutoMix Mashup; **слайдер длительности скрыт** в режиме Mashup — длина сведения только из blend-point detection.
+5. **`MashupBlendScheduler`** — автодетект blend points: cue по outro (`mixOut`, ≥75% трека), вход B по `mixIn` / intro lead; длина окна = хвост outro / bar ladder, без preferred из UI-слайдера. Live путь берёт `TransitionPlan` / `TrackProfile` из analysis runtime, если есть, иначе structural heuristic.
 
 ## Streaming
 
 Yandex / online tracks use dual `AVPlayer` + `StreamBeatTap` (`MTAudioProcessingTap`).
 AutoMix Mashup now publishes **per-item EQ overrides** during the transition:
 
-- Outgoing stream item → bass kill / HPF proxy
-- Incoming stream item → bass restore + vocal pocket
+- Outgoing stream item → bass kill / HPF riser / late vocal duck
+- Incoming stream item → instrumental body + vocal pocket → bass restore + soft reveal
 - Mixed stream↔local uses stream overrides on the AVPlayer side and native `eqOffset*` on the engine side
 - Overrides clear on complete/cancel so the next track is clean
 
@@ -43,4 +45,4 @@ Dolby / spatial-passthrough items cannot take PCM EQ (existing StreamBeatTap rul
 
 ## Как слушать
 
-Настройки → Переходы → **AutoMix Mashup**. Работает на локальных и стриминговых треках (Yandex). Слайдер задаёт preferred-окно (×1.35), но старт сведения — по detected mixOut / intro, не `duration − N`.
+Настройки → Переходы → **AutoMix Mashup**. Работает на локальных и стриминговых треках (Yandex). Длительность сведения **автоматическая** (outro/intro / analysis plan) — слайдер «N секунд» относится только к обычному кроссфейду.

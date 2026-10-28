@@ -3,7 +3,7 @@
 // Chooses mashup blend points from track structure (mixOut / mixIn), not a
 // fixed "N seconds before the end" window. Mirrors Apple Music AutoMix intent:
 // start the handoff in the outro, enter the next track on a musical intro cue,
-// and let blend length follow the available outro rather than the crossfade slider alone.
+// and let blend length follow the available outro / bar ladder — never a UI slider.
 
 import Foundation
 import MixModels
@@ -31,6 +31,9 @@ public enum MashupBlendScheduler {
     /// Absolute floors / ceilings for live PlayerCore mashup windows.
     public static let minimumBlendSec: Double = 4
     public static let maximumBlendSec: Double = 32
+    /// Soft structural default when a track is too short for outro detection.
+    /// Not driven by the crossfade duration slider.
+    public static let defaultPreferredBlendSec: Double = 12
     /// Never cut the outgoing body before this fraction of the track (Apple-style: play the song).
     public static let minimumPlayedFraction: Double = 0.75
     /// Leave at least this much tail after the cue so the outro can finish under the blend.
@@ -38,10 +41,12 @@ public enum MashupBlendScheduler {
 
     /// Build a live mashup schedule for PlayerCore.
     /// Prefers analysed `TrackProfile` cues when present; otherwise uses structural heuristics.
+    /// `preferredBlendSec` is only a short-track / cold-start floor — blend length follows
+    /// detected outro / intro (and bar ladders), not a settings slider.
     public static func schedule(
         outgoingDuration: Double,
         incomingDuration: Double,
-        preferredBlendSec: Double,
+        preferredBlendSec: Double = defaultPreferredBlendSec,
         outgoing: TrackProfile? = nil,
         incoming: TrackProfile? = nil
     ) -> LiveMashupBlend {
@@ -50,10 +55,10 @@ public enum MashupBlendScheduler {
         let preferred = clamp(preferredBlendSec, min: minimumBlendSec, max: maximumBlendSec)
 
         if let a = outgoing, let b = incoming, a.mixable, b.mixable, a.durationSec > 45, b.durationSec > 45 {
-            return scheduleFromProfiles(a: a, b: b, preferred: preferred)
+            return scheduleFromProfiles(a: a, b: b)
         }
         if let a = outgoing, a.durationSec > 20 {
-            return scheduleFromOutgoingProfile(a: a, incomingDuration: inDur, preferred: preferred, incoming: incoming)
+            return scheduleFromOutgoingProfile(a: a, incomingDuration: inDur, incoming: incoming)
         }
         return scheduleHeuristic(
             outgoingDuration: outDur,
@@ -93,13 +98,13 @@ public enum MashupBlendScheduler {
 
     // MARK: - Profile-backed
 
-    private static func scheduleFromProfiles(a: TrackProfile, b: TrackProfile, preferred: Double) -> LiveMashupBlend {
+    private static func scheduleFromProfiles(a: TrackProfile, b: TrackProfile) -> LiveMashupBlend {
         let bpm = Double(a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120))
         let barSec = 240.0 / max(60, bpm)
         let availableOutro = max(minimumBlendSec, a.durationSec - a.mixOutSec)
         // Prefer an 8–16 bar window when the outro has room; otherwise shrink to available.
         let ladder = availableOutro >= barSec * 14 ? barSec * 16 : (availableOutro >= barSec * 7 ? barSec * 8 : availableOutro)
-        let blend = clamp(max(preferred, min(ladder, availableOutro)), min: minimumBlendSec, max: maximumBlendSec)
+        let blend = clamp(min(ladder, availableOutro), min: minimumBlendSec, max: maximumBlendSec)
 
         let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: blend)
         let outCue = clamp(
@@ -107,9 +112,9 @@ public enum MashupBlendScheduler {
             min: a.durationSec * minimumPlayedFraction,
             max: max(a.durationSec * minimumPlayedFraction, a.durationSec - minimumBlendSec)
         )
-        // Recompute blend so the window actually reaches the end (or the natural tail).
+        // Blend length follows the remaining outro tail (musical ladder already applied).
         let naturalBlend = max(minimumBlendSec, a.durationSec - outCue)
-        let finalBlend = clamp(min(naturalBlend, max(blend, preferred)), min: minimumBlendSec, max: maximumBlendSec)
+        let finalBlend = clamp(min(naturalBlend, max(blend, minimumBlendSec)), min: minimumBlendSec, max: maximumBlendSec)
 
         let inStart = BeatGridSynchronization.incomingCue(profile: b, duration: finalBlend)
         let clampedIn = clamp(inStart, min: 0, max: max(0, b.durationSec - finalBlend - 1))
@@ -125,13 +130,12 @@ public enum MashupBlendScheduler {
     private static func scheduleFromOutgoingProfile(
         a: TrackProfile,
         incomingDuration: Double,
-        preferred: Double,
         incoming: TrackProfile?
     ) -> LiveMashupBlend {
         let floor = a.durationSec * minimumPlayedFraction
         let mixOut = clamp(a.mixOutSec, min: floor, max: max(floor, a.durationSec - minimumTailSec))
         let natural = max(minimumBlendSec, a.durationSec - mixOut)
-        let blend = clamp(max(preferred, min(natural, preferred * 1.35)), min: minimumBlendSec, max: min(maximumBlendSec, natural))
+        let blend = clamp(natural, min: minimumBlendSec, max: min(maximumBlendSec, natural))
         let inStart: Double
         if let b = incoming {
             inStart = clamp(b.mixInSec, min: 0, max: max(0, b.durationSec * 0.25))
@@ -166,16 +170,12 @@ public enum MashupBlendScheduler {
             )
         }
 
-        // Detected outro cue first; blend length is the remaining tail (nudged by slider).
+        // Detected outro cue first; blend length is the remaining tail (not a slider).
         let mixOut = heuristicCues(duration: outgoingDuration, role: .mixOut)
         let floor = outgoingDuration * minimumPlayedFraction
         let finalCue = clamp(mixOut, min: floor, max: max(floor, outgoingDuration - minimumBlendSec))
         let natural = max(minimumBlendSec, outgoingDuration - finalCue)
-        let blend = clamp(
-            max(preferred, min(natural, preferred * 1.35)),
-            min: minimumBlendSec,
-            max: min(maximumBlendSec, natural)
-        )
+        let blend = clamp(natural, min: minimumBlendSec, max: min(maximumBlendSec, natural))
         let inStart = incomingMixIn ?? heuristicCues(duration: incomingDuration, role: .mixIn)
 
         return LiveMashupBlend(

@@ -2152,9 +2152,10 @@ final class PlayerCore {
     }
 
     /// Prefer analysed TrackProfile cues from AutoMixV2 analysis when present;
-    /// otherwise structural heuristics (outro ≥75%, intro lead) — not fixed end-seconds.
+    /// otherwise structural heuristics (outro ≥75%, intro lead).
+    /// Blend length auto-adjusts from detection — the crossfade slider is unused here.
     private func resolveMashupBlend(outgoing: Track, incoming: Track, duration totalDur: Double) -> LiveMashupBlend {
-        let preferred = max(MashupBlendScheduler.minimumBlendSec, crossfadeDuration * 1.35)
+        let preferred = MashupBlendScheduler.defaultPreferredBlendSec
         let analysis = AutoMixV2AnalysisRuntime.shared
         let outProfile = analysis.currentProfile.flatMap { mashupProfileMatches($0, track: outgoing) ? $0 : nil }
         let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
@@ -2359,8 +2360,8 @@ final class PlayerCore {
             idlePlayer.volume = targetLevel
         }
 
-        // AutoMix Mashup: equal-power volumes + bass-swap / vocal pocket on both
-        // native decks and stream MTAudioProcessingTap probes (per AVPlayerItem).
+        // AutoMix Mashup: equal-power volumes + vocal↔instrumental EQ envelopes
+        // (bass swap / HPF riser / vocal pocket / soft reveal) on native + stream items.
         if transitionMode == .automix {
             AutoMixDJEngine.shared.markMashupProgress(p)
             applyMashupTransitionEQ(progress: p)

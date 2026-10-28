@@ -257,10 +257,10 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    if player.transitionMode == .crossfade || player.transitionMode == .automix {
+                    if player.transitionMode == .crossfade {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text(player.transitionMode == .automix ? "Длительность mashup" : "Длительность кроссфейда")
+                                Text("Длительность кроссфейда")
                                 Spacer()
                                 Text(String(format: "%.1f сек", player.crossfadeDuration)).foregroundStyle(.secondary)
                             }
@@ -270,7 +270,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Переходы между треками")
                 } footer: {
-                    Text("Gapless — без пауз. Кроссфейд — плавное смешивание. AutoMix Mashup — DJ bass-swap и vocal pocket поверх equal-power кроссфейда.")
+                    Text("Gapless — без пауз. Кроссфейд — плавное смешивание по слайдеру. AutoMix Mashup — DJ vocal↔instrumental слой поверх equal-power; длительность сведения сама подстраивается под outro/intro.")
                 }
 
     }

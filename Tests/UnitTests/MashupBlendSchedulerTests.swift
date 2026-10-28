@@ -8,18 +8,32 @@ struct MashupBlendSchedulerTests {
     @Test("Heuristic cue is not a fixed N-seconds-from-end window")
     func heuristicUsesOutroNotSliderAlone() {
         let duration = 200.0
-        let preferred = 6.0
         let plan = MashupBlendScheduler.schedule(
             outgoingDuration: duration,
             incomingDuration: 210,
-            preferredBlendSec: preferred
+            preferredBlendSec: MashupBlendScheduler.defaultPreferredBlendSec
         )
-        // Must start in the final quarter, not at duration - preferred.
+        // Must start in the final quarter; blend follows remaining outro tail.
         #expect(plan.outgoingCueSec >= duration * 0.75 - 0.01)
-        #expect(plan.outgoingCueSec < duration - preferred)
+        #expect(plan.outgoingCueSec < duration - MashupBlendScheduler.minimumBlendSec)
+        #expect(abs(plan.blendDurationSec - (duration - plan.outgoingCueSec)) < 0.05
+                || plan.blendDurationSec <= MashupBlendScheduler.maximumBlendSec)
         #expect(plan.blendDurationSec >= MashupBlendScheduler.minimumBlendSec)
         #expect(plan.blendDurationSec <= MashupBlendScheduler.maximumBlendSec)
         #expect(plan.incomingStartSec >= 0)
+    }
+
+    @Test("Preferred slider value does not cap natural outro blend")
+    func preferredDoesNotCapNaturalBlend() {
+        let duration = 200.0
+        let shortPreferred = 6.0
+        let plan = MashupBlendScheduler.schedule(
+            outgoingDuration: duration,
+            incomingDuration: 210,
+            preferredBlendSec: shortPreferred
+        )
+        // Natural outro for a 200s track is well above a 6s slider preference.
+        #expect(plan.blendDurationSec > shortPreferred + 1)
     }
 
     @Test("Profile mixOut / mixIn drive the live schedule")

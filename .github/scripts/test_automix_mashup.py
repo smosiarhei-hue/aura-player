@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source-shape checks for AutoMix Mashup (DJ bass-swap path)."""
+"""Source-shape checks for AutoMix Mashup (DJ vocal↔instrumental live path)."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ class AutoMixMashupTests(unittest.TestCase):
         models = (ROOT / "Sonivo/models.swift").read_text()
         self.assertIn('case automix = "AutoMix Mashup"', models)
         self.assertIn("markMashupProgress", models)
+        self.assertIn("VOCAL HOLD", models)
+        self.assertIn("SOFT REVEAL", models)
         # Equal-power volume contract stays intact for CI purity checks.
         self.assertIn("return (outVol, inVol, 0.0, 0.0, 1.0)", models)
 
@@ -37,6 +39,8 @@ class AutoMixMashupTests(unittest.TestCase):
         # Auto blend-point detection (outro/intro), not fixed end-seconds alone.
         self.assertIn("resolveMashupBlend", player)
         self.assertIn("MashupBlendScheduler.schedule", player)
+        self.assertIn("defaultPreferredBlendSec", player)
+        self.assertNotIn("crossfadeDuration * 1.35", player)
         self.assertIn("incomingStartPosition + elapsed", player)
         # Stream intro seek must use completion-handler overload (Swift 6 async seek needs await).
         self.assertIn(
@@ -52,8 +56,11 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("minimumPlayedFraction", scheduler)
         self.assertIn("heuristicCues", scheduler)
         self.assertIn("LiveMashupBlend", scheduler)
+        self.assertIn("defaultPreferredBlendSec", scheduler)
+        self.assertIn("not a settings slider", scheduler)
         tests = (ROOT / "Tests/UnitTests/MashupBlendSchedulerTests.swift").read_text()
         self.assertIn("MashupBlendSchedulerTests", tests)
+        self.assertIn("preferredDoesNotCapNaturalBlend", tests)
 
         presentation = (ROOT / "Sonivo/ActivePlayerPresentation.swift").read_text()
         self.assertIn("mashupPhaseLabel", presentation)
@@ -71,10 +78,18 @@ class AutoMixMashupTests(unittest.TestCase):
 
         settings = (ROOT / "Sonivo/settingsview.swift").read_text()
         self.assertIn("TransitionMode.automix", settings)
+        # Duration slider is crossfade-only; mashup auto-adjusts from blend detection.
+        self.assertIn("player.transitionMode == .crossfade", settings)
+        self.assertNotIn("Длительность mashup", settings)
+        self.assertIn("outro/intro", settings)
 
         runner = (ROOT / "Sonivo/MixPlanRealtimeTransitionRunner.swift").read_text()
         self.assertIn("MashupTransitionExecutor", runner)
         self.assertIn("enum MashupLiveEQEnvelope", runner)
+        self.assertIn("vocal hold", runner.lower())
+        self.assertIn("soft LPF reveal", runner)
+        self.assertIn("inVocalPocket", runner)
+        self.assertIn("outHPFBody", runner)
 
     def test_drop_swap_plan_still_encodes_mashup_fx(self):
         planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
@@ -82,6 +97,14 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("kind: .bassKill", planner)
         self.assertIn("kind: .vocalDucking", planner)
         self.assertIn("kind: .echoOut", planner)
+
+    def test_docs_describe_auto_duration_and_live_eq(self):
+        docs = (ROOT / "docs/automix-mashup.md").read_text()
+        self.assertIn("Vocal↔instrumental layering", docs)
+        self.assertIn("слайдер длительности скрыт", docs)
+        self.assertIn("автоматическая", docs)
+        self.assertIn("MashupLiveEQEnvelope", docs)
+        self.assertNotIn("force-enable", docs.lower())
 
 
 if __name__ == "__main__":

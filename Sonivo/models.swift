@@ -20,7 +20,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
         case .off:
             return "Стандартное раздельное воспроизведение треков."
         case .automix:
-            return "DJ mashup: equal-power кроссфейд плюс bass-swap, vocal pocket и мягкий HPF на уходящем треке."
+            return "DJ mashup: equal-power кроссфейд плюс vocal↔instrumental слой, bass-swap, HPF riser и soft reveal. Длительность — по outro/intro."
         }
     }
 }
@@ -73,9 +73,11 @@ final class AutoMixDJEngine {
         isTransitionActive = true
         transitionProgress = max(0, min(1, progress))
         activeStrategyName = "MASHUP"
-        statusBadge = progress < 0.45 ? "BASS SWAP" : (progress < 0.85 ? "VOCAL POCKET" : "DROP IN")
+        statusBadge = progress < 0.30 ? "BASS SWAP"
+            : (progress < 0.52 ? "VOCAL HOLD"
+            : (progress < 0.82 ? "VOCAL POCKET" : "SOFT REVEAL"))
         dropProgress = progress
-        isPostMixActive = progress >= 0.85
+        isPostMixActive = progress >= 0.82
     }
 }
 
