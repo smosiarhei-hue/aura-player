@@ -443,8 +443,9 @@ public struct MashupLiveStyle: Sendable, Equatable {
             style.oneVocalConflict = true
             style.vocalHoldUntil = min(style.vocalHoldUntil, max(0.22, style.bassSwapAt * 0.9))
             style.vocalPocketUntil = max(style.handoffAt + 0.06, min(0.92, style.vocalPocketUntil))
-            style.vocalPocketDepth = max(1.4, style.vocalPocketDepth)
-            style.hpfDepth = min(1.5, style.hpfDepth + 0.2)
+            // Lab demuffle: light pocket only — Mid/Side bake does the vocal carve.
+            style.vocalPocketDepth = max(0.95, min(1.15, style.vocalPocketDepth))
+            style.hpfDepth = min(1.2, style.hpfDepth + 0.08)
             style.incomingVolumeLag = min(0.14, max(0.04, style.incomingVolumeLag))
             style.bodyLift = min(1.35, style.bodyLift)
             if !style.reason.contains("ONE VOCAL") {

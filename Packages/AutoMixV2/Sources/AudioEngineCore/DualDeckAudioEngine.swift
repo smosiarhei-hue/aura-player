@@ -627,27 +627,27 @@ private final class DeckSlot {
         }
     }
 
-    /// Lab-style instrumentalize: cut center lead while keeping kick/sub.
+    /// Lab MidSideStemNode.setInstrumental: presence notch + light mid tuck, keep body/air.
     func applyInstrumentalize(_ amount: Float) {
         let a = min(1, max(0, amount))
         let bass = fxEQ.bands[0]
         bass.bypass = false
-        bass.gain = 3.5 * a // restore sub like Lab mid-bass keep
+        bass.gain = 2.5 * a // Lab mid-bass keep
         let vocal = fxEQ.bands[3]
         vocal.bypass = a < 0.05
         vocal.frequency = 1600
-        vocal.bandwidth = 1.2
-        vocal.gain = -22 * a
+        vocal.bandwidth = 1.1
+        vocal.gain = -6 * a
         let mid = fxEQ.bands[4]
         mid.bypass = a < 0.05
         mid.frequency = 850
-        mid.bandwidth = 1.15
-        mid.gain = -18 * a
+        mid.bandwidth = 1.0
+        mid.gain = -4 * a
         let presence = fxEQ.bands[5]
         presence.bypass = a < 0.05
         presence.frequency = 2800
-        presence.bandwidth = 0.85
-        presence.gain = -20 * a
+        presence.bandwidth = 0.9
+        presence.gain = -7 * a
     }
 }
 private struct FadeState {

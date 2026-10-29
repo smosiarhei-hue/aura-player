@@ -145,10 +145,12 @@ public enum MidSideStemBaker {
         fileB.framePosition = startB
 
         var written: AVAudioFrameCount = 0
-        var aLp: Float = 0, aBp: Float = 0
-        var bLp: Float = 0, bBp: Float = 0
-        let lpAlpha = Float(1 - exp(-2 * Double.pi * 180 / rate))
-        let bpAlpha = Float(1 - exp(-2 * Double.pi * 2500 / rate))
+        // Lab multiband mid: ~150 Hz sub · ~800 Hz body · ~2.8 kHz presence.
+        var aLp: Float = 0, aBody: Float = 0, aPres: Float = 0
+        var bLp: Float = 0, bBody: Float = 0, bPres: Float = 0
+        let lpAlpha = Float(1 - exp(-2 * Double.pi * 150 / rate))
+        let bodyAlpha = Float(1 - exp(-2 * Double.pi * 800 / rate))
+        let presAlpha = Float(1 - exp(-2 * Double.pi * 2800 / rate))
         let chA = Int(formatA.channelCount)
         let chB = Int(formatB.channelCount)
         let hold = request.outgoingVolumeHold
@@ -177,9 +179,11 @@ public enum MidSideStemBaker {
                     untilFrame: 0,
                     fadeFrames: fadeFrames,
                     midLp: &aLp,
-                    midBp: &aBp,
+                    midBody: &aBody,
+                    midPres: &aPres,
                     lpAlpha: lpAlpha,
-                    bpAlpha: bpAlpha
+                    bodyAlpha: bodyAlpha,
+                    presAlpha: presAlpha
                 )
                 processChunk(
                     input: bufB,
@@ -192,9 +196,11 @@ public enum MidSideStemBaker {
                     untilFrame: untilFrame,
                     fadeFrames: fadeFrames,
                     midLp: &bLp,
-                    midBp: &bBp,
+                    midBody: &bBody,
+                    midPres: &bPres,
                     lpAlpha: lpAlpha,
-                    bpAlpha: bpAlpha
+                    bodyAlpha: bodyAlpha,
+                    presAlpha: presAlpha
                 )
 
                 mixMasterChunk(
@@ -289,9 +295,11 @@ public enum MidSideStemBaker {
         source.framePosition = startFrame
         var written: AVAudioFrameCount = 0
         var midLp: Float = 0
-        var midBp: Float = 0
-        let lpAlpha = Float(1 - exp(-2 * Double.pi * 180 / rate))
-        let bpAlpha = Float(1 - exp(-2 * Double.pi * 2500 / rate))
+        var midBody: Float = 0
+        var midPres: Float = 0
+        let lpAlpha = Float(1 - exp(-2 * Double.pi * 150 / rate))
+        let bodyAlpha = Float(1 - exp(-2 * Double.pi * 800 / rate))
+        let presAlpha = Float(1 - exp(-2 * Double.pi * 2800 / rate))
         let channels = Int(format.channelCount)
         // Equal-power-ish bloom into dry B (~350 ms) — 80 ms was a hard gate click.
         let fadeFrames = AVAudioFrameCount(max(1, Int(0.35 * rate)))
@@ -320,9 +328,11 @@ public enum MidSideStemBaker {
                         untilFrame: untilFrame,
                         fadeFrames: fadeFrames,
                         midLp: &midLp,
-                        midBp: &midBp,
+                        midBody: &midBody,
+                        midPres: &midPres,
                         lpAlpha: lpAlpha,
-                        bpAlpha: bpAlpha
+                        bodyAlpha: bodyAlpha,
+                        presAlpha: presAlpha
                     )
                 }
 
@@ -464,9 +474,11 @@ public enum MidSideStemBaker {
         untilFrame: AVAudioFrameCount,
         fadeFrames: AVAudioFrameCount,
         midLp: inout Float,
-        midBp: inout Float,
+        midBody: inout Float,
+        midPres: inout Float,
         lpAlpha: Float,
-        bpAlpha: Float
+        bodyAlpha: Float,
+        presAlpha: Float
     ) {
         let left = input.floatChannelData?[0]
         let right = channels > 1 ? input.floatChannelData?[1] : left
@@ -482,8 +494,11 @@ public enum MidSideStemBaker {
             let r = right[i]
             let mid = (l + r) * 0.5
             let side = (l - r) * 0.5
+            // Lab karaoke carve: keep sub + body/air; notch lead presence only.
             midLp += lpAlpha * (mid - midLp)
-            midBp += bpAlpha * (mid - midLp - midBp)
+            let midHi = mid - midLp
+            midBody += bodyAlpha * (midHi - midBody)
+            midPres += presAlpha * (midHi - midBody - midPres)
 
             let processedL: Float
             let processedR: Float
@@ -492,14 +507,17 @@ public enum MidSideStemBaker {
                 processedL = l
                 processedR = r
             case .instrumental:
-                let midVocal = mid - midLp
-                let midKeep = midLp * (1 + 0.1 * a) + midVocal * (1 - 0.999 * a) - midBp * 0.85 * a
-                let sideBoost = side * (1 + 0.35 * a)
+                let midKeep =
+                    midLp * (1 + 0.08 * a)
+                    + midBody * (1 - 0.22 * a)
+                    + midPres * (1 - 0.92 * a)
+                let sideBoost = side * (1 + 0.22 * a)
                 processedL = midKeep + sideBoost
                 processedR = midKeep - sideBoost
             case .vocal:
-                let sideKeep = side * (1 - 0.9 * a)
-                let midBoost = mid * (1 + 0.12 * a)
+                // Light vocal focus — don't collapse stereo image / air.
+                let sideKeep = side * (1 - 0.45 * a)
+                let midBoost = midLp + midBody * (1 + 0.05 * a) + midPres * (1 + 0.2 * a)
                 processedL = midBoost + sideKeep
                 processedR = midBoost - sideKeep
             }
