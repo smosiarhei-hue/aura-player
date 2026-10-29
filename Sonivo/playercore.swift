@@ -151,6 +151,25 @@ final class PlayerCore {
                 defaults.set(true, forKey: "eq.layout.reference6")
             }
         }
+        // Bass-tight 6: 150 Hz → 120 Hz punch + steeper shelf widths (DSP-side).
+        // Resample prior reference6 curve in log-frequency; keep a one-time backup.
+        if !defaults.bool(forKey: EQGainLimits.layoutMarkerKey),
+           gains.count == EQGainLimits.previousReferenceFrequencies.count {
+            if defaults.data(forKey: "eq.gains.bassTight6.backup") == nil,
+               let data = try? JSONEncoder().encode(gains) {
+                defaults.set(data, forKey: "eq.gains.bassTight6.backup")
+            }
+            gains = EQGainLimits.resample(
+                gains,
+                from: EQGainLimits.previousReferenceFrequencies,
+                to: EQGainLimits.frequencies
+            )
+            gains = EQGainLimits.normalized(gains)
+            if let data = try? JSONEncoder().encode(gains) {
+                defaults.set(data, forKey: eqGainsKey)
+                defaults.set(true, forKey: EQGainLimits.layoutMarkerKey)
+            }
+        }
         return (normalized(gains), enabled)
     }
 
@@ -735,8 +754,9 @@ final class PlayerCore {
         engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
         engine.attach(outputLimiter)
         // Explicit native envelope within Apple's documented parameter ranges.
-        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.012, 0)
-        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.060, 0)
+        // Slightly slower attack/decay so boosted kicks aren't crushed into "cut bass".
+        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.024, 0)
+        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.120, 0)
         AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
         // Flat playback bypasses protection; non-flat EQ enables the native peak limiter.
         outputLimiter.bypass = true

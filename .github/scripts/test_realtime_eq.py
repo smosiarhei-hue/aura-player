@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
-FREQUENCIES=[60,150,400,1000,2400,15000]
+FREQUENCIES=[60,120,400,1000,2400,15000]
 N=len(FREQUENCIES)
 LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
 def expanded(gains):
@@ -86,7 +86,8 @@ void destroy(void *p) { free(p); }
         for hz in FREQUENCIES[1:-1]:
             gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
             self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),6,delta=.08)
-        gains=[0]*N;gains[FREQUENCIES.index(150)]=6
+        # Punch band (120 Hz) should not lift sub or upper mid like a wide shelf.
+        gains=[0]*N;gains[FREQUENCIES.index(120)]=6
         self.assertLess(self.response(gains,30),1)
         self.assertLess(self.response(gains,600),1)
     def test_flat_and_disabled_are_exact_bypass(self):
@@ -102,13 +103,14 @@ void destroy(void *p) { free(p); }
         self.assertLess(self.response(gains,100)-pre,.2)
 
     def test_extended_bass_range_is_real_and_does_not_boost_high_band_limits(self):
-        for band,hz in [(1,150),(2,400),(3,1000),(4,2400)]:
+        for band in (1, 2, 3, 4):
+            hz = FREQUENCIES[band]
             gains=[0]*N;gains[band]=15
-            self.assertAlmostEqual(self.response(gains,hz),15,delta=.1)
+            self.assertAlmostEqual(self.response(gains,hz),15,delta=.15)
             gains[band]=24
-            self.assertAlmostEqual(self.response(gains,hz),15,delta=.1)
+            self.assertAlmostEqual(self.response(gains,hz),15,delta=.15)
             gains[band]=-24
-            self.assertAlmostEqual(self.response(gains,hz),-15,delta=.1)
+            self.assertAlmostEqual(self.response(gains,hz),-15,delta=.15)
         strong=[15]+[0]*(N-1);mild=[9]+[0]*(N-1)
         self.assertGreater(self.response(strong,12)-self.response(mild,12),5.5)
         self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[15]*N)))

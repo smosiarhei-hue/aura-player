@@ -2,7 +2,16 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {60, 150, 400, 1000, 2400, 15000};
+static const double frequencies[SONIVO_EQ_BANDS] = {60, 120, 400, 1000, 2400, 15000};
+/* Match EQGainLimits.bandwidth(at:) — steeper shelves, tighter kick punch. */
+static double bandWidthOctaves(unsigned band) {
+    switch (band) {
+        case 0: return 0.55;
+        case 1: return 0.70;
+        case 2: case 3: case 4: return 0.90;
+        default: return 0.70;
+    }
+}
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
 static double cleanGain(double gain, unsigned band) { (void)band; return isfinite(gain) ? clamp(gain, -15, 15) : 0; }
 static SonivoEQCoefficients identity(void) { return (SonivoEQCoefficients){1,0,0,0,0}; }
@@ -12,8 +21,11 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     double c = cos(w), sn = sin(w), A = pow(10, gain / 40);
     double b0, b1, b2, a0, a1, a2;
     if (band == 0 || band == SONIVO_EQ_BANDS - 1) {
-        // RBJ shelves, slope S=1: broad bass/treble controls, not narrow edge resonances.
-        double alpha = sn * 0.7071067811865476, beta = 2 * sqrt(A) * alpha;
+        // RBJ shelves with slope S from bandwidth (0.55/0.70) — less mid-bass bleed
+        // than the old S=1 blanket that made bass boosts muddy then limiter-cut.
+        double S = bandWidthOctaves(band);
+        double alpha = sn / 2.0 * sqrt((A + 1.0 / A) * (1.0 / fmax(S, 0.2) - 1.0) + 2.0);
+        double beta = 2 * sqrt(A) * alpha;
         if (band == 0) {
             b0=A*((A+1)-(A-1)*c+beta); b1=2*A*((A-1)-(A+1)*c); b2=A*((A+1)-(A-1)*c-beta);
             a0=(A+1)+(A-1)*c+beta; a1=-2*((A-1)+(A+1)*c); a2=(A+1)+(A-1)*c-beta;
@@ -22,8 +34,7 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
             a0=(A+1)-(A-1)*c+beta; a1=2*((A-1)-(A+1)*c); a2=(A+1)-(A-1)*c-beta;
         }
     } else {
-        // One-octave parametric width matches all native local EQ bands.
-        double bandwidth = 1;
+        double bandwidth = bandWidthOctaves(band);
         double alpha = sn * sinh(0.34657359027997265 * bandwidth * w / fmax(sn, 1e-9));
         b0=1+alpha*A; b1=-2*c; b2=1-alpha*A;
         a0=1+alpha/A; a1=-2*c; a2=1-alpha/A;
@@ -116,9 +127,9 @@ void SonivoEQPrepare(SonivoRealtimeEQ *eq,double rate) {
     eq->coefficientAlpha=1-exp(-16/(eq->sampleRate*.030));
     eq->sampleAlpha=1-exp(-1/(eq->sampleRate*.025));
     eq->headroomAttackAlpha=1-exp(-1/(eq->sampleRate*.001));
-    // Hold across a complete 20 Hz cycle; no gain recovery between bass peaks.
-    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.200));
-    eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.050);eq->peakHold=0;
+    // Gentler release so kick boosts aren't heard as "bass cut" after each peak.
+    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.280));
+    eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.035);eq->peakHold=0;
     memset(eq->z1,0,sizeof(eq->z1)); memset(eq->z2,0,sizeof(eq->z2));
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) eq->current[b]=eq->target[b]=identity();
     eq->wet=0;eq->preGain=1;eq->limiter=1;eq->rampCounter=0;

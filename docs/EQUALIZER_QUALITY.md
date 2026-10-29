@@ -1,12 +1,19 @@
-# Equalizer: six-band reference
+# Equalizer: six-band reference (bass-tight)
 
 ## Approved controls
-Actual filter centers (UI, AVAudioUnitEQ, streamed PCM and existing experimental
-decks): **60 / 150 / 400 / 1000 / 2400 / 15000 Hz**. This is a real six-filter
-change, not six labels over the old ten-band DSP. First/last filters are low/high
-shelves; the four interior bands are one-octave parametric filters. Working centers
-are capped at 0.44 × processing sample rate. Shelf centers are not playback cutoffs.
-Categories select two bands each, without averaging or overwriting the curve.
+Actual filter centers (UI, AVAudioUnitEQ, streamed PCM and DualDeck):
+**60 / 120 / 400 / 1000 / 2400 / 15000 Hz**.
+
+Bass redesign vs the prior 60+150 @ 1-oct layout: that pair overlapped so “Глубина”
+bled into mid-bass and the peak limiter then ducked kicks — heard as thin / cut bass.
+Now the low shelf is steeper (bandwidth **0.55**), punch sits at **120 Hz** with
+width **0.70**, mids **0.90**, high shelf **0.70**. Native PeakLimiter attack/decay
+are gentler (**24 ms / 120 ms**) so boosts keep punch. Streamed C DSP matches the
+same centers and widths (RBJ shelf slope from bandwidth).
+
+First/last filters are low/high shelves; interior bands are parametric. Working
+centers are capped at 0.44 × processing sample rate. Categories select two bands
+each, without averaging or overwriting the curve.
 
 All six controls now have the user-requested **−15…+15 dB** range, half-dB steps,
 and a symmetric graph with 0 dB exactly in the middle. The screenshot's drawn +12 dB
@@ -19,9 +26,9 @@ The exclusive double-tap/drag gesture uses a movement threshold, with a shared
 Single tap selects, drag edits. Native zero buttons remain available to VoiceOver.
 
 ## Historical settings and presets
-- New runtime marker: `eq.layout.reference6`.
-- Original runtime data is kept once as `eq.gains.reference6.backup` before the
-  reference migration. Historical 10-/29-band upgrades run before conversion.
+- Runtime marker: `eq.layout.bassTight6` (after `eq.layout.reference6`).
+- Prior 60/150 curves are log-resampled onto 60/120 once; backup
+  `eq.gains.bassTight6.backup`. Historical 10-/29-band upgrades still run first.
 - Recognize both compact metadata layouts (30/40 Hz), old octave and dense grids.
   Resample gain values in log-frequency space onto the six new centers.
 - Saved preset IDs/names remain unchanged, with original archives retained in

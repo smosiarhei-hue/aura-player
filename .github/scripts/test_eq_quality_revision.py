@@ -9,17 +9,20 @@ class EQQualityRevisionTests(unittest.TestCase):
             self.assertIn(expected,render)
         for forbidden in ['malloc(', 'calloc(', 'realloc(', 'dispatch_', 'mutex', 'sleep(']:
             self.assertNotIn(forbidden,render)
-        self.assertIn('eq->sampleRate*.050',c)
-        self.assertIn('eq->sampleRate*.200',c)
+        self.assertIn('eq->sampleRate*.035',c)
+        self.assertIn('eq->sampleRate*.280',c)
     def test_native_envelopes_and_low_band_width_are_consistent(self):
         core=(R/'Sonivo/playercore.swift').read_text()
         dual=(R/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
         for text in [core,dual]:
-            for value in ['kLimiterParam_AttackTime','kLimiterParam_DecayTime','kLimiterParam_PreGain','0.012','0.060']:
+            for value in ['kLimiterParam_AttackTime','kLimiterParam_DecayTime','kLimiterParam_PreGain','0.024','0.120']:
                 self.assertIn(value,text)
-        self.assertIn('return 1',(R/'Sonivo/EQGainLimits.swift').read_text())
-        self.assertIn('band.bandwidth = 1',dual)
-        self.assertIn('EQGainLimits.bandwidth(at:band) == 1',(R/'.github/scripts/check_eq_user_presets.py').read_text())
+        limits=(R/'Sonivo/EQGainLimits.swift').read_text()
+        self.assertIn('case 0: return 0.55',limits)
+        self.assertIn('case 1: return 0.70',limits)
+        self.assertIn('[60, 120, 400, 1000, 2400, 15000]',limits)
+        self.assertIn('0.55, 0.70, 0.90',dual)
+        self.assertIn('EQGainLimits.bandwidth(at:0) == 0.55',(R/'.github/scripts/check_eq_user_presets.py').read_text())
     def test_geometry_animates_without_animating_the_audio_controls(self):
         shapes=(R/'Sonivo/EQResponseShapes.swift').read_text()
         ui=(R/'Sonivo/playerchrome.swift').read_text()
@@ -48,7 +51,7 @@ class EQQualityRevisionTests(unittest.TestCase):
     def test_six_band_reference_and_symmetric_gain_range_have_real_filters(self):
         limits=(R/'Sonivo/EQGainLimits.swift').read_text()
         header=(R/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.h').read_text()
-        self.assertIn('[60,150,400,1000,2400,15000]',limits)
+        self.assertIn('[60, 120, 400, 1000, 2400, 15000]',limits)
         self.assertIn('static let maximum: Float = 15',limits)
         self.assertIn('-maximum...maximum',limits)
         self.assertIn('#define SONIVO_EQ_BANDS 6',header)

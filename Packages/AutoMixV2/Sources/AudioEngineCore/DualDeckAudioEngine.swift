@@ -54,10 +54,11 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 slot.resetFX()
             }
             engine.attach(userEQ)
-            let frequencies: [Float] = [60, 150, 400, 1000, 2400, 15000]
+            let frequencies: [Float] = [60, 120, 400, 1000, 2400, 15000]
+            let widths: [Float] = [0.55, 0.70, 0.90, 0.90, 0.90, 0.70]
             for (index, band) in userEQ.bands.enumerated() {
                 band.frequency = min(frequencies[index], Float(format.sampleRate * 0.44))
-                band.bandwidth = 1
+                band.bandwidth = widths[index]
                 band.filterType = index == 0 ? .lowShelf : (index == frequencies.count - 1 ? .highShelf : .parametric)
                 band.gain = 0
                 band.bypass = false
@@ -68,8 +69,8 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
                 componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
             engine.attach(limiter)
-            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.012, 0)
-            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.060, 0)
+            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.024, 0)
+            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.120, 0)
             AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
             limiter.bypass = true
             engine.connect(userEQ, to: limiter, format: format)

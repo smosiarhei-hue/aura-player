@@ -42,17 +42,18 @@ import AudioToolbox
         engine.connect(player, to: eq, format: format)
         engine.connect(eq, to: limiter, format: format)
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
-        let frequencies: [Float] = [60,150,400,1000,2400,15000]
+        let frequencies: [Float] = [60,120,400,1000,2400,15000]
+        let widths: [Float] = [0.55,0.70,0.90,0.90,0.90,0.70]
         for (i, band) in eq.bands.enumerated() {
-            band.frequency=frequencies[i]; band.bandwidth = 1; band.gain=gains[i]; band.bypass=false
+            band.frequency=frequencies[i]; band.bandwidth = widths[i]; band.gain=gains[i]; band.bypass=false
             band.filterType = i == 0 ? .lowShelf : (i == frequencies.count - 1 ? .highShelf : .parametric)
         }
-        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.012, 0)
-        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.060, 0)
+        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.024, 0)
+        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.120, 0)
         AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
         var decay: AudioUnitParameterValue = 0
         precondition(AudioUnitGetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, &decay) == noErr)
-        precondition(abs(decay - 0.060) < 0.0001)
+        precondition(abs(decay - 0.120) < 0.0001)
         eq.globalGain=EQHeadroom.preamp(gains:gains,sampleRate:48000)
         eq.bypass = !enabled
         limiter.bypass = !enabled || !gains.contains { $0 != 0 }

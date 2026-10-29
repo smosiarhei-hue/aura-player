@@ -18,10 +18,13 @@ __PERSISTED_EQ_BODY__
         func rejects(_ action: () throws -> Void) {
             do { try action(); fatalError("Invalid input accepted") } catch { }
         }
-        precondition(EQGainLimits.frequencies == [60,150,400,1000,2400,15000])
+        precondition(EQGainLimits.frequencies == [60,120,400,1000,2400,15000])
+        precondition(EQGainLimits.bandwidth(at:0) == 0.55)
+        precondition(EQGainLimits.bandwidth(at:1) == 0.70)
+        precondition(EQGainLimits.bandwidth(at:2) == 0.90)
+        precondition(EQGainLimits.bandwidth(at:5) == 0.70)
         for band in EQGainLimits.frequencies.indices {
             precondition(EQGainLimits.range(at:band) == (-15...15))
-            precondition(EQGainLimits.bandwidth(at:band) == 1)
         }
         let store=EQUserPresetStore(defaults:defaults)
         let gains: [Float] = [12,6,-1,2,4,-15]
