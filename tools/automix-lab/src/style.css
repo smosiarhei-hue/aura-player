@@ -244,6 +244,22 @@ button.primary {
   color: #10140f;
 }
 
+button.primary.ai {
+  background: linear-gradient(120deg, #d8ff6a, var(--accent) 55%, #6f9a2e);
+  box-shadow: 0 0 24px rgba(184, 242, 85, 0.28);
+}
+
+.ai-status {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(184, 242, 85, 0.07);
+  border: 1px solid rgba(184, 242, 85, 0.22);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 button.ghost {
   background: transparent;
   color: var(--ink);

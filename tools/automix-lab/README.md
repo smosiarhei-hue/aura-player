@@ -1,12 +1,8 @@
-# Automix Lab
+# Automix Lab · AI Engine
 
-Локальный стенд для разработки Sonivo **AutoMix Mashup** на твоём компьютере.
+Локальный стенд + **AI-движок**, который сам обрабатывает каждый трек и сводит пару как Apple Music Automix.
 
-Загружаешь два трека → слушаешь сведение → крутишь ручки (BPM/rates, cues, bass lock, handoff, громкости) → экспортируешь JSON-пресет.
-
-Кривые объёма / баса / rate совпадают по смыслу с live `MashupLiveStyle` в приложении.
-
-## Запуск
+## Запуск на своём компьютере
 
 ```bash
 cd tools/automix-lab
@@ -16,35 +12,44 @@ npm run dev
 
 Открой [http://127.0.0.1:43187](http://127.0.0.1:43187).
 
-Сборка: `npm run build` → `dist/`.
+## Что делает AI
 
-## Как пользоваться
+На каждый загруженный файл:
 
-1. **Deck A** — текущий трек (outro / инструментал).
-2. **Deck B** — следующий (уже с вокалом + битом).
-3. Введи **BPM** обоих и нажми **Match BPM → rates**.
-4. Поставь **Cue A** в конец песни, **Cue B** туда, где следующий уже «играет».
-5. **Play mashup** — оба слоя на общей сетке; на handoff шкала снэпается на B.
-6. Крути ручки на слух. **Export JSON** — пресет в буфер / textarea.
+1. **BPM** — автокорреляция onset-огибающей (70–180, fold в 80–160)
+2. **Energy / vocal proxy** — кривые по треку
+3. **mixOut** — outro / инструментальный хвост (после 75% трека)
+4. **mixIn** — вход после тихого intro, ближе к биту/вокалу
 
-### Solo
+По паре (`planAutomix`):
 
-**Solo A/B от cue** — проверить точку входа без сведения.
+- beatmatch rates к общему BPM  
+- cues на сетке тактов  
+- окно 8/16 баров из outro  
+- архетип `dropSwap` / `seamlessLoop` / `energyWash`  
+- бас от B, dual-layer громкости (мэшап A+B)
 
-## Ограничения браузера
+Один клик **✦ AI Auto Mix** — анализ (если ещё нет) → план → play.
 
-- Rate = «виниловый» beatmatch (темп вместе с питчем), как у классического DJ. Независимый time-stretch как у `AVAudioUnitTimePitch` в iOS здесь не эмулируется.
-- Автодетект BPM нет — вводи вручную (или с анализатора).
-- Файлы остаются локально в браузере, никуда не загружаются.
+## Ручная доводка
 
-## Связь с iOS
+После AI можно крутить rates / bass / handoff и **Export JSON**.  
+Поля ≈ iOS `MashupLiveStyle` + cues из `MashupBlendScheduler`.
 
-Поля пресета ≈ `MashupLiveStyle` + cues из `MashupBlendScheduler`:
+## Связь с Sonivo iOS
 
-| Lab | iOS |
+В приложении тот же смысл уже встроен:
+
+| Lab AI | iOS |
 |---|---|
-| `rateA` / `rateB` | `MashupLiveStyle.rateA/B` |
-| `pitchCentsB` | `pitchCentsB` |
-| `bassSwapAt` / `handoffAt` | те же |
-| `cueASec` / `cueBSec` | outgoing cue / `incomingStartSec` |
-| `blendDurationSec` | mashup blend window |
+| `analyzeTrackBuffer` | `TrackAnalyzer` / `TrackAnalysisComputer` |
+| `planAutomix` | `MixPlanner` + `MashupLiveStyle.resolve` |
+| Play mashup | `PlayerCore` AutoMix Mashup |
+
+Включи **Настройки → Переходы → AutoMix Mashup** — телефон сам анализирует current/next и сводит.
+
+## Ограничения
+
+- Rate «виниловый» (темп+питч), без отдельного time-stretch как `AVAudioUnitTimePitch`
+- Camelot key в lab пока 0 (полная гармоника — в iOS профилях)
+- Файлы только локально в браузере

@@ -32,12 +32,14 @@ Ownership force-disabled. Live путь: beatmatch + bass-from-B + dual-layer ma
 
 Настройки → Переходы → **AutoMix Mashup**. Длительность окна — из outro/intro и плана, не из слайдера.
 
-## Automix Lab (на компьютере)
+## Automix Lab + AI Engine (на компьютере)
 
-Локальный стенд для подбора сведения на слух: два файла → mashup → ручные ручки → JSON-пресет.
+Локальный стенд: загружаешь A/B → **AI Auto Mix** сам считает BPM, mixIn/mixOut, rates и играет мэшап (как Apple Automix). Ручки — опциональная доводка.
 
 ```bash
 cd tools/automix-lab && npm install && npm run dev
 ```
 
 Открой http://127.0.0.1:43187 — см. `tools/automix-lab/README.md`.
+
+Модули: `analyzeTrack.ts` (пер-трек), `aiMixEngine.ts` (план пары), `engine.ts` (Web Audio dual-deck).

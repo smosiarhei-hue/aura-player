@@ -1,19 +1,25 @@
 import "./style.css";
 import { AutomixEngine } from "./audio/engine";
+import { analyzeTrackBuffer, type TrackAIProfile } from "./audio/analyzeTrack";
+import { planAutomix } from "./audio/aiMixEngine";
 import { defaultParams, tempoMatch } from "./audio/envelopes";
 import type { MashupParams } from "./audio/envelopes";
 
 const params = defaultParams();
 const engine = new AutomixEngine(params);
+const profiles: { a: TrackAIProfile | null; b: TrackAIProfile | null } = {
+  a: null,
+  b: null,
+};
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <header class="hero">
     <h1>Automix <span>Lab</span></h1>
     <p>
-      Локальный стенд для сведения двух треков как в Sonivo AutoMix Mashup:
-      BPM в такт, бас от следующего, мэшап-слой A+B. Крути ручки на слух,
-      экспортируй пресет в JSON.
+      AI сам разбирает каждый трек (BPM, outro/intro, энергия, вокал) и строит
+      сведение как Apple Music Automix: такт, бас от следующего, мэшап-слой.
+      Можно поправить руками и сохранить пресет.
     </p>
   </header>
 
@@ -41,6 +47,7 @@ app.innerHTML = `
           </div>
           <div class="actions">
             <button class="ghost" id="soloA" type="button">Solo A от cue</button>
+            <button class="ghost" id="analyzeA" type="button">AI анализ A</button>
           </div>
         </div>
         <div class="deck b">
@@ -63,6 +70,7 @@ app.innerHTML = `
           </div>
           <div class="actions">
             <button class="ghost" id="soloB" type="button">Solo B от cue</button>
+            <button class="ghost" id="analyzeB" type="button">AI анализ B</button>
           </div>
         </div>
       </div>
@@ -75,6 +83,7 @@ app.innerHTML = `
           <span id="timeRight">-0:00</span>
         </div>
         <div class="phase" id="phase">READY</div>
+        <div class="ai-status" id="aiStatus">Загрузи A и B → нажми AI Auto Mix</div>
         <div class="meters">
           <div>
             <label>Vol A / Bass A</label>
@@ -88,15 +97,15 @@ app.innerHTML = `
           </div>
         </div>
         <div class="actions">
+          <button class="primary ai" id="aiAuto" type="button">✦ AI Auto Mix</button>
           <button class="primary" id="play" type="button">▶ Play mashup</button>
           <button class="warn" id="stop" type="button">Stop</button>
           <button class="ghost" id="matchTempo" type="button">Match BPM → rates</button>
         </div>
         <div class="error" id="error"></div>
         <p class="hint">
-          Подсказка: поставь Cue A в outro (инструментал), Cue B туда, где уже есть
-          вокал/бит следующего трека. Play — оба слоя на общей сетке, на handoff
-          шкала снэпается на B.
+          <strong>AI Auto Mix</strong> сам считает BPM, mixOut/mixIn, rates и огибающие,
+          затем сразу играет мэшап. Ручки справа — тонкая подстройка на слух.
         </p>
       </div>
     </section>
@@ -109,10 +118,10 @@ app.innerHTML = `
         <button class="ghost" id="importBtn" type="button">Import JSON</button>
         <button class="ghost" id="resetBtn" type="button">Reset</button>
       </div>
-      <textarea class="preset-box" id="preset" spellcheck="false" placeholder="Пресет появится здесь…"></textarea>
+      <textarea class="preset-box" id="preset" spellcheck="false" placeholder="Пресет / AI plan появится здесь…"></textarea>
       <p class="hint">
-        Поля совпадают с live <code>MashupLiveStyle</code> в aura-player.
-        Rate меняет темп «винилово» (с питчем) — как у DJ beatmatch.
+        Алгоритм ≈ iOS <code>TrackAnalyzer</code> + <code>MashupLiveStyle.resolve</code>.
+        В приложении Sonivo AutoMix Mashup делает то же автоматически на каждом треке.
       </p>
     </section>
   </div>
@@ -158,6 +167,10 @@ function fmtTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function setAiStatus(msg: string) {
+  document.querySelector("#aiStatus")!.textContent = msg;
+}
+
 function setParamNumber(key: keyof MashupParams, value: number) {
   switch (key) {
     case "archetype":
@@ -165,6 +178,19 @@ function setParamNumber(key: keyof MashupParams, value: number) {
     default:
       params[key] = value;
   }
+}
+
+function applyParamsToUI(p: MashupParams, bpmA?: number, bpmB?: number) {
+  Object.assign(params, p);
+  for (const k of knobs) {
+    const el = document.querySelector<HTMLInputElement>(`#k-${k.key}`);
+    if (el) el.value = String(params[k.key]);
+  }
+  document.querySelector<HTMLInputElement>("#cueA")!.value = String(params.cueASec);
+  document.querySelector<HTMLInputElement>("#cueB")!.value = String(params.cueBSec);
+  if (bpmA != null) document.querySelector<HTMLInputElement>("#bpmA")!.value = String(bpmA);
+  if (bpmB != null) document.querySelector<HTMLInputElement>("#bpmB")!.value = String(bpmB);
+  syncKnobOutputs();
 }
 
 function syncKnobOutputs() {
@@ -197,13 +223,25 @@ function setCueMax(id: "a" | "b", duration: number) {
   const el = document.querySelector<HTMLInputElement>(id === "a" ? "#cueA" : "#cueB")!;
   el.max = String(Math.max(0, duration - 1));
   if (Number(el.value) > duration - 1) el.value = String(Math.max(0, duration * 0.75));
-  // Sensible defaults: A near outro, B past short intro
-  if (id === "a" && Number(el.value) === 0 && duration > 40) {
-    el.value = String(Math.max(0, duration - 24));
-  }
-  if (id === "b" && Number(el.value) === 0 && duration > 60) {
-    el.value = String(Math.min(32, duration * 0.12));
-  }
+}
+
+async function analyzeDeck(id: "a" | "b") {
+  const deck = engine.getDeck(id);
+  if (!deck.buffer) throw new Error(`Сначала загрузи трек ${id.toUpperCase()}`);
+  const profile = await analyzeTrackBuffer(deck.buffer, deck.name, (msg) => {
+    setAiStatus(`AI · ${id.toUpperCase()}: ${msg}`);
+  });
+  profiles[id] = profile;
+  engine.setBpm(id, profile.bpm);
+  document.querySelector<HTMLInputElement>(id === "a" ? "#bpmA" : "#bpmB")!.value = String(profile.bpm);
+  setCueMax(id, profile.durationSec);
+  const cueEl = document.querySelector<HTMLInputElement>(id === "a" ? "#cueA" : "#cueB")!;
+  cueEl.value = String(id === "a" ? profile.mixOutSec : profile.mixInSec);
+  const meta = document.querySelector(id === "a" ? "#metaA" : "#metaB")!;
+  meta.innerHTML = `<strong>${profile.name}</strong><br>${profile.durationSec.toFixed(1)}s · AI ${profile.reason}`;
+  syncKnobOutputs();
+  setAiStatus(`AI · ${id.toUpperCase()} готов: ${profile.reason}`);
+  return profile;
 }
 
 async function onFile(id: "a" | "b", file: File | undefined) {
@@ -211,14 +249,55 @@ async function onFile(id: "a" | "b", file: File | undefined) {
   err.textContent = "";
   if (!file) return;
   try {
+    setAiStatus(`Загрузка ${id.toUpperCase()}…`);
     const deck = await engine.loadFile(id, file);
     const meta = document.querySelector(id === "a" ? "#metaA" : "#metaB")!;
-    meta.innerHTML = `<strong>${deck.name}</strong><br>${deck.duration.toFixed(1)}s · ${deck.buffer?.numberOfChannels ?? 0}ch · ${deck.buffer?.sampleRate ?? 0} Hz`;
+    meta.innerHTML = `<strong>${deck.name}</strong><br>${deck.duration.toFixed(1)}s · анализ…`;
     setCueMax(id, deck.duration);
-    syncKnobOutputs();
+    await analyzeDeck(id);
   } catch (e) {
     err.textContent = e instanceof Error ? e.message : String(e);
+    setAiStatus("Ошибка анализа");
   }
+}
+
+function runPlanFromProfiles() {
+  if (!profiles.a || !profiles.b) {
+    throw new Error("Нужен AI-анализ обоих треков");
+  }
+  const plan = planAutomix(profiles.a, profiles.b);
+  applyParamsToUI(plan.params, plan.profileA.bpm, plan.profileB.bpm);
+  const box = document.querySelector<HTMLTextAreaElement>("#preset")!;
+  box.value = JSON.stringify(
+    {
+      engine: "AutomixAI",
+      reason: plan.reason,
+      archetype: plan.archetype,
+      beatmatched: plan.beatmatched,
+      params: plan.params,
+      profileA: {
+        name: plan.profileA.name,
+        bpm: plan.profileA.bpm,
+        mixIn: plan.profileA.mixInSec,
+        mixOut: plan.profileA.mixOutSec,
+        confidence: plan.profileA.bpmConfidence,
+      },
+      profileB: {
+        name: plan.profileB.name,
+        bpm: plan.profileB.bpm,
+        mixIn: plan.profileB.mixInSec,
+        mixOut: plan.profileB.mixOutSec,
+        confidence: plan.profileB.bpmConfidence,
+      },
+    },
+    null,
+    2
+  );
+  setAiStatus(plan.reason);
+  document.querySelector("#phase")!.textContent = plan.beatmatched
+    ? `AI TEMPO LOCK ${Math.round(plan.params.targetBPM)}`
+    : `AI ${plan.archetype}`;
+  return plan;
 }
 
 document.querySelector("#fileA")?.addEventListener("change", (e) => {
@@ -228,6 +307,40 @@ document.querySelector("#fileA")?.addEventListener("change", (e) => {
 document.querySelector("#fileB")?.addEventListener("change", (e) => {
   const f = (e.target as HTMLInputElement).files?.[0];
   void onFile("b", f);
+});
+
+document.querySelector("#analyzeA")?.addEventListener("click", () => {
+  void analyzeDeck("a").catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+  });
+});
+document.querySelector("#analyzeB")?.addEventListener("click", () => {
+  void analyzeDeck("b").catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+  });
+});
+
+document.querySelector("#aiAuto")?.addEventListener("click", async () => {
+  const err = document.querySelector("#error")!;
+  const btn = document.querySelector<HTMLButtonElement>("#aiAuto")!;
+  err.textContent = "";
+  btn.disabled = true;
+  try {
+    if (!engine.getDeck("a").buffer || !engine.getDeck("b").buffer) {
+      throw new Error("Загрузи оба трека");
+    }
+    if (!profiles.a) await analyzeDeck("a");
+    if (!profiles.b) await analyzeDeck("b");
+    setAiStatus("AI строит план сведения…");
+    const plan = runPlanFromProfiles();
+    setAiStatus(`Играю: ${plan.reason}`);
+    await engine.playMashup();
+    document.querySelector("#mixing")!.classList.add("on");
+  } catch (e) {
+    err.textContent = e instanceof Error ? e.message : String(e);
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 document.querySelector("#play")?.addEventListener("click", async () => {
@@ -290,11 +403,18 @@ document.querySelector("#matchTempo")?.addEventListener("click", () => {
 document.querySelector("#exportBtn")?.addEventListener("click", () => {
   syncKnobOutputs();
   const payload = {
+    engine: "AutomixAI",
     ...params,
     bpmA: engine.getDeck("a").bpm,
     bpmB: engine.getDeck("b").bpm,
     trackA: engine.getDeck("a").name,
     trackB: engine.getDeck("b").name,
+    profileA: profiles.a
+      ? { bpm: profiles.a.bpm, mixIn: profiles.a.mixInSec, mixOut: profiles.a.mixOutSec }
+      : null,
+    profileB: profiles.b
+      ? { bpm: profiles.b.bpm, mixIn: profiles.b.mixInSec, mixOut: profiles.b.mixOutSec }
+      : null,
     exportedAt: new Date().toISOString(),
   };
   const box = document.querySelector<HTMLTextAreaElement>("#preset")!;
@@ -306,17 +426,14 @@ document.querySelector("#importBtn")?.addEventListener("click", () => {
   const box = document.querySelector<HTMLTextAreaElement>("#preset")!;
   const err = document.querySelector("#error")!;
   try {
-    const data = JSON.parse(box.value) as Partial<MashupParams> & { bpmA?: number; bpmB?: number };
-    Object.assign(params, defaultParams(), data);
-    for (const k of knobs) {
-      const el = document.querySelector<HTMLInputElement>(`#k-${k.key}`);
-      if (el && data[k.key] != null) el.value = String(data[k.key]);
-    }
-    if (data.cueASec != null) document.querySelector<HTMLInputElement>("#cueA")!.value = String(data.cueASec);
-    if (data.cueBSec != null) document.querySelector<HTMLInputElement>("#cueB")!.value = String(data.cueBSec);
-    if (data.bpmA != null) document.querySelector<HTMLInputElement>("#bpmA")!.value = String(data.bpmA);
-    if (data.bpmB != null) document.querySelector<HTMLInputElement>("#bpmB")!.value = String(data.bpmB);
-    syncKnobOutputs();
+    const data = JSON.parse(box.value) as Partial<MashupParams> & {
+      bpmA?: number;
+      bpmB?: number;
+      params?: MashupParams;
+    };
+    const src = data.params ?? data;
+    Object.assign(params, defaultParams(), src);
+    applyParamsToUI(params, data.bpmA, data.bpmB);
     err.textContent = "";
   } catch {
     err.textContent = "Невалидный JSON пресета";
@@ -334,14 +451,12 @@ document.querySelector("#resetBtn")?.addEventListener("click", () => {
 engine.onUpdate((snap) => {
   const fill = document.querySelector<HTMLDivElement>("#fill")!;
   fill.style.width = `${(snap.progress * 100).toFixed(2)}%`;
-  // Apple-style hard snap of timeline numbers to display deck
   document.querySelector("#timeLeft")!.textContent = fmtTime(snap.displayElapsed);
   document.querySelector("#timeRight")!.textContent =
     "-" + fmtTime(Math.max(0, snap.displayDuration - snap.displayElapsed));
   document.querySelector("#phase")!.textContent = snap.phase;
   document.querySelector<HTMLElement>("#volA")!.style.width = `${snap.volA * 100}%`;
   document.querySelector<HTMLElement>("#volB")!.style.width = `${snap.volB * 100}%`;
-  // Map bass dB (-15…0) to 0…100 bar
   document.querySelector<HTMLElement>("#bassA")!.style.width = `${Math.max(0, 100 + snap.bassA * (100 / 15))}%`;
   document.querySelector<HTMLElement>("#bassB")!.style.width = `${Math.max(0, 100 + snap.bassB * (100 / 15))}%`;
   document.querySelector("#mixing")!.classList.toggle("on", snap.playing && snap.phase !== "READY");
