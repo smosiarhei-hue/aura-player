@@ -157,29 +157,31 @@ export function volumesAt(
     return { outgoing: 0, incoming: 1 };
   }
 
-  // Echo Out — A drops early into delay tail; B rises clean.
+  // Echo Out — A holds into delay while B locks under (dual layer), then LAND.
   if (params.archetype === "echoOut") {
     let out: number;
-    if (p <= hold) out = 1 - (p / Math.max(hold, 0.001)) * 0.35;
+    if (p <= hold) out = 1 - (p / Math.max(hold, 0.001)) * 0.18;
     else if (p <= handoff) {
       const t = smoothstep((p - hold) / Math.max(0.001, handoff - hold));
-      out = Math.max(0.12, 0.65 * (1 - t));
+      out = Math.max(0.28, 0.82 * (1 - t * 0.55));
     } else {
-      out = Math.max(0, 0.12 * (1 - smoothstep((p - handoff) / Math.max(0.001, 1 - handoff))));
+      out = Math.max(0, 0.28 * (1 - smoothstep((p - handoff) / Math.max(0.001, 1 - handoff))));
     }
     let inn: number;
-    if (p <= lag) inn = 0.55 * smoothstep(p / Math.max(lag, 0.001));
+    if (p <= lag) inn = 0.68 * smoothstep(p / Math.max(lag, 0.001));
     else if (p <= handoff) {
       const t = smoothstep((p - lag) / Math.max(0.001, handoff - lag));
-      inn = 0.55 + 0.4 * t;
-    } else inn = Math.min(1, 0.95 + 0.05 * smoothstep((p - handoff) / Math.max(0.001, 1 - handoff)));
+      inn = 0.68 + 0.28 * t;
+    } else {
+      inn = Math.min(1, 0.96 + 0.04 * smoothstep((p - handoff) / Math.max(0.001, 1 - handoff)));
+    }
     return { outgoing: out, incoming: inn };
   }
 
-  // Smart Crossfade — classic X; little dual-layer drama.
-  const mashupFloor = params.archetype === "smartCrossfade" ? 0.45 : 0.72;
-  const mashupPeak = params.archetype === "smartCrossfade" ? 0.9 : 0.96;
-  const dualFloor = params.archetype === "smartCrossfade" ? 0.2 : 0.38;
+  // Smart Crossfade — softer dual layer, still a phrase (not a 2s radio fade).
+  const mashupFloor = params.archetype === "smartCrossfade" ? 0.58 : 0.72;
+  const mashupPeak = params.archetype === "smartCrossfade" ? 0.92 : 0.96;
+  const dualFloor = params.archetype === "smartCrossfade" ? 0.28 : 0.38;
 
   let out: number;
   if (p <= hold) {

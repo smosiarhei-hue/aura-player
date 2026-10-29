@@ -262,14 +262,16 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   const archetype = decision.archetype;
   params.archetype = archetype;
 
-  // Beatmatch only when planner says it's viable (or soft match within 16%).
+  // Beatmatch whenever tempos are within lock range — including Echo Out on key clash.
+  // Only abandon stretch when cut/echo was chosen because BPM itself is too far.
   const beatmatched = decision.beatmatch && tempo != null;
+  const abandonStretch =
+    !beatmatched && (decision.type === "cutOnOne" || decision.type === "echoOut");
   if (beatmatched && tempo) {
     params.rateA = tempo.rateA;
     params.rateB = tempo.rateB;
     params.targetBPM = tempo.targetBPM;
-  } else if (decision.type === "cutOnOne" || decision.type === "echoOut") {
-    // Keep native tempos — don't force a stretch when keys/BPM fight.
+  } else if (abandonStretch) {
     params.rateA = 1;
     params.rateB = 1;
     params.targetBPM = a.bpm > 30 ? a.bpm : 0;
@@ -298,7 +300,7 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     decision.type === "cutOnOne"
       ? Math.max(4, barSec * 2)
       : decision.type === "echoOut"
-        ? Math.max(8, barSec * 4)
+        ? Math.max(16, barSec * 8) // leave a full phrase for echo→LAND
         : Math.max(16, barSec * 8);
   const latestCueA = Math.max(0, a.durationSec - minOutroSec);
   const earliestCueA = Math.min(latestCueA, a.durationSec * 0.7);
@@ -313,14 +315,25 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   const availableOutro = Math.max(minOutroSec, a.durationSec - cueA);
   const bars = phraseBars(availableOutro, barSec, archetype);
   let blend = Math.min(36, Math.max(minOutroSec, Math.min(bars * barSec, availableOutro)));
-  if (decision.type === "cutOnOne") blend = Math.min(blend, Math.max(barSec * 2, 4));
-  if (decision.type === "echoOut") blend = Math.min(blend, Math.max(barSec * 4, 8));
-  if (decision.type === "longBlend") blend = Math.max(blend, Math.min(availableOutro, barSec * 16));
-  // TZ §5: incompatible keys → avoid long blend
-  if (!decision.harmonic.isHarmonicallyViable) {
-    blend = Math.min(blend, Math.max(barSec * 4, 10));
-  } else if (!decision.harmonic.isNaturallyCompatible) {
-    blend = Math.min(blend, Math.max(barSec * 8, 16));
+  if (decision.type === "cutOnOne") {
+    blend = Math.min(blend, Math.max(barSec * 2, 4));
+  } else if (decision.type === "echoOut") {
+    // Echo needs a real phrase: 8 bars when outro allows, never a 8–10s limp fade.
+    const echoFloor = Math.max(barSec * 8, 16);
+    const echoCeil = Math.max(echoFloor, Math.min(availableOutro, barSec * 12));
+    blend = Math.min(Math.max(blend, echoFloor), echoCeil);
+  } else if (decision.type === "longBlend") {
+    blend = Math.max(blend, Math.min(availableOutro, barSec * 16));
+  }
+  // TZ §5: incompatible keys → avoid *long* harmonic blend (32s), keep an 8-bar phrase.
+  if (!decision.harmonic.isNaturallyCompatible && decision.type !== "cutOnOne") {
+    const phrase8 = Math.max(barSec * 8, 16);
+    const phrase12 = Math.max(barSec * 12, 24);
+    if (decision.type === "longBlend" || decision.type === "eqBlend") {
+      blend = Math.min(blend, phrase12);
+    } else if (decision.type === "smartCrossfade") {
+      blend = Math.max(Math.min(blend, phrase8), Math.min(phrase8, availableOutro));
+    }
   }
   params.blendDurationSec = blend;
   params.cueASec = cueA;
@@ -347,11 +360,12 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
       params.bassDepth = 1.1;
       break;
     case "echoOut":
-      params.bassSwapAt = 0.35;
-      params.handoffAt = 0.62;
-      params.outgoingVolumeHold = 0.28;
-      params.incomingVolumeLag = 0.08;
-      params.bassDepth = 1.2;
+      // Longer invite: A rings out while B locks under — not a snap fade.
+      params.bassSwapAt = 0.28;
+      params.handoffAt = 0.58;
+      params.outgoingVolumeHold = 0.38;
+      params.incomingVolumeLag = 0.06;
+      params.bassDepth = 1.25;
       break;
     case "cutOnOne":
       params.bassSwapAt = 0.45;

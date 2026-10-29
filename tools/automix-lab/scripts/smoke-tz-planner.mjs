@@ -135,6 +135,21 @@ const cases = [
     outro: 32,
     expect: (t) => t === "eqBlend" || t === "longBlend" || t === "smartCrossfade",
   },
+  {
+    name: "close BPM + key clash → Echo Out (not short Smart Crossfade)",
+    a: profile({
+      bpm: 117,
+      camelotKey: "8B",
+      energy: Array.from({ length: 40 }, () => 0.5),
+    }),
+    b: profile({
+      bpm: 124,
+      camelotKey: "4B",
+      energy: Array.from({ length: 40 }, () => 0.5),
+    }),
+    outro: 38,
+    expect: (t) => t === "echoOut",
+  },
 ];
 
 let failed = 0;

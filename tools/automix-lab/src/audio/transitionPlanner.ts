@@ -1,11 +1,15 @@
 /**
- * Transition Planner — TZ §2.4
+ * Transition Planner — TZ §2.4 (+ §5 edge cases)
  *
  * If BPM diff > 8% AND keys incompatible → Echo Out or Cut
  * If keys compatible + BPM close → EQ Blend / Long Blend
  * If high energy shift → Filter Sweep
  * If short outro → Echo Out (Loop optional later)
+ * If keys clash but BPM locks (beatmatch) → Echo Out (not a limp short X-fade)
  * Else → Smart Crossfade
+ *
+ * §5 «избегать длинного blend» = не Long Blend / не 32s harmonic mashup,
+ * а не «сжать всё в 10s soft crossfade».
  */
 
 import type { TrackAIProfile } from "./analyzeTrack";
@@ -116,12 +120,17 @@ export function planTransitionType(
     type = "eqBlend";
     reason = `EQ Blend · ${harmonic.description}`;
   }
-  // 6. Fallback smart crossfade
+  // 6. Keys clash / unknown, but tempos lock → Echo Out (DJ exit), keep phrase length later
+  else if (beatmatch && bpmClose && !harmonic.isNaturallyCompatible) {
+    type = "echoOut";
+    reason = `Echo Out · beatmatch при ключевом конфликте · ${harmonic.description}`;
+  }
+  // 7. Far tempo leftover → Echo; true fallback X-fade only when no lock
   else {
-    type = bpmFar ? "echoOut" : "smartCrossfade";
+    type = bpmFar || beatmatch ? "echoOut" : "smartCrossfade";
     reason =
       type === "echoOut"
-        ? `Echo Out fallback · BPM Δ${(bpmDiff * 100) | 0}%`
+        ? `Echo Out · ${harmonic.description} · BPM Δ${(bpmDiff * 100) | 0}%`
         : `Smart Crossfade · ${harmonic.description}`;
   }
 
