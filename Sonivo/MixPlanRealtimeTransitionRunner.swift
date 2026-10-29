@@ -64,34 +64,76 @@ enum MashupLiveEQEnvelope {
         let hpfD = max(0.5, style.hpfDepth)
         let bodyD = max(0.4, style.bodyLift)
 
+        let shaped: (outgoing: [Float], incoming: [Float])
         switch style.archetypeName {
         case "seamlessLoop":
-            return seamlessLoop(
+            shaped = seamlessLoop(
                 p: p, bassAt: bassAt, holdUntil: holdUntil, pocketUntil: pocketUntil,
                 handoff: handoff, bassD: bassD, pocketD: pocketD, hpfD: hpfD, bodyD: bodyD
             )
         case "echoFreeze", "spaceReverb":
-            return echoFreeze(
+            shaped = echoFreeze(
                 p: p, bassAt: bassAt, holdUntil: holdUntil, pocketUntil: pocketUntil,
                 handoff: handoff, bassD: bassD, pocketD: pocketD, hpfD: hpfD, bodyD: bodyD
             )
         case "energyWash":
-            return energyWash(
+            shaped = energyWash(
                 p: p, bassAt: bassAt, holdUntil: holdUntil, pocketUntil: pocketUntil,
                 handoff: handoff, bassD: bassD, pocketD: pocketD, hpfD: hpfD, bodyD: bodyD
             )
         case "tapeStop":
-            return tapeStop(
+            shaped = tapeStop(
                 p: p, bassAt: bassAt, holdUntil: holdUntil, pocketUntil: pocketUntil,
                 handoff: handoff, bassD: bassD, pocketD: pocketD, hpfD: hpfD, bodyD: bodyD
             )
         default:
             // dropSwap / beatStutter — sharp bass kill + clear vocal pocket.
-            return dropSwap(
+            shaped = dropSwap(
                 p: p, bassAt: bassAt, holdUntil: holdUntil, pocketUntil: pocketUntil,
                 handoff: handoff, bassD: bassD, pocketD: pocketD, hpfD: hpfD, bodyD: bodyD
             )
         }
+
+        guard style.oneVocalConflict else { return shaped }
+        return applyOneVocalGate(
+            shaped,
+            p: p,
+            bassAt: bassAt,
+            handoff: handoff,
+            pocketD: pocketD,
+            hpfD: hpfD
+        )
+    }
+
+    /// Hard ONE VOCAL: carve A lead early; keep B lead ducked until LAND.
+    private static func applyOneVocalGate(
+        _ shaped: (outgoing: [Float], incoming: [Float]),
+        p: Double,
+        bassAt: Double,
+        handoff: Double,
+        pocketD: Float,
+        hpfD: Float
+    ) -> (outgoing: [Float], incoming: [Float]) {
+        var out = shaped.outgoing
+        var inn = shaped.incoming
+        // A: kill mid/presence fast so residual lead doesn't stack under B.
+        let outVocalCut = clampDB(-15 * ramp(p, from: 0.0, to: max(0.12, bassAt * 0.55)))
+        let outPresenceCut = clampDB(-12 * hpfD * ramp(p, from: 0.02, to: max(0.18, bassAt)))
+        if out.count >= 6 {
+            out[2] = clampDB(min(out[2], outPresenceCut * 0.7))
+            out[3] = clampDB(min(out[3], outVocalCut))
+            out[4] = clampDB(min(out[4], outVocalCut * 0.9))
+        }
+        // B: no lead until handoff — drums/body ok via lows + soft body, mid ducked hard.
+        let inVocalHold = clampDB(
+            -15 * max(1.2, pocketD) * (1 - ramp(p, from: handoff - 0.02, to: min(0.95, handoff + 0.12)))
+        )
+        if inn.count >= 6 {
+            inn[2] = clampDB(min(inn[2], inVocalHold * 0.35))
+            inn[3] = clampDB(min(inn[3], inVocalHold))
+            inn[4] = clampDB(min(inn[4], inVocalHold * 0.95))
+        }
+        return (out, inn)
     }
 
     /// Apple-style mashup: A bass dies so B kick owns the groove; A stays as

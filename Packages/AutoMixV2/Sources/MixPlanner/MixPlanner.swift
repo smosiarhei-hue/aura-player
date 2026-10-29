@@ -50,15 +50,27 @@ public enum MixPlanner {
         }
 
         let availableOutro = max(0, a.durationSec - a.mixOutSec)
+        let bpmClose = bpmDiffPct <= 0.08
+        let bpmFar = bpmDiffPct > 0.08
+        let bpmVeryFar = bpmDiffPct > 0.12
 
-        // Выбор архетипа по матрице переходов (только чистые музыкальные переходы)
+        // TZ §2.4: BPM·Key·outro → archetype (не «любой конфликт = короткий freeze»).
         let archetype: MixTransitionArchetype
-        if bpmDiffPct > 0.08 || !harmonic.isHarmonicallyViable {
-            archetype = (a.confidence.bpm >= 0.7 && b.confidence.bpm >= 0.7) ? .echoFreeze : .energyWash
-        } else if ladderBars >= 16.0 && availableOutro >= 36 && bpmDiffPct <= 0.01 && harmonic.isNaturallyCompatible && a.confidence.bpm >= 0.80 {
+        if (bpmFar && !harmonic.isHarmonicallyViable) || (bpmVeryFar && !harmonic.isNaturallyCompatible) {
+            archetype = .echoFreeze
+        } else if availableOutro > 0 && availableOutro < 14 {
+            archetype = .echoFreeze
+        } else if ladderBars >= 16.0 && availableOutro >= 36 && bpmClose && harmonic.isNaturallyCompatible && a.confidence.bpm >= 0.80 {
             archetype = .seamlessLoop
-        } else {
+        } else if harmonic.isNaturallyCompatible && bpmClose {
             archetype = .dropSwap
+        } else if harmonic.isHarmonicallyViable && bpmDiffPct <= 0.1 {
+            archetype = .dropSwap
+        } else if bpmClose && !harmonic.isNaturallyCompatible {
+            // Ключи конфликтуют, но темп лочится → Echo Out с beatmatch (не 6-bar snap).
+            archetype = .echoFreeze
+        } else {
+            archetype = bpmFar ? .echoFreeze : .energyWash
         }
 
         switch archetype {
@@ -148,9 +160,9 @@ public enum MixPlanner {
                     fromValue: 1, toValue: 1, curve: .linear),
             FxEvent(target: .b, kind: .bassOn, startBar: min(2, bars / 2), endBar: min(bars, min(2, bars / 2) + 1),
                     fromValue: 1, toValue: 0, curve: .sCurve),
-            // Vocal Pocket Ducking: приглушение вокального диапазона входящего трека до дропа
-            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: min(2, bars / 2),
-                    fromValue: -7, toValue: 0, curve: .sCurve),
+            // ONE VOCAL: duck B lead through most of the dual-layer window (not only 2 bars).
+            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: max(2, bars * 0.55),
+                    fromValue: -12, toValue: 0, curve: .sCurve),
             // High-Pass Resonant Riser (20 -> 4500 Гц с подъемом Q)
             FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
                     fromValue: 20, toValue: 4500, curve: .exp),
@@ -179,43 +191,59 @@ public enum MixPlanner {
         )
     }
 
-    // 3. Архетип Echo Freeze: удар эха при резком скачке темпа (>15%) или несовместимых ключах
+    // 3. Echo Out / Freeze: key clash or far tempo — keep beatmatch when tempos still lock.
     private static func planEchoFreeze(from a: TrackProfile, to b: TrackProfile,
                                        tempo: BeatGridSynchronization.TempoMatch?,
                                        settings: MixSettings,
                                        harmonic: HarmonicMatch) -> TransitionPlan {
-        let bars = 6.0
-        let targetBPM: Float = b.bpm > 30 ? b.bpm : (a.bpm > 30 ? a.bpm : 120.0)
+        let beatmatched = tempo != nil
+        let bars = beatmatched ? 8.0 : 6.0
+        let targetBPM: Float = tempo?.targetBPM
+            ?? (a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120.0))
+        let rateA: Float = tempo.map { max(0.84, min(1.16, $0.rateA)) } ?? 1.0
+        let rateB: Float = tempo.map { max(0.84, min(1.16, $0.rateB)) } ?? 1.0
         let seconds = BeatGridSynchronization.duration(bars: bars, bpm: targetBPM)
         let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
         let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
         let rawIncoming = BeatGridSynchronization.incomingCue(profile: b, duration: seconds)
         let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
 
-        let events: [FxEvent] = [
-            // Трек A играет до bars - 1.0, затем громкость отсекается в 0
-            FxEvent(target: .a, kind: .volume, startBar: bars - 1.0, endBar: bars,
-                    fromValue: 0, toValue: -60, curve: .linear),
-            // Бас трека A глушится в момент захода в эхо
-            FxEvent(target: .a, kind: .bassKill, startBar: bars - 1.5, endBar: bars - 0.5,
+        var events: [FxEvent] = [
+            // Dual-layer: A holds into echo while B locks under, then LAND.
+            FxEvent(target: .a, kind: .volume, startBar: bars * 0.35, endBar: bars,
+                    fromValue: 0, toValue: -60, curve: .sCurve),
+            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: bars * 0.55,
+                    fromValue: -28, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .bassKill, startBar: 0, endBar: bars * 0.35,
                     fromValue: 0, toValue: 1, curve: .sCurve),
-            // Сильный Echo Out (Wet 70%, Feedback 60%), хвост которого растворится поверх трека B
-            FxEvent(target: .a, kind: .echoOut, startBar: bars - 1.5, endBar: bars,
+            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: bars * 0.3,
+                    fromValue: 0.85, toValue: 0, curve: .sCurve),
+            // ONE VOCAL: duck B lead until late handoff when A still sings.
+            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: bars * 0.6,
+                    fromValue: -12, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .echoOut, startBar: bars * 0.2, endBar: bars,
                     fromValue: 0, toValue: 70, curve: .sCurve, param: 60),
-            // Трек B входит на сильную долю (bars) на полной громкости
-            FxEvent(target: .b, kind: .volume, startBar: bars - 0.25, endBar: bars,
-                    fromValue: -40, toValue: 0, curve: .linear)
+            FxEvent(target: .a, kind: .highPass, startBar: bars * 0.55, endBar: bars,
+                    fromValue: 20, toValue: 2800, curve: .exp)
         ]
+        if beatmatched {
+            events.append(
+                FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 1.5), endBar: bars,
+                        fromValue: rateB, toValue: 1, curve: .sCurve)
+            )
+        }
 
         return TransitionPlan(
             type: .filterEcho,
             archetype: .echoFreeze,
             aOutStartSec: out, bInStartSec: incoming, bars: bars,
-            tempoTargetBPM: targetBPM, rateA: 1.0, rateB: 1.0,
-            pitchShiftCentsB: 0, // Без питч-шифта, трек B стартует в естественной тональности
+            tempoTargetBPM: targetBPM, rateA: rateA, rateB: rateB,
+            pitchShiftCentsB: harmonic.isHarmonicallyViable ? harmonic.pitchShiftCents : 0,
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
             loopBarsA: 0, fx: events,
-            reason: "Echo Freeze (\(Int(round(a.bpm))) -> \(Int(round(b.bpm))) BPM, \(harmonic.description))"
+            reason: beatmatched
+                ? "Echo Out + beatmatch (\(Int(round(targetBPM))) BPM, \(harmonic.description))"
+                : "Echo Freeze (\(Int(round(a.bpm))) -> \(Int(round(b.bpm))) BPM, \(harmonic.description))"
         )
     }
 

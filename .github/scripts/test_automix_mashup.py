@@ -147,11 +147,23 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("KEY", style)
         self.assertIn("mashupFloor", style)
         self.assertIn("bass from B", style)
+        self.assertIn("oneVocalConflict", style)
+        self.assertIn("ONE VOCAL", style)
+
+        runner = (ROOT / "Sonivo/MixPlanRealtimeTransitionRunner.swift").read_text()
+        self.assertIn("applyOneVocalGate", runner)
+        self.assertIn("oneVocalConflict", runner)
+
+        planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
+        self.assertIn("Echo Out + beatmatch", planner)
+        self.assertIn("bpmClose && !harmonic.isNaturallyCompatible", planner)
 
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
         self.assertIn("LOCK", l10n)
         self.assertIn("ONE BASS", l10n)
         self.assertIn("INVITE B", l10n)
+        self.assertIn("ECHO OUT", l10n)
+        self.assertIn("Эхо-выход", l10n)
         self.assertIn("Мэшап", l10n)
         self.assertIn("Лок темпа", l10n)
 

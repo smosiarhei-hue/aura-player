@@ -102,6 +102,8 @@ final class SonivoL10n {
         switch raw {
         case "INVITE B": return "Вход B"
         case "ONE BASS", "BASS SWAP", "BASS LOCK": return "Один бас"
+        case "ECHO OUT": return "Эхо-выход"
+        case "ECHO→B", "ECHO->B": return "Эхо → B"
         case "MASHUP": return "Мэшап"
         case "LAND", "TEMPO SETTLE", "SOFT REVEAL": return "Посадка"
         case "VOCAL × INSTR", "VOCAL HOLD": return "Вокал × инструмент"

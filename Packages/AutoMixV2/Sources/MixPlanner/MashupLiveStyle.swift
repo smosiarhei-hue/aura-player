@@ -30,6 +30,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
     public var pitchCentsB: Float
     public var targetBPM: Float
     public var isBeatmatched: Bool
+    /// Both leads present around the cues — never stack two vocals before LAND.
+    public var oneVocalConflict: Bool
     public var reason: String
     public var archetypeName: String
 
@@ -49,6 +51,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         pitchCentsB: 0,
         targetBPM: 0,
         isBeatmatched: false,
+        oneVocalConflict: false,
         reason: "Default mashup style",
         archetypeName: "dropSwap"
     )
@@ -69,6 +72,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         pitchCentsB: Float,
         targetBPM: Float,
         isBeatmatched: Bool,
+        oneVocalConflict: Bool = false,
         reason: String,
         archetypeName: String
     ) {
@@ -87,6 +91,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         self.pitchCentsB = pitchCentsB
         self.targetBPM = targetBPM
         self.isBeatmatched = isBeatmatched
+        self.oneVocalConflict = oneVocalConflict
         self.reason = reason
         self.archetypeName = archetypeName
     }
@@ -231,10 +236,14 @@ public struct MashupLiveStyle: Sendable, Equatable {
             let sign = pitchCentsB >= 0 ? "+" : ""
             return String(format: "KEY %@%.0f¢", sign, pitchCentsB)
         }
+        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" {
+            if p < bassSwapAt { return "ECHO OUT" }
+            if p < handoffAt { return oneVocalConflict ? "ECHO→B" : "ONE BASS" }
+            return "LAND"
+        }
         if p < bassSwapAt { return "INVITE B" }
         if p < handoffAt { return "ONE BASS" }
         if p < min(0.88, handoffAt + 0.22) { return "MASHUP" }
-        if p < settleStart { return "LAND" }
         return "LAND"
     }
 
@@ -273,16 +282,29 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let bpmDiff: Float = (a.bpm > 30 && b.bpm > 30) ? abs(a.bpm - b.bpm) / max(a.bpm, 1) : 1
         let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey)
         let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm)
+        let bpmClose = bpmDiff <= 0.08
+        let bpmFar = bpmDiff > 0.08
+        let bpmVeryFar = bpmDiff > 0.12
 
+        // TZ §2.4 — same ladder as Automix Lab transitionPlanner.
         let archetype: MixTransitionArchetype
-        if tempo == nil || bpmDiff > 0.15 || !harmonic.isHarmonicallyViable {
-            archetype = (a.confidence.bpm >= 0.7 && b.confidence.bpm >= 0.7) ? .echoFreeze : .energyWash
-        } else if a.tempoStability >= 0.85, b.tempoStability >= 0.85, harmonic.isNaturallyCompatible, bpmDiff <= 0.01 {
+        if tempo == nil && bpmVeryFar {
+            archetype = .echoFreeze
+        } else if (bpmFar && !harmonic.isHarmonicallyViable) || (bpmVeryFar && !harmonic.isNaturallyCompatible) {
+            archetype = .echoFreeze
+        } else if a.tempoStability >= 0.85, b.tempoStability >= 0.85, harmonic.isNaturallyCompatible, bpmClose {
             archetype = .seamlessLoop
+        } else if harmonic.isNaturallyCompatible && bpmClose {
+            archetype = .dropSwap
+        } else if harmonic.isHarmonicallyViable && bpmDiff <= 0.1 {
+            archetype = .dropSwap
+        } else if bpmClose && !harmonic.isNaturallyCompatible {
+            // Key clash but tempos lock → Echo Out, keep beatmatch below.
+            archetype = .echoFreeze
         } else if a.dropsSec.isEmpty && b.dropsSec.isEmpty {
             archetype = .energyWash
         } else {
-            archetype = .dropSwap
+            archetype = tempo == nil ? .energyWash : .dropSwap
         }
 
         var style = base(for: archetype)
@@ -292,10 +314,12 @@ public struct MashupLiveStyle: Sendable, Equatable {
             style.rateA = clampRate(tempo.rateA)
             style.rateB = clampRate(tempo.rateB)
             style.targetBPM = tempo.targetBPM
-            style.pitchCentsB = max(-200, min(200, harmonic.pitchShiftCents))
+            style.pitchCentsB = harmonic.isHarmonicallyViable
+                ? max(-200, min(200, harmonic.pitchShiftCents))
+                : 0
             style.reason = String(
-                format: "Beatmatch %.0f BPM · %@ · %d→%d",
-                tempo.targetBPM, archetype.rawValue, Int(a.bpm), Int(b.bpm)
+                format: "Beatmatch %.0f BPM · %@ · %d→%d · %@",
+                tempo.targetBPM, archetype.rawValue, Int(a.bpm), Int(b.bpm), harmonic.description
             )
         } else {
             style.isBeatmatched = false
@@ -404,41 +428,61 @@ public struct MashupLiveStyle: Sendable, Equatable {
         a: TrackProfile?,
         b: TrackProfile?
     ) {
-        if let a {
-            let vocalOut = meanTail(a.vocalPresence) ?? meanTail(a.energyCurve) ?? 0.5
-            if vocalOut < 0.45 {
-                // Outro already instrumental — keep A as the bed under B's vocal.
-                style.outgoingVolumeHold = min(0.68, style.outgoingVolumeHold + 0.08)
-                style.hpfDepth = min(1.4, style.hpfDepth + 0.1)
-            } else if vocalOut > 0.55 {
-                // Still singing on A → duck A vocal band sooner so B vocal reads clean.
-                style.vocalHoldUntil = max(0.32, style.vocalHoldUntil - 0.06)
+        let vocalOut = a.map { meanTail($0.vocalPresence) ?? meanTail($0.energyCurve) ?? 0.5 } ?? 0.5
+        let vocalIn = b.map { meanHead($0.vocalPresence) ?? meanHead($0.energyCurve) ?? 0.45 } ?? 0.45
+        let conflict = vocalOut >= 0.42 && vocalIn >= 0.4
+
+        if conflict {
+            // ONE VOCAL: never two leads in the dual-layer window.
+            // Carve A toward instrumental early; keep B mid/vocal ducked until LAND.
+            style.oneVocalConflict = true
+            style.vocalHoldUntil = min(style.vocalHoldUntil, max(0.22, style.bassSwapAt * 0.9))
+            style.vocalPocketUntil = max(style.handoffAt + 0.06, min(0.92, style.vocalPocketUntil))
+            style.vocalPocketDepth = max(1.4, style.vocalPocketDepth)
+            style.hpfDepth = min(1.5, style.hpfDepth + 0.2)
+            style.incomingVolumeLag = min(0.14, max(0.04, style.incomingVolumeLag))
+            style.bodyLift = min(1.35, style.bodyLift)
+            if !style.reason.contains("ONE VOCAL") {
+                style.reason += " · ONE VOCAL"
             }
+        } else if vocalOut < 0.45 {
+            // Outro already instrumental — invite B vocal early (ideal mashup).
+            style.oneVocalConflict = false
+            style.outgoingVolumeHold = min(0.68, style.outgoingVolumeHold + 0.08)
+            style.hpfDepth = min(1.4, style.hpfDepth + 0.1)
+            style.incomingVolumeLag = max(0.02, style.incomingVolumeLag * 0.55)
+            style.vocalPocketDepth = max(0.35, style.vocalPocketDepth * 0.55)
+            style.vocalPocketUntil = min(style.vocalPocketUntil, max(0.35, style.bassSwapAt + 0.1))
+        } else if vocalOut >= 0.42 && vocalIn < 0.4 {
+            // A still sings over an instrumental B bed — soft A carve, no B vocalize.
+            style.oneVocalConflict = false
+            style.vocalHoldUntil = max(0.32, style.vocalHoldUntil - 0.04)
+            style.vocalPocketDepth = max(0.8, style.vocalPocketDepth)
+        }
+
+        if let a {
             if a.hasFadeOut || a.endsInSilence {
                 style.hpfDepth *= 0.7
                 style.outgoingVolumeHold = max(0.22, style.outgoingVolumeHold - 0.08)
             }
             if !a.dropsSec.isEmpty {
                 style.bassDepth = min(1.45, style.bassDepth + 0.15)
-                // Hand bass to B early so the next kick owns the groove.
                 style.bassSwapAt = max(0.12, style.handoffAt - 0.30)
             }
         }
         if let b {
-            let vocalIn = meanHead(b.vocalPresence) ?? meanHead(b.energyCurve) ?? 0.45
-            if vocalIn > 0.5 {
-                // B already has vocals — keep them in the mashup (do NOT pocket-duck hard).
-                style.vocalPocketDepth = max(0.35, style.vocalPocketDepth * 0.45)
-                style.incomingVolumeLag = max(0.03, style.incomingVolumeLag * 0.55)
+            if !conflict, vocalIn > 0.5, vocalOut < 0.45 {
                 style.bodyLift = min(1.5, style.bodyLift + 0.20)
             }
             if b.mixInSec > 12 {
-                // Enter past padded intro so B is already in vocal+instr territory.
                 style.bodyLift = min(1.55, style.bodyLift + 0.12)
             }
             if let drop = b.dropsSec.first(where: { $0 >= 8 && $0 <= 48 }) {
                 style.handoffAt = min(0.62, max(0.38, style.handoffAt))
                 style.bassSwapAt = min(style.bassSwapAt, max(0.12, style.handoffAt - 0.28))
+                if style.oneVocalConflict {
+                    style.vocalPocketUntil = max(style.handoffAt + 0.06, style.vocalPocketUntil)
+                }
                 _ = drop
             }
         }
