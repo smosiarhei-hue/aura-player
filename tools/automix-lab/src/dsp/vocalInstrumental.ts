@@ -52,9 +52,12 @@ export function processBufferStem(
   const oR = out.getChannelData(1);
   const a = Math.min(1, Math.max(0, amount));
 
-  // Simple one-pole for mid presence (vocal) / mid duck (instrumental)
+  // One-pole LF keep + presence notch state for instrumental mid-vocal cut.
   let midLp = 0;
-  const lpAlpha = 1 - Math.exp((-2 * Math.PI * 180) / sr); // keep some bass in mid when instrumentalizing
+  let midBp = 0;
+  const lpAlpha = 1 - Math.exp((-2 * Math.PI * 180) / sr); // keep kick/sub in mid
+  // Soft band around lead presence (~2.5 kHz) — Mid/Side alone leaves vocals here.
+  const bpAlpha = 1 - Math.exp((-2 * Math.PI * 2500) / sr);
 
   for (let i = 0; i < n; i++) {
     const l = L[i]!;
@@ -62,6 +65,7 @@ export function processBufferStem(
     const mid = (l + r) * 0.5;
     const side = (l - r) * 0.5;
     midLp += lpAlpha * (mid - midLp);
+    midBp += bpAlpha * (mid - midLp - midBp);
 
     if (mode === "dry") {
       oL[i] = l;
@@ -69,8 +73,11 @@ export function processBufferStem(
     } else if (mode === "instrumental") {
       // Aggressive center-vocal cut; keep mid bass so kick/sub survive.
       const midVocal = mid - midLp;
-      const midKeep = midLp * (1 + 0.08 * a) + midVocal * (1 - 0.995 * a);
-      const sideBoost = side * (1 + 0.28 * a);
+      const midKeep =
+        midLp * (1 + 0.1 * a) +
+        midVocal * (1 - 0.999 * a) -
+        midBp * 0.85 * a; // notch residual lead presence
+      const sideBoost = side * (1 + 0.35 * a);
       oL[i] = midKeep + sideBoost;
       oR[i] = midKeep - sideBoost;
     } else {
@@ -100,6 +107,44 @@ export function bakeStemSlice(
   const slice = sliceBuffer(ctx, input, cueSec, durationSec + 1.2);
   if (mode === "dry" || amount < 0.05) return slice;
   return processBufferStem(ctx, slice, mode, amount);
+}
+
+/**
+ * ONE VOCAL conflict bake for deck B:
+ * instrumental through `instrUntilSec`, then crossfade into dry (lead returns for LAND).
+ */
+export function bakeInstrThenDry(
+  ctx: BaseAudioContext,
+  input: AudioBuffer,
+  cueSec: number,
+  durationSec: number,
+  instrUntilSec: number,
+  amount: number
+): AudioBuffer {
+  const pad = durationSec + 1.2;
+  const dry = sliceBuffer(ctx, input, cueSec, pad);
+  if (amount < 0.05 || instrUntilSec <= 0.05) return dry;
+  const instr = processBufferStem(ctx, dry, "instrumental", amount);
+  const sr = dry.sampleRate;
+  const until = Math.max(1, Math.min(instr.length - 1, Math.floor(instrUntilSec * sr)));
+  const fade = Math.max(1, Math.floor(0.08 * sr)); // ~80ms crossfade into dry lead
+  const out = ctx.createBuffer(2, dry.length, sr);
+  for (const c of [0, 1]) {
+    const iCh = instr.getChannelData(c);
+    const dCh = dry.getChannelData(c);
+    const oCh = out.getChannelData(c);
+    for (let i = 0; i < out.length; i++) {
+      if (i < until - fade) {
+        oCh[i] = iCh[i]!;
+      } else if (i < until) {
+        const t = (i - (until - fade)) / fade;
+        oCh[i] = iCh[i]! * (1 - t) + dCh[i]! * t;
+      } else {
+        oCh[i] = dCh[i]!;
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -188,13 +233,14 @@ export class MidSideStemNode {
 
   setInstrumental(amount: number, when: number, immediate = false) {
     const a = Math.min(1, Math.max(0, amount));
-    const mid = 1 - 0.88 * a;
-    const side = 1 + 0.18 * a;
+    // Harder mid cut — 0.88 still leaked lead vocals under dual-deck.
+    const mid = 1 - 0.97 * a;
+    const side = 1 + 0.28 * a;
     this.setGain(this.midGain.gain, mid, when, immediate);
     this.setGain(this.sideGain.gain, side, when, immediate);
-    this.setGain(this.presence.gain, -4 * a, when, immediate);
+    this.setGain(this.presence.gain, -9 * a, when, immediate);
     const midBass = (this as unknown as { _midBass: BiquadFilterNode })._midBass;
-    this.setGain(midBass.gain, 3.5 * a, when, immediate); // restore kick/sub
+    this.setGain(midBass.gain, 4.5 * a, when, immediate); // restore kick/sub
   }
 
   setVocal(amount: number, when: number, immediate = false) {

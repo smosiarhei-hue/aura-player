@@ -12,6 +12,7 @@ import {
   FilterSweepNode,
   MidSideStemNode,
   bakeStemSlice,
+  bakeInstrThenDry,
   stemFxAt,
 } from "../dsp";
 
@@ -176,16 +177,23 @@ export class AutomixEngine {
         onStatus?.(`Bake A instrumental ${Math.round(dsp.instrAPeak * 100)}%…`);
         bufA = bakeStemSlice(ctx, a, cueA, blend, "instrumental", dsp.instrAPeak);
         offsetA = 0;
-        liveInstrScale = 0.45; // keep live carve on top of bake
+        liveInstrScale = 0.7; // reinforce residual mid-vocal on top of bake
       }
-      // B vocal bake ONLY when A is already instrumental — never for conflict blends.
-      if (dsp.bakeVocalB && dsp.vocalBPeak >= 0.35) {
+      // Conflict: B instrumental until handoff, then dry lead for LAND.
+      if (dsp.bakeInstrB && dsp.instrBPeak >= 0.5) {
+        const untilSec = Math.max(0.5, blend * Math.min(0.85, Math.max(0.35, dsp.instrBUntil)));
+        onStatus?.(
+          `Bake B instrumental → dry @ ${untilSec.toFixed(1)}s (ONE VOCAL)…`
+        );
+        bufB = bakeInstrThenDry(ctx, b, cueB, blend, untilSec, dsp.instrBPeak);
+        offsetB = 0;
+        liveVocalScale = 0.35; // don't re-boost B vocal while instr gate is up
+      } else if (dsp.bakeVocalB && dsp.vocalBPeak >= 0.35) {
+        // Ideal mashup only — A already instrumental.
         onStatus?.(`Bake B vocal ${Math.round(dsp.vocalBPeak * 100)}%…`);
         bufB = bakeStemSlice(ctx, b, cueB, blend, "vocal", dsp.vocalBPeak);
         offsetB = 0;
         liveVocalScale = 0.45;
-      } else if (dsp.instrBPeak >= 0.5) {
-        onStatus?.("B без bake vocal (ONE VOCAL: сначала drums B)…");
       }
     }
 
@@ -350,14 +358,17 @@ export class AutomixEngine {
     this.chainA.eq.setAirDb(-2 * fx.hpfA, audioTime, immediate);
     this.chainB.eq.setAirDb(2 * (1 - fx.lpfB), audioTime, immediate);
 
-    // Live stems — ONE VOCAL: A instrumentalize and/or B instrumentalize before B vocal.
+    // Live stems — ONE VOCAL: never dry-B under an active instrumental gate.
     this.chainA.stem.setInstrumental(
       fx.instrumentalA * this.liveInstrScale,
       audioTime,
       immediate
     );
-    if (fx.instrumentalB > 0.08) {
-      this.chainB.stem.setInstrumental(fx.instrumentalB, audioTime, immediate);
+    const conflictGate = this.params.dsp.instrBPeak >= 0.5;
+    const beforeVocalOpen = progress < Math.max(0.05, this.params.dsp.vocalBAt);
+    if (fx.instrumentalB > 0.08 || (conflictGate && beforeVocalOpen)) {
+      const amt = Math.max(fx.instrumentalB, conflictGate && beforeVocalOpen ? 0.92 : 0);
+      this.chainB.stem.setInstrumental(amt, audioTime, immediate);
     } else if (fx.vocalB > 0.05) {
       this.chainB.stem.setVocal(fx.vocalB * this.liveVocalScale, audioTime, immediate);
     } else {

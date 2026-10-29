@@ -42,6 +42,11 @@ export type AutoDspRecipe = {
   /** Bake A as instrumental slice (safe anytime A has outro vocals). */
   bakeInstrA: boolean;
   /**
+   * Bake B as instrumental through the dual-layer window (ONE VOCAL conflict).
+   * At handoff the engine crossfades into dry/vocal B so LAND has a lead.
+   */
+  bakeInstrB: boolean;
+  /**
    * Bake B as vocal slice — ONLY when A outro is already instrumental.
    * Never bake B vocal for the whole blend if A still sings (would stack leads).
    */
@@ -81,6 +86,7 @@ export const defaultDsp = (): AutoDspRecipe => ({
   echoAPeak: 0.5,
   bakeStems: true,
   bakeInstrA: true,
+  bakeInstrB: false,
   bakeVocalB: false,
   decisions: [],
 });

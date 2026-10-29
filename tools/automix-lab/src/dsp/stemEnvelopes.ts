@@ -48,43 +48,41 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
 
   // B instrumental gate: full while A owns the vocal, then release.
   const instrBPeak = Math.min(1, Math.max(0, dsp.instrBPeak));
-  const instrBUntil = Math.min(0.85, Math.max(0.05, dsp.instrBUntil));
+  const instrBUntil = Math.min(0.9, Math.max(0.05, dsp.instrBUntil));
   let instrumentalB = 0;
   if (instrBPeak > 0.02) {
     if (p < instrBUntil) {
       instrumentalB = instrBPeak;
-    } else if (p < instrBUntil + 0.12) {
+    } else if (p < instrBUntil + 0.1) {
       instrumentalB =
-        instrBPeak *
-        (1 - smoothstep((p - instrBUntil) / 0.12));
+        instrBPeak * (1 - smoothstep((p - instrBUntil) / 0.1));
     } else {
       instrumentalB = 0;
     }
   }
 
-  // B vocal only after instrumental gate releases (and never under A vocal).
+  // B vocal only after instrumental gate releases — and never before handoff on conflict.
   const vocalPeak = Math.min(1, Math.max(0, dsp.vocalBPeak));
   const vocalAt = Math.max(
-    Math.min(0.75, Math.max(0.04, dsp.vocalBAt)),
-    instrBPeak > 0.2 ? instrBUntil : 0
+    Math.min(0.85, Math.max(0.04, dsp.vocalBAt)),
+    instrBPeak > 0.2 ? instrBUntil : 0,
+    instrBPeak >= 0.5 ? handoff : 0
   );
   let vocalB = 0;
   if (vocalPeak > 0.02) {
     if (p < vocalAt) {
       vocalB = 0; // hard gate — no soft early bleed of B lead
-    } else if (p < handoff) {
-      vocalB = vocalPeak * smoothstep((p - vocalAt) / Math.max(0.001, handoff - vocalAt));
     } else if (p < mashupEnd) {
-      vocalB = vocalPeak;
+      vocalB = vocalPeak * smoothstep((p - vocalAt) / Math.max(0.001, mashupEnd - vocalAt));
     } else {
       vocalB =
-        vocalPeak * (1 - 0.55 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
+        vocalPeak * (1 - 0.35 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
     }
   }
 
-  // Mutual exclusion: if we’re still cutting B vocal, don’t vocalize B.
-  if (instrumentalB > 0.25) {
-    vocalB *= 1 - instrumentalB;
+  // Hard mutual exclusion: any instrumental gate kills B vocalize.
+  if (instrumentalB > 0.08) {
+    vocalB = 0;
   }
 
   const hpfPeak = Math.min(1, Math.max(0, dsp.hpfAPeak));

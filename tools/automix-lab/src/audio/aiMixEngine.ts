@@ -126,26 +126,29 @@ function buildDspRecipe(
     dsp.vocalBAt = 0.04;
     dsp.vocalDuckBDb = -1.5;
     dsp.bakeInstrA = false;
+    dsp.bakeInstrB = false;
     dsp.bakeVocalB = true;
     dsp.bakeStems = true;
     decisions.push("ONE VOCAL: A уже инструментал → вокал B сразу поверх");
   }
   // --- Case 2: conflict — both leads present ---
   else if (aHasVocal && bHasVocal) {
-    // Kill A vocal fast; keep B instrumental (no B lead) until A is a bed; then open B vocal.
-    dsp.instrAPeak = 0.98;
-    dsp.instrAAt = Math.min(0.22, Math.max(0.08, params.bassSwapAt * 0.55));
-    dsp.instrBPeak = 0.95; // remove B vocal while A still occupies the lead
-    dsp.instrBUntil = Math.max(dsp.instrAAt + 0.12, params.bassSwapAt + 0.05);
-    dsp.vocalBPeak = 0.88;
-    dsp.vocalBAt = dsp.instrBUntil + 0.02; // only after B instrumental gate lifts
-    dsp.vocalDuckBDb = -12;
+    // Hard rule: only one lead in the dual-layer window.
+    // Bake A+B instrumental until handoff; open B vocal only at LAND.
+    const handoff = Math.min(0.72, Math.max(0.45, params.handoffAt));
+    dsp.instrAPeak = 1;
+    dsp.instrAAt = Math.min(0.12, Math.max(0.05, params.bassSwapAt * 0.35));
+    dsp.instrBPeak = 1;
+    dsp.instrBUntil = handoff; // hold B instrumental through the whole mashup
+    dsp.vocalBPeak = 0.9;
+    dsp.vocalBAt = handoff + 0.04; // never under A
+    dsp.vocalDuckBDb = -14;
     dsp.bakeInstrA = true;
-    dsp.bakeVocalB = false; // CRITICAL: never bake B vocal for whole blend
+    dsp.bakeInstrB = true; // CRITICAL: live Mid/Side alone leaks B vocal
+    dsp.bakeVocalB = false;
     dsp.bakeStems = true;
-    // Give A a bit more hold so instrumentalize finishes before handoff.
     decisions.push(
-      "ONE VOCAL: конфликт → bake A instrumental, B без вокала до готовности A, потом вокал B"
+      "ONE VOCAL: конфликт → bake A+B instrumental до handoff, вокал B только на LAND"
     );
   }
   // --- Case 3: A still sings, B is instrumental bed ---
@@ -158,6 +161,7 @@ function buildDspRecipe(
     dsp.vocalBAt = 0.5;
     dsp.vocalDuckBDb = -3;
     dsp.bakeInstrA = vocalOut >= 0.55;
+    dsp.bakeInstrB = false;
     dsp.bakeVocalB = false;
     dsp.bakeStems = dsp.bakeInstrA;
     decisions.push("ONE VOCAL: вокал A × инструментал B — B без vocalize");
@@ -172,6 +176,7 @@ function buildDspRecipe(
     dsp.vocalBAt = 0.25;
     dsp.vocalDuckBDb = -2;
     dsp.bakeInstrA = false;
+    dsp.bakeInstrB = false;
     dsp.bakeVocalB = false;
     dsp.bakeStems = false;
     decisions.push("Оба инструментальны — текстурный мэшап без stem bake");
@@ -209,8 +214,10 @@ function buildDspRecipe(
       dsp.lpfBPeak = 0.25;
       dsp.hpfAPeak = 0.4;
       dsp.echoAPeak = 0.2;
-      dsp.instrAPeak *= 0.7;
-      dsp.instrBPeak *= 0.5;
+      // Never weaken ONE VOCAL instrumental gates on conflict.
+      if (dsp.instrBPeak < 0.5) {
+        dsp.instrAPeak *= 0.7;
+      }
       decisions.push("FX: Smart Crossfade — мягкий fallback");
       break;
     default: // dropSwap = EQ Blend / Bass Swap
@@ -234,7 +241,7 @@ function buildDspRecipe(
 
   if (dsp.bakeStems) {
     decisions.push(
-      `Bake: A instrumental=${dsp.bakeInstrA ? "yes" : "no"}, B vocal=${dsp.bakeVocalB ? "yes" : "no"}`
+      `Bake: A instr=${dsp.bakeInstrA ? "yes" : "no"}, B instr=${dsp.bakeInstrB ? "yes" : "no"}, B vocal=${dsp.bakeVocalB ? "yes" : "no"}`
     );
   }
 
@@ -417,8 +424,11 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   params.dsp = buildDspRecipe(a, b, params, vocalOut, vocalIn, energyOut, energyIn);
 
   if (params.dsp.instrBPeak >= 0.5) {
-    params.handoffAt = Math.max(params.handoffAt, params.dsp.instrBUntil + 0.06);
-    params.handoffAt = Math.min(0.72, params.handoffAt);
+    // Keep B instrumental through handoff; open B vocal only after A yields.
+    const land = Math.min(0.72, Math.max(params.handoffAt, params.dsp.instrBUntil));
+    params.handoffAt = land;
+    params.dsp.instrBUntil = land;
+    params.dsp.vocalBAt = Math.min(0.85, land + 0.04);
   }
 
   const story = [

@@ -14,6 +14,7 @@ export {
   MidSideStemNode,
   processBufferStem,
   bakeStemSlice,
+  bakeInstrThenDry,
   sliceBuffer,
   type StemMode,
 } from "./vocalInstrumental";
