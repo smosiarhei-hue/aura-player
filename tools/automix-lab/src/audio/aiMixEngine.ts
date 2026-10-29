@@ -126,112 +126,114 @@ function buildDspRecipe(
 
   switch (craft.mode) {
     case "acapellaDrop": {
-      dsp.instrAPeak = craft.bakeInstrA ? 0.45 : 0.12;
+      dsp.instrAPeak = craft.bakeInstrA ? 0.55 : 0.1;
       dsp.instrAAt = craft.aInstrReadyAt;
       dsp.instrBPeak = 0;
       dsp.instrBUntil = 0.04;
-      dsp.vocalBPeak = vocalIn >= 0.55 ? 0.95 : 0.78;
+      dsp.vocalBPeak = 0; // keep B dry/full quality — no live vocalize thinning
       dsp.vocalBAt = craft.bVocalOpenAt;
-      dsp.vocalDuckBDb = -1.2;
-      dsp.bakeInstrA = craft.bakeInstrA;
-      dsp.bakeInstrB = false;
-      dsp.bakeVocalB = true;
-      dsp.bakeStems = true;
-      decisions.push("Acapella Drop: B vocal поверх A bed с первых тактов");
-      break;
-    }
-    case "vocalSwap": {
-      // Carve A fast → B groove → open B lead on mashup peak (A already instr).
-      dsp.instrAPeak = 1;
-      dsp.instrAAt = craft.aInstrReadyAt;
-      dsp.instrBPeak = 1;
-      dsp.instrBUntil = craft.bVocalOpenAt;
-      dsp.vocalBPeak = 0.95;
-      dsp.vocalBAt = craft.bVocalOpenAt;
-      dsp.vocalDuckBDb = -10;
-      dsp.bakeInstrA = true;
-      dsp.bakeInstrB = true;
-      dsp.bakeVocalB = false;
-      dsp.bakeStems = true;
-      decisions.push(
-        `Vocal Swap: bake A instr + B instr→dry @ ${(craft.bVocalOpenAt * 100) | 0}% (мэшап-пик, не LAND)`
-      );
-      break;
-    }
-    case "textureBed": {
-      dsp.instrAPeak = 0.55;
-      dsp.instrAAt = craft.aInstrReadyAt;
-      dsp.instrBPeak = 0;
-      dsp.instrBUntil = 0.1;
-      dsp.vocalBPeak = 0.12;
-      dsp.vocalBAt = 0.55;
-      dsp.vocalDuckBDb = -3;
+      dsp.vocalDuckBDb = 0;
       dsp.bakeInstrA = craft.bakeInstrA;
       dsp.bakeInstrB = false;
       dsp.bakeVocalB = false;
       dsp.bakeStems = craft.bakeInstrA;
-      decisions.push("Texture Bed: вокал A × инструментал B");
+      dsp.sidechainA = 0;
+      decisions.push("Acapella Drop: A bed (если нужно) × B full quality");
+      break;
+    }
+    case "vocalSwap": {
+      // Carve A lead only; B short groove then dry at full quality.
+      dsp.instrAPeak = 0.85;
+      dsp.instrAAt = craft.aInstrReadyAt;
+      dsp.instrBPeak = 0.75;
+      dsp.instrBUntil = craft.bVocalOpenAt;
+      dsp.vocalBPeak = 0; // dry B after open — don't re-thin with vocalize
+      dsp.vocalBAt = craft.bVocalOpenAt;
+      dsp.vocalDuckBDb = -4; // light pocket only while B still gated
+      dsp.bakeInstrA = true;
+      dsp.bakeInstrB = true;
+      dsp.bakeVocalB = false;
+      dsp.bakeStems = true;
+      dsp.sidechainA = 0;
+      decisions.push(
+        `Vocal Swap: carve A lead + B groove→dry @ ${(craft.bVocalOpenAt * 100) | 0}% (без sidechain/muffle)`
+      );
+      break;
+    }
+    case "textureBed": {
+      dsp.instrAPeak = 0.4;
+      dsp.instrAAt = craft.aInstrReadyAt;
+      dsp.instrBPeak = 0;
+      dsp.instrBUntil = 0.1;
+      dsp.vocalBPeak = 0;
+      dsp.vocalBAt = 0.55;
+      dsp.vocalDuckBDb = 0;
+      dsp.bakeInstrA = craft.bakeInstrA;
+      dsp.bakeInstrB = false;
+      dsp.bakeVocalB = false;
+      dsp.bakeStems = craft.bakeInstrA;
+      dsp.sidechainA = 0;
+      decisions.push("Texture Bed: мягкий carve A × B dry");
       break;
     }
     default: {
-      dsp.instrAPeak = 0.18;
+      dsp.instrAPeak = 0.1;
       dsp.instrAAt = 0.22;
       dsp.instrBPeak = 0;
       dsp.instrBUntil = 0.1;
-      dsp.vocalBPeak = 0.18;
+      dsp.vocalBPeak = 0;
       dsp.vocalBAt = 0.28;
-      dsp.vocalDuckBDb = -2;
+      dsp.vocalDuckBDb = 0;
       dsp.bakeInstrA = false;
       dsp.bakeInstrB = false;
       dsp.bakeVocalB = false;
       dsp.bakeStems = false;
-      decisions.push("Instrumental Wash: текстурный мэшап без stem bake");
+      dsp.sidechainA = 0;
+      decisions.push("Instrumental Wash: без stem bake / без приглушения");
     }
   }
 
-  // --- Filters / echo by TZ transition type (via archetype) ---
+  // Filters only where the TZ type needs drama — keep peaks modest so quality stays even.
   switch (params.archetype) {
-    case "energyWash": // Filter Sweep
-      dsp.lpfBPeak = 0.95;
-      dsp.hpfAPeak = 1.0;
-      dsp.echoAPeak = 0.45;
-      decisions.push("FX: Filter Sweep — LPF reveal B + HPF riser A");
-      break;
-    case "seamlessLoop": // Long Blend
-      dsp.lpfBPeak = 0.35;
-      dsp.hpfAPeak = 0.55;
-      dsp.echoAPeak = 0.28;
-      decisions.push("FX: Long Blend — мягкие фильтры");
-      break;
-    case "echoOut":
-      dsp.lpfBPeak = 0.4;
+    case "energyWash": // Filter Sweep — the one place LPF/HPF are intentional
+      dsp.lpfBPeak = 0.55;
       dsp.hpfAPeak = 0.7;
-      dsp.echoAPeak = 0.92;
-      dsp.instrAPeak = Math.max(dsp.instrAPeak, 0.7);
-      decisions.push("FX: Echo Out — сильный tempo-echo на A, B входит чисто");
+      dsp.echoAPeak = 0.35;
+      decisions.push("FX: Filter Sweep — мягкий LPF→reveal + HPF на LAND");
       break;
-    case "cutOnOne":
+    case "seamlessLoop":
       dsp.lpfBPeak = 0.15;
-      dsp.hpfAPeak = 0.35;
-      dsp.echoAPeak = 0.2;
-      dsp.bakeVocalB = false;
-      decisions.push("FX: Cut on the 1 — короткий стык по фразе");
-      break;
-    case "smartCrossfade":
-      dsp.lpfBPeak = 0.25;
       dsp.hpfAPeak = 0.4;
       dsp.echoAPeak = 0.2;
-      // Never weaken ONE VOCAL instrumental gates on conflict.
+      decisions.push("FX: Long Blend — почти без фильтров");
+      break;
+    case "echoOut":
+      dsp.lpfBPeak = 0.12;
+      dsp.hpfAPeak = 0.55;
+      dsp.echoAPeak = 0.85;
+      decisions.push("FX: Echo Out — echo на A, B без LPF-одеяла");
+      break;
+    case "cutOnOne":
+      dsp.lpfBPeak = 0;
+      dsp.hpfAPeak = 0.25;
+      dsp.echoAPeak = 0.15;
+      dsp.bakeVocalB = false;
+      decisions.push("FX: Cut on the 1 — без muffling");
+      break;
+    case "smartCrossfade":
+      dsp.lpfBPeak = 0.1;
+      dsp.hpfAPeak = 0.35;
+      dsp.echoAPeak = 0.15;
       if (dsp.instrBPeak < 0.5) {
-        dsp.instrAPeak *= 0.7;
+        dsp.instrAPeak *= 0.85;
       }
       decisions.push("FX: Smart Crossfade — мягкий fallback");
       break;
-    default: // dropSwap = EQ Blend / Bass Swap
-      dsp.lpfBPeak = craft.mode === "vocalSwap" ? 0.75 : 0.65;
-      dsp.hpfAPeak = 0.85;
-      dsp.echoAPeak = 0.55;
-      decisions.push("FX: EQ Blend / Bass Swap — один бас + LAND echo");
+    default: // EQ Blend — bass swap owns the drama, not filters
+      dsp.lpfBPeak = 0.12;
+      dsp.hpfAPeak = 0.55;
+      dsp.echoAPeak = 0.35;
+      decisions.push("FX: EQ Blend — один бас, фильтры только на LAND");
   }
 
   if (energyIn > energyOut + 0.12) {

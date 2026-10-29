@@ -30,8 +30,6 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   const bassAt = Math.min(0.7, Math.max(0.12, params.bassSwapAt));
   const handoff = Math.min(0.85, Math.max(bassAt + 0.08, params.handoffAt));
   const mashupEnd = Math.min(0.94, handoff + 0.2);
-  const modern = dsp.mashupMode === "vocalSwap" || dsp.mashupMode === "acapellaDrop";
-
   const instrPeak = Math.min(1, Math.max(0, dsp.instrAPeak));
   const instrAt = Math.min(0.7, Math.max(0.04, dsp.instrAAt));
   let instrumentalA = 0;
@@ -70,10 +68,7 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
     if (p < vocalAt) {
       vocalB = 0;
     } else if (p < mashupEnd) {
-      // Bloom into the mashup — faster on modern craft so the remix bar hits.
-      const rise = modern ? 0.1 : Math.max(0.001, mashupEnd - vocalAt);
-      vocalB = vocalPeak * smoothstep((p - vocalAt) / Math.max(0.001, rise));
-      if (p > vocalAt + rise) vocalB = vocalPeak;
+      vocalB = vocalPeak * smoothstep((p - vocalAt) / Math.max(0.001, mashupEnd - vocalAt));
     } else {
       vocalB =
         vocalPeak * (1 - 0.25 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
@@ -84,16 +79,13 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
     vocalB = 0;
   }
 
+  // HPF only at LAND — early/mid HPF just muffles the dual layer.
   const hpfPeak = Math.min(1, Math.max(0, dsp.hpfAPeak));
-  // Modern: gentle HPF on A during mashup peak so B vocal sits forward, then full LAND riser.
-  let hpfA = 0;
-  if (modern && p >= Math.max(bassAt, vocalAt) && p < handoff) {
-    hpfA = 0.28 * hpfPeak * smoothstep((p - Math.max(bassAt, vocalAt)) / Math.max(0.001, handoff - Math.max(bassAt, vocalAt)));
-  } else if (p >= handoff) {
-    hpfA = hpfPeak * smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
-  }
+  const hpfA =
+    p < handoff ? 0 : hpfPeak * smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
 
-  const lpfPeak = Math.min(1, Math.max(0, dsp.lpfBPeak));
+  // Soft LPF invite only when recipe asks — never a heavy blanket muff.
+  const lpfPeak = Math.min(0.55, Math.max(0, dsp.lpfBPeak));
   const lpfB =
     p >= bassAt ? 0 : lpfPeak * (1 - smoothstep(p / Math.max(0.001, bassAt)));
 

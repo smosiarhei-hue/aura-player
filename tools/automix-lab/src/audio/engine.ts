@@ -13,8 +13,6 @@ import {
   MidSideStemNode,
   bakeStemSlice,
   bakeInstrThenDry,
-  applySidechainDuck,
-  sliceBuffer,
   stemFxAt,
 } from "../dsp";
 
@@ -172,25 +170,16 @@ export class AutomixEngine {
     let offsetA = cueA;
     let offsetB = cueB;
     let liveInstrScale = 1;
-    let liveVocalScale = 1;
 
     if (dsp.bakeStems) {
-      // Always work on the mashup window when baking — not the full track.
-      const needWindow =
-        (dsp.bakeInstrA && dsp.instrAPeak >= 0.28) ||
-        (dsp.bakeInstrB && dsp.instrBPeak >= 0.5) ||
-        (dsp.bakeVocalB && dsp.vocalBPeak >= 0.35) ||
-        dsp.sidechainA >= 0.35;
-
-      if (needWindow && dsp.bakeInstrA && dsp.instrAPeak >= 0.28) {
-        onStatus?.(`Bake A instrumental bed ${Math.round(dsp.instrAPeak * 100)}%…`);
-        bufA = bakeStemSlice(ctx, a, cueA, blend, "instrumental", dsp.instrAPeak);
+      // Bake only where ONE VOCAL needs a carve — never blanket-duck / thin the mix.
+      if (dsp.bakeInstrA && dsp.instrAPeak >= 0.35) {
+        onStatus?.(`Bake A lead carve ${Math.round(dsp.instrAPeak * 100)}%…`);
+        // Softer amount so the bed stays bright; live graph can reinforce if needed.
+        const amt = Math.min(0.85, dsp.instrAPeak);
+        bufA = bakeStemSlice(ctx, a, cueA, blend, "instrumental", amt);
         offsetA = 0;
-        liveInstrScale = 0.55;
-      } else if (needWindow && offsetA !== 0 && dsp.sidechainA >= 0.35) {
-        // Slice A window dry so sidechain can run without loading the full track.
-        bufA = sliceBuffer(ctx, a, cueA, blend + 1.2);
-        offsetA = 0;
+        liveInstrScale = 0.25; // avoid double-muffling on top of bake
       }
 
       if (dsp.bakeInstrB && dsp.instrBPeak >= 0.5) {
@@ -199,23 +188,19 @@ export class AutomixEngine {
           blend * Math.min(0.75, Math.max(0.12, dsp.instrBUntil))
         );
         onStatus?.(
-          `Bake B groove → vocal @ ${untilSec.toFixed(1)}s (${modeLabel})…`
+          `Bake B groove → dry @ ${untilSec.toFixed(1)}s (${modeLabel})…`
         );
-        bufB = bakeInstrThenDry(ctx, b, cueB, blend, untilSec, dsp.instrBPeak);
+        bufB = bakeInstrThenDry(
+          ctx,
+          b,
+          cueB,
+          blend,
+          untilSec,
+          Math.min(0.8, dsp.instrBPeak)
+        );
         offsetB = 0;
-        liveVocalScale = 0.4;
-      } else if (dsp.bakeVocalB && dsp.vocalBPeak >= 0.35) {
-        onStatus?.(`Bake B vocal layer ${Math.round(dsp.vocalBPeak * 100)}%…`);
-        bufB = bakeStemSlice(ctx, b, cueB, blend, "vocal", dsp.vocalBPeak);
-        offsetB = 0;
-        liveVocalScale = 0.5;
       }
-
-      // Sidechain A under B — bed breathes with B's groove/vocal.
-      if (offsetA === 0 && offsetB === 0 && dsp.sidechainA >= 0.2 && bufB !== b) {
-        onStatus?.(`Sidechain A under B ${(dsp.sidechainA * 100) | 0}%…`);
-        bufA = applySidechainDuck(bufA, bufB, dsp.sidechainA);
-      }
+      // Never bake B as "vocal" stem — that thins the whole incoming track.
     }
 
     onStatus?.("Сведение мэшапа…");
@@ -224,9 +209,7 @@ export class AutomixEngine {
     this.chainA = this.makeChain(bufA, p.rateA, offsetA);
     this.chainB = this.makeChain(bufB, p.rateB, offsetB);
 
-    // Stash live scale on params via temporary fields on instance
     this.liveInstrScale = liveInstrScale;
-    this.liveVocalScale = liveVocalScale;
 
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
@@ -278,7 +261,6 @@ export class AutomixEngine {
   }
 
   private liveInstrScale = 1;
-  private liveVocalScale = 1;
 
   async playSolo(id: DeckId, fromSec?: number) {
     const deck = this.decks[id];
@@ -375,24 +357,26 @@ export class AutomixEngine {
     this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
     this.chainB.eq.setBassGainDb(bass.incoming, audioTime, immediate);
     this.chainA.eq.setVocalDuckDb(0, audioTime, immediate);
+    // Mid duck only while B is still gated instrumental — not a constant muff.
     this.chainB.eq.setVocalDuckDb(fx.vocalDuckBDb, audioTime, immediate);
-    this.chainA.eq.setAirDb(-2 * fx.hpfA, audioTime, immediate);
-    this.chainB.eq.setAirDb(2 * (1 - fx.lpfB), audioTime, immediate);
+    // Don't steal air with negative shelves; keep tone even.
+    this.chainA.eq.setAirDb(0, audioTime, immediate);
+    this.chainB.eq.setAirDb(0, audioTime, immediate);
 
-    // Live stems — ONE VOCAL: never dry-B under an active instrumental gate.
-    this.chainA.stem.setInstrumental(
-      fx.instrumentalA * this.liveInstrScale,
-      audioTime,
-      immediate
-    );
+    // Live stems: reinforce carve lightly; prefer dry once bake/gate is done.
+    const liveA = fx.instrumentalA * this.liveInstrScale;
+    if (liveA > 0.05) {
+      this.chainA.stem.setInstrumental(liveA, audioTime, immediate);
+    } else {
+      this.chainA.stem.setDry(audioTime, immediate);
+    }
     const conflictGate = this.params.dsp.instrBPeak >= 0.5;
     const beforeVocalOpen = progress < Math.max(0.05, this.params.dsp.vocalBAt);
     if (fx.instrumentalB > 0.08 || (conflictGate && beforeVocalOpen)) {
-      const amt = Math.max(fx.instrumentalB, conflictGate && beforeVocalOpen ? 0.92 : 0);
-      this.chainB.stem.setInstrumental(amt, audioTime, immediate);
-    } else if (fx.vocalB > 0.05) {
-      this.chainB.stem.setVocal(fx.vocalB * this.liveVocalScale, audioTime, immediate);
+      const amt = Math.max(fx.instrumentalB, conflictGate && beforeVocalOpen ? 0.7 : 0);
+      this.chainB.stem.setInstrumental(Math.min(0.85, amt), audioTime, immediate);
     } else {
+      // Full-quality dry B for the mashup peak / LAND — no vocalize thinning.
       this.chainB.stem.setDry(audioTime, immediate);
     }
 

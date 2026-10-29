@@ -53,7 +53,7 @@ export function chooseModernMashup(
   const bass = Math.min(0.55, Math.max(0.14, bassSwapAt));
   const handoff = Math.min(0.78, Math.max(bass + 0.12, handoffAt));
 
-  // Ideal Apple-style mashup: instrumental outro × incoming lead.
+  // Ideal: A outro already a bed × B full mix (keep B quality — no vocal bake that thins it).
   if (!aHasVocal && bHasVocal) {
     return {
       mode: "acapellaDrop",
@@ -61,16 +61,15 @@ export function chooseModernMashup(
       aInstrReadyAt: 0.08,
       bVocalOpenAt: 0.06,
       dualLayerPeak: 0.92,
-      bakeInstrA: vocalOut >= 0.28, // light carve if residual mid-vocal
+      bakeInstrA: vocalOut >= 0.35, // only if residual lead still sits in A
       bakeInstrB: false,
-      bakeVocalB: true,
-      sidechainA: 0.55,
-      story: "A bed × B vocal early → ONE BASS → MASHUP → LAND",
+      bakeVocalB: false, // dry B — full fidelity
+      sidechainA: 0, // no blanket duck / muffling
+      story: "A bed × B full → ONE BASS → MASHUP → LAND",
     };
   }
 
-  // Both still sing — the case that used to kill the mashup by holding B mute until LAND.
-  // Modern: carve A ASAP, B groove under, open B lead once A is a bed (mashup peak).
+  // Both still sing: carve only A's lead (needed); B stays dry after a short groove invite.
   if (aHasVocal && bHasVocal) {
     const aReady = Math.min(0.18, Math.max(0.08, bass * 0.55));
     const bOpen = Math.min(handoff - 0.06, Math.max(aReady + 0.1, bass + 0.04));
@@ -80,11 +79,11 @@ export function chooseModernMashup(
       aInstrReadyAt: aReady,
       bVocalOpenAt: bOpen,
       dualLayerPeak: 0.95,
-      bakeInstrA: true,
-      bakeInstrB: true,
+      bakeInstrA: true, // needed — kill A lead so B can open
+      bakeInstrB: true, // only until open, then dry B at full quality
       bakeVocalB: false,
-      sidechainA: 0.7,
-      story: "Carve A → B groove → B vocal on mashup peak × A instr → LAND",
+      sidechainA: 0,
+      story: "Carve A lead → B groove → B dry lead on mashup peak × A instr → LAND",
     };
   }
 
@@ -95,11 +94,11 @@ export function chooseModernMashup(
       aInstrReadyAt: 0.4,
       bVocalOpenAt: 0.55,
       dualLayerPeak: 0.7,
-      bakeInstrA: vocalOut >= 0.55,
+      bakeInstrA: vocalOut >= 0.6,
       bakeInstrB: false,
       bakeVocalB: false,
-      sidechainA: 0.25,
-      story: "A lead soft-carve × B instrumental bed → LAND",
+      sidechainA: 0,
+      story: "Soft A carve × B instrumental bed → LAND",
     };
   }
 
@@ -112,7 +111,7 @@ export function chooseModernMashup(
     bakeInstrA: false,
     bakeInstrB: false,
     bakeVocalB: false,
-    sidechainA: 0.35,
-    story: "Dual instrumental texture → filters → LAND",
+    sidechainA: 0,
+    story: "Dual instrumental texture → LAND",
   };
 }

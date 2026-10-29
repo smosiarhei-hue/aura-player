@@ -49,7 +49,8 @@ const cases = [
   {
     name: "A instr × B vocal → acapellaDrop",
     run: () => chooseModernMashup(0.2, 0.7, 0.22, 0.52),
-    expect: (c) => c.mode === "acapellaDrop" && c.bVocalOpenAt < 0.15 && c.bakeVocalB,
+    expect: (c) =>
+      c.mode === "acapellaDrop" && c.bVocalOpenAt < 0.15 && !c.bakeVocalB && c.sidechainA === 0,
   },
   {
     name: "both vocal → vocalSwap opens B before handoff",

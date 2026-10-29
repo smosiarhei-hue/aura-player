@@ -50,11 +50,11 @@ export class FilterSweepNode {
     setParam(this.hpf.frequency, clamp(hz, 20, 18000), when, immediate, 0.05);
   }
 
-  /** Close LPF: amount 0 = open (~20 kHz), 1 ≈ 200–400 Hz muffling. */
+  /** Close LPF: amount 0 = open (~20 kHz). Softer curve — 1 ≈ ~800 Hz, not mud. */
   setLowPass(amount: number, when: number, immediate = false) {
     const a = clamp(amount, 0, 1);
-    const hz = 20000 / Math.pow(80, a); // 20000 → ~250
-    const q = 0.7 + a * 0.4;
+    const hz = 20000 / Math.pow(25, a); // 20000 → ~800 (was ~250 — too muffled)
+    const q = 0.7 + a * 0.25;
     setParam(this.lpf.frequency, hz, when, immediate, 0.05);
     setParam(this.lpf.Q, q, when, immediate, 0.05);
   }

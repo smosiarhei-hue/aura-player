@@ -78,18 +78,18 @@ export function processBufferStem(
       oL[i] = l;
       oR[i] = r;
     } else if (mode === "instrumental") {
-      // Keep sub + some body, kill lead band hard, widen sides (club instrumental).
+      // Notch lead presence only — keep body/air so the bed stays bright, not muffled.
       const midKeep =
-        midLp * (1 + 0.12 * a) +
-        midBody * (1 - 0.55 * a) +
-        midPres * (1 - 0.98 * a);
-      const sideBoost = side * (1 + 0.42 * a);
+        midLp * (1 + 0.08 * a) +
+        midBody * (1 - 0.22 * a) +
+        midPres * (1 - 0.92 * a);
+      const sideBoost = side * (1 + 0.22 * a);
       oL[i] = midKeep + sideBoost;
       oR[i] = midKeep - sideBoost;
     } else {
-      // Vocal layer: mid-forward, sides tucked — sits on an instrumental bed.
-      const sideKeep = side * (1 - 0.82 * a);
-      const midBoost = midLp * 0.85 + midBody * (1 + 0.08 * a) + midPres * (1 + 0.35 * a);
+      // Light vocal focus — don't collapse the stereo image / air.
+      const sideKeep = side * (1 - 0.45 * a);
+      const midBoost = midLp + midBody * (1 + 0.05 * a) + midPres * (1 + 0.2 * a);
       oL[i] = midBoost + sideKeep;
       oR[i] = midBoost - sideKeep;
     }
@@ -287,23 +287,24 @@ export class MidSideStemNode {
 
   setInstrumental(amount: number, when: number, immediate = false) {
     const a = Math.min(1, Math.max(0, amount));
-    // Harder mid cut — 0.88 still leaked lead vocals under dual-deck.
-    const mid = 1 - 0.97 * a;
-    const side = 1 + 0.28 * a;
+    // Presence notch + light mid tuck — keep body/air (no dull karaoke blanket).
+    const mid = 1 - 0.55 * a;
+    const side = 1 + 0.18 * a;
     this.setGain(this.midGain.gain, mid, when, immediate);
     this.setGain(this.sideGain.gain, side, when, immediate);
-    this.setGain(this.presence.gain, -9 * a, when, immediate);
+    this.setGain(this.presence.gain, -7 * a, when, immediate);
     const midBass = (this as unknown as { _midBass: BiquadFilterNode })._midBass;
-    this.setGain(midBass.gain, 4.5 * a, when, immediate); // restore kick/sub
+    this.setGain(midBass.gain, 2.5 * a, when, immediate);
   }
 
   setVocal(amount: number, when: number, immediate = false) {
     const a = Math.min(1, Math.max(0, amount));
-    const mid = 1 + 0.12 * a;
-    const side = 1 - 0.88 * a;
+    // Mild focus only — never collapse sides/air.
+    const mid = 1 + 0.06 * a;
+    const side = 1 - 0.35 * a;
     this.setGain(this.midGain.gain, mid, when, immediate);
     this.setGain(this.sideGain.gain, side, when, immediate);
-    this.setGain(this.presence.gain, 5 * a, when, immediate);
+    this.setGain(this.presence.gain, 2.5 * a, when, immediate);
     const midBass = (this as unknown as { _midBass: BiquadFilterNode })._midBass;
     this.setGain(midBass.gain, 0, when, immediate);
   }

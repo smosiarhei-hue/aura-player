@@ -19,13 +19,13 @@ npm run dev
 
 | Режим | Когда | Что слышно |
 |---|---|---|
-| **Acapella Drop** | A outro уже инструментал, B с вокалом | B vocal сразу поверх A bed + sidechain |
-| **Vocal Swap** | оба ещё поют | Carve A → B groove → B vocal на mashup-пике × A instr |
-| **Texture Bed** | A поёт, B инструментал | Мягкий carve A × bed B |
-| **Instrumental Wash** | оба beds | Фильтры / текстура |
+| **Acapella Drop** | A outro уже инструментал, B с вокалом | A bed (если нужно) × **B full quality** |
+| **Vocal Swap** | оба ещё поют | Carve только lead A → B groove → **B dry** на пике |
+| **Texture Bed** | A поёт, B инструментал | Мягкий carve A × B dry |
+| **Instrumental Wash** | оба beds | Без stem bake / без приглушения |
 
-ONE VOCAL: никогда два лида сразу. Но B vocal открывается на **mashup peak**
-(когда A уже bed), а не только на LAND — иначе мэшапа не слышно.
+Без blanket sidechain и без vocal-bake B (они резали качество). Carve / HPF / LPF —
+только где нужно (ONE VOCAL / Filter Sweep / LAND).
 
 ## DSP toolkit (`src/dsp/`)
 
