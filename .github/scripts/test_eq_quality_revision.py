@@ -56,7 +56,9 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('-maximum...maximum',limits)
         self.assertIn('#define SONIVO_EQ_BANDS 6',header)
         self.assertIn('eq.gains.reference6.backup',(R/'Sonivo/playercore.swift').read_text())
+        self.assertIn('eq.layout.bassTight6',(R/'Sonivo/playercore.swift').read_text())
         self.assertIn('eq.userPresets.reference6.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
+        self.assertIn('eq.userPresets.bassTight6.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
     def test_manual_haptics_are_shared_by_graph_and_slider_and_obey_settings(self):
         ui=(R/'Sonivo/playerchrome.swift').read_text()
         self.assertIn('setBandGain(index, Float(value))',ui)
