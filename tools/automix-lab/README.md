@@ -1,8 +1,9 @@
-# Automix Lab · AI Engine
+# Automix Lab · AI + DSP Toolkit
 
-Локальный стенд + **AI-движок**, который сам обрабатывает каждый трек и сводит пару как Apple Music Automix.
+Локальный стенд: AI разбирает треки и сводит пару как Apple Music Automix.
+DSP-инструменты написаны с нуля на Web Audio (не только volume/EQ envelopes).
 
-## Запуск на своём компьютере
+## Запуск
 
 ```bash
 cd tools/automix-lab
@@ -12,44 +13,50 @@ npm run dev
 
 Открой [http://127.0.0.1:43187](http://127.0.0.1:43187).
 
+Макет приложения на iPhone 17 Pro: [http://127.0.0.1:43187/iphone.html](http://127.0.0.1:43187/iphone.html) —
+плеер с Автомикс, DSP-инструменты (вокал/инструментал, HPF, echo) и ручная настройка.
+
+## DSP toolkit (`src/dsp/`)
+
+| Модуль | Что делает |
+|---|---|
+| `vocalInstrumental.ts` | Mid/Side: удаление вокала (instrumentalize) / фокус вокала (vocalize); offline `processBufferStem` |
+| `bassEq.ts` | Bass kill/on (lowshelf), mid vocal pocket, air shelf |
+| `filters.ts` | HPF riser на уходящем, LPF reveal на входящем |
+| `echo.ts` | Tempo-sync echo-out (0.75 beat delay + feedback LPF) |
+| `stemEnvelopes.ts` | Огибающие stem/FX по DJ-актам LOCK→LAND |
+
+Цепь каждой деки:
+
+```
+source → MidSideStem → BassEq → HPF/LPF → EchoOut → Gain → master
+```
+
+Preview-кнопки в UI: **Preview A instrumental** / **Preview B vocal** — offline Mid/Side render.
+
 ## Что делает AI
 
-На каждый загруженный файл:
+На каждый файл: BPM, energy, vocal proxy, mixOut/mixIn.  
+По паре (`planAutomix`): beatmatch, cues на тактах, 8/16 bars, архетип, one-bass + dual-layer.
 
-1. **BPM** — автокорреляция onset-огибающей (70–180, fold в 80–160)
-2. **Energy / vocal proxy** — кривые по треку
-3. **mixOut** — outro / инструментальный хвост (после 75% трека)
-4. **mixIn** — вход после тихого intro, ближе к биту/вокалу
+**✦ AI Auto Mix** — анализ → план → play с полной DSP-цепью.
 
-По паре (`planAutomix`):
+## DJ 5 актов
 
-- beatmatch rates к общему BPM  
-- cues на сетке тактов  
-- окно 8/16 баров из outro  
-- архетип `dropSwap` / `seamlessLoop` / `energyWash`  
-- бас от B, dual-layer громкости (мэшап A+B)
-
-Один клик **✦ AI Auto Mix** — анализ (если ещё нет) → план → play.
-
-## Ручная доводка
-
-После AI можно крутить rates / bass / handoff и **Export JSON**.  
-Поля ≈ iOS `MashupLiveStyle` + cues из `MashupBlendScheduler`.
+`LOCK` → `INVITE B` → `ONE BASS` → `MASHUP` → `LAND`  
+(см. `src/audio/djCraft.ts`)
 
 ## Связь с Sonivo iOS
 
-В приложении тот же смысл уже встроен:
-
-| Lab AI | iOS |
+| Lab | iOS |
 |---|---|
-| `analyzeTrackBuffer` | `TrackAnalyzer` / `TrackAnalysisComputer` |
+| `analyzeTrackBuffer` | `TrackAnalyzer` |
 | `planAutomix` | `MixPlanner` + `MashupLiveStyle.resolve` |
-| Play mashup | `PlayerCore` AutoMix Mashup |
-
-Включи **Настройки → Переходы → AutoMix Mashup** — телефон сам анализирует current/next и сводит.
+| DSP chain | DualDeck FX + `MashupLiveEQEnvelope` |
+| Play mashup | PlayerCore AutoMix Mashup |
 
 ## Ограничения
 
-- Rate «виниловый» (темп+питч), без отдельного time-stretch как `AVAudioUnitTimePitch`
-- Camelot key в lab пока 0 (полная гармоника — в iOS профилях)
+- Mid/Side ≠ Demucs stems (клубный karaoke-трюк, слышимо и полезно)
+- Rate «виниловый» (темп+питч)
 - Файлы только локально в браузере

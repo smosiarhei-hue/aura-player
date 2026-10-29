@@ -4,6 +4,7 @@ import { analyzeTrackBuffer, type TrackAIProfile } from "./audio/analyzeTrack";
 import { planAutomix } from "./audio/aiMixEngine";
 import { defaultParams, tempoMatch } from "./audio/envelopes";
 import type { MashupParams } from "./audio/envelopes";
+import { processBufferStem } from "./dsp/vocalInstrumental";
 
 const params = defaultParams();
 const engine = new AutomixEngine(params);
@@ -17,9 +18,13 @@ app.innerHTML = `
   <header class="hero">
     <h1>Automix <span>Lab</span></h1>
     <p>
-      AI сам разбирает каждый трек (BPM, outro/intro, энергия, вокал) и строит
-      сведение как Apple Music Automix: такт, бас от следующего, мэшап-слой.
-      Можно поправить руками и сохранить пресет.
+      AI разбирает треки и сводит как Apple Automix. DSP с нуля: Mid/Side
+      удаление вокала/инструментала, bass kill, HPF/LPF, echo-out — реально
+      в dual-deck цепи, не только громкость.
+    </p>
+    <p class="hint" style="margin-top:8px">
+      <a href="/iphone.html" style="color:var(--accent);font-weight:700">iPhone 17 Pro макет Sonivo →</a>
+      плеер, Automix-инструменты и ручная настройка как в приложении.
     </p>
   </header>
 
@@ -96,6 +101,19 @@ app.innerHTML = `
             <div class="bar b" style="margin-top:4px"><i id="bassB"></i></div>
           </div>
         </div>
+        <div class="meters dsp-meters">
+          <div>
+            <label>DSP A · instr / HPF / echo</label>
+            <div class="bar a"><i id="instrA"></i></div>
+            <div class="bar a" style="margin-top:4px"><i id="hpfA"></i></div>
+            <div class="bar a" style="margin-top:4px"><i id="echoA"></i></div>
+          </div>
+          <div>
+            <label>DSP B · vocal / LPF</label>
+            <div class="bar b"><i id="vocalB"></i></div>
+            <div class="bar b" style="margin-top:4px"><i id="lpfB"></i></div>
+          </div>
+        </div>
         <div class="actions">
           <button class="primary ai" id="aiAuto" type="button">✦ AI Auto Mix</button>
           <button class="primary" id="play" type="button">▶ Play mashup</button>
@@ -121,8 +139,20 @@ app.innerHTML = `
       <textarea class="preset-box" id="preset" spellcheck="false" placeholder="Пресет / AI plan появится здесь…"></textarea>
       <p class="hint">
         Алгоритм ≈ iOS <code>TrackAnalyzer</code> + <code>MashupLiveStyle.resolve</code>.
-        В приложении Sonivo AutoMix Mashup делает то же автоматически на каждом треке.
+        DSP toolkit: <code>src/dsp/</code> — MidSideStem, BassEq, FilterSweep, EchoOut.
       </p>
+
+      <h2 style="margin-top:22px">DSP инструменты</h2>
+      <ul class="dsp-list">
+        <li><strong>Mid/Side stem</strong> — A instrumentalize (вокал уходит), B vocalize</li>
+        <li><strong>Bass EQ</strong> — ONE BASS: kill A lows, restore B + mid vocal pocket</li>
+        <li><strong>HPF / LPF</strong> — HPF riser на A (LAND), LPF reveal на B (INVITE)</li>
+        <li><strong>Echo-out</strong> — tempo-sync delay на хвосте A поверх B</li>
+      </ul>
+      <div class="actions">
+        <button class="ghost" id="previewInstrA" type="button">Preview A instrumental</button>
+        <button class="ghost" id="previewVocalB" type="button">Preview B vocal</button>
+      </div>
     </section>
   </div>
 `;
@@ -272,6 +302,7 @@ function runPlanFromProfiles() {
     {
       engine: "AutomixAI",
       reason: plan.reason,
+      story: plan.story,
       archetype: plan.archetype,
       beatmatched: plan.beatmatched,
       params: plan.params,
@@ -333,7 +364,7 @@ document.querySelector("#aiAuto")?.addEventListener("click", async () => {
     if (!profiles.b) await analyzeDeck("b");
     setAiStatus("AI строит план сведения…");
     const plan = runPlanFromProfiles();
-    setAiStatus(`Играю: ${plan.reason}`);
+    setAiStatus(`Играю wow-историю: ${plan.story}`);
     await engine.playMashup();
     document.querySelector("#mixing")!.classList.add("on");
   } catch (e) {
@@ -459,7 +490,46 @@ engine.onUpdate((snap) => {
   document.querySelector<HTMLElement>("#volB")!.style.width = `${snap.volB * 100}%`;
   document.querySelector<HTMLElement>("#bassA")!.style.width = `${Math.max(0, 100 + snap.bassA * (100 / 15))}%`;
   document.querySelector<HTMLElement>("#bassB")!.style.width = `${Math.max(0, 100 + snap.bassB * (100 / 15))}%`;
+  document.querySelector<HTMLElement>("#instrA")!.style.width = `${snap.instrA * 100}%`;
+  document.querySelector<HTMLElement>("#vocalB")!.style.width = `${snap.vocalB * 100}%`;
+  document.querySelector<HTMLElement>("#hpfA")!.style.width = `${snap.hpfA * 100}%`;
+  document.querySelector<HTMLElement>("#lpfB")!.style.width = `${snap.lpfB * 100}%`;
+  document.querySelector<HTMLElement>("#echoA")!.style.width = `${snap.echoA * 100}%`;
   document.querySelector("#mixing")!.classList.toggle("on", snap.playing && snap.phase !== "READY");
+});
+
+/** Offline Mid/Side stem preview (instrumentalize A / vocalize B). */
+async function previewStem(id: "a" | "b", mode: "instrumental" | "vocal") {
+  const deck = engine.getDeck(id);
+  if (!deck.buffer) throw new Error(`Нет трека ${id.toUpperCase()}`);
+  const ctx = await engine.ensureContext();
+  const processed = processBufferStem(ctx, deck.buffer, mode, 1);
+  // Swap buffer for preview, then restore after stop is user's job via reload —
+  // keep original and play a one-shot source instead.
+  const cue = id === "a" ? params.cueASec : params.cueBSec;
+  engine.stop();
+  const src = ctx.createBufferSource();
+  src.buffer = processed;
+  const g = ctx.createGain();
+  g.gain.value = 0.95;
+  src.connect(g);
+  g.connect(ctx.destination);
+  src.start(ctx.currentTime, Math.max(0, cue));
+  src.stop(ctx.currentTime + Math.min(12, Math.max(4, deck.duration - cue)));
+  document.querySelector("#phase")!.textContent =
+    mode === "instrumental" ? `STEM A INSTRUMENTAL` : `STEM B VOCAL`;
+  document.querySelector("#mixing")!.classList.remove("on");
+}
+
+document.querySelector("#previewInstrA")?.addEventListener("click", () => {
+  void previewStem("a", "instrumental").catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+  });
+});
+document.querySelector("#previewVocalB")?.addEventListener("click", () => {
+  void previewStem("b", "vocal").catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+  });
 });
 
 wireKnobs();

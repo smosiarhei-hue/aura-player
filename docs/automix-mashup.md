@@ -1,45 +1,44 @@
 # AutoMix Mashup
 
-## Логика (как Apple Automix)
+## Логика «вау»-перехода (как делают диджеи)
 
-Не кроссфейд. На стыке **два трека играют вместе** на одной сетке:
+Красивый Automix — это **короткая история**, не кроссфейд громкостей.
 
-1. **BPM / такт** — оба дека на общем tempo (`rateA`/`rateB`), cue A/B на downbeat, чтобы кик следующего попал в фазу.
-2. **Бас от следующего** — низ A режется рано (`BASS LOCK`); kick/bass B держат грув.
-3. **Мэшап-слой** — outro A как инструментал + уже идущий B с **вокалом и инструменталом**. Оба слышны, не «тихая подложка».
-4. После handoff A уходит, B остаётся на натуральном tempo/key.
-5. **UI как Apple:** бейдж Mixing на шкале; scrubber скрыт; на handoff обложка + шкала **жёстко снэпаются** на cue B (без morph).
+| Акт | Что слышит слушатель | Правило DJ |
+|---|---|---|
+| **LOCK** | Кики уже в одном темпе | Сетка / downbeat до того, как микс «заметен» |
+| **INVITE B** | B входит гостем | Барабаны/тело B под A; не два лид-вокала сразу |
+| **ONE BASS** | Пол выносит один бас | Бас A режется на доле → бас B владеет грувом |
+| **MASHUP** | Оба слоя нарочно | Outro A (часто инструментал) × вокал/бит B — ощущение ремикса |
+| **LAND** | Уже песня B | A уходит чисто; rate/pitch B в норму |
 
-## Алгоритм под каждую пару
+От этого «вау»: **один бас**, **одна вокальная доминанта**, стык на **фразе 8/16 тактов**, вход B не с тишины, выход A не в случайный мид-бар.
 
-| Шаг | Где |
-|---|---|
-| Анализ current/next | `AutoMixV2AnalysisRuntime` |
-| Tempo match + downbeat cues | `BeatGridSynchronization` / `MashupBlendScheduler` |
-| Rate accel→lock→decel, pitch, dual volumes | `MashupLiveStyle` |
-| Bass lock + mashup EQ | `MashupLiveEQEnvelope` |
-| Live tick | `PlayerCore.tickTransition` |
+## Как это в Sonivo
 
-Бейджи: `TEMPO LOCK` → `KEY SHIFT` → `BEATMATCH` → `BASS LOCK` → `MASHUP` → `HANDOFF` → `VOCAL × INSTR` → `SOFT REVEAL` → `TEMPO SETTLE`.
+Сведение считается **под каждую пару** треков: BPM / такт, **Бас от следующего**, **Мэшап-слой** A+B.
 
-Пока BPM не посчитан — style без beatmatch (`rate=1`), reason `Waiting for BPM analysis`.
+1. Анализ current/next → BPM, energy, mixIn/mixOut, downbeats (`TrackAnalyzer`)
+2. План пары → rates, cues, архетип (`MixPlanner` / Lab `planAutomix`)
+3. Live → dual volumes + bass EQ + rate ramp (`MashupLiveStyle`, `MashupLiveEQEnvelope`)
+4. UI → Mixing на шкале; на handoff hard-snap обложки и таймлайна на B
 
-## DualDeck V2
+Бейджи актов: `LOCK` → `INVITE B` → `ONE BASS` → `MASHUP` → `LAND`.
 
-Ownership force-disabled. Live путь: beatmatch + bass-from-B + dual-layer mashup на AVAudioEngine / AVPlayer. Camelot pitch на стриме ограничен; на локальных — полный `AVAudioUnitTimePitch`.
-
-## Как слушать
-
-Настройки → Переходы → **AutoMix Mashup**. Длительность окна — из outro/intro и плана, не из слайдера.
-
-## Automix Lab + AI Engine (на компьютере)
-
-Локальный стенд: загружаешь A/B → **AI Auto Mix** сам считает BPM, mixIn/mixOut, rates и играет мэшап (как Apple Automix). Ручки — опциональная доводка.
+## Automix Lab + AI (на компьютере)
 
 ```bash
 cd tools/automix-lab && npm install && npm run dev
 ```
 
-Открой http://127.0.0.1:43187 — см. `tools/automix-lab/README.md`.
+http://127.0.0.1:43187 — **✦ AI Auto Mix** сам разбирает оба трека и ведёт 5 актов.  
+Craft: `tools/automix-lab/src/audio/djCraft.ts`.  
+DSP с нуля: `tools/automix-lab/src/dsp/` — Mid/Side vocal/instrumental, bass EQ, HPF/LPF, echo-out.
 
-Модули: `analyzeTrack.ts` (пер-трек), `aiMixEngine.ts` (план пары), `engine.ts` (Web Audio dual-deck).
+## DualDeck V2
+
+Ownership force-disabled. Live путь уже делает beatmatch + one-bass + mashup на AVAudioEngine / AVPlayer.
+
+## Как слушать в приложении
+
+Настройки → Переходы → **AutoMix Mashup**.

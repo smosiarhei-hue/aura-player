@@ -324,6 +324,23 @@ button:disabled {
   margin-top: 14px;
 }
 
+.dsp-meters {
+  margin-top: 8px;
+  opacity: 0.92;
+}
+
+.dsp-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.dsp-list strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .meter label {
   display: block;
   margin-bottom: 4px;

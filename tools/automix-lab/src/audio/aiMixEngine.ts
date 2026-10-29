@@ -1,6 +1,8 @@
 /**
- * AI Automix planner — mirrors Sonivo MixPlanner + MashupLiveStyle.resolve
- * for the lab: given two analysed profiles, pick cues, rates, envelopes.
+ * AI Automix planner — DJ “wow” grammar + Sonivo MashupLiveStyle intent.
+ *
+ * See `djCraft.ts` for the 5-act story. This file picks cues, phrase length,
+ * rates and envelopes so the mix feels intentional — not a crossfade.
  */
 
 import type { TrackAIProfile } from "./analyzeTrack";
@@ -11,6 +13,7 @@ export type AIMixPlan = {
   profileA: TrackAIProfile;
   profileB: TrackAIProfile;
   reason: string;
+  story: string;
   archetype: MashupParams["archetype"];
   beatmatched: boolean;
 };
@@ -41,16 +44,13 @@ function pickArchetype(
   matched: boolean,
   bpmDiff: number
 ): MashupParams["archetype"] {
-  if (!matched || bpmDiff > 0.15) {
-    return a.bpmConfidence >= 0.55 && b.bpmConfidence >= 0.55 ? "energyWash" : "energyWash";
-  }
-  if (
-    a.tempoStability >= 0.75 &&
-    b.tempoStability >= 0.75 &&
-    bpmDiff <= 0.02
-  ) {
+  // Far tempos / weak grid → wash (filter story), not forced beatmatch mashup.
+  if (!matched || bpmDiff > 0.12) return "energyWash";
+  // Same pocket, rock-solid grid → long seamless phrase blend.
+  if (a.tempoStability >= 0.75 && b.tempoStability >= 0.75 && bpmDiff <= 0.02) {
     return "seamlessLoop";
   }
+  // Default wow path: bass swap + mashup peak into B’s groove.
   return "dropSwap";
 }
 
@@ -60,9 +60,17 @@ function snapToBar(sec: number, bpm: number): number {
   return Math.round(sec / bar) * bar;
 }
 
+function phraseBars(availableOutro: number, barSec: number, archetype: MashupParams["archetype"]): number {
+  // DJs think in 8 / 16 bar phrases — that’s what feels “on purpose”.
+  if (archetype === "seamlessLoop" && availableOutro >= barSec * 14) return 16;
+  if (availableOutro >= barSec * 14) return 16;
+  if (availableOutro >= barSec * 7) return 8;
+  if (availableOutro >= barSec * 3.5) return 4;
+  return Math.max(2, availableOutro / barSec);
+}
+
 /**
- * Build a full mashup plan like Apple Automix: analyse-driven cues,
- * beatmatch rates, bass-from-B envelopes, dual-layer volumes.
+ * Build a wow mashup plan: phrase-locked cues, one bass, vocal focus, remix peak.
  */
 export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   const params = defaultParams();
@@ -84,80 +92,101 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     params.targetBPM = a.bpm > 30 ? a.bpm : 0;
   }
 
-  // Cues on the grid (Apple: leave song body, enter B past intro).
   const bpmGrid = tempo?.targetBPM || a.bpm || 120;
-  let cueA = a.mixOutSec;
-  let cueB = b.mixInSec;
-  cueA = snapToBar(cueA, a.bpm || bpmGrid);
-  cueB = snapToBar(cueB, b.bpm || bpmGrid);
-  cueA = Math.min(Math.max(a.durationSec * 0.75, cueA), Math.max(0, a.durationSec - 6));
-  cueB = Math.min(Math.max(0, cueB), Math.max(0, b.durationSec * 0.25));
-
-  const availableOutro = Math.max(4, a.durationSec - cueA);
   const barSec = 240 / Math.max(60, bpmGrid);
-  const ladder =
-    availableOutro >= barSec * 14
-      ? barSec * 16
-      : availableOutro >= barSec * 7
-        ? barSec * 8
-        : availableOutro;
-  params.blendDurationSec = Math.min(32, Math.max(8, Math.min(ladder, availableOutro)));
+
+  // --- Cues: where a DJ would put the faders ---
+  let cueA = snapToBar(a.mixOutSec, a.bpm || bpmGrid);
+  let cueB = snapToBar(b.mixInSec, b.bpm || bpmGrid);
+  // Never cut the song body early; leave a musical tail.
+  cueA = Math.min(Math.max(a.durationSec * 0.75, cueA), Math.max(0, a.durationSec - barSec * 4));
+  cueB = Math.min(Math.max(0, cueB), Math.max(0, b.durationSec * 0.28));
+
+  const availableOutro = Math.max(barSec * 4, a.durationSec - cueA);
+  const bars = phraseBars(availableOutro, barSec, archetype);
+  params.blendDurationSec = Math.min(36, Math.max(barSec * 4, Math.min(bars * barSec, availableOutro)));
   params.cueASec = cueA;
   params.cueBSec = cueB;
 
-  // Envelope shape by archetype + vocal profiles (bass from B, mashup layer).
+  const vocalOut = meanTail(a.vocalPresence); // A outro still singing?
+  const vocalIn = meanHead(b.vocalPresence); // B already has lead vocal?
+  const energyOut = meanTail(a.energy);
+  const energyIn = meanHead(b.energy);
+
+  // --- Envelope story by archetype (wow path = dropSwap) ---
   switch (archetype) {
     case "seamlessLoop":
-      params.bassSwapAt = 0.38;
-      params.handoffAt = 0.52;
-      params.outgoingVolumeHold = 0.5;
-      params.incomingVolumeLag = 0.08;
+      // Soft invite, later bass trade, long co-existence.
+      params.bassSwapAt = 0.36;
+      params.handoffAt = 0.55;
+      params.outgoingVolumeHold = 0.52;
+      params.incomingVolumeLag = 0.1;
       params.bassDepth = 1.05;
       break;
     case "energyWash":
-      params.bassSwapAt = 0.28;
+      // Filter drama when tempo/key aren’t friendly.
+      params.bassSwapAt = 0.3;
       params.handoffAt = 0.5;
-      params.outgoingVolumeHold = 0.36;
+      params.outgoingVolumeHold = 0.34;
       params.incomingVolumeLag = 0.05;
-      params.bassDepth = 1.0;
+      params.bassDepth = 1.05;
       break;
     default:
-      params.bassSwapAt = 0.22;
-      params.handoffAt = 0.52;
-      params.outgoingVolumeHold = 0.48;
-      params.incomingVolumeLag = 0.06;
-      params.bassDepth = 1.4;
+      // Classic wow: early ONE BASS, mid MASHUP PEAK, clean LAND.
+      params.bassSwapAt = 0.2;
+      params.handoffAt = 0.5;
+      params.outgoingVolumeHold = 0.46;
+      params.incomingVolumeLag = 0.05;
+      params.bassDepth = 1.45;
   }
 
-  const vocalOut = meanTail(a.vocalPresence);
-  const vocalIn = meanHead(b.vocalPresence);
-  if (vocalOut < 0.45) {
-    // A outro already instrumental — hold longer under B.
-    params.outgoingVolumeHold = Math.min(0.68, params.outgoingVolumeHold + 0.08);
+  // Vocal choreography — the difference between mashup and mess.
+  if (vocalOut < 0.42) {
+    // A is already instrumental outro → invite B vocal early (Apple mashup feel).
+    params.incomingVolumeLag = Math.max(0.02, params.incomingVolumeLag * 0.45);
+    params.outgoingVolumeHold = Math.min(0.7, params.outgoingVolumeHold + 0.1);
+    params.bassSwapAt = Math.max(0.14, params.bassSwapAt - 0.04);
   } else {
-    params.outgoingVolumeHold = Math.max(0.32, params.outgoingVolumeHold - 0.04);
-  }
-  if (vocalIn > 0.5) {
-    // B already has vocals — bring them in fast (Apple mashup layer).
-    params.incomingVolumeLag = Math.max(0.03, params.incomingVolumeLag * 0.55);
-  }
-  if (a.hasFadeOut || a.endsInSilence) {
-    params.outgoingVolumeHold = Math.max(0.22, params.outgoingVolumeHold - 0.08);
-    params.bassDepth *= 0.9;
+    // A still singing → delay B’s dominance; carve space before mashup peak.
+    params.outgoingVolumeHold = Math.max(0.28, params.outgoingVolumeHold - 0.06);
+    params.incomingVolumeLag = Math.min(0.18, params.incomingVolumeLag + 0.04);
+    params.handoffAt = Math.min(0.62, params.handoffAt + 0.04);
   }
 
-  // Soft Camelot substitute: if BPMs close, tiny pitch nudge unused (0).
-  // Real Camelot lives in iOS TrackProfile; lab keeps pitch at 0 unless user sets it.
+  if (vocalIn > 0.55 && vocalOut < 0.45) {
+    // Ideal Apple case: instrumental A × vocal B together.
+    params.incomingVolumeLag = 0.03;
+    params.bassDepth = Math.min(1.55, params.bassDepth + 0.1);
+  }
+
+  // Energy: if B hits harder, hand bass earlier so the drop feels owned by B.
+  if (energyIn > energyOut + 0.12) {
+    params.bassSwapAt = Math.max(0.12, params.bassSwapAt - 0.05);
+    params.handoffAt = Math.max(params.bassSwapAt + 0.18, params.handoffAt - 0.04);
+  }
+
+  if (a.hasFadeOut || a.endsInSilence) {
+    params.outgoingVolumeHold = Math.max(0.2, params.outgoingVolumeHold - 0.1);
+    params.blendDurationSec = Math.min(params.blendDurationSec, Math.max(8, availableOutro));
+  }
+
   params.pitchCentsB = 0;
+
+  const story = [
+    "LOCK сетка",
+    vocalOut < 0.42 ? "INVITE B vocal early" : "INVITE B under A vocal",
+    "ONE BASS → B",
+    "MASHUP peak",
+    "LAND на B",
+  ].join(" → ");
 
   const reason = [
     beatmatched
-      ? `AI beatmatch ${Math.round(params.targetBPM)} BPM · ${a.bpm}→${b.bpm}`
-      : `AI без безопасного tempo match · ${archetype}`,
-    archetype,
-    `A@${cueA.toFixed(1)}s → B@${cueB.toFixed(1)}s`,
-    `${params.blendDurationSec.toFixed(0)}s окно`,
-    `bass@${params.bassSwapAt.toFixed(2)} handoff@${params.handoffAt.toFixed(2)}`,
+      ? `wow beatmatch ${Math.round(params.targetBPM)} BPM`
+      : `wow ${archetype} (tempo soft)`,
+    `${bars | 0} bars`,
+    `A@${cueA.toFixed(1)}→B@${cueB.toFixed(1)}`,
+    story,
   ].join(" · ");
 
   return {
@@ -165,6 +194,7 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     profileA: a,
     profileB: b,
     reason,
+    story,
     archetype,
     beatmatched,
   };

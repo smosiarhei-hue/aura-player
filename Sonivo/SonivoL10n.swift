@@ -70,6 +70,13 @@ final class SonivoL10n {
     /// Localize live mashup phase codes from `MashupLiveStyle.phaseLabel`.
     func automixPhase(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("LOCK") {
+            let bpm = raw.split(separator: " ").dropFirst().joined(separator: " ")
+            if isRussian {
+                return bpm.isEmpty ? "Лок темпа" : "Лок \(bpm)"
+            }
+            return raw
+        }
         if raw.hasPrefix("TEMPO LOCK") {
             let bpm = raw.split(separator: " ").dropFirst(2).joined(separator: " ")
             if isRussian {
@@ -77,10 +84,10 @@ final class SonivoL10n {
             }
             return raw
         }
-        if raw.hasPrefix("KEY SHIFT") {
-            let cents = raw.split(separator: " ").dropFirst(2).joined(separator: " ")
+        if raw.hasPrefix("KEY") {
+            let cents = raw.split(separator: " ").dropFirst().joined(separator: " ")
             if isRussian {
-                return cents.isEmpty ? "Сдвиг тональности" : "Тональность \(cents)"
+                return cents.isEmpty ? "Тональность" : "Тональность \(cents)"
             }
             return raw
         }
@@ -93,13 +100,13 @@ final class SonivoL10n {
         }
         if !isRussian { return raw }
         switch raw {
-        case "BASS SWAP", "BASS LOCK": return "Бас следующего"
+        case "INVITE B": return "Вход B"
+        case "ONE BASS", "BASS SWAP", "BASS LOCK": return "Один бас"
         case "MASHUP": return "Мэшап"
+        case "LAND", "TEMPO SETTLE", "SOFT REVEAL": return "Посадка"
         case "VOCAL × INSTR", "VOCAL HOLD": return "Вокал × инструмент"
         case "HANDOFF": return "Перехват"
         case "VOCAL POCKET": return "Вокальный карман"
-        case "SOFT REVEAL": return "Мягкое раскрытие"
-        case "TEMPO SETTLE": return "Темп в норму"
         default: return raw
         }
     }

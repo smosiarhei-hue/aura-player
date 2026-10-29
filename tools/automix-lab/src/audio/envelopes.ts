@@ -155,19 +155,19 @@ export function pitchCentsAt(p: number, params: MashupParams): number {
 }
 
 export function phaseLabel(p: number, params: MashupParams): string {
-  const lockAt = Math.min(0.28, Math.max(0.1, params.bassSwapAt * 0.72));
-  if (params.targetBPM > 30 && p < lockAt) {
-    return `TEMPO LOCK ${Math.round(params.targetBPM)}`;
+  // DJ 5-act story labels (see djCraft.ts).
+  const lockEnd = Math.min(0.18, params.bassSwapAt * 0.65);
+  if (p < lockEnd) {
+    return params.targetBPM > 30
+      ? `LOCK ${Math.round(params.targetBPM)}`
+      : "LOCK";
   }
-  if (Math.abs(params.pitchCentsB) >= 20 && p < 0.24) {
+  if (Math.abs(params.pitchCentsB) >= 20 && p < Math.min(0.28, params.bassSwapAt)) {
     const sign = params.pitchCentsB >= 0 ? "+" : "";
-    return `KEY SHIFT ${sign}${Math.round(params.pitchCentsB)}¢`;
+    return `KEY ${sign}${Math.round(params.pitchCentsB)}¢`;
   }
-  if (params.targetBPM > 30 && p < Math.min(0.3, params.bassSwapAt)) {
-    return `BEATMATCH ${Math.round(params.targetBPM)}`;
-  }
-  if (p < params.bassSwapAt) return "BASS LOCK";
-  if (p < params.handoffAt) return "MASHUP";
-  if (p < 0.85) return "HANDOFF";
-  return "TEMPO SETTLE";
+  if (p < params.bassSwapAt) return "INVITE B";
+  if (p < params.handoffAt) return "ONE BASS";
+  if (p < Math.min(0.88, params.handoffAt + 0.22)) return "MASHUP";
+  return "LAND";
 }

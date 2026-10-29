@@ -218,23 +218,24 @@ public struct MashupLiveStyle: Sendable, Equatable {
     }
 
     public func phaseLabel(progress: Double) -> String {
+        // DJ “wow” 5-act story: LOCK → INVITE → ONE BASS → MASHUP → LAND.
         let p = min(1, max(0, progress))
-        if isBeatmatched, p < tempoLockUntil {
-            return String(format: "TEMPO LOCK %.0f", targetBPM)
+        let lockEnd = min(0.18, bassSwapAt * 0.65)
+        if p < lockEnd {
+            if isBeatmatched, targetBPM > 30 {
+                return String(format: "LOCK %.0f", targetBPM)
+            }
+            return "LOCK"
         }
-        if abs(pitchCentsB) >= 20, p < min(0.24, max(tempoLockUntil, bassSwapAt * 0.85)) {
+        if abs(pitchCentsB) >= 20, p < min(0.28, max(lockEnd, bassSwapAt * 0.85)) {
             let sign = pitchCentsB >= 0 ? "+" : ""
-            return String(format: "KEY SHIFT %@%.0f¢", sign, pitchCentsB)
+            return String(format: "KEY %@%.0f¢", sign, pitchCentsB)
         }
-        if isBeatmatched, p < min(0.30, bassSwapAt) {
-            return String(format: "BEATMATCH %.0f", targetBPM)
-        }
-        if p < bassSwapAt { return "BASS LOCK" }
-        if p < vocalHoldUntil { return "MASHUP" }
-        if p < handoffAt { return "HANDOFF" }
-        if p < vocalPocketUntil { return "VOCAL × INSTR" }
-        if p < settleStart { return "SOFT REVEAL" }
-        return "TEMPO SETTLE"
+        if p < bassSwapAt { return "INVITE B" }
+        if p < handoffAt { return "ONE BASS" }
+        if p < min(0.88, handoffAt + 0.22) { return "MASHUP" }
+        if p < settleStart { return "LAND" }
+        return "LAND"
     }
 
     // MARK: - Plan / profile

@@ -42,7 +42,7 @@ struct MashupLiveStyleTests {
 
         let late = style.playbackRates(progress: 0.98)
         #expect(abs(late.incoming - 1.0) < 0.05)
-        #expect(style.phaseLabel(progress: 0.05).contains("TEMPO LOCK"))
+        #expect(style.phaseLabel(progress: 0.05).contains("LOCK"))
     }
 
     @Test("Pitch cents ramp in, hold through handoff, ease out")
@@ -61,7 +61,7 @@ struct MashupLiveStyleTests {
         #expect(abs(locked - 100) < 1)
         let late = style.pitchCents(progress: 0.95)
         #expect(abs(late) < abs(locked))
-        #expect(style.phaseLabel(progress: 0.22).contains("KEY SHIFT"))
+        #expect(style.phaseLabel(progress: 0.22).contains("KEY"))
     }
 
     @Test("Mashup volumes keep A+B loud together; B is not a whisper bed")
@@ -77,6 +77,7 @@ struct MashupLiveStyleTests {
         style.incomingVolumeLag = 0.06
         style.outgoingVolumeHold = 0.48
         style.handoffAt = 0.52
+        style.bassSwapAt = 0.22
         let early = style.volumes(progress: 0.12)
         let mid = style.volumes(progress: 0.40)
         let late = style.volumes(progress: 0.92)
@@ -85,9 +86,12 @@ struct MashupLiveStyleTests {
         #expect(mid.incoming > 0.70) // B vocal+instr audible with A
         #expect(mid.outgoing > 0.40) // A instrumental still layered
         #expect(late.incoming > late.outgoing)
-        #expect(style.phaseLabel(progress: 0.35).contains("MASHUP")
-            || style.phaseLabel(progress: 0.35).contains("BASS")
-            || style.phaseLabel(progress: 0.35).contains("BEATMATCH"))
+        let midPhase = style.phaseLabel(progress: 0.35)
+        #expect(midPhase.contains("MASHUP")
+            || midPhase.contains("ONE BASS")
+            || midPhase.contains("INVITE")
+            || midPhase.contains("BASS"))
+        #expect(style.phaseLabel(progress: 0.95).contains("LAND"))
     }
 
     @Test("Profile tempo match produces beatmatch style")

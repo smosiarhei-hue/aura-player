@@ -6,6 +6,13 @@ import {
   volumesAt,
 } from "./envelopes";
 import type { MashupParams } from "./envelopes";
+import {
+  BassEqNode,
+  EchoOutNode,
+  FilterSweepNode,
+  MidSideStemNode,
+  stemFxAt,
+} from "../dsp";
 
 export type DeckId = "a" | "b";
 
@@ -27,15 +34,28 @@ export type EngineSnapshot = {
   rateA: number;
   rateB: number;
   pitchB: number;
+  /** Stem / FX meters for UI. */
+  instrA: number;
+  vocalB: number;
+  hpfA: number;
+  lpfB: number;
+  echoA: number;
   displayElapsed: number;
   displayDuration: number;
   displayDeck: DeckId;
 };
 
+/**
+ * Full dual-deck chain (written with our DSP toolkit):
+ *   source → Mid/Side stem → Bass EQ → HPF/LPF → Echo → Gain → master
+ */
 type SourceChain = {
   source: AudioBufferSourceNode;
+  stem: MidSideStemNode;
+  eq: BassEqNode;
+  filters: FilterSweepNode;
+  echo: EchoOutNode;
   gain: GainNode;
-  bass: BiquadFilterNode;
 };
 
 export class AutomixEngine {
@@ -125,25 +145,33 @@ export class AutomixEngine {
     const cueB = Math.min(Math.max(0, p.cueBSec), Math.max(0, b.duration - 1));
     const blend = Math.max(4, Math.min(48, p.blendDurationSec));
 
-    this.chainA = this.makeChain(a, cueA, p.rateA);
-    this.chainB = this.makeChain(b, cueB, p.rateB);
+    this.chainA = this.makeChain(a, p.rateA);
+    this.chainB = this.makeChain(b, p.rateB);
 
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
     this.playing = true;
     this.handoffSnapped = false;
 
-    // Seed envelopes at t0
+    // Tempo-sync echo delays to target / deck BPM.
+    const bpm =
+      p.targetBPM > 30
+        ? p.targetBPM
+        : this.decks.a.bpm > 30
+          ? this.decks.a.bpm
+          : 120;
+    this.chainA.echo.setTempo(bpm, now, true);
+    this.chainB.echo.setTempo(this.decks.b.bpm || bpm, now, true);
+
     this.applyEnvelope(0, now, true);
 
     this.chainA.source.start(now, cueA);
     this.chainB.source.start(now, cueB);
 
-    // Stop after blend (+ small tail)
-    const stopAt = now + blend + 0.4;
+    const stopAt = now + blend + 0.6;
     try {
       this.chainA.source.stop(stopAt);
-      this.chainB.source.stop(stopAt + 0.2);
+      this.chainB.source.stop(stopAt + 0.35);
     } catch {
       /* ignore */
     }
@@ -171,11 +199,14 @@ export class AutomixEngine {
     this.stop();
     const cue = fromSec ?? (id === "a" ? this.params.cueASec : this.params.cueBSec);
     const rate = id === "a" ? this.params.rateA : this.params.rateB;
-    const chain = this.makeChain(deck.buffer, cue, rate);
+    const chain = this.makeChain(deck.buffer, rate);
     if (id === "a") this.chainA = chain;
     else this.chainB = chain;
     chain.gain.gain.value = 1;
-    chain.bass.gain.value = 0;
+    chain.eq.setBassGainDb(0, ctx.currentTime, true);
+    chain.stem.setDry(ctx.currentTime, true);
+    chain.filters.setOpen(ctx.currentTime, true);
+    chain.echo.bypass(ctx.currentTime, true);
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
     this.playing = true;
@@ -194,6 +225,11 @@ export class AutomixEngine {
         rateA: this.params.rateA,
         rateB: this.params.rateB,
         pitchB: 0,
+        instrA: 0,
+        vocalB: 0,
+        hpfA: 0,
+        lpfB: 0,
+        echoA: 0,
         displayElapsed: cue + elapsed,
         displayDuration: deck.duration,
         displayDeck: id,
@@ -203,25 +239,28 @@ export class AutomixEngine {
     this.raf = requestAnimationFrame(tick);
   }
 
-  private makeChain(buffer: AudioBuffer, _cue: number, rate: number): SourceChain {
+  private makeChain(buffer: AudioBuffer, rate: number): SourceChain {
     const ctx = this.ctx!;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.playbackRate.value = rate;
 
+    const stem = new MidSideStemNode(ctx);
+    const eq = new BassEqNode(ctx);
+    const filters = new FilterSweepNode(ctx);
+    const echo = new EchoOutNode(ctx);
     const gain = ctx.createGain();
     gain.gain.value = 0;
 
-    const bass = ctx.createBiquadFilter();
-    bass.type = "lowshelf";
-    bass.frequency.value = 120;
-    bass.gain.value = 0;
-
-    source.connect(bass);
-    bass.connect(gain);
+    // source → stem → eq → filters → echo → gain → master
+    source.connect(stem.input);
+    stem.output.connect(eq.input);
+    eq.output.connect(filters.input);
+    filters.output.connect(echo.input);
+    echo.output.connect(gain);
     gain.connect(this.master!);
 
-    return { source, gain, bass };
+    return { source, stem, eq, filters, echo, gain };
   }
 
   private applyEnvelope(progress: number, audioTime: number, immediate: boolean) {
@@ -230,6 +269,7 @@ export class AutomixEngine {
     const bass = bassGainDbAt(progress, this.params);
     const rates = playbackRatesAt(progress, this.params);
     const cents = pitchCentsAt(progress, this.params);
+    const fx = stemFxAt(progress, this.params);
 
     const set = (param: AudioParam, value: number) => {
       if (immediate) {
@@ -242,14 +282,32 @@ export class AutomixEngine {
 
     set(this.chainA.gain.gain, vols.outgoing);
     set(this.chainB.gain.gain, vols.incoming);
-    set(this.chainA.bass.gain, bass.outgoing);
-    set(this.chainB.bass.gain, bass.incoming);
 
-    // Vinyl-style rate (tempo+pitch together) — classic DJ beatmatch feel.
+    // Bass ownership (ONE BASS)
+    this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
+    this.chainB.eq.setBassGainDb(bass.incoming, audioTime, immediate);
+    this.chainA.eq.setVocalDuckDb(0, audioTime, immediate);
+    this.chainB.eq.setVocalDuckDb(fx.vocalDuckBDb, audioTime, immediate);
+    this.chainA.eq.setAirDb(-1.5 * fx.hpfA, audioTime, immediate);
+    this.chainB.eq.setAirDb(1.5 * (1 - fx.lpfB), audioTime, immediate);
+
+    // Stem tools: A instrumentalize, B vocalize
+    this.chainA.stem.setInstrumental(fx.instrumentalA, audioTime, immediate);
+    this.chainB.stem.setVocal(fx.vocalB, audioTime, immediate);
+
+    // Filters
+    this.chainA.filters.setHighPass(fx.hpfA, audioTime, immediate);
+    this.chainA.filters.setLowPass(0, audioTime, immediate);
+    this.chainB.filters.setHighPass(0, audioTime, immediate);
+    this.chainB.filters.setLowPass(fx.lpfB, audioTime, immediate);
+
+    // Echo-out on A near LAND
+    this.chainA.echo.setAmount(fx.echoA, audioTime, immediate);
+    this.chainB.echo.bypass(audioTime, immediate);
+
     try {
       this.chainA.source.playbackRate.setTargetAtTime(rates.outgoing, audioTime, 0.04);
       this.chainB.source.playbackRate.setTargetAtTime(rates.incoming, audioTime, 0.04);
-      // Extra key shift on B in cents via detune.
       this.chainB.source.detune.setTargetAtTime(cents, audioTime, 0.05);
     } catch {
       /* source may have ended */
@@ -261,8 +319,8 @@ export class AutomixEngine {
     const bass = bassGainDbAt(progress, this.params);
     const rates = playbackRatesAt(progress, this.params);
     const cents = pitchCentsAt(progress, this.params);
+    const fx = stemFxAt(progress, this.params);
     const elapsed = (performance.now() - this.startedAt) / 1000;
-    const blend = Math.max(0.001, this.params.blendDurationSec);
 
     const pastHandoff = progress >= this.params.handoffAt;
     if (pastHandoff) this.handoffSnapped = true;
@@ -285,15 +343,15 @@ export class AutomixEngine {
       rateA: rates.outgoing,
       rateB: rates.incoming,
       pitchB: cents,
+      instrA: fx.instrumentalA,
+      vocalB: fx.vocalB,
+      hpfA: fx.hpfA,
+      lpfB: fx.lpfB,
+      echoA: fx.echoA,
       displayElapsed: Math.min(displayDuration, Math.max(0, displayElapsed)),
       displayDuration,
       displayDeck,
     });
-
-    if (!this.playing && progress >= 1) {
-      // keep final UI state
-    }
-    void blend;
   }
 
   private teardownChain(chain: SourceChain | null) {
@@ -305,7 +363,10 @@ export class AutomixEngine {
     }
     try {
       chain.source.disconnect();
-      chain.bass.disconnect();
+      chain.stem.disconnect();
+      chain.eq.disconnect();
+      chain.filters.disconnect();
+      chain.echo.disconnect();
       chain.gain.disconnect();
     } catch {
       /* ignore */
