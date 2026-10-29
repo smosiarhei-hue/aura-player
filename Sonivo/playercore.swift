@@ -505,7 +505,9 @@ final class PlayerCore {
     private var failedPrebufferTrackId: UUID?
     private var lastPrebufferAttempt: Date?
 
-    var displayTrack: Track? { currentTrack }
+    /// Artwork / title shown in the player. During AutoMix, snaps to the incoming
+    /// track at the musical handoff (Apple Music Automix hard cut) while audio still blends.
+    var displayTrack: Track? { metadataTrack ?? currentTrack }
 
     var duration: Double {
         if isUsingStreamPlayer {
@@ -517,6 +519,34 @@ final class PlayerCore {
         }
         let trackDur = currentTrack?.duration ?? 0
         return max(trackDur > 0 ? trackDur : streamDuration, 0.001)
+    }
+
+    /// Timeline seconds shown in the player chrome. After the Automix handoff snap,
+    /// this follows the incoming cue (e.g. 0:25) instead of staying on A's outro.
+    var displayProgress: Double {
+        if metadataSwapped, isTransitioning {
+            return incomingDisplayPosition()
+        }
+        return isUsingStreamPlayer ? max(0, progress) : liveProgress()
+    }
+
+    /// Duration paired with `displayProgress` / `displayTrack` during Automix snap.
+    var displayDuration: Double {
+        if metadataSwapped, isTransitioning,
+           let incoming = metadataTrack ?? incomingTrack,
+           incoming.duration > 0 {
+            return incoming.duration
+        }
+        return duration
+    }
+
+    private func incomingDisplayPosition() -> Double {
+        if incomingIsStream {
+            let t = CMTimeGetSeconds(idleStreamingPlayer.currentTime())
+            if t.isFinite, t >= 0 { return t }
+        }
+        let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
+        return max(0, incomingStartPosition + elapsed)
     }
 
     private init() {
@@ -2440,9 +2470,17 @@ final class PlayerCore {
             applyMashupTransitionEQ(progress: p)
         }
 
-        if !metadataSwapped, let incomingTrack, transitionDuration * (1.0 - p) <= 0.25 {
+        // Apple Automix: hard-cut artwork + timeline to B at the musical handoff
+        // (not at the very end). Progress bar snaps to B's cue; Mixing badge stays.
+        let swapAt = mashup ? activeMashupStyle.handoffAt : 0.75
+        if !metadataSwapped, let incomingTrack, p >= swapAt {
             metadataSwapped = true
             metadataTrack = incomingTrack
+            NotificationCenter.default.post(
+                name: .didTriggerAutoMixDrop,
+                object: nil,
+                userInfo: ["trackID": incomingTrack.id.uuidString]
+            )
         }
 
         if p >= 1.0, let incomingTrack {

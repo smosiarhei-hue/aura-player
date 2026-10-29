@@ -715,19 +715,26 @@ struct PlayerScreenV2: View {
     @ViewBuilder private var artwork: some View {
         let cached = track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
         let current = (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? cached
-        if let current {
-            Image(uiImage: current)
-                .resizable()
-                .scaledToFit()
+        // Automix handoff: hard-cut cover like Apple Music (no crossfade/morph).
+        let mixCut = player.isTransitionActive
+        Group {
+            if let current {
+                Image(uiImage: current)
+                    .resizable()
+                    .scaledToFit()
+                    .id(track?.id)
+            } else if let raw = track?.coverURL, let url = URL(string: raw) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image { image.resizable().scaledToFit() } else { fallbackArtwork }
+                }
                 .id(track?.id)
-        } else if let raw = track?.coverURL, let url = URL(string: raw) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image { image.resizable().scaledToFit() } else { fallbackArtwork }
+            } else {
+                fallbackArtwork
+                    .id(track?.id)
             }
-            .id(track?.id)
-        } else {
-            fallbackArtwork
-                .id(track?.id)
+        }
+        .transaction { tx in
+            if mixCut { tx.animation = nil }
         }
     }
     private var fallbackArtwork: some View {
@@ -1695,12 +1702,15 @@ struct PlayerTimelineSection<Center: View>: View {
     @GestureState private var scrubContact = false
     @State private var pendingSeekProgress: Double?
     @State private var lastFeedbackProgress = 0.0
+    /// Tracks Automix display-track hard cut so the bar snaps without easing.
+    @State private var timelineIdentity: UUID?
     private let feedback = UISelectionFeedbackGenerator()
     private let center: Center
     init(player: ActivePlayerPresentation, @ViewBuilder center: () -> Center) {
         self.player = player
         self.center = center()
     }
+    private var mixing: Bool { player.isTransitionActive }
     private var effectiveProgress: Double {
         if isScrubbing { return scrubProgress }
         if let pending = pendingSeekProgress { return pending }
@@ -1713,15 +1723,16 @@ struct PlayerTimelineSection<Center: View>: View {
                 let duration = max(player.duration, 0.01)
                 let fraction = min(1, max(0, effectiveProgress / duration))
                 let width = geo.size.width * fraction
-                let trackHeight: CGFloat = isScrubbing ? 7 : 2.5
+                // Apple Automix: no scrubber thumb while Mixing is active.
+                let trackHeight: CGFloat = (isScrubbing && !mixing) ? 7 : (mixing ? 3.0 : 2.5)
                 let thumbSize: CGFloat = 15
 
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(SN.ink.opacity(isScrubbing ? 0.20 : 0.14))
+                        .fill(SN.ink.opacity(isScrubbing ? 0.20 : (mixing ? 0.18 : 0.14)))
                         .frame(height: trackHeight)
 
-                    if let bufferFraction = player.bufferedProgress, bufferFraction > 0.005 {
+                    if let bufferFraction = player.bufferedProgress, bufferFraction > 0.005, !mixing {
                         Capsule(style: .continuous)
                             .fill(SN.ink.opacity(isScrubbing ? 0.38 : 0.28))
                             .frame(
@@ -1732,10 +1743,14 @@ struct PlayerTimelineSection<Center: View>: View {
                     }
 
                     Capsule(style: .continuous)
-                        .fill(SN.ink.opacity(0.96))
+                        .fill(SN.ink.opacity(mixing ? 1.0 : 0.96))
                         .frame(width: max(0, width), height: trackHeight)
+                        // Hard snap on Automix handoff (display track / duration change) — no morph.
+                        .transaction { tx in
+                            if mixing { tx.animation = nil }
+                        }
 
-                    if isScrubbing {
+                    if isScrubbing && !mixing {
                         Circle()
                             .fill(SN.ink)
                             .frame(width: thumbSize, height: thumbSize)
@@ -1743,25 +1758,26 @@ struct PlayerTimelineSection<Center: View>: View {
                             .shadow(color: .black.opacity(0.26), radius: 3, y: 1)
                     }
                 }
-                .animation(.smooth(duration: 0.18), value: isScrubbing)
+                .animation(mixing ? nil : .smooth(duration: 0.18), value: isScrubbing)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 10)
                         .updating($scrubContact) { _, state, _ in state = true }
                         .onChanged { value in
-                            guard !scrubRejected, player.duration > 0 else { return }
+                            // Scrubber disabled while Automix Mixing is active (Apple behavior).
+                            guard !mixing, !scrubRejected, player.duration > 0 else { return }
                             if !isScrubbing {
                                 guard PlayerInteractionPolicy.horizontalIntent(x: Double(value.translation.width), y: Double(value.translation.height)) else {
                                     scrubRejected = true; return
                                 }
                                 scrubStartFraction = min(1, max(0, effectiveProgress / duration))
-                                scrubTrackID = player.currentTrack?.id
+                                scrubTrackID = player.displayTrack?.id ?? player.currentTrack?.id
                                 lastFeedbackProgress = scrubStartFraction
                                 isScrubbing = true
                                 feedback.prepare()
                             }
-                            guard scrubTrackID == player.currentTrack?.id else { return }
+                            guard scrubTrackID == (player.displayTrack?.id ?? player.currentTrack?.id) else { return }
                             let f = PlayerInteractionPolicy.draggedFraction(start: scrubStartFraction,
                                 translation: Double(value.translation.width), width: Double(geo.size.width))
                             scrubProgress = f * duration
@@ -1772,7 +1788,9 @@ struct PlayerTimelineSection<Center: View>: View {
                         }
                         .onEnded { value in
                             defer { isScrubbing = false; scrubRejected = false }
-                            guard isScrubbing, !scrubRejected, scrubTrackID == player.currentTrack?.id, player.duration > 0 else { return }
+                            guard !mixing, isScrubbing, !scrubRejected,
+                                  scrubTrackID == (player.displayTrack?.id ?? player.currentTrack?.id),
+                                  player.duration > 0 else { return }
                             let f = PlayerInteractionPolicy.draggedFraction(start: scrubStartFraction,
                                 translation: Double(value.translation.width), width: Double(geo.size.width))
                             let target = f * duration
@@ -1791,6 +1809,7 @@ struct PlayerTimelineSection<Center: View>: View {
                 "\(player.formatted(effectiveProgress)) из \(player.formatted(player.duration))"
             )
             .accessibilityAdjustableAction { direction in
+                guard !mixing else { return }
                 let step = max(5, player.duration * 0.02)
                 switch direction {
                 case .increment:
@@ -1802,28 +1821,41 @@ struct PlayerTimelineSection<Center: View>: View {
                 }
             }
 
+            // Apple layout: elapsed | Mixing | remaining on one row under the bar.
             HStack {
                 Text(player.formatted(effectiveProgress))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
                     .foregroundStyle(SN.inkMuted)
+                    .contentTransition(mixing ? .identity : .numericText())
                 Spacer()
                 center
                 Spacer()
                 Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
                     .foregroundStyle(SN.inkMuted)
+                    .contentTransition(mixing ? .identity : .numericText())
+            }
+            .transaction { tx in
+                if mixing { tx.animation = nil }
             }
         }
         .onChange(of: scrubContact) { _, active in
             if !active { isScrubbing = false; scrubRejected = false }
         }
-        .onChange(of: player.currentTrack?.id) { _, _ in
+        .onChange(of: player.displayTrack?.id) { _, newID in
             isScrubbing = false
             scrubRejected = scrubContact
             pendingSeekProgress = nil
+            timelineIdentity = newID
         }
         .onChange(of: player.progress) { _, newProgress in
             if let pending = pendingSeekProgress, abs(newProgress - pending) < 1.0 {
+                pendingSeekProgress = nil
+            }
+        }
+        .onChange(of: player.isTransitionActive) { _, active in
+            if active {
+                isScrubbing = false
                 pendingSeekProgress = nil
             }
         }

@@ -18,7 +18,16 @@ class PlayerIntentTests(unittest.TestCase):
         self.assertIn('coverSwitchTask?.cancel()',lifetime)
     def test_timeline_ignores_taps_and_vertical_drags_and_stale_track(self):
         block=SCREEN.split('struct PlayerTimelineSection',1)[1].split('final class SystemVolumeManager',1)[0]
-        for token in ['DragGesture(minimumDistance: 10)', 'PlayerInteractionPolicy.horizontalIntent', 'scrubTrackID == player.currentTrack?.id', 'guard isScrubbing, !scrubRejected', 'start: scrubStartFraction', '.accessibilityAdjustableAction', '.onChange(of: scrubContact)']:
+        for token in [
+            'DragGesture(minimumDistance: 10)',
+            'PlayerInteractionPolicy.horizontalIntent',
+            'scrubTrackID == (player.displayTrack?.id ?? player.currentTrack?.id)',
+            'guard !mixing, isScrubbing, !scrubRejected',
+            'start: scrubStartFraction',
+            '.accessibilityAdjustableAction',
+            '.onChange(of: scrubContact)',
+            'Scrubber disabled while Automix',
+        ]:
             self.assertIn(token,block)
         self.assertNotIn('value.location.x',block)
     def test_only_headers_allow_intentional_dismiss_drag(self):

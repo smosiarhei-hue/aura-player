@@ -20,7 +20,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
         case .off:
             return "Стандартное раздельное воспроизведение треков."
         case .automix:
-            return "Мэшап под каждую пару: beatmatch по BPM, инструментал следующего под вокал текущего, handoff на сетке. Длительность сама."
+            return "Как Apple Automix: BPM в такт, бас от следующего, мэшап A+B вместе. Шкала и обложка снэпаются на handoff."
         }
     }
 }
@@ -69,13 +69,11 @@ final class AutoMixDJEngine {
     }
 
     /// UI badge for the active mashup window (EQ shaping lives in PlayerCore offsets).
+    /// Label text is overwritten by PlayerCore from `MashupLiveStyle.phaseLabel`.
     func markMashupProgress(_ progress: Double) {
         isTransitionActive = true
         transitionProgress = max(0, min(1, progress))
         activeStrategyName = "MASHUP"
-        statusBadge = progress < 0.30 ? "BASS SWAP"
-            : (progress < 0.52 ? "VOCAL HOLD"
-            : (progress < 0.82 ? "VOCAL POCKET" : "SOFT REVEAL"))
         dropProgress = progress
         isPostMixActive = progress >= 0.82
     }

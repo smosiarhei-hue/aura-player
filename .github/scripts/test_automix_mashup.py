@@ -24,8 +24,7 @@ class AutoMixMashupTests(unittest.TestCase):
         models = (ROOT / "Sonivo/models.swift").read_text()
         self.assertIn('case automix = "AutoMix Mashup"', models)
         self.assertIn("markMashupProgress", models)
-        self.assertIn("VOCAL HOLD", models)
-        self.assertIn("SOFT REVEAL", models)
+        self.assertIn("шкала и обложка снэпаются", models.lower())
         # Equal-power volume contract stays intact for CI purity checks.
         self.assertIn("return (outVol, inVol, 0.0, 0.0, 1.0)", models)
 
@@ -43,6 +42,12 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("MashupLiveStyle.resolve", player)
         self.assertIn("applyMashupTimePitch", player)
         self.assertIn("playImmediately(atRate: startRate)", player)
+        # Apple Automix UI: timeline + artwork hard-cut at handoff.
+        self.assertIn("displayProgress", player)
+        self.assertIn("displayDuration", player)
+        self.assertIn("metadataTrack ?? currentTrack", player)
+        self.assertIn("activeMashupStyle.handoffAt", player)
+        self.assertIn("didTriggerAutoMixDrop", player)
         # Auto blend-point detection (outro/intro), not fixed end-seconds alone.
         self.assertIn("resolveMashupBlend", player)
         self.assertIn("MashupBlendScheduler.schedule", player)
@@ -78,6 +83,16 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("headroom", badge)
         self.assertIn("extendedLinear", badge)
         self.assertIn("plusLighter", badge)
+
+        timeline = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
+        self.assertIn("struct PlayerTimelineSection", timeline)
+        self.assertIn("player.isTransitionActive", timeline)
+        self.assertIn("if mixing { tx.animation = nil }", timeline)
+        self.assertIn("Scrubber disabled while Automix", timeline)
+
+        presentation = (ROOT / "Sonivo/ActivePlayerPresentation.swift").read_text()
+        self.assertIn("legacy.displayProgress", presentation)
+        self.assertIn("legacy.displayDuration", presentation)
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
         self.assertIn("var automix", l10n)
         self.assertIn("Автомикс", l10n)

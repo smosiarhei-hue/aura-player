@@ -51,8 +51,7 @@ final class ActivePlayerPresentation {
         AutoMixDJEngine.shared.transitionProgress
     }
 
-    // Artwork, title, seek and transport controls must always address the deck
-    // that is currently audible. In iOS 27 AutoMix, this switches on the Drop (T=0) hard cut.
+    // Artwork / title: during AutoMix snaps to incoming at handoff (Apple hard cut).
     var displayTrack: Track? { legacy.displayTrack }
 
     var usesStreamingBackend: Bool { legacy.usesStreamingBackend }
@@ -70,12 +69,14 @@ final class ActivePlayerPresentation {
         guard AutoMixDJEngine.shared.isTransitionActive else { return nil }
         return AutoMixDJEngine.shared.statusBadge
     }
+    /// Timeline position for the player chrome (snaps to B at Automix handoff).
     var progress: Double {
-        legacy.progress
+        legacy.displayProgress
     }
     var lyricsPresentationPosition: Double { legacy.lyricsPresentationPosition }
+    /// Timeline duration paired with `progress` / `displayTrack`.
     var duration: Double {
-        legacy.duration
+        legacy.displayDuration
     }
     /// Buffered range is NOT a saved/offline download and is not a loading state.
     var bufferedProgress: Double? {
