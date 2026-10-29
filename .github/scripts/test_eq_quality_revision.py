@@ -9,20 +9,24 @@ class EQQualityRevisionTests(unittest.TestCase):
             self.assertIn(expected,render)
         for forbidden in ['malloc(', 'calloc(', 'realloc(', 'dispatch_', 'mutex', 'sleep(']:
             self.assertNotIn(forbidden,render)
-        self.assertIn('eq->sampleRate*.035',c)
-        self.assertIn('eq->sampleRate*.280',c)
+        self.assertIn('eq->sampleRate*.022',c)
+        self.assertIn('eq->sampleRate*.160',c)
+        # Deep kick ducks must not refresh forever; only near-ceiling steady tones.
+        self.assertIn('eq->limiter * 1.002',c)
+        self.assertIn('peak >= 0.97',c)
+        self.assertNotIn('eq->limiter * 1.005',c)
     def test_native_envelopes_and_band_widths_are_consistent(self):
         core=(R/'Sonivo/playercore.swift').read_text()
         dual=(R/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
         for text in [core,dual]:
-            for value in ['kLimiterParam_AttackTime','kLimiterParam_DecayTime','kLimiterParam_PreGain','0.024','0.120']:
+            for value in ['kLimiterParam_AttackTime','kLimiterParam_DecayTime','kLimiterParam_PreGain','0.040','0.080']:
                 self.assertIn(value,text)
         limits=(R/'Sonivo/EQGainLimits.swift').read_text()
-        self.assertIn('[31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]',limits)
-        self.assertIn('if band == 0 || band == last { return 0.70 }',limits)
-        self.assertIn('return 1.0',limits)
-        self.assertIn('0.70, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.70',dual)
-        self.assertIn('EQGainLimits.bandwidth(at:0) == 0.70',(R/'.github/scripts/check_eq_user_presets.py').read_text())
+        self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',limits)
+        self.assertIn('case 0: return 0.90',limits)
+        self.assertIn('case 1: return 0.65',limits)
+        self.assertIn('0.90, 0.65, 0.80',dual)
+        self.assertIn('EQGainLimits.bandwidth(at:0) == 0.90',(R/'.github/scripts/check_eq_user_presets.py').read_text())
     def test_geometry_animates_without_animating_the_audio_controls(self):
         shapes=(R/'Sonivo/EQResponseShapes.swift').read_text()
         ui=(R/'Sonivo/playerchrome.swift').read_text()
@@ -48,20 +52,18 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('graphHitBand(x:x,y:y',fixture)
         self.assertIn('graphHitBand(x:.nan',fixture)
 
-    def test_standard_ten_band_and_symmetric_gain_range_have_real_filters(self):
+    def test_bass_shake_ten_band_and_symmetric_gain_range_have_real_filters(self):
         limits=(R/'Sonivo/EQGainLimits.swift').read_text()
         header=(R/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.h').read_text()
-        self.assertIn('[31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]',limits)
+        self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',limits)
         self.assertIn('static let maximum: Float = 15',limits)
         self.assertIn('-maximum...maximum',limits)
         self.assertIn('#define SONIVO_EQ_BANDS 10',header)
-        self.assertIn('eq.layout.standard10',limits)
+        self.assertIn('eq.layout.bassShake10',limits)
         self.assertIn('EQGainLimits.layoutMarkerKey',(R/'Sonivo/playercore.swift').read_text())
-        self.assertIn('eq.gains.reference6.backup',(R/'Sonivo/playercore.swift').read_text())
-        self.assertIn('eq.gains.bassTight6.backup',(R/'Sonivo/playercore.swift').read_text())
+        self.assertIn('eq.gains.bassShake10.backup',(R/'Sonivo/playercore.swift').read_text())
         self.assertIn('eq.gains.standard10.backup',(R/'Sonivo/playercore.swift').read_text())
-        self.assertIn('eq.userPresets.reference6.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
-        self.assertIn('eq.userPresets.bassTight6.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
+        self.assertIn('eq.userPresets.bassShake10.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
         self.assertIn('eq.userPresets.standard10.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
     def test_manual_haptics_are_shared_by_graph_and_slider_and_obey_settings(self):
         ui=(R/'Sonivo/playerchrome.swift').read_text()

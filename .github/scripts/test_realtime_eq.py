@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
-FREQUENCIES=[31,62,125,250,500,1000,2000,4000,8000,16000]
+FREQUENCIES=[60,120,250,500,1000,2000,4000,8000,12000,16000]
 N=len(FREQUENCIES)
 LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
 def expanded(gains):
@@ -86,9 +86,9 @@ void destroy(void *p) { free(p); }
         for hz in FREQUENCIES[1:-1]:
             gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
             self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),6,delta=.08)
-        # Low peaking (62 Hz) should not lift deep sub or upper mid like a wide shelf.
-        gains=[0]*N;gains[FREQUENCIES.index(62)]=6
-        self.assertLess(self.response(gains,20),2.5)
+        # Kick peaking (120 Hz) should not lift deep sub or upper mid like a wide shelf.
+        gains=[0]*N;gains[FREQUENCIES.index(120)]=6
+        self.assertLess(self.response(gains,30),1.5)
         self.assertLess(self.response(gains,600),1)
     def test_flat_and_disabled_are_exact_bypass(self):
         samples=[.95*math.sin(n*.031) for n in range(5000)]
@@ -144,11 +144,11 @@ void destroy(void *p) { free(p); }
             values=re.search(r'static let '+name+r' = EQPreset\(name: "[^"]+", gains: \[([^\]]+)\]',models).group(1)
             gains=[float(x.strip()) for x in values.split(',')]
             self.assertEqual(len(gains),10)
-            gains=migrated_factory(gains)
+            # Factory curves are authored on the working shake grid already.
             mid=self.response(gains,500)
-            self.assertGreater(self.response(gains,20)-mid,4)
-            self.assertGreater(self.response(gains,63)-mid,2.5)
-            self.assertLess(self.response(gains,250)-mid,2)
+            self.assertGreater(self.response(gains,40)-mid,5)
+            self.assertGreater(self.response(gains,60)-mid,4)
+            self.assertLess(self.response(gains,250)-mid,1)
             # High-level multitone stays finite and below the sample-peak ceiling.
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
             output=self.run_audio(signal,gains)
@@ -267,7 +267,7 @@ void destroy(void *p) { free(p); }
     def test_response_preview_uses_actual_cascade_coefficients(self):
         response=self.lib.SonivoEQResponse
         response.argtypes=[C.POINTER(C.c_float),C.c_size_t,C.c_double,C.POINTER(C.c_float),C.c_size_t]
-        values=(C.c_float*121)();gains=[0]*N;gains[FREQUENCIES.index(1000)]=6;gains[FREQUENCIES.index(62)]=4
+        values=(C.c_float*121)();gains=[0]*N;gains[FREQUENCIES.index(1000)]=6;gains[FREQUENCIES.index(120)]=4
         response(array(gains),N,48000,values,len(values))
         for index in [10,35,68,95,110]:
             hz=20*1000**(index/120)

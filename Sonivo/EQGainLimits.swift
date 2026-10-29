@@ -1,13 +1,16 @@
 import Foundation
 
-/// Standard 10-band octave graphic EQ (music-player quality).
-/// Centers follow the common ISO-ish octave ladder used by consumer players.
-/// Ends are shelves; interior bands are one-octave parametrics — even tone,
-/// no muddy overlapping bass shelves.
+/// 10-band graphic EQ tuned for headphone shake without muddying the mix.
+/// Low shelf sits at 60 Hz (the band that moves drivers); kick peaking is tight
+/// at 120 Hz; 250 Hz stays available to carve mud. Ends are shelves; interior
+/// bands are parametrics with widths chosen so bass boosts don't smear into
+/// the vocal body and then get crushed by the peak guard.
 nonisolated enum EQGainLimits {
     /// Working centers (native AU + streamed PCM + DualDeck).
-    static let frequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
-    /// Prior six-band grids (for one-time log-frequency migration).
+    static let frequencies: [Float] = [60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]
+    /// Prior ISO standard10 ladder — one-time log-frequency migration.
+    static let previousStandard10Frequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+    /// Prior six-band grids.
     static let previousBassTightFrequencies: [Float] = [60, 120, 400, 1000, 2400, 15000]
     static let previousReferenceFrequencies: [Float] = [60, 150, 400, 1000, 2400, 15000]
     static let compact10Frequencies: [Float] = [40, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 15000]
@@ -15,7 +18,7 @@ nonisolated enum EQGainLimits {
     static let denseFrequencies: [Float] = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 500, 1000, 2000, 4000, 8000, 20000]
     static let legacyFrequencies: [Float] = [30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000]
     static let maximum: Float = 15
-    static let layoutMarkerKey = "eq.layout.standard10"
+    static let layoutMarkerKey = "eq.layout.bassShake10"
 
     static func range(at band: Int) -> ClosedRange<Float> { -maximum...maximum }
     static func clean(_ gain: Float, at band: Int) -> Float {
@@ -24,11 +27,18 @@ nonisolated enum EQGainLimits {
         return max(range.lowerBound, min(range.upperBound, gain))
     }
 
-    /// Standard graphic widths: steeper shelves, true 1-oct peaking in between.
+    /// Shelf slope / peaking width in octaves (AVAudioUnitEQ + matching C DSP).
+    /// Low shelf ~0.90: strong 40–80 Hz shake without blanketing 250 Hz.
+    /// Kick 0.65: punch stays above the shelf knee. Mud band slightly tighter.
     static func bandwidth(at band: Int) -> Float {
         let last = frequencies.count - 1
-        if band == 0 || band == last { return 0.70 }
-        return 1.0
+        switch band {
+        case 0: return 0.90
+        case 1: return 0.65
+        case 2: return 0.80
+        case last: return 0.70
+        default: return 1.0
+        }
     }
 
     static func graphX(at band: Int, width: Double) -> Double {
@@ -66,9 +76,9 @@ nonisolated enum EQGainLimits {
         }
     }
     static func normalized(_ gains: [Float]) -> [Float] {
-        // Ten-value arrays share a count across compact/legacy/standard grids —
-        // callers with known centers must resample first. Unmarked six-value
-        // imports assume the last shipping bass-tight centers.
+        // Ten-value arrays share a count across prior 10-band grids — callers
+        // with known centers must resample first. Unmarked six-value imports
+        // assume the last shipping bass-tight centers.
         let expanded: [Float]
         if gains.count == frequencies.count {
             expanded = gains
@@ -90,16 +100,16 @@ nonisolated enum EQFrequencyRegion: Int, CaseIterable, Identifiable {
     var title: String { switch self { case .low: "Низкие"; case .middle: "Средние"; case .high: "Высокие" } }
     var indices: ClosedRange<Int> {
         switch self {
-        case .low: 0...2      // 31–125
-        case .middle: 3...6   // 250–2k
-        case .high: 7...9     // 4k–16k
+        case .low: 0...2      // 60–250
+        case .middle: 3...6   // 500–4k
+        case .high: 7...9     // 8k–16k
         }
     }
     var detail: String {
         switch self {
-        case .low: "31–125 Гц · саб, удар, низ"
-        case .middle: "250 Гц–2 кГц · плотность и голос"
-        case .high: "4–16 кГц · яркость и воздух"
+        case .low: "60–250 Гц · саб, удар, контроль грязи"
+        case .middle: "500 Гц–4 кГц · тело, голос, присутствие"
+        case .high: "8–16 кГц · воздух и шёлк"
         }
     }
     static func containing(_ band: Int) -> Self {
@@ -108,7 +118,7 @@ nonisolated enum EQFrequencyRegion: Int, CaseIterable, Identifiable {
         return .high
     }
     static let bandTitles = [
-        "Саб", "Бас", "Низ", "Плотность", "Тело",
-        "Голос", "Присутствие", "Яркость", "Воздух", "Шёлк"
+        "Саб", "Удар", "Плотность", "Тело", "Голос",
+        "Присутствие", "Яркость", "Воздух", "Блеск", "Шёлк"
     ]
 }

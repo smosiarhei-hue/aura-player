@@ -54,8 +54,8 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 slot.resetFX()
             }
             engine.attach(userEQ)
-            let frequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
-            let widths: [Float] = [0.70, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.70]
+            let frequencies: [Float] = [60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]
+            let widths: [Float] = [0.90, 0.65, 0.80, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.70]
             for (index, band) in userEQ.bands.enumerated() {
                 band.frequency = min(frequencies[index], Float(format.sampleRate * 0.44))
                 band.bandwidth = widths[index]
@@ -69,8 +69,9 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
                 componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
             engine.attach(limiter)
-            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.024, 0)
-            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.120, 0)
+            // Slow attack lets kick transients through; quicker decay restores body.
+            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.040, 0)
+            AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.080, 0)
             AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
             limiter.bypass = true
             engine.connect(userEQ, to: limiter, format: format)

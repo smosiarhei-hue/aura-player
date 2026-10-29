@@ -57,9 +57,13 @@ final class EQUserPresetStore {
                defaults.data(forKey: "eq.userPresets.bassTight6.backup") == nil {
                 defaults.set(data, forKey: "eq.userPresets.bassTight6.backup")
             }
-            if decoded.contains(where: { $0.frequencies != EQGainLimits.frequencies }),
+            if decoded.contains(where: { $0.frequencies == EQGainLimits.previousStandard10Frequencies }),
                defaults.data(forKey: "eq.userPresets.standard10.backup") == nil {
                 defaults.set(data, forKey: "eq.userPresets.standard10.backup")
+            }
+            if decoded.contains(where: { $0.frequencies != EQGainLimits.frequencies }),
+               defaults.data(forKey: "eq.userPresets.bassShake10.backup") == nil {
+                defaults.set(data, forKey: "eq.userPresets.bassShake10.backup")
             }
             presets = decoded.map { preset in
                 let source = preset.frequencies ?? (preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies)
@@ -117,12 +121,14 @@ final class EQUserPresetStore {
         guard !trimmed.isEmpty, trimmed.count <= 64 else { return false }
         if let frequencies = preset.frequencies {
             let known = frequencies == EQGainLimits.frequencies
+                || frequencies == EQGainLimits.previousStandard10Frequencies
                 || frequencies == EQGainLimits.previousBassTightFrequencies
                 || frequencies == EQGainLimits.previousReferenceFrequencies
                 || frequencies == EQGainLimits.compact10Frequencies
                 || frequencies == EQGainLimits.previousCompactFrequencies
             if frequencies == EQGainLimits.frequencies { return validGains(preset.gains) }
-            if frequencies == EQGainLimits.previousBassTightFrequencies
+            if frequencies == EQGainLimits.previousStandard10Frequencies
+                || frequencies == EQGainLimits.previousBassTightFrequencies
                 || frequencies == EQGainLimits.previousReferenceFrequencies {
                 return preset.gains.count == frequencies.count && preset.gains.enumerated().allSatisfy {
                     $0.element.isFinite && EQGainLimits.range(at: $0.offset).contains($0.element)

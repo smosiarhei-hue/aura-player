@@ -42,18 +42,18 @@ import AudioToolbox
         engine.connect(player, to: eq, format: format)
         engine.connect(eq, to: limiter, format: format)
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
-        let frequencies: [Float] = [31,62,125,250,500,1000,2000,4000,8000,16000]
-        let widths: [Float] = [0.70,1,1,1,1,1,1,1,1,0.70]
+        let frequencies: [Float] = [60,120,250,500,1000,2000,4000,8000,12000,16000]
+        let widths: [Float] = [0.90,0.65,0.80,1,1,1,1,1,1,0.70]
         for (i, band) in eq.bands.enumerated() {
             band.frequency=frequencies[i]; band.bandwidth = widths[i]; band.gain=gains[i]; band.bypass=false
             band.filterType = i == 0 ? .lowShelf : (i == frequencies.count - 1 ? .highShelf : .parametric)
         }
-        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.024, 0)
-        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.120, 0)
+        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.040, 0)
+        AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.080, 0)
         AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
         var decay: AudioUnitParameterValue = 0
         precondition(AudioUnitGetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, &decay) == noErr)
-        precondition(abs(decay - 0.120) < 0.0001)
+        precondition(abs(decay - 0.080) < 0.0001)
         eq.globalGain=EQHeadroom.preamp(gains:gains,sampleRate:48000)
         eq.bypass = !enabled
         limiter.bypass = !enabled || !gains.contains { $0 != 0 }
@@ -87,12 +87,12 @@ import AudioToolbox
         let flat=[Float](repeating:0,count:10)
         precondition(EQHeadroom.preamp(gains:flat,sampleRate:48000)==0)
         precondition(EQHeadroom.preamp(gains:[Float](repeating:-12,count:10),sampleRate:48000)==0)
-        var curve=flat;curve[5]=6
+        var curve=flat;curve[4]=6
         let output=try render(gains:curve,hz:1000,amplitude:0.01)
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
         let db=20*log10(rms/(0.01/sqrt(2)))
         precondition(abs(db - Double(6+EQHeadroom.preamp(gains:curve,sampleRate:48000))) < 0.6, "Native center gain incorrect: \(db)")
-        for (band,hz) in [(1,62.0),(3,250.0),(6,2000.0)] {
+        for (band,hz) in [(1,120.0),(2,250.0),(5,2000.0)] {
             var curve=flat;curve[band]=6
             let rendered=try render(gains:curve,hz:hz,amplitude:0.01)
             let rms=sqrt(rendered.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)

@@ -2,11 +2,16 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
-/* Match EQGainLimits.bandwidth(at:) — steeper shelves, true 1-oct peaking. */
+static const double frequencies[SONIVO_EQ_BANDS] = {60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000};
+/* Match EQGainLimits.bandwidth(at:) — shake shelf, tight kick, clean mids. */
 static double bandWidthOctaves(unsigned band) {
-    if (band == 0 || band == SONIVO_EQ_BANDS - 1) return 0.70;
-    return 1.0;
+    switch (band) {
+        case 0: return 0.90;                 /* low shelf — 40–80 Hz shake */
+        case 1: return 0.65;                 /* kick punch */
+        case 2: return 0.80;                 /* mud control */
+        case SONIVO_EQ_BANDS - 1: return 0.70; /* high shelf */
+        default: return 1.0;
+    }
 }
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
 static double cleanGain(double gain, unsigned band) { (void)band; return isfinite(gain) ? clamp(gain, -15, 15) : 0; }
@@ -17,8 +22,8 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     double c = cos(w), sn = sin(w), A = pow(10, gain / 40);
     double b0, b1, b2, a0, a1, a2;
     if (band == 0 || band == SONIVO_EQ_BANDS - 1) {
-        // RBJ shelves with slope S from bandwidth (0.70) — even ends without
-        // the old S=1 blanket that muddied bass boosts into the limiter.
+        // RBJ shelves with slope S from bandwidth — 60 Hz @ 0.90 moves drivers
+        // without the wide S≪1 blanket that pushed mid-bass into the limiter.
         double S = bandWidthOctaves(band);
         double alpha = sn / 2.0 * sqrt((A + 1.0 / A) * (1.0 / fmax(S, 0.2) - 1.0) + 2.0);
         double beta = 2 * sqrt(A) * alpha;
@@ -123,9 +128,10 @@ void SonivoEQPrepare(SonivoRealtimeEQ *eq,double rate) {
     eq->coefficientAlpha=1-exp(-16/(eq->sampleRate*.030));
     eq->sampleAlpha=1-exp(-1/(eq->sampleRate*.025));
     eq->headroomAttackAlpha=1-exp(-1/(eq->sampleRate*.001));
-    // Gentler release so kick boosts aren't heard as "bass cut" after each peak.
-    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.280));
-    eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.035);eq->peakHold=0;
+    // Short hold + moderate release: steady tones stay clean (low THD), but a
+    // single kick duck is not parked across the following bars.
+    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.160));
+    eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.022);eq->peakHold=0;
     memset(eq->z1,0,sizeof(eq->z1)); memset(eq->z2,0,sizeof(eq->z2));
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) eq->current[b]=eq->target[b]=identity();
     eq->wet=0;eq->preGain=1;eq->limiter=1;eq->rampCounter=0;
@@ -191,10 +197,10 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
         double required=peak>.98?.98/peak:1;
         if(required<=eq->limiter) {
             eq->limiter=required;eq->peakHold=eq->peakHoldFrames;
-        } else if(required < 1 && required <= eq->limiter * 1.005) {
-            // Refresh the hold near a recurring crest, even if its required gain
-            // is fractionally above the held transient value. This avoids a
-            // periodic hold/release cycle on a steady bass tone (<=0.043 dB margin).
+        } else if(required < 1 && required <= eq->limiter * 1.002 && peak >= 0.97) {
+            // Steady near-ceiling tone: keep attenuation flat (no THD pump).
+            // Do NOT refresh after a deep kick duck — quieter follow-up crests
+            // fail the 0.97 gate so the mix can release bass body again.
             eq->peakHold=eq->peakHoldFrames;
         } else if(eq->peakHold) {
             eq->peakHold--;

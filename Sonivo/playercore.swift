@@ -137,8 +137,8 @@ final class PlayerCore {
             defaults.set(true,forKey:"eq.bassProfiles.v3")
             defaults.set(true,forKey:"eq.layout.compact10")
         }
-        // One-time upgrade onto the standard ISO 10-band ladder. Historical
-        // compact/dense/6-band eras keep their own backups; never invent a factory curve.
+        // One-time upgrade onto the bass-shake 10-band ladder (60 Hz shelf +
+        // tight 120 Hz kick). Prior ISO/compact/6-band eras keep backups.
         if !defaults.bool(forKey: EQGainLimits.layoutMarkerKey) {
             let sourceGrid: [Float]?
             if gains.count == EQGainLimits.previousBassTightFrequencies.count {
@@ -149,28 +149,40 @@ final class PlayerCore {
                 } else {
                     sourceGrid = EQGainLimits.previousBassTightFrequencies
                 }
-            } else if gains.count == EQGainLimits.compact10Frequencies.count {
-                sourceGrid = EQGainLimits.compact10Frequencies
+            } else if gains.count == EQGainLimits.frequencies.count {
+                if defaults.bool(forKey: "eq.layout.standard10") {
+                    sourceGrid = EQGainLimits.previousStandard10Frequencies
+                } else if defaults.bool(forKey: "eq.layout.compact10") {
+                    sourceGrid = EQGainLimits.compact10Frequencies
+                } else {
+                    sourceGrid = EQGainLimits.previousStandard10Frequencies
+                }
             } else if gains.count == EQGainLimits.denseFrequencies.count {
                 sourceGrid = EQGainLimits.denseFrequencies
             } else {
                 sourceGrid = nil
             }
             if let sourceGrid {
-                if defaults.data(forKey: "eq.gains.standard10.backup") == nil {
+                if defaults.data(forKey: "eq.gains.bassShake10.backup") == nil {
                     if let data = try? JSONEncoder().encode(gains) {
-                        defaults.set(data, forKey: "eq.gains.standard10.backup")
+                        defaults.set(data, forKey: "eq.gains.bassShake10.backup")
                     } else if let originalArchive {
-                        defaults.set(originalArchive, forKey: "eq.gains.standard10.backup")
+                        defaults.set(originalArchive, forKey: "eq.gains.bassShake10.backup")
                     }
+                }
+                if defaults.bool(forKey: "eq.layout.standard10"),
+                   defaults.data(forKey: "eq.gains.standard10.backup") == nil,
+                   let data = try? JSONEncoder().encode(gains) {
+                    defaults.set(data, forKey: "eq.gains.standard10.backup")
                 }
                 if gains.count == EQGainLimits.previousBassTightFrequencies.count,
                    defaults.data(forKey: "eq.gains.bassTight6.backup") == nil,
                    let data = try? JSONEncoder().encode(gains) {
                     defaults.set(data, forKey: "eq.gains.bassTight6.backup")
                 }
-                if gains.count == EQGainLimits.compact10Frequencies.count
-                    || gains.count == EQGainLimits.denseFrequencies.count,
+                if !defaults.bool(forKey: "eq.layout.standard10"),
+                   (gains.count == EQGainLimits.compact10Frequencies.count
+                    || gains.count == EQGainLimits.denseFrequencies.count),
                    defaults.data(forKey: "eq.gains.reference6.backup") == nil,
                    let originalArchive {
                     defaults.set(originalArchive, forKey: "eq.gains.reference6.backup")
@@ -181,6 +193,7 @@ final class PlayerCore {
             if let data = try? JSONEncoder().encode(gains) {
                 defaults.set(data, forKey: eqGainsKey)
                 defaults.set(true, forKey: EQGainLimits.layoutMarkerKey)
+                defaults.set(true, forKey: "eq.layout.standard10")
                 defaults.set(true, forKey: "eq.layout.reference6")
                 defaults.set(true, forKey: "eq.layout.bassTight6")
             }
@@ -769,9 +782,10 @@ final class PlayerCore {
         engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
         engine.attach(outputLimiter)
         // Explicit native envelope within Apple's documented parameter ranges.
-        // Slightly slower attack/decay so boosted kicks aren't crushed into "cut bass".
-        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.024, 0)
-        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.120, 0)
+        // Slow attack lets boosted kicks through; quicker decay restores bass body
+        // instead of parking the mix down (heard as muffled / "cut" bass).
+        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.040, 0)
+        AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.080, 0)
         AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
         // Flat playback bypasses protection; non-flat EQ enables the native peak limiter.
         outputLimiter.bypass = true
