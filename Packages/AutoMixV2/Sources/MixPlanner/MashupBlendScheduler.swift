@@ -107,8 +107,10 @@ public enum MashupBlendScheduler {
         let blend = clamp(min(ladder, availableOutro), min: minimumBlendSec, max: maximumBlendSec)
 
         let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: blend)
+        // Snap both cues to downbeats so B's kick lands in phase with A's grid.
+        let snappedOut = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
         let outCue = clamp(
-            rawOut,
+            snappedOut,
             min: a.durationSec * minimumPlayedFraction,
             max: max(a.durationSec * minimumPlayedFraction, a.durationSec - minimumBlendSec)
         )
@@ -116,14 +118,15 @@ public enum MashupBlendScheduler {
         let naturalBlend = max(minimumBlendSec, a.durationSec - outCue)
         let finalBlend = clamp(min(naturalBlend, max(blend, minimumBlendSec)), min: minimumBlendSec, max: maximumBlendSec)
 
-        let inStart = BeatGridSynchronization.incomingCue(profile: b, duration: finalBlend)
-        let clampedIn = clamp(inStart, min: 0, max: max(0, b.durationSec - finalBlend - 1))
+        let rawIn = BeatGridSynchronization.incomingCue(profile: b, duration: finalBlend)
+        let snappedIn = b.downbeatsSec.min(by: { abs($0 - rawIn) < abs($1 - rawIn) }) ?? rawIn
+        let clampedIn = clamp(snappedIn, min: 0, max: max(0, b.durationSec - finalBlend - 1))
 
         return LiveMashupBlend(
             outgoingCueSec: outCue,
             blendDurationSec: finalBlend,
             incomingStartSec: clampedIn,
-            reason: "Profile mixOut \(fmt(a.mixOutSec)) → cue \(fmt(outCue)), B@\(fmt(clampedIn))"
+            reason: "Profile mashup on grid · A@\(fmt(outCue)) → B@\(fmt(clampedIn)) · \(fmt(finalBlend))"
         )
     }
 

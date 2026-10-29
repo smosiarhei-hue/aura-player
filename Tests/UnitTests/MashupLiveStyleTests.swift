@@ -64,8 +64,8 @@ struct MashupLiveStyleTests {
         #expect(style.phaseLabel(progress: 0.22).contains("KEY SHIFT"))
     }
 
-    @Test("Vocal bed volumes keep A louder while B instrumental sneaks in")
-    func vocalInstrumentalVolumes() {
+    @Test("Mashup volumes keep A+B loud together; B is not a whisper bed")
+    func mashupDualLayerVolumes() {
         var style = MashupLiveStyle.resolve(
             plan: nil,
             outgoing: nil,
@@ -74,14 +74,20 @@ struct MashupLiveStyleTests {
             incomingDuration: 200
         )
         style.isBeatmatched = true
+        style.incomingVolumeLag = 0.06
+        style.outgoingVolumeHold = 0.48
+        style.handoffAt = 0.52
         let early = style.volumes(progress: 0.12)
-        let mid = style.volumes(progress: 0.42)
+        let mid = style.volumes(progress: 0.40)
         let late = style.volumes(progress: 0.92)
-        #expect(early.outgoing > early.incoming)
         #expect(early.outgoing > 0.85)
-        #expect(mid.incoming > 0.35) // audible instrumental bed, not a whisper
-        #expect(mid.outgoing > mid.incoming * 0.55)
+        #expect(early.incoming > 0.55) // next track already in the mashup
+        #expect(mid.incoming > 0.70) // B vocal+instr audible with A
+        #expect(mid.outgoing > 0.40) // A instrumental still layered
         #expect(late.incoming > late.outgoing)
+        #expect(style.phaseLabel(progress: 0.35).contains("MASHUP")
+            || style.phaseLabel(progress: 0.35).contains("BASS")
+            || style.phaseLabel(progress: 0.35).contains("BEATMATCH"))
     }
 
     @Test("Profile tempo match produces beatmatch style")

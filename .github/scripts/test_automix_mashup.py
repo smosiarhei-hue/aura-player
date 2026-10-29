@@ -127,11 +127,23 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("TEMPO LOCK", style)
         self.assertIn("KEY SHIFT", style)
         self.assertIn("TEMPO SETTLE", style)
+        self.assertIn("BASS LOCK", style)
+        self.assertIn("MASHUP", style)
+        self.assertIn("mashupFloor", style)
+        self.assertIn("bass from B", style)
 
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
         self.assertIn("TEMPO LOCK", l10n)
         self.assertIn("KEY SHIFT", l10n)
+        self.assertIn("BASS LOCK", l10n)
+        self.assertIn("Мэшап", l10n)
         self.assertIn("Темпо-лок", l10n)
+
+        scheduler = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupBlendScheduler.swift"
+        ).read_text()
+        self.assertIn("downbeatsSec.min", scheduler)
+        self.assertIn("Profile mashup on grid", scheduler)
 
         analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
         self.assertIn("transitionMode == .automix", analysis)
@@ -147,9 +159,9 @@ class AutoMixMashupTests(unittest.TestCase):
 
     def test_docs_describe_auto_duration_and_live_eq(self):
         docs = (ROOT / "docs/automix-mashup.md").read_text()
-        self.assertIn("инструментал B под вокал A", docs)
-        self.assertIn("Accel", docs)
-        self.assertIn("Key shift", docs)
+        self.assertIn("Бас от следующего", docs)
+        self.assertIn("Мэшап-слой", docs)
+        self.assertIn("BPM / такт", docs)
         self.assertIn("MashupLiveStyle", docs)
         self.assertIn("под каждую пару", docs)
         self.assertIn("MashupLiveEQEnvelope", docs)

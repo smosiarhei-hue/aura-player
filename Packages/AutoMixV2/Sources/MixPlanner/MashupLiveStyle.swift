@@ -177,38 +177,42 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return pitchCentsB * (1 - t)
     }
 
-    // MARK: - Volumes (A vocal over B instrumental bed → handoff → B vocal)
+    // MARK: - Volumes (Apple Automix mashup: A instrumental + B vocal×instr together)
 
+    /// Dual-deck mashup levels — both tracks stay audible on the shared grid.
+    /// A = outro instrumental layer; B = next track already with vocals + instrumental.
+    /// Not a quiet bed under A, and not a simple equal-power crossfade.
     public func volumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
         let hold = min(0.72, max(0.18, outgoingVolumeHold))
-        let lag = min(0.55, max(0.05, incomingVolumeLag))
+        let lag = min(0.28, max(0.02, incomingVolumeLag * 0.55))
         let handoff = min(0.85, max(hold, handoffAt))
-        // Stronger mid bed so the instrumental under A is audible, not a whisper.
-        let bedPeak: Float = isBeatmatched ? 0.58 : 0.48
-        let preHandoffPeak: Float = isBeatmatched ? 0.88 : 0.78
+        // B must be loud enough that its vocal + kick read as a real mashup layer.
+        let mashupFloor: Float = isBeatmatched ? 0.72 : 0.58
+        let mashupPeak: Float = isBeatmatched ? 0.96 : 0.88
 
         let out: Float
         if p <= hold {
-            // Keep A vocals dominant while B instrumental locks underneath.
-            out = 1.0 - Float(p / max(hold, 0.001)) * 0.06
+            // A outro instrumental stays present while B locks in on the grid.
+            out = 1.0 - Float(p / max(hold, 0.001)) * 0.12
         } else if p <= handoff {
             let t = Self.smoothstep((p - hold) / max(0.001, handoff - hold))
-            out = max(0.42, 0.94 * (1 - t * 0.55))
+            out = max(0.38, 0.88 * (1 - t * 0.55))
         } else {
             let t = Self.smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            out = max(0, 0.42 * (1 - t))
+            out = max(0, 0.38 * (1 - t))
         }
 
         let inVol: Float
         if p <= lag {
-            inVol = bedPeak * 0.55 * Self.smoothstep(p / max(lag, 0.001))
+            // Fast rise — next track enters with vocal + instrumental, not a whisper.
+            inVol = mashupFloor * Self.smoothstep(p / max(lag, 0.001))
         } else if p <= handoff {
             let t = Self.smoothstep((p - lag) / max(0.001, handoff - lag))
-            inVol = bedPeak * 0.55 + (preHandoffPeak - bedPeak * 0.55) * t
+            inVol = mashupFloor + (mashupPeak - mashupFloor) * t
         } else {
             let t = Self.smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            inVol = min(1, preHandoffPeak + (1 - preHandoffPeak) * t)
+            inVol = min(1, mashupPeak + (1 - mashupPeak) * t)
         }
         return (out, inVol)
     }
@@ -222,13 +226,13 @@ public struct MashupLiveStyle: Sendable, Equatable {
             let sign = pitchCentsB >= 0 ? "+" : ""
             return String(format: "KEY SHIFT %@%.0f¢", sign, pitchCentsB)
         }
-        if isBeatmatched, p < min(0.28, bassSwapAt) {
+        if isBeatmatched, p < min(0.30, bassSwapAt) {
             return String(format: "BEATMATCH %.0f", targetBPM)
         }
-        if p < bassSwapAt { return "BASS SWAP" }
-        if p < vocalHoldUntil { return "VOCAL × INSTR" }
+        if p < bassSwapAt { return "BASS LOCK" }
+        if p < vocalHoldUntil { return "MASHUP" }
         if p < handoffAt { return "HANDOFF" }
-        if p < vocalPocketUntil { return "VOCAL POCKET" }
+        if p < vocalPocketUntil { return "VOCAL × INSTR" }
         if p < settleStart { return "SOFT REVEAL" }
         return "TEMPO SETTLE"
     }
@@ -249,16 +253,17 @@ public struct MashupLiveStyle: Sendable, Equatable {
         style.rateB = clampRate(plan.rateB)
         style.pitchCentsB = max(-200, min(200, plan.pitchShiftCentsB))
         style.targetBPM = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : 0
-        // Handoff at half the planned bars (drop / phrase center).
-        style.handoffAt = 0.48
-        style.bassSwapAt = min(style.handoffAt, max(0.18, style.handoffAt - 0.18))
-        style.vocalHoldUntil = min(0.72, style.handoffAt + 0.04)
-        style.vocalPocketUntil = min(0.92, style.handoffAt + 0.28)
-        style.outgoingVolumeHold = min(0.6, style.handoffAt - 0.06)
-        style.incomingVolumeLag = max(0.08, style.bassSwapAt * 0.55)
+        // Bass from B locks early; dual-layer mashup fills the window until handoff.
+        style.handoffAt = 0.52
+        style.bassSwapAt = min(style.handoffAt, max(0.14, style.handoffAt - 0.28))
+        style.vocalHoldUntil = min(0.78, style.handoffAt + 0.10)
+        style.vocalPocketUntil = min(0.94, style.handoffAt + 0.30)
+        style.outgoingVolumeHold = min(0.62, style.handoffAt - 0.04)
+        // Short lag so B vocal+instr is in the mashup almost immediately.
+        style.incomingVolumeLag = max(0.04, min(0.14, style.bassSwapAt * 0.35))
         refineWithProfiles(&style, a: outgoing, b: incoming)
         if style.isBeatmatched {
-            style.reason = "Beatmatch \(Int(round(style.targetBPM))) BPM · \(plan.reason)"
+            style.reason = "Beatmatch \(Int(round(style.targetBPM))) BPM · bass from B · \(plan.reason)"
         }
         return style
     }
@@ -324,16 +329,16 @@ public struct MashupLiveStyle: Sendable, Equatable {
         switch archetype {
         case .dropSwap, .beatStutter, .tapeStop:
             return MashupLiveStyle(
-                bassSwapAt: 0.26,
-                vocalHoldUntil: 0.48,
-                vocalPocketUntil: 0.80,
-                handoffAt: 0.48,
-                outgoingVolumeHold: 0.42,
-                incomingVolumeLag: 0.12,
-                bassDepth: 1.35,
-                vocalPocketDepth: 1.35,
-                hpfDepth: 1.2,
-                bodyLift: 1.3,
+                bassSwapAt: 0.22,
+                vocalHoldUntil: 0.58,
+                vocalPocketUntil: 0.84,
+                handoffAt: 0.52,
+                outgoingVolumeHold: 0.48,
+                incomingVolumeLag: 0.06,
+                bassDepth: 1.4,
+                vocalPocketDepth: 0.55,
+                hpfDepth: 1.15,
+                bodyLift: 1.35,
                 rateA: 1, rateB: 1, pitchCentsB: 0, targetBPM: 0,
                 isBeatmatched: false,
                 reason: archetype.rawValue,
@@ -400,36 +405,39 @@ public struct MashupLiveStyle: Sendable, Equatable {
     ) {
         if let a {
             let vocalOut = meanTail(a.vocalPresence) ?? meanTail(a.energyCurve) ?? 0.5
-            if vocalOut > 0.55 {
-                style.vocalHoldUntil = min(0.70, style.vocalHoldUntil + 0.08)
-                style.outgoingVolumeHold = min(0.62, style.outgoingVolumeHold + 0.06)
+            if vocalOut < 0.45 {
+                // Outro already instrumental — keep A as the bed under B's vocal.
+                style.outgoingVolumeHold = min(0.68, style.outgoingVolumeHold + 0.08)
+                style.hpfDepth = min(1.4, style.hpfDepth + 0.1)
+            } else if vocalOut > 0.55 {
+                // Still singing on A → duck A vocal band sooner so B vocal reads clean.
+                style.vocalHoldUntil = max(0.32, style.vocalHoldUntil - 0.06)
             }
             if a.hasFadeOut || a.endsInSilence {
                 style.hpfDepth *= 0.7
                 style.outgoingVolumeHold = max(0.22, style.outgoingVolumeHold - 0.08)
             }
             if !a.dropsSec.isEmpty {
-                style.bassDepth = min(1.4, style.bassDepth + 0.12)
-                // Align bass swap toward first late drop relative to mixOut when possible.
-                style.bassSwapAt = max(0.16, style.handoffAt - 0.22)
+                style.bassDepth = min(1.45, style.bassDepth + 0.15)
+                // Hand bass to B early so the next kick owns the groove.
+                style.bassSwapAt = max(0.12, style.handoffAt - 0.30)
             }
         }
         if let b {
             let vocalIn = meanHead(b.vocalPresence) ?? meanHead(b.energyCurve) ?? 0.45
             if vocalIn > 0.5 {
-                // Strong early vocals on B → keep instrumental pocket longer under A.
-                style.vocalPocketDepth = min(1.45, style.vocalPocketDepth + 0.18)
-                style.vocalPocketUntil = min(0.94, max(style.vocalPocketUntil, style.handoffAt + 0.3))
-                style.incomingVolumeLag = min(0.36, style.incomingVolumeLag + 0.06)
-                style.bodyLift = min(1.45, style.bodyLift + 0.18)
+                // B already has vocals — keep them in the mashup (do NOT pocket-duck hard).
+                style.vocalPocketDepth = max(0.35, style.vocalPocketDepth * 0.45)
+                style.incomingVolumeLag = max(0.03, style.incomingVolumeLag * 0.55)
+                style.bodyLift = min(1.5, style.bodyLift + 0.20)
             }
             if b.mixInSec > 12 {
-                style.incomingVolumeLag = min(0.42, style.incomingVolumeLag + 0.08)
-                style.bodyLift = min(1.5, style.bodyLift + 0.12)
+                // Enter past padded intro so B is already in vocal+instr territory.
+                style.bodyLift = min(1.55, style.bodyLift + 0.12)
             }
             if let drop = b.dropsSec.first(where: { $0 >= 8 && $0 <= 48 }) {
-                // Aim handoff so B's early drop lands mid-window.
                 style.handoffAt = min(0.62, max(0.38, style.handoffAt))
+                style.bassSwapAt = min(style.bassSwapAt, max(0.12, style.handoffAt - 0.28))
                 _ = drop
             }
         }

@@ -93,7 +93,8 @@ final class SonivoL10n {
         }
         if !isRussian { return raw }
         switch raw {
-        case "BASS SWAP": return "Смена баса"
+        case "BASS SWAP", "BASS LOCK": return "Бас следующего"
+        case "MASHUP": return "Мэшап"
         case "VOCAL × INSTR", "VOCAL HOLD": return "Вокал × инструмент"
         case "HANDOFF": return "Перехват"
         case "VOCAL POCKET": return "Вокальный карман"

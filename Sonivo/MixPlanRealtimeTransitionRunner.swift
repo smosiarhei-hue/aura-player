@@ -94,84 +94,78 @@ enum MashupLiveEQEnvelope {
         }
     }
 
-    /// Classic DJ drop: kill A lows fast, keep A vocal, B = instrumental bed → vocal open.
+    /// Apple-style mashup: A bass dies so B kick owns the groove; A stays as
+    /// instrumental layer; B vocals + instrumental play together on the grid.
     private static func dropSwap(
         p: Double, bassAt: Double, holdUntil: Double, pocketUntil: Double, handoff: Double,
         bassD: Float, pocketD: Float, hpfD: Float, bodyD: Float
     ) -> (outgoing: [Float], incoming: [Float]) {
-        let outBass = clampDB(-15 * bassD * ramp(p, from: 0.00, to: bassAt * 0.85))
-        let outHPFBody = clampDB(-13 * hpfD * ramp(p, from: 0.04, to: holdUntil))
-        let outHPFMid = clampDB(-12 * hpfD * ramp(p, from: bassAt * 0.55, to: pocketUntil))
-        let outVocalHold = clampDB(4.2 * (1 - ramp(p, from: holdUntil * 0.45, to: holdUntil)))
-        let outVocalDuck = clampDB(-15 * ramp(p, from: holdUntil, to: min(1, pocketUntil + 0.10)))
-        let outVocal = clampDB(outVocalHold + outVocalDuck)
-        let outMidDuck = clampDB(-11 * ramp(p, from: holdUntil, to: 0.96))
-        let outAir = clampDB(-9 * ramp(p, from: handoff, to: 1.00))
+        // A: hand bass to B early; carve A toward instrumental outro.
+        let outBass = clampDB(-15 * bassD * ramp(p, from: 0.00, to: bassAt * 0.75))
+        let outHPFBody = clampDB(-10 * hpfD * ramp(p, from: 0.04, to: holdUntil))
+        let outVocalDuck = clampDB(-12 * ramp(p, from: bassAt * 0.4, to: holdUntil))
+        let outMidKeep = clampDB(3.0 * bodyD * (1 - ramp(p, from: holdUntil, to: pocketUntil)))
+        let outMidDuck = clampDB(-9 * ramp(p, from: handoff, to: 0.98))
+        let outAir = clampDB(-8 * ramp(p, from: handoff, to: 1.00))
 
-        let inBass = clampDB(-15 * bassD * (1 - ramp(p, from: bassAt, to: handoff + 0.12)))
-        let inAirCut = clampDB(-11 * hpfD * (1 - ramp(p, from: holdUntil * 0.65, to: 0.94)))
-        let inPresenceOpen = clampDB(-9 * (1 - ramp(p, from: handoff, to: pocketUntil)))
-        let inVocalPocket = clampDB(-15 * pocketD * (1 - ramp(p, from: holdUntil, to: pocketUntil)))
-        let inBodyLift = clampDB(
-            5.0 * bodyD * ramp(p, from: 0.02, to: bassAt) * (1 - ramp(p, from: holdUntil, to: pocketUntil))
-        )
-        let inMidDuck = clampDB(
-            -9 * ramp(p, from: 0.10, to: bassAt) * (1 - ramp(p, from: holdUntil, to: pocketUntil))
-        )
+        // B: bass locks the shared groove; vocals stay audible (light pocket only).
+        let inBass = clampDB(-15 * bassD * (1 - ramp(p, from: bassAt * 0.35, to: bassAt + 0.12)))
+        let inAirCut = clampDB(-6 * hpfD * (1 - ramp(p, from: 0.05, to: bassAt)))
+        let inVocalSoft = clampDB(-6 * pocketD * (1 - ramp(p, from: 0.0, to: bassAt)))
+        let inBodyLift = clampDB(5.5 * bodyD * ramp(p, from: 0.02, to: bassAt))
+        let inPresence = clampDB(3.2 * (1 - ramp(p, from: handoff, to: pocketUntil)) * ramp(p, from: bassAt, to: handoff))
 
         return (
             [
                 outBass,
-                clampDB(outBass * 0.90),
-                clampDB(outHPFBody + outMidDuck * 0.55),
-                clampDB(outVocal + outHPFMid * 0.40 + outMidDuck * 0.30),
-                clampDB(outVocal * 0.95 + outHPFMid * 0.28),
+                clampDB(outBass * 0.92),
+                clampDB(outHPFBody + outMidKeep * 0.45 + outMidDuck * 0.35),
+                clampDB(outVocalDuck + outMidKeep * 0.55 + outMidDuck * 0.25),
+                clampDB(outVocalDuck * 0.85 + outMidDuck * 0.2),
                 outAir
             ],
             [
                 inBass,
-                clampDB(inBass * 0.90),
-                clampDB(inBodyLift + inMidDuck),
-                clampDB(inVocalPocket * 0.90 + inMidDuck * 0.40),
-                clampDB(inVocalPocket + inPresenceOpen * 0.60),
+                clampDB(inBass * 0.92),
+                clampDB(inBodyLift),
+                clampDB(inVocalSoft * 0.55 + inPresence * 0.35),
+                clampDB(inVocalSoft * 0.35 + inPresence),
                 inAirCut
             ]
         )
     }
 
-    /// Soft HPF + brief co-singing window (compatible keys / same BPM).
+    /// Soft dual-layer: shared grid, early bass from B, both mids audible together.
     private static func seamlessLoop(
         p: Double, bassAt: Double, holdUntil: Double, pocketUntil: Double, handoff: Double,
         bassD: Float, pocketD: Float, hpfD: Float, bodyD: Float
     ) -> (outgoing: [Float], incoming: [Float]) {
-        let outBass = clampDB(-11 * bassD * ramp(p, from: 0.08, to: bassAt))
-        let outHPFBody = clampDB(-7 * hpfD * ramp(p, from: 0.12, to: holdUntil))
-        let outVocalHold = clampDB(2.4 * (1 - ramp(p, from: holdUntil * 0.7, to: handoff)))
-        let outVocalDuck = clampDB(-10 * ramp(p, from: handoff, to: pocketUntil))
-        let outVocal = clampDB(outVocalHold + outVocalDuck)
+        let outBass = clampDB(-13 * bassD * ramp(p, from: 0.04, to: bassAt))
+        let outHPFBody = clampDB(-6 * hpfD * ramp(p, from: 0.10, to: holdUntil))
+        let outVocalDuck = clampDB(-8 * ramp(p, from: holdUntil * 0.6, to: handoff))
         let outAir = clampDB(-5 * ramp(p, from: pocketUntil * 0.9, to: 1.00))
 
-        let inBass = clampDB(-10 * bassD * (1 - ramp(p, from: bassAt * 0.85, to: pocketUntil)))
-        // Soft co-sing: lighter vocal pocket so both voices share a beat.
-        let inVocalPocket = clampDB(-9 * pocketD * (1 - ramp(p, from: holdUntil, to: pocketUntil)))
-        let inBodyLift = clampDB(3.5 * bodyD * ramp(p, from: 0.05, to: bassAt) * (1 - ramp(p, from: handoff, to: pocketUntil)))
-        let inAirCut = clampDB(-6 * hpfD * (1 - ramp(p, from: holdUntil, to: 0.92)))
+        let inBass = clampDB(-12 * bassD * (1 - ramp(p, from: bassAt * 0.4, to: bassAt + 0.15)))
+        // Co-sing / mashup: keep B vocals mostly open.
+        let inVocalSoft = clampDB(-4 * pocketD * (1 - ramp(p, from: 0.0, to: bassAt)))
+        let inBodyLift = clampDB(4.0 * bodyD * ramp(p, from: 0.03, to: bassAt))
+        let inAirCut = clampDB(-4 * hpfD * (1 - ramp(p, from: 0.05, to: bassAt)))
 
         return (
             [
                 outBass,
-                clampDB(outBass * 0.75),
+                clampDB(outBass * 0.8),
                 clampDB(outHPFBody),
-                outVocal,
-                clampDB(outVocal * 0.85),
+                outVocalDuck,
+                clampDB(outVocalDuck * 0.75),
                 outAir
             ],
             [
                 inBass,
-                clampDB(inBass * 0.75),
+                clampDB(inBass * 0.8),
                 inBodyLift,
-                clampDB(inVocalPocket * 0.75),
-                inVocalPocket,
+                clampDB(inVocalSoft * 0.5),
+                inVocalSoft,
                 inAirCut
             ]
         )
