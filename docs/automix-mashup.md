@@ -16,7 +16,8 @@
 
 Если оба трека ещё поют в зоне cue → **ONE VOCAL**:
 - DualDeck: `FxKind.instrumentalize` (karaoke mid-notch, Lab Mid/Side) на A и на B до handoff
-- Live PlayerCore (AVPlayer): `MashupLiveStyle.oneVocalConflict` + `MashupLiveEQEnvelope.applyOneVocalGate`
+- Live PlayerCore: при локальном кэше обоих треков — `MidSideStemBaker` (только окно мэшапа ≤40 с, чанки ~4k кадров → temp CAF, без загрузки всего трека в RAM); иначе fallback `MashupLiveEQEnvelope.applyOneVocalGate`
+- После LAND bake-слайсы удаляются, воспроизведение переключается на реальный файл B
 - Вокал B открывается только на LAND
 
 ## Как это в Sonivo

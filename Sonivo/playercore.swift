@@ -494,6 +494,11 @@ final class PlayerCore {
     private var rateReleaseTimer: Timer?
     /// Per-pair algorithmic mashup style (archetype + profile cues).
     private var activeMashupStyle = MashupLiveStyle.fallback
+    /// Temp CAF slices from MidSideStemBaker (mashup window only). Deleted on complete/cancel.
+    private var mashupBakeTempURLs: [URL] = []
+    /// Real incoming file + cue when mashup plays baked slices from t=0.
+    private var mashupBakeRealIncomingURL: URL?
+    private var mashupBakeIncomingBaseCue: Double = 0
 
     var streamBufferFraction: Double = 0.0
     private(set) var isStreamBuffering = false
@@ -957,7 +962,13 @@ final class PlayerCore {
     /// Publish mashup envelopes to stream taps and/or native EQ decks for any mix of backends.
     /// Writes immediately (no multi-hundred-ms ramp) so 30 Hz transition ticks stay click-free.
     private func applyMashupTransitionEQ(progress: Double) {
-        let shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: activeMashupStyle)
+        // When Mid/Side bake already instrumentalized the window, skip ONE VOCAL EQ gate
+        // so we don't double-carve mids on top of the baked stem.
+        var style = activeMashupStyle
+        if mashupBakeRealIncomingURL != nil {
+            style.oneVocalConflict = false
+        }
+        let shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: style)
         let activeOff = Self.normalized(shaped.outgoing)
         let idleOff = Self.normalized(shaped.incoming)
         if activePlayer === playerA {
@@ -2292,9 +2303,69 @@ final class PlayerCore {
         let targetStream = idleStreamingPlayer
         let targetNode = idlePlayer
         let startAt = incomingStartPosition
+        let outgoingCacheURL = findLocalOrCachedAudioFile(for: current)
+        let cueAForBake = isUsingStreamPlayer ? progress : liveProgress()
         transitionPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                // Lab ONE VOCAL bake: only the mashup window → temp CAF (chunked, low RAM).
+                if mashup,
+                   self.activeMashupStyle.oneVocalConflict,
+                   let outURL = outgoingCacheURL,
+                   let inURL = nextURL ?? self.findLocalOrCachedAudioFile(for: nextTrack) {
+                    let blend = self.transitionDuration
+                    let handoff = self.activeMashupStyle.handoffAt
+                    let cueA = max(0, cueAForBake)
+                    let cueB = max(0, startAt)
+                    let bakeStartedAt = Date()
+                    let baked: (outgoing: URL, incoming: URL)? = await Task.detached(priority: .userInitiated) {
+                        try? MidSideStemBaker.bakeOneVocalPair(
+                            outgoingURL: outURL,
+                            incomingURL: inURL,
+                            cueA: cueA,
+                            cueB: cueB,
+                            blendSec: blend,
+                            handoffProgress: handoff
+                        )
+                    }.value
+                    // Bake ran while live A kept playing — enter the CAF mid-window so the
+                    // playhead doesn't jump backward by the bake latency.
+                    let bakeLag = min(max(0, Date().timeIntervalSince(bakeStartedAt)), max(0, blend - 1.5))
+                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                          self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
+                        if let baked { MidSideStemBaker.removeTempFiles([baked.outgoing, baked.incoming]) }
+                        return
+                    }
+                    if let baked {
+                        self.clearMashupBakeTemps()
+                        self.mashupBakeTempURLs = [baked.outgoing, baked.incoming]
+                        self.mashupBakeRealIncomingURL = inURL
+                        self.mashupBakeIncomingBaseCue = cueB + bakeLag
+                        try self.playMashupFromBakedSlices(
+                            outgoingBake: baked.outgoing,
+                            incomingBake: baked.incoming,
+                            targetNode: targetNode,
+                            startOffsetSec: bakeLag
+                        )
+                        self.incomingLaneReady = true
+                        self.transitionStartTime = Date()
+                        let rates = self.activeMashupStyle.playbackRates(progress: 0)
+                        self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+                        self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
+                        self.applyMashupTransitionEQ(progress: 0)
+                        AutoMixDJEngine.shared.markMashupProgress(0)
+                        AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
+                        AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
+                        SonivoDiagnostics.log(
+                            "[Mashup] ONE VOCAL bake Mid/Side · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
+                            tag: "AUDIO"
+                        )
+                        self.startTransitionTimer()
+                        self.transitionPreparationTask = nil
+                        return
+                    }
+                }
+
                 if self.incomingIsStream {
                     let resolved: URL
                     var resolvedQuality: PlaybackQualityFacts?
@@ -2501,10 +2572,62 @@ final class PlayerCore {
         }
     }
 
+    private func clearMashupBakeTemps() {
+        MidSideStemBaker.removeTempFiles(mashupBakeTempURLs)
+        mashupBakeTempURLs = []
+        mashupBakeRealIncomingURL = nil
+        mashupBakeIncomingBaseCue = 0
+    }
+
+    /// Play Lab-baked mashup slices on native decks.
+    /// `startOffsetSec` skips bake latency so playback aligns with the live playhead.
+    private func playMashupFromBakedSlices(
+        outgoingBake: URL,
+        incomingBake: URL,
+        targetNode: AVAudioPlayerNode,
+        startOffsetSec: Double = 0
+    ) throws {
+        let outFile = try AVAudioFile(forReading: outgoingBake)
+        let inFile = try AVAudioFile(forReading: incomingBake)
+        guard outFile.length > 0, inFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+
+        // Leave AVPlayer; mashup runs on AVAudioEngine with baked PCM.
+        isUsingStreamPlayer = false
+        incomingIsStream = false
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
+        activeStreamingPlayer.volume = 0
+        idleStreamingPlayer.volume = 0
+
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(targetNode))
+        activePlayer.stop()
+        targetNode.stop()
+
+        let offset = max(0, startOffsetSec)
+        activeAudioFile = outFile
+        incomingAudioFile = inFile
+        activeLocalURL = outgoingBake
+        incomingStartPosition = offset
+
+        scheduleLocalSegment(outFile, on: activePlayer, at: offset)
+        scheduleLocalSegment(inFile, on: targetNode, at: offset)
+        activePlayer.volume = 1
+        targetNode.volume = 0
+        if !engine.isRunning { try engine.start() }
+        activePlayer.play()
+        targetNode.play()
+    }
+
     private func completeTransition(to nextTrack: Track) {
         let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
+        let usedBake = mashupBakeRealIncomingURL != nil
         // Local incoming was scheduled at incomingStartPosition; wall-clock elapsed alone would jump back to 0.
-        let nativeIncomingPosition = max(0, incomingStartPosition + elapsed)
+        // Baked slices start at 0 → map back onto the real track cue + elapsed.
+        let nativeIncomingPosition = usedBake
+            ? max(0, mashupBakeIncomingBaseCue + elapsed)
+            : max(0, incomingStartPosition + elapsed)
+        let bakeRealURL = mashupBakeRealIncomingURL
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
@@ -2514,7 +2637,54 @@ final class PlayerCore {
 
         let wasStream = isUsingStreamPlayer
 
-        if incomingIsStream {
+        if usedBake, let realURL = bakeRealURL {
+            // Promote incoming bake deck, then swap baked window → real next track.
+            isUsingStreamPlayer = false
+            streamingPlayerA.pause()
+            streamingPlayerB.pause()
+            let outgoingNode = activeTimePitch
+            let incomingNode = idlePlayer
+            activePlayer.stop()
+            idlePlayer.stop()
+            outgoingNode.rate = 1
+            outgoingNode.pitch = 0
+            outgoingNode.bypass = true
+            localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+            localSegmentTokens.removeValue(forKey: ObjectIdentifier(incomingNode))
+            activePlayer = incomingNode
+            idlePlayer.volume = 0
+            incomingIsStream = false
+            do {
+                let realFile = try AVAudioFile(forReading: realURL)
+                if !engine.isRunning { try engine.start() }
+                activeAudioFile = realFile
+                activeLocalURL = realURL
+                incomingAudioFile = nil
+                clearMashupBakeTemps()
+                scheduleLocalSegment(realFile, on: activePlayer, at: nativeIncomingPosition)
+                activePlayer.volume = 1
+                if isPlaying { activePlayer.play() }
+                applyEQ()
+            } catch {
+                SonivoDiagnostics.log("[Mashup] bake→real reload failed: \(error) — keeping baked B", tag: "AUDIO")
+                // Keep playing baked incoming from elapsed offset (bake timeline starts at 0).
+                activeAudioFile = incomingAudioFile
+                activeLocalURL = activeAudioFile?.url
+                incomingAudioFile = nil
+                activePlayer.volume = 1
+                if let bakedIn = activeAudioFile {
+                    scheduleLocalSegment(bakedIn, on: activePlayer, at: elapsed)
+                    if isPlaying { activePlayer.play() }
+                }
+                if let outBake = mashupBakeTempURLs.first {
+                    MidSideStemBaker.removeTempFiles([outBake])
+                    mashupBakeTempURLs = Array(mashupBakeTempURLs.dropFirst())
+                }
+                mashupBakeRealIncomingURL = nil
+                mashupBakeIncomingBaseCue = 0
+                applyEQ()
+            }
+        } else if incomingIsStream {
             if !wasStream {
                 isUsingStreamPlayer = true
             }
@@ -2578,8 +2748,17 @@ final class PlayerCore {
         streamDuration = nextTrack.duration
 
         // Sync playback progress accurately to the incoming player's actual continuous time
-        let actualTime = isUsingStreamPlayer ? CMTimeGetSeconds(activeStreamingPlayer.currentTime()) : nativeIncomingPosition
-        let resolvedPos = (actualTime.isFinite && actualTime >= 0) ? actualTime : incomingStartPosition
+        let actualTime: Double
+        if usedBake {
+            actualTime = nativeIncomingPosition
+        } else if isUsingStreamPlayer {
+            actualTime = CMTimeGetSeconds(activeStreamingPlayer.currentTime())
+        } else {
+            actualTime = nativeIncomingPosition
+        }
+        let resolvedPos = (actualTime.isFinite && actualTime >= 0)
+            ? actualTime
+            : (usedBake ? nativeIncomingPosition : incomingStartPosition)
         anchorDate = Date()
         anchorOffset = resolvedPos
         pausedProgress = resolvedPos
@@ -2713,6 +2892,7 @@ final class PlayerCore {
         failedPrebufferTrackId = nil
         lastPrebufferAttempt = nil
         stopBeatLoop()
+        clearMashupBakeTemps()
 
         // Unconditionally silence and reset idle deck
         idleStreamingPlayer.pause()
