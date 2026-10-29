@@ -148,6 +148,8 @@ public enum MixPlanner {
         let rawIncoming = BeatGridSynchronization.incomingCue(profile: b, duration: seconds)
         let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
 
+        let conflict = oneVocalConflict(a: a, b: b)
+        let handoffBar = bars * 0.55
         let events = [
             FxEvent(target: .a, kind: .volume, startBar: 0, endBar: bars,
                     fromValue: 0, toValue: -60, curve: .sCurve),
@@ -160,9 +162,13 @@ public enum MixPlanner {
                     fromValue: 1, toValue: 1, curve: .linear),
             FxEvent(target: .b, kind: .bassOn, startBar: min(2, bars / 2), endBar: min(bars, min(2, bars / 2) + 1),
                     fromValue: 1, toValue: 0, curve: .sCurve),
-            // ONE VOCAL: duck B lead through most of the dual-layer window (not only 2 bars).
-            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: max(2, bars * 0.55),
-                    fromValue: -12, toValue: 0, curve: .sCurve),
+            // Lab ONE VOCAL: instrumentalize A (and B until LAND when both leads present).
+            FxEvent(target: .a, kind: .instrumentalize, startBar: 0, endBar: min(2, bars * 0.25),
+                    fromValue: conflict ? 0.55 : 0.25, toValue: conflict ? 1 : 0.75, curve: .sCurve),
+            FxEvent(target: .b, kind: .instrumentalize, startBar: 0, endBar: handoffBar,
+                    fromValue: conflict ? 1 : 0.15, toValue: conflict ? 0.15 : 0, curve: .sCurve),
+            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: handoffBar,
+                    fromValue: conflict ? -14 : -8, toValue: 0, curve: .sCurve),
             // High-Pass Resonant Riser (20 -> 4500 Гц с подъемом Q)
             FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
                     fromValue: 20, toValue: 4500, curve: .exp),
@@ -208,6 +214,7 @@ public enum MixPlanner {
         let rawIncoming = BeatGridSynchronization.incomingCue(profile: b, duration: seconds)
         let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
 
+        let conflict = oneVocalConflict(a: a, b: b)
         var events: [FxEvent] = [
             // Dual-layer: A holds into echo while B locks under, then LAND.
             FxEvent(target: .a, kind: .volume, startBar: bars * 0.35, endBar: bars,
@@ -218,9 +225,13 @@ public enum MixPlanner {
                     fromValue: 0, toValue: 1, curve: .sCurve),
             FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: bars * 0.3,
                     fromValue: 0.85, toValue: 0, curve: .sCurve),
-            // ONE VOCAL: duck B lead until late handoff when A still sings.
+            // Lab ONE VOCAL: instrumentalize both leads until LAND.
+            FxEvent(target: .a, kind: .instrumentalize, startBar: 0, endBar: bars * 0.25,
+                    fromValue: 0.6, toValue: 1, curve: .sCurve),
+            FxEvent(target: .b, kind: .instrumentalize, startBar: 0, endBar: bars * 0.6,
+                    fromValue: conflict ? 1 : 0.35, toValue: conflict ? 0.1 : 0, curve: .sCurve),
             FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: bars * 0.6,
-                    fromValue: -12, toValue: 0, curve: .sCurve),
+                    fromValue: conflict ? -14 : -10, toValue: 0, curve: .sCurve),
             FxEvent(target: .a, kind: .echoOut, startBar: bars * 0.2, endBar: bars,
                     fromValue: 0, toValue: 70, curve: .sCurve, param: 60),
             FxEvent(target: .a, kind: .highPass, startBar: bars * 0.55, endBar: bars,
@@ -360,6 +371,28 @@ public enum MixPlanner {
             loopBarsA: 0, fx: events,
             reason: "Beat Stutter (\(Int(bars)) тактов, \(harmonic.description))"
         )
+    }
+
+    /// Lab ONE VOCAL: both leads present around outro/intro → never stack.
+    private static func oneVocalConflict(a: TrackProfile, b: TrackProfile) -> Bool {
+        let vocalOut = meanTail(a.vocalPresence) ?? meanTail(a.energyCurve) ?? 0.5
+        let vocalIn = meanHead(b.vocalPresence) ?? meanHead(b.energyCurve) ?? 0.45
+        return vocalOut >= 0.42 && vocalIn >= 0.4
+    }
+
+    private static func meanTail(_ values: [Float]) -> Float? {
+        guard !values.isEmpty else { return nil }
+        let start = Int(Double(values.count) * 0.7)
+        let slice = values[start...]
+        guard !slice.isEmpty else { return nil }
+        return slice.reduce(0, +) / Float(slice.count)
+    }
+
+    private static func meanHead(_ values: [Float]) -> Float? {
+        guard !values.isEmpty else { return nil }
+        let end = max(1, Int(Double(values.count) * 0.25))
+        let slice = values[..<end]
+        return slice.reduce(0, +) / Float(slice.count)
     }
 
     private static func crossfade(_ a: TrackProfile, _ b: TrackProfile,

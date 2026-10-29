@@ -29,6 +29,8 @@ public enum FxKind: String, Sendable, Codable, Equatable {
     case volume
     case rateRamp
     case vocalDucking
+    /// 0…1 Mid/Side-style lead cut (Lab `instrAPeak` / `instrBPeak`). Keeps kick/sub, kills center vocal.
+    case instrumentalize
 }
 
 public enum Deck: String, Sendable, Codable, Equatable {

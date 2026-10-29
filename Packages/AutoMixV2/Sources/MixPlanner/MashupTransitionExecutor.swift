@@ -88,7 +88,7 @@ public struct MashupTransitionExecutor: Sendable {
             guard let value = EffectAutomation.value(for: event, atBar: bar) else { continue }
             switch event.kind {
             case .volume, .highPass, .lowPass, .bassKill, .bassOn, .echoOut,
-                 .reverbWash, .tapeStop, .stutter, .vocalDucking:
+                 .reverbWash, .tapeStop, .stutter, .vocalDucking, .instrumentalize:
                 await audio.applyEffect(event.kind, value: value, param: event.param, bpm: bpm, to: event.target)
             case .rateRamp:
                 await audio.setRate(value, for: event.target)

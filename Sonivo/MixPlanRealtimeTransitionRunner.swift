@@ -105,7 +105,8 @@ enum MashupLiveEQEnvelope {
         )
     }
 
-    /// Hard ONE VOCAL: carve A lead early; keep B lead ducked until LAND.
+    /// Lab ONE VOCAL on the live AVPlayer EQ path (no stem bake available):
+    /// A → instrumental shape ASAP; B mid/presence held at floor until LAND.
     private static func applyOneVocalGate(
         _ shaped: (outgoing: [Float], incoming: [Float]),
         p: Double,
@@ -116,22 +117,27 @@ enum MashupLiveEQEnvelope {
     ) -> (outgoing: [Float], incoming: [Float]) {
         var out = shaped.outgoing
         var inn = shaped.incoming
-        // A: kill mid/presence fast so residual lead doesn't stack under B.
-        let outVocalCut = clampDB(-15 * ramp(p, from: 0.0, to: max(0.12, bassAt * 0.55)))
-        let outPresenceCut = clampDB(-12 * hpfD * ramp(p, from: 0.02, to: max(0.18, bassAt)))
+        // A instrumentalize: keep 60/150, carve 400–2400 hard (Lab mid-vocal cut).
+        let outInstr = ramp(p, from: 0.0, to: max(0.1, bassAt * 0.5))
+        let outMidCut = clampDB(-15 * hpfD * outInstr)
+        let outLeadCut = clampDB(-15 * outInstr)
         if out.count >= 6 {
-            out[2] = clampDB(min(out[2], outPresenceCut * 0.7))
-            out[3] = clampDB(min(out[3], outVocalCut))
-            out[4] = clampDB(min(out[4], outVocalCut * 0.9))
+            out[0] = clampDB(max(out[0], 2.5 * outInstr)) // sub keep
+            out[1] = clampDB(max(out[1], 1.5 * outInstr))
+            out[2] = clampDB(min(out[2], outMidCut))
+            out[3] = clampDB(min(out[3], outLeadCut))
+            out[4] = clampDB(min(out[4], outLeadCut))
+            out[5] = clampDB(min(out[5], -8 * outInstr))
         }
-        // B: no lead until handoff — drums/body ok via lows + soft body, mid ducked hard.
-        let inVocalHold = clampDB(
-            -15 * max(1.2, pocketD) * (1 - ramp(p, from: handoff - 0.02, to: min(0.95, handoff + 0.12)))
-        )
+        // B instrumental until handoff — then release into dry lead for LAND.
+        let inInstr = 1 - ramp(p, from: handoff - 0.02, to: min(0.96, handoff + 0.1))
+        let inLeadFloor = clampDB(-15 * max(1.25, pocketD) * inInstr)
         if inn.count >= 6 {
-            inn[2] = clampDB(min(inn[2], inVocalHold * 0.35))
-            inn[3] = clampDB(min(inn[3], inVocalHold))
-            inn[4] = clampDB(min(inn[4], inVocalHold * 0.95))
+            inn[0] = clampDB(max(inn[0], 1.5 * inInstr)) // kick bed
+            inn[2] = clampDB(min(inn[2], inLeadFloor * 0.55))
+            inn[3] = clampDB(min(inn[3], inLeadFloor))
+            inn[4] = clampDB(min(inn[4], inLeadFloor))
+            inn[5] = clampDB(min(inn[5], inLeadFloor * 0.65))
         }
         return (out, inn)
     }

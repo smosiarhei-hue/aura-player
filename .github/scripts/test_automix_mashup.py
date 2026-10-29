@@ -184,6 +184,19 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("kind: .bassKill", planner)
         self.assertIn("kind: .vocalDucking", planner)
         self.assertIn("kind: .echoOut", planner)
+        self.assertIn("kind: .instrumentalize", planner)
+        self.assertIn("oneVocalConflict", planner)
+
+        models = (ROOT / "Packages/AutoMixV2/Sources/MixModels/TransitionModels.swift").read_text()
+        self.assertIn("case instrumentalize", models)
+
+        deck = (ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift").read_text()
+        self.assertIn("case .instrumentalize", deck)
+        self.assertIn("applyInstrumentalize", deck)
+        self.assertIn("numberOfBands: 6", deck)
+
+        executor = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupTransitionExecutor.swift").read_text()
+        self.assertIn(".instrumentalize", executor)
 
     def test_docs_describe_auto_duration_and_live_eq(self):
         docs = (ROOT / "docs/automix-mashup.md").read_text()

@@ -14,7 +14,10 @@
 
 От этого «вау»: **один бас**, **одна вокальная доминанта** (ONE VOCAL — никогда два лида до LAND), стык на **фразе 8/16 тактов**, вход B не с тишины, выход A не в случайный мид-бар.
 
-Если оба трека ещё поют в зоне cue → A режется в instrumental-EQ, B mid/vocal давится до handoff (`MashupLiveStyle.oneVocalConflict` + `MashupLiveEQEnvelope`).
+Если оба трека ещё поют в зоне cue → **ONE VOCAL**:
+- DualDeck: `FxKind.instrumentalize` (karaoke mid-notch, Lab Mid/Side) на A и на B до handoff
+- Live PlayerCore (AVPlayer): `MashupLiveStyle.oneVocalConflict` + `MashupLiveEQEnvelope.applyOneVocalGate`
+- Вокал B открывается только на LAND
 
 ## Как это в Sonivo
 

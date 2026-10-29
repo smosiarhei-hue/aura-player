@@ -281,6 +281,10 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 band.bypass = abs(value) < 0.1
                 let gainDB: Float = value > 0 ? -abs(value) : value
                 band.gain = max(-24, min(0, gainDB))
+            case .instrumentalize:
+                // Lab Mid/Side instrumentalize ≈ karaoke: keep sub, notch lead presence.
+                let amount = min(1, max(0, value))
+                slot.applyInstrumentalize(amount)
             }
         }
     }
@@ -546,8 +550,9 @@ private final class DeckSlot {
     let player = AVAudioPlayerNode()
     // Per-deck DJ FX chain (docs/automix-stage4-acceptance.md):
     // player -> timePitch -> fxEQ -> fxDelay -> dryMixer -> fxMixer -> gainMixer -> mainMixerNode
+    // fxEQ bands: 0 bass · 1 HPF · 2 LPF · 3 vocal duck · 4 mid notch · 5 presence notch (instrumentalize)
     let timePitch = AVAudioUnitTimePitch()
-    let fxEQ = AVAudioUnitEQ(numberOfBands: 4)
+    let fxEQ = AVAudioUnitEQ(numberOfBands: 6)
     let fxDelay = AVAudioUnitDelay()
     let dryMixer = AVAudioMixerNode()
     let fxMixer = AVAudioMixerNode()
@@ -594,6 +599,18 @@ private final class DeckSlot {
         vocal.bandwidth = 1.0
         vocal.gain = 0
         vocal.bypass = true
+        let midNotch = fxEQ.bands[4]
+        midNotch.filterType = .parametric
+        midNotch.frequency = 900
+        midNotch.bandwidth = 1.1
+        midNotch.gain = 0
+        midNotch.bypass = true
+        let presenceNotch = fxEQ.bands[5]
+        presenceNotch.filterType = .parametric
+        presenceNotch.frequency = 2800
+        presenceNotch.bandwidth = 0.9
+        presenceNotch.gain = 0
+        presenceNotch.bypass = true
         fxDelay.wetDryMix = 0
         fxDelay.feedback = 0
         fxDelay.delayTime = 0.375
@@ -606,6 +623,29 @@ private final class DeckSlot {
             timePitch.rate = keptRate
             timePitch.pitch = keptPitch
         }
+    }
+
+    /// Lab-style instrumentalize: cut center lead while keeping kick/sub.
+    func applyInstrumentalize(_ amount: Float) {
+        let a = min(1, max(0, amount))
+        let bass = fxEQ.bands[0]
+        bass.bypass = false
+        bass.gain = 3.5 * a // restore sub like Lab mid-bass keep
+        let vocal = fxEQ.bands[3]
+        vocal.bypass = a < 0.05
+        vocal.frequency = 1600
+        vocal.bandwidth = 1.2
+        vocal.gain = -22 * a
+        let mid = fxEQ.bands[4]
+        mid.bypass = a < 0.05
+        mid.frequency = 850
+        mid.bandwidth = 1.15
+        mid.gain = -18 * a
+        let presence = fxEQ.bands[5]
+        presence.bypass = a < 0.05
+        presence.frequency = 2800
+        presence.bandwidth = 0.85
+        presence.gain = -20 * a
     }
 }
 private struct FadeState {
