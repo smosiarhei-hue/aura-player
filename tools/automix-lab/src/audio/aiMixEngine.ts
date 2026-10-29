@@ -226,14 +226,23 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
 
   let cueA = snapToBar(a.mixOutSec, a.bpm || bpmGrid);
   let cueB = snapToBar(b.mixInSec, b.bpm || bpmGrid);
-  cueA = Math.min(Math.max(a.durationSec * 0.75, cueA), Math.max(0, a.durationSec - barSec * 4));
-  cueB = Math.min(Math.max(0, cueB), Math.max(0, b.durationSec * 0.28));
 
-  const availableOutro = Math.max(barSec * 4, a.durationSec - cueA);
+  // Hard guarantee: at least 8 bars (or 16s) of A remain after cue for the mashup.
+  const minOutroSec = Math.max(16, barSec * 8);
+  const latestCueA = Math.max(0, a.durationSec - minOutroSec);
+  const earliestCueA = Math.min(latestCueA, a.durationSec * 0.7);
+  cueA = Math.min(latestCueA, Math.max(earliestCueA, cueA));
+  cueA = snapToBar(cueA, a.bpm || bpmGrid);
+  if (cueA > latestCueA) cueA = Math.max(0, latestCueA - (latestCueA % Math.max(barSec, 0.001)));
+
+  cueB = Math.min(Math.max(0, cueB), Math.max(0, b.durationSec * 0.28));
+  cueB = snapToBar(cueB, b.bpm || bpmGrid);
+
+  const availableOutro = Math.max(minOutroSec, a.durationSec - cueA);
   const bars = phraseBars(availableOutro, barSec, archetype);
   params.blendDurationSec = Math.min(
     36,
-    Math.max(barSec * 4, Math.min(bars * barSec, availableOutro))
+    Math.max(barSec * 8, Math.min(bars * barSec, availableOutro))
   );
   params.cueASec = cueA;
   params.cueBSec = cueB;

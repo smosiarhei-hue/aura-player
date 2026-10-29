@@ -142,40 +142,52 @@ function meanSlice(values: number[], from: number, to: number): number {
   return s / (b - a);
 }
 
-/** Mix-out: start of outro — last sustained quieter / instrumental region near the end. */
+/**
+ * Mix-out: where a DJ would start the blend — must leave a real phrase of audio
+ * after the cue (16–32s), not the last 1–2 seconds of the file.
+ */
 function detectMixOut(energy: number[], vocal: number[], duration: number): { mixOut: number; fade: boolean; silent: boolean } {
   const n = energy.length;
-  if (n < 8) return { mixOut: Math.max(0, duration - 16), fade: false, silent: false };
+  // Always leave room for an 8–16 bar mashup window.
+  const minTailSec = duration > 150 ? 32 : duration > 100 ? 24 : 16;
+  const fallback = Math.max(0, duration - minTailSec);
+  if (n < 8) return { mixOut: fallback, fade: false, silent: false };
 
-  const floor = Math.floor(n * 0.75);
-  const tail = energy.slice(Math.floor(n * 0.85));
   const silent = meanSlice(energy, n * 0.92, n) < 0.08;
   const fade = meanSlice(energy, n * 0.7, n * 0.85) > meanSlice(energy, n * 0.9, n) * 1.35;
 
-  // Find earliest point in last 25% where energy stays below mid-track average * 0.85
-  // OR vocal drops (instrumental outro) while energy remains.
   const bodyMean = meanSlice(energy, n * 0.2, n * 0.6);
   const vocalBody = meanSlice(vocal, n * 0.2, n * 0.6);
 
-  let mixIdx = floor;
-  for (let i = floor; i < n - 4; i++) {
-    const localE = meanSlice(energy, i, i + 4);
-    const localV = meanSlice(vocal, i, i + 4);
-    const instrumentalOutro = localV < vocalBody * 0.55 && localE > 0.12;
-    const softOutro = localE < bodyMean * 0.75;
-    if (instrumentalOutro || softOutro) {
-      mixIdx = i;
-      break;
+  // Search last 35% for vocal drop / soft outro, but never past (duration - minTail).
+  const searchStart = Math.floor(n * 0.65);
+  const searchEnd = Math.max(searchStart + 4, Math.floor((duration - minTailSec) / HOP_SEC));
+
+  let bestIdx = Math.floor(fallback / HOP_SEC);
+  let bestScore = -1;
+  for (let i = searchStart; i < Math.min(n - 4, searchEnd); i++) {
+    const localE = meanSlice(energy, i, i + 6);
+    const localV = meanSlice(vocal, i, i + 6);
+    const nextV = meanSlice(vocal, i + 4, Math.min(n, i + 12));
+    // Prefer: vocals dropping while bed still has energy (classic instrumental outro).
+    const vocalDrop = vocalBody > 0.2 && localV < vocalBody * 0.6 && nextV <= localV * 1.1;
+    const softOutro = localE < bodyMean * 0.8;
+    const score =
+      (vocalDrop ? 2.5 : 0) +
+      (softOutro ? 1 : 0) +
+      (1 - localV) * 0.8 +
+      Math.min(1, localE) * 0.3;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
     }
   }
 
-  // Prefer ~8–16s before end when track is long
-  const sec = mixIdx * HOP_SEC;
-  const minPlayed = duration * 0.75;
-  const idealTail = duration > 140 ? 24 : 16;
-  const capped = Math.min(sec, Math.max(minPlayed, duration - idealTail));
-  const mixOut = Math.max(minPlayed, Math.min(capped, duration - 6));
-  void tail;
+  let mixOut = bestIdx * HOP_SEC;
+  // Clamp: after 70% of track, before minTail from end.
+  const earliest = duration * 0.7;
+  const latest = Math.max(earliest, duration - minTailSec);
+  mixOut = Math.min(latest, Math.max(earliest, mixOut));
   return { mixOut, fade, silent };
 }
 
