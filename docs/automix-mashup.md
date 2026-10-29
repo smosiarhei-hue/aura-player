@@ -31,3 +31,13 @@ Ownership force-disabled. Live путь: beatmatch + bass-from-B + dual-layer ma
 ## Как слушать
 
 Настройки → Переходы → **AutoMix Mashup**. Длительность окна — из outro/intro и плана, не из слайдера.
+
+## Automix Lab (на компьютере)
+
+Локальный стенд для подбора сведения на слух: два файла → mashup → ручные ручки → JSON-пресет.
+
+```bash
+cd tools/automix-lab && npm install && npm run dev
+```
+
+Открой http://127.0.0.1:43187 — см. `tools/automix-lab/README.md`.
