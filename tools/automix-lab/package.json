@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "smoke:tz": "node scripts/smoke-tz-planner.mjs",
+    "smoke:mashup": "node scripts/smoke-modern-mashup.mjs",
     "analyze:pair": "node scripts/analyze-pair.mjs"
   },
   "devDependencies": {

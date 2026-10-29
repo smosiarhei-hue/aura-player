@@ -18,6 +18,7 @@ import {
   transitionTypeLabel,
   type TransitionType,
 } from "./transitionPlanner";
+import { chooseModernMashup } from "./modernMashup";
 
 export type AIMixPlan = {
   params: MashupParams;
@@ -97,10 +98,10 @@ function phraseBars(
 /**
  * Build DSP recipe from measured vocal/energy at the actual cues.
  *
- * ONE VOCAL RULE (Apple / club mashup grammar):
- *   A instrumental × B vocal  → stack OK (the desired mashup)
- *   A vocal × B instrumental  → OK (A still leads)
- *   A vocal × B vocal         → NEVER — cut one lead before the other opens
+ * Modern mashup grammar (see modernMashup.ts):
+ *   A instrumental bed × B vocal  → the remix bar we want
+ *   Never two leads at once — but B vocal opens on mashup peak once A is carved,
+ *   not only at LAND (that killed the dual-layer magic).
  */
 function buildDspRecipe(
   a: TrackAIProfile,
@@ -113,73 +114,79 @@ function buildDspRecipe(
 ): AutoDspRecipe {
   const dsp = defaultDsp();
   const decisions: string[] = [];
-  const aHasVocal = vocalOut >= 0.42;
-  const bHasVocal = vocalIn >= 0.4;
+  const craft = chooseModernMashup(
+    vocalOut,
+    vocalIn,
+    params.bassSwapAt,
+    params.handoffAt
+  );
+  dsp.mashupMode = craft.mode;
+  dsp.sidechainA = craft.sidechainA;
+  decisions.push(`Mashup craft: ${craft.label} — ${craft.story}`);
 
-  // --- Case 1: ideal — A outro already instrumental, B has vocal ---
-  if (!aHasVocal && bHasVocal) {
-    dsp.instrAPeak = 0.12;
-    dsp.instrAAt = 0.2;
-    dsp.instrBPeak = 0;
-    dsp.instrBUntil = 0.05;
-    dsp.vocalBPeak = vocalIn >= 0.55 ? 0.9 : 0.7;
-    dsp.vocalBAt = 0.04;
-    dsp.vocalDuckBDb = -1.5;
-    dsp.bakeInstrA = false;
-    dsp.bakeInstrB = false;
-    dsp.bakeVocalB = true;
-    dsp.bakeStems = true;
-    decisions.push("ONE VOCAL: A уже инструментал → вокал B сразу поверх");
-  }
-  // --- Case 2: conflict — both leads present ---
-  else if (aHasVocal && bHasVocal) {
-    // Hard rule: only one lead in the dual-layer window.
-    // Bake A+B instrumental until handoff; open B vocal only at LAND.
-    const handoff = Math.min(0.72, Math.max(0.45, params.handoffAt));
-    dsp.instrAPeak = 1;
-    dsp.instrAAt = Math.min(0.12, Math.max(0.05, params.bassSwapAt * 0.35));
-    dsp.instrBPeak = 1;
-    dsp.instrBUntil = handoff; // hold B instrumental through the whole mashup
-    dsp.vocalBPeak = 0.9;
-    dsp.vocalBAt = handoff + 0.04; // never under A
-    dsp.vocalDuckBDb = -14;
-    dsp.bakeInstrA = true;
-    dsp.bakeInstrB = true; // CRITICAL: live Mid/Side alone leaks B vocal
-    dsp.bakeVocalB = false;
-    dsp.bakeStems = true;
-    decisions.push(
-      "ONE VOCAL: конфликт → bake A+B instrumental до handoff, вокал B только на LAND"
-    );
-  }
-  // --- Case 3: A still sings, B is instrumental bed ---
-  else if (aHasVocal && !bHasVocal) {
-    dsp.instrAPeak = 0.55; // soft carve, A may keep some presence
-    dsp.instrAAt = 0.35;
-    dsp.instrBPeak = 0;
-    dsp.instrBUntil = 0.1;
-    dsp.vocalBPeak = 0.15;
-    dsp.vocalBAt = 0.5;
-    dsp.vocalDuckBDb = -3;
-    dsp.bakeInstrA = vocalOut >= 0.55;
-    dsp.bakeInstrB = false;
-    dsp.bakeVocalB = false;
-    dsp.bakeStems = dsp.bakeInstrA;
-    decisions.push("ONE VOCAL: вокал A × инструментал B — B без vocalize");
-  }
-  // --- Case 4: both instrumental-ish ---
-  else {
-    dsp.instrAPeak = 0.15;
-    dsp.instrAAt = 0.25;
-    dsp.instrBPeak = 0;
-    dsp.instrBUntil = 0.1;
-    dsp.vocalBPeak = 0.2;
-    dsp.vocalBAt = 0.25;
-    dsp.vocalDuckBDb = -2;
-    dsp.bakeInstrA = false;
-    dsp.bakeInstrB = false;
-    dsp.bakeVocalB = false;
-    dsp.bakeStems = false;
-    decisions.push("Оба инструментальны — текстурный мэшап без stem bake");
+  switch (craft.mode) {
+    case "acapellaDrop": {
+      dsp.instrAPeak = craft.bakeInstrA ? 0.45 : 0.12;
+      dsp.instrAAt = craft.aInstrReadyAt;
+      dsp.instrBPeak = 0;
+      dsp.instrBUntil = 0.04;
+      dsp.vocalBPeak = vocalIn >= 0.55 ? 0.95 : 0.78;
+      dsp.vocalBAt = craft.bVocalOpenAt;
+      dsp.vocalDuckBDb = -1.2;
+      dsp.bakeInstrA = craft.bakeInstrA;
+      dsp.bakeInstrB = false;
+      dsp.bakeVocalB = true;
+      dsp.bakeStems = true;
+      decisions.push("Acapella Drop: B vocal поверх A bed с первых тактов");
+      break;
+    }
+    case "vocalSwap": {
+      // Carve A fast → B groove → open B lead on mashup peak (A already instr).
+      dsp.instrAPeak = 1;
+      dsp.instrAAt = craft.aInstrReadyAt;
+      dsp.instrBPeak = 1;
+      dsp.instrBUntil = craft.bVocalOpenAt;
+      dsp.vocalBPeak = 0.95;
+      dsp.vocalBAt = craft.bVocalOpenAt;
+      dsp.vocalDuckBDb = -10;
+      dsp.bakeInstrA = true;
+      dsp.bakeInstrB = true;
+      dsp.bakeVocalB = false;
+      dsp.bakeStems = true;
+      decisions.push(
+        `Vocal Swap: bake A instr + B instr→dry @ ${(craft.bVocalOpenAt * 100) | 0}% (мэшап-пик, не LAND)`
+      );
+      break;
+    }
+    case "textureBed": {
+      dsp.instrAPeak = 0.55;
+      dsp.instrAAt = craft.aInstrReadyAt;
+      dsp.instrBPeak = 0;
+      dsp.instrBUntil = 0.1;
+      dsp.vocalBPeak = 0.12;
+      dsp.vocalBAt = 0.55;
+      dsp.vocalDuckBDb = -3;
+      dsp.bakeInstrA = craft.bakeInstrA;
+      dsp.bakeInstrB = false;
+      dsp.bakeVocalB = false;
+      dsp.bakeStems = craft.bakeInstrA;
+      decisions.push("Texture Bed: вокал A × инструментал B");
+      break;
+    }
+    default: {
+      dsp.instrAPeak = 0.18;
+      dsp.instrAAt = 0.22;
+      dsp.instrBPeak = 0;
+      dsp.instrBUntil = 0.1;
+      dsp.vocalBPeak = 0.18;
+      dsp.vocalBAt = 0.28;
+      dsp.vocalDuckBDb = -2;
+      dsp.bakeInstrA = false;
+      dsp.bakeInstrB = false;
+      dsp.bakeVocalB = false;
+      dsp.bakeStems = false;
+      decisions.push("Instrumental Wash: текстурный мэшап без stem bake");
+    }
   }
 
   // --- Filters / echo by TZ transition type (via archetype) ---
@@ -221,7 +228,7 @@ function buildDspRecipe(
       decisions.push("FX: Smart Crossfade — мягкий fallback");
       break;
     default: // dropSwap = EQ Blend / Bass Swap
-      dsp.lpfBPeak = aHasVocal && bHasVocal ? 0.75 : 0.65;
+      dsp.lpfBPeak = craft.mode === "vocalSwap" ? 0.75 : 0.65;
       dsp.hpfAPeak = 0.85;
       dsp.echoAPeak = 0.55;
       decisions.push("FX: EQ Blend / Bass Swap — один бас + LAND echo");
@@ -423,17 +430,27 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
 
   params.dsp = buildDspRecipe(a, b, params, vocalOut, vocalIn, energyOut, energyIn);
 
-  if (params.dsp.instrBPeak >= 0.5) {
-    // Keep B instrumental through handoff; open B vocal only after A yields.
-    const land = Math.min(0.72, Math.max(params.handoffAt, params.dsp.instrBUntil));
-    params.handoffAt = land;
-    params.dsp.instrBUntil = land;
-    params.dsp.vocalBAt = Math.min(0.85, land + 0.04);
+  // Vocal Swap: keep handoff after B vocal opens so LAND still has a phrase of dual layer.
+  if (params.dsp.mashupMode === "vocalSwap" && params.dsp.instrBPeak >= 0.5) {
+    const open = params.dsp.vocalBAt;
+    params.handoffAt = Math.min(0.78, Math.max(open + 0.12, params.handoffAt));
+    params.dsp.instrBUntil = open;
+    // Dual-layer volumes: hold A texture through the remix bar.
+    params.outgoingVolumeHold = Math.min(params.outgoingVolumeHold, Math.max(0.22, open - 0.04));
   }
+
+  const craftLabel =
+    params.dsp.mashupMode === "acapellaDrop"
+      ? "B vocal early"
+      : params.dsp.mashupMode === "vocalSwap"
+        ? "Vocal Swap"
+        : vocalOut < 0.42
+          ? "INVITE B vocal"
+          : "INVITE B drums";
 
   const story = [
     transitionTypeLabel(decision.type),
-    vocalOut < 0.42 ? "INVITE B vocal" : "INVITE B drums",
+    craftLabel,
     decision.type === "cutOnOne" ? "CUT" : "ONE BASS",
     decision.type === "echoOut" ? "ECHO→LAND" : "MASHUP→LAND",
   ].join(" → ");
@@ -441,6 +458,7 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   const processing = [
     `TZ type: ${transitionTypeLabel(decision.type)} · ${decision.reason}`,
     `Key A ${a.camelotKey ?? "?"} → B ${b.camelotKey ?? "?"} · ${decision.harmonic.description}`,
+    `Mashup: ${params.dsp.mashupMode} · sidechain A ${(params.dsp.sidechainA * 100) | 0}%`,
     beatmatched
       ? `beatmatch → ${Math.round(params.targetBPM)} BPM (A×${params.rateA.toFixed(3)} B×${params.rateB.toFixed(3)})`
       : `no forced beatmatch · rates A×${params.rateA.toFixed(3)} B×${params.rateB.toFixed(3)}`,
@@ -448,7 +466,7 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
       ? `Camelot pitch B ${params.pitchCentsB >= 0 ? "+" : ""}${params.pitchCentsB | 0}¢`
       : null,
     `cues A@${cueA.toFixed(1)}s → B@${cueB.toFixed(1)}s · ${bars | 0} bars · ${params.blendDurationSec.toFixed(1)}s`,
-    `vocalOut ${(vocalOut * 100) | 0}% / vocalIn ${(vocalIn * 100) | 0}%`,
+    `vocalOut ${(vocalOut * 100) | 0}% / vocalIn ${(vocalIn * 100) | 0}% · B vocal @ ${((params.dsp.vocalBAt * 100) | 0)}%`,
     ...params.dsp.decisions,
   ].filter(Boolean) as string[];
 

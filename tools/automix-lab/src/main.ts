@@ -19,9 +19,10 @@ app.innerHTML = `
   <header class="hero">
     <h1>Automix <span>Lab</span></h1>
     <p>
-      По ТЗ AutoMix: анализ BPM + Key/Camelot → Transition Planner §2.4
-      (EQ Blend / Filter Sweep / Echo Out / Long Blend / Cut / Smart Crossfade)
-      → bake стемов → LOCK→LAND. Один клик <strong>AI Auto Mix</strong>.
+      Современный мэшап-переход: анализ BPM + Key/Camelot → тип §2.4 →
+      craft (Acapella Drop / Vocal Swap) → offline bake вокал/инструментал
+      A+B на окне сведения → sidechain → LOCK→MASHUP→LAND.
+      Один клик <strong>AI Auto Mix</strong>.
     </p>
     <p class="hint" style="margin-top:8px">
       <a href="/iphone.html" style="color:var(--accent);font-weight:700">iPhone 17 Pro макет Sonivo →</a>

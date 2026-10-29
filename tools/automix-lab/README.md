@@ -1,7 +1,7 @@
-# Automix Lab · AI + DSP Toolkit
+# Automix Lab · Modern Mashup
 
-Локальный стенд: AI разбирает треки и сводит пару как Apple Music Automix.
-DSP-инструменты написаны с нуля на Web Audio (не только volume/EQ envelopes).
+Локальный стенд: AI разбирает пару треков и сводит **окно автомикса** как современный
+мэшап — инструментал A × вокал/грув B, один бас, фраза 8/16 тактов. Не radio-crossfade.
 
 ## Запуск
 
@@ -13,54 +13,49 @@ npm run dev
 
 Открой [http://127.0.0.1:43187](http://127.0.0.1:43187).
 
-Макет приложения на iPhone 17 Pro: [http://127.0.0.1:43187/iphone.html](http://127.0.0.1:43187/iphone.html) —
-плеер с Автомикс, DSP-инструменты (вокал/инструментал, HPF, echo) и ручная настройка.
+Макет iPhone: [http://127.0.0.1:43187/iphone.html](http://127.0.0.1:43187/iphone.html).
+
+## Modern mashup craft (`modernMashup.ts`)
+
+| Режим | Когда | Что слышно |
+|---|---|---|
+| **Acapella Drop** | A outro уже инструментал, B с вокалом | B vocal сразу поверх A bed + sidechain |
+| **Vocal Swap** | оба ещё поют | Carve A → B groove → B vocal на mashup-пике × A instr |
+| **Texture Bed** | A поёт, B инструментал | Мягкий carve A × bed B |
+| **Instrumental Wash** | оба beds | Фильтры / текстура |
+
+ONE VOCAL: никогда два лида сразу. Но B vocal открывается на **mashup peak**
+(когда A уже bed), а не только на LAND — иначе мэшапа не слышно.
 
 ## DSP toolkit (`src/dsp/`)
 
 | Модуль | Что делает |
 |---|---|
-| `vocalInstrumental.ts` | Mid/Side: удаление вокала (instrumentalize) / фокус вокала (vocalize); offline `processBufferStem` |
-| `bassEq.ts` | Bass kill/on (lowshelf), mid vocal pocket, air shelf |
-| `filters.ts` | HPF riser на уходящем, LPF reveal на входящем |
-| `echo.ts` | Tempo-sync echo-out (0.75 beat delay + feedback LPF) |
-| `stemEnvelopes.ts` | Огибающие stem/FX по DJ-актам LOCK→LAND |
+| `vocalInstrumental.ts` | Multiband Mid/Side bake; `bakeInstrThenDry`; `applySidechainDuck` |
+| `bassEq.ts` | Bass kill/on, mid pocket, air |
+| `filters.ts` | HPF riser / LPF reveal |
+| `echo.ts` | Tempo-sync echo-out |
+| `stemEnvelopes.ts` | Огибающие stem/FX по актам |
 
-Цепь каждой деки:
+Цепь деки:
 
 ```
 source → MidSideStem → BassEq → HPF/LPF → EchoOut → Gain → master
 ```
 
-Preview-кнопки в UI: **Preview A instrumental** / **Preview B vocal** — offline Mid/Side render.
+Offline bake режет **только окно** сведения (не весь трек), затем dual-deck play.
 
-## Что делает AI (ТЗ AutoMix / Intelligent Transitions)
+## AI пайплайн
 
-На каждый файл: BPM, **Key → Camelot** (chroma + Krumhansl), energy, vocal proxy, mixOut/mixIn.  
-По паре (`planAutomix` + `transitionPlanner` §2.4):
-
-| Условие | Тип |
-|---|---|
-| BPM Δ > 8% и ключи несовместимы | Echo Out / Cut on the 1 |
-| Ключи совместимы + BPM близки | EQ Blend / Long Blend |
-| Высокий energy shift | Filter Sweep |
-| Короткий outro | Echo Out |
-| Иначе | Smart Crossfade |
-
-Плюс: beatmatch (если viable), Camelot pitch ±200¢, cues на тактах, one-vocal rule, one-bass.
-
-**✦ AI Auto Mix** — полный автопайплайн:
-
-1. анализ A/B (BPM, Key/Camelot, vocal, mixIn/Out)  
-2. Transition Planner выбирает тип §2.4  
-3. `planAutomix` → DSP recipe (стемы / bass / HPF / echo / cut)  
-4. **offline bake** Mid/Side + dual-deck play  
-
-В UI: бейдж `TZ · <тип> · KeyA → KeyB` и список решений под транспортом.
+1. Анализ A/B — BPM, Key/Camelot, vocal, mixIn/Out  
+2. Transition Planner §2.4 — EQ Blend / Filter / Echo / Long / Cut / Smart  
+3. `chooseModernMashup` + `planAutomix` — craft + DSP recipe  
+4. Offline bake стемов + sidechain A under B  
+5. Play LOCK → INVITE → ONE BASS → **MASHUP** → LAND  
 
 ## DJ 5 актов
 
-`LOCK` → `INVITE B` → `ONE BASS` → `MASHUP` → `LAND`  
+`LOCK` → `INVITE B` / `ACAPELLA` → `ONE BASS` / `VOCAL SWAP` → `MASHUP` → `LAND`  
 (см. `src/audio/djCraft.ts`)
 
 ## Связь с Sonivo iOS
@@ -68,12 +63,12 @@ Preview-кнопки в UI: **Preview A instrumental** / **Preview B vocal** —
 | Lab | iOS |
 |---|---|
 | `analyzeTrackBuffer` | `TrackAnalyzer` |
-| `planAutomix` | `MixPlanner` + `MashupLiveStyle.resolve` |
-| DSP chain | DualDeck FX + `MashupLiveEQEnvelope` |
+| `modernMashup` + `planAutomix` | `MixPlanner` + `MashupLiveStyle` |
+| stem bake + sidechain | `MidSideStemBaker` (master CAF) |
 | Play mashup | PlayerCore AutoMix Mashup |
 
 ## Ограничения
 
-- Mid/Side ≠ Demucs stems (клубный karaoke-трюк, слышимо и полезно)
+- Mid/Side ≠ Demucs stems (клубный karaoke-трюк)
 - Rate «виниловый» (темп+питч)
 - Файлы только локально в браузере

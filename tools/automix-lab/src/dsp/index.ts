@@ -15,6 +15,7 @@ export {
   processBufferStem,
   bakeStemSlice,
   bakeInstrThenDry,
+  applySidechainDuck,
   sliceBuffer,
   type StemMode,
 } from "./vocalInstrumental";

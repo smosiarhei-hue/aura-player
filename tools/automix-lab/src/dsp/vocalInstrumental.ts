@@ -34,7 +34,11 @@ function range(n: number): number[] {
   return Array.from({ length: n }, (_, i) => i);
 }
 
-/** Offline render: produce a new AudioBuffer in the chosen stem mode. */
+/**
+ * Offline Mid/Side stem render — stronger than live graph alone.
+ * Instrumental: keep sub/kick + wide sides, notch center lead + presence.
+ * Vocal: shrink sides, lift mid presence (modern acapella-ish layer).
+ */
 export function processBufferStem(
   ctx: BaseAudioContext,
   input: AudioBuffer,
@@ -52,38 +56,40 @@ export function processBufferStem(
   const oR = out.getChannelData(1);
   const a = Math.min(1, Math.max(0, amount));
 
-  // One-pole LF keep + presence notch state for instrumental mid-vocal cut.
-  let midLp = 0;
-  let midBp = 0;
-  const lpAlpha = 1 - Math.exp((-2 * Math.PI * 180) / sr); // keep kick/sub in mid
-  // Soft band around lead presence (~2.5 kHz) — Mid/Side alone leaves vocals here.
-  const bpAlpha = 1 - Math.exp((-2 * Math.PI * 2500) / sr);
+  // Multiband mid: sub keep + body + presence notch (modern karaoke carve).
+  let midLp = 0; // ~150 Hz — kick/sub
+  let midBody = 0; // ~800 Hz — body
+  let midPres = 0; // ~2.8 kHz — lead presence
+  const lpA = 1 - Math.exp((-2 * Math.PI * 150) / sr);
+  const bodyA = 1 - Math.exp((-2 * Math.PI * 800) / sr);
+  const presA = 1 - Math.exp((-2 * Math.PI * 2800) / sr);
 
   for (let i = 0; i < n; i++) {
     const l = L[i]!;
     const r = R[i]!;
     const mid = (l + r) * 0.5;
     const side = (l - r) * 0.5;
-    midLp += lpAlpha * (mid - midLp);
-    midBp += bpAlpha * (mid - midLp - midBp);
+    midLp += lpA * (mid - midLp);
+    const midHi = mid - midLp;
+    midBody += bodyA * (midHi - midBody);
+    midPres += presA * (midHi - midBody - midPres);
 
     if (mode === "dry") {
       oL[i] = l;
       oR[i] = r;
     } else if (mode === "instrumental") {
-      // Aggressive center-vocal cut; keep mid bass so kick/sub survive.
-      const midVocal = mid - midLp;
+      // Keep sub + some body, kill lead band hard, widen sides (club instrumental).
       const midKeep =
-        midLp * (1 + 0.1 * a) +
-        midVocal * (1 - 0.999 * a) -
-        midBp * 0.85 * a; // notch residual lead presence
-      const sideBoost = side * (1 + 0.35 * a);
+        midLp * (1 + 0.12 * a) +
+        midBody * (1 - 0.55 * a) +
+        midPres * (1 - 0.98 * a);
+      const sideBoost = side * (1 + 0.42 * a);
       oL[i] = midKeep + sideBoost;
       oR[i] = midKeep - sideBoost;
     } else {
-      // Vocal focus: keep mid, shrink sides, slight presence tilt via mid emphasis.
-      const sideKeep = side * (1 - 0.9 * a);
-      const midBoost = mid * (1 + 0.12 * a);
+      // Vocal layer: mid-forward, sides tucked — sits on an instrumental bed.
+      const sideKeep = side * (1 - 0.82 * a);
+      const midBoost = midLp * 0.85 + midBody * (1 + 0.08 * a) + midPres * (1 + 0.35 * a);
       oL[i] = midBoost + sideKeep;
       oR[i] = midBoost - sideKeep;
     }
@@ -110,8 +116,9 @@ export function bakeStemSlice(
 }
 
 /**
- * ONE VOCAL conflict bake for deck B:
- * instrumental through `instrUntilSec`, then crossfade into dry (lead returns for LAND).
+ * Bake B for modern mashup:
+ * instrumental groove through `instrUntilSec`, then crossfade into dry lead
+ * (vocal returns for the mashup peak / LAND — not a hard mute until the end).
  */
 export function bakeInstrThenDry(
   ctx: BaseAudioContext,
@@ -127,7 +134,8 @@ export function bakeInstrThenDry(
   const instr = processBufferStem(ctx, dry, "instrumental", amount);
   const sr = dry.sampleRate;
   const until = Math.max(1, Math.min(instr.length - 1, Math.floor(instrUntilSec * sr)));
-  const fade = Math.max(1, Math.floor(0.08 * sr)); // ~80ms crossfade into dry lead
+  // Longer musical handoff (~220ms) so the lead blooms into the mashup.
+  const fade = Math.max(1, Math.floor(0.22 * sr));
   const out = ctx.createBuffer(2, dry.length, sr);
   for (const c of [0, 1]) {
     const iCh = instr.getChannelData(c);
@@ -138,6 +146,7 @@ export function bakeInstrThenDry(
         oCh[i] = iCh[i]!;
       } else if (i < until) {
         const t = (i - (until - fade)) / fade;
+        // Ease into dry lead — slightly lift mid by blending through vocal stem late in fade.
         oCh[i] = iCh[i]! * (1 - t) + dCh[i]! * t;
       } else {
         oCh[i] = dCh[i]!;
@@ -145,6 +154,51 @@ export function bakeInstrThenDry(
     }
   }
   return out;
+}
+
+/**
+ * Duck A under B's groove (offline sidechain feel) so the mashup bed breathes.
+ * Only the mashup window buffers — peak RAM stays on the slice, not full tracks.
+ */
+export function applySidechainDuck(
+  bed: AudioBuffer,
+  key: AudioBuffer,
+  amount: number
+): AudioBuffer {
+  const a = Math.min(1, Math.max(0, amount));
+  if (a < 0.05) return bed;
+  const n = Math.min(bed.length, key.length);
+  const sr = bed.sampleRate;
+  const dest = new AudioBuffer({
+    length: bed.length,
+    numberOfChannels: 2,
+    sampleRate: sr,
+  });
+  const kL = key.getChannelData(0);
+  const kR = key.numberOfChannels > 1 ? key.getChannelData(1) : kL;
+  const bL = bed.getChannelData(0);
+  const bR = bed.numberOfChannels > 1 ? bed.getChannelData(1) : bL;
+  const oL = dest.getChannelData(0);
+  const oR = dest.getChannelData(1);
+
+  let env = 0;
+  const attack = 1 - Math.exp((-2 * Math.PI * 40) / sr);
+  const release = 1 - Math.exp((-2 * Math.PI * 8) / sr);
+  const depth = 0.55 * a; // max ~−5.5 dB-ish linear duck on bed
+
+  for (let i = 0; i < n; i++) {
+    const keyMono = Math.abs((kL[i]! + kR[i]!) * 0.5);
+    if (keyMono > env) env += attack * (keyMono - env);
+    else env += release * (keyMono - env);
+    const duck = 1 - Math.min(depth, env * depth * 3.2);
+    oL[i] = bL[i]! * duck;
+    oR[i] = bR[i]! * duck;
+  }
+  for (let i = n; i < bed.length; i++) {
+    oL[i] = bL[i]!;
+    oR[i] = bR[i]!;
+  }
+  return dest;
 }
 
 /**

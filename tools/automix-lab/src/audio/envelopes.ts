@@ -53,6 +53,10 @@ export type AutoDspRecipe = {
   bakeVocalB: boolean;
   /** Human-readable decisions for UI / preset. */
   decisions: string[];
+  /** Modern mashup mode label (acapellaDrop / vocalSwap / …). */
+  mashupMode: string;
+  /** Sidechain duck of A under B groove (0…1), applied offline on bake. */
+  sidechainA: number;
 };
 
 export type MashupParams = {
@@ -89,6 +93,8 @@ export const defaultDsp = (): AutoDspRecipe => ({
   bakeInstrB: false,
   bakeVocalB: false,
   decisions: [],
+  mashupMode: "acapellaDrop",
+  sidechainA: 0.4,
 });
 
 export const defaultParams = (): MashupParams => ({
@@ -184,17 +190,26 @@ export function volumesAt(
     return { outgoing: out, incoming: inn };
   }
 
-  // Smart Crossfade — softer dual layer, still a phrase (not a 2s radio fade).
-  const mashupFloor = params.archetype === "smartCrossfade" ? 0.58 : 0.72;
-  const mashupPeak = params.archetype === "smartCrossfade" ? 0.92 : 0.96;
-  const dualFloor = params.archetype === "smartCrossfade" ? 0.28 : 0.38;
+  // Modern mashup / EQ Blend — both layers stay loud on the remix bar.
+  const modern =
+    params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop";
+  const mashupFloor =
+    params.archetype === "smartCrossfade" ? 0.58 : modern ? 0.78 : 0.72;
+  const mashupPeak =
+    params.archetype === "smartCrossfade" ? 0.92 : modern ? 0.98 : 0.96;
+  const dualFloor =
+    params.archetype === "smartCrossfade" ? 0.28 : modern ? 0.48 : 0.38;
 
   let out: number;
   if (p <= hold) {
-    out = 1.0 - (p / Math.max(hold, 0.001)) * (params.archetype === "smartCrossfade" ? 0.25 : 0.12);
+    out = 1.0 - (p / Math.max(hold, 0.001)) * (params.archetype === "smartCrossfade" ? 0.25 : 0.1);
   } else if (p <= handoff) {
     const t = smoothstep((p - hold) / Math.max(0.001, handoff - hold));
-    out = Math.max(dualFloor, 0.88 * (1 - t * (params.archetype === "smartCrossfade" ? 0.85 : 0.55)));
+    // Keep A texture present through mashup peak (instrumental bed under B vocal).
+    out = Math.max(
+      dualFloor,
+      0.92 * (1 - t * (params.archetype === "smartCrossfade" ? 0.85 : modern ? 0.42 : 0.55))
+    );
   } else {
     const t = smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
     out = Math.max(0, dualFloor * (1 - t));
@@ -287,10 +302,20 @@ export function phaseLabel(p: number, params: MashupParams): string {
     return "LAND";
   }
   if (params.archetype === "energyWash" && p < params.bassSwapAt) return "FILTER";
-  if (p < params.bassSwapAt) return "INVITE B";
-  if (p < params.handoffAt) return "ONE BASS";
+  if (p < params.bassSwapAt) {
+    if (params.dsp.mashupMode === "acapellaDrop") return "ACAPELLA";
+    return "INVITE B";
+  }
+  if (p < params.handoffAt) {
+    if (params.dsp.vocalBAt <= p && params.dsp.mashupMode === "vocalSwap") return "VOCAL SWAP";
+    return "ONE BASS";
+  }
   if (p < Math.min(0.88, params.handoffAt + 0.22)) {
-    return params.archetype === "seamlessLoop" ? "LONG BLEND" : "MASHUP";
+    if (params.archetype === "seamlessLoop") return "LONG BLEND";
+    if (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") {
+      return "MASHUP";
+    }
+    return "MASHUP";
   }
   return "LAND";
 }

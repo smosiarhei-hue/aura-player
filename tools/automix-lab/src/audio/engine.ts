@@ -13,6 +13,8 @@ import {
   MidSideStemNode,
   bakeStemSlice,
   bakeInstrThenDry,
+  applySidechainDuck,
+  sliceBuffer,
   stemFxAt,
 } from "../dsp";
 
@@ -158,8 +160,9 @@ export class AutomixEngine {
     const cueB = Math.min(Math.max(0, p.cueBSec), Math.max(0, b.duration - 1));
     const blend = Math.max(4, Math.min(48, p.blendDurationSec));
 
-    onStatus?.("AI обрабатывает стемы…");
-    this.processingNote = "baking stems";
+    const modeLabel = dsp.mashupMode || "mashup";
+    onStatus?.(`Modern mashup · ${modeLabel} — обрабатываю окно…`);
+    this.processingNote = `baking ${modeLabel}`;
 
     // Yield so UI can paint status
     await new Promise((r) => setTimeout(r, 0));
@@ -172,33 +175,51 @@ export class AutomixEngine {
     let liveVocalScale = 1;
 
     if (dsp.bakeStems) {
-      // A: bake instrumental when outro still has lead vocal.
-      if (dsp.bakeInstrA && dsp.instrAPeak >= 0.35) {
-        onStatus?.(`Bake A instrumental ${Math.round(dsp.instrAPeak * 100)}%…`);
+      // Always work on the mashup window when baking — not the full track.
+      const needWindow =
+        (dsp.bakeInstrA && dsp.instrAPeak >= 0.28) ||
+        (dsp.bakeInstrB && dsp.instrBPeak >= 0.5) ||
+        (dsp.bakeVocalB && dsp.vocalBPeak >= 0.35) ||
+        dsp.sidechainA >= 0.35;
+
+      if (needWindow && dsp.bakeInstrA && dsp.instrAPeak >= 0.28) {
+        onStatus?.(`Bake A instrumental bed ${Math.round(dsp.instrAPeak * 100)}%…`);
         bufA = bakeStemSlice(ctx, a, cueA, blend, "instrumental", dsp.instrAPeak);
         offsetA = 0;
-        liveInstrScale = 0.7; // reinforce residual mid-vocal on top of bake
+        liveInstrScale = 0.55;
+      } else if (needWindow && offsetA !== 0 && dsp.sidechainA >= 0.35) {
+        // Slice A window dry so sidechain can run without loading the full track.
+        bufA = sliceBuffer(ctx, a, cueA, blend + 1.2);
+        offsetA = 0;
       }
-      // Conflict: B instrumental until handoff, then dry lead for LAND.
+
       if (dsp.bakeInstrB && dsp.instrBPeak >= 0.5) {
-        const untilSec = Math.max(0.5, blend * Math.min(0.85, Math.max(0.35, dsp.instrBUntil)));
+        const untilSec = Math.max(
+          0.4,
+          blend * Math.min(0.75, Math.max(0.12, dsp.instrBUntil))
+        );
         onStatus?.(
-          `Bake B instrumental → dry @ ${untilSec.toFixed(1)}s (ONE VOCAL)…`
+          `Bake B groove → vocal @ ${untilSec.toFixed(1)}s (${modeLabel})…`
         );
         bufB = bakeInstrThenDry(ctx, b, cueB, blend, untilSec, dsp.instrBPeak);
         offsetB = 0;
-        liveVocalScale = 0.35; // don't re-boost B vocal while instr gate is up
+        liveVocalScale = 0.4;
       } else if (dsp.bakeVocalB && dsp.vocalBPeak >= 0.35) {
-        // Ideal mashup only — A already instrumental.
-        onStatus?.(`Bake B vocal ${Math.round(dsp.vocalBPeak * 100)}%…`);
+        onStatus?.(`Bake B vocal layer ${Math.round(dsp.vocalBPeak * 100)}%…`);
         bufB = bakeStemSlice(ctx, b, cueB, blend, "vocal", dsp.vocalBPeak);
         offsetB = 0;
-        liveVocalScale = 0.45;
+        liveVocalScale = 0.5;
+      }
+
+      // Sidechain A under B — bed breathes with B's groove/vocal.
+      if (offsetA === 0 && offsetB === 0 && dsp.sidechainA >= 0.2 && bufB !== b) {
+        onStatus?.(`Sidechain A under B ${(dsp.sidechainA * 100) | 0}%…`);
+        bufA = applySidechainDuck(bufA, bufB, dsp.sidechainA);
       }
     }
 
-    onStatus?.("Сведение…");
-    this.processingNote = dsp.decisions[0] ?? "auto mashup";
+    onStatus?.("Сведение мэшапа…");
+    this.processingNote = dsp.decisions[0] ?? modeLabel;
 
     this.chainA = this.makeChain(bufA, p.rateA, offsetA);
     this.chainB = this.makeChain(bufB, p.rateB, offsetB);
