@@ -103,7 +103,11 @@ function phraseBars(
 
 /**
  * Build DSP recipe from measured vocal/energy at the actual cues.
- * This is the “algorithm processes everything” decision layer.
+ *
+ * ONE VOCAL RULE (Apple / club mashup grammar):
+ *   A instrumental × B vocal  → stack OK (the desired mashup)
+ *   A vocal × B instrumental  → OK (A still leads)
+ *   A vocal × B vocal         → NEVER — cut one lead before the other opens
  */
 function buildDspRecipe(
   a: TrackAIProfile,
@@ -116,54 +120,68 @@ function buildDspRecipe(
 ): AutoDspRecipe {
   const dsp = defaultDsp();
   const decisions: string[] = [];
+  const aHasVocal = vocalOut >= 0.42;
+  const bHasVocal = vocalIn >= 0.4;
 
-  // --- Stem A: remove vocals when outro still sings ---
-  if (vocalOut >= 0.55) {
-    dsp.instrAPeak = 0.95;
-    dsp.instrAAt = Math.max(0.12, params.bassSwapAt * 0.55);
-    dsp.bakeStems = true;
-    decisions.push("A: bake instrumental (вокал в outro → Mid/Side cut)");
-  } else if (vocalOut >= 0.38) {
-    dsp.instrAPeak = 0.72;
-    dsp.instrAAt = Math.max(0.16, params.bassSwapAt * 0.7);
-    dsp.bakeStems = true;
-    decisions.push("A: soft instrumentalize (остаточный вокал)");
-  } else {
-    dsp.instrAPeak = 0.18; // already instrumental — barely touch
-    dsp.instrAAt = 0.25;
-    dsp.bakeStems = vocalIn > 0.5; // still bake B if needed
-    decisions.push("A: outro уже инструментал — почти dry");
-  }
-
-  // --- Stem B: vocal focus when B has a lead ---
-  if (vocalIn >= 0.55) {
-    dsp.vocalBPeak = 0.88;
-    dsp.vocalBAt = vocalOut < 0.42 ? 0.06 : Math.max(0.12, params.incomingVolumeLag);
-    decisions.push("B: vocal focus (лид слышен в intro)");
-  } else if (vocalIn >= 0.35) {
-    dsp.vocalBPeak = 0.55;
-    dsp.vocalBAt = 0.15;
-    decisions.push("B: лёгкий vocal presence");
-  } else {
-    dsp.vocalBPeak = 0.2;
-    dsp.vocalBAt = 0.2;
-    decisions.push("B: instrumental bed — без сильного vocalize");
-  }
-
-  // Two lead vocals fighting → duck B hard until A is instrumentalized
-  if (vocalOut >= 0.5 && vocalIn >= 0.5) {
-    dsp.vocalDuckBDb = -9;
-    dsp.vocalBAt = Math.max(dsp.vocalBAt, params.bassSwapAt * 0.9);
-    dsp.instrAPeak = Math.max(dsp.instrAPeak, 0.92);
-    dsp.bakeStems = true;
-    decisions.push("Конфликт вокалов → duck B + жёсткий instrumental A");
-  } else if (vocalOut < 0.42 && vocalIn > 0.5) {
-    // Ideal Apple case
-    dsp.vocalDuckBDb = -2;
+  // --- Case 1: ideal — A outro already instrumental, B has vocal ---
+  if (!aHasVocal && bHasVocal) {
+    dsp.instrAPeak = 0.12;
+    dsp.instrAAt = 0.2;
+    dsp.instrBPeak = 0;
+    dsp.instrBUntil = 0.05;
+    dsp.vocalBPeak = vocalIn >= 0.55 ? 0.9 : 0.7;
     dsp.vocalBAt = 0.04;
-    decisions.push("Идеал: instrumental A × vocal B сразу");
-  } else {
-    dsp.vocalDuckBDb = -5;
+    dsp.vocalDuckBDb = -1.5;
+    dsp.bakeInstrA = false;
+    dsp.bakeVocalB = true;
+    dsp.bakeStems = true;
+    decisions.push("ONE VOCAL: A уже инструментал → вокал B сразу поверх");
+  }
+  // --- Case 2: conflict — both leads present ---
+  else if (aHasVocal && bHasVocal) {
+    // Kill A vocal fast; keep B instrumental (no B lead) until A is a bed; then open B vocal.
+    dsp.instrAPeak = 0.98;
+    dsp.instrAAt = Math.min(0.22, Math.max(0.08, params.bassSwapAt * 0.55));
+    dsp.instrBPeak = 0.95; // remove B vocal while A still occupies the lead
+    dsp.instrBUntil = Math.max(dsp.instrAAt + 0.12, params.bassSwapAt + 0.05);
+    dsp.vocalBPeak = 0.88;
+    dsp.vocalBAt = dsp.instrBUntil + 0.02; // only after B instrumental gate lifts
+    dsp.vocalDuckBDb = -12;
+    dsp.bakeInstrA = true;
+    dsp.bakeVocalB = false; // CRITICAL: never bake B vocal for whole blend
+    dsp.bakeStems = true;
+    // Give A a bit more hold so instrumentalize finishes before handoff.
+    decisions.push(
+      "ONE VOCAL: конфликт → bake A instrumental, B без вокала до готовности A, потом вокал B"
+    );
+  }
+  // --- Case 3: A still sings, B is instrumental bed ---
+  else if (aHasVocal && !bHasVocal) {
+    dsp.instrAPeak = 0.55; // soft carve, A may keep some presence
+    dsp.instrAAt = 0.35;
+    dsp.instrBPeak = 0;
+    dsp.instrBUntil = 0.1;
+    dsp.vocalBPeak = 0.15;
+    dsp.vocalBAt = 0.5;
+    dsp.vocalDuckBDb = -3;
+    dsp.bakeInstrA = vocalOut >= 0.55;
+    dsp.bakeVocalB = false;
+    dsp.bakeStems = dsp.bakeInstrA;
+    decisions.push("ONE VOCAL: вокал A × инструментал B — B без vocalize");
+  }
+  // --- Case 4: both instrumental-ish ---
+  else {
+    dsp.instrAPeak = 0.15;
+    dsp.instrAAt = 0.25;
+    dsp.instrBPeak = 0;
+    dsp.instrBUntil = 0.1;
+    dsp.vocalBPeak = 0.2;
+    dsp.vocalBAt = 0.25;
+    dsp.vocalDuckBDb = -2;
+    dsp.bakeInstrA = false;
+    dsp.bakeVocalB = false;
+    dsp.bakeStems = false;
+    decisions.push("Оба инструментальны — текстурный мэшап без stem bake");
   }
 
   // --- Filters / echo by archetype ---
@@ -181,17 +199,16 @@ function buildDspRecipe(
       decisions.push("FX: seamless — мягкие фильтры, тихий echo");
       break;
     default:
-      dsp.lpfBPeak = 0.65;
+      dsp.lpfBPeak = aHasVocal && bHasVocal ? 0.75 : 0.65;
       dsp.hpfAPeak = 0.85;
       dsp.echoAPeak = 0.55;
       decisions.push("FX: dropSwap — bass swap + echo-out на LAND");
   }
 
-  // Energy asymmetry: harder drop into B → more drama
   if (energyIn > energyOut + 0.12) {
     dsp.hpfAPeak = Math.min(1, dsp.hpfAPeak + 0.1);
     dsp.echoAPeak = Math.min(0.85, dsp.echoAPeak + 0.1);
-    decisions.push("B энергичнее → раньше отдаём пол + ярче LAND");
+    decisions.push("B энергичнее → раньше пол + ярче LAND");
   }
 
   if (a.hasFadeOut || a.endsInSilence) {
@@ -200,9 +217,10 @@ function buildDspRecipe(
     decisions.push("A уже fade/silence → меньше echo/HPF");
   }
 
-  dsp.bakeStems = dsp.bakeStems || dsp.instrAPeak >= 0.55 || dsp.vocalBPeak >= 0.55;
   if (dsp.bakeStems) {
-    decisions.push("Offline bake стемов перед play");
+    decisions.push(
+      `Bake: A instrumental=${dsp.bakeInstrA ? "yes" : "no"}, B vocal=${dsp.bakeVocalB ? "yes" : "no"}`
+    );
   }
 
   dsp.decisions = decisions;
@@ -317,11 +335,17 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   params.pitchCentsB = 0;
   params.dsp = buildDspRecipe(a, b, params, vocalOut, vocalIn, energyOut, energyIn);
 
+  // Align handoff with one-vocal gate so MASHUP opens when B vocal is allowed.
+  if (params.dsp.instrBPeak >= 0.5) {
+    params.handoffAt = Math.max(params.handoffAt, params.dsp.instrBUntil + 0.06);
+    params.handoffAt = Math.min(0.72, params.handoffAt);
+  }
+
   const story = [
     "LOCK",
-    vocalOut < 0.42 ? "INVITE B vocal" : "INVITE + carve A vocal",
+    vocalOut < 0.42 ? "INVITE B vocal" : "INVITE B drums (без вокала B)",
     "ONE BASS",
-    "MASHUP",
+    vocalOut >= 0.42 && vocalIn >= 0.4 ? "MASHUP (вокал B после carve A)" : "MASHUP",
     "LAND",
   ].join(" → ");
 

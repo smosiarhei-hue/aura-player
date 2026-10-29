@@ -67,10 +67,10 @@ export function processBufferStem(
       oL[i] = l;
       oR[i] = r;
     } else if (mode === "instrumental") {
-      // Cut centered vocal hard; keep mid bass so kick/sub survive.
+      // Aggressive center-vocal cut; keep mid bass so kick/sub survive.
       const midVocal = mid - midLp;
-      const midKeep = midLp + midVocal * (1 - 0.97 * a);
-      const sideBoost = side * (1 + 0.22 * a);
+      const midKeep = midLp * (1 + 0.08 * a) + midVocal * (1 - 0.995 * a);
+      const sideBoost = side * (1 + 0.28 * a);
       oL[i] = midKeep + sideBoost;
       oR[i] = midKeep - sideBoost;
     } else {

@@ -11,9 +11,16 @@ export type AutoDspRecipe = {
   instrAPeak: number;
   /** When (0…1 progress) A instrumentalize reaches peak. */
   instrAAt: number;
+  /**
+   * Early instrumentalize on B (0…1) — kills B’s lead vocal while A still sings.
+   * One-vocal rule: never stack two leads.
+   */
+  instrBPeak: number;
+  /** Progress where B instrumentalize releases (then vocal B may open). */
+  instrBUntil: number;
   /** Peak vocal-focus on B (0…1). */
   vocalBPeak: number;
-  /** When B vocal focus opens. */
+  /** When B vocal focus opens — must be ≥ instrBUntil when A had vocals. */
   vocalBAt: number;
   /** Early mid-duck on B in dB (negative). Clears space under A vocal. */
   vocalDuckBDb: number;
@@ -25,6 +32,13 @@ export type AutoDspRecipe = {
   echoAPeak: number;
   /** Offline-bake stems before play (stronger than live Mid/Side alone). */
   bakeStems: boolean;
+  /** Bake A as instrumental slice (safe anytime A has outro vocals). */
+  bakeInstrA: boolean;
+  /**
+   * Bake B as vocal slice — ONLY when A outro is already instrumental.
+   * Never bake B vocal for the whole blend if A still sings (would stack leads).
+   */
+  bakeVocalB: boolean;
   /** Human-readable decisions for UI / preset. */
   decisions: string[];
 };
@@ -50,6 +64,8 @@ export type MashupParams = {
 export const defaultDsp = (): AutoDspRecipe => ({
   instrAPeak: 0.85,
   instrAAt: 0.35,
+  instrBPeak: 0,
+  instrBUntil: 0.2,
   vocalBPeak: 0.7,
   vocalBAt: 0.2,
   vocalDuckBDb: -5,
@@ -57,6 +73,8 @@ export const defaultDsp = (): AutoDspRecipe => ({
   lpfBPeak: 0.7,
   echoAPeak: 0.5,
   bakeStems: true,
+  bakeInstrA: true,
+  bakeVocalB: false,
   decisions: [],
 });
 

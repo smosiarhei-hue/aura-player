@@ -36,6 +36,7 @@ export type EngineSnapshot = {
   rateB: number;
   pitchB: number;
   instrA: number;
+  instrB: number;
   vocalB: number;
   hpfA: number;
   lpfB: number;
@@ -170,18 +171,21 @@ export class AutomixEngine {
     let liveVocalScale = 1;
 
     if (dsp.bakeStems) {
-      if (dsp.instrAPeak >= 0.35) {
+      // A: bake instrumental when outro still has lead vocal.
+      if (dsp.bakeInstrA && dsp.instrAPeak >= 0.35) {
         onStatus?.(`Bake A instrumental ${Math.round(dsp.instrAPeak * 100)}%…`);
         bufA = bakeStemSlice(ctx, a, cueA, blend, "instrumental", dsp.instrAPeak);
         offsetA = 0;
-        // Live Mid/Side only adds a little more motion on top of bake.
-        liveInstrScale = 0.35;
+        liveInstrScale = 0.45; // keep live carve on top of bake
       }
-      if (dsp.vocalBPeak >= 0.35) {
-        onStatus?.(`Bake B vocal focus ${Math.round(dsp.vocalBPeak * 100)}%…`);
+      // B vocal bake ONLY when A is already instrumental — never for conflict blends.
+      if (dsp.bakeVocalB && dsp.vocalBPeak >= 0.35) {
+        onStatus?.(`Bake B vocal ${Math.round(dsp.vocalBPeak * 100)}%…`);
         bufB = bakeStemSlice(ctx, b, cueB, blend, "vocal", dsp.vocalBPeak);
         offsetB = 0;
-        liveVocalScale = 0.4;
+        liveVocalScale = 0.45;
+      } else if (dsp.instrBPeak >= 0.5) {
+        onStatus?.("B без bake vocal (ONE VOCAL: сначала drums B)…");
       }
     }
 
@@ -282,6 +286,7 @@ export class AutomixEngine {
         rateB: this.params.rateB,
         pitchB: 0,
         instrA: 0,
+        instrB: 0,
         vocalB: 0,
         hpfA: 0,
         lpfB: 0,
@@ -345,13 +350,19 @@ export class AutomixEngine {
     this.chainA.eq.setAirDb(-2 * fx.hpfA, audioTime, immediate);
     this.chainB.eq.setAirDb(2 * (1 - fx.lpfB), audioTime, immediate);
 
-    // Live stem motion scaled down if we already baked
+    // Live stems — ONE VOCAL: A instrumentalize and/or B instrumentalize before B vocal.
     this.chainA.stem.setInstrumental(
       fx.instrumentalA * this.liveInstrScale,
       audioTime,
       immediate
     );
-    this.chainB.stem.setVocal(fx.vocalB * this.liveVocalScale, audioTime, immediate);
+    if (fx.instrumentalB > 0.08) {
+      this.chainB.stem.setInstrumental(fx.instrumentalB, audioTime, immediate);
+    } else if (fx.vocalB > 0.05) {
+      this.chainB.stem.setVocal(fx.vocalB * this.liveVocalScale, audioTime, immediate);
+    } else {
+      this.chainB.stem.setDry(audioTime, immediate);
+    }
 
     this.chainA.filters.setHighPass(fx.hpfA, audioTime, immediate);
     this.chainA.filters.setLowPass(0, audioTime, immediate);
@@ -399,6 +410,7 @@ export class AutomixEngine {
       rateB: rates.incoming,
       pitchB: cents,
       instrA: fx.instrumentalA,
+      instrB: fx.instrumentalB,
       vocalB: fx.vocalB,
       hpfA: fx.hpfA,
       lpfB: fx.lpfB,

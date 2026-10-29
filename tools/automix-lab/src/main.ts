@@ -109,8 +109,9 @@ app.innerHTML = `
             <div class="bar a" style="margin-top:4px"><i id="echoA"></i></div>
           </div>
           <div>
-            <label>DSP B · vocal / LPF</label>
-            <div class="bar b"><i id="vocalB"></i></div>
+            <label>DSP B · instr→vocal / LPF</label>
+            <div class="bar b"><i id="instrB"></i></div>
+            <div class="bar b" style="margin-top:4px"><i id="vocalB"></i></div>
             <div class="bar b" style="margin-top:4px"><i id="lpfB"></i></div>
           </div>
         </div>
@@ -525,6 +526,7 @@ engine.onUpdate((snap) => {
   document.querySelector<HTMLElement>("#bassA")!.style.width = `${Math.max(0, 100 + snap.bassA * (100 / 15))}%`;
   document.querySelector<HTMLElement>("#bassB")!.style.width = `${Math.max(0, 100 + snap.bassB * (100 / 15))}%`;
   document.querySelector<HTMLElement>("#instrA")!.style.width = `${snap.instrA * 100}%`;
+  document.querySelector<HTMLElement>("#instrB")!.style.width = `${snap.instrB * 100}%`;
   document.querySelector<HTMLElement>("#vocalB")!.style.width = `${snap.vocalB * 100}%`;
   document.querySelector<HTMLElement>("#hpfA")!.style.width = `${snap.hpfA * 100}%`;
   document.querySelector<HTMLElement>("#lpfB")!.style.width = `${snap.lpfB * 100}%`;

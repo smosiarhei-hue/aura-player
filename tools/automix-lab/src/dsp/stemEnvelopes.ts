@@ -1,6 +1,10 @@
 /**
  * Stem + FX envelopes driven by the AI AutoDspRecipe.
- * Peaks / timings come from planAutomix — not hardcoded club presets.
+ *
+ * ONE VOCAL RULE:
+ *   - Never two lead vocals at once.
+ *   - If A still sings → instrumentalize A and/or keep B instrumental until A is a bed.
+ *   - If A outro is already instrumental → invite B vocal early (Apple mashup).
  */
 
 import type { MashupParams } from "../audio/envelopes";
@@ -8,6 +12,8 @@ import { smoothstep } from "../audio/envelopes";
 
 export type StemFxAt = {
   instrumentalA: number;
+  /** Early: cut B vocal so it doesn’t stack on A. */
+  instrumentalB: number;
   vocalB: number;
   hpfA: number;
   lpfB: number;
@@ -22,35 +28,59 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   const mashupEnd = Math.min(0.92, handoff + 0.22);
 
   const instrPeak = Math.min(1, Math.max(0, dsp.instrAPeak));
-  const instrAt = Math.min(0.7, Math.max(0.08, dsp.instrAAt));
+  const instrAt = Math.min(0.7, Math.max(0.05, dsp.instrAAt));
   let instrumentalA = 0;
   if (instrPeak > 0.02) {
     if (p < instrAt) {
+      // Reach full cut ASAP so A vocal is gone before B vocal opens.
       instrumentalA = instrPeak * smoothstep(p / Math.max(0.001, instrAt));
     } else if (p < mashupEnd) {
       instrumentalA = instrPeak;
     } else {
-      // Keep some instrumental bed while A fades; drop to 0 as A is gone.
-      instrumentalA = instrPeak * (1 - 0.35 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
+      instrumentalA =
+        instrPeak * (1 - 0.35 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
     }
   }
 
+  // B instrumental gate: full while A owns the vocal, then release.
+  const instrBPeak = Math.min(1, Math.max(0, dsp.instrBPeak));
+  const instrBUntil = Math.min(0.85, Math.max(0.05, dsp.instrBUntil));
+  let instrumentalB = 0;
+  if (instrBPeak > 0.02) {
+    if (p < instrBUntil) {
+      instrumentalB = instrBPeak;
+    } else if (p < instrBUntil + 0.12) {
+      instrumentalB =
+        instrBPeak *
+        (1 - smoothstep((p - instrBUntil) / 0.12));
+    } else {
+      instrumentalB = 0;
+    }
+  }
+
+  // B vocal only after instrumental gate releases (and never under A vocal).
   const vocalPeak = Math.min(1, Math.max(0, dsp.vocalBPeak));
-  const vocalAt = Math.min(0.65, Math.max(0.04, dsp.vocalBAt));
+  const vocalAt = Math.max(
+    Math.min(0.75, Math.max(0.04, dsp.vocalBAt)),
+    instrBPeak > 0.2 ? instrBUntil : 0
+  );
   let vocalB = 0;
   if (vocalPeak > 0.02) {
     if (p < vocalAt) {
-      vocalB = vocalPeak * 0.35 * smoothstep(p / Math.max(0.001, vocalAt));
+      vocalB = 0; // hard gate — no soft early bleed of B lead
     } else if (p < handoff) {
-      vocalB =
-        vocalPeak * 0.35 +
-        vocalPeak * 0.65 * smoothstep((p - vocalAt) / Math.max(0.001, handoff - vocalAt));
+      vocalB = vocalPeak * smoothstep((p - vocalAt) / Math.max(0.001, handoff - vocalAt));
     } else if (p < mashupEnd) {
       vocalB = vocalPeak;
     } else {
-      // Settle toward dry once B owns the track.
-      vocalB = vocalPeak * (1 - 0.7 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
+      vocalB =
+        vocalPeak * (1 - 0.55 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
     }
+  }
+
+  // Mutual exclusion: if we’re still cutting B vocal, don’t vocalize B.
+  if (instrumentalB > 0.25) {
+    vocalB *= 1 - instrumentalB;
   }
 
   const hpfPeak = Math.min(1, Math.max(0, dsp.hpfAPeak));
@@ -72,13 +102,14 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
     }
   }
 
-  const duckPeak = Math.min(0, dsp.vocalDuckBDb); // negative dB
-  const duckUntil = Math.max(bassAt, handoff * 0.85);
+  const duckPeak = Math.min(0, dsp.vocalDuckBDb);
+  const duckUntil = Math.max(instrBUntil, Math.max(bassAt, vocalAt));
   const vocalDuckBDb =
     p < duckUntil ? duckPeak * (1 - smoothstep(p / Math.max(0.001, duckUntil))) : 0;
 
   return {
     instrumentalA,
+    instrumentalB,
     vocalB,
     hpfA,
     lpfB,
