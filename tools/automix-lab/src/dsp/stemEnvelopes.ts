@@ -10,6 +10,10 @@
 import type { MashupParams } from "../audio/envelopes";
 import { smoothstep } from "../audio/envelopes";
 
+function holdFrac(params: MashupParams): number {
+  return Math.min(0.72, Math.max(0.12, params.outgoingVolumeHold));
+}
+
 export type StemFxAt = {
   instrumentalA: number;
   /** Early: cut B vocal so it doesn’t stack on A. */
@@ -93,7 +97,11 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
 
   const echoPeak = Math.min(1, Math.max(0, dsp.echoAPeak));
   let echoA = 0;
-  const echoStart = Math.max(bassAt, handoff - 0.14);
+  // Echo Out starts early (INVITE); EQ Blend / Filter Sweep keep it near LAND.
+  const echoStart =
+    params.archetype === "echoOut"
+      ? Math.max(0.08, holdFrac(params) * 0.5)
+      : Math.max(bassAt, handoff - 0.14);
   if (echoPeak > 0.02) {
     if (p >= echoStart && p < mashupEnd) {
       echoA = echoPeak * smoothstep((p - echoStart) / Math.max(0.001, mashupEnd - echoStart));

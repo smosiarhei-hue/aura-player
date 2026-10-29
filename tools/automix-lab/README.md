@@ -34,19 +34,29 @@ source → MidSideStem → BassEq → HPF/LPF → EchoOut → Gain → master
 
 Preview-кнопки в UI: **Preview A instrumental** / **Preview B vocal** — offline Mid/Side render.
 
-## Что делает AI
+## Что делает AI (ТЗ AutoMix / Intelligent Transitions)
 
-На каждый файл: BPM, energy, vocal proxy, mixOut/mixIn.  
-По паре (`planAutomix`): beatmatch, cues на тактах, 8/16 bars, архетип, one-bass + dual-layer.
+На каждый файл: BPM, **Key → Camelot** (chroma + Krumhansl), energy, vocal proxy, mixOut/mixIn.  
+По паре (`planAutomix` + `transitionPlanner` §2.4):
+
+| Условие | Тип |
+|---|---|
+| BPM Δ > 8% и ключи несовместимы | Echo Out / Cut on the 1 |
+| Ключи совместимы + BPM близки | EQ Blend / Long Blend |
+| Высокий energy shift | Filter Sweep |
+| Короткий outro | Echo Out |
+| Иначе | Smart Crossfade |
+
+Плюс: beatmatch (если viable), Camelot pitch ±200¢, cues на тактах, one-vocal rule, one-bass.
 
 **✦ AI Auto Mix** — полный автопайплайн:
 
-1. анализ A/B (BPM, vocal, mixIn/Out)  
-2. `planAutomix` решает стемы / bass / HPF / echo  
-3. **offline bake** Mid/Side instrumental A + vocal B  
-4. play dual-deck с live FX поверх bake  
+1. анализ A/B (BPM, Key/Camelot, vocal, mixIn/Out)  
+2. Transition Planner выбирает тип §2.4  
+3. `planAutomix` → DSP recipe (стемы / bass / HPF / echo / cut)  
+4. **offline bake** Mid/Side + dual-deck play  
 
-Список решений появляется под транспортом.
+В UI: бейдж `TZ · <тип> · KeyA → KeyB` и список решений под транспортом.
 
 ## DJ 5 актов
 

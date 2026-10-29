@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Real uploaded tracks / local symlinks (keep synthetic demo WAVs)
+public/samples/track-a-nkeeei.wav
+public/samples/track-b-kai-angel.wav
+public/samples/*.mp3
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

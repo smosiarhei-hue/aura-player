@@ -1,10 +1,15 @@
-/** Offline per-track analysis (Apple Automix–style cues + BPM). */
+/** Offline per-track analysis (Apple Automix–style cues + BPM + Camelot). */
+
+import { computeChroma, estimateCamelotKey } from "./keyCamelot";
 
 export type TrackAIProfile = {
   name: string;
   durationSec: number;
   bpm: number;
   bpmConfidence: number;
+  /** Camelot wheel key e.g. "8A", "12B". */
+  camelotKey: string | null;
+  keyConfidence: number;
   energy: number[]; // ~1 sample / 0.25s, 0…1
   vocalPresence: number[]; // mid-band proxy per energy hop
   mixInSec: number;
@@ -313,6 +318,11 @@ export async function analyzeTrackBuffer(
   const tempo = estimateBPMFromSamples(mono, analysisRate);
   const stability = tempoStability(energy, tempo.bpm);
 
+  onProgress?.("Key / Camelot…");
+  await yieldToUI();
+  const chroma = computeChroma(mono, analysisRate);
+  const key = estimateCamelotKey(chroma);
+
   onProgress?.("Cue mixIn / mixOut…");
   await yieldToUI();
   const duration = buffer.duration;
@@ -321,6 +331,7 @@ export async function analyzeTrackBuffer(
 
   const reason = [
     `BPM ${tempo.bpm} (conf ${(tempo.confidence * 100) | 0}%)`,
+    key.camelot ? `Key ${key.camelot}` : "Key ?",
     `mixOut ${out.mixOut.toFixed(1)}s`,
     `mixIn ${mixIn.toFixed(1)}s`,
     out.fade ? "fadeOut" : null,
@@ -333,6 +344,8 @@ export async function analyzeTrackBuffer(
     durationSec: duration,
     bpm: tempo.bpm,
     bpmConfidence: tempo.confidence,
+    camelotKey: key.camelot,
+    keyConfidence: key.confidence,
     energy,
     vocalPresence: vocal,
     mixInSec: mixIn,

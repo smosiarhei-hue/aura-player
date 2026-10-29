@@ -4,6 +4,7 @@ import { analyzeTrackBuffer, type TrackAIProfile } from "./audio/analyzeTrack";
 import { planAutomix } from "./audio/aiMixEngine";
 import { defaultParams, tempoMatch } from "./audio/envelopes";
 import type { MashupParams } from "./audio/envelopes";
+import { transitionTypeLabel } from "./audio/transitionPlanner";
 import { processBufferStem } from "./dsp/vocalInstrumental";
 
 const params = defaultParams();
@@ -18,9 +19,9 @@ app.innerHTML = `
   <header class="hero">
     <h1>Automix <span>Lab</span></h1>
     <p>
-      Алгоритм сам: анализ → решение (стемы/бас/фильтры/echo) → offline bake
-      вокал/инструментал → сведение LOCK→LAND. Без ручной возни — один клик
-      <strong>AI Auto Mix</strong>.
+      По ТЗ AutoMix: анализ BPM + Key/Camelot → Transition Planner §2.4
+      (EQ Blend / Filter Sweep / Echo Out / Long Blend / Cut / Smart Crossfade)
+      → bake стемов → LOCK→LAND. Один клик <strong>AI Auto Mix</strong>.
     </p>
     <p class="hint" style="margin-top:8px">
       <a href="/iphone.html" style="color:var(--accent);font-weight:700">iPhone 17 Pro макет Sonivo →</a>
@@ -80,6 +81,11 @@ app.innerHTML = `
         </div>
       </div>
 
+      <div class="actions" style="margin-top:12px">
+        <button class="ghost" id="loadSamples" type="button">Загрузить demo Midnight→Neon</button>
+        <button class="ghost" id="loadRealPair" type="button">Загрузить nkeeei→Kai Angel</button>
+      </div>
+
       <div class="transport">
         <div class="timeline"><div class="fill" id="fill"></div></div>
         <div class="times">
@@ -88,6 +94,7 @@ app.innerHTML = `
           <span id="timeRight">-0:00</span>
         </div>
         <div class="phase" id="phase">READY</div>
+        <div class="tz-badge" id="tzBadge">TZ · —</div>
         <div class="ai-status" id="aiStatus">Загрузи A и B → нажми AI Auto Mix</div>
         <div class="meters">
           <div>
@@ -123,8 +130,8 @@ app.innerHTML = `
         </div>
         <div class="error" id="error"></div>
         <p class="hint">
-          <strong>AI Auto Mix</strong> сам решает и обрабатывает: BPM, cues, bake стемов,
-          bass swap, HPF/LPF, echo — потом играет. Ручки справа только если хочешь переиграть.
+          <strong>AI Auto Mix</strong>: Key + BPM → тип перехода по §2.4, затем bake стемов,
+          bass swap / filter / echo / cut. Ручки справа — только override.
         </p>
         <ul class="dsp-list" id="processingList" style="margin-top:10px"></ul>
       </div>
@@ -290,7 +297,10 @@ async function analyzeDeck(id: "a" | "b") {
   const cueEl = document.querySelector<HTMLInputElement>(id === "a" ? "#cueA" : "#cueB")!;
   cueEl.value = String(id === "a" ? profile.mixOutSec : profile.mixInSec);
   const meta = document.querySelector(id === "a" ? "#metaA" : "#metaB")!;
-  meta.innerHTML = `<strong>${profile.name}</strong><br>${profile.durationSec.toFixed(1)}s · AI ${profile.reason}`;
+  const key = profile.camelotKey
+    ? `<span class="key-pill">${profile.camelotKey}</span>`
+    : `<span class="key-pill dim">Key?</span>`;
+  meta.innerHTML = `<strong>${profile.name}</strong> ${key}<br>${profile.durationSec.toFixed(1)}s · AI ${profile.reason}`;
   syncKnobOutputs();
   setAiStatus(`AI · ${id.toUpperCase()} готов: ${profile.reason}`);
   return profile;
@@ -324,10 +334,18 @@ function runPlanFromProfiles() {
   params.dsp = dsp;
   engine.setParams(params);
   showProcessing(plan.processing);
+  const tz = document.querySelector("#tzBadge");
+  if (tz) {
+    const keyLine = `${plan.profileA.camelotKey ?? "?"} → ${plan.profileB.camelotKey ?? "?"}`;
+    tz.textContent = `TZ · ${transitionTypeLabel(plan.transitionType)} · ${keyLine}`;
+    tz.setAttribute("data-type", plan.transitionType);
+  }
   const box = document.querySelector<HTMLTextAreaElement>("#preset")!;
   box.value = JSON.stringify(
     {
       engine: "AutomixAI",
+      tzSection: "2.4",
+      transitionType: plan.transitionType,
       reason: plan.reason,
       story: plan.story,
       archetype: plan.archetype,
@@ -338,6 +356,8 @@ function runPlanFromProfiles() {
       profileA: {
         name: plan.profileA.name,
         bpm: plan.profileA.bpm,
+        camelotKey: plan.profileA.camelotKey,
+        keyConfidence: plan.profileA.keyConfidence,
         mixIn: plan.profileA.mixInSec,
         mixOut: plan.profileA.mixOutSec,
         confidence: plan.profileA.bpmConfidence,
@@ -345,6 +365,8 @@ function runPlanFromProfiles() {
       profileB: {
         name: plan.profileB.name,
         bpm: plan.profileB.bpm,
+        camelotKey: plan.profileB.camelotKey,
+        keyConfidence: plan.profileB.keyConfidence,
         mixIn: plan.profileB.mixInSec,
         mixOut: plan.profileB.mixOutSec,
         confidence: plan.profileB.bpmConfidence,
@@ -356,7 +378,7 @@ function runPlanFromProfiles() {
   setAiStatus(plan.reason);
   document.querySelector("#phase")!.textContent = plan.beatmatched
     ? `AI LOCK ${Math.round(plan.params.targetBPM)}`
-    : `AI ${plan.archetype}`;
+    : `AI ${transitionTypeLabel(plan.transitionType)}`;
   return plan;
 }
 
@@ -367,6 +389,40 @@ document.querySelector("#fileA")?.addEventListener("change", (e) => {
 document.querySelector("#fileB")?.addEventListener("change", (e) => {
   const f = (e.target as HTMLInputElement).files?.[0];
   void onFile("b", f);
+});
+
+async function loadUrlPair(urlA: string, urlB: string, nameA: string, nameB: string) {
+  const err = document.querySelector("#error")!;
+  err.textContent = "";
+  setAiStatus(`Загрузка ${nameA} / ${nameB}…`);
+  const [ra, rb] = await Promise.all([fetch(urlA), fetch(urlB)]);
+  if (!ra.ok || !rb.ok) throw new Error("Не удалось скачать samples");
+  const [ba, bb] = await Promise.all([ra.arrayBuffer(), rb.arrayBuffer()]);
+  const fa = new File([ba], `${nameA}.wav`, { type: "audio/wav" });
+  const fb = new File([bb], `${nameB}.wav`, { type: "audio/wav" });
+  await onFile("a", fa);
+  await onFile("b", fb);
+}
+
+document.querySelector("#loadSamples")?.addEventListener("click", () => {
+  void loadUrlPair(
+    "/samples/track-a-midnight.wav",
+    "/samples/track-b-neon.wav",
+    "midnight",
+    "neon"
+  ).catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+  });
+});
+document.querySelector("#loadRealPair")?.addEventListener("click", () => {
+  void loadUrlPair(
+    "/samples/track-a-nkeeei.wav",
+    "/samples/track-b-kai-angel.wav",
+    "nkeeei",
+    "kai-angel"
+  ).catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+  });
 });
 
 document.querySelector("#analyzeA")?.addEventListener("click", () => {

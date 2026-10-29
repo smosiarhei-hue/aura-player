@@ -1,6 +1,13 @@
 /** Curves + auto-DSP recipe mirrored from Sonivo mashup intent. */
 
-export type MashupArchetype = "dropSwap" | "seamlessLoop" | "energyWash";
+/** Maps TZ transition types onto envelope/DSP presets. */
+export type MashupArchetype =
+  | "dropSwap" // EQ Blend / Bass Swap
+  | "seamlessLoop" // Long Blend
+  | "energyWash" // Filter Sweep
+  | "echoOut"
+  | "cutOnOne"
+  | "smartCrossfade";
 
 /**
  * What the AI decides to *do* to the audio — not just volume knobs.
@@ -128,26 +135,61 @@ export function tempoMatch(
   };
 }
 
-/** Dual-layer mashup volumes — A instrumental + B vocal/instr together. */
+/** Dual-layer mashup volumes — shaped by TZ transition type. */
 export function volumesAt(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
-  const hold = Math.min(0.72, Math.max(0.18, params.outgoingVolumeHold));
-  const lag = Math.min(0.28, Math.max(0.02, params.incomingVolumeLag));
+  const hold = Math.min(0.72, Math.max(0.12, params.outgoingVolumeHold));
+  const lag = Math.min(0.28, Math.max(0.01, params.incomingVolumeLag));
   const handoff = Math.min(0.85, Math.max(hold, params.handoffAt));
-  const mashupFloor = 0.72;
-  const mashupPeak = 0.96;
+
+  // Cut on the 1 — almost no dual-layer; snap at handoff.
+  if (params.archetype === "cutOnOne") {
+    const cut = Math.max(0.35, Math.min(0.7, handoff));
+    if (p < cut - 0.04) {
+      return { outgoing: 1, incoming: p < lag ? smoothstep(p / Math.max(lag, 0.001)) * 0.15 : 0.2 };
+    }
+    if (p < cut + 0.04) {
+      const t = smoothstep((p - (cut - 0.04)) / 0.08);
+      return { outgoing: 1 - t, incoming: 0.2 + 0.8 * t };
+    }
+    return { outgoing: 0, incoming: 1 };
+  }
+
+  // Echo Out — A drops early into delay tail; B rises clean.
+  if (params.archetype === "echoOut") {
+    let out: number;
+    if (p <= hold) out = 1 - (p / Math.max(hold, 0.001)) * 0.35;
+    else if (p <= handoff) {
+      const t = smoothstep((p - hold) / Math.max(0.001, handoff - hold));
+      out = Math.max(0.12, 0.65 * (1 - t));
+    } else {
+      out = Math.max(0, 0.12 * (1 - smoothstep((p - handoff) / Math.max(0.001, 1 - handoff))));
+    }
+    let inn: number;
+    if (p <= lag) inn = 0.55 * smoothstep(p / Math.max(lag, 0.001));
+    else if (p <= handoff) {
+      const t = smoothstep((p - lag) / Math.max(0.001, handoff - lag));
+      inn = 0.55 + 0.4 * t;
+    } else inn = Math.min(1, 0.95 + 0.05 * smoothstep((p - handoff) / Math.max(0.001, 1 - handoff)));
+    return { outgoing: out, incoming: inn };
+  }
+
+  // Smart Crossfade — classic X; little dual-layer drama.
+  const mashupFloor = params.archetype === "smartCrossfade" ? 0.45 : 0.72;
+  const mashupPeak = params.archetype === "smartCrossfade" ? 0.9 : 0.96;
+  const dualFloor = params.archetype === "smartCrossfade" ? 0.2 : 0.38;
 
   let out: number;
   if (p <= hold) {
-    out = 1.0 - (p / Math.max(hold, 0.001)) * 0.12;
+    out = 1.0 - (p / Math.max(hold, 0.001)) * (params.archetype === "smartCrossfade" ? 0.25 : 0.12);
   } else if (p <= handoff) {
     const t = smoothstep((p - hold) / Math.max(0.001, handoff - hold));
-    out = Math.max(0.38, 0.88 * (1 - t * 0.55));
+    out = Math.max(dualFloor, 0.88 * (1 - t * (params.archetype === "smartCrossfade" ? 0.85 : 0.55)));
   } else {
     const t = smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
-    out = Math.max(0, 0.38 * (1 - t));
+    out = Math.max(0, dualFloor * (1 - t));
   }
 
   let inn: number;
@@ -226,8 +268,21 @@ export function phaseLabel(p: number, params: MashupParams): string {
     const sign = params.pitchCentsB >= 0 ? "+" : "";
     return `KEY ${sign}${Math.round(params.pitchCentsB)}¢`;
   }
+  if (params.archetype === "cutOnOne") {
+    if (p < params.handoffAt - 0.05) return "PHRASE";
+    if (p < params.handoffAt + 0.08) return "CUT ON 1";
+    return "LAND";
+  }
+  if (params.archetype === "echoOut") {
+    if (p < params.bassSwapAt) return "ECHO OUT";
+    if (p < params.handoffAt) return "ECHO→B";
+    return "LAND";
+  }
+  if (params.archetype === "energyWash" && p < params.bassSwapAt) return "FILTER";
   if (p < params.bassSwapAt) return "INVITE B";
   if (p < params.handoffAt) return "ONE BASS";
-  if (p < Math.min(0.88, params.handoffAt + 0.22)) return "MASHUP";
+  if (p < Math.min(0.88, params.handoffAt + 0.22)) {
+    return params.archetype === "seamlessLoop" ? "LONG BLEND" : "MASHUP";
+  }
   return "LAND";
 }

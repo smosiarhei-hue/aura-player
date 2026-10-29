@@ -18,12 +18,15 @@
 
 Сведение считается **под каждую пару** треков: BPM / такт, **Бас от следующего**, **Мэшап-слой** A+B.
 
-1. Анализ current/next → BPM, energy, mixIn/mixOut, downbeats (`TrackAnalyzer`)
-2. План пары → rates, cues, архетип (`MixPlanner` / Lab `planAutomix`)
-3. Live → dual volumes + bass EQ + rate ramp (`MashupLiveStyle`, `MashupLiveEQEnvelope`)
-4. UI → Mixing на шкале; на handoff hard-snap обложки и таймлайна на B
+1. Анализ current/next → BPM, **Key/Camelot**, energy, mixIn/mixOut, downbeats (`TrackAnalyzer` / Lab `analyzeTrack` + `keyCamelot`)
+2. Transition Planner §2.4 → тип: EQ Blend / Filter Sweep / Echo Out / Long Blend / Cut / Smart Crossfade (`transitionPlanner`)
+3. План пары → rates, cues, DSP recipe, one-vocal (`MixPlanner` / Lab `planAutomix`)
+4. Live → dual volumes + bass EQ + filters/echo + rate ramp (`MashupLiveStyle`, Lab dual-deck)
+5. UI → Mixing на шкале; на handoff hard-snap обложки и таймлайна на B
 
-Бейджи актов: `LOCK` → `INVITE B` → `ONE BASS` → `MASHUP` → `LAND`.
+Бейджи актов: `LOCK` → `INVITE B` → `ONE BASS` → `MASHUP` → `LAND` (Cut/Echo — свои фазы).
+
+**§2.4 кратко:** BPM Δ>8% + несовместимые ключи → Echo/Cut; совместимые + близкий BPM → EQ/Long Blend; energy shift → Filter Sweep; короткий outro → Echo; иначе Smart Crossfade. Несовместимые ключи — короткий blend (§5).
 
 ## Automix Lab + AI (на компьютере)
 
@@ -31,7 +34,8 @@
 cd tools/automix-lab && npm install && npm run dev
 ```
 
-http://127.0.0.1:43187 — **✦ AI Auto Mix** сам разбирает оба трека и ведёт 5 актов.  
+http://127.0.0.1:43187 — **✦ AI Auto Mix** сам разбирает оба трека (BPM + Camelot), выбирает тип §2.4 и ведёт акты.  
+Smoke: `npm run smoke:tz`. Пара файлов: `npm run analyze:pair -- a.wav b.wav`.  
 Craft: `tools/automix-lab/src/audio/djCraft.ts`.  
 DSP с нуля: `tools/automix-lab/src/dsp/` — Mid/Side vocal/instrumental, bass EQ, HPF/LPF, echo-out.
 

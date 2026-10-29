@@ -13,6 +13,11 @@ import {
   type AutoDspRecipe,
   type MashupParams,
 } from "./envelopes";
+import {
+  planTransitionType,
+  transitionTypeLabel,
+  type TransitionType,
+} from "./transitionPlanner";
 
 export type AIMixPlan = {
   params: MashupParams;
@@ -21,6 +26,7 @@ export type AIMixPlan = {
   reason: string;
   story: string;
   archetype: MashupParams["archetype"];
+  transitionType: TransitionType;
   beatmatched: boolean;
   /** What the algorithm will process — shown in UI. */
   processing: string[];
@@ -57,19 +63,6 @@ function energyNear(profile: TrackAIProfile, sec: number, windowSec = 8): number
   let s = 0;
   for (let i = i0; i < i1; i++) s += profile.energy[i]!;
   return s / (i1 - i0);
-}
-
-function pickArchetype(
-  a: TrackAIProfile,
-  b: TrackAIProfile,
-  matched: boolean,
-  bpmDiff: number
-): MashupParams["archetype"] {
-  if (!matched || bpmDiff > 0.12) return "energyWash";
-  if (a.tempoStability >= 0.75 && b.tempoStability >= 0.75 && bpmDiff <= 0.02) {
-    return "seamlessLoop";
-  }
-  return "dropSwap";
 }
 
 function snapToBar(sec: number, bpm: number): number {
@@ -184,25 +177,47 @@ function buildDspRecipe(
     decisions.push("Оба инструментальны — текстурный мэшап без stem bake");
   }
 
-  // --- Filters / echo by archetype ---
+  // --- Filters / echo by TZ transition type (via archetype) ---
   switch (params.archetype) {
-    case "energyWash":
+    case "energyWash": // Filter Sweep
       dsp.lpfBPeak = 0.95;
       dsp.hpfAPeak = 1.0;
-      dsp.echoAPeak = 0.75;
-      decisions.push("FX: energyWash — сильный LPF→HPF + echo");
+      dsp.echoAPeak = 0.45;
+      decisions.push("FX: Filter Sweep — LPF reveal B + HPF riser A");
       break;
-    case "seamlessLoop":
+    case "seamlessLoop": // Long Blend
       dsp.lpfBPeak = 0.35;
       dsp.hpfAPeak = 0.55;
       dsp.echoAPeak = 0.28;
-      decisions.push("FX: seamless — мягкие фильтры, тихий echo");
+      decisions.push("FX: Long Blend — мягкие фильтры");
       break;
-    default:
+    case "echoOut":
+      dsp.lpfBPeak = 0.4;
+      dsp.hpfAPeak = 0.7;
+      dsp.echoAPeak = 0.92;
+      dsp.instrAPeak = Math.max(dsp.instrAPeak, 0.7);
+      decisions.push("FX: Echo Out — сильный tempo-echo на A, B входит чисто");
+      break;
+    case "cutOnOne":
+      dsp.lpfBPeak = 0.15;
+      dsp.hpfAPeak = 0.35;
+      dsp.echoAPeak = 0.2;
+      dsp.bakeVocalB = false;
+      decisions.push("FX: Cut on the 1 — короткий стык по фразе");
+      break;
+    case "smartCrossfade":
+      dsp.lpfBPeak = 0.25;
+      dsp.hpfAPeak = 0.4;
+      dsp.echoAPeak = 0.2;
+      dsp.instrAPeak *= 0.7;
+      dsp.instrBPeak *= 0.5;
+      decisions.push("FX: Smart Crossfade — мягкий fallback");
+      break;
+    default: // dropSwap = EQ Blend / Bass Swap
       dsp.lpfBPeak = aHasVocal && bHasVocal ? 0.75 : 0.65;
       dsp.hpfAPeak = 0.85;
       dsp.echoAPeak = 0.55;
-      decisions.push("FX: dropSwap — bass swap + echo-out на LAND");
+      decisions.push("FX: EQ Blend / Bass Swap — один бас + LAND echo");
   }
 
   if (energyIn > energyOut + 0.12) {
@@ -228,19 +243,37 @@ function buildDspRecipe(
 }
 
 /**
- * Full auto plan: cues + envelopes + DSP recipe the engine will execute.
+ * Full auto plan per TZ: Analyzer → Transition Planner → DSP recipe → play.
  */
 export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   const params = defaultParams();
   const tempo = tempoMatch(a.bpm, b.bpm);
-  const bpmDiff =
-    a.bpm > 30 && b.bpm > 30 ? Math.abs(a.bpm - b.bpm) / Math.max(a.bpm, 1) : 1;
 
-  const beatmatched = tempo != null;
-  const archetype = pickArchetype(a, b, beatmatched, bpmDiff);
+  // Tentative cues to estimate outro length for the planner.
+  const bpmGrid0 = tempo?.targetBPM || a.bpm || 120;
+  const barSec0 = 240 / Math.max(60, bpmGrid0);
+  const tentativeCueA = Math.min(
+    Math.max(0, a.durationSec - Math.max(16, barSec0 * 8)),
+    Math.max(a.durationSec * 0.7, a.mixOutSec)
+  );
+  const availableOutro0 = Math.max(8, a.durationSec - tentativeCueA);
+
+  const decision = planTransitionType(a, b, availableOutro0);
+  const archetype = decision.archetype;
   params.archetype = archetype;
 
-  if (tempo) {
+  // Beatmatch only when planner says it's viable (or soft match within 16%).
+  const beatmatched = decision.beatmatch && tempo != null;
+  if (beatmatched && tempo) {
+    params.rateA = tempo.rateA;
+    params.rateB = tempo.rateB;
+    params.targetBPM = tempo.targetBPM;
+  } else if (decision.type === "cutOnOne" || decision.type === "echoOut") {
+    // Keep native tempos — don't force a stretch when keys/BPM fight.
+    params.rateA = 1;
+    params.rateB = 1;
+    params.targetBPM = a.bpm > 30 ? a.bpm : 0;
+  } else if (tempo) {
     params.rateA = tempo.rateA;
     params.rateB = tempo.rateB;
     params.targetBPM = tempo.targetBPM;
@@ -250,35 +283,49 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     params.targetBPM = a.bpm > 30 ? a.bpm : 0;
   }
 
-  const bpmGrid = tempo?.targetBPM || a.bpm || 120;
+  // Camelot pitch compensation (±200¢) when harmonically viable but not natural.
+  params.pitchCentsB = decision.harmonic.isHarmonicallyViable
+    ? Math.max(-200, Math.min(200, decision.harmonic.pitchShiftCents))
+    : 0;
+
+  const bpmGrid = params.targetBPM || a.bpm || 120;
   const barSec = 240 / Math.max(60, bpmGrid);
 
   let cueA = snapToBar(a.mixOutSec, a.bpm || bpmGrid);
   let cueB = snapMixIn(b.mixInSec, b.bpm || bpmGrid);
 
-  // Hard guarantee: at least 8 bars (or 16s) of A remain after cue for the mashup.
-  const minOutroSec = Math.max(16, barSec * 8);
+  const minOutroSec =
+    decision.type === "cutOnOne"
+      ? Math.max(4, barSec * 2)
+      : decision.type === "echoOut"
+        ? Math.max(8, barSec * 4)
+        : Math.max(16, barSec * 8);
   const latestCueA = Math.max(0, a.durationSec - minOutroSec);
   const earliestCueA = Math.min(latestCueA, a.durationSec * 0.7);
   cueA = Math.min(latestCueA, Math.max(earliestCueA, cueA));
   cueA = snapToBar(cueA, a.bpm || bpmGrid);
   if (cueA > latestCueA) cueA = Math.max(0, latestCueA - (latestCueA % Math.max(barSec, 0.001)));
 
-  // B enters after quiet intro — keep mixIn, never force 0 when analysis found a groove.
   const maxCueB = Math.max(barSec * 2, Math.min(b.durationSec * 0.28, 48));
   if (b.mixInSec > 0.5 && cueB < 0.5) cueB = snapMixIn(b.mixInSec, b.bpm || bpmGrid);
   cueB = Math.min(Math.max(0, cueB), maxCueB);
 
   const availableOutro = Math.max(minOutroSec, a.durationSec - cueA);
   const bars = phraseBars(availableOutro, barSec, archetype);
-  params.blendDurationSec = Math.min(
-    36,
-    Math.max(barSec * 8, Math.min(bars * barSec, availableOutro))
-  );
+  let blend = Math.min(36, Math.max(minOutroSec, Math.min(bars * barSec, availableOutro)));
+  if (decision.type === "cutOnOne") blend = Math.min(blend, Math.max(barSec * 2, 4));
+  if (decision.type === "echoOut") blend = Math.min(blend, Math.max(barSec * 4, 8));
+  if (decision.type === "longBlend") blend = Math.max(blend, Math.min(availableOutro, barSec * 16));
+  // TZ §5: incompatible keys → avoid long blend
+  if (!decision.harmonic.isHarmonicallyViable) {
+    blend = Math.min(blend, Math.max(barSec * 4, 10));
+  } else if (!decision.harmonic.isNaturallyCompatible) {
+    blend = Math.min(blend, Math.max(barSec * 8, 16));
+  }
+  params.blendDurationSec = blend;
   params.cueASec = cueA;
   params.cueBSec = cueB;
 
-  // Measure vocals/energy AT the cues the plan will actually use.
   const vocalOut = vocalNear(a, cueA, Math.min(12, params.blendDurationSec));
   const vocalIn = vocalNear(b, cueB, Math.min(12, params.blendDurationSec));
   const energyOut = energyNear(a, cueA, 10);
@@ -298,6 +345,27 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
       params.outgoingVolumeHold = 0.34;
       params.incomingVolumeLag = 0.05;
       params.bassDepth = 1.1;
+      break;
+    case "echoOut":
+      params.bassSwapAt = 0.35;
+      params.handoffAt = 0.62;
+      params.outgoingVolumeHold = 0.28;
+      params.incomingVolumeLag = 0.08;
+      params.bassDepth = 1.2;
+      break;
+    case "cutOnOne":
+      params.bassSwapAt = 0.45;
+      params.handoffAt = 0.55;
+      params.outgoingVolumeHold = 0.2;
+      params.incomingVolumeLag = 0.02;
+      params.bassDepth = 1.0;
+      break;
+    case "smartCrossfade":
+      params.bassSwapAt = 0.4;
+      params.handoffAt = 0.55;
+      params.outgoingVolumeHold = 0.4;
+      params.incomingVolumeLag = 0.12;
+      params.bassDepth = 0.85;
       break;
     default:
       params.bassSwapAt = 0.2;
@@ -322,7 +390,7 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     params.bassDepth = Math.min(1.55, params.bassDepth + 0.1);
   }
 
-  if (energyIn > energyOut + 0.12) {
+  if (energyIn > energyOut + 0.12 && decision.type !== "cutOnOne") {
     params.bassSwapAt = Math.max(0.12, params.bassSwapAt - 0.05);
     params.handoffAt = Math.max(params.bassSwapAt + 0.18, params.handoffAt - 0.04);
   }
@@ -332,41 +400,42 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     params.blendDurationSec = Math.min(params.blendDurationSec, Math.max(8, availableOutro));
   }
 
-  params.pitchCentsB = 0;
   params.dsp = buildDspRecipe(a, b, params, vocalOut, vocalIn, energyOut, energyIn);
 
-  // Align handoff with one-vocal gate so MASHUP opens when B vocal is allowed.
   if (params.dsp.instrBPeak >= 0.5) {
     params.handoffAt = Math.max(params.handoffAt, params.dsp.instrBUntil + 0.06);
     params.handoffAt = Math.min(0.72, params.handoffAt);
   }
 
   const story = [
-    "LOCK",
-    vocalOut < 0.42 ? "INVITE B vocal" : "INVITE B drums (без вокала B)",
-    "ONE BASS",
-    vocalOut >= 0.42 && vocalIn >= 0.4 ? "MASHUP (вокал B после carve A)" : "MASHUP",
-    "LAND",
+    transitionTypeLabel(decision.type),
+    vocalOut < 0.42 ? "INVITE B vocal" : "INVITE B drums",
+    decision.type === "cutOnOne" ? "CUT" : "ONE BASS",
+    decision.type === "echoOut" ? "ECHO→LAND" : "MASHUP→LAND",
   ].join(" → ");
 
   const processing = [
+    `TZ type: ${transitionTypeLabel(decision.type)} · ${decision.reason}`,
+    `Key A ${a.camelotKey ?? "?"} → B ${b.camelotKey ?? "?"} · ${decision.harmonic.description}`,
     beatmatched
       ? `beatmatch → ${Math.round(params.targetBPM)} BPM (A×${params.rateA.toFixed(3)} B×${params.rateB.toFixed(3)})`
-      : `tempo soft · ${archetype}`,
-    `cues A@${cueA.toFixed(1)}s → B@${cueB.toFixed(1)}s · ${bars | 0} bars`,
+      : `no forced beatmatch · rates A×${params.rateA.toFixed(3)} B×${params.rateB.toFixed(3)}`,
+    params.pitchCentsB
+      ? `Camelot pitch B ${params.pitchCentsB >= 0 ? "+" : ""}${params.pitchCentsB | 0}¢`
+      : null,
+    `cues A@${cueA.toFixed(1)}s → B@${cueB.toFixed(1)}s · ${bars | 0} bars · ${params.blendDurationSec.toFixed(1)}s`,
     `vocalOut ${(vocalOut * 100) | 0}% / vocalIn ${(vocalIn * 100) | 0}%`,
     ...params.dsp.decisions,
-  ];
-
-  const reason = processing.slice(0, 3).join(" · ");
+  ].filter(Boolean) as string[];
 
   return {
     params,
     profileA: a,
     profileB: b,
-    reason,
+    reason: processing.slice(0, 2).join(" · "),
     story,
     archetype,
+    transitionType: decision.type,
     beatmatched,
     processing,
   };
