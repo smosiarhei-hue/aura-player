@@ -11,6 +11,7 @@ import {
   EchoOutNode,
   FilterSweepNode,
   MidSideStemNode,
+  bakeStemSlice,
   stemFxAt,
 } from "../dsp";
 
@@ -34,7 +35,6 @@ export type EngineSnapshot = {
   rateA: number;
   rateB: number;
   pitchB: number;
-  /** Stem / FX meters for UI. */
   instrA: number;
   vocalB: number;
   hpfA: number;
@@ -43,12 +43,9 @@ export type EngineSnapshot = {
   displayElapsed: number;
   displayDuration: number;
   displayDeck: DeckId;
+  processingNote?: string;
 };
 
-/**
- * Full dual-deck chain (written with our DSP toolkit):
- *   source → Mid/Side stem → Bass EQ → HPF/LPF → Echo → Gain → master
- */
 type SourceChain = {
   source: AudioBufferSourceNode;
   stem: MidSideStemNode;
@@ -56,6 +53,8 @@ type SourceChain = {
   filters: FilterSweepNode;
   echo: EchoOutNode;
   gain: GainNode;
+  /** Baked slices start at 0; full-buffer playback uses cue offset. */
+  startOffset: number;
 };
 
 export class AutomixEngine {
@@ -73,17 +72,24 @@ export class AutomixEngine {
   private raf = 0;
   private onTick: ((s: EngineSnapshot) => void) | null = null;
   private handoffSnapped = false;
+  private processingNote = "";
 
   constructor(params: MashupParams) {
-    this.params = { ...params };
+    this.params = { ...params, dsp: { ...params.dsp } };
   }
 
   setParams(params: MashupParams) {
-    this.params = { ...params };
+    this.params = {
+      ...params,
+      dsp: { ...params.dsp, decisions: [...(params.dsp?.decisions ?? [])] },
+    };
   }
 
   getParams() {
-    return { ...this.params };
+    return {
+      ...this.params,
+      dsp: { ...this.params.dsp, decisions: [...this.params.dsp.decisions] },
+    };
   }
 
   getDeck(id: DeckId) {
@@ -133,7 +139,11 @@ export class AutomixEngine {
     this.emit(0);
   }
 
-  async playMashup() {
+  /**
+   * Full auto path: bake stems from recipe → play mashup.
+   * Call after setParams(plan.params).
+   */
+  async playAutoMashup(onStatus?: (msg: string) => void): Promise<void> {
     const a = this.decks.a.buffer;
     const b = this.decks.b.buffer;
     if (!a || !b) throw new Error("Загрузи оба трека");
@@ -141,19 +151,55 @@ export class AutomixEngine {
     this.stop();
 
     const p = this.params;
+    const dsp = p.dsp;
     const cueA = Math.min(Math.max(0, p.cueASec), Math.max(0, a.duration - 1));
     const cueB = Math.min(Math.max(0, p.cueBSec), Math.max(0, b.duration - 1));
     const blend = Math.max(4, Math.min(48, p.blendDurationSec));
 
-    this.chainA = this.makeChain(a, p.rateA);
-    this.chainB = this.makeChain(b, p.rateB);
+    onStatus?.("AI обрабатывает стемы…");
+    this.processingNote = "baking stems";
+
+    // Yield so UI can paint status
+    await new Promise((r) => setTimeout(r, 0));
+
+    let bufA = a;
+    let bufB = b;
+    let offsetA = cueA;
+    let offsetB = cueB;
+    let liveInstrScale = 1;
+    let liveVocalScale = 1;
+
+    if (dsp.bakeStems) {
+      if (dsp.instrAPeak >= 0.35) {
+        onStatus?.(`Bake A instrumental ${Math.round(dsp.instrAPeak * 100)}%…`);
+        bufA = bakeStemSlice(ctx, a, cueA, blend, "instrumental", dsp.instrAPeak);
+        offsetA = 0;
+        // Live Mid/Side only adds a little more motion on top of bake.
+        liveInstrScale = 0.35;
+      }
+      if (dsp.vocalBPeak >= 0.35) {
+        onStatus?.(`Bake B vocal focus ${Math.round(dsp.vocalBPeak * 100)}%…`);
+        bufB = bakeStemSlice(ctx, b, cueB, blend, "vocal", dsp.vocalBPeak);
+        offsetB = 0;
+        liveVocalScale = 0.4;
+      }
+    }
+
+    onStatus?.("Сведение…");
+    this.processingNote = dsp.decisions[0] ?? "auto mashup";
+
+    this.chainA = this.makeChain(bufA, p.rateA, offsetA);
+    this.chainB = this.makeChain(bufB, p.rateB, offsetB);
+
+    // Stash live scale on params via temporary fields on instance
+    this.liveInstrScale = liveInstrScale;
+    this.liveVocalScale = liveVocalScale;
 
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
     this.playing = true;
     this.handoffSnapped = false;
 
-    // Tempo-sync echo delays to target / deck BPM.
     const bpm =
       p.targetBPM > 30
         ? p.targetBPM
@@ -165,13 +211,13 @@ export class AutomixEngine {
 
     this.applyEnvelope(0, now, true);
 
-    this.chainA.source.start(now, cueA);
-    this.chainB.source.start(now, cueB);
+    this.chainA.source.start(now, this.chainA.startOffset);
+    this.chainB.source.start(now, this.chainB.startOffset);
 
-    const stopAt = now + blend + 0.6;
+    const stopAt = now + blend + 0.8;
     try {
       this.chainA.source.stop(stopAt);
-      this.chainB.source.stop(stopAt + 0.35);
+      this.chainB.source.stop(stopAt + 0.4);
     } catch {
       /* ignore */
     }
@@ -184,6 +230,7 @@ export class AutomixEngine {
       this.emit(progress);
       if (progress >= 1) {
         this.playing = false;
+        this.processingNote = "";
         this.emit(1);
         return;
       }
@@ -192,6 +239,14 @@ export class AutomixEngine {
     this.raf = requestAnimationFrame(tick);
   }
 
+  /** Manual play without re-baking (uses current params + live DSP only). */
+  async playMashup() {
+    return this.playAutoMashup();
+  }
+
+  private liveInstrScale = 1;
+  private liveVocalScale = 1;
+
   async playSolo(id: DeckId, fromSec?: number) {
     const deck = this.decks[id];
     if (!deck.buffer) throw new Error("Нет трека");
@@ -199,7 +254,7 @@ export class AutomixEngine {
     this.stop();
     const cue = fromSec ?? (id === "a" ? this.params.cueASec : this.params.cueBSec);
     const rate = id === "a" ? this.params.rateA : this.params.rateB;
-    const chain = this.makeChain(deck.buffer, rate);
+    const chain = this.makeChain(deck.buffer, rate, Math.max(0, cue));
     if (id === "a") this.chainA = chain;
     else this.chainB = chain;
     chain.gain.gain.value = 1;
@@ -210,7 +265,8 @@ export class AutomixEngine {
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
     this.playing = true;
-    chain.source.start(now, Math.max(0, cue));
+    this.processingNote = "";
+    chain.source.start(now, chain.startOffset);
     const tick = () => {
       if (!this.playing) return;
       const elapsed = (performance.now() - this.startedAt) / 1000;
@@ -239,7 +295,7 @@ export class AutomixEngine {
     this.raf = requestAnimationFrame(tick);
   }
 
-  private makeChain(buffer: AudioBuffer, rate: number): SourceChain {
+  private makeChain(buffer: AudioBuffer, rate: number, startOffset: number): SourceChain {
     const ctx = this.ctx!;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -252,7 +308,6 @@ export class AutomixEngine {
     const gain = ctx.createGain();
     gain.gain.value = 0;
 
-    // source → stem → eq → filters → echo → gain → master
     source.connect(stem.input);
     stem.output.connect(eq.input);
     eq.output.connect(filters.input);
@@ -260,7 +315,7 @@ export class AutomixEngine {
     echo.output.connect(gain);
     gain.connect(this.master!);
 
-    return { source, stem, eq, filters, echo, gain };
+    return { source, stem, eq, filters, echo, gain, startOffset };
   }
 
   private applyEnvelope(progress: number, audioTime: number, immediate: boolean) {
@@ -283,25 +338,26 @@ export class AutomixEngine {
     set(this.chainA.gain.gain, vols.outgoing);
     set(this.chainB.gain.gain, vols.incoming);
 
-    // Bass ownership (ONE BASS)
     this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
     this.chainB.eq.setBassGainDb(bass.incoming, audioTime, immediate);
     this.chainA.eq.setVocalDuckDb(0, audioTime, immediate);
     this.chainB.eq.setVocalDuckDb(fx.vocalDuckBDb, audioTime, immediate);
-    this.chainA.eq.setAirDb(-1.5 * fx.hpfA, audioTime, immediate);
-    this.chainB.eq.setAirDb(1.5 * (1 - fx.lpfB), audioTime, immediate);
+    this.chainA.eq.setAirDb(-2 * fx.hpfA, audioTime, immediate);
+    this.chainB.eq.setAirDb(2 * (1 - fx.lpfB), audioTime, immediate);
 
-    // Stem tools: A instrumentalize, B vocalize
-    this.chainA.stem.setInstrumental(fx.instrumentalA, audioTime, immediate);
-    this.chainB.stem.setVocal(fx.vocalB, audioTime, immediate);
+    // Live stem motion scaled down if we already baked
+    this.chainA.stem.setInstrumental(
+      fx.instrumentalA * this.liveInstrScale,
+      audioTime,
+      immediate
+    );
+    this.chainB.stem.setVocal(fx.vocalB * this.liveVocalScale, audioTime, immediate);
 
-    // Filters
     this.chainA.filters.setHighPass(fx.hpfA, audioTime, immediate);
     this.chainA.filters.setLowPass(0, audioTime, immediate);
     this.chainB.filters.setHighPass(0, audioTime, immediate);
     this.chainB.filters.setLowPass(fx.lpfB, audioTime, immediate);
 
-    // Echo-out on A near LAND
     this.chainA.echo.setAmount(fx.echoA, audioTime, immediate);
     this.chainB.echo.bypass(audioTime, immediate);
 
@@ -322,8 +378,7 @@ export class AutomixEngine {
     const fx = stemFxAt(progress, this.params);
     const elapsed = (performance.now() - this.startedAt) / 1000;
 
-    const pastHandoff = progress >= this.params.handoffAt;
-    if (pastHandoff) this.handoffSnapped = true;
+    if (progress >= this.params.handoffAt) this.handoffSnapped = true;
 
     const displayDeck: DeckId = this.handoffSnapped ? "b" : "a";
     const displayElapsed = this.handoffSnapped
@@ -351,6 +406,7 @@ export class AutomixEngine {
       displayElapsed: Math.min(displayDuration, Math.max(0, displayElapsed)),
       displayDuration,
       displayDeck,
+      processingNote: this.processingNote || undefined,
     });
   }
 

@@ -1,18 +1,38 @@
 /**
  * Vocal / instrumental tools — written from scratch (no ML stems).
  *
- * Stereo DJ trick used for decades:
- *   Mid  = (L + R) / 2  → usually vocals + kick + bass (center)
- *   Side = (L − R) / 2  → usually stereo instruments / FX / doubles
+ * Stereo DJ Mid/Side:
+ *   Mid  = (L + R) / 2  → vocals + kick + bass (center)
+ *   Side = (L − R) / 2  → stereo instruments / FX
  *
- * - instrumentalize: duck Mid (cut centered vocal), keep Side
- * - vocalize:        duck Side, keep/boost Mid presence
- *
- * Not perfect Demucs stems — but real, audible, and what club tools often
- * approximate when stems aren’t available.
+ * Offline bake is stronger than live MidSideStemNode alone — used by the
+ * auto engine when planAutomix decides A needs instrumental / B needs vocal.
  */
 
 export type StemMode = "dry" | "instrumental" | "vocal";
+
+/** Slice a region of an AudioBuffer (seconds). */
+export function sliceBuffer(
+  ctx: BaseAudioContext,
+  input: AudioBuffer,
+  startSec: number,
+  durationSec: number
+): AudioBuffer {
+  const sr = input.sampleRate;
+  const start = Math.max(0, Math.floor(startSec * sr));
+  const len = Math.max(1, Math.min(input.length - start, Math.floor(durationSec * sr)));
+  const ch = input.numberOfChannels;
+  const out = ctx.createBuffer(ch, len, sr);
+  for (const c of range(ch)) {
+    const src = input.getChannelData(c);
+    out.copyToChannel(src.subarray(start, start + len), c);
+  }
+  return out;
+}
+
+function range(n: number): number[] {
+  return Array.from({ length: n }, (_, i) => i);
+}
 
 /** Offline render: produce a new AudioBuffer in the chosen stem mode. */
 export function processBufferStem(
@@ -24,7 +44,7 @@ export function processBufferStem(
   const ch = input.numberOfChannels;
   const n = input.length;
   const sr = input.sampleRate;
-  const out = ctx.createBuffer(Math.min(2, Math.max(2, ch)), n, sr);
+  const out = ctx.createBuffer(2, n, sr);
 
   const L = input.getChannelData(0);
   const R = ch > 1 ? input.getChannelData(1) : input.getChannelData(0);
@@ -32,40 +52,65 @@ export function processBufferStem(
   const oR = out.getChannelData(1);
   const a = Math.min(1, Math.max(0, amount));
 
+  // Simple one-pole for mid presence (vocal) / mid duck (instrumental)
+  let midLp = 0;
+  const lpAlpha = 1 - Math.exp((-2 * Math.PI * 180) / sr); // keep some bass in mid when instrumentalizing
+
   for (let i = 0; i < n; i++) {
     const l = L[i]!;
     const r = R[i]!;
     const mid = (l + r) * 0.5;
     const side = (l - r) * 0.5;
+    midLp += lpAlpha * (mid - midLp);
 
     if (mode === "dry") {
       oL[i] = l;
       oR[i] = r;
     } else if (mode === "instrumental") {
-      // Remove centered vocal: attenuate mid, keep side (+ a bit of mid bass later via FX).
-      const midKeep = mid * (1 - 0.92 * a);
-      oL[i] = midKeep + side;
-      oR[i] = midKeep - side;
+      // Cut centered vocal hard; keep mid bass so kick/sub survive.
+      const midVocal = mid - midLp;
+      const midKeep = midLp + midVocal * (1 - 0.97 * a);
+      const sideBoost = side * (1 + 0.22 * a);
+      oL[i] = midKeep + sideBoost;
+      oR[i] = midKeep - sideBoost;
     } else {
-      // Vocal focus: keep mid, shrink side bed.
-      const sideKeep = side * (1 - 0.85 * a);
-      oL[i] = mid + sideKeep;
-      oR[i] = mid - sideKeep;
+      // Vocal focus: keep mid, shrink sides, slight presence tilt via mid emphasis.
+      const sideKeep = side * (1 - 0.9 * a);
+      const midBoost = mid * (1 + 0.12 * a);
+      oL[i] = midBoost + sideKeep;
+      oR[i] = midBoost - sideKeep;
     }
   }
   return out;
 }
 
 /**
- * Realtime Mid/Side splitter graph.
- * `instrumentalAmt` 0…1 ducks mid (vocal out).
- * `vocalAmt` 0…1 ducks side (instrumental bed out).
+ * Bake a mashup slice: take from cue for `durationSec`, apply stem, return buffer
+ * that starts at t=0 (engine plays from 0 instead of cue).
+ */
+export function bakeStemSlice(
+  ctx: BaseAudioContext,
+  input: AudioBuffer,
+  cueSec: number,
+  durationSec: number,
+  mode: StemMode,
+  amount: number
+): AudioBuffer {
+  // Pad a little past blend so echo tails / rate don't cut dry.
+  const slice = sliceBuffer(ctx, input, cueSec, durationSec + 1.2);
+  if (mode === "dry" || amount < 0.05) return slice;
+  return processBufferStem(ctx, slice, mode, amount);
+}
+
+/**
+ * Realtime Mid/Side splitter graph (live automation on top of baked stems).
  */
 export class MidSideStemNode {
   readonly input: GainNode;
   readonly output: GainNode;
   private midGain: GainNode;
   private sideGain: GainNode;
+  private presence: BiquadFilterNode;
 
   constructor(ctx: AudioContext) {
     this.input = ctx.createGain();
@@ -74,9 +119,6 @@ export class MidSideStemNode {
     const split = ctx.createChannelSplitter(2);
     const merge = ctx.createChannelMerger(2);
 
-    // Decode L/R into mid/side using gain phase tricks:
-    // mid  = 0.5*L + 0.5*R
-    // side = 0.5*L - 0.5*R
     const lToMid = ctx.createGain();
     const rToMid = ctx.createGain();
     const lToSide = ctx.createGain();
@@ -91,12 +133,17 @@ export class MidSideStemNode {
     this.midGain.gain.value = 1;
     this.sideGain.gain.value = 1;
 
-    // Presence shelf on mid (helps “vocal” read when vocalAmt high)
-    const midPresence = ctx.createBiquadFilter();
-    midPresence.type = "peaking";
-    midPresence.frequency.value = 2800;
-    midPresence.Q.value = 0.9;
-    midPresence.gain.value = 0;
+    this.presence = ctx.createBiquadFilter();
+    this.presence.type = "peaking";
+    this.presence.frequency.value = 2800;
+    this.presence.Q.value = 0.9;
+    this.presence.gain.value = 0;
+
+    // Bass keep on mid when instrumentalizing (live)
+    const midBass = ctx.createBiquadFilter();
+    midBass.type = "lowshelf";
+    midBass.frequency.value = 160;
+    midBass.gain.value = 0;
 
     this.input.connect(split);
     split.connect(lToMid, 0);
@@ -112,10 +159,9 @@ export class MidSideStemNode {
     rToSide.connect(sideSum);
 
     midSum.connect(this.midGain);
-    this.midGain.connect(midPresence);
+    this.midGain.connect(midBass);
+    midBass.connect(this.presence);
 
-    // Encode mid/side back to L/R:
-    // L = mid + side, R = mid - side
     const midToL = ctx.createGain();
     const midToR = ctx.createGain();
     const sideToL = ctx.createGain();
@@ -125,8 +171,8 @@ export class MidSideStemNode {
     sideToL.gain.value = 1;
     sideToR.gain.value = -1;
 
-    midPresence.connect(midToL);
-    midPresence.connect(midToR);
+    this.presence.connect(midToL);
+    this.presence.connect(midToR);
     sideSum.connect(this.sideGain);
     this.sideGain.connect(sideToL);
     this.sideGain.connect(sideToR);
@@ -137,37 +183,37 @@ export class MidSideStemNode {
     sideToR.connect(merge, 0, 1);
     merge.connect(this.output);
 
-    // stash presence for automation
-    (this as unknown as { _presence: BiquadFilterNode })._presence = midPresence;
+    (this as unknown as { _midBass: BiquadFilterNode })._midBass = midBass;
   }
 
-  /** 0 = dry stereo balance, 1 = full instrumental (vocal removed). */
   setInstrumental(amount: number, when: number, immediate = false) {
     const a = Math.min(1, Math.max(0, amount));
-    const mid = 1 - 0.92 * a;
-    const side = 1 + 0.15 * a; // slight side lift so bed stays wide
+    const mid = 1 - 0.88 * a;
+    const side = 1 + 0.18 * a;
     this.setGain(this.midGain.gain, mid, when, immediate);
     this.setGain(this.sideGain.gain, side, when, immediate);
-    const presence = (this as unknown as { _presence: BiquadFilterNode })._presence;
-    this.setGain(presence.gain, -3 * a, when, immediate);
+    this.setGain(this.presence.gain, -4 * a, when, immediate);
+    const midBass = (this as unknown as { _midBass: BiquadFilterNode })._midBass;
+    this.setGain(midBass.gain, 3.5 * a, when, immediate); // restore kick/sub
   }
 
-  /** 0 = dry, 1 = vocal focus (sides ducked, mid presence up). */
   setVocal(amount: number, when: number, immediate = false) {
     const a = Math.min(1, Math.max(0, amount));
-    const mid = 1 + 0.1 * a;
-    const side = 1 - 0.85 * a;
+    const mid = 1 + 0.12 * a;
+    const side = 1 - 0.88 * a;
     this.setGain(this.midGain.gain, mid, when, immediate);
     this.setGain(this.sideGain.gain, side, when, immediate);
-    const presence = (this as unknown as { _presence: BiquadFilterNode })._presence;
-    this.setGain(presence.gain, 4.5 * a, when, immediate);
+    this.setGain(this.presence.gain, 5 * a, when, immediate);
+    const midBass = (this as unknown as { _midBass: BiquadFilterNode })._midBass;
+    this.setGain(midBass.gain, 0, when, immediate);
   }
 
   setDry(when: number, immediate = false) {
     this.setGain(this.midGain.gain, 1, when, immediate);
     this.setGain(this.sideGain.gain, 1, when, immediate);
-    const presence = (this as unknown as { _presence: BiquadFilterNode })._presence;
-    this.setGain(presence.gain, 0, when, immediate);
+    this.setGain(this.presence.gain, 0, when, immediate);
+    const midBass = (this as unknown as { _midBass: BiquadFilterNode })._midBass;
+    this.setGain(midBass.gain, 0, when, immediate);
   }
 
   private setGain(param: AudioParam, value: number, when: number, immediate: boolean) {

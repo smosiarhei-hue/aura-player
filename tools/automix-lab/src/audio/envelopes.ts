@@ -1,4 +1,33 @@
-/** Curves mirrored from Sonivo `MashupLiveStyle` / live EQ intent. */
+/** Curves + auto-DSP recipe mirrored from Sonivo mashup intent. */
+
+export type MashupArchetype = "dropSwap" | "seamlessLoop" | "energyWash";
+
+/**
+ * What the AI decides to *do* to the audio — not just volume knobs.
+ * Engine reads this and actually processes stems / schedules FX.
+ */
+export type AutoDspRecipe = {
+  /** Peak Mid/Side instrumentalize on A (0…1). High when A outro still has vocals. */
+  instrAPeak: number;
+  /** When (0…1 progress) A instrumentalize reaches peak. */
+  instrAAt: number;
+  /** Peak vocal-focus on B (0…1). */
+  vocalBPeak: number;
+  /** When B vocal focus opens. */
+  vocalBAt: number;
+  /** Early mid-duck on B in dB (negative). Clears space under A vocal. */
+  vocalDuckBDb: number;
+  /** HPF riser intensity on A at LAND (0…1). */
+  hpfAPeak: number;
+  /** LPF muffling on B at INVITE start (0…1). */
+  lpfBPeak: number;
+  /** Echo-out peak on A (0…1). */
+  echoAPeak: number;
+  /** Offline-bake stems before play (stronger than live Mid/Side alone). */
+  bakeStems: boolean;
+  /** Human-readable decisions for UI / preset. */
+  decisions: string[];
+};
 
 export type MashupParams = {
   bassSwapAt: number;
@@ -13,8 +42,23 @@ export type MashupParams = {
   blendDurationSec: number;
   cueASec: number;
   cueBSec: number;
-  archetype: "dropSwap" | "seamlessLoop" | "energyWash";
+  archetype: MashupArchetype;
+  /** Filled by planAutomix — engine consumes this. */
+  dsp: AutoDspRecipe;
 };
+
+export const defaultDsp = (): AutoDspRecipe => ({
+  instrAPeak: 0.85,
+  instrAAt: 0.35,
+  vocalBPeak: 0.7,
+  vocalBAt: 0.2,
+  vocalDuckBDb: -5,
+  hpfAPeak: 0.85,
+  lpfBPeak: 0.7,
+  echoAPeak: 0.5,
+  bakeStems: true,
+  decisions: [],
+});
 
 export const defaultParams = (): MashupParams => ({
   bassSwapAt: 0.22,
@@ -30,6 +74,7 @@ export const defaultParams = (): MashupParams => ({
   cueASec: 0,
   cueBSec: 0,
   archetype: "dropSwap",
+  dsp: defaultDsp(),
 });
 
 export function smoothstep(t: number): number {
@@ -46,7 +91,6 @@ export function tempoMatch(
   if (Math.abs(direct - 1) <= 0.16) {
     return { targetBPM: bpmA, rateA: 1, rateB: direct };
   }
-  // Half/double fold
   let b = bpmB;
   if (Math.abs(bpmA - b * 2) < Math.abs(bpmA - b)) b *= 2;
   if (Math.abs(bpmA - b / 2) < Math.abs(bpmA - b)) b /= 2;
@@ -101,7 +145,6 @@ export function volumesAt(
   return { outgoing: out, incoming: inn };
 }
 
-/** Bass shelf gain in dB for each deck (A killed early, B owns the groove). */
 export function bassGainDbAt(
   p: number,
   params: MashupParams
@@ -155,7 +198,6 @@ export function pitchCentsAt(p: number, params: MashupParams): number {
 }
 
 export function phaseLabel(p: number, params: MashupParams): string {
-  // DJ 5-act story labels (see djCraft.ts).
   const lockEnd = Math.min(0.18, params.bassSwapAt * 0.65);
   if (p < lockEnd) {
     return params.targetBPM > 30

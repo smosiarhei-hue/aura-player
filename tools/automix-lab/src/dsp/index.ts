@@ -13,6 +13,8 @@
 export {
   MidSideStemNode,
   processBufferStem,
+  bakeStemSlice,
+  sliceBuffer,
   type StemMode,
 } from "./vocalInstrumental";
 export { BassEqNode } from "./bassEq";

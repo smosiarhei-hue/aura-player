@@ -18,9 +18,9 @@ app.innerHTML = `
   <header class="hero">
     <h1>Automix <span>Lab</span></h1>
     <p>
-      AI разбирает треки и сводит как Apple Automix. DSP с нуля: Mid/Side
-      удаление вокала/инструментала, bass kill, HPF/LPF, echo-out — реально
-      в dual-deck цепи, не только громкость.
+      Алгоритм сам: анализ → решение (стемы/бас/фильтры/echo) → offline bake
+      вокал/инструментал → сведение LOCK→LAND. Без ручной возни — один клик
+      <strong>AI Auto Mix</strong>.
     </p>
     <p class="hint" style="margin-top:8px">
       <a href="/iphone.html" style="color:var(--accent);font-weight:700">iPhone 17 Pro макет Sonivo →</a>
@@ -122,9 +122,10 @@ app.innerHTML = `
         </div>
         <div class="error" id="error"></div>
         <p class="hint">
-          <strong>AI Auto Mix</strong> сам считает BPM, mixOut/mixIn, rates и огибающие,
-          затем сразу играет мэшап. Ручки справа — тонкая подстройка на слух.
+          <strong>AI Auto Mix</strong> сам решает и обрабатывает: BPM, cues, bake стемов,
+          bass swap, HPF/LPF, echo — потом играет. Ручки справа только если хочешь переиграть.
         </p>
+        <ul class="dsp-list" id="processingList" style="margin-top:10px"></ul>
       </div>
     </section>
 
@@ -203,11 +204,29 @@ function setAiStatus(msg: string) {
 
 function setParamNumber(key: keyof MashupParams, value: number) {
   switch (key) {
-    case "archetype":
-      return;
-    default:
+    case "bassSwapAt":
+    case "handoffAt":
+    case "outgoingVolumeHold":
+    case "incomingVolumeLag":
+    case "bassDepth":
+    case "rateA":
+    case "rateB":
+    case "pitchCentsB":
+    case "targetBPM":
+    case "blendDurationSec":
+    case "cueASec":
+    case "cueBSec":
       params[key] = value;
+      break;
+    default:
+      break;
   }
+}
+
+function showProcessing(lines: string[]) {
+  const el = document.querySelector("#processingList");
+  if (!el) return;
+  el.innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
 }
 
 function applyParamsToUI(p: MashupParams, bpmA?: number, bpmB?: number) {
@@ -224,6 +243,7 @@ function applyParamsToUI(p: MashupParams, bpmA?: number, bpmB?: number) {
 }
 
 function syncKnobOutputs() {
+  const dspKeep = params.dsp;
   for (const k of knobs) {
     const input = document.querySelector<HTMLInputElement>(`#k-${k.key}`)!;
     const out = document.querySelector<HTMLOutputElement>(`#o-${k.key}`)!;
@@ -233,6 +253,7 @@ function syncKnobOutputs() {
   }
   params.cueASec = Number(document.querySelector<HTMLInputElement>("#cueA")!.value);
   params.cueBSec = Number(document.querySelector<HTMLInputElement>("#cueB")!.value);
+  params.dsp = dspKeep;
   document.querySelector("#cueAOut")!.textContent = params.cueASec.toFixed(1);
   document.querySelector("#cueBOut")!.textContent = params.cueBSec.toFixed(1);
   engine.setBpm("a", Number(document.querySelector<HTMLInputElement>("#bpmA")!.value));
@@ -296,7 +317,12 @@ function runPlanFromProfiles() {
     throw new Error("Нужен AI-анализ обоих треков");
   }
   const plan = planAutomix(profiles.a, profiles.b);
+  // Keep AI dsp recipe intact while syncing numeric knobs.
+  const dsp = plan.params.dsp;
   applyParamsToUI(plan.params, plan.profileA.bpm, plan.profileB.bpm);
+  params.dsp = dsp;
+  engine.setParams(params);
+  showProcessing(plan.processing);
   const box = document.querySelector<HTMLTextAreaElement>("#preset")!;
   box.value = JSON.stringify(
     {
@@ -305,6 +331,8 @@ function runPlanFromProfiles() {
       story: plan.story,
       archetype: plan.archetype,
       beatmatched: plan.beatmatched,
+      processing: plan.processing,
+      dsp: plan.params.dsp,
       params: plan.params,
       profileA: {
         name: plan.profileA.name,
@@ -326,7 +354,7 @@ function runPlanFromProfiles() {
   );
   setAiStatus(plan.reason);
   document.querySelector("#phase")!.textContent = plan.beatmatched
-    ? `AI TEMPO LOCK ${Math.round(plan.params.targetBPM)}`
+    ? `AI LOCK ${Math.round(plan.params.targetBPM)}`
     : `AI ${plan.archetype}`;
   return plan;
 }
@@ -360,12 +388,15 @@ document.querySelector("#aiAuto")?.addEventListener("click", async () => {
     if (!engine.getDeck("a").buffer || !engine.getDeck("b").buffer) {
       throw new Error("Загрузи оба трека");
     }
+    setAiStatus("1/4 · анализ A…");
     if (!profiles.a) await analyzeDeck("a");
+    setAiStatus("2/4 · анализ B…");
     if (!profiles.b) await analyzeDeck("b");
-    setAiStatus("AI строит план сведения…");
+    setAiStatus("3/4 · план обработки (стемы / FX / cues)…");
     const plan = runPlanFromProfiles();
-    setAiStatus(`Играю wow-историю: ${plan.story}`);
-    await engine.playMashup();
+    setAiStatus(`4/4 · ${plan.story}`);
+    await engine.playAutoMashup((msg) => setAiStatus(msg));
+    setAiStatus(`Играю · ${plan.processing.slice(0, 2).join(" · ")}`);
     document.querySelector("#mixing")!.classList.add("on");
   } catch (e) {
     err.textContent = e instanceof Error ? e.message : String(e);
@@ -379,7 +410,7 @@ document.querySelector("#play")?.addEventListener("click", async () => {
   err.textContent = "";
   syncKnobOutputs();
   try {
-    await engine.playMashup();
+    await engine.playAutoMashup((msg) => setAiStatus(msg));
     document.querySelector("#mixing")!.classList.add("on");
   } catch (e) {
     err.textContent = e instanceof Error ? e.message : String(e);
@@ -472,10 +503,13 @@ document.querySelector("#importBtn")?.addEventListener("click", () => {
 });
 
 document.querySelector("#resetBtn")?.addEventListener("click", () => {
-  Object.assign(params, defaultParams());
+  const fresh = defaultParams();
+  Object.assign(params, fresh);
+  params.dsp = fresh.dsp;
   for (const k of knobs) {
     document.querySelector<HTMLInputElement>(`#k-${k.key}`)!.value = String(params[k.key]);
   }
+  showProcessing([]);
   syncKnobOutputs();
 });
 
@@ -496,6 +530,9 @@ engine.onUpdate((snap) => {
   document.querySelector<HTMLElement>("#lpfB")!.style.width = `${snap.lpfB * 100}%`;
   document.querySelector<HTMLElement>("#echoA")!.style.width = `${snap.echoA * 100}%`;
   document.querySelector("#mixing")!.classList.toggle("on", snap.playing && snap.phase !== "READY");
+  if (snap.processingNote && snap.playing) {
+    // keep phase as DJ act; status already set during bake
+  }
 });
 
 /** Offline Mid/Side stem preview (instrumentalize A / vocalize B). */

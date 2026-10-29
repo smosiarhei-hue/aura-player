@@ -39,7 +39,14 @@ Preview-кнопки в UI: **Preview A instrumental** / **Preview B vocal** —
 На каждый файл: BPM, energy, vocal proxy, mixOut/mixIn.  
 По паре (`planAutomix`): beatmatch, cues на тактах, 8/16 bars, архетип, one-bass + dual-layer.
 
-**✦ AI Auto Mix** — анализ → план → play с полной DSP-цепью.
+**✦ AI Auto Mix** — полный автопайплайн:
+
+1. анализ A/B (BPM, vocal, mixIn/Out)  
+2. `planAutomix` решает стемы / bass / HPF / echo  
+3. **offline bake** Mid/Side instrumental A + vocal B  
+4. play dual-deck с live FX поверх bake  
+
+Список решений появляется под транспортом.
 
 ## DJ 5 актов
 
