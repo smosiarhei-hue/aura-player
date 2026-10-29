@@ -16,8 +16,9 @@
 
 Если оба трека ещё поют в зоне cue → **ONE VOCAL**:
 - DualDeck: `FxKind.instrumentalize` (karaoke mid-notch, Lab Mid/Side) на A и на B до handoff
-- Live PlayerCore: при локальном кэше обоих треков — `MidSideStemBaker` (только окно мэшапа ≤40 с, чанки ~4k кадров → temp CAF, без загрузки всего трека в RAM); иначе fallback `MashupLiveEQEnvelope.applyOneVocalGate`
-- После LAND bake-слайсы удаляются, воспроизведение переключается на реальный файл B
+- Live PlayerCore: при локальном кэше обоих треков — `MidSideStemBaker.bakeTransitionMaster` сводит **один stereo master** окна мэшапа (A instr + B instr→dry + volumes, чанки ~4k, ≤40 с → один temp CAF, без загрузки треков в RAM); иначе fallback `MashupLiveEQEnvelope.applyOneVocalGate`
+- Во время master-bake dual-deck volumes не крутятся — мастер уже содержит сведение
+- После LAND master удаляется, воспроизведение переключается на реальный файл B
 - Вокал B открывается только на LAND
 
 ## Как это в Sonivo

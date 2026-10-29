@@ -1,8 +1,10 @@
 // Path: Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift
 //
-// Lab-style Mid/Side instrumentalize — memory-light:
-// only the mashup window is read, processed in small chunks, and written to a
-// temp CAF on disk. Peak RAM ≈ one chunk (~64 KB), not the full track.
+// Lab-style Mid/Side mashup bake — memory-light:
+// only the transition window is read, processed in small chunks, and written
+// to a temp CAF on disk. Peak RAM ≈ a few chunks (~256 KB), not full tracks.
+//
+// Primary path: bakeTransitionMaster — one stereo master of A+B (instr + volumes).
 
 @preconcurrency import AVFAudio
 import Foundation
@@ -41,10 +43,215 @@ public struct MidSideBakeRequest: Sendable, Equatable {
     }
 }
 
+/// Recipe for a single mastered mashup window (A+B summed offline).
+public struct MidSideMasterBakeRequest: Sendable, Equatable {
+    public var outgoingURL: URL
+    public var incomingURL: URL
+    public var cueA: Double
+    public var cueB: Double
+    public var durationSec: Double
+    /// Progress (0…1) where B lead returns (LAND handoff).
+    public var handoffProgress: Double
+    public var outgoingVolumeHold: Double
+    public var incomingVolumeLag: Double
+    public var isBeatmatched: Bool
+
+    public init(
+        outgoingURL: URL,
+        incomingURL: URL,
+        cueA: Double,
+        cueB: Double,
+        durationSec: Double,
+        handoffProgress: Double,
+        outgoingVolumeHold: Double = 0.42,
+        incomingVolumeLag: Double = 0.18,
+        isBeatmatched: Bool = true
+    ) {
+        self.outgoingURL = outgoingURL
+        self.incomingURL = incomingURL
+        self.cueA = cueA
+        self.cueB = cueB
+        self.durationSec = durationSec
+        self.handoffProgress = handoffProgress
+        self.outgoingVolumeHold = outgoingVolumeHold
+        self.incomingVolumeLag = incomingVolumeLag
+        self.isBeatmatched = isBeatmatched
+    }
+}
+
 public enum MidSideStemBaker {
     /// Soft cap so a bad cue can't allocate a huge bake (Lab blend ≤ ~36s).
     public static let maximumDurationSec: Double = 40
     private static let chunkFrames: AVAudioFrameCount = 4_096
+
+    // MARK: - Transition master (A+B → one CAF)
+
+    /// Bake ONE VOCAL mashup as a single stereo master: A instrumental + B instr→dry,
+    /// mashed with Lab-style dual-deck volumes. Caller must delete the URL when done.
+    public static func bakeTransitionMaster(_ request: MidSideMasterBakeRequest) throws -> URL {
+        let duration = min(maximumDurationSec, max(4, request.durationSec))
+        let cueA = max(0, request.cueA)
+        let cueB = max(0, request.cueB)
+        let handoff = min(0.85, max(0.35, request.handoffProgress))
+        let untilSec = duration * handoff
+
+        let fileA = try AVAudioFile(forReading: request.outgoingURL)
+        let fileB = try AVAudioFile(forReading: request.incomingURL)
+        let formatA = fileA.processingFormat
+        let formatB = fileB.processingFormat
+        let rate = formatA.sampleRate
+        guard rate.isFinite, rate > 0, fileA.length > 0, fileB.length > 0,
+              abs(formatA.sampleRate - formatB.sampleRate) < 1.0 else {
+            // Divergent sample rates → caller falls back to live EQ path.
+            throw AudioEngineCoreError.unsupportedOutputFormat
+        }
+
+        let startA = min(fileA.length - 1, AVAudioFramePosition(cueA * rate))
+        let startB = min(fileB.length - 1, AVAudioFramePosition(cueB * formatB.sampleRate))
+        let maxA = fileA.length - startA
+        let maxB = fileB.length - startB
+        let availableSec = min(Double(maxA), Double(maxB)) / rate
+        let wantSec = min(duration + 0.5, availableSec)
+        let totalFrames = AVAudioFrameCount(
+            max(1, min(min(maxA, maxB), AVAudioFramePosition(wantSec * rate)))
+        )
+        let untilFrame = AVAudioFrameCount(min(Double(totalFrames), untilSec * rate))
+        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
+
+        // Master is always stereo float at A's processing format.
+        guard let outFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: rate,
+            channels: 2,
+            interleaved: false
+        ) else {
+            throw AudioEngineCoreError.unsupportedOutputFormat
+        }
+
+        let outURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonivo-mashup-master-\(UUID().uuidString).caf")
+        let output = try AVAudioFile(forWriting: outURL, settings: outFormat.settings)
+
+        // Peak RAM: 3 PCM chunks — never both full windows.
+        guard let bufA = AVAudioPCMBuffer(pcmFormat: formatA, frameCapacity: chunkFrames),
+              let bufB = AVAudioPCMBuffer(pcmFormat: formatB, frameCapacity: chunkFrames),
+              let bufOut = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: chunkFrames) else {
+            try? FileManager.default.removeItem(at: outURL)
+            throw AudioEngineCoreError.cannotCreatePCMBuffer
+        }
+
+        fileA.framePosition = startA
+        fileB.framePosition = startB
+
+        var written: AVAudioFrameCount = 0
+        var aLp: Float = 0, aBp: Float = 0
+        var bLp: Float = 0, bBp: Float = 0
+        let lpAlpha = Float(1 - exp(-2 * Double.pi * 180 / rate))
+        let bpAlpha = Float(1 - exp(-2 * Double.pi * 2500 / rate))
+        let chA = Int(formatA.channelCount)
+        let chB = Int(formatB.channelCount)
+        let hold = request.outgoingVolumeHold
+        let lag = request.incomingVolumeLag
+        let beatmatched = request.isBeatmatched
+
+        while written < totalFrames {
+            let got: AVAudioFrameCount = try autoreleasepool {
+                let n = min(chunkFrames, totalFrames - written)
+                bufA.frameLength = 0
+                bufB.frameLength = 0
+                try fileA.read(into: bufA, frameCount: n)
+                try fileB.read(into: bufB, frameCount: n)
+                let got = min(bufA.frameLength, bufB.frameLength)
+                guard got > 0 else { return 0 }
+                bufOut.frameLength = got
+
+                processChunk(
+                    input: bufA,
+                    output: bufA,
+                    frames: got,
+                    channels: chA,
+                    mode: .instrumental,
+                    amount: 1,
+                    absoluteFrame: written,
+                    untilFrame: 0,
+                    fadeFrames: fadeFrames,
+                    midLp: &aLp,
+                    midBp: &aBp,
+                    lpAlpha: lpAlpha,
+                    bpAlpha: bpAlpha
+                )
+                processChunk(
+                    input: bufB,
+                    output: bufB,
+                    frames: got,
+                    channels: chB,
+                    mode: .instrumental,
+                    amount: 1,
+                    absoluteFrame: written,
+                    untilFrame: untilFrame,
+                    fadeFrames: fadeFrames,
+                    midLp: &bLp,
+                    midBp: &bBp,
+                    lpAlpha: lpAlpha,
+                    bpAlpha: bpAlpha
+                )
+
+                mixMasterChunk(
+                    outgoing: bufA,
+                    incoming: bufB,
+                    output: bufOut,
+                    frames: got,
+                    channelsA: chA,
+                    channelsB: chB,
+                    absoluteFrame: written,
+                    totalFrames: totalFrames,
+                    handoff: handoff,
+                    hold: hold,
+                    lag: lag,
+                    beatmatched: beatmatched
+                )
+
+                try output.write(from: bufOut)
+                return got
+            }
+            guard got > 0 else { break }
+            written += got
+            if fileA.framePosition >= fileA.length || fileB.framePosition >= fileB.length {
+                break
+            }
+        }
+
+        return outURL
+    }
+
+    /// Convenience: ONE VOCAL conflict → one master CAF for the mashup window.
+    public static func bakeOneVocalMaster(
+        outgoingURL: URL,
+        incomingURL: URL,
+        cueA: Double,
+        cueB: Double,
+        blendSec: Double,
+        handoffProgress: Double,
+        outgoingVolumeHold: Double,
+        incomingVolumeLag: Double,
+        isBeatmatched: Bool
+    ) throws -> URL {
+        try bakeTransitionMaster(
+            MidSideMasterBakeRequest(
+                outgoingURL: outgoingURL,
+                incomingURL: incomingURL,
+                cueA: cueA,
+                cueB: cueB,
+                durationSec: blendSec,
+                handoffProgress: handoffProgress,
+                outgoingVolumeHold: outgoingVolumeHold,
+                incomingVolumeLag: incomingVolumeLag,
+                isBeatmatched: isBeatmatched
+            )
+        )
+    }
+
+    // MARK: - Single-stem bake (tests / DualDeck helpers)
 
     /// Bake one mashup slice to a temp CAF. Caller must delete the URL when done.
     public static func bakeToTempFile(_ request: MidSideBakeRequest) throws -> URL {
@@ -87,8 +294,6 @@ public enum MidSideStemBaker {
         let channels = Int(format.channelCount)
         let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
 
-        // Chunked read→process→write: never materialize the whole window in RAM.
-        // autoreleasepool drains AVFoundation temps per chunk on Apple platforms.
         while written < totalFrames {
             let got: AVAudioFrameCount = try autoreleasepool {
                 let n = min(chunkFrames, totalFrames - written)
@@ -124,52 +329,10 @@ public enum MidSideStemBaker {
             }
             guard got > 0 else { break }
             written += got
-            if got < chunkFrames && written < totalFrames {
-                // Short read near EOF — stop rather than spin.
-                if source.framePosition >= source.length { break }
-            }
+            if source.framePosition >= source.length { break }
         }
 
         return outURL
-    }
-
-    /// Bake A instrumental + B instrumental→dry for ONE VOCAL mashup. Temp files only.
-    public static func bakeOneVocalPair(
-        outgoingURL: URL,
-        incomingURL: URL,
-        cueA: Double,
-        cueB: Double,
-        blendSec: Double,
-        handoffProgress: Double
-    ) throws -> (outgoing: URL, incoming: URL) {
-        let blend = min(maximumDurationSec, max(4, blendSec))
-        let handoff = min(0.85, max(0.35, handoffProgress))
-        let a = try bakeToTempFile(
-            MidSideBakeRequest(
-                fileURL: outgoingURL,
-                cueSec: cueA,
-                durationSec: blend,
-                mode: .instrumental,
-                amount: 1,
-                instrumentalUntilSec: 0
-            )
-        )
-        do {
-            let b = try bakeToTempFile(
-                MidSideBakeRequest(
-                    fileURL: incomingURL,
-                    cueSec: cueB,
-                    durationSec: blend,
-                    mode: .instrumental,
-                    amount: 1,
-                    instrumentalUntilSec: blend * handoff
-                )
-            )
-            return (a, b)
-        } catch {
-            try? FileManager.default.removeItem(at: a)
-            throw error
-        }
     }
 
     public static func removeTempFiles(_ urls: [URL]) {
@@ -180,6 +343,96 @@ public enum MidSideStemBaker {
 
     // MARK: - DSP
 
+    /// MashupLiveStyle.volumes mirrored (AudioEngineCore cannot import MixPlanner).
+    private static func mashupVolumes(
+        progress: Double,
+        hold rawHold: Double,
+        lag rawLag: Double,
+        handoff rawHandoff: Double,
+        beatmatched: Bool
+    ) -> (outgoing: Float, incoming: Float) {
+        let p = min(1, max(0, progress))
+        let hold = min(0.72, max(0.18, rawHold))
+        let lag = min(0.28, max(0.02, rawLag * 0.55))
+        let handoff = min(0.85, max(hold, rawHandoff))
+        let mashupFloor: Float = beatmatched ? 0.72 : 0.58
+        let mashupPeak: Float = beatmatched ? 0.96 : 0.88
+
+        let out: Float
+        if p <= hold {
+            out = 1.0 - Float(p / max(hold, 0.001)) * 0.12
+        } else if p <= handoff {
+            let t = smoothstep((p - hold) / max(0.001, handoff - hold))
+            out = max(0.38, 0.88 * (1 - t * 0.55))
+        } else {
+            let t = smoothstep((p - handoff) / max(0.001, 1 - handoff))
+            out = max(0, 0.38 * (1 - t))
+        }
+
+        let inVol: Float
+        if p <= lag {
+            inVol = mashupFloor * smoothstep(p / max(lag, 0.001))
+        } else if p <= handoff {
+            let t = smoothstep((p - lag) / max(0.001, handoff - lag))
+            inVol = mashupFloor + (mashupPeak - mashupFloor) * t
+        } else {
+            let t = smoothstep((p - handoff) / max(0.001, 1 - handoff))
+            inVol = min(1, mashupPeak + (1 - mashupPeak) * t)
+        }
+        return (out, inVol)
+    }
+
+    private static func smoothstep(_ x: Double) -> Float {
+        let t = min(1, max(0, x))
+        return Float(t * t * (3 - 2 * t))
+    }
+
+    private static func mixMasterChunk(
+        outgoing: AVAudioPCMBuffer,
+        incoming: AVAudioPCMBuffer,
+        output: AVAudioPCMBuffer,
+        frames: AVAudioFrameCount,
+        channelsA: Int,
+        channelsB: Int,
+        absoluteFrame: AVAudioFrameCount,
+        totalFrames: AVAudioFrameCount,
+        handoff: Double,
+        hold: Double,
+        lag: Double,
+        beatmatched: Bool
+    ) {
+        let aL = outgoing.floatChannelData?[0]
+        let aR = channelsA > 1 ? outgoing.floatChannelData?[1] : aL
+        let bL = incoming.floatChannelData?[0]
+        let bR = channelsB > 1 ? incoming.floatChannelData?[1] : bL
+        let oL = output.floatChannelData?[0]
+        let oR = output.floatChannelData?[1]
+        guard let aL, let aR, let bL, let bR, let oL, let oR else { return }
+
+        let n = Int(frames)
+        let denom = max(1, Double(totalFrames))
+        for i in 0..<n {
+            let progress = Double(absoluteFrame + AVAudioFrameCount(i)) / denom
+            let vols = mashupVolumes(
+                progress: progress,
+                hold: hold,
+                lag: lag,
+                handoff: handoff,
+                beatmatched: beatmatched
+            )
+            // Soft ceiling so A+B mashup floor doesn't clip the master.
+            oL[i] = softClip(aL[i] * vols.outgoing + bL[i] * vols.incoming)
+            oR[i] = softClip(aR[i] * vols.outgoing + bR[i] * vols.incoming)
+        }
+    }
+
+    private static func softClip(_ x: Float) -> Float {
+        let lim: Float = 0.98
+        if x > lim { return lim + (x - lim) / (1 + (x - lim) * 4) }
+        if x < -lim { return -lim + (x + lim) / (1 + (-x - lim) * 4) }
+        return x
+    }
+
     private static func copy(
         from input: AVAudioPCMBuffer,
         to output: AVAudioPCMBuffer,
@@ -189,9 +442,6 @@ public enum MidSideStemBaker {
         for c in 0..<max(1, min(channels, 2)) {
             guard let src = input.floatChannelData?[c],
                   let dst = output.floatChannelData?[c] else { continue }
-            dst.update(from: src, count: Int(frames))
-        }
-        if channels == 1, let src = input.floatChannelData?[0], let dst = output.floatChannelData?[0] {
             dst.update(from: src, count: Int(frames))
         }
     }

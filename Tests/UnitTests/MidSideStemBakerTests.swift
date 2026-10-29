@@ -50,30 +50,31 @@ struct MidSideStemBakerTests {
         #expect(seconds <= MidSideStemBaker.maximumDurationSec + 1.5)
     }
 
-    @Test("ONE VOCAL pair: A instrumental, B instrumental until handoff then dry")
-    func oneVocalPair() throws {
+    @Test("ONE VOCAL master: one stereo CAF of A+B for the mashup window")
+    func oneVocalMaster() throws {
         let dir = try temporaryBakeDirectory()
         defer { removeBakeItem(at: dir) }
         let a = try makeStereoTone(in: dir, name: "a.caf", rate: 44_100, duration: 30)
         let b = try makeStereoTone(in: dir, name: "b.caf", rate: 44_100, duration: 30)
-        let pair = try MidSideStemBaker.bakeOneVocalPair(
+        let master = try MidSideStemBaker.bakeOneVocalMaster(
             outgoingURL: a,
             incomingURL: b,
             cueA: 10,
             cueB: 5,
             blendSec: 8,
-            handoffProgress: 0.55
+            handoffProgress: 0.55,
+            outgoingVolumeHold: 0.42,
+            incomingVolumeLag: 0.18,
+            isBeatmatched: true
         )
-        defer { MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming]) }
+        defer { MidSideStemBaker.removeTempFiles([master]) }
 
-        let outA = try AVAudioFile(forReading: pair.outgoing)
-        let outB = try AVAudioFile(forReading: pair.incoming)
-        let secA = Double(outA.length) / outA.processingFormat.sampleRate
-        let secB = Double(outB.length) / outB.processingFormat.sampleRate
-        #expect(secA >= 7)
-        #expect(secA <= MidSideStemBaker.maximumDurationSec + 1.5)
-        #expect(secB >= 7)
-        #expect(abs(secA - secB) < 1.0)
+        let file = try AVAudioFile(forReading: master)
+        let sec = Double(file.length) / file.processingFormat.sampleRate
+        #expect(file.processingFormat.channelCount == 2)
+        #expect(sec >= 7)
+        #expect(sec <= MidSideStemBaker.maximumDurationSec + 1.5)
+        #expect(FileManager.default.fileExists(atPath: master.path))
     }
 
     @Test("removeTempFiles deletes baked CAF slices")
@@ -124,7 +125,6 @@ private func makeStereoTone(
             buffer.frameLength = AVAudioFrameCount(count)
             for index in 0..<count {
                 let t = Double(offset + index) / rate
-                // Center-panned lead (mid) + side pad — gives Mid/Side something to carve.
                 let mid = Float(0.25 * sin(2 * Double.pi * 880 * t))
                 let side = Float(0.12 * sin(2 * Double.pi * 220 * t))
                 left[index] = mid + side
