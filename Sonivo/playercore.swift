@@ -137,37 +137,52 @@ final class PlayerCore {
             defaults.set(true,forKey:"eq.bassProfiles.v3")
             defaults.set(true,forKey:"eq.layout.compact10")
         }
-        // One-time reference-grid migration, after historical 10/29-band upgrades.
-        // Never overwrite a custom curve with a factory preset. Retain the original archive.
-        if !defaults.bool(forKey: "eq.layout.reference6"),
-           [EQGainLimits.frequencies.count, EQGainLimits.compact10Frequencies.count, EQGainLimits.denseFrequencies.count].contains(gains.count) {
-            if gains.count != EQGainLimits.frequencies.count,
-               defaults.data(forKey: "eq.gains.reference6.backup") == nil, let originalArchive {
-                defaults.set(originalArchive, forKey: "eq.gains.reference6.backup")
+        // One-time upgrade onto the standard ISO 10-band ladder. Historical
+        // compact/dense/6-band eras keep their own backups; never invent a factory curve.
+        if !defaults.bool(forKey: EQGainLimits.layoutMarkerKey) {
+            let sourceGrid: [Float]?
+            if gains.count == EQGainLimits.previousBassTightFrequencies.count {
+                if defaults.bool(forKey: "eq.layout.bassTight6") {
+                    sourceGrid = EQGainLimits.previousBassTightFrequencies
+                } else if defaults.bool(forKey: "eq.layout.reference6") {
+                    sourceGrid = EQGainLimits.previousReferenceFrequencies
+                } else {
+                    sourceGrid = EQGainLimits.previousBassTightFrequencies
+                }
+            } else if gains.count == EQGainLimits.compact10Frequencies.count {
+                sourceGrid = EQGainLimits.compact10Frequencies
+            } else if gains.count == EQGainLimits.denseFrequencies.count {
+                sourceGrid = EQGainLimits.denseFrequencies
+            } else {
+                sourceGrid = nil
             }
-            gains = EQGainLimits.normalized(gains)
-            if let data = try? JSONEncoder().encode(gains) {
-                defaults.set(data, forKey: eqGainsKey)
-                defaults.set(true, forKey: "eq.layout.reference6")
+            if let sourceGrid {
+                if defaults.data(forKey: "eq.gains.standard10.backup") == nil {
+                    if let data = try? JSONEncoder().encode(gains) {
+                        defaults.set(data, forKey: "eq.gains.standard10.backup")
+                    } else if let originalArchive {
+                        defaults.set(originalArchive, forKey: "eq.gains.standard10.backup")
+                    }
+                }
+                if gains.count == EQGainLimits.previousBassTightFrequencies.count,
+                   defaults.data(forKey: "eq.gains.bassTight6.backup") == nil,
+                   let data = try? JSONEncoder().encode(gains) {
+                    defaults.set(data, forKey: "eq.gains.bassTight6.backup")
+                }
+                if gains.count == EQGainLimits.compact10Frequencies.count
+                    || gains.count == EQGainLimits.denseFrequencies.count,
+                   defaults.data(forKey: "eq.gains.reference6.backup") == nil,
+                   let originalArchive {
+                    defaults.set(originalArchive, forKey: "eq.gains.reference6.backup")
+                }
+                gains = EQGainLimits.resample(gains, from: sourceGrid, to: EQGainLimits.frequencies)
             }
-        }
-        // Bass-tight 6: 150 Hz → 120 Hz punch + steeper shelf widths (DSP-side).
-        // Resample prior reference6 curve in log-frequency; keep a one-time backup.
-        if !defaults.bool(forKey: EQGainLimits.layoutMarkerKey),
-           gains.count == EQGainLimits.previousReferenceFrequencies.count {
-            if defaults.data(forKey: "eq.gains.bassTight6.backup") == nil,
-               let data = try? JSONEncoder().encode(gains) {
-                defaults.set(data, forKey: "eq.gains.bassTight6.backup")
-            }
-            gains = EQGainLimits.resample(
-                gains,
-                from: EQGainLimits.previousReferenceFrequencies,
-                to: EQGainLimits.frequencies
-            )
             gains = EQGainLimits.normalized(gains)
             if let data = try? JSONEncoder().encode(gains) {
                 defaults.set(data, forKey: eqGainsKey)
                 defaults.set(true, forKey: EQGainLimits.layoutMarkerKey)
+                defaults.set(true, forKey: "eq.layout.reference6")
+                defaults.set(true, forKey: "eq.layout.bassTight6")
             }
         }
         return (normalized(gains), enabled)

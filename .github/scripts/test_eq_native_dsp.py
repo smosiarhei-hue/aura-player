@@ -33,7 +33,7 @@ import AVFAudio
 import AudioToolbox
 @main struct Checks {
     static func render(gains: [Float], hz: Double, amplitude: Float, enabled: Bool = true) throws -> [Float] {
-        let engine = AVAudioEngine(), player = AVAudioPlayerNode(), eq = AVAudioUnitEQ(numberOfBands: 6)
+        let engine = AVAudioEngine(), player = AVAudioPlayerNode(), eq = AVAudioUnitEQ(numberOfBands: 10)
         let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
             componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
             componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
@@ -42,8 +42,8 @@ import AudioToolbox
         engine.connect(player, to: eq, format: format)
         engine.connect(eq, to: limiter, format: format)
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
-        let frequencies: [Float] = [60,120,400,1000,2400,15000]
-        let widths: [Float] = [0.55,0.70,0.90,0.90,0.90,0.70]
+        let frequencies: [Float] = [31,62,125,250,500,1000,2000,4000,8000,16000]
+        let widths: [Float] = [0.70,1,1,1,1,1,1,1,1,0.70]
         for (i, band) in eq.bands.enumerated() {
             band.frequency=frequencies[i]; band.bandwidth = widths[i]; band.gain=gains[i]; band.bypass=false
             band.filterType = i == 0 ? .lowShelf : (i == frequencies.count - 1 ? .highShelf : .parametric)
@@ -84,25 +84,25 @@ import AudioToolbox
         return samples
     }
     static func main() throws {
-        let flat=[Float](repeating:0,count:6)
+        let flat=[Float](repeating:0,count:10)
         precondition(EQHeadroom.preamp(gains:flat,sampleRate:48000)==0)
-        precondition(EQHeadroom.preamp(gains:[Float](repeating:-12,count:6),sampleRate:48000)==0)
-        var curve=flat;curve[3]=6
+        precondition(EQHeadroom.preamp(gains:[Float](repeating:-12,count:10),sampleRate:48000)==0)
+        var curve=flat;curve[5]=6
         let output=try render(gains:curve,hz:1000,amplitude:0.01)
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
         let db=20*log10(rms/(0.01/sqrt(2)))
         precondition(abs(db - Double(6+EQHeadroom.preamp(gains:curve,sampleRate:48000))) < 0.6, "Native center gain incorrect: \(db)")
-        for (band,hz) in [(1,150.0),(2,400.0),(4,2400.0)] {
+        for (band,hz) in [(1,62.0),(3,250.0),(6,2000.0)] {
             var curve=flat;curve[band]=6
             let rendered=try render(gains:curve,hz:hz,amplitude:0.01)
             let rms=sqrt(rendered.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
             precondition(abs(20*log10(rms/(0.01/sqrt(2)))-6)<0.6, "Native band response mismatch")
         }
         for rate in [8000.0,32000,44100,48000,96000] {
-            let pre=EQHeadroom.preamp(gains:[Float](repeating:12,count:6),sampleRate:rate)
+            let pre=EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)
             precondition(pre.isFinite && pre == 0)
         }
-        let hot=try render(gains:[Float](repeating:12,count:6),hz:60,amplitude:0.95)
+        let hot=try render(gains:[Float](repeating:12,count:10),hz:60,amplitude:0.95)
         precondition(hot.allSatisfy { abs($0) <= 1.01 },"Native output overflow")
         print("native EQ response, stereo and sample-peak checks passed")
     }

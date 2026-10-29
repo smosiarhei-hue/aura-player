@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
-FREQUENCIES=[60,120,400,1000,2400,15000]
+FREQUENCIES=[31,62,125,250,500,1000,2000,4000,8000,16000]
 N=len(FREQUENCIES)
 LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
 def expanded(gains):
@@ -86,9 +86,9 @@ void destroy(void *p) { free(p); }
         for hz in FREQUENCIES[1:-1]:
             gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
             self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),6,delta=.08)
-        # Punch band (120 Hz) should not lift sub or upper mid like a wide shelf.
-        gains=[0]*N;gains[FREQUENCIES.index(120)]=6
-        self.assertLess(self.response(gains,30),1)
+        # Low peaking (62 Hz) should not lift deep sub or upper mid like a wide shelf.
+        gains=[0]*N;gains[FREQUENCIES.index(62)]=6
+        self.assertLess(self.response(gains,20),2.5)
         self.assertLess(self.response(gains,600),1)
     def test_flat_and_disabled_are_exact_bypass(self):
         samples=[.95*math.sin(n*.031) for n in range(5000)]
@@ -112,7 +112,8 @@ void destroy(void *p) { free(p); }
             gains[band]=-24
             self.assertAlmostEqual(self.response(gains,hz),-15,delta=.15)
         strong=[15]+[0]*(N-1);mild=[9]+[0]*(N-1)
-        self.assertGreater(self.response(strong,12)-self.response(mild,12),5.5)
+        # 31 Hz shelf @ 0.70 slope still separates +15 vs +9 deep sub; less blanket than old 60 Hz.
+        self.assertGreater(self.response(strong,12)-self.response(mild,12),4.5)
         self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[15]*N)))
     def test_shelves_control_bass_and_treble_without_edge_resonance(self):
         bass=[6]+[0]*(N-1);treble=[0]*(N-1)+[6]
@@ -120,11 +121,11 @@ void destroy(void *p) { free(p); }
         self.assertGreater(self.response(treble,22000)-self.response(treble,1000),5.5)
 
     def test_overlapping_boosts_do_not_apply_fixed_master_attenuation(self):
-        for gains in [[12]*N,[12,0,0,0,0,3],[6]+[0]*(N-1)]:
+        for gains in [[12]*N,[12,0,0,0,0,0,0,0,0,3],[6]+[0]*(N-1)]:
             self.assertEqual(self.preamp(gains),0)
         # Low-level audio remains linear, without a static whole-song volume cut.
         self.assertAlmostEqual(self.response([6]+[0]*(N-1),1000),0,delta=.1)
-        self.assertGreater(self.response([6]+[0]*(N-1),20),5)
+        self.assertGreater(self.response([6]+[0]*(N-1),20),4.0)
         self.assertGreater(self.response([12]*N,16000),6)
         self.assertEqual(self.preamp([-12]*N),0)
         self.assertEqual(self.preamp([0]*N),0)
@@ -174,10 +175,10 @@ void destroy(void *p) { free(p); }
 
     def test_sample_rates_and_invalid_gains_remain_finite(self):
         for rate in [8000,32000,44100,48000,96000]:
-            gains=[float('nan'),float('inf'),-float('inf'),15,-15,6]
+            gains=[float('nan'),float('inf'),-float('inf'),15,-15,6,0,0,0,0]
             output=self.run_audio([.5*math.sin(n*.37) for n in range(10000)],gains,rate)
             self.assertTrue(all(math.isfinite(x) for x in output))
-            sanitized=[0,0,0,15,-15,6]
+            sanitized=[0,0,0,15,-15,6,0,0,0,0]
             self.assertEqual(output,self.run_audio([.5*math.sin(n*.37) for n in range(10000)],sanitized,rate))
 
     def test_toggle_and_slider_updates_are_smooth_and_return_to_exact_bypass(self):
@@ -213,7 +214,7 @@ void destroy(void *p) { free(p); }
         finally:self.lib.destroy(ptr)
 
     def test_disabling_strong_bass_does_not_restore_a_fixed_master_cut(self):
-        gains=[12,0,0,0,0,3]
+        gains=[12,0,0,0,0,0,0,0,0,3]
         ptr=self.lib.create(48000,array(gains),1)
         try:
             # Warm the actual filters at an unaffected midrange frequency.
@@ -266,7 +267,7 @@ void destroy(void *p) { free(p); }
     def test_response_preview_uses_actual_cascade_coefficients(self):
         response=self.lib.SonivoEQResponse
         response.argtypes=[C.POINTER(C.c_float),C.c_size_t,C.c_double,C.POINTER(C.c_float),C.c_size_t]
-        values=(C.c_float*121)();gains=[0]*N;gains[3]=6;gains[1]=4
+        values=(C.c_float*121)();gains=[0]*N;gains[FREQUENCIES.index(1000)]=6;gains[FREQUENCIES.index(62)]=4
         response(array(gains),N,48000,values,len(values))
         for index in [10,35,68,95,110]:
             hz=20*1000**(index/120)

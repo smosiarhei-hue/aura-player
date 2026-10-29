@@ -24,7 +24,7 @@ final class EQUserPresetStore {
             switch self {
             case .invalidName: return "Введи название от 1 до 64 символов."
             case .duplicateName: return "Пресет с таким названием уже есть. Выбери другое название."
-            case .invalidCurve: return "Нужны 6 конечных значений: от −15 до +15 дБ для каждой полосы."
+            case .invalidCurve: return "Нужны 10 конечных значений: от −15 до +15 дБ для каждой полосы."
             case .invalidArchive: return "Сохранённые пресеты повреждены. Они не были перезаписаны."
             }
         }
@@ -50,23 +50,22 @@ final class EQUserPresetStore {
                defaults.data(forKey: "eq.userPresets.reference6.backup") == nil {
                 defaults.set(data, forKey: "eq.userPresets.reference6.backup")
             }
-            if decoded.contains(where: { $0.frequencies == EQGainLimits.previousReferenceFrequencies }),
+            if decoded.contains(where: {
+                $0.frequencies == EQGainLimits.previousReferenceFrequencies
+                    || $0.frequencies == EQGainLimits.previousBassTightFrequencies
+            }),
                defaults.data(forKey: "eq.userPresets.bassTight6.backup") == nil {
                 defaults.set(data, forKey: "eq.userPresets.bassTight6.backup")
             }
+            if decoded.contains(where: { $0.frequencies != EQGainLimits.frequencies }),
+               defaults.data(forKey: "eq.userPresets.standard10.backup") == nil {
+                defaults.set(data, forKey: "eq.userPresets.standard10.backup")
+            }
             presets = decoded.map { preset in
                 let source = preset.frequencies ?? (preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies)
-                // Historical grids → current bass-tight six. Same-count previousReference
-                // (60/150…) must resample onto 60/120…, not pass through as-is.
                 let gains: [Float]
                 if source == EQGainLimits.frequencies {
                     gains = EQGainLimits.normalized(preset.gains)
-                } else if source == EQGainLimits.previousCompactFrequencies {
-                    gains = EQGainLimits.normalized(preset.gains)
-                } else if source == EQGainLimits.previousReferenceFrequencies {
-                    gains = EQGainLimits.normalized(
-                        EQGainLimits.resample(preset.gains, from: source, to: EQGainLimits.frequencies)
-                    )
                 } else {
                     gains = EQGainLimits.normalized(
                         EQGainLimits.resample(preset.gains, from: source, to: EQGainLimits.frequencies)
@@ -118,11 +117,13 @@ final class EQUserPresetStore {
         guard !trimmed.isEmpty, trimmed.count <= 64 else { return false }
         if let frequencies = preset.frequencies {
             let known = frequencies == EQGainLimits.frequencies
+                || frequencies == EQGainLimits.previousBassTightFrequencies
                 || frequencies == EQGainLimits.previousReferenceFrequencies
                 || frequencies == EQGainLimits.compact10Frequencies
                 || frequencies == EQGainLimits.previousCompactFrequencies
             if frequencies == EQGainLimits.frequencies { return validGains(preset.gains) }
-            if frequencies == EQGainLimits.previousReferenceFrequencies {
+            if frequencies == EQGainLimits.previousBassTightFrequencies
+                || frequencies == EQGainLimits.previousReferenceFrequencies {
                 return preset.gains.count == frequencies.count && preset.gains.enumerated().allSatisfy {
                     $0.element.isFinite && EQGainLimits.range(at: $0.offset).contains($0.element)
                 }

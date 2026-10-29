@@ -2,15 +2,11 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {60, 120, 400, 1000, 2400, 15000};
-/* Match EQGainLimits.bandwidth(at:) — steeper shelves, tighter kick punch. */
+static const double frequencies[SONIVO_EQ_BANDS] = {31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+/* Match EQGainLimits.bandwidth(at:) — steeper shelves, true 1-oct peaking. */
 static double bandWidthOctaves(unsigned band) {
-    switch (band) {
-        case 0: return 0.55;
-        case 1: return 0.70;
-        case 2: case 3: case 4: return 0.90;
-        default: return 0.70;
-    }
+    if (band == 0 || band == SONIVO_EQ_BANDS - 1) return 0.70;
+    return 1.0;
 }
 static double clamp(double x, double lo, double hi) { return fmax(lo, fmin(hi, x)); }
 static double cleanGain(double gain, unsigned band) { (void)band; return isfinite(gain) ? clamp(gain, -15, 15) : 0; }
@@ -21,8 +17,8 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     double c = cos(w), sn = sin(w), A = pow(10, gain / 40);
     double b0, b1, b2, a0, a1, a2;
     if (band == 0 || band == SONIVO_EQ_BANDS - 1) {
-        // RBJ shelves with slope S from bandwidth (0.55/0.70) — less mid-bass bleed
-        // than the old S=1 blanket that made bass boosts muddy then limiter-cut.
+        // RBJ shelves with slope S from bandwidth (0.70) — even ends without
+        // the old S=1 blanket that muddied bass boosts into the limiter.
         double S = bandWidthOctaves(band);
         double alpha = sn / 2.0 * sqrt((A + 1.0 / A) * (1.0 / fmax(S, 0.2) - 1.0) + 2.0);
         double beta = 2 * sqrt(A) * alpha;

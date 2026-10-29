@@ -8,18 +8,20 @@ class LinearEQTests(unittest.TestCase):
         c=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.c').read_text()
         a=[float(x) for x in re.search(r'frequencies: \[Float\] = \[([^]]+)\]',swift)[1].split(',')]
         b=[float(x) for x in re.search(r'frequencies\[SONIVO_EQ_BANDS\] = \{([^}]+)\}',c)[1].split(',')]
-        self.assertEqual(a,b);self.assertEqual(a,[60,120,400,1000,2400,15000])
-        self.assertEqual((a[0],a[-1]),(60,15000))
+        self.assertEqual(a,b);self.assertEqual(a,[31,62,125,250,500,1000,2000,4000,8000,16000])
+        self.assertEqual((a[0],a[-1]),(31,16000))
         self.assertIn('validRate * 0.44',(ROOT/'Sonivo/playercore.swift').read_text())
         self.assertIn('rate * 0.44',c)
         dual=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
         d=[float(x) for x in re.search(r'let frequencies: \[Float\] = \[([^]]+)',dual)[1].split(',')]
         self.assertEqual(a,d)
-        self.assertIn('numberOfBands: 6',dual)
+        self.assertIn('numberOfBands: 10',dual)
+        self.assertIn('numberOfBands: 6',dual)  # per-deck mashup FX stays 6-band
         self.assertIn('bandwidth * w',c)
         self.assertIn('bandWidthOctaves',c)
         self.assertIn('EQGainLimits.bandwidth(at:i)',(ROOT/'Sonivo/playercore.swift').read_text())
-        self.assertIn('case 0: return 0.55',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
+        self.assertIn('return 0.70',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
+        self.assertIn('return 1.0',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
     def test_single_screen_graph_and_native_precise_slider(self):
         text=(ROOT/'Sonivo/playerchrome.swift').read_text().split('struct PlayerEQSheetView:',1)[1]
         self.assertNotIn('EQRegion',text)
@@ -33,7 +35,7 @@ class LinearEQTests(unittest.TestCase):
         self.assertIn('draggingBand = closest',text)
         self.assertIn('selectedBand = closest',text)
         self.assertIn('bandRow(index)',text)
-        self.assertIn('15 кГц — номинальная',text)
+        self.assertIn('16 кГц — номинальная',text)
     def test_named_presets_have_native_save_apply_and_confirmed_delete(self):
         ui=(ROOT/'Sonivo/playerchrome.swift').read_text()
         for expected in ['TextField("Название"','try userPresets.save(','player.eqGains = preset.gains','.confirmationDialog("Удалить пресет?"','try userPresets.delete(']:

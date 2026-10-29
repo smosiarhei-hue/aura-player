@@ -35,11 +35,11 @@ final class DualDeckMashupAudioAdapter: MashupTransitionAudio {
     }
 }
 
-/// Live PlayerCore mashup EQ offsets (6 bands: 60, 150, 400, 1000, 2400, 15000).
+/// Live PlayerCore mashup EQ offsets (10 bands: 31…16k ISO ladder).
 /// Archetype-shaped sweeps so each pair gets a real mashup filter path, not a
 /// flat fade. Gains stay within `EQGainLimits` (±15 dB).
 enum MashupLiveEQEnvelope {
-    static let bandCount = 6
+    static let bandCount = 10
 
     private static func ramp(_ progress: Double, from start: Double, to end: Double) -> Float {
         guard end > start else { return progress >= end ? 1 : 0 }
@@ -117,27 +117,35 @@ enum MashupLiveEQEnvelope {
     ) -> (outgoing: [Float], incoming: [Float]) {
         var out = shaped.outgoing
         var inn = shaped.incoming
-        // A instrumentalize: keep 60/150, carve 400–2400 hard (Lab mid-vocal cut).
+        // A instrumentalize: keep sub/bass, carve 250 Hz–4 kHz hard (Lab mid-vocal cut).
         let outInstr = ramp(p, from: 0.0, to: max(0.1, bassAt * 0.5))
         let outMidCut = clampDB(-15 * hpfD * outInstr)
         let outLeadCut = clampDB(-15 * outInstr)
-        if out.count >= 6 {
+        if out.count >= 10 {
             out[0] = clampDB(max(out[0], 2.5 * outInstr)) // sub keep
             out[1] = clampDB(max(out[1], 1.5 * outInstr))
-            out[2] = clampDB(min(out[2], outMidCut))
-            out[3] = clampDB(min(out[3], outLeadCut))
-            out[4] = clampDB(min(out[4], outLeadCut))
-            out[5] = clampDB(min(out[5], -8 * outInstr))
+            out[2] = clampDB(max(out[2], 1.0 * outInstr))
+            out[3] = clampDB(min(out[3], outMidCut * 0.7))
+            out[4] = clampDB(min(out[4], outMidCut))
+            out[5] = clampDB(min(out[5], outLeadCut))
+            out[6] = clampDB(min(out[6], outLeadCut))
+            out[7] = clampDB(min(out[7], outLeadCut * 0.85))
+            out[8] = clampDB(min(out[8], -8 * outInstr))
+            out[9] = clampDB(min(out[9], -8 * outInstr))
         }
         // B instrumental until handoff — then release into dry lead for LAND.
         let inInstr = 1 - ramp(p, from: handoff - 0.02, to: min(0.96, handoff + 0.1))
         let inLeadFloor = clampDB(-15 * max(1.25, pocketD) * inInstr)
-        if inn.count >= 6 {
+        if inn.count >= 10 {
             inn[0] = clampDB(max(inn[0], 1.5 * inInstr)) // kick bed
-            inn[2] = clampDB(min(inn[2], inLeadFloor * 0.55))
-            inn[3] = clampDB(min(inn[3], inLeadFloor))
-            inn[4] = clampDB(min(inn[4], inLeadFloor))
-            inn[5] = clampDB(min(inn[5], inLeadFloor * 0.65))
+            inn[1] = clampDB(max(inn[1], 1.0 * inInstr))
+            inn[3] = clampDB(min(inn[3], inLeadFloor * 0.45))
+            inn[4] = clampDB(min(inn[4], inLeadFloor * 0.55))
+            inn[5] = clampDB(min(inn[5], inLeadFloor))
+            inn[6] = clampDB(min(inn[6], inLeadFloor))
+            inn[7] = clampDB(min(inn[7], inLeadFloor * 0.85))
+            inn[8] = clampDB(min(inn[8], inLeadFloor * 0.65))
+            inn[9] = clampDB(min(inn[9], inLeadFloor * 0.65))
         }
         return (out, inn)
     }
@@ -166,18 +174,26 @@ enum MashupLiveEQEnvelope {
         return (
             [
                 outBass,
-                clampDB(outBass * 0.92),
+                clampDB(outBass * 0.95),
+                clampDB(outBass * 0.88),
+                clampDB(outHPFBody * 0.7 + outMidKeep * 0.35 + outMidDuck * 0.25),
                 clampDB(outHPFBody + outMidKeep * 0.45 + outMidDuck * 0.35),
                 clampDB(outVocalDuck + outMidKeep * 0.55 + outMidDuck * 0.25),
+                clampDB(outVocalDuck * 0.9 + outMidDuck * 0.25),
                 clampDB(outVocalDuck * 0.85 + outMidDuck * 0.2),
+                clampDB(outAir * 0.85),
                 outAir
             ],
             [
                 inBass,
-                clampDB(inBass * 0.92),
+                clampDB(inBass * 0.95),
+                clampDB(inBass * 0.88),
+                clampDB(inBodyLift * 0.7),
                 clampDB(inBodyLift),
                 clampDB(inVocalSoft * 0.55 + inPresence * 0.35),
+                clampDB(inVocalSoft * 0.4 + inPresence * 0.7),
                 clampDB(inVocalSoft * 0.35 + inPresence),
+                clampDB(inAirCut * 0.85),
                 inAirCut
             ]
         )
@@ -202,18 +218,26 @@ enum MashupLiveEQEnvelope {
         return (
             [
                 outBass,
-                clampDB(outBass * 0.8),
+                clampDB(outBass * 0.9),
+                clampDB(outBass * 0.75),
+                clampDB(outHPFBody * 0.7),
                 clampDB(outHPFBody),
                 outVocalDuck,
+                clampDB(outVocalDuck * 0.85),
                 clampDB(outVocalDuck * 0.75),
+                clampDB(outAir * 0.85),
                 outAir
             ],
             [
                 inBass,
-                clampDB(inBass * 0.8),
+                clampDB(inBass * 0.9),
+                clampDB(inBass * 0.75),
+                clampDB(inBodyLift * 0.7),
                 inBodyLift,
                 clampDB(inVocalSoft * 0.5),
+                clampDB(inVocalSoft * 0.75),
                 inVocalSoft,
+                clampDB(inAirCut * 0.85),
                 inAirCut
             ]
         )
@@ -240,18 +264,26 @@ enum MashupLiveEQEnvelope {
         return (
             [
                 outBass,
-                clampDB(outBass * 0.85 + outBody * 0.25),
+                clampDB(outBass * 0.9 + outBody * 0.15),
+                clampDB(outBass * 0.8 + outBody * 0.25),
+                clampDB(outMidCut * 0.7 + outBody * 0.7),
                 clampDB(outMidCut + outBody),
                 clampDB(outVocalHold + outVocalDump + outMidCut * 0.4),
+                clampDB(outVocalHold * 0.85 + outVocalDump * 0.9),
                 clampDB(outVocalHold * 0.7 + outVocalDump),
+                clampDB(outAir * 0.9),
                 outAir
             ],
             [
                 inBass,
-                clampDB(inBass * 0.88),
+                clampDB(inBass * 0.92),
+                clampDB(inBass * 0.85),
+                clampDB(inBodyLift * 0.7),
                 inBodyLift,
                 clampDB(inVocalPocket * 0.85),
+                clampDB(inVocalPocket * 0.95),
                 inVocalPocket,
+                clampDB(inAirCut * 0.9),
                 inAirCut
             ]
         )
@@ -276,18 +308,26 @@ enum MashupLiveEQEnvelope {
         return (
             [
                 outBass,
-                clampDB(outBass * 0.8 + outHPF * 0.2),
+                clampDB(outBass * 0.9 + outHPF * 0.1),
+                clampDB(outBass * 0.75 + outHPF * 0.2),
+                clampDB(outHPF * 0.7),
                 clampDB(outHPF * 0.85),
                 outVocal,
+                clampDB(outVocal * 0.95 + outHPF * 0.15),
                 clampDB(outVocal * 0.9 + outHPF * 0.25),
+                clampDB(outAir * 0.9),
                 outAir
             ],
             [
                 inBass,
-                clampDB(inBass * 0.8),
+                clampDB(inBass * 0.9),
+                clampDB(inBass * 0.75),
+                clampDB(inBody * 0.7 + inLPF * 0.25),
                 clampDB(inBody + inLPF * 0.35),
                 clampDB(inVocalPocket * 0.85 + inLPF * 0.25),
+                clampDB(inVocalPocket * 0.95 + inLPF * 0.2),
                 clampDB(inVocalPocket + inLPF * 0.15),
+                clampDB(inLPF * 0.75),
                 clampDB(inLPF * 0.7)
             ]
         )
@@ -312,18 +352,26 @@ enum MashupLiveEQEnvelope {
         return (
             [
                 outBass,
-                clampDB(outBass * 0.92 + outCollapse * 0.2),
+                clampDB(outBass * 0.95 + outCollapse * 0.1),
+                clampDB(outBass * 0.9 + outCollapse * 0.2),
+                clampDB(outCollapse * 0.85),
                 clampDB(outCollapse),
                 clampDB(outVocal + outCollapse * 0.35),
+                clampDB(outVocal * 0.9 + outCollapse * 0.35),
                 clampDB(outVocal * 0.85 + outCollapse * 0.4),
+                clampDB(outAir * 0.9),
                 outAir
             ],
             [
                 inBass,
-                clampDB(inBass * 0.9),
+                clampDB(inBass * 0.95),
+                clampDB(inBass * 0.85),
+                clampDB(inBody * 0.7),
                 inBody,
                 clampDB(inVocalPocket * 0.88),
+                clampDB(inVocalPocket * 0.95),
                 inVocalPocket,
+                clampDB(inAirCut * 0.9),
                 inAirCut
             ]
         )

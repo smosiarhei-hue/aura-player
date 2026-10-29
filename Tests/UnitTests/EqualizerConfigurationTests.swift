@@ -18,10 +18,14 @@ struct EqualizerConfigurationTests {
         let normalized = PlayerCore.normalized(values)
 
         #expect(normalized.count == PlayerCore.bandFrequencies.count)
+        #expect(PlayerCore.bandFrequencies.count == 10)
         #expect(normalized.allSatisfy(\.isFinite))
         #expect(normalized.allSatisfy { abs($0) <= PlayerCore.maximumEQGain })
         #expect(normalized[0] == 0)
-        #expect(normalized[1] == -12)
-        #expect(normalized[6] == 12)
+        #expect(normalized[1] == -15)
+        #expect(normalized[2] == -12)
+        #expect(normalized[5] == 12)
+        #expect(normalized[6] == 15)
+        #expect(normalized[9] == 0)
     }
 }

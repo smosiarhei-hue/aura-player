@@ -35,7 +35,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let engine = AVAudioEngine()
             let a = DeckSlot(deck: .a, capacity: preloadPolicy.initialChunksPerDeck)
             let b = DeckSlot(deck: .b, capacity: preloadPolicy.initialChunksPerDeck)
-            let userEQ = AVAudioUnitEQ(numberOfBands: 6)
+            let userEQ = AVAudioUnitEQ(numberOfBands: 10)
             for slot in [a, b] {
                 engine.attach(slot.player)
                 engine.attach(slot.timePitch)
@@ -54,8 +54,8 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 slot.resetFX()
             }
             engine.attach(userEQ)
-            let frequencies: [Float] = [60, 120, 400, 1000, 2400, 15000]
-            let widths: [Float] = [0.55, 0.70, 0.90, 0.90, 0.90, 0.70]
+            let frequencies: [Float] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+            let widths: [Float] = [0.70, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.70]
             for (index, band) in userEQ.bands.enumerated() {
                 band.frequency = min(frequencies[index], Float(format.sampleRate * 0.44))
                 band.bandwidth = widths[index]
