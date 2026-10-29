@@ -157,7 +157,7 @@ enum MashupLiveEQEnvelope {
         bassD: Float, pocketD: Float, hpfD: Float, bodyD: Float
     ) -> (outgoing: [Float], incoming: [Float]) {
         // A: hand bass to B early; carve A toward instrumental outro.
-        let outBass = clampDB(-15 * bassD * ramp(p, from: 0.00, to: bassAt * 0.75))
+        let outBass = clampDB(-12 * bassD * ramp(p, from: 0.00, to: bassAt * 0.9))
         let outHPFBody = clampDB(-10 * hpfD * ramp(p, from: 0.04, to: holdUntil))
         let outVocalDuck = clampDB(-12 * ramp(p, from: bassAt * 0.4, to: holdUntil))
         let outMidKeep = clampDB(3.0 * bodyD * (1 - ramp(p, from: holdUntil, to: pocketUntil)))
@@ -165,7 +165,7 @@ enum MashupLiveEQEnvelope {
         let outAir = clampDB(-8 * ramp(p, from: handoff, to: 1.00))
 
         // B: bass locks the shared groove; vocals stay audible (light pocket only).
-        let inBass = clampDB(-15 * bassD * (1 - ramp(p, from: bassAt * 0.35, to: bassAt + 0.12)))
+        let inBass = clampDB(-12 * bassD * (1 - ramp(p, from: bassAt * 0.28, to: bassAt + 0.18)))
         let inAirCut = clampDB(-6 * hpfD * (1 - ramp(p, from: 0.05, to: bassAt)))
         let inVocalSoft = clampDB(-6 * pocketD * (1 - ramp(p, from: 0.0, to: bassAt)))
         let inBodyLift = clampDB(5.5 * bodyD * ramp(p, from: 0.02, to: bassAt))
@@ -256,7 +256,7 @@ enum MashupLiveEQEnvelope {
         let outAir = clampDB(-12 * ramp(p, from: handoff, to: 1.00))
         let outBody = clampDB(-13 * hpfD * ramp(p, from: lateBass, to: pocketUntil))
 
-        let inBass = clampDB(-15 * bassD * (1 - ramp(p, from: lateBass, to: pocketUntil)))
+        let inBass = clampDB(-12 * bassD * (1 - ramp(p, from: lateBass, to: pocketUntil)))
         let inVocalPocket = clampDB(-13 * pocketD * (1 - ramp(p, from: handoff, to: pocketUntil)))
         let inBodyLift = clampDB(2.5 * bodyD * ramp(p, from: 0.2, to: lateBass) * (1 - ramp(p, from: handoff, to: pocketUntil)))
         let inAirCut = clampDB(-14 * hpfD * (1 - ramp(p, from: holdUntil, to: 0.96)))
@@ -338,13 +338,13 @@ enum MashupLiveEQEnvelope {
         p: Double, bassAt: Double, holdUntil: Double, pocketUntil: Double, handoff: Double,
         bassD: Float, pocketD: Float, hpfD: Float, bodyD: Float
     ) -> (outgoing: [Float], incoming: [Float]) {
-        let outBass = clampDB(-15 * bassD * ramp(p, from: 0.00, to: bassAt))
+        let outBass = clampDB(-12 * bassD * ramp(p, from: 0.00, to: bassAt * 0.9))
         let outCollapse = clampDB(-15 * hpfD * ramp(p, from: 0.10, to: handoff))
         let outVocal = clampDB(3.0 * (1 - ramp(p, from: holdUntil * 0.4, to: holdUntil))
             - 15 * ramp(p, from: holdUntil, to: pocketUntil))
         let outAir = clampDB(-14 * ramp(p, from: handoff * 0.8, to: 1.00))
 
-        let inBass = clampDB(-15 * bassD * (1 - ramp(p, from: bassAt, to: pocketUntil)))
+        let inBass = clampDB(-12 * bassD * (1 - ramp(p, from: bassAt * 0.28, to: bassAt + 0.18)))
         let inVocalPocket = clampDB(-14 * pocketD * (1 - ramp(p, from: holdUntil, to: pocketUntil)))
         let inBody = clampDB(4.0 * bodyD * ramp(p, from: 0.05, to: bassAt) * (1 - ramp(p, from: holdUntil, to: pocketUntil)))
         let inAirCut = clampDB(-10 * (1 - ramp(p, from: holdUntil, to: 0.94)))

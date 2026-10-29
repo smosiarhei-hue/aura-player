@@ -42,9 +42,14 @@ cd tools/automix-lab && npm install && npm run dev
 ```
 
 http://127.0.0.1:43187 — **✦ AI Auto Mix** сам разбирает оба трека (BPM + Camelot), выбирает тип §2.4 и ведёт акты.  
-Smoke: `npm run smoke:tz`. Пара файлов: `npm run analyze:pair -- a.wav b.wav`.  
+Smoke: `npm run smoke:tz`, `npm run smoke:mashup`, `npm run smoke:smooth` (непрерывность огибающих).  
+Пара файлов: `npm run analyze:pair -- a.wav b.wav`.  
 Craft: `tools/automix-lab/src/audio/djCraft.ts`.  
 DSP с нуля: `tools/automix-lab/src/dsp/` — Mid/Side vocal/instrumental, bass EQ, HPF/LPF, echo-out.
+
+**Плавность:** громкости A/B стыкуются без ступенек на hold/handoff; invite B — soft (smoothstep²);
+AudioParam через `cancelAndHold` + ramp (без очереди linearRamp); stem A/B — непрерывный amount
+(0 ≡ dry); bake B instr→dry — equal-power ~350 ms; ONE BASS ≤ −12·depth dB; тики Live/DualDeck 60 Hz / 25 ms.
 
 ## DualDeck V2
 

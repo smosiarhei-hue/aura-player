@@ -2531,7 +2531,8 @@ final class PlayerCore {
 
     private func startTransitionTimer() {
         transitionTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        // 60 Hz keeps mashup volumes / EQ envelopes continuous (30 Hz felt stepped).
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickTransition() }
         }
         RunLoop.main.add(t, forMode: .common)

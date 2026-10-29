@@ -9,6 +9,8 @@
  * auto engine when planAutomix decides A needs instrumental / B needs vocal.
  */
 
+import { setParam } from "./param";
+
 export type StemMode = "dry" | "instrumental" | "vocal";
 
 /** Slice a region of an AudioBuffer (seconds). */
@@ -134,8 +136,8 @@ export function bakeInstrThenDry(
   const instr = processBufferStem(ctx, dry, "instrumental", amount);
   const sr = dry.sampleRate;
   const until = Math.max(1, Math.min(instr.length - 1, Math.floor(instrUntilSec * sr)));
-  // Longer musical handoff (~220ms) so the lead blooms into the mashup.
-  const fade = Math.max(1, Math.floor(0.22 * sr));
+  // Equal-power bloom (~350ms) so the lead opens without a hard gate click.
+  const fade = Math.max(1, Math.floor(0.35 * sr));
   const out = ctx.createBuffer(2, dry.length, sr);
   for (const c of [0, 1]) {
     const iCh = instr.getChannelData(c);
@@ -146,8 +148,10 @@ export function bakeInstrThenDry(
         oCh[i] = iCh[i]!;
       } else if (i < until) {
         const t = (i - (until - fade)) / fade;
-        // Ease into dry lead — slightly lift mid by blending through vocal stem late in fade.
-        oCh[i] = iCh[i]! * (1 - t) + dCh[i]! * t;
+        const ease = t * t * (3 - 2 * t);
+        const a = Math.cos(ease * Math.PI * 0.5);
+        const b = Math.sin(ease * Math.PI * 0.5);
+        oCh[i] = iCh[i]! * a + dCh[i]! * b;
       } else {
         oCh[i] = dCh[i]!;
       }
@@ -318,12 +322,8 @@ export class MidSideStemNode {
   }
 
   private setGain(param: AudioParam, value: number, when: number, immediate: boolean) {
-    if (immediate) {
-      param.cancelScheduledValues(when);
-      param.setValueAtTime(value, when);
-    } else {
-      param.linearRampToValueAtTime(value, when + 0.04);
-    }
+    // Shared cancelAndHold + ramp — avoids RAF ramp stacking / clicks.
+    setParam(param, value, when, immediate, 0.09);
   }
 
   disconnect() {

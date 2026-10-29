@@ -26,7 +26,7 @@ public struct MashupTransitionExecutor: Sendable {
     private let clock: ContinuousClock
     private let tickSeconds: Double
 
-    public init(audio: any MashupTransitionAudio, tickSeconds: Double = 0.05) {
+    public init(audio: any MashupTransitionAudio, tickSeconds: Double = 0.025) {
         self.audio = audio
         self.clock = ContinuousClock()
         self.tickSeconds = max(0.01, tickSeconds)

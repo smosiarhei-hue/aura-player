@@ -27,6 +27,9 @@ npm run dev
 Без blanket sidechain и без vocal-bake B (они резали качество). Carve / HPF / LPF —
 только где нужно (ONE VOCAL / Filter Sweep / LAND).
 
+Плавность: непрерывные volume/bass/stem огибающие (smoke `npm run smoke:smooth`),
+`cancelAndHold` AudioParam, soft invite B, equal-power bake B instr→dry.
+
 ## DSP toolkit (`src/dsp/`)
 
 | Модуль | Что делает |

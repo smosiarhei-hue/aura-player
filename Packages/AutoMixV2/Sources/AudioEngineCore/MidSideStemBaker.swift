@@ -116,7 +116,8 @@ public enum MidSideStemBaker {
             max(1, min(min(maxA, maxB), AVAudioFramePosition(wantSec * rate)))
         )
         let untilFrame = AVAudioFrameCount(min(Double(totalFrames), untilSec * rate))
-        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
+        // Equal-power-ish bloom into dry B (~350 ms) — 80 ms was a hard gate click.
+        let fadeFrames = AVAudioFrameCount(max(1, Int(0.35 * rate)))
 
         // Master is always stereo float at A's processing format.
         guard let outFormat = AVAudioFormat(
@@ -292,7 +293,8 @@ public enum MidSideStemBaker {
         let lpAlpha = Float(1 - exp(-2 * Double.pi * 180 / rate))
         let bpAlpha = Float(1 - exp(-2 * Double.pi * 2500 / rate))
         let channels = Int(format.channelCount)
-        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
+        // Equal-power-ish bloom into dry B (~350 ms) — 80 ms was a hard gate click.
+        let fadeFrames = AVAudioFrameCount(max(1, Int(0.35 * rate)))
 
         while written < totalFrames {
             let got: AVAudioFrameCount = try autoreleasepool {
@@ -357,21 +359,26 @@ public enum MidSideStemBaker {
         let handoff = min(0.85, max(hold, rawHandoff))
         let mashupFloor: Float = beatmatched ? 0.72 : 0.58
         let mashupPeak: Float = beatmatched ? 0.96 : 0.88
+        // Continuous with MashupLiveStyle.volumes — no hold/handoff steps.
+        let dualFloor: Float = 0.38
+        let holdEnd: Float = 0.88
+        let midDrop = max(0.05, 1 - dualFloor / holdEnd)
 
         let out: Float
         if p <= hold {
-            out = 1.0 - Float(p / max(hold, 0.001)) * 0.12
+            out = 1.0 - Float(p / max(hold, 0.001)) * (1 - holdEnd)
         } else if p <= handoff {
             let t = smoothstep((p - hold) / max(0.001, handoff - hold))
-            out = max(0.38, 0.88 * (1 - t * 0.55))
+            out = max(dualFloor, holdEnd * (1 - t * midDrop))
         } else {
             let t = smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            out = max(0, 0.38 * (1 - t))
+            out = max(0, dualFloor * (1 - t))
         }
 
         let inVol: Float
         if p <= lag {
-            inVol = mashupFloor * smoothstep(p / max(lag, 0.001))
+            let t = smoothstep(p / max(lag, 0.001))
+            inVol = mashupFloor * smoothstep(Double(t))
         } else if p <= handoff {
             let t = smoothstep((p - lag) / max(0.001, handoff - lag))
             inVol = mashupFloor + (mashupPeak - mashupFloor) * t
@@ -505,9 +512,12 @@ public enum MidSideStemBaker {
                 } else if absFrame + fadeFrames >= untilFrame {
                     let start = untilFrame > fadeFrames ? untilFrame - fadeFrames : 0
                     let t = Float(absFrame - start) / Float(max(1, fadeFrames))
-                    let w = min(1, max(0, t))
-                    oL[i] = processedL * (1 - w) + l * w
-                    oR[i] = processedR * (1 - w) + r * w
+                    let ease = min(1, max(0, t))
+                    let s = ease * ease * (3 - 2 * ease)
+                    let a = cos(s * Float.pi * 0.5)
+                    let b = sin(s * Float.pi * 0.5)
+                    oL[i] = processedL * a + l * b
+                    oR[i] = processedR * a + r * b
                 } else {
                     oL[i] = processedL
                     oR[i] = processedR

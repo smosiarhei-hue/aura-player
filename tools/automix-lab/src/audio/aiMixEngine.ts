@@ -372,22 +372,22 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
       params.bassSwapAt = 0.28;
       params.handoffAt = 0.48;
       params.outgoingVolumeHold = 0.34;
-      params.incomingVolumeLag = 0.05;
-      params.bassDepth = 1.1;
+      params.incomingVolumeLag = 0.1;
+      params.bassDepth = 1.05;
       break;
     case "echoOut":
       // Longer invite: A rings out while B locks under — not a snap fade.
       params.bassSwapAt = 0.28;
       params.handoffAt = 0.58;
       params.outgoingVolumeHold = 0.38;
-      params.incomingVolumeLag = 0.06;
-      params.bassDepth = 1.25;
+      params.incomingVolumeLag = 0.1;
+      params.bassDepth = 1.1;
       break;
     case "cutOnOne":
       params.bassSwapAt = 0.45;
       params.handoffAt = 0.55;
       params.outgoingVolumeHold = 0.2;
-      params.incomingVolumeLag = 0.02;
+      params.incomingVolumeLag = 0.06;
       params.bassDepth = 1.0;
       break;
     case "smartCrossfade":
@@ -401,23 +401,24 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
       params.bassSwapAt = 0.2;
       params.handoffAt = 0.5;
       params.outgoingVolumeHold = 0.46;
-      params.incomingVolumeLag = 0.05;
-      params.bassDepth = 1.45;
+      params.incomingVolumeLag = 0.1;
+      params.bassDepth = 1.1;
   }
 
   if (vocalOut < 0.42) {
-    params.incomingVolumeLag = Math.max(0.02, params.incomingVolumeLag * 0.45);
+    // A already a bed — invite B sooner, but keep lag ≥0.06 so volumes stay smooth.
+    params.incomingVolumeLag = Math.max(0.06, params.incomingVolumeLag * 0.7);
     params.outgoingVolumeHold = Math.min(0.7, params.outgoingVolumeHold + 0.1);
     params.bassSwapAt = Math.max(0.14, params.bassSwapAt - 0.04);
   } else {
     params.outgoingVolumeHold = Math.max(0.28, params.outgoingVolumeHold - 0.06);
-    params.incomingVolumeLag = Math.min(0.18, params.incomingVolumeLag + 0.04);
+    params.incomingVolumeLag = Math.min(0.2, params.incomingVolumeLag + 0.04);
     params.handoffAt = Math.min(0.62, params.handoffAt + 0.04);
   }
 
   if (vocalIn > 0.55 && vocalOut < 0.45) {
-    params.incomingVolumeLag = 0.03;
-    params.bassDepth = Math.min(1.55, params.bassDepth + 0.1);
+    params.incomingVolumeLag = Math.max(0.06, Math.min(0.1, params.incomingVolumeLag));
+    params.bassDepth = Math.min(1.15, params.bassDepth + 0.05);
   }
 
   if (energyIn > energyOut + 0.12 && decision.type !== "cutOnOne") {

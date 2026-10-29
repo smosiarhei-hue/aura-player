@@ -196,22 +196,27 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let mashupFloor: Float = isBeatmatched ? 0.72 : 0.58
         let mashupPeak: Float = isBeatmatched ? 0.96 : 0.88
 
+        // Continuous segments: hold ends at holdEnd, mid lands on dualFloor at handoff.
+        let dualFloor: Float = 0.38
+        let holdEnd: Float = 0.88
+        let midDrop = max(0.05, 1 - dualFloor / holdEnd)
         let out: Float
         if p <= hold {
             // A outro instrumental stays present while B locks in on the grid.
-            out = 1.0 - Float(p / max(hold, 0.001)) * 0.12
+            out = 1.0 - Float(p / max(hold, 0.001)) * (1 - holdEnd)
         } else if p <= handoff {
             let t = Self.smoothstep((p - hold) / max(0.001, handoff - hold))
-            out = max(0.38, 0.88 * (1 - t * 0.55))
+            out = max(dualFloor, holdEnd * (1 - t * midDrop))
         } else {
             let t = Self.smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            out = max(0, 0.38 * (1 - t))
+            out = max(0, dualFloor * (1 - t))
         }
 
         let inVol: Float
         if p <= lag {
-            // Fast rise — next track enters with vocal + instrumental, not a whisper.
-            inVol = mashupFloor * Self.smoothstep(p / max(lag, 0.001))
+            // Gentler invite (smoothstep²) — B enters as a guest, not a slam.
+            let t = Self.smoothstep(p / max(lag, 0.001))
+            inVol = mashupFloor * Self.smoothstep(Double(t))
         } else if p <= handoff {
             let t = Self.smoothstep((p - lag) / max(0.001, handoff - lag))
             inVol = mashupFloor + (mashupPeak - mashupFloor) * t
@@ -450,7 +455,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
             style.oneVocalConflict = false
             style.outgoingVolumeHold = min(0.68, style.outgoingVolumeHold + 0.08)
             style.hpfDepth = min(1.4, style.hpfDepth + 0.1)
-            style.incomingVolumeLag = max(0.02, style.incomingVolumeLag * 0.55)
+            style.incomingVolumeLag = max(0.06, style.incomingVolumeLag * 0.7)
             style.vocalPocketDepth = max(0.35, style.vocalPocketDepth * 0.55)
             style.vocalPocketUntil = min(style.vocalPocketUntil, max(0.35, style.bassSwapAt + 0.1))
         } else if vocalOut >= 0.42 && vocalIn < 0.4 {

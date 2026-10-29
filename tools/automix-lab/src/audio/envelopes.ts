@@ -101,8 +101,8 @@ export const defaultParams = (): MashupParams => ({
   bassSwapAt: 0.22,
   handoffAt: 0.52,
   outgoingVolumeHold: 0.48,
-  incomingVolumeLag: 0.06,
-  bassDepth: 1.35,
+  incomingVolumeLag: 0.12,
+  bassDepth: 1.1,
   rateA: 1,
   rateB: 1,
   pitchCentsB: 0,
@@ -199,17 +199,18 @@ export function volumesAt(
     params.archetype === "smartCrossfade" ? 0.92 : modern ? 0.98 : 0.96;
   const dualFloor =
     params.archetype === "smartCrossfade" ? 0.28 : modern ? 0.48 : 0.38;
+  // Hold ends exactly at the mid-segment start level (no 0.90→0.92 step).
+  const holdEnd = params.archetype === "smartCrossfade" ? 0.75 : 0.92;
+  // Mid segment lands exactly on dualFloor at handoff (no step into LAND).
+  const midDrop = Math.max(0.05, 1 - dualFloor / Math.max(0.001, holdEnd));
 
   let out: number;
   if (p <= hold) {
-    out = 1.0 - (p / Math.max(hold, 0.001)) * (params.archetype === "smartCrossfade" ? 0.25 : 0.1);
+    out = 1.0 - (p / Math.max(hold, 0.001)) * (1 - holdEnd);
   } else if (p <= handoff) {
     const t = smoothstep((p - hold) / Math.max(0.001, handoff - hold));
     // Keep A texture present through mashup peak (instrumental bed under B vocal).
-    out = Math.max(
-      dualFloor,
-      0.92 * (1 - t * (params.archetype === "smartCrossfade" ? 0.85 : modern ? 0.42 : 0.55))
-    );
+    out = Math.max(dualFloor, holdEnd * (1 - t * midDrop));
   } else {
     const t = smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
     out = Math.max(0, dualFloor * (1 - t));
@@ -217,7 +218,9 @@ export function volumesAt(
 
   let inn: number;
   if (p <= lag) {
-    inn = mashupFloor * smoothstep(p / Math.max(lag, 0.001));
+    // Gentler invite (smoothstep²) — B rises as a guest, not a slam to mashupFloor.
+    const t = smoothstep(p / Math.max(lag, 0.001));
+    inn = mashupFloor * smoothstep(t);
   } else if (p <= handoff) {
     const t = smoothstep((p - lag) / Math.max(0.001, handoff - lag));
     inn = mashupFloor + (mashupPeak - mashupFloor) * t;
@@ -233,14 +236,15 @@ export function bassGainDbAt(
   params: MashupParams
 ): { outgoing: number; incoming: number } {
   const bassAt = Math.min(0.7, Math.max(0.12, params.bassSwapAt));
-  const depth = Math.max(0.5, params.bassDepth);
-  const killA = smoothstep(p / Math.max(0.001, bassAt * 0.75));
+  // Cap depth so ONE BASS doesn't dig a −20 dB hole that the limiter then "muffles".
+  const depth = Math.min(1.15, Math.max(0.5, params.bassDepth));
+  const killA = smoothstep(p / Math.max(0.001, bassAt * 0.9));
   const restoreB = smoothstep(
-    (p - bassAt * 0.35) / Math.max(0.001, bassAt + 0.12 - bassAt * 0.35)
+    (p - bassAt * 0.28) / Math.max(0.001, bassAt + 0.18 - bassAt * 0.28)
   );
   return {
-    outgoing: -15 * depth * killA,
-    incoming: -15 * depth * (1 - Math.min(1, Math.max(0, restoreB))),
+    outgoing: -12 * depth * killA,
+    incoming: -12 * depth * (1 - Math.min(1, Math.max(0, restoreB))),
   };
 }
 

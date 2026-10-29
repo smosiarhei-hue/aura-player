@@ -14,6 +14,7 @@ import {
   bakeStemSlice,
   bakeInstrThenDry,
   stemFxAt,
+  setParam,
 } from "../dsp";
 
 export type DeckId = "a" | "b";
@@ -342,17 +343,9 @@ export class AutomixEngine {
     const cents = pitchCentsAt(progress, this.params);
     const fx = stemFxAt(progress, this.params);
 
-    const set = (param: AudioParam, value: number) => {
-      if (immediate) {
-        param.cancelScheduledValues(audioTime);
-        param.setValueAtTime(value, audioTime);
-      } else {
-        param.linearRampToValueAtTime(value, audioTime + 0.03);
-      }
-    };
-
-    set(this.chainA.gain.gain, vols.outgoing);
-    set(this.chainB.gain.gain, vols.incoming);
+    // Shared cancelAndHold + ramp (see dsp/param) — no stacked linearRamp clicks.
+    setParam(this.chainA.gain.gain, vols.outgoing, audioTime, immediate, 0.08);
+    setParam(this.chainB.gain.gain, vols.incoming, audioTime, immediate, 0.08);
 
     this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
     this.chainB.eq.setBassGainDb(bass.incoming, audioTime, immediate);
@@ -363,22 +356,16 @@ export class AutomixEngine {
     this.chainA.eq.setAirDb(0, audioTime, immediate);
     this.chainB.eq.setAirDb(0, audioTime, immediate);
 
-    // Live stems: reinforce carve lightly; prefer dry once bake/gate is done.
+    // Continuous stem amounts (0 ≡ dry) — never hard-switch setDry/setInstrumental.
     const liveA = fx.instrumentalA * this.liveInstrScale;
-    if (liveA > 0.05) {
-      this.chainA.stem.setInstrumental(liveA, audioTime, immediate);
-    } else {
-      this.chainA.stem.setDry(audioTime, immediate);
-    }
+    this.chainA.stem.setInstrumental(liveA, audioTime, immediate);
     const conflictGate = this.params.dsp.instrBPeak >= 0.5;
     const beforeVocalOpen = progress < Math.max(0.05, this.params.dsp.vocalBAt);
-    if (fx.instrumentalB > 0.08 || (conflictGate && beforeVocalOpen)) {
-      const amt = Math.max(fx.instrumentalB, conflictGate && beforeVocalOpen ? 0.7 : 0);
-      this.chainB.stem.setInstrumental(Math.min(0.85, amt), audioTime, immediate);
-    } else {
-      // Full-quality dry B for the mashup peak / LAND — no vocalize thinning.
-      this.chainB.stem.setDry(audioTime, immediate);
-    }
+    const liveB = Math.min(
+      0.85,
+      Math.max(fx.instrumentalB, conflictGate && beforeVocalOpen ? 0.7 : 0)
+    );
+    this.chainB.stem.setInstrumental(liveB, audioTime, immediate);
 
     this.chainA.filters.setHighPass(fx.hpfA, audioTime, immediate);
     this.chainA.filters.setLowPass(0, audioTime, immediate);

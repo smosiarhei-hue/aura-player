@@ -47,12 +47,15 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
 
   const instrBPeak = Math.min(1, Math.max(0, dsp.instrBPeak));
   const instrBUntil = Math.min(0.9, Math.max(0.05, dsp.instrBUntil));
+  // ~0.16 of the blend window ≈ musical phrase of release (not an 80ms gate).
+  const instrBRelease = 0.16;
   let instrumentalB = 0;
   if (instrBPeak > 0.02) {
     if (p < instrBUntil) {
       instrumentalB = instrBPeak;
-    } else if (p < instrBUntil + 0.08) {
-      instrumentalB = instrBPeak * (1 - smoothstep((p - instrBUntil) / 0.08));
+    } else if (p < instrBUntil + instrBRelease) {
+      instrumentalB =
+        instrBPeak * (1 - smoothstep((p - instrBUntil) / instrBRelease));
     } else {
       instrumentalB = 0;
     }
