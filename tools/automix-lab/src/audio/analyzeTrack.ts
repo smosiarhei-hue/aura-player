@@ -92,22 +92,89 @@ function onsetEnvelope(energy: number[]): number[] {
   return out;
 }
 
+/** Fine hop for tempo — 0.25s energy hops cannot separate 118 vs 124 BPM. */
+const BPM_HOP_SEC = 0.01;
+
 /**
- * BPM via autocorrelation of onset envelope in 70–180 range.
- * Mirrors the spirit of TrackAnalyzer TempoDetector (lab port).
+ * BPM via autocorrelation of a fine onset envelope (10 ms hops).
+ * Old 250 ms hops mapped ~110–130 BPM onto the same lag (= always “120”).
  */
+export function estimateBPMFromSamples(
+  samples: Float32Array,
+  sampleRate: number
+): { bpm: number; confidence: number } {
+  const hop = Math.max(1, Math.floor(sampleRate * BPM_HOP_SEC));
+  const env: number[] = [];
+  for (let i = 0; i + hop <= samples.length; i += hop) {
+    let sum = 0;
+    for (let j = 0; j < hop; j++) {
+      const v = samples[i + j]!;
+      sum += v * v;
+    }
+    env.push(Math.sqrt(sum / hop));
+  }
+  const onset = onsetEnvelope(env);
+  // Use middle 60% of the track (skip intro silence / outro fade).
+  const i0 = Math.floor(onset.length * 0.15);
+  const i1 = Math.floor(onset.length * 0.85);
+  const region = onset.slice(i0, Math.max(i0 + 64, i1));
+  if (region.length < 64) return { bpm: 120, confidence: 0.1 };
+
+  const minBpm = 70;
+  const maxBpm = 180;
+  const candidates: { bpm: number; score: number }[] = [];
+
+  for (let bpm = minBpm; bpm <= maxBpm; bpm++) {
+    const lag = Math.round(60 / bpm / BPM_HOP_SEC);
+    if (lag < 2 || lag >= region.length >> 1) continue;
+    let corr = 0;
+    let norm = 0;
+    for (let i = 0; i + lag < region.length; i++) {
+      corr += region[i]! * region[i + lag]!;
+      norm += region[i]! * region[i]!;
+    }
+    const score = norm > 1e-9 ? corr / norm : 0;
+    // Mild preference for club/pop pocket 95–135 without forcing 120.
+    const center = 115;
+    const bias = 1 - Math.min(1, Math.abs(bpm - center) / 90) * 0.12;
+    candidates.push({ bpm, score: score * bias });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  if (!candidates.length) return { bpm: 120, confidence: 0.1 };
+
+  // Pick best in 90–140 if close to global best; else global.
+  let best = candidates[0]!;
+  for (const c of candidates.slice(0, 12)) {
+    if (c.bpm >= 90 && c.bpm <= 140 && c.score >= best.score * 0.92) {
+      best = c;
+      break;
+    }
+  }
+
+  // Resolve half/double vs neighbours (e.g. 62 vs 124).
+  let bpm = best.bpm;
+  const scoreAt = (b: number) =>
+    candidates.find((c) => c.bpm === b)?.score ?? 0;
+  if (bpm < 90 && scoreAt(bpm * 2) >= best.score * 0.85) bpm *= 2;
+  if (bpm > 150 && scoreAt(Math.round(bpm / 2)) >= best.score * 0.85) bpm = Math.round(bpm / 2);
+
+  const mean =
+    candidates.reduce((s, c) => s + c.score, 0) / Math.max(1, candidates.length);
+  const confidence = Math.min(1, Math.max(0.2, (best.score - mean) * 5 + 0.25));
+  return { bpm: Math.round(bpm * 10) / 10, confidence };
+}
+
+/** @deprecated coarse energy path — kept for callers; prefer estimateBPMFromSamples. */
 export function estimateBPM(energy: number[], hopSec = HOP_SEC): { bpm: number; confidence: number } {
   const onset = onsetEnvelope(energy);
   if (onset.length < 32) return { bpm: 120, confidence: 0.1 };
-
   const minBpm = 70;
   const maxBpm = 180;
   const minLag = Math.max(2, Math.round(60 / maxBpm / hopSec));
   const maxLag = Math.min(onset.length >> 1, Math.round(60 / minBpm / hopSec));
-
   let bestLag = minLag;
   let bestScore = -1;
-  const scores: number[] = [];
   for (let lag = minLag; lag <= maxLag; lag++) {
     let corr = 0;
     let norm = 0;
@@ -116,21 +183,15 @@ export function estimateBPM(energy: number[], hopSec = HOP_SEC): { bpm: number; 
       norm += onset[i]! * onset[i]!;
     }
     const score = norm > 1e-9 ? corr / norm : 0;
-    scores.push(score);
     if (score > bestScore) {
       bestScore = score;
       bestLag = lag;
     }
   }
-
   let bpm = 60 / (bestLag * hopSec);
-  // Prefer ~100–140 by folding
   while (bpm < 80) bpm *= 2;
   while (bpm > 160) bpm /= 2;
-
-  const mean = scores.reduce((a, b) => a + b, 0) / Math.max(1, scores.length);
-  const confidence = Math.min(1, Math.max(0.15, (bestScore - mean) * 4 + 0.35));
-  return { bpm: Math.round(bpm * 10) / 10, confidence };
+  return { bpm: Math.round(bpm * 10) / 10, confidence: 0.35 };
 }
 
 function meanSlice(values: number[], from: number, to: number): number {
@@ -249,7 +310,7 @@ export async function analyzeTrackBuffer(
 
   onProgress?.("BPM…");
   await yieldToUI();
-  const tempo = estimateBPM(energy);
+  const tempo = estimateBPMFromSamples(mono, analysisRate);
   const stability = tempoStability(energy, tempo.bpm);
 
   onProgress?.("Cue mixIn / mixOut…");

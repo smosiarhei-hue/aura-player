@@ -78,6 +78,17 @@ function snapToBar(sec: number, bpm: number): number {
   return Math.round(sec / bar) * bar;
 }
 
+/** Mix-in: never snap down to 0 — prefer the next bar if we're past a quiet head. */
+function snapMixIn(sec: number, bpm: number): number {
+  if (!(bpm > 30)) return Math.max(0, sec);
+  const bar = (60 / bpm) * 4;
+  if (sec <= 0.25) return 0;
+  // Round to nearest bar, but keep at least 1 bar if analysis found an intro.
+  const snapped = Math.round(sec / bar) * bar;
+  if (snapped < 0.5 && sec >= bar * 0.4) return bar;
+  return Math.max(0, snapped);
+}
+
 function phraseBars(
   availableOutro: number,
   barSec: number,
@@ -225,7 +236,7 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   const barSec = 240 / Math.max(60, bpmGrid);
 
   let cueA = snapToBar(a.mixOutSec, a.bpm || bpmGrid);
-  let cueB = snapToBar(b.mixInSec, b.bpm || bpmGrid);
+  let cueB = snapMixIn(b.mixInSec, b.bpm || bpmGrid);
 
   // Hard guarantee: at least 8 bars (or 16s) of A remain after cue for the mashup.
   const minOutroSec = Math.max(16, barSec * 8);
@@ -235,8 +246,10 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   cueA = snapToBar(cueA, a.bpm || bpmGrid);
   if (cueA > latestCueA) cueA = Math.max(0, latestCueA - (latestCueA % Math.max(barSec, 0.001)));
 
-  cueB = Math.min(Math.max(0, cueB), Math.max(0, b.durationSec * 0.28));
-  cueB = snapToBar(cueB, b.bpm || bpmGrid);
+  // B enters after quiet intro — keep mixIn, never force 0 when analysis found a groove.
+  const maxCueB = Math.max(barSec * 2, Math.min(b.durationSec * 0.28, 48));
+  if (b.mixInSec > 0.5 && cueB < 0.5) cueB = snapMixIn(b.mixInSec, b.bpm || bpmGrid);
+  cueB = Math.min(Math.max(0, cueB), maxCueB);
 
   const availableOutro = Math.max(minOutroSec, a.durationSec - cueA);
   const bars = phraseBars(availableOutro, barSec, archetype);
