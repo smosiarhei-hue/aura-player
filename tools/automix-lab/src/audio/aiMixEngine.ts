@@ -19,6 +19,7 @@ import {
   type TransitionType,
 } from "./transitionPlanner";
 import { chooseModernMashup } from "./modernMashup";
+import { runMixCritic, type MixCriticReport } from "./mixCritic";
 
 export type AIMixPlan = {
   params: MashupParams;
@@ -31,6 +32,8 @@ export type AIMixPlan = {
   beatmatched: boolean;
   /** What the algorithm will process — shown in UI. */
   processing: string[];
+  /** OpenSonic/DeckGhost-style preflight — Vocal Safe / Bass Surgeon if needed. */
+  critic: MixCriticReport;
 };
 
 function meanTail(values: number[], fromFrac = 0.7): number {
@@ -442,6 +445,17 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     params.outgoingVolumeHold = Math.min(params.outgoingVolumeHold, Math.max(0.22, open - 0.04));
   }
 
+  // Mix Critic (OpenSonic verify + DeckGhost Vocal Safe / Bass Surgeon).
+  const critic = runMixCritic({
+    params,
+    vocalOut,
+    vocalIn,
+    bpm: bpmGrid,
+    transitionType: decision.type,
+    harmonicOk: decision.harmonic.isHarmonicallyViable,
+    beatmatched,
+  });
+
   const craftLabel =
     params.dsp.mashupMode === "acapellaDrop"
       ? "B vocal early"
@@ -458,9 +472,15 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     decision.type === "echoOut" ? "ECHO→LAND" : "MASHUP→LAND",
   ].join(" → ");
 
+  const criticLine = critic.ok
+    ? `Mix Critic ${critic.score}/100 · pass`
+    : `Mix Critic ${critic.score}/100 · ${critic.mode} · ${critic.fixes.join(" + ") || "review"}`;
+
   const processing = [
     `TZ type: ${transitionTypeLabel(decision.type)} · ${decision.reason}`,
     `Key A ${a.camelotKey ?? "?"} → B ${b.camelotKey ?? "?"} · ${decision.harmonic.description}`,
+    criticLine,
+    ...critic.gates.map((g) => `${g.ok ? "✓" : "✗"} ${g.label}: ${g.detail}`),
     `Mashup: ${params.dsp.mashupMode} · sidechain A ${(params.dsp.sidechainA * 100) | 0}%`,
     beatmatched
       ? `beatmatch → ${Math.round(params.targetBPM)} BPM (A×${params.rateA.toFixed(3)} B×${params.rateB.toFixed(3)})`
@@ -483,5 +503,6 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     transitionType: decision.type,
     beatmatched,
     processing,
+    critic,
   };
 }

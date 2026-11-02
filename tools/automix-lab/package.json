@@ -10,6 +10,7 @@
     "smoke:tz": "node scripts/smoke-tz-planner.mjs",
     "smoke:mashup": "node scripts/smoke-modern-mashup.mjs",
     "smoke:smooth": "node scripts/smoke-envelope-smoothness.mjs",
+    "smoke:critic": "node scripts/smoke-mix-critic.mjs",
     "analyze:pair": "node scripts/analyze-pair.mjs"
   },
   "devDependencies": {

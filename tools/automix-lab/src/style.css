@@ -320,6 +320,27 @@ button.primary.ai:hover {
   letter-spacing: 0;
 }
 
+.critic {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.critic[data-ok="pass"] {
+  border-color: rgba(184, 242, 85, 0.28);
+  color: var(--accent);
+}
+
+.critic[data-ok="fix"] {
+  border-color: rgba(224, 160, 90, 0.28);
+  color: var(--warn);
+}
+
 .tz-badge[data-type="echoOut"],
 .tz-badge[data-type="cutOnOne"] {
   border-color: rgba(224, 160, 90, 0.28);

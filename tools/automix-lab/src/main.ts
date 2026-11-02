@@ -94,6 +94,7 @@ app.innerHTML = `
         </div>
         <div class="phase" id="phase">READY</div>
         <div class="tz-badge" id="tzBadge">TZ · —</div>
+        <div class="critic" id="criticBadge" data-ok="idle">Mix Critic · —</div>
         <div class="ai-status" id="aiStatus">Загрузи A и B → Auto Mix</div>
         <div class="meters">
           <div>
@@ -207,6 +208,22 @@ function fmtTime(sec: number): string {
 
 function setAiStatus(msg: string) {
   document.querySelector("#aiStatus")!.textContent = msg;
+}
+
+function setCriticBadge(plan: { critic?: import("./audio/mixCritic").MixCriticReport } | null) {
+  const el = document.querySelector<HTMLElement>("#criticBadge");
+  if (!el) return;
+  if (!plan?.critic) {
+    el.dataset.ok = "idle";
+    el.textContent = "Mix Critic · —";
+    return;
+  }
+  const c = plan.critic;
+  el.dataset.ok = c.ok ? "pass" : "fix";
+  const fixes = c.fixes.length ? ` · ${c.fixes.join(" + ")}` : "";
+  el.textContent = c.ok
+    ? `Mix Critic ${c.score}/100 · pass`
+    : `Mix Critic ${c.score}/100 · ${c.mode}${fixes}`;
 }
 
 function setParamNumber(key: keyof MashupParams, value: number) {
@@ -333,6 +350,7 @@ function runPlanFromProfiles() {
   params.dsp = dsp;
   engine.setParams(params);
   showProcessing(plan.processing);
+  setCriticBadge(plan);
   const tz = document.querySelector("#tzBadge");
   if (tz) {
     const keyLine = `${plan.profileA.camelotKey ?? "?"} → ${plan.profileB.camelotKey ?? "?"}`;
@@ -349,6 +367,7 @@ function runPlanFromProfiles() {
       story: plan.story,
       archetype: plan.archetype,
       beatmatched: plan.beatmatched,
+      critic: plan.critic,
       processing: plan.processing,
       dsp: plan.params.dsp,
       params: plan.params,
