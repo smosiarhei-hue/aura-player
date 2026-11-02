@@ -1766,6 +1766,17 @@ a {
 }
 
 /* iPhone mock iframe: fill 402×874 hole, no desktop chrome / letterbox */
+html.embed-phone {
+  /*
+    Hardware Dynamic Island overlay ends ~50pt from top of the hole
+    (y≈13 + h≈37). Corner radius ~79pt — keep chrome below the island
+    so brand / «Моя волна» are not clipped by the continuous corner.
+  */
+  --safe-top: 56px;
+  --safe-bottom: 20px;
+  --phone-inline: 22px;
+}
+
 html.embed-phone,
 html.embed-phone body {
   width: 100%;
@@ -1792,6 +1803,31 @@ html.embed-phone .stage {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  padding-top: calc(14px + var(--safe-top));
-  padding-bottom: calc(18px + var(--safe-bottom));
+  padding-top: calc(10px + var(--safe-top));
+  padding-left: var(--phone-inline);
+  padding-right: var(--phone-inline);
+  padding-bottom: calc(16px + var(--safe-bottom));
+}
+
+html.embed-phone .chrome {
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+html.embed-phone .brand-row {
+  gap: 10px;
+}
+
+html.embed-phone .brand {
+  font-size: 0.98rem;
+  min-width: 0;
+}
+
+html.embed-phone .pill {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
