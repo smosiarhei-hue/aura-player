@@ -252,8 +252,8 @@ export class AutomixEngine {
     const dsp = p.dsp;
     const cueA = Math.min(Math.max(0, p.cueASec), Math.max(0, a.duration - 1));
     const cueB = Math.min(Math.max(0, p.cueBSec), Math.max(0, b.duration - 1));
-    // One-Bar Duet is intentionally ~1 bar (<4s). Other mashups keep a 4s floor.
-    const blendFloor = p.dsp.mashupMode === "oneBarDuet" ? 1.2 : 4;
+    // Adaptive Duet + AutoMix: never shorter than 4s (no blink).
+    const blendFloor = 4;
     const blend = Math.max(blendFloor, Math.min(48, p.blendDurationSec));
 
     const modeLabel = dsp.mashupMode || "mashup";

@@ -101,10 +101,11 @@ function leadB(vocalIn: number, instrB: number, vocalFocus: number): number {
 
 export function critiqueMix(input: MixCriticInput): MixCriticReport {
   const { params, vocalOut, vocalIn, bpm, transitionType, harmonicOk, beatmatched } = input;
-  // One-Bar Duet *is* dual lead for ~1 bar — do not Vocal Safe it away.
+  // Phrase Duet *is* dual lead for ~4 bars — do not Vocal Safe it away.
   if (params.dsp.mashupMode === "oneBarDuet") {
     const blendSec = Math.max(1, params.blendDurationSec);
     const spb = 60 / Math.max(60, bpm);
+    const bars = blendSec / (spb * 4);
     return {
       ok: true,
       score: 100,
@@ -113,13 +114,13 @@ export function critiqueMix(input: MixCriticInput): MixCriticReport {
           id: "vocalClash",
           ok: true,
           label: "DUET VOCAL",
-          detail: `intentional dual lead · ${blendSec.toFixed(2)}s (~${(blendSec / spb).toFixed(1)} beat)`,
+          detail: `intentional dual lead · ${blendSec.toFixed(1)}s (~${bars.toFixed(1)} bars)`,
         },
         {
           id: "bassClash",
           ok: true,
           label: "ONE BASS",
-          detail: "short bar · mid swap",
+          detail: "4-bar dual · mid swap",
         },
         {
           id: "harmonic",
@@ -135,9 +136,9 @@ export function critiqueMix(input: MixCriticInput): MixCriticReport {
         },
         {
           id: "land",
-          ok: params.handoffAt <= 0.78,
+          ok: params.handoffAt <= 0.85,
           label: "LAND",
-          detail: params.handoffAt <= 0.78 ? "LAND to B" : `late handoff @${(params.handoffAt * 100) | 0}%`,
+          detail: params.handoffAt <= 0.85 ? "LAND to B after phrase" : `late handoff @${(params.handoffAt * 100) | 0}%`,
         },
       ],
       vocalClashBeats: blendSec / spb,

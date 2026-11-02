@@ -52,7 +52,7 @@ export type WaveRadioState =
   | "mixing"
   | "error";
 
-/** Song Transitions: AutoMix | Duet (1-bar dual vocal) | Crossfade | Off. */
+/** Song Transitions: AutoMix | Duet (4-bar dual vocal) | Crossfade | Off. */
 export type TransitionMode = "automix" | "duet" | "crossfade" | "off";
 
 const TRANSITION_KEY = "sonivo-song-transitions";
@@ -90,6 +90,8 @@ export type WaveRadioSnapshot = {
   elapsed: number;
   duration: number;
   planMode: string | null;
+  /** Planned mashup/duet window length (content-aware). */
+  blendSec: number | null;
   planStory: string | null;
   planBlurb: string;
   criticOk: boolean | null;
@@ -611,7 +613,7 @@ export class WaveRadio {
       this.transitionMode === "duet"
         ? planOneBarDuet(this.profileA, this.profileB)
         : planAutomix(this.profileA, this.profileB);
-    // Coach offsets are for long AutoMix phrases — skip on the 1-bar duet.
+    // Coach offsets are for long AutoMix phrases — skip on Phrase Duet.
     if (this.transitionMode !== "duet") {
       applyCoachOffsets(this.plan.params, this.coach);
     }
@@ -712,7 +714,8 @@ export class WaveRadio {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          learn: true,
+          // Duet dual-lead fails AutoMix noDualLead gates — never train on it.
+          learn: this.plan.params.dsp.mashupMode !== "oneBarDuet",
           pair: {
             a: this.current ? `${this.current.artists} — ${this.current.title}` : null,
             b: this.next ? `${this.next.artists} — ${this.next.title}` : null,
@@ -849,7 +852,7 @@ export class WaveRadio {
           this.setStatus(
             "loading",
             this.transitionMode === "duet"
-              ? "Duet · добираю 1-bar план…"
+              ? "Duet · слушаю фразы A/B…"
               : "Automix · добираю план сведения…"
           );
           await this.waitForPlan(gen);

@@ -245,13 +245,14 @@ export function volumesAt(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
-  // One-Bar Duet: intentional dual lead for ~1 bar, then LAND to B.
+  // Phrase Duet: intentional dual lead for ~4 bars, then LAND to B.
   if (params.dsp.mashupMode === "oneBarDuet") {
     // Lazy import avoided — keep curves local so envelopes stay dependency-light.
-    const handoff = Math.min(0.78, Math.max(0.48, params.handoffAt));
-    const invite = Math.min(0.22, Math.max(0.06, params.incomingVolumeLag || 0.06));
+    const handoff = Math.min(0.82, Math.max(0.55, params.handoffAt));
+    const invite = Math.min(0.18, Math.max(0.05, params.incomingVolumeLag || 0.08));
+    const landSpan = Math.max(0.12, 1 - handoff);
     let outgoing =
-      p <= handoff ? 1 : Math.max(0, 1 - (p - handoff) / Math.max(0.08, 1 - handoff));
+      p <= handoff ? 1 : Math.max(0, 1 - (p - handoff) / landSpan);
     let incoming =
       p <= invite
         ? p / invite

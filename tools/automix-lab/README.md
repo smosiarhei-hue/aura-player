@@ -61,7 +61,7 @@ npm run dev
 | Режим | Поведение |
 |---|---|
 | **AutoMix** | Beatmatch + mashup craft; при сбое плана — Crossfade fallback |
-| **Duet** | One-Bar Duet — оба вокала ~1 такт на сетке → LAND B (отдельный режим, не ONE VOCAL) |
+| **Duet** | Adaptive Duet — слушает vocal/LRC фразы A+B, сам выбирает длину dual-vocal окна (2–16 bars) → LAND B (не ONE VOCAL) |
 | **Crossfade** | Equal-power 1–12 с, без stems/FX |
 | **Off** | Без overlap → следующий трек |
 
