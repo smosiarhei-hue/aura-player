@@ -19,14 +19,12 @@ app.innerHTML = `
   <header class="hero">
     <h1>Automix <span>Lab</span></h1>
     <p>
-      Современный мэшап-переход: анализ BPM + Key/Camelot → тип §2.4 →
-      craft (Acapella Drop / Vocal Swap) → offline bake вокал/инструментал
-      A+B на окне сведения → sidechain → LOCK→MASHUP→LAND.
-      Один клик <strong>AI Auto Mix</strong>.
+      Консоль сведения Sonivo: BPM и Camelot → тип перехода → bake вокал/инструментал
+      на окне A+B → LOCK → MASHUP → LAND. Один проход через Auto Mix.
     </p>
-    <p class="hint" style="margin-top:8px">
-      <a href="/iphone.html" style="color:var(--accent);font-weight:700">iPhone 17 Pro макет Sonivo →</a>
-      плеер, Automix-инструменты и ручная настройка как в приложении.
+    <p class="hint">
+      <a href="/iphone.html">Макет Sonivo на iPhone</a>
+      — плеер и ручки как в приложении.
     </p>
   </header>
 
@@ -36,11 +34,11 @@ app.innerHTML = `
       <div class="decks">
         <div class="deck a">
           <div class="label">Deck A · outgoing</div>
-          <label class="file-btn">Загрузить трек A
+          <label class="file-btn">Трек A
             <input id="fileA" type="file" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" />
           </label>
           <div class="meta" id="metaA">файл не выбран</div>
-          <div class="controls" style="margin-top:10px">
+          <div class="controls deck-controls">
             <div class="row">
               <label>BPM A</label>
               <input id="bpmA" type="number" min="40" max="220" step="0.1" value="120" />
@@ -52,18 +50,18 @@ app.innerHTML = `
               <output id="cueAOut">0.0</output>
             </div>
           </div>
-          <div class="actions">
+          <div class="actions tight">
             <button class="ghost" id="soloA" type="button">Solo A от cue</button>
-            <button class="ghost" id="analyzeA" type="button">AI анализ A</button>
+            <button class="ghost" id="analyzeA" type="button">Анализ A</button>
           </div>
         </div>
         <div class="deck b">
           <div class="label">Deck B · incoming</div>
-          <label class="file-btn">Загрузить трек B
+          <label class="file-btn">Трек B
             <input id="fileB" type="file" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" />
           </label>
           <div class="meta" id="metaB">файл не выбран</div>
-          <div class="controls" style="margin-top:10px">
+          <div class="controls deck-controls">
             <div class="row">
               <label>BPM B</label>
               <input id="bpmB" type="number" min="40" max="220" step="0.1" value="124" />
@@ -75,16 +73,16 @@ app.innerHTML = `
               <output id="cueBOut">0.0</output>
             </div>
           </div>
-          <div class="actions">
+          <div class="actions tight">
             <button class="ghost" id="soloB" type="button">Solo B от cue</button>
-            <button class="ghost" id="analyzeB" type="button">AI анализ B</button>
+            <button class="ghost" id="analyzeB" type="button">Анализ B</button>
           </div>
         </div>
       </div>
 
-      <div class="actions" style="margin-top:12px">
-        <button class="ghost" id="loadSamples" type="button">Загрузить demo Midnight→Neon</button>
-        <button class="ghost" id="loadRealPair" type="button">Загрузить nkeeei→Kai Angel</button>
+      <div class="actions tight">
+        <button class="ghost" id="loadSamples" type="button">Demo Midnight → Neon</button>
+        <button class="ghost" id="loadRealPair" type="button">nkeeei → Kai Angel</button>
       </div>
 
       <div class="transport">
@@ -96,7 +94,7 @@ app.innerHTML = `
         </div>
         <div class="phase" id="phase">READY</div>
         <div class="tz-badge" id="tzBadge">TZ · —</div>
-        <div class="ai-status" id="aiStatus">Загрузи A и B → нажми AI Auto Mix</div>
+        <div class="ai-status" id="aiStatus">Загрузи A и B → Auto Mix</div>
         <div class="meters">
           <div>
             <label>Vol A / Bass A</label>
@@ -124,17 +122,17 @@ app.innerHTML = `
           </div>
         </div>
         <div class="actions">
-          <button class="primary ai" id="aiAuto" type="button">✦ AI Auto Mix</button>
-          <button class="primary" id="play" type="button">▶ Play mashup</button>
+          <button class="primary ai" id="aiAuto" type="button">Auto Mix</button>
+          <button class="primary" id="play" type="button">Play mashup</button>
           <button class="warn" id="stop" type="button">Stop</button>
-          <button class="ghost" id="matchTempo" type="button">Match BPM → rates</button>
+          <button class="ghost" id="matchTempo" type="button">Match BPM</button>
         </div>
         <div class="error" id="error"></div>
         <p class="hint">
-          <strong>AI Auto Mix</strong>: Key + BPM → тип перехода по §2.4, затем bake стемов,
-          bass swap / filter / echo / cut. Ручки справа — только override.
+          Auto Mix читает key и BPM, выбирает тип по §2.4, затем bake стемов и FX.
+          Ручки справа — только override.
         </p>
-        <ul class="dsp-list" id="processingList" style="margin-top:10px"></ul>
+        <ul class="dsp-list" id="processingList"></ul>
       </div>
     </section>
 
@@ -146,18 +144,18 @@ app.innerHTML = `
         <button class="ghost" id="importBtn" type="button">Import JSON</button>
         <button class="ghost" id="resetBtn" type="button">Reset</button>
       </div>
-      <textarea class="preset-box" id="preset" spellcheck="false" placeholder="Пресет / AI plan появится здесь…"></textarea>
+      <textarea class="preset-box" id="preset" spellcheck="false" placeholder="Пресет / AI plan…"></textarea>
       <p class="hint">
-        Алгоритм ≈ iOS <code>TrackAnalyzer</code> + <code>MashupLiveStyle.resolve</code>.
-        DSP toolkit: <code>src/dsp/</code> — MidSideStem, BassEq, FilterSweep, EchoOut.
+        Зеркало iOS <code>TrackAnalyzer</code> + <code>MashupLiveStyle.resolve</code>.
+        DSP: <code>src/dsp/</code> — MidSideStem, BassEq, FilterSweep, EchoOut.
       </p>
 
-      <h2 style="margin-top:22px">DSP инструменты</h2>
+      <h2 class="spaced">DSP</h2>
       <ul class="dsp-list">
-        <li><strong>Mid/Side stem</strong> — A instrumentalize (вокал уходит), B vocalize</li>
-        <li><strong>Bass EQ</strong> — ONE BASS: kill A lows, restore B + mid vocal pocket</li>
-        <li><strong>HPF / LPF</strong> — HPF riser на A (LAND), LPF reveal на B (INVITE)</li>
-        <li><strong>Echo-out</strong> — tempo-sync delay на хвосте A поверх B</li>
+        <li><strong>Mid/Side stem</strong> — A instrumentalize, B vocalize</li>
+        <li><strong>Bass EQ</strong> — ONE BASS: kill A lows, restore B</li>
+        <li><strong>HPF / LPF</strong> — HPF riser на A, LPF reveal на B</li>
+        <li><strong>Echo-out</strong> — tempo-sync delay хвоста A поверх B</li>
       </ul>
       <div class="actions">
         <button class="ghost" id="previewInstrA" type="button">Preview A instrumental</button>
