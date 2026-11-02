@@ -479,8 +479,11 @@ export class WaveRadio {
     if (cue < pos + 3.2) {
       const dur =
         this.profileA?.durationSec || this.engine.getDeck("a").duration || cue + 24;
-      const nextSafe = Math.min(dur - 4, pos + 4.5);
+      const nextSafe = Math.min(dur - 4, Math.max(pos + 4.5, pos + 0.5));
       target = nextSafe;
+      // Keep the live plan in sync — otherwise the loop rewinds to a stale cueA
+      // and playAutoMashup stop()+bake kills audio right after the new song lands.
+      this.plan.params.cueASec = target;
       this.brainStatus = `Automix · late cue → exit @ ${target.toFixed(1)}s`;
     } else {
       target = cue;
@@ -954,7 +957,9 @@ export class WaveRadio {
             mixed = join.ok;
             landedAt = join.landedAt;
           }
-          await this.finishMashupLog();
+          // Never await coach logging before audio handoff — the B tail is short
+          // and a network stall was silencing the newly landed track.
+          void this.finishMashupLog();
           playedSec = Math.max(
             1,
             (livePlan.params.cueASec || 0) + (livePlan.params.blendDurationSec || 0)
@@ -985,9 +990,21 @@ export class WaveRadio {
           body: JSON.stringify({ trackId: finishedId, playedSec }),
         }).catch(() => undefined);
 
+        // Handoff FIRST while mashup/crossfade B is still draining — then bookkeeping.
         this.engine.promoteBToA();
         this.current = incoming;
         this.profileA = liveProfileB;
+        const landedProfile = this.profileA as TrackAIProfile;
+        const provisionalUntil = Math.min(
+          landedProfile.durationSec - 0.5,
+          Math.max(landedAt + 20, landedProfile.mixOutSec - 0.5)
+        );
+        this.setStatus(
+          "playing",
+          `${incoming.artists} — ${incoming.title}`
+        );
+        const soloP = this.engine.playSoloUntil("a", landedAt, provisionalUntil, 1);
+
         // Promoted B becomes A — keep its transcript as the new outgoing cue source.
         this.transcriptA = this.transcriptB;
         this.transcriptB = null;
@@ -1001,18 +1018,6 @@ export class WaveRadio {
           void this.transcribeAndRefine(this.current, this.profileA);
         }
         this.emit();
-
-        // Keep audio alive while next track downloads + analyzes.
-        const landedProfile = this.profileA as TrackAIProfile;
-        const provisionalUntil = Math.min(
-          landedProfile.durationSec - 0.5,
-          Math.max(landedAt + 20, landedProfile.mixOutSec - 0.5)
-        );
-        this.setStatus(
-          "playing",
-          `${incoming.artists} — ${incoming.title}`
-        );
-        const soloP = this.engine.playSoloUntil("a", landedAt, provisionalUntil, 1);
 
         const prefetch = (async () => {
           try {
@@ -1045,10 +1050,17 @@ export class WaveRadio {
         resumeFrom = this.engine.getSoloPosition();
         if (
           (this.transitionMode === "automix" || this.transitionMode === "duet") &&
-          readyPlan &&
-          resumeFrom >= readyPlan.params.cueASec - 0.2
+          readyPlan
         ) {
-          resumeFrom = readyPlan.params.cueASec;
+          const cue = readyPlan.params.cueASec;
+          // Snap only a tiny overshoot — never rewind far behind the playhead
+          // (that forced an instant remash with stop()+bake silence).
+          if (resumeFrom >= cue - 0.2 && resumeFrom <= cue + 1.5) {
+            resumeFrom = cue;
+          } else if (resumeFrom > cue + 1.5) {
+            readyPlan.params.cueASec = resumeFrom;
+            this.engine.setParams(readyPlan.params);
+          }
         }
       }
       // Natural loop exit — clear running so Play can restart.

@@ -449,10 +449,12 @@ export class AutomixEngine {
     this.chainA.source.start(now, this.chainA.startOffset);
     this.chainB.source.start(now, this.chainB.startOffset);
 
+    // Keep B alive long enough for waveRadio to hand off into solo without a
+    // silent gap (finishMashupLog / promote used to outrun a 0.8s tail).
     const stopAt = now + blend + 0.8;
     try {
       this.chainA.source.stop(stopAt);
-      this.chainB.source.stop(stopAt + 0.4);
+      this.chainB.source.stop(now + blend + 12);
     } catch {
       /* ignore */
     }
@@ -585,7 +587,8 @@ export class AutomixEngine {
     this.chainB.source.start(now, this.chainB.startOffset);
     try {
       this.chainA.source.stop(now + blend + 0.3);
-      this.chainB.source.stop(now + blend + 0.6);
+      // Tail B past the crossfade so the solo handoff can start without silence.
+      this.chainB.source.stop(now + blend + 12);
     } catch {
       /* ignore */
     }
