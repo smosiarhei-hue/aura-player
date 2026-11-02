@@ -187,6 +187,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("bakeDuetStemPair", player)
         self.assertIn("bakeAutomixStemPair", player)
         self.assertIn("playMashupStemPair", player)
+        self.assertIn("isCompletingTransition", player)
+        self.assertIn("stemPadSec", player)
+        self.assertIn("completeAt", player)
+        self.assertIn("LAND→real reload failed", player)
 
         baker = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift"
@@ -194,6 +198,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("bakeDuetMaster", baker)
         self.assertIn("bakeDuetStemPair", baker)
         self.assertIn("bakeAutomixStemPair", baker)
+        self.assertIn("padSec", baker)
         self.assertIn("useDuetVolumes", baker)
         self.assertIn("outgoingMode: .vocal", baker)
         self.assertIn("incomingMode: .dry", baker)

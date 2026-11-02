@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Страница артиста (reference match: blur dissolve hero)
 
@@ -35,6 +36,8 @@ struct ArtistView: View {
         .navigationBarBackButtonHidden(true)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .navigationBar)
+        // Keep native edge-swipe back even with a custom chevron (push from catalog/search).
+        .background(NavigationInteractivePopEnabler())
         .sheet(isPresented: $showingInfoSheet) {
             if let artist {
                 ArtistInfoSheet(artist: artist, playWave: { playArtistWave(artist) })
@@ -1478,6 +1481,30 @@ private func playTrackWave(from track: Track) {
         guard let first = tracks.first else { return }
         PlaybackCommandRouter.shared.play(first, queue: tracks)
         MoodRadioEngine.shared.activateYandexTrackWave(tracks: tracks)
+    }
+}
+
+// MARK: - Native swipe-back with hidden UIKit nav bar
+
+/// Re-enables `interactivePopGestureRecognizer` when SwiftUI hides the system back button.
+private struct NavigationInteractivePopEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        InteractivePopController()
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+
+    private final class InteractivePopController: UIViewController, UIGestureRecognizerDelegate {
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            guard let pop = navigationController?.interactivePopGestureRecognizer else { return }
+            pop.isEnabled = true
+            pop.delegate = self
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
     }
 }
 

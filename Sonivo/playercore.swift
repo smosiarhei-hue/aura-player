@@ -534,6 +534,9 @@ final class PlayerCore {
     private var lastNowPlayingSync: Date?
 
     private var isTransitioning = false
+    /// Prevents stem-completion + timer from double-entering `completeTransition`
+    /// (second pass stopped the freshly scheduled B and left playback frozen).
+    private var isCompletingTransition = false
     private var transitionScheduled = false
     private var transitionStartTime: Date?
     private var transitionDuration: Double = 3.0
@@ -548,6 +551,9 @@ final class PlayerCore {
     private var mashupBakeIncomingBaseCue: Double = 0
     /// True while playing the offline A+B master (volumes already baked in).
     private var mashupPlayingMasterBake = false
+    /// Musical cue B (mix-in). Kept separate from bake schedule offset so the
+    /// Automix timeline snap stays on the real track position, not bakeLag.
+    private var mashupIncomingCueSec: Double = 0
 
     var streamBufferFraction: Double = 0.0
     private(set) var isStreamBuffering = false
@@ -611,6 +617,10 @@ final class PlayerCore {
             if t.isFinite, t >= 0 { return t }
         }
         let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
+        // Stem/master bake: map wall-clock back onto real B (cue + bake lag + elapsed).
+        if mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake {
+            return max(0, mashupBakeIncomingBaseCue + elapsed)
+        }
         return max(0, incomingStartPosition + elapsed)
     }
 
@@ -2351,6 +2361,7 @@ final class PlayerCore {
         metadataSwapped = false
         metadataTrack = nil
         incomingStartPosition = max(0, incomingStart)
+        mashupIncomingCueSec = max(0, incomingStart)
         activeMashupStyle = mashupStyle ?? .fallback
         let mashup = isMashupTransitionMode
         let strategyName = activeMashupStyle.isDuet ? "DUET" : "MASHUP"
@@ -2399,6 +2410,9 @@ final class PlayerCore {
                     let handoff = style.handoffAt
                     let cueA = max(0, cueAForBake)
                     let cueB = max(0, startAt)
+                    // Extra tail so stems outlive bake lag + LAND handoff (short stems
+                    // ending mid-window previously froze B after a stop/reload race).
+                    let stemPadSec = 4.0
                     let bakeStartedAt = Date()
                     let stemPair: (outgoing: URL, incoming: URL)? = await Task.detached(priority: .userInitiated) {
                         if duetBake {
@@ -2407,7 +2421,8 @@ final class PlayerCore {
                                 incomingURL: inURL,
                                 cueA: cueA,
                                 cueB: cueB,
-                                blendSec: blend
+                                blendSec: blend,
+                                padSec: stemPadSec
                             )
                         }
                         return try? MidSideStemBaker.bakeAutomixStemPair(
@@ -2416,7 +2431,8 @@ final class PlayerCore {
                             cueA: cueA,
                             cueB: cueB,
                             blendSec: blend,
-                            handoffProgress: handoff
+                            handoffProgress: handoff,
+                            padSec: stemPadSec
                         )
                     }.value
                     // Bake ran while live A kept playing — enter the CAF mid-window so the
@@ -2434,6 +2450,9 @@ final class PlayerCore {
                         self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
                         self.mashupBakeRealIncomingURL = inURL
                         self.mashupBakeIncomingBaseCue = cueB + bakeLag
+                        self.mashupIncomingCueSec = cueB
+                        // Keep musical cue B for timeline math; schedule offset is bakeLag only.
+                        self.incomingStartPosition = cueB
                         try self.playMashupStemPair(
                             outgoingURL: stemPair.outgoing,
                             incomingURL: stemPair.incoming,
@@ -2648,8 +2667,8 @@ final class PlayerCore {
             applyMashupTransitionEQ(progress: p)
         }
 
-        // Apple Automix: hard-cut artwork + timeline to B at the musical handoff
-        // (not at the very end). Progress bar snaps to B's cue; Mixing badge stays.
+        // Apple Automix: hard-cut artwork + timeline + dry B at musical LAND
+        // (handoffAt), not at the window end — matches IMG_7144.
         let swapAt = mashup ? activeMashupStyle.handoffAt : 0.75
         if !metadataSwapped, let incomingTrack, p >= swapAt {
             metadataSwapped = true
@@ -2661,7 +2680,8 @@ final class PlayerCore {
             )
         }
 
-        if p >= 1.0, let incomingTrack {
+        let completeAt = mashup ? activeMashupStyle.handoffAt : 1.0
+        if p >= completeAt, let incomingTrack {
             completeTransition(to: incomingTrack)
         }
     }
@@ -2685,6 +2705,7 @@ final class PlayerCore {
         mashupBakeRealIncomingURL = nil
         mashupBakeIncomingBaseCue = 0
         mashupPlayingMasterBake = false
+        mashupIncomingCueSec = 0
     }
 
     /// Play offline A+B master bake on the active native deck (idle stays silent).
@@ -2719,7 +2740,7 @@ final class PlayerCore {
         activeAudioFile = masterFile
         incomingAudioFile = nil
         activeLocalURL = masterURL
-        incomingStartPosition = offset
+        // Do not clobber musical cue B with the bake schedule offset.
 
         scheduleLocalSegment(masterFile, on: activePlayer, at: offset)
         activePlayer.volume = 1
@@ -2747,6 +2768,7 @@ final class PlayerCore {
         activeStreamingPlayer.volume = 0
         idleStreamingPlayer.volume = 0
 
+        // Invalidate completions before stop so drained stems can't re-enter finish.
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
         activePlayer.stop()
@@ -2756,11 +2778,11 @@ final class PlayerCore {
         activeAudioFile = outFile
         incomingAudioFile = inFile
         activeLocalURL = outgoingURL
-        incomingStartPosition = offset
+        // Keep `incomingStartPosition` as musical cue B (set by beginTransition).
 
         scheduleLocalSegment(outFile, on: activePlayer, at: offset)
         scheduleLocalSegment(inFile, on: idlePlayer, at: offset)
-        let vols = activeMashupStyle.volumes(progress: 0)
+        let vols = activeMashupStyle.volumes(progress: min(1, offset / max(0.001, transitionDuration)))
         activePlayer.volume = vols.outgoing
         idlePlayer.volume = vols.incoming
         if !engine.isRunning { try engine.start() }
@@ -2769,6 +2791,12 @@ final class PlayerCore {
     }
 
     private func completeTransition(to nextTrack: Track) {
+        // Stem end + LAND timer used to call this twice: the second pass stopped
+        // the freshly loaded B and swapped onto an empty idle node → frozen timecode.
+        guard isTransitioning, !isCompletingTransition else { return }
+        isCompletingTransition = true
+        defer { isCompletingTransition = false }
+
         let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
         let usedBake = mashupBakeRealIncomingURL != nil
         // Local incoming was scheduled at incomingStartPosition; wall-clock elapsed alone would jump back to 0.
@@ -2787,18 +2815,21 @@ final class PlayerCore {
         let wasStream = isUsingStreamPlayer
 
         if usedBake, let realURL = bakeRealURL {
-            // Master bake finished → load real next track at cue + elapsed.
+            // LAND → load real next track at cue + elapsed (dry B continues solo).
             isUsingStreamPlayer = false
             streamingPlayerA.pause()
             streamingPlayerB.pause()
-            let outgoingNode = activeTimePitch
-            activePlayer.stop()
-            idlePlayer.stop()
-            outgoingNode.rate = 1
-            outgoingNode.pitch = 0
-            outgoingNode.bypass = true
+            // Invalidate stem completions before stop to block re-entrant finish.
             localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
             localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
+            activePlayer.stop()
+            idlePlayer.stop()
+            activeTimePitch.rate = 1
+            activeTimePitch.pitch = 0
+            activeTimePitch.bypass = true
+            idleTimePitch.rate = 1
+            idleTimePitch.pitch = 0
+            idleTimePitch.bypass = true
             idlePlayer.volume = 0
             incomingIsStream = false
             mashupPlayingMasterBake = false
@@ -2811,12 +2842,32 @@ final class PlayerCore {
                 clearMashupBakeTemps()
                 scheduleLocalSegment(realFile, on: activePlayer, at: nativeIncomingPosition)
                 activePlayer.volume = 1
-                if isPlaying { activePlayer.play() }
+                // Always resume B after LAND — Automix must leave a playing deck.
+                isPlaying = true
+                activePlayer.play()
                 applyEQ()
             } catch {
-                SonivoDiagnostics.log("[Mashup] master→real reload failed: \(error)", tag: "AUDIO")
+                let fallbackCue = max(0, mashupIncomingCueSec > 0 ? mashupIncomingCueSec : nativeIncomingPosition)
+                SonivoDiagnostics.log("[Mashup] LAND→real reload failed: \(error)", tag: "AUDIO")
                 clearMashupBakeTemps()
                 applyEQ()
+                // Last resort: restart the incoming track from its musical cue.
+                incomingTrack = nil
+                incomingLaneReady = false
+                incomingAudioFile = nil
+                metadataTrack = nil
+                metadataSwapped = false
+                isTransitioning = false
+                transitionScheduled = false
+                AutoMixDJEngine.shared.isTransitionActive = false
+                AutoMixDJEngine.shared.transitionProgress = 0
+                AutoMixDJEngine.shared.statusBadge = nil
+                AutoMixDJEngine.shared.resetDrop()
+                AutoMixDJEngine.shared.isPostMixActive = true
+                currentTrack = nextTrack
+                streamDuration = nextTrack.duration
+                start(at: fallbackCue)
+                return
             }
         } else if incomingIsStream {
             if !wasStream {
@@ -3006,6 +3057,7 @@ final class PlayerCore {
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
         transitionScheduled = false
         isTransitioning = false
+        isCompletingTransition = false
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil

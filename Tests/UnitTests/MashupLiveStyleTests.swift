@@ -42,7 +42,8 @@ struct MashupLiveStyleTests {
 
         let late = style.playbackRates(progress: 0.98)
         #expect(abs(late.incoming - 1.0) < 0.05)
-        #expect(style.phaseLabel(progress: 0.05).contains("LOCK"))
+        // Apple Automix surfaces a single Mixing badge (no LOCK/KEY sub-phases).
+        #expect(style.phaseLabel(progress: 0.05) == "MIXING")
     }
 
     @Test("Pitch cents ramp in, hold through handoff, ease out")
@@ -61,11 +62,11 @@ struct MashupLiveStyleTests {
         #expect(abs(locked - 100) < 1)
         let late = style.pitchCents(progress: 0.95)
         #expect(abs(late) < abs(locked))
-        #expect(style.phaseLabel(progress: 0.22).contains("KEY"))
+        #expect(style.phaseLabel(progress: 0.22) == "MIXING")
     }
 
-    @Test("Mashup volumes keep A+B loud together; B is not a whisper bed")
-    func mashupDualLayerVolumes() {
+    @Test("Apple Automix volumes: A vocal + B beat full, hard mute A at LAND")
+    func appleAutomixVolumesHardLand() {
         var style = MashupLiveStyle.resolve(
             plan: nil,
             outgoing: nil,
@@ -73,25 +74,20 @@ struct MashupLiveStyleTests {
             outgoingDuration: 210,
             incomingDuration: 200
         )
-        style.isBeatmatched = true
-        style.incomingVolumeLag = 0.06
-        style.outgoingVolumeHold = 0.48
-        style.handoffAt = 0.52
-        style.bassSwapAt = 0.22
+        style.applyAutomixPlaybackCharacter()
+        #expect(style.handoffAt >= 0.88)
+        #expect(style.phaseLabel(progress: 0.35) == "MIXING")
+        #expect(style.phaseLabel(progress: 0.95) == "MIXING")
+
         let early = style.volumes(progress: 0.12)
-        let mid = style.volumes(progress: 0.40)
-        let late = style.volumes(progress: 0.92)
-        #expect(early.outgoing > 0.85)
-        #expect(early.incoming > 0.55) // next track already in the mashup
-        #expect(mid.incoming > 0.70) // B vocal+instr audible with A
-        #expect(mid.outgoing > 0.40) // A instrumental still layered
-        #expect(late.incoming > late.outgoing)
-        let midPhase = style.phaseLabel(progress: 0.35)
-        #expect(midPhase.contains("MASHUP")
-            || midPhase.contains("ONE BASS")
-            || midPhase.contains("INVITE")
-            || midPhase.contains("BASS"))
-        #expect(style.phaseLabel(progress: 0.95).contains("LAND"))
+        let mid = style.volumes(progress: 0.50)
+        let land = style.volumes(progress: min(0.99, style.handoffAt + 0.01))
+        #expect(early.outgoing > 0.95)
+        #expect(early.incoming > 0.90) // B beat bed already in
+        #expect(mid.outgoing > 0.95)
+        #expect(mid.incoming > 0.95)
+        #expect(land.outgoing == 0)
+        #expect(land.incoming > 0.95)
     }
 
     @Test("Duet plan keeps dual vocal volumes and DUET phase labels")

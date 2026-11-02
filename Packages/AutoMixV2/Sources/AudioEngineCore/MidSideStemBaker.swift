@@ -310,9 +310,11 @@ public enum MidSideStemBaker {
         incomingURL: URL,
         cueA: Double,
         cueB: Double,
-        blendSec: Double
+        blendSec: Double,
+        padSec: Double = 0
     ) throws -> (outgoing: URL, incoming: URL) {
-        let duration = min(maximumDurationSec, max(4, blendSec))
+        let musical = min(maximumDurationSec, max(4, blendSec))
+        let duration = min(maximumDurationSec, musical + max(0, padSec))
         let aURL = try bakeToTempFile(
             MidSideBakeRequest(
                 fileURL: outgoingURL,
@@ -341,17 +343,22 @@ public enum MidSideStemBaker {
 
     /// Apple Automix dual-deck stems (IMG_7144 grammar):
     /// A vocal isolate over B instrumental, then B blooms to dry at LAND.
+    /// `padSec` extends the CAF past the musical blend so bake-lag / LAND reload
+    /// never drain the stem before dry B is scheduled.
     public static func bakeAutomixStemPair(
         outgoingURL: URL,
         incomingURL: URL,
         cueA: Double,
         cueB: Double,
         blendSec: Double,
-        handoffProgress: Double
+        handoffProgress: Double,
+        padSec: Double = 0
     ) throws -> (outgoing: URL, incoming: URL) {
-        let duration = min(maximumDurationSec, max(4, blendSec))
-        // LAND near the end of a short mashup window (~5s in the reference).
+        let musical = min(maximumDurationSec, max(4, blendSec))
+        let duration = min(maximumDurationSec, musical + max(0, padSec))
+        // LAND near the end of the musical mashup window (~5s in the reference).
         let handoff = min(0.98, max(0.82, handoffProgress))
+        let landAtSec = musical * handoff
         let aURL = try bakeToTempFile(
             MidSideBakeRequest(
                 fileURL: outgoingURL,
@@ -369,7 +376,7 @@ public enum MidSideStemBaker {
                     durationSec: duration,
                     mode: .instrumental,
                     amount: 0.94,
-                    instrumentalUntilSec: duration * handoff
+                    instrumentalUntilSec: landAtSec
                 )
             )
             return (aURL, bURL)

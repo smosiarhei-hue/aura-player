@@ -193,7 +193,15 @@ struct PlayerScreenV2: View {
                 }
             }
         }
-        .sheet(item: $selectedArtist) { artist in NavigationStack { ArtistView(artistId: artist.id) } }
+        .sheet(item: $selectedArtist) { artist in
+            NavigationStack {
+                ArtistView(artistId: artist.id)
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationContentInteraction(.scrolls)
+            .interactiveDismissDisabled(false)
+        }
         .task { await player.observeTimeline() }
         .task(id: track?.id) {
             async let p: () = refreshPalette()
@@ -1248,7 +1256,17 @@ struct PlayerScreenV2: View {
     }
 
     private var artistSelectionSheet: some View {
-        List(artistChoices) { artist in Button(artist.name) { activeModal = nil; selectedArtist = artist } }
+        List(artistChoices) { artist in
+            Button(artist.name) {
+                let chosen = artist
+                activeModal = nil
+                // Dismiss the picker sheet first so the artist window can present cleanly.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(320))
+                    selectedArtist = chosen
+                }
+            }
+        }
             .navigationTitle("Исполнители").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
     }
 
