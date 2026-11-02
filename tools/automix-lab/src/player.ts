@@ -2,6 +2,12 @@ import "./player.css";
 import { WaveRadio, type WaveRadioSnapshot } from "./audio/waveRadio";
 import { PREMIUM_FEATURES } from "./audio/premiumAutomix";
 
+/** Full-bleed layout when framed inside the iPhone mock iframe. */
+const embedPhone = new URLSearchParams(location.search).get("embed") === "phone";
+if (embedPhone) {
+  document.documentElement.classList.add("embed-phone");
+}
+
 const radio = new WaveRadio();
 let pollTimer: number | null = null;
 let openSheet: "lyrics" | "queue" | "more" | "auth" | null = null;

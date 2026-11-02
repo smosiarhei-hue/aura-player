@@ -25,11 +25,11 @@ body {
 #stage {
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: minmax(230px, 360px) minmax(0, 1fr);
-  gap: 28px;
+  grid-template-columns: minmax(220px, 340px) minmax(0, 1fr);
+  gap: 24px;
   align-items: center;
-  padding: 28px clamp(16px, 3vw, 40px) 40px;
-  max-width: 1180px;
+  padding: 24px clamp(14px, 2.5vw, 36px) 36px;
+  max-width: 1120px;
   margin: 0 auto;
 }
 
@@ -44,7 +44,7 @@ body {
 
 .copy h1 {
   margin: 0 0 14px;
-  font-size: clamp(1.85rem, 3.3vw, 2.75rem);
+  font-size: clamp(1.75rem, 3.1vw, 2.55rem);
   font-weight: 800;
   letter-spacing: -0.04em;
   line-height: 1.05;
@@ -60,7 +60,7 @@ body {
   color: var(--ink-dim);
   font-size: 14px;
   line-height: 1.55;
-  max-width: 36ch;
+  max-width: 34ch;
 }
 
 .copy .lede a {
@@ -118,15 +118,30 @@ body {
 .phone-stage {
   display: grid;
   place-items: center;
-  min-height: min(92dvh, 940px);
+  min-height: min(92dvh, 960px);
+}
+
+/*
+  Layout box = visual size after scale.
+  Inner .phone stays at true pt geometry (iframe = 402×874), then
+  scale(fit) from top-left so nothing shifts or letterboxes.
+*/
+.phone-fit {
+  --fit: min(1, 90dvh / var(--phone-h), 58vw / var(--phone-w));
+  width: calc(var(--phone-w) * var(--fit));
+  height: calc(var(--phone-h) * var(--fit));
+  position: relative;
+  filter: drop-shadow(0 40px 80px rgba(0, 0, 0, 0.58));
 }
 
 .phone {
-  --scale: min(0.33, 90dvh / (var(--fh) * 1px), 54vw / (var(--fw) * 1px));
-  position: relative;
-  width: calc(var(--fw) * 1px * var(--scale));
-  height: calc(var(--fh) * 1px * var(--scale));
-  filter: drop-shadow(0 40px 80px rgba(0, 0, 0, 0.58));
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--phone-w);
+  height: var(--phone-h);
+  transform: scale(var(--fit));
+  transform-origin: top left;
 }
 
 .frame {
@@ -135,23 +150,23 @@ body {
   width: 100%;
   height: 100%;
   display: block;
+  object-fit: fill;
   pointer-events: none;
   user-select: none;
   z-index: 1;
 }
 
-/* Live app sits above the SVG body fill, inside the display cutout. */
 .screen {
   position: absolute;
-  left: calc(var(--sx) / var(--fw) * 100%);
-  top: calc(var(--sy) / var(--fh) * 100%);
-  width: calc(var(--sw) / var(--fw) * 100%);
-  height: calc(var(--sh) / var(--fh) * 100%);
-  border-radius: calc(var(--sr) * 1px * var(--scale));
+  left: var(--screen-x);
+  top: var(--screen-y);
+  width: var(--screen-w);
+  height: var(--screen-h);
+  border-radius: var(--screen-r);
   overflow: hidden;
   background: #050508;
+  /* Covers SVG glass fill; bezel around the hole stays visible under/around. */
   z-index: 2;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
 }
 
 .screen iframe {
@@ -162,11 +177,25 @@ body {
   background: #050508;
 }
 
+/* Matches SVG Dynamic Island over the live UI. */
+.screen .island {
+  position: absolute;
+  left: var(--island-x);
+  top: var(--island-y);
+  width: var(--island-w);
+  height: var(--island-h);
+  border-radius: 999px;
+  background: #000;
+  z-index: 2;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+
 @media (max-width: 900px) {
   #stage {
     grid-template-columns: 1fr;
     justify-items: center;
-    padding-top: 18px;
+    padding-top: 16px;
   }
 
   .copy {
@@ -174,7 +203,7 @@ body {
   }
 
   .copy .lede {
-    max-width: 46ch;
+    max-width: 44ch;
     margin-inline: auto;
   }
 
@@ -186,7 +215,7 @@ body {
     justify-content: center;
   }
 
-  .phone {
-    --scale: min(0.29, 78dvh / (var(--fh) * 1px), 92vw / (var(--fw) * 1px));
+  .phone-fit {
+    --fit: min(1, 78dvh / var(--phone-h), 92vw / var(--phone-w));
   }
 }
