@@ -2176,108 +2176,6 @@ final class PlayerCore {
         return nil
     }
 
-    /// Download a stream into `InternalAudioCache` so Automix/Duet can stem-bake.
-    /// Returns nil when the track cannot be materialized (caller falls back to live path).
-    private func materializeLocalAudio(for track: Track) async throws -> URL? {
-        if let cached = findLocalOrCachedAudioFile(for: track, respectingQuality: false) {
-            return cached
-        }
-        if !track.isStream, track.url.isFileURL {
-            return FileManager.default.fileExists(atPath: track.url.path) ? track.url : nil
-        }
-
-        let streamURL: URL?
-        if let active = activeStreamURL, currentTrack?.id == track.id {
-            streamURL = active
-        } else if let str = track.streamUrlString, let u = URL(string: str),
-                  u.scheme == "http" || u.scheme == "https" {
-            streamURL = u
-        } else if track.url.scheme == "http" || track.url.scheme == "https" {
-            streamURL = track.url
-        } else {
-            let ymID = Self.yandexTrackID(from: track)
-            guard !ymID.isEmpty else { return nil }
-            let info = try await YandexMusicService.shared.getStreamInfo(
-                for: ymID,
-                preferredQuality: audioQuality,
-                preferredBitrate: audioQuality.targetBitrate
-            )
-            streamURL = info.url
-            if currentTrack?.id == track.id {
-                currentTrack?.streamUrlString = info.url.absoluteString
-            }
-        }
-        guard let remote = streamURL else { return nil }
-        if remote.isFileURL {
-            return FileManager.default.fileExists(atPath: remote.path) ? remote : nil
-        }
-
-        let ext = remote.pathExtension.isEmpty ? "mp3" : remote.pathExtension
-        let (temporaryURL, response) = try await URLSession.shared.download(from: remote)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            try? FileManager.default.removeItem(at: temporaryURL)
-            return nil
-        }
-        // Validate before committing to the playback cache.
-        let validated = try AVAudioFile(forReading: temporaryURL)
-        guard validated.length > 0 else {
-            try? FileManager.default.removeItem(at: temporaryURL)
-            return nil
-        }
-        return try InternalAudioCache.store(temporaryURL: temporaryURL, for: track.id, fileExtension: ext)
-    }
-
-    /// Synchronous local handoff used at Automix LAND — sets anchors immediately so
-    /// the UI never freezes waiting on an async `startLocal` Task.
-    private func handoffLocalPlayback(track: Track, fileURL: URL, at seconds: Double) throws {
-        let audioFile = try AVAudioFile(forReading: fileURL)
-        guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
-
-        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        isUsingStreamPlayer = false
-        streamingPlayerA.pause()
-        streamingPlayerB.pause()
-        streamingPlayerA.replaceCurrentItem(with: nil)
-        streamingPlayerB.replaceCurrentItem(with: nil)
-        activeStreamingPlayer.pause()
-        idleStreamingPlayer.pause()
-
-        localSegmentTokens.removeAll()
-        lyricsLocalSegments.removeAll()
-        playerA.stop()
-        playerB.stop()
-        stopBeatLoop()
-        activePlayer = playerA
-        playerA.volume = 1
-        playerB.volume = 0
-        timePitchA.rate = 1
-        timePitchA.pitch = 0
-        timePitchA.bypass = true
-        timePitchB.rate = 1
-        timePitchB.pitch = 0
-        timePitchB.bypass = true
-
-        if !engine.isRunning { try engine.start() }
-
-        let pos = PlaybackResumePolicy.position(seconds, duration: track.duration)
-        activeLocalURL = fileURL
-        activeAudioFile = audioFile
-        incomingAudioFile = nil
-        let facts = LocalAudioQualityReader.read(audioFile)
-        currentCodec = facts.codec
-        currentBitrate = facts.bitrate
-        scheduleLocalSegment(audioFile, on: playerA, at: pos)
-        playerA.play()
-        isPlaying = true
-        anchorDate = Date()
-        anchorOffset = pos
-        pausedProgress = pos
-        progress = pos
-        streamDuration = track.duration
-        startTimer()
-        applyEQ()
-    }
-
     /// Migrates streaming playback from AVPlayer to AVAudioEngine so raw PCM samples can be processed in real time
     func migrateStreamToAudioEngineIfNeeded() async {
         guard isUsingStreamPlayer, isPlaying, !streamMigrationInFlight, let track = currentTrack else { return }
@@ -2338,6 +2236,112 @@ final class PlayerCore {
                 SonivoDiagnostics.log("[VocalIsolation] Stream migration to AVAudioEngine error: \(error)", tag: "AUDIO")
             }
         }
+    }
+
+    /// Download a stream into `InternalAudioCache` so Automix/Duet can stem-bake.
+    /// Returns nil when the track cannot be materialized (caller falls back to live path).
+    private func materializeLocalAudio(for track: Track) async throws -> URL? {
+        if let cached = findLocalOrCachedAudioFile(for: track, respectingQuality: false) {
+            return cached
+        }
+        if !track.isStream, track.url.isFileURL {
+            return FileManager.default.fileExists(atPath: track.url.path) ? track.url : nil
+        }
+
+        let streamURL: URL?
+        if let active = activeStreamURL, currentTrack?.id == track.id {
+            streamURL = active
+        } else if let str = track.streamUrlString, let u = URL(string: str),
+                  u.scheme == "http" || u.scheme == "https" {
+            streamURL = u
+        } else if track.url.scheme == "http" || track.url.scheme == "https" {
+            streamURL = track.url
+        } else {
+            let ymID = Self.yandexTrackID(from: track)
+            guard !ymID.isEmpty else { return nil }
+            let info = try await YandexMusicService.shared.getStreamInfo(
+                for: ymID,
+                preferredQuality: audioQuality,
+                preferredBitrate: audioQuality.targetBitrate
+            )
+            streamURL = info.url
+            if currentTrack?.id == track.id {
+                currentTrack?.streamUrlString = info.url.absoluteString
+            }
+        }
+        guard let remote = streamURL else { return nil }
+        if remote.isFileURL {
+            return FileManager.default.fileExists(atPath: remote.path) ? remote : nil
+        }
+
+        let ext = remote.pathExtension.isEmpty ? "mp3" : remote.pathExtension
+        let (temporaryURL, response) = try await URLSession.shared.download(from: remote)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            discardTemporaryDownload(temporaryURL)
+            return nil
+        }
+        // Validate before committing to the playback cache.
+        let validated = try AVAudioFile(forReading: temporaryURL)
+        guard validated.length > 0 else {
+            discardTemporaryDownload(temporaryURL)
+            return nil
+        }
+        return try InternalAudioCache.store(temporaryURL: temporaryURL, for: track.id, fileExtension: ext)
+    }
+
+    private func discardTemporaryDownload(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Synchronous local handoff used at Automix LAND — sets anchors immediately so
+    /// the UI never freezes waiting on an async `startLocal` Task.
+    private func handoffLocalPlayback(track: Track, fileURL: URL, at seconds: Double) throws {
+        let audioFile = try AVAudioFile(forReading: fileURL)
+        guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        isUsingStreamPlayer = false
+        streamingPlayerA.pause()
+        streamingPlayerB.pause()
+        streamingPlayerA.replaceCurrentItem(with: nil)
+        streamingPlayerB.replaceCurrentItem(with: nil)
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
+
+        localSegmentTokens.removeAll()
+        lyricsLocalSegments.removeAll()
+        playerA.stop()
+        playerB.stop()
+        stopBeatLoop()
+        activePlayer = playerA
+        playerA.volume = 1
+        playerB.volume = 0
+        timePitchA.rate = 1
+        timePitchA.pitch = 0
+        timePitchA.bypass = true
+        timePitchB.rate = 1
+        timePitchB.pitch = 0
+        timePitchB.bypass = true
+
+        if !engine.isRunning { try engine.start() }
+
+        let pos = PlaybackResumePolicy.position(seconds, duration: track.duration)
+        activeLocalURL = fileURL
+        activeAudioFile = audioFile
+        incomingAudioFile = nil
+        let facts = LocalAudioQualityReader.read(audioFile)
+        currentCodec = facts.codec
+        currentBitrate = facts.bitrate
+        scheduleLocalSegment(audioFile, on: playerA, at: pos)
+        playerA.play()
+        isPlaying = true
+        anchorDate = Date()
+        anchorOffset = pos
+        pausedProgress = pos
+        progress = pos
+        streamDuration = track.duration
+        startTimer()
+        applyEQ()
     }
 
     /// Beatmatched mashup modes (AutoMix ONE VOCAL + Modern Duet).
