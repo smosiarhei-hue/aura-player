@@ -187,51 +187,28 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return pitchCentsB * (1 - t)
     }
 
-    // MARK: - Volumes (Apple Automix mashup: A instrumental + B vocal×instr together)
+    // MARK: - Volumes (Apple Automix: A vocal over B beat → hard LAND)
 
-    /// Dual-deck mashup levels — both tracks stay audible on the shared grid.
-    /// A = outro instrumental layer; B = next track already with vocals + instrumental.
-    /// Not a quiet bed under A, and not a simple equal-power crossfade.
+    /// Apple Automix (IMG_7144): both stems full during the mashup window,
+    /// then A hard-cuts at LAND while B stays at unity. Not a crossfade.
     public func volumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         if isDuet { return duetVolumes(progress: progress) }
+        return appleAutomixVolumes(progress: progress)
+    }
 
+    /// Reference mashup: ~5s window, A vocal + B instr both loud, A mute at handoff.
+    private func appleAutomixVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
-        let hold = min(0.72, max(0.18, outgoingVolumeHold))
-        let lag = min(0.28, max(0.02, incomingVolumeLag * 0.55))
-        let handoff = min(0.85, max(hold, handoffAt))
-        // B must be loud enough that its vocal + kick read as a real mashup layer.
-        let mashupFloor: Float = isBeatmatched ? 0.72 : 0.58
-        let mashupPeak: Float = isBeatmatched ? 0.96 : 0.88
-
-        // Continuous segments: hold ends at holdEnd, mid lands on dualFloor at handoff.
-        let dualFloor: Float = 0.38
-        let holdEnd: Float = 0.88
-        let midDrop = max(0.05, 1 - dualFloor / holdEnd)
-        let out: Float
-        if p <= hold {
-            // A outro instrumental stays present while B locks in on the grid.
-            out = 1.0 - Float(p / max(hold, 0.001)) * (1 - holdEnd)
-        } else if p <= handoff {
-            let t = Self.smoothstep((p - hold) / max(0.001, handoff - hold))
-            out = max(dualFloor, holdEnd * (1 - t * midDrop))
+        let handoff = min(0.98, max(0.82, handoffAt))
+        let lag = min(0.06, max(0.0, incomingVolumeLag))
+        let outgoing: Float = p < handoff ? 1 : 0
+        let incoming: Float
+        if p <= lag, lag > 0.001 {
+            incoming = Float(p / lag)
         } else {
-            let t = Self.smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            out = max(0, dualFloor * (1 - t))
+            incoming = 1
         }
-
-        let inVol: Float
-        if p <= lag {
-            // Gentler invite (smoothstep²) — B enters as a guest, not a slam.
-            let t = Self.smoothstep(p / max(lag, 0.001))
-            inVol = mashupFloor * Self.smoothstep(Double(t))
-        } else if p <= handoff {
-            let t = Self.smoothstep((p - lag) / max(0.001, handoff - lag))
-            inVol = mashupFloor + (mashupPeak - mashupFloor) * t
-        } else {
-            let t = Self.smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            inVol = min(1, mashupPeak + (1 - mashupPeak) * t)
-        }
-        return (out, inVol)
+        return (outgoing, min(1, max(0, incoming)))
     }
 
     /// Lab `oneBarDuetVolumes`: invite → vocal stack (A stays strong) → LAND A out.
@@ -284,21 +261,23 @@ public struct MashupLiveStyle: Sendable, Equatable {
         }
     }
 
-    /// Live Automix without stem bake: force ONE VOCAL grammar (A instr bed + B lead).
+    /// Apple Automix live character: A vocal over B beat, hard LAND near the end.
     public mutating func applyAutomixPlaybackCharacter() {
         isDuet = false
         oneVocalConflict = true
         if archetypeName == "duet" { archetypeName = "dropSwap" }
-        handoffAt = min(0.62, max(0.42, handoffAt > 0 ? handoffAt : 0.52))
-        bassSwapAt = min(handoffAt, max(0.12, handoffAt - 0.28))
-        vocalHoldUntil = min(0.78, handoffAt + 0.10)
-        vocalPocketUntil = min(0.94, handoffAt + 0.28)
-        outgoingVolumeHold = min(0.62, max(0.28, outgoingVolumeHold))
-        incomingVolumeLag = max(0.04, min(0.14, incomingVolumeLag))
-        hpfDepth = max(1.05, hpfDepth)
-        bassDepth = max(1.0, bassDepth)
-        if !reason.uppercased().contains("ONE VOCAL") {
-            reason = "ONE VOCAL · \(reason)"
+        // Reference window ~5s: B owns bass immediately; UI/vocal swap at LAND.
+        handoffAt = min(0.96, max(0.88, handoffAt > 0.8 ? handoffAt : 0.92))
+        bassSwapAt = 0.02
+        vocalHoldUntil = handoffAt
+        vocalPocketUntil = handoffAt
+        outgoingVolumeHold = 1.0
+        incomingVolumeLag = 0.02
+        hpfDepth = max(1.0, hpfDepth)
+        bassDepth = max(1.05, bassDepth)
+        bodyLift = max(1.0, bodyLift)
+        if !reason.uppercased().contains("APPLE AUTOMIX") {
+            reason = "APPLE AUTOMIX · A vocal × B beat · \(reason)"
         }
     }
 
@@ -315,27 +294,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
             if p < handoffAt + 0.08 { return "DUET LAND" }
             return "LAND"
         }
-        // DJ “wow” 5-act story: LOCK → INVITE → ONE BASS → MASHUP → LAND.
-        let lockEnd = min(0.18, bassSwapAt * 0.65)
-        if p < lockEnd {
-            if isBeatmatched, targetBPM > 30 {
-                return String(format: "LOCK %.0f", targetBPM)
-            }
-            return "LOCK"
-        }
-        if abs(pitchCentsB) >= 20, p < min(0.28, max(lockEnd, bassSwapAt * 0.85)) {
-            let sign = pitchCentsB >= 0 ? "+" : ""
-            return String(format: "KEY %@%.0f¢", sign, pitchCentsB)
-        }
-        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" {
-            if p < bassSwapAt { return "ECHO OUT" }
-            if p < handoffAt { return oneVocalConflict ? "ECHO→B" : "ONE BASS" }
-            return "LAND"
-        }
-        if p < bassSwapAt { return "INVITE B" }
-        if p < handoffAt { return "ONE BASS" }
-        if p < min(0.88, handoffAt + 0.22) { return "MASHUP" }
-        return "LAND"
+        // User-facing Automix matches the reference: a single Mixing badge.
+        return "MIXING"
     }
 
     // MARK: - Plan / profile
@@ -375,15 +335,17 @@ public struct MashupLiveStyle: Sendable, Equatable {
             }
             return style
         }
-        // Bass from B locks early; dual-layer mashup fills the window until handoff.
-        style.handoffAt = 0.52
-        style.bassSwapAt = min(style.handoffAt, max(0.14, style.handoffAt - 0.28))
-        style.vocalHoldUntil = min(0.78, style.handoffAt + 0.10)
-        style.vocalPocketUntil = min(0.94, style.handoffAt + 0.30)
-        style.outgoingVolumeHold = min(0.62, style.handoffAt - 0.04)
-        // Short lag so B vocal+instr is in the mashup almost immediately.
-        style.incomingVolumeLag = max(0.04, min(0.14, style.bassSwapAt * 0.35))
+        // Apple Automix: short mashup, B bass from the first beat, LAND near the end.
+        style.handoffAt = 0.92
+        style.bassSwapAt = 0.02
+        style.vocalHoldUntil = style.handoffAt
+        style.vocalPocketUntil = style.handoffAt
+        style.outgoingVolumeHold = 1.0
+        style.incomingVolumeLag = 0.02
+        style.oneVocalConflict = true
         refineWithProfiles(&style, a: outgoing, b: incoming)
+        // Keep Apple timings even after profile refine.
+        style.applyAutomixPlaybackCharacter()
         if style.isBeatmatched {
             style.reason = "Beatmatch \(Int(round(style.targetBPM))) BPM · bass from B · \(plan.reason)"
         }
@@ -551,18 +513,16 @@ public struct MashupLiveStyle: Sendable, Equatable {
         }
 
         if conflict {
-            // ONE VOCAL: never two leads in the dual-layer window.
-            // Carve A toward instrumental early; keep B mid/vocal ducked until LAND.
+            // Apple Automix: A keeps the lead vocal; B is the beat bed until LAND.
             style.oneVocalConflict = true
-            style.vocalHoldUntil = min(style.vocalHoldUntil, max(0.22, style.bassSwapAt * 0.9))
-            style.vocalPocketUntil = max(style.handoffAt + 0.06, min(0.92, style.vocalPocketUntil))
-            // Lab demuffle: light pocket only — Mid/Side bake does the vocal carve.
-            style.vocalPocketDepth = max(0.95, min(1.15, style.vocalPocketDepth))
-            style.hpfDepth = min(1.2, style.hpfDepth + 0.08)
-            style.incomingVolumeLag = min(0.14, max(0.04, style.incomingVolumeLag))
-            style.bodyLift = min(1.35, style.bodyLift)
-            if !style.reason.contains("ONE VOCAL") {
-                style.reason += " · ONE VOCAL"
+            style.vocalHoldUntil = style.handoffAt
+            style.vocalPocketUntil = style.handoffAt
+            style.vocalPocketDepth = max(1.0, style.vocalPocketDepth)
+            style.hpfDepth = min(1.15, style.hpfDepth + 0.05)
+            style.incomingVolumeLag = min(0.04, style.incomingVolumeLag)
+            style.bodyLift = min(1.2, style.bodyLift)
+            if !style.reason.contains("APPLE AUTOMIX") {
+                style.reason += " · APPLE AUTOMIX"
             }
         } else if vocalOut < 0.45 {
             // Outro already instrumental — invite B vocal early (ideal mashup).

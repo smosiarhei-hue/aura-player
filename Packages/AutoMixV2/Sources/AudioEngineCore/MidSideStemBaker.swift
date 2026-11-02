@@ -128,8 +128,8 @@ public enum MidSideStemBaker {
             max(1, min(min(maxA, maxB), AVAudioFramePosition(wantSec * rate)))
         )
         let untilFrame = AVAudioFrameCount(min(Double(totalFrames), untilSec * rate))
-        // Equal-power-ish bloom into dry B (~350 ms) — 80 ms was a hard gate click.
-        let fadeFrames = AVAudioFrameCount(max(1, Int(0.35 * rate)))
+        // Apple Automix LAND is a hard stem cut — short bloom only to avoid a click.
+        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
 
         // Master is always stereo float at A's processing format.
         guard let outFormat = AVAudioFormat(
@@ -244,7 +244,7 @@ public enum MidSideStemBaker {
         return outURL
     }
 
-    /// Convenience: ONE VOCAL conflict → one master CAF for the mashup window.
+    /// Apple Automix master: A vocal over B instrumental → B dry at LAND.
     public static func bakeOneVocalMaster(
         outgoingURL: URL,
         incomingURL: URL,
@@ -266,7 +266,10 @@ public enum MidSideStemBaker {
                 handoffProgress: handoffProgress,
                 outgoingVolumeHold: outgoingVolumeHold,
                 incomingVolumeLag: incomingVolumeLag,
-                isBeatmatched: isBeatmatched
+                isBeatmatched: isBeatmatched,
+                outgoingMode: .vocal,
+                incomingMode: .instrumental,
+                useDuetVolumes: false
             )
         )
     }
@@ -336,7 +339,8 @@ public enum MidSideStemBaker {
         }
     }
 
-    /// Lab ONE VOCAL dual-deck stems: A instrumental bed + B instr→dry at LAND.
+    /// Apple Automix dual-deck stems (IMG_7144 grammar):
+    /// A vocal isolate over B instrumental, then B blooms to dry at LAND.
     public static func bakeAutomixStemPair(
         outgoingURL: URL,
         incomingURL: URL,
@@ -346,14 +350,15 @@ public enum MidSideStemBaker {
         handoffProgress: Double
     ) throws -> (outgoing: URL, incoming: URL) {
         let duration = min(maximumDurationSec, max(4, blendSec))
-        let handoff = min(0.85, max(0.35, handoffProgress))
+        // LAND near the end of a short mashup window (~5s in the reference).
+        let handoff = min(0.98, max(0.82, handoffProgress))
         let aURL = try bakeToTempFile(
             MidSideBakeRequest(
                 fileURL: outgoingURL,
                 cueSec: cueA,
                 durationSec: duration,
-                mode: .instrumental,
-                amount: 0.92
+                mode: .vocal,
+                amount: 0.94
             )
         )
         do {
@@ -363,7 +368,7 @@ public enum MidSideStemBaker {
                     cueSec: cueB,
                     durationSec: duration,
                     mode: .instrumental,
-                    amount: 0.90,
+                    amount: 0.94,
                     instrumentalUntilSec: duration * handoff
                 )
             )
@@ -417,8 +422,8 @@ public enum MidSideStemBaker {
         let bodyAlpha = Float(1 - exp(-2 * Double.pi * 800 / rate))
         let presAlpha = Float(1 - exp(-2 * Double.pi * 2800 / rate))
         let channels = Int(format.channelCount)
-        // Equal-power-ish bloom into dry B (~350 ms) — 80 ms was a hard gate click.
-        let fadeFrames = AVAudioFrameCount(max(1, Int(0.35 * rate)))
+        // Apple Automix LAND is a hard stem cut — keep bloom short to avoid a soft crossfade.
+        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
 
         while written < totalFrames {
             let got: AVAudioFrameCount = try autoreleasepool {
@@ -488,40 +493,18 @@ public enum MidSideStemBaker {
                 handoff: rawHandoff
             )
         }
+        // Apple Automix volumes: both stems full during mashup; A hard-cuts at LAND.
         let p = min(1, max(0, progress))
-        let hold = min(0.72, max(0.18, rawHold))
-        let lag = min(0.28, max(0.02, rawLag * 0.55))
-        let handoff = min(0.85, max(hold, rawHandoff))
-        let mashupFloor: Float = beatmatched ? 0.72 : 0.58
-        let mashupPeak: Float = beatmatched ? 0.96 : 0.88
-        // Continuous with MashupLiveStyle.volumes — no hold/handoff steps.
-        let dualFloor: Float = 0.38
-        let holdEnd: Float = 0.88
-        let midDrop = max(0.05, 1 - dualFloor / holdEnd)
-
-        let out: Float
-        if p <= hold {
-            out = 1.0 - Float(p / max(hold, 0.001)) * (1 - holdEnd)
-        } else if p <= handoff {
-            let t = smoothstep((p - hold) / max(0.001, handoff - hold))
-            out = max(dualFloor, holdEnd * (1 - t * midDrop))
-        } else {
-            let t = smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            out = max(0, dualFloor * (1 - t))
-        }
-
+        let handoff = min(0.98, max(0.82, rawHandoff))
+        let lag = min(0.08, max(0.0, rawLag))
+        let out: Float = p < handoff ? 1 : 0
         let inVol: Float
-        if p <= lag {
-            let t = smoothstep(p / max(lag, 0.001))
-            inVol = mashupFloor * smoothstep(Double(t))
-        } else if p <= handoff {
-            let t = smoothstep((p - lag) / max(0.001, handoff - lag))
-            inVol = mashupFloor + (mashupPeak - mashupFloor) * t
+        if p <= lag, lag > 0.001 {
+            inVol = Float(p / lag)
         } else {
-            let t = smoothstep((p - handoff) / max(0.001, 1 - handoff))
-            inVol = min(1, mashupPeak + (1 - mashupPeak) * t)
+            inVol = 1
         }
-        return (out, inVol)
+        return (out, min(1, max(0, inVol)))
     }
 
     /// Lab `oneBarDuetVolumes` — A vocal stays strong through stack, then LAND.

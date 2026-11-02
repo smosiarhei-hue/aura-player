@@ -20,7 +20,8 @@ struct AIDJTransitionBadgeView: View {
         let raw = phaseLabel ?? ""
         if raw.hasPrefix("DUET") || raw.contains("DUET") { return l10n.duet }
         if AutoMixDJEngine.shared.activeStrategyName == "DUET" { return l10n.duet }
-        return l10n.automix
+        // Match Apple Automix reference badge copy.
+        return l10n.isRussian ? "Сведение" : "Mixing"
     }
     private var phase: String? { l10n.automixPhase(phaseLabel) }
 

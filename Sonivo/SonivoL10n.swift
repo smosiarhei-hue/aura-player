@@ -85,6 +85,8 @@ final class SonivoL10n {
         }
         if raw == "DUET STACK" { return isRussian ? "Дуэт · стек" : raw }
         if raw == "DUET LAND" { return isRussian ? "Дуэт · посадка" : raw }
+        // Apple Automix reference shows a single Mixing badge — no tech sub-phases.
+        if raw == "MIXING" { return nil }
         if raw.hasPrefix("LOCK") {
             let bpm = raw.split(separator: " ").dropFirst().joined(separator: " ")
             if isRussian {

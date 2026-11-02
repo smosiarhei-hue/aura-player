@@ -31,9 +31,9 @@ public enum MashupBlendScheduler {
     /// Absolute floors / ceilings for live PlayerCore mashup windows.
     public static let minimumBlendSec: Double = 4
     public static let maximumBlendSec: Double = 32
-    /// Soft structural default when a track is too short for outro detection.
+    /// Apple Automix reference mashup window is ~5s of A-vocal × B-beat.
     /// Not driven by the crossfade duration slider.
-    public static let defaultPreferredBlendSec: Double = 12
+    public static let defaultPreferredBlendSec: Double = 5
     /// Never cut the outgoing body before this fraction of the track (Apple-style: play the song).
     public static let minimumPlayedFraction: Double = 0.75
     /// Leave at least this much tail after the cue so the outro can finish under the blend.

@@ -148,16 +148,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("tempoMatch", style)
         self.assertIn("static func resolve", style)
         self.assertIn("fromPlan", style)
-        self.assertIn("LOCK", style)
-        self.assertIn("INVITE B", style)
-        self.assertIn("ONE BASS", style)
-        self.assertIn("MASHUP", style)
-        self.assertIn("LAND", style)
-        self.assertIn("KEY", style)
-        self.assertIn("mashupFloor", style)
-        self.assertIn("bass from B", style)
+        self.assertIn("MIXING", style)
+        self.assertIn("appleAutomixVolumes", style)
+        self.assertIn("APPLE AUTOMIX", style)
         self.assertIn("oneVocalConflict", style)
-        self.assertIn("ONE VOCAL", style)
         self.assertIn("isDuet", style)
         self.assertIn("DUET LOCK", style)
         self.assertIn("DUET STACK", style)
@@ -203,6 +197,8 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("useDuetVolumes", baker)
         self.assertIn("outgoingMode: .vocal", baker)
         self.assertIn("incomingMode: .dry", baker)
+        self.assertIn("incomingMode: .instrumental", baker)
+        self.assertIn("A vocal isolate over B instrumental", baker)
 
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
         self.assertIn("LOCK", l10n)
@@ -215,6 +211,11 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("var duet", l10n)
         self.assertIn("DUET LOCK", l10n)
         self.assertIn("DUET STACK", l10n)
+        self.assertIn('"MIXING"', l10n)
+
+        badge = (ROOT / "Sonivo/Dify/AIDJTransitionBadgeView.swift").read_text()
+        self.assertIn("Mixing", badge)
+        self.assertIn("Сведение", badge)
 
         scheduler = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupBlendScheduler.swift"
@@ -229,8 +230,13 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("allowDownload", analysis)
         self.assertIn("mixSettingsMode", analysis)
 
-        badge = (ROOT / "Sonivo/Dify/AIDJTransitionBadgeView.swift").read_text()
-        self.assertIn("l10n.duet", badge)
+        badge_duet = (ROOT / "Sonivo/Dify/AIDJTransitionBadgeView.swift").read_text()
+        self.assertIn("l10n.duet", badge_duet)
+
+        scheduler_pref = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupBlendScheduler.swift"
+        ).read_text()
+        self.assertIn("defaultPreferredBlendSec: Double = 5", scheduler_pref)
 
     def test_drop_swap_plan_still_encodes_mashup_fx(self):
         planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()

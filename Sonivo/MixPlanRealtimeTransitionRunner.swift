@@ -154,8 +154,8 @@ enum MashupLiveEQEnvelope {
         return (out, inn)
     }
 
-    /// Lab ONE VOCAL on the live AVPlayer EQ path (no stem bake available):
-    /// A → instrumental shape ASAP; B mid/presence held at floor until LAND.
+    /// Apple Automix live EQ (no stem bake): A vocal isolate over B beat bed,
+    /// then B lead releases at LAND. Matches IMG_7144 stem grammar.
     private static func applyOneVocalGate(
         _ shaped: (outgoing: [Float], incoming: [Float]),
         p: Double,
@@ -166,33 +166,27 @@ enum MashupLiveEQEnvelope {
     ) -> (outgoing: [Float], incoming: [Float]) {
         var out = shaped.outgoing
         var inn = shaped.incoming
-        // A instrumentalize: Lab demuffle — keep sub/body/air, notch lead presence only.
-        let outInstr = ramp(p, from: 0.0, to: max(0.1, bassAt * 0.5))
-        let outMidCut = clampDB(-4 * hpfD * outInstr)
-        let outLeadCut = clampDB(-7 * outInstr)
+        // A: kill bass/sides feel, keep lead presence until hard LAND mute via volumes.
+        let outVocal = 1 - ramp(p, from: handoff, to: min(1, handoff + 0.06))
         if out.count >= 10 {
-            out[0] = clampDB(max(out[0], 2.5 * outInstr)) // sub keep
-            out[1] = clampDB(max(out[1], 1.5 * outInstr))
-            out[2] = clampDB(max(out[2], 1.0 * outInstr))
-            out[3] = clampDB(min(out[3], outMidCut * 0.55))
-            out[4] = clampDB(min(out[4], outMidCut))
-            out[5] = clampDB(min(out[5], outLeadCut * 0.85))
-            out[6] = clampDB(min(out[6], outLeadCut))
-            out[7] = clampDB(min(out[7], outLeadCut * 0.7))
-            out[8] = clampDB(min(out[8], -3 * outInstr))
-            out[9] = clampDB(min(out[9], -2.5 * outInstr))
+            out[0] = clampDB(min(out[0], -12 * ramp(p, from: 0, to: max(0.08, bassAt))))
+            out[1] = clampDB(min(out[1], -10 * ramp(p, from: 0, to: max(0.08, bassAt))))
+            out[2] = clampDB(min(out[2], -6 * ramp(p, from: 0.02, to: max(0.12, bassAt))))
+            out[5] = clampDB(max(out[5], 2.2 * outVocal))
+            out[6] = clampDB(max(out[6], 3.0 * outVocal))
+            out[7] = clampDB(max(out[7], 1.8 * outVocal))
+            out[8] = clampDB(min(out[8], -4 * hpfD * (1 - outVocal)))
+            out[9] = clampDB(min(out[9], -3 * hpfD * (1 - outVocal)))
         }
-        // B instrumental until handoff — then release into dry lead for LAND.
-        let inInstr = 1 - ramp(p, from: handoff - 0.02, to: min(0.96, handoff + 0.1))
-        let inLeadFloor = clampDB(-7 * max(1.0, pocketD) * inInstr)
+        // B: instrumental bed until LAND, then release dry vocal.
+        let inInstr = 1 - ramp(p, from: handoff - 0.01, to: min(0.99, handoff + 0.05))
+        let inLeadFloor = clampDB(-8 * max(1.0, pocketD) * inInstr)
         if inn.count >= 10 {
-            inn[0] = clampDB(max(inn[0], 1.5 * inInstr)) // kick bed
-            inn[1] = clampDB(max(inn[1], 1.0 * inInstr))
-            inn[3] = clampDB(min(inn[3], inLeadFloor * 0.35))
-            inn[4] = clampDB(min(inn[4], inLeadFloor * 0.45))
-            inn[5] = clampDB(min(inn[5], inLeadFloor * 0.85))
+            inn[0] = clampDB(max(inn[0], 2.0 * inInstr))
+            inn[1] = clampDB(max(inn[1], 1.4 * inInstr))
+            inn[5] = clampDB(min(inn[5], inLeadFloor * 0.9))
             inn[6] = clampDB(min(inn[6], inLeadFloor))
-            inn[7] = clampDB(min(inn[7], inLeadFloor * 0.7))
+            inn[7] = clampDB(min(inn[7], inLeadFloor * 0.75))
             inn[8] = clampDB(min(inn[8], inLeadFloor * 0.4))
             inn[9] = clampDB(min(inn[9], inLeadFloor * 0.35))
         }
