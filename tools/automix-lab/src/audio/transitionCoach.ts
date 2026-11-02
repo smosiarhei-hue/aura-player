@@ -132,26 +132,36 @@ export function scoreTransition(
     };
   }
 
-  // Duet grammar ≠ AutoMix: dual lead is intentional; B must lead; LAND early.
+  // Modern Duet: dual vocals intentional; A vocal isolate; ONE BASS; LAND early.
   if (duet) {
     const handoff = Math.max(0.45, opts.handoffAt || 0.65);
     const bassAt = Math.max(0.1, opts.bassSwapAt || 0.28);
     const mid = trail.filter((s) => s.p > 0.12 && s.p < handoff - 0.02);
     const dualOk =
       mid.length >= 4 &&
-      mid.some((s) => s.volA > 0.2 && s.volB > 0.45);
+      mid.some((s) => s.volA > 0.55 && s.volB > 0.55);
     gates.push({
       id: "duetDual",
       ok: dualOk,
-      detail: dualOk ? "dual window present" : "no audible dual",
+      detail: dualOk ? "vocal stack present" : "no audible dual vocals",
     });
-    const bLed =
+    // A must stay strong (acapella), B owns the bed — both loud is correct.
+    const stackBalance =
       mid.length < 4 ||
-      mid.filter((s) => s.volB + 0.02 >= s.volA).length >= mid.length * 0.55;
+      mid.filter((s) => s.volA >= 0.55 && s.volB >= 0.65).length >= mid.length * 0.45;
     gates.push({
-      id: "duetBLed",
-      ok: bLed,
-      detail: bLed ? "B leads dual" : "A still louder than B in dual",
+      id: "duetStack",
+      ok: stackBalance,
+      detail: stackBalance ? "A vocal + B full balanced" : "stack levels weak",
+    });
+    // Vocal isolate: instrA meter carries vocalA amount for duet trails.
+    const vocalIso =
+      mid.length < 3 ||
+      mid.filter((s) => s.instrA >= 0.55 || s.volA >= 0.7).length >= mid.length * 0.4;
+    gates.push({
+      id: "duetVocalA",
+      ok: vocalIso,
+      detail: vocalIso ? "A vocal isolate active" : "A vocal isolate weak",
     });
     const afterBass = trail.filter(
       (s) => s.p >= bassAt + 0.04 && s.p <= Math.max(handoff, bassAt + 0.18)
@@ -399,7 +409,8 @@ export function simulateTrail(params: MashupParams, steps = 80): MeterPoint[] {
       phase: p < params.bassSwapAt ? "INVITE" : p < params.handoffAt ? "MASHUP" : "LAND",
       volA: v.outgoing,
       volB: v.incoming,
-      instrA: fx.instrumentalA,
+      instrA:
+        params.dsp.mashupMode === "oneBarDuet" ? fx.vocalA : fx.instrumentalA,
       instrB: fx.instrumentalB,
       bassA: b.outgoing,
       bassB: b.incoming,

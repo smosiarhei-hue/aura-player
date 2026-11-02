@@ -33,6 +33,34 @@ function fmt(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** Duet stage: playing in duet mode, or mixing via oneBarDuet / DUET phase. */
+function isDuetActive(s: WaveRadioSnapshot): boolean {
+  const live =
+    s.state === "playing" || s.state === "mixing" || s.state === "loading";
+  if (s.transitionMode === "duet" && live) return true;
+  if (s.mixing && (s.planMode === "oneBarDuet" || /DUET/i.test(s.phase || ""))) {
+    return true;
+  }
+  return false;
+}
+
+/** Compact float badge: DUET → STACK → LAND. */
+function duetFloatLabel(phase: string, progress: number): string {
+  const p = (phase || "").toUpperCase();
+  if (/LAND/.test(p) || progress >= 0.72) return "LAND";
+  if (/LOCK/.test(p) || progress < 0.1) return "DUET";
+  if (/DUET|B-LED|STACK/.test(p) || progress < 0.72) return "STACK";
+  return "DUET";
+}
+
+/** Cue under scrub during a live vocal-stack mix. */
+function duetCueLine(phase: string, progress: number): string {
+  const float = duetFloatLabel(phase, progress);
+  if (float === "LAND") return "Duet · LAND · B home";
+  if (float === "STACK") return "Duet · вокалы A+B · instr B";
+  return "Duet · stack · вокалы A+B";
+}
+
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <div class="stage" id="stage">
@@ -167,7 +195,7 @@ const sheetBodies = {
           <span class="platters mini" aria-hidden="true"><i></i><i></i></span>
           <span>AutoMix</span>
         </button>
-        <button type="button" class="tmode" role="radio" data-mode="duet" aria-checked="false" title="Adaptive Duet — listens to phrases, B-led dual (A ducked), early LAND B">
+        <button type="button" class="tmode" role="radio" data-mode="duet" aria-checked="false" title="Modern Duet — A vocal + B vocal over B instrumental, then LAND">
           <span class="platters mini" aria-hidden="true"><i></i><i></i></span>
           <span>Duet</span>
         </button>
@@ -529,8 +557,10 @@ function render(s: WaveRadioSnapshot) {
 
   const live = s.state === "playing" || s.state === "mixing" || s.state === "loading";
   const isLand = s.mixing && (s.phase === "LAND" || s.progress >= 0.72);
+  const duet = isDuetActive(s);
   stage.classList.toggle("is-mixing", s.mixing);
   stage.classList.toggle("is-land", isLand);
+  stage.classList.toggle("is-duet", duet);
   stage.style.setProperty("--mix-p", String(s.mixing ? Math.min(1, Math.max(0, s.progress)) : 0));
 
   queuePill.classList.toggle("live", s.state === "playing");
@@ -538,9 +568,13 @@ function render(s: WaveRadioSnapshot) {
   queuePill.classList.toggle("land", isLand);
   queueLabel.textContent =
     s.state === "mixing"
-      ? "Mixing"
+      ? duet
+        ? "Duet"
+        : "Mixing"
       : s.state === "playing"
-        ? "Моя волна · live"
+        ? duet
+          ? "Моя волна · duet"
+          : "Моя волна · live"
         : "Моя волна";
 
   island.classList.toggle(
@@ -549,16 +583,23 @@ function render(s: WaveRadioSnapshot) {
   );
   island.classList.toggle("mixing", s.mixing);
   island.classList.toggle("land", isLand);
+  island.classList.toggle("duet", duet && (s.mixing || s.state === "playing"));
   if (s.mixing) {
-    islandLabel.textContent = "Mixing";
-    islandPhase.textContent = s.phase && s.phase !== "PLAY" ? s.phase : "";
+    islandLabel.textContent = duet ? "Duet" : "Mixing";
+    islandPhase.textContent = duet
+      ? duetFloatLabel(s.phase, s.progress)
+      : s.phase && s.phase !== "PLAY"
+        ? s.phase
+        : "";
   } else if (s.state === "loading") {
     islandLabel.textContent = s.brainStatus || "Loading";
     islandPhase.textContent = "";
   } else if (s.state === "playing") {
     islandLabel.textContent = s.brainStatus
       ? s.brainStatus.replace(/^Automix · /, "")
-      : "Now Playing";
+      : duet
+        ? "Duet ready"
+        : "Now Playing";
     islandPhase.textContent =
       s.transitionMode === "crossfade"
         ? `${s.crossfadeSec}s`
@@ -578,7 +619,11 @@ function render(s: WaveRadioSnapshot) {
   }
 
   mixFloat.hidden = !s.mixing;
-  mixFloat.textContent = s.phase && s.phase !== "PLAY" ? s.phase : "Mixing";
+  mixFloat.textContent = duet
+    ? duetFloatLabel(s.phase, s.progress)
+    : s.phase && s.phase !== "PLAY"
+      ? s.phase
+      : "Mixing";
 
   if (openSheet === "queue") {
     document.querySelectorAll<HTMLButtonElement>(".tmode").forEach((btn) => {
@@ -594,7 +639,7 @@ function render(s: WaveRadioSnapshot) {
           : s.transitionMode === "off"
             ? "Play to the end, then the next song"
             : s.transitionMode === "duet"
-              ? "Duet · listens · stretch/key · B-led · stems/FX · LAND"
+              ? "Duet · A vocal + B vocal · только instr B · LAND"
               : "Beatmatched blend · Crossfade if the plan is late";
     }
     const row = document.querySelector<HTMLElement>("#xfadeRow");
@@ -697,16 +742,21 @@ function render(s: WaveRadioSnapshot) {
     mark.hidden = true;
   }
   if (s.mixing) {
-    mixingWord.hidden = false;
     cueLine.classList.add("is-mixing");
-    cueRest.textContent = s.phase && s.phase !== "PLAY" ? s.phase : "";
+    if (duet) {
+      mixingWord.hidden = true;
+      cueRest.textContent = duetCueLine(s.phase, s.progress);
+    } else {
+      mixingWord.hidden = false;
+      cueRest.textContent = s.phase && s.phase !== "PLAY" ? s.phase : "";
+    }
   } else {
     mixingWord.hidden = true;
     cueLine.classList.remove("is-mixing");
     if (s.transitionMode === "duet" && s.automixAtSec != null && dur > 0) {
       const blend =
         s.blendSec != null && s.blendSec > 0 ? ` · ${Math.round(s.blendSec)}s` : "";
-      cueRest.textContent = `Duet @ ${fmt(s.automixAtSec)}${blend}`;
+      cueRest.textContent = `Duet @ ${fmt(s.automixAtSec)}${blend} · вокалы A+B`;
     } else if (s.transitionMode === "automix" && s.automixAtSec != null && dur > 0) {
       cueRest.textContent = `Automix @ ${fmt(s.automixAtSec)}`;
     } else if (s.transitionMode === "crossfade" && dur > 0 && s.duration > 0) {
@@ -772,7 +822,9 @@ function render(s: WaveRadioSnapshot) {
           ? `Crossfade ${s.crossfadeSec}s`
           : s.transitionMode === "off"
             ? "после конца"
-            : "после Automix";
+            : s.transitionMode === "duet"
+              ? "после Duet"
+              : "после Automix";
       upArtist.textContent = s.next ? `${s.next.artists} · ${join}` : "Далее · ждём волну";
       nextPh.textContent = (s.next?.title?.[0] || "N").toUpperCase();
       setCover(nextCover, s.next?.coverUrl, nextPh);

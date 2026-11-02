@@ -31,6 +31,8 @@ export type StemFxAt = {
   /** Early: cut B vocal so it doesn’t stack on A. */
   instrumentalB: number;
   vocalB: number;
+  /** Modern Duet: isolate A lead (kill A instruments). */
+  vocalA: number;
   hpfA: number;
   lpfB: number;
   echoA: number;
@@ -45,19 +47,27 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   const safe = dsp.mashupMode === "safeExit";
   const instrPeak = clamp(dsp.instrAPeak, 0, 1);
   const instrAt = clamp(dsp.instrAAt, 0.04, 0.7);
+  const duet = dsp.mashupMode === "oneBarDuet";
+
+  // Modern Duet: A becomes an acapella over B's full mix (instr + vocal).
+  const vocalAPeak = clamp(dsp.vocalAPeak || 0, 0, 1);
+  let vocalA = 0;
+  if (duet && vocalAPeak > 0.02) {
+    const rise = seg(p, 0, Math.min(0.18, Math.max(0.04, instrAt)), 0, vocalAPeak);
+    const atHandoff = seg(handoff, 0, Math.min(0.18, Math.max(0.04, instrAt)), 0, vocalAPeak);
+    vocalA =
+      p <= handoff
+        ? rise
+        : seg(p, handoff, Math.min(0.96, handoff + 0.2), atHandoff, 0);
+  }
 
   // Relay keeps A's lead carved through LAND. Other modes may ease the carve
   // only after the exit — never snap it back on (that reopens a second vocal).
-  // Duet: soft Mid/Side only through the dual, then release (A exits by volume/HPF).
-  const duet = dsp.mashupMode === "oneBarDuet";
+  // Duet never uses instrumentalA (that would kill the vocal we want to keep).
   let instrumentalA = 0;
-  if (instrPeak > 0.02 && !safe) {
+  if (instrPeak > 0.02 && !safe && !duet) {
     const risen = seg(p, 0, instrAt, 0, instrPeak);
-    if (duet) {
-      const atHandoff = seg(handoff, 0, instrAt, 0, instrPeak);
-      instrumentalA =
-        p <= handoff ? risen : seg(p, handoff, Math.min(0.94, handoff + 0.18), atHandoff, 0);
-    } else if (relay || p <= handoff) instrumentalA = risen;
+    if (relay || p <= handoff) instrumentalA = risen;
     else {
       const atHandoff = seg(handoff, 0, instrAt, 0, instrPeak);
       instrumentalA = seg(p, handoff, 1, atHandoff, atHandoff * 0.65);
@@ -119,13 +129,18 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   }
 
   const duckPeak = Math.min(0, dsp.vocalDuckBDb);
-  const duckUntil = Math.max(instrBUntil, vocalAt);
-  const vocalDuckBDb = duckPeak * (1 - seg(p, 0, Math.max(0.05, duckUntil), 0, 1));
+  // Duet: hold soft B mid-duck through the vocal stack, then release at LAND.
+  // AutoMix: duck only while B is still gated instrumental.
+  const duckUntil = duet
+    ? Math.max(0.45, handoff)
+    : Math.max(instrBUntil, vocalAt);
+  const vocalDuckBDb = duckPeak * (1 - seg(p, duckUntil, Math.min(0.95, duckUntil + 0.16), 0, 1));
 
   return {
     instrumentalA,
     instrumentalB,
     vocalB,
+    vocalA,
     hpfA,
     lpfB,
     echoA,

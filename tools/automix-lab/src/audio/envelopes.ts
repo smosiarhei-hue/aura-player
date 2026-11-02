@@ -51,6 +51,13 @@ export type AutoDspRecipe = {
    * Never bake B vocal for the whole blend if A still sings (would stack leads).
    */
   bakeVocalB: boolean;
+  /**
+   * Modern Duet: isolate A's lead vocal (kill A instruments) so both vocals
+   * can stack over B's instrumental bed.
+   */
+  vocalAPeak?: number;
+  /** Offline-bake A as vocal/acapella for the blend window. */
+  bakeVocalA?: boolean;
   /** Human-readable decisions for UI / preset. */
   decisions: string[];
   /** Modern mashup mode label (acapellaDrop / safeExit / …). */
@@ -121,6 +128,8 @@ export const defaultDsp = (): AutoDspRecipe => ({
   bakeInstrA: true,
   bakeInstrB: false,
   bakeVocalB: false,
+  vocalAPeak: 0,
+  bakeVocalA: false,
   decisions: [],
   mashupMode: "acapellaDrop",
   sidechainA: 0.4,
@@ -245,34 +254,27 @@ export function volumesAt(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
-  // Phrase Duet: B-led dual (A ducked), LAND A out by ~0.92.
+  // Modern Duet: A vocal stays audible over B full mix, then LAND A out.
   if (params.dsp.mashupMode === "oneBarDuet") {
     const handoff = Math.min(0.72, Math.max(0.52, params.handoffAt));
-    const invite = Math.min(0.16, Math.max(0.05, params.incomingVolumeLag || 0.08));
-    const aDual = Math.min(0.82, Math.max(0.5, params.outgoingVolumeHold || 0.65));
-    const landEnd = 0.92;
+    const invite = Math.min(0.14, Math.max(0.05, params.incomingVolumeLag || 0.08));
+    // Keep A vocal present for the stack (not a timid duck).
+    const aDual = Math.min(0.92, Math.max(0.72, params.outgoingVolumeHold || 0.82));
+    const landEnd = 0.94;
     let outgoing: number;
     if (p <= invite) outgoing = 1;
     else if (p <= handoff) {
       const t = (p - invite) / Math.max(0.001, handoff - invite);
       outgoing = 1 - t * (1 - aDual);
     } else if (p <= landEnd) {
-      outgoing = aDual * (1 - (p - handoff) / Math.max(0.08, landEnd - handoff));
+      outgoing = aDual * (1 - (p - handoff) / Math.max(0.1, landEnd - handoff));
     } else outgoing = 0;
     let incoming: number;
-    if (p <= invite) incoming = (p / invite) * 0.85;
+    if (p <= invite) incoming = (p / invite) * 0.78;
     else if (p < handoff) {
       const t = (p - invite) / Math.max(0.001, handoff - invite);
-      incoming = 0.85 + 0.15 * t;
+      incoming = 0.78 + 0.22 * t;
     } else incoming = 1;
-    if (p < handoff) {
-      const pow = Math.hypot(outgoing, incoming);
-      if (pow > 0.05 && pow < 0.85) {
-        const s = Math.min(1.08, 0.92 / pow);
-        incoming = Math.min(1, incoming * s);
-        outgoing = Math.min(aDual + 0.05, outgoing * s);
-      }
-    }
     return {
       outgoing: clamp(outgoing, 0, 1),
       incoming: clamp(incoming, 0, 1),
@@ -444,7 +446,7 @@ export function phaseLabel(p: number, params: MashupParams): string {
         ? `DUET LOCK ${Math.round(params.targetBPM)}`
         : "DUET LOCK";
     }
-    if (p < handoff - 0.05) return "DUET · B-led";
+    if (p < handoff - 0.05) return "DUET STACK";
     if (p < handoff + 0.08) return "DUET LAND";
     return "LAND";
   }

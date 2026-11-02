@@ -101,51 +101,64 @@ function leadB(vocalIn: number, instrB: number, vocalFocus: number): number {
 
 export function critiqueMix(input: MixCriticInput): MixCriticReport {
   const { params, vocalOut, vocalIn, bpm, transitionType, harmonicOk, beatmatched } = input;
-  // Phrase Duet *is* dual lead for ~4 bars — do not Vocal Safe it away.
+  // Modern Duet *is* dual vocal over B instrumental — never Vocal Safe it away.
   if (params.dsp.mashupMode === "oneBarDuet") {
     const blendSec = Math.max(1, params.blendDurationSec);
     const spb = 60 / Math.max(60, bpm);
     const bars = blendSec / (spb * 4);
+    const vocalA = params.dsp.vocalAPeak || 0;
+    const vocalOk = vocalA >= 0.7 && (params.dsp.bakeVocalA || params.dsp.bakeStems);
+    const instrAOk = (params.dsp.instrAPeak || 0) < 0.15;
+    const landOk = params.handoffAt <= 0.72;
+    const gates: MixCriticGate[] = [
+      {
+        id: "vocalClash",
+        ok: vocalOk,
+        label: "DUET VOCAL A",
+        detail: vocalOk
+          ? `A acapella ${Math.round(vocalA * 100)}% · ${blendSec.toFixed(1)}s (~${bars.toFixed(1)} bars)`
+          : `weak A vocal isolate ${Math.round(vocalA * 100)}%`,
+      },
+      {
+        id: "bassClash",
+        ok: instrAOk,
+        label: "INSTR B ONLY",
+        detail: instrAOk
+          ? "A instruments killed · B full mix bed"
+          : `A still carved as bed (instrA ${Math.round((params.dsp.instrAPeak || 0) * 100)}%)`,
+      },
+      {
+        id: "harmonic",
+        ok: true,
+        label: "Key / Camelot",
+        detail: harmonicOk ? "compatible or pitch-compensated" : "duet tolerates brief clash",
+      },
+      {
+        id: "tempo",
+        ok: true,
+        label: "Tempo lock",
+        detail: beatmatched ? "beatmatched" : "duet grid",
+      },
+      {
+        id: "land",
+        ok: landOk,
+        label: "LAND",
+        detail: landOk
+          ? "LAND to B after phrase"
+          : `late handoff @${(params.handoffAt * 100) | 0}%`,
+      },
+    ];
+    const passed = gates.filter((g) => g.ok).length;
     return {
-      ok: true,
-      score: 100,
-      gates: [
-        {
-          id: "vocalClash",
-          ok: true,
-          label: "DUET VOCAL",
-          detail: `intentional dual lead · ${blendSec.toFixed(1)}s (~${bars.toFixed(1)} bars)`,
-        },
-        {
-          id: "bassClash",
-          ok: true,
-          label: "ONE BASS",
-          detail: "4-bar dual · mid swap",
-        },
-        {
-          id: "harmonic",
-          ok: true,
-          label: "Key / Camelot",
-          detail: harmonicOk ? "compatible or pitch-compensated" : "duet tolerates brief clash",
-        },
-        {
-          id: "tempo",
-          ok: true,
-          label: "Tempo lock",
-          detail: beatmatched ? "beatmatched" : "duet grid",
-        },
-        {
-          id: "land",
-          ok: params.handoffAt <= 0.85,
-          label: "LAND",
-          detail: params.handoffAt <= 0.85 ? "LAND to B after phrase" : `late handoff @${(params.handoffAt * 100) | 0}%`,
-        },
-      ],
+      ok: gates.every((g) => g.ok),
+      score: Math.round((passed / gates.length) * 100),
+      gates,
       vocalClashBeats: blendSec / spb,
       vocalClashFrac: 1,
       bassClashFrac: 0,
       bassClashBeats: 0,
-      fixes: [],
+      fixes: vocalOk ? [] : ["Bake A vocal isolate ≥70%"],
+      // Never Vocal Safe a Duet — dual lead is the product.
       mode: "pass",
     };
   }

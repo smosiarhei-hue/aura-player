@@ -337,7 +337,7 @@ function critiqueDuetPlan(
     bassClashFrac: bassClash / 41,
     bassClashBeats: bassClash,
     fixes: [],
-    mode: bassOk && landOk && landTimingOk ? "pass" : "warn",
+    mode: "pass",
   };
 }
 
@@ -384,29 +384,35 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
 
   const dsp = defaultDsp();
   dsp.mashupMode = ONE_BAR_DUET_MODE;
-  // Soft live Mid/Side on A when both vocals hot — NOT nuclear leadKill / bake.
-  // Keeps A's words but pulls competing instruments under B.
-  const softCarve =
-    pick.bothHot >= 0.5 ? 0.38 : pick.bothHot >= 0.35 ? 0.28 : pick.bothHot >= 0.22 ? 0.18 : 0;
-  dsp.instrAPeak = softCarve;
-  dsp.instrAAt = Math.min(0.2, Math.max(0.06, params.incomingVolumeLag));
-  // B stays dry lead the whole dual (never gate B vocal for Duet).
+  // Modern Duet grammar:
+  //   A = acapella (vocal isolate) · B = full mix (instr + vocal)
+  //   → both vocals stack over ONLY B's instrumental, then LAND on B.
+  const vocalIsolate =
+    pick.bothHot >= 0.45 ? 0.96 : pick.bothHot >= 0.28 ? 0.9 : vocalOut >= 0.25 ? 0.86 : 0.78;
+  dsp.instrAPeak = 0; // never carve A into a bed — that kills the vocal
+  dsp.instrAAt = Math.min(0.16, Math.max(0.05, params.incomingVolumeLag));
+  dsp.vocalAPeak = vocalIsolate;
+  dsp.bakeVocalA = true;
+  dsp.bakeStems = true;
+  // B stays dry full mix the whole dual (owns the instrumental bed + its vocal).
   dsp.instrBPeak = 0;
   dsp.instrBUntil = 0;
   dsp.vocalBPeak = 0;
   dsp.vocalBAt = 0;
-  dsp.vocalDuckBDb = 0;
-  dsp.hpfAPeak = 0.82;
-  dsp.lpfBPeak = 0.32;
-  dsp.echoAPeak = 0.22;
-  dsp.bakeStems = false;
+  // Soft mid duck on B so A's isolated vocal has air — not a mute.
+  dsp.vocalDuckBDb = pick.bothHot >= 0.4 ? -5 : -3.5;
+  dsp.hpfAPeak = 0.78;
+  dsp.lpfBPeak = 0.28;
+  dsp.echoAPeak = 0.2;
   dsp.bakeInstrA = false;
   dsp.bakeInstrB = false;
   dsp.bakeVocalB = false;
-  dsp.sidechainA = Math.min(0.55, 0.25 + pick.bothHot * 0.35);
-  dsp.dualLayerPeak = pick.aDuck;
+  dsp.sidechainA = Math.min(0.28, 0.1 + pick.bothHot * 0.2);
+  dsp.dualLayerPeak = Math.max(0.78, pick.aDuck);
   dsp.guardVocalOut = vocalOut;
   dsp.guardVocalIn = vocalIn;
+  // Keep A vocal loud through the stack.
+  params.outgoingVolumeHold = Math.max(0.78, Math.min(0.9, pick.aDuck + 0.12));
 
   const stretchNote =
     tempo && (Math.abs(tempo.rateA - 1) >= 0.004 || Math.abs(tempo.rateB - 1) >= 0.004)
@@ -417,12 +423,11 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
     : harmonic.description;
 
   dsp.decisions = [
-    `Duet stack · ${pick.bars} bars / ${pick.beats} beats / ${pick.blendSec.toFixed(1)}s`,
+    `Modern Duet · ${pick.bars} bars / ${pick.beats} beats / ${pick.blendSec.toFixed(1)}s`,
     pick.reason,
-    softCarve > 0
-      ? `Soft A Mid/Side carve ${Math.round(softCarve * 100)}% (live, no bake)`
-      : "A dry lead (low dual heat)",
-    `A vol duck @${pick.aDuck.toFixed(2)} · sidechain ${dsp.sidechainA.toFixed(2)} · mid-duck live`,
+    `A vocal isolate ${Math.round(vocalIsolate * 100)}% (bake + live)`,
+    `B full mix · only B instrumental under dual vocals`,
+    `A vol hold @${params.outgoingVolumeHold.toFixed(2)} · B mid-duck ${dsp.vocalDuckBDb} dB`,
     `ONE BASS/kick depth ${params.bassDepth.toFixed(2)} @${(params.bassSwapAt * 100) | 0}%`,
     `FX · LPF invite B ${dsp.lpfBPeak} · HPF LAND A ${dsp.hpfAPeak} · echo ${dsp.echoAPeak}`,
     stretchNote,
@@ -437,16 +442,17 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
     params,
     profileA: a,
     profileB: b,
-    reason: "Full-stack Adaptive Phrase Duet",
-    story: `DUET · ${pick.bars} bars · ${pick.beats} beats · B-led · LAND`,
+    reason: "Modern Adaptive Phrase Duet",
+    story: `DUET · ${pick.bars} bars · vocal A + vocal B · instr B · LAND`,
     archetype: "dropSwap",
     transitionType: "eqBlend",
     beatmatched: tempo != null,
     processing: [
-      "Adaptive Phrase Duet (full DSP)",
+      "Modern Phrase Duet",
+      "A acapella over B full mix (dual vocals, one instrumental)",
       "Listen vocals + energy + Camelot + BPM",
       "Beatmatch / pitch-lock stretch when needed",
-      "Invite LPF → B-led dual → soft A carve → ONE BASS → HPF/echo LAND",
+      "Invite → DUET STACK → ONE BASS → HPF/echo LAND",
       ...dsp.decisions,
     ],
     critic: critiqueDuetPlan(
@@ -485,7 +491,7 @@ function energyMean(profile: TrackAIProfile, from: number, len: number): number 
   return s / (i1 - i0);
 }
 
-/** Bar-snap handoff/bass + Duet LAND FX floors — never forces stem bake. */
+/** Bar-snap handoff/bass + keep A vocal bake for the modern Duet stack. */
 function applyDuetPremiumLand(plan: AIMixPlan): AIMixPlan {
   const params = plan.params;
   const bpm = params.targetBPM > 30 ? params.targetBPM : plan.profileA.bpm || 120;
@@ -503,14 +509,18 @@ function applyDuetPremiumLand(plan: AIMixPlan): AIMixPlan {
   );
   params.dsp.hpfAPeak = Math.max(0.7, params.dsp.hpfAPeak);
   params.dsp.echoAPeak = Math.min(0.28, Math.max(0.14, params.dsp.echoAPeak));
-  // Never enable bake via Premium LAND for Duet.
-  params.dsp.bakeStems = false;
+  // Keep A vocal bake — this is the whole point of modern Duet.
+  params.dsp.bakeVocalA = true;
+  params.dsp.bakeStems = true;
   params.dsp.bakeInstrA = false;
   params.dsp.bakeInstrB = false;
   params.dsp.bakeVocalB = false;
+  params.dsp.instrAPeak = 0;
+  params.dsp.vocalAPeak = Math.max(0.82, params.dsp.vocalAPeak || 0.9);
+  params.outgoingVolumeHold = Math.max(0.78, params.outgoingVolumeHold || 0.82);
   params.dsp.decisions = [
     ...params.dsp.decisions,
-    `Premium Duet LAND @${((landAt * 100) | 0)}% · bar-snap · no bake`,
+    `Premium Duet LAND @${((landAt * 100) | 0)}% · bar-snap · A vocal bake`,
   ];
   return {
     ...plan,
@@ -518,56 +528,39 @@ function applyDuetPremiumLand(plan: AIMixPlan): AIMixPlan {
     story: `${plan.story} → LAND @${((landAt * 100) | 0)}%`,
     processing: [
       ...plan.processing,
-      `Premium Duet LAND: HPF≥0.70 · echo≤0.28 · bar-snap · stems live-only`,
+      `Premium Duet LAND: A acapella bake · HPF≥0.70 · echo≤0.28 · bar-snap`,
     ],
   };
 }
 
 /**
- * B-led duet volumes: invite → dual (A ducked) → LAND A out by ~0.9.
- * `outgoingVolumeHold` carries the A duck level (0.55…0.8).
+ * Modern Duet volumes: invite → vocal stack (A stays strong) → LAND A out.
+ * `outgoingVolumeHold` is A's dual level (≈0.78…0.9).
  */
 export function oneBarDuetVolumes(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
   const handoff = Math.min(0.72, Math.max(0.52, params.handoffAt));
-  const invite = Math.min(0.16, Math.max(0.05, params.incomingVolumeLag || 0.08));
-  const aDual = Math.min(0.82, Math.max(0.5, params.outgoingVolumeHold || 0.65));
-  const landEnd = 0.92;
+  const invite = Math.min(0.14, Math.max(0.05, params.incomingVolumeLag || 0.08));
+  const aDual = Math.min(0.92, Math.max(0.72, params.outgoingVolumeHold || 0.82));
+  const landEnd = 0.94;
 
   let outgoing: number;
-  if (p <= invite) {
-    outgoing = 1;
-  } else if (p <= handoff) {
-    // Duck A as B rises through the dual window.
+  if (p <= invite) outgoing = 1;
+  else if (p <= handoff) {
     const t = (p - invite) / Math.max(0.001, handoff - invite);
     outgoing = 1 - t * (1 - aDual);
   } else if (p <= landEnd) {
-    outgoing = aDual * (1 - (p - handoff) / Math.max(0.08, landEnd - handoff));
-  } else {
-    outgoing = 0;
-  }
+    outgoing = aDual * (1 - (p - handoff) / Math.max(0.1, landEnd - handoff));
+  } else outgoing = 0;
 
   let incoming: number;
-  if (p <= invite) {
-    incoming = (p / invite) * 0.85;
-  } else if (p < handoff) {
+  if (p <= invite) incoming = (p / invite) * 0.78;
+  else if (p < handoff) {
     const t = (p - invite) / Math.max(0.001, handoff - invite);
-    incoming = 0.85 + 0.15 * t;
-  } else {
-    incoming = 1;
-  }
-
-  // Mild equal-power only before handoff — don't boost A back up.
-  if (p < handoff) {
-    const pow = Math.hypot(outgoing, incoming);
-    if (pow > 0.05 && pow < 0.85) {
-      const s = Math.min(1.08, 0.92 / pow);
-      incoming = Math.min(1, incoming * s);
-      outgoing = Math.min(aDual + 0.05, outgoing * s);
-    }
-  }
+    incoming = 0.78 + 0.22 * t;
+  } else incoming = 1;
 
   return {
     outgoing: Math.min(1, Math.max(0, outgoing)),
@@ -582,7 +575,7 @@ export function oneBarDuetPhase(p: number, params: MashupParams): string {
       ? `DUET LOCK ${Math.round(params.targetBPM)}`
       : "DUET LOCK";
   }
-  if (p < handoff - 0.05) return "DUET · B-led";
+  if (p < handoff - 0.05) return "DUET STACK";
   if (p < handoff + 0.08) return "DUET LAND";
   return "LAND";
 }

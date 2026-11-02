@@ -306,6 +306,28 @@ a {
   transform: scale(1.02);
 }
 
+.island.duet {
+  background: linear-gradient(
+    105deg,
+    color-mix(in oklab, var(--c1) 28%, rgba(20, 20, 24, 0.94)),
+    color-mix(in oklab, var(--c2) 22%, rgba(20, 20, 24, 0.94)) 55%
+  );
+  border-color: color-mix(in oklab, var(--c1) 35%, rgba(255, 255, 255, 0.14));
+  box-shadow:
+    0 12px 32px color-mix(in oklab, var(--c1) 18%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.island.duet.mixing {
+  background: linear-gradient(
+    105deg,
+    color-mix(in oklab, var(--c1) 38%, rgba(20, 20, 24, 0.94)),
+    color-mix(in oklab, var(--c2) 30%, rgba(20, 20, 24, 0.94)) 50%
+  );
+  border-color: color-mix(in oklab, var(--wave) 28%, rgba(255, 255, 255, 0.16));
+  transform: scale(1.015);
+}
+
 .island.land {
   background: linear-gradient(105deg, rgba(48, 209, 88, 0.18), rgba(20, 20, 24, 0.94) 50%);
   border-color: rgba(48, 209, 88, 0.3);
@@ -321,6 +343,11 @@ a {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--amber);
+}
+
+.island.duet .phase {
+  color: color-mix(in oklab, var(--wave) 70%, white);
+  letter-spacing: 0.06em;
 }
 
 .island.land .phase {
@@ -362,6 +389,51 @@ a {
   pointer-events: none;
 }
 
+/* Duet vocal stack — two soft overlapping halos (--c1 / --c2), calm not busy. */
+.stage.is-duet .art-orbit {
+  inset: -14%;
+  background:
+    radial-gradient(
+      circle at 34% 40%,
+      color-mix(in oklab, var(--c1) 72%, white) 0%,
+      transparent 58%
+    ),
+    radial-gradient(
+      circle at 68% 58%,
+      color-mix(in oklab, var(--c2) 78%, var(--art-glow)) 0%,
+      transparent 60%
+    );
+  filter: blur(34px);
+  opacity: 0.58;
+  animation: duet-halo 8.5s var(--ease) infinite alternate;
+}
+
+.stage.is-duet.is-mixing .art-orbit {
+  animation: duet-halo-mix 3.2s var(--ease-premium) infinite alternate;
+}
+
+@keyframes duet-halo {
+  from {
+    transform: scale(0.97);
+    opacity: 0.48;
+  }
+  to {
+    transform: scale(1.05);
+    opacity: 0.68;
+  }
+}
+
+@keyframes duet-halo-mix {
+  from {
+    transform: scale(0.98);
+    opacity: 0.55;
+  }
+  to {
+    transform: scale(1.08);
+    opacity: 0.78;
+  }
+}
+
 /* Beat flicker lives here — one place, behind the cover. */
 .art-pulse {
   position: absolute;
@@ -386,6 +458,21 @@ a {
 .art-pulse.on {
   opacity: calc(0.35 + var(--flash, 0) * 0.65);
   transform: scale(calc(1 + var(--flash, 0) * 0.04));
+}
+
+.stage.is-duet .art-pulse {
+  background:
+    radial-gradient(
+      circle at 36% 44%,
+      rgba(255, 255, 255, calc(0.14 + var(--flash, 0) * 0.4)) 0%,
+      color-mix(in oklab, var(--c1) 40%, transparent) 40%,
+      transparent 70%
+    ),
+    radial-gradient(
+      circle at 64% 56%,
+      color-mix(in oklab, var(--c2) 45%, transparent) 0%,
+      transparent 68%
+    );
 }
 
 @keyframes breathe {
@@ -429,6 +516,37 @@ a {
   color: #fff8e8;
   background: rgba(255, 214, 10, 0.16);
   border-color: rgba(255, 214, 10, 0.38);
+}
+
+/* Duet: soft chip breath while the vocal stack is live. */
+.stage.is-duet.is-mixing .kill-chip {
+  animation: kill-breathe 2.6s var(--ease) infinite alternate;
+}
+
+.stage.is-duet.is-mixing .kill-chip.hot {
+  animation-name: kill-breathe-hot;
+}
+
+@keyframes kill-breathe {
+  from {
+    opacity: 0.78;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  to {
+    opacity: 1;
+    border-color: color-mix(in oklab, var(--c1) 42%, rgba(255, 255, 255, 0.2));
+  }
+}
+
+@keyframes kill-breathe-hot {
+  from {
+    opacity: 0.82;
+    border-color: rgba(255, 214, 10, 0.28);
+  }
+  to {
+    opacity: 1;
+    border-color: color-mix(in oklab, var(--amber) 55%, rgba(255, 255, 255, 0.25));
+  }
 }
 
 .art-card {
@@ -543,6 +661,22 @@ a {
   opacity: calc(0.35 + var(--mix-p) * 0.45);
 }
 
+/* Duet: quieter veil — stack presence, not mashup glare. */
+.stage.is-duet.is-mixing .mix-veil {
+  opacity: calc(0.16 + var(--mix-p) * 0.26);
+  background:
+    radial-gradient(
+      circle at 38% 40%,
+      color-mix(in oklab, var(--c1) 48%, transparent),
+      transparent 56%
+    ),
+    radial-gradient(
+      circle at 64% 62%,
+      color-mix(in oklab, var(--c2) 42%, transparent),
+      transparent 54%
+    );
+}
+
 .stage.is-land .mix-veil {
   opacity: 0;
   transition: opacity 280ms var(--ease-in);
@@ -569,6 +703,18 @@ a {
     transform var(--dur-std) var(--ease-out);
 }
 
+.stage.is-duet .mix-badge-float {
+  color: rgba(247, 247, 250, 0.95);
+  letter-spacing: 0.18em;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--c1) 45%, #2a2430),
+    color-mix(in oklab, var(--c2) 55%, #121820)
+  );
+  border: 1px solid color-mix(in oklab, var(--wave) 28%, rgba(255, 255, 255, 0.16));
+  box-shadow: 0 10px 26px color-mix(in oklab, var(--c1) 32%, transparent);
+}
+
 .art-card.mixing .mix-badge-float:not([hidden]) {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
@@ -584,6 +730,10 @@ a {
 
 .stage.is-mixing .art-orbit {
   animation: orbit-surge 1.1s var(--ease-premium) infinite alternate;
+}
+
+.stage.is-duet.is-mixing .art-orbit {
+  animation: duet-halo-mix 3.2s var(--ease-premium) infinite alternate;
 }
 
 @keyframes orbit-surge {
@@ -795,6 +945,16 @@ a {
   transition: width 40ms linear;
 }
 
+.stage.is-duet.is-mixing .scrub-fill {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--c1) 70%, white),
+    #fff 52%,
+    var(--wave)
+  );
+  box-shadow: 0 0 16px color-mix(in oklab, var(--c1) 35%, transparent);
+}
+
 .stage.is-land .scrub-fill {
   background: linear-gradient(90deg, var(--land), #fff);
   box-shadow: 0 0 18px rgba(48, 209, 88, 0.3);
@@ -871,6 +1031,29 @@ a {
   justify-content: center;
   align-items: baseline;
   gap: 8px;
+}
+
+.stage.is-duet .cue-line {
+  color: color-mix(in oklab, var(--wave) 55%, white);
+}
+
+.stage.is-duet .cue-line .cue-rest {
+  color: color-mix(in oklab, var(--wave) 65%, white);
+  letter-spacing: 0.01em;
+}
+
+.stage.is-duet .automix-mark {
+  background: var(--wave);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--wave) 22%, transparent);
+}
+
+.stage.is-duet .automix-mark::after {
+  color: var(--wave);
+}
+
+.mode-chip[data-mode="oneBarDuet"] {
+  color: color-mix(in oklab, var(--wave) 75%, white);
+  border-color: color-mix(in oklab, var(--wave) 32%, rgba(255, 255, 255, 0.14));
 }
 
 .mixing-word {
@@ -1491,6 +1674,9 @@ a {
   .island.mixing #islandLabel,
   .tmode.on .platters i:last-child,
   .stage.is-mixing .art-orbit,
+  .stage.is-duet .art-orbit,
+  .stage.is-duet.is-mixing .art-orbit,
+  .stage.is-duet.is-mixing .kill-chip,
   .stage.is-land .meta h1,
   .stage.is-land .meta .artist,
   .meta.swap-out h1,
@@ -1498,6 +1684,7 @@ a {
   .meta.swap-in h1,
   .meta.swap-in .artist,
   .art-pulse {
+    animation: none !important;
     transition: none !important;
   }
 
@@ -1530,6 +1717,15 @@ a {
 
   .art-card.land .outgoing {
     opacity: 0;
+  }
+
+  .stage.is-duet .art-orbit {
+    opacity: 0.55;
+    transform: none;
+  }
+
+  .stage.is-duet.is-mixing .kill-chip {
+    opacity: 1;
   }
 }
 

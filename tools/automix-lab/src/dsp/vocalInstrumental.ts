@@ -191,14 +191,15 @@ export function processBufferStem(
       wetL = midKeep + sideBoost;
       wetR = midKeep - sideBoost;
     } else {
-      // Light vocal focus — don't collapse the stereo image / air.
-      const sideKeep = side * (1 - 0.45 * a);
+      // Vocal isolate: high amount ≈ acapella (kill sides / keep center lead).
+      const sideCut = a >= 0.7 ? 0.92 : 0.45;
+      const sideKeep = side * (1 - sideCut * a);
       const midBoost =
-        midLp +
+        midLp * (1 - 0.35 * a) + // roll A sub so B kick owns the floor
         midMud * (1 + 0.02 * a) +
-        midBody * (1 + 0.05 * a) +
-        midLead * (1 + 0.12 * a) +
-        midPres * (1 + 0.2 * a);
+        midBody * (1 + 0.08 * a) +
+        midLead * (1 + (a >= 0.7 ? 0.22 : 0.12) * a) +
+        midPres * (1 + (a >= 0.7 ? 0.32 : 0.2) * a);
       wetL = midBoost + sideKeep;
       wetR = midBoost - sideKeep;
     }
@@ -454,15 +455,17 @@ export class MidSideStemNode {
 
   setVocal(amount: number, when: number, immediate = false) {
     const a = Math.min(1, Math.max(0, amount));
-    // Mild focus only — never collapse sides/air.
-    const mid = 1 + 0.06 * a;
-    const side = 1 - 0.35 * a;
+    // High amount = modern Duet acapella: kill sides, keep formant/presence.
+    const isolate = a >= 0.7;
+    const mid = 1 + (isolate ? 0.12 : 0.06) * a;
+    const side = 1 - (isolate ? 0.9 : 0.35) * a;
     this.setGain(this.midGain.gain, mid, when, immediate);
     this.setGain(this.sideGain.gain, side, when, immediate);
-    this.setGain(this.mud.gain, 0, when, immediate);
-    this.setGain(this.formant.gain, 1.5 * a, when, immediate);
-    this.setGain(this.presence.gain, 2.5 * a, when, immediate);
-    this.setGain(this.midBass.gain, 0, when, immediate);
+    this.setGain(this.mud.gain, isolate ? -4 * a : 0, when, immediate);
+    this.setGain(this.formant.gain, (isolate ? 3.2 : 1.5) * a, when, immediate);
+    this.setGain(this.presence.gain, (isolate ? 4.5 : 2.5) * a, when, immediate);
+    // Clear A's low-mid so B's kick/bass owns the floor under the stack.
+    this.setGain(this.midBass.gain, isolate ? -6 * a : 0, when, immediate);
   }
 
   setDry(when: number, immediate = false) {

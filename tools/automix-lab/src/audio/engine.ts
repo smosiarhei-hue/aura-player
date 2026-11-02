@@ -323,6 +323,7 @@ export class AutomixEngine {
     let liveInstrScale = 1;
     this.bakedLeadA = false;
     this.bakedLeadB = false;
+    this.bakedVocalA = false;
     this.pitchLockedA = false;
     this.pitchLockedB = false;
 
@@ -361,8 +362,20 @@ export class AutomixEngine {
 
     const leadKill = wantsLeadKill(dsp);
     const carve = leadKill ? "leadKill" : "bed";
+    const duetMode = dsp.mashupMode === "oneBarDuet";
 
-    if (leadKill || dsp.bakeStems) {
+    // Modern Duet: bake A as vocal/acapella so only B's instrumental remains.
+    if (duetMode && (dsp.bakeVocalA || (dsp.vocalAPeak || 0) >= 0.55)) {
+      const amt = Math.min(1, Math.max(0.78, dsp.vocalAPeak || 0.9));
+      onStatus?.(`Bake A vocal isolate ${Math.round(amt * 100)}% · Duet…`);
+      bufA = bakeStemSlice(ctx, bufA, offsetA, blend, "vocal", amt, "bed");
+      offsetA = 0;
+      this.bakedVocalA = true;
+      dsp.bakeVocalA = true;
+      dsp.bakeStems = true;
+    }
+
+    if (!duetMode && (leadKill || dsp.bakeStems)) {
       // Acapella Drop / high instrAPeak: leadKill the bed, then B groove→dry.
       if (leadKill || (dsp.bakeInstrA && dsp.instrAPeak >= 0.35)) {
         onStatus?.(
@@ -507,6 +520,7 @@ export class AutomixEngine {
     this.liveInstrScale = 1;
     this.bakedLeadA = false;
     this.bakedLeadB = false;
+    this.bakedVocalA = false;
 
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
@@ -604,6 +618,8 @@ export class AutomixEngine {
 
   private liveInstrScale = 1;
   private bakedLeadA = false;
+  /** Modern Duet: A was offline-baked as vocal/acapella. */
+  private bakedVocalA = false;
   /** Blend was offline time-stretched; playbackRate stays 1, Camelot is detune-only. */
   private pitchLockedA = false;
   private pitchLockedB = false;
@@ -756,28 +772,56 @@ export class AutomixEngine {
     this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
     this.chainB.eq.setBassGainDb(bass.incoming, audioTime, immediate);
 
-    // Mid duck: Duet ducks A under B-led dual (sidechainA scales depth);
-    // AutoMix ducks gated B only.
+    // Modern Duet: keep A vocal clear; soft mid duck on B for air.
+    // AutoMix: duck gated B only.
     const duet = this.params.dsp.mashupMode === "oneBarDuet";
-    const side = Math.min(1, Math.max(0, this.params.dsp.sidechainA || 0.4));
-    const duetDuckA =
-      duet && progress < this.params.handoffAt
-        ? -(6 + 6 * side) * Math.min(1, Math.max(0, vols.incoming))
-        : 0;
-    this.chainA.eq.setVocalDuckDb(duetDuckA, audioTime, immediate);
-    this.chainB.eq.setVocalDuckDb(duet ? 0 : fx.vocalDuckBDb, audioTime, immediate);
-    this.chainA.eq.setAirDb(0, audioTime, immediate);
+    this.chainA.eq.setVocalDuckDb(0, audioTime, immediate);
+    this.chainB.eq.setVocalDuckDb(
+      duet
+        ? progress < this.params.handoffAt
+          ? fx.vocalDuckBDb
+          : 0
+        : fx.vocalDuckBDb,
+      audioTime,
+      immediate
+    );
+    this.chainA.eq.setAirDb(duet ? 1.5 * Math.min(1, fx.vocalA) : 0, audioTime, immediate);
     this.chainB.eq.setAirDb(0, audioTime, immediate);
 
-    // Continuous stem amounts (0 ≡ dry) — never hard-switch setDry/setInstrumental.
-    if (bakedRelay) {
+    if (duet) {
+      // A = vocal isolate (bake already acapella; live reinforces). B stays dry.
+      const liveVocal = this.bakedVocalA
+        ? Math.min(1, Math.max(0.55, fx.vocalA))
+        : Math.min(1, fx.vocalA);
+      if (liveVocal > 0.04) this.chainA.stem.setVocal(liveVocal, audioTime, immediate);
+      else this.chainA.stem.setDry(audioTime, immediate);
+      this.chainB.stem.setDry(audioTime, immediate);
+    } else if (bakedRelay) {
       // Bake already removed the center lead. A light notch only — a second
       // full mid mute thins the kick that the carve kept.
       this.chainA.stem.setInstrumental(0.22, audioTime, immediate, true);
+      this.chainB.stem.setInstrumental(
+        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
+        audioTime,
+        immediate,
+        false
+      );
     } else if (leadKillLive && fx.instrumentalA >= 0.75) {
       this.chainA.stem.setInstrumental(Math.max(0.9, fx.instrumentalA), audioTime, immediate, true);
+      this.chainB.stem.setInstrumental(
+        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
+        audioTime,
+        immediate,
+        false
+      );
     } else if (leadKillLive) {
       this.chainA.stem.setInstrumental(fx.instrumentalA, audioTime, immediate, false);
+      this.chainB.stem.setInstrumental(
+        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
+        audioTime,
+        immediate,
+        false
+      );
     } else {
       const raw = Math.max(
         fx.instrumentalA * this.liveInstrScale,
@@ -790,15 +834,14 @@ export class AutomixEngine {
           ? Math.min(raw, 0.22)
           : raw;
       this.chainA.stem.setInstrumental(liveA, audioTime, immediate, false);
+      // Envelope already holds B instrumental until the vocal open — no second gate.
+      this.chainB.stem.setInstrumental(
+        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
+        audioTime,
+        immediate,
+        false
+      );
     }
-    // Envelope already holds B instrumental until the vocal open — no second gate.
-    // A leadKill bake already cleared B's center; don't notch that kick again.
-    this.chainB.stem.setInstrumental(
-      this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
-      audioTime,
-      immediate,
-      false
-    );
 
     // HPF belongs to LAND (stem envelope), not the whole mashup.
     this.chainA.filters.setHighPass(fx.hpfA, audioTime, immediate);
@@ -853,7 +896,11 @@ export class AutomixEngine {
       rateA: rates.outgoing,
       rateB: rates.incoming,
       pitchB: cents,
-      instrA: fx.instrumentalA,
+      // Duet reports vocal isolate on instrA so coach/UI meters stay useful.
+      instrA:
+        this.params.dsp.mashupMode === "oneBarDuet"
+          ? fx.vocalA
+          : fx.instrumentalA,
       instrB: fx.instrumentalB,
       vocalB: fx.vocalB,
       hpfA: fx.hpfA,

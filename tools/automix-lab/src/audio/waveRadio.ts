@@ -271,14 +271,18 @@ export class WaveRadio {
     if (!dsp) return [];
     const kills: string[] = [];
     const dec = (dsp.decisions || []).join(" · ");
+    if (dsp.mashupMode === "oneBarDuet" || dsp.bakeVocalA || (dsp.vocalAPeak || 0) >= 0.55) {
+      kills.push("Vocal A");
+    }
     if (wantsLeadKill(dsp) || /lead.?kill|acapella drop/i.test(dec)) kills.push("Lead kill");
     else if (dsp.bakeInstrA || (dsp.instrAPeak || 0) >= 0.35) kills.push("Instr A");
     if (dsp.bakeInstrB || (dsp.instrBPeak || 0) >= 0.35) kills.push("Instr B");
     if (dsp.bakeVocalB || (dsp.vocalBPeak || 0) >= 0.4) kills.push("Vocal B");
+    if (dsp.mashupMode === "oneBarDuet") kills.push("Instr B only");
     if (/vocal safe/i.test(dec)) kills.push("Vocal Safe");
     if (/bass surgeon/i.test(dec)) kills.push("Bass Surgeon");
     if ((dsp.vocalDuckBDb || 0) <= -3) kills.push("Mid duck");
-    if ((dsp.sidechainA || 0) >= 0.25) kills.push("Sidechain");
+    if ((dsp.sidechainA || 0) >= 0.25 && dsp.mashupMode !== "oneBarDuet") kills.push("Sidechain");
     if ((dsp.echoAPeak || 0) >= 0.35) kills.push("Echo out");
     if ((dsp.hpfAPeak || 0) >= 0.4) kills.push("HPF A");
     if ((dsp.lpfBPeak || 0) >= 0.35) kills.push("LPF B");
