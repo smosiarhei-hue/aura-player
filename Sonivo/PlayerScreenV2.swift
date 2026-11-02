@@ -1227,15 +1227,14 @@ struct PlayerScreenV2: View {
 
             Section {
                 Button {
+                    AutoMixSessionLog.shared.copyReportToClipboard()
+                    waveMessage = "✅ Лог AutoMix скопирован — вставь в чат"
                     Task {
-                        if await SonivoDiagnostics.shared.sendReportToTelegram() {
-                            waveMessage = "✅ Диагностика отправлена"
-                            try? await Task.sleep(for: .seconds(2.5))
-                            waveMessage = nil
-                        }
+                        try? await Task.sleep(for: .seconds(2.5))
+                        if waveMessage?.contains("Лог AutoMix") == true { waveMessage = nil }
                     }
                 } label: {
-                    Label("Отправить логи", systemImage: "paperplane")
+                    Label("Скопировать лог AutoMix", systemImage: "doc.on.clipboard")
                 }
 
                 Button(role: .destructive) {

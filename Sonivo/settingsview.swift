@@ -273,6 +273,45 @@ struct SettingsView: View {
                     Text("Gapless — без пауз. Кроссфейд — по слайдеру. AutoMix Mashup — beatmatch + мэшап. Duet — вокал A + полный микс B, затем LAND (иначе Automix).")
                 }
 
+                Section {
+                    Toggle(
+                        l10n.isRussian ? "Лог AutoMix каждую секунду" : "AutoMix second-by-second log",
+                        isOn: Binding(
+                            get: { AutoMixSessionLog.shared.isEnabled },
+                            set: { AutoMixSessionLog.shared.isEnabled = $0 }
+                        )
+                    )
+                    .tint(settings.accentColor)
+
+                    Button {
+                        AutoMixSessionLog.shared.copyReportToClipboard()
+                        Haptics.tap(.light)
+                    } label: {
+                        Label(
+                            l10n.isRussian ? "Скопировать лог AutoMix" : "Copy AutoMix log",
+                            systemImage: "doc.on.clipboard"
+                        )
+                    }
+
+                    Button(role: .destructive) {
+                        AutoMixSessionLog.shared.clear()
+                        Haptics.tap(.light)
+                    } label: {
+                        Label(
+                            l10n.isRussian ? "Очистить лог AutoMix" : "Clear AutoMix log",
+                            systemImage: "trash"
+                        )
+                    }
+                } header: {
+                    Text(l10n.isRussian ? "Диагностика AutoMix" : "AutoMix diagnostics")
+                } footer: {
+                    Text(
+                        l10n.isRussian
+                            ? "Пишет каждое действие и каждую секунду состояние сведения. Скопируй лог и пришли в чат после проверки Mashup/Duet."
+                            : "Records every action and a once-per-second Automix snapshot. Copy the log and paste it in chat after testing Mashup/Duet."
+                    )
+                }
+
     }
 
     @ViewBuilder

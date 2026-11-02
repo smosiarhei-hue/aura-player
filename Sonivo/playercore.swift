@@ -409,7 +409,16 @@ final class PlayerCore {
         }
     }
 
-    var transitionMode: TransitionMode = .off { didSet { defaults.set(transitionMode.rawValue, forKey: "player.transitionMode") } }
+    var transitionMode: TransitionMode = .off {
+        didSet {
+            defaults.set(transitionMode.rawValue, forKey: "player.transitionMode")
+            AutoMixSessionLog.shared.action(
+                "mode",
+                details: "\(oldValue.rawValue) → \(transitionMode.rawValue)"
+            )
+            AutoMixSessionLog.shared.ensureHeartbeat()
+        }
+    }
     var crossfadeDuration: Double = 3.0 { didSet { defaults.set(crossfadeDuration, forKey: "player.crossfadeDuration") } }
 
     private(set) var currentBitrate: Int?
@@ -441,6 +450,16 @@ final class PlayerCore {
     private var idleStreamingPlayer: AVPlayer
     var streamingPlayer: AVPlayer { activeStreamingPlayer }
     var usesStreamingBackend: Bool { isUsingStreamPlayer }
+    /// Read-only AutoMix session-log probes (no behavior change).
+    var isTransitioningPublic: Bool { isTransitioning }
+    var incomingTrackPublic: Track? { incomingTrack }
+    var incomingLaneReadyPublic: Bool { incomingLaneReady }
+    var mashupBakeActivePublic: Bool { mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake }
+    var activeDeckVolumePublic: Float { isUsingStreamPlayer ? activeStreamingPlayer.volume : activePlayer.volume }
+    var idleDeckVolumePublic: Float {
+        if isUsingStreamPlayer { return incomingIsStream ? idleStreamingPlayer.volume : 0 }
+        return idlePlayer.volume
+    }
     var playbackRequestID: Int { generation }
     @ObservationIgnored private var lyricsSeekTarget: (id: UUID, track: UUID?, generation: Int, seconds: Double)?
 
@@ -1492,6 +1511,7 @@ final class PlayerCore {
     }
 
     func pause() {
+        AutoMixSessionLog.shared.action("pause", details: String(format: "pos=%.1f", playbackProgress))
         resetPlaybackFade(.wave)
         invalidateQueueContinuation()
         generation += 1
@@ -1532,6 +1552,7 @@ final class PlayerCore {
 
     func resume() {
         guard !isPlaying, currentTrack != nil else { return }
+        AutoMixSessionLog.shared.action("play", details: String(format: "pos=%.1f", playbackProgress))
         if duration > 0, progress >= duration - 0.1 { next(); return }
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         if isUsingStreamPlayer {
@@ -1583,6 +1604,10 @@ final class PlayerCore {
     }
 
     func next() {
+        AutoMixSessionLog.shared.action(
+            "next",
+            details: "from=\(currentTrack?.title ?? "-") to=\(peekNext(auto: false)?.title ?? "-")"
+        )
         cancelTransition()
         reportWaveSkipIfNeeded()
         if let nextTrack = peekNext(auto: false) {
@@ -1622,6 +1647,7 @@ final class PlayerCore {
     }
 
     func previous() {
+        AutoMixSessionLog.shared.action("previous", details: String(format: "pos=%.1f", playbackProgress))
         cancelTransition()
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         if currentPos > 3.0 {
@@ -1642,6 +1668,10 @@ final class PlayerCore {
     }
 
     func seek(to seconds: Double) {
+        AutoMixSessionLog.shared.action(
+            "seek",
+            details: String(format: "to=%.1f from=%.1f mode=%@", seconds, playbackProgress, transitionMode.rawValue)
+        )
         cancelTransition()
         guard seconds.isFinite else { return }
         let d = duration
@@ -2466,6 +2496,17 @@ final class PlayerCore {
         incomingIsStream = nextTrack.isStream
         transitionDuration = blendDuration
         incomingTrack = nextTrack
+        AutoMixSessionLog.shared.event(
+            String(
+                format: "transition.schedule mode=%@ blend=%.1fs inCue=%.1f A=%@ → B=%@ badge=%@",
+                transitionMode.rawValue,
+                blendDuration,
+                incomingStart,
+                current.title,
+                nextTrack.title,
+                mashupBadge ?? "-"
+            )
+        )
         incomingQuality = nil
         metadataSwapped = false
         metadataTrack = nil
@@ -2522,6 +2563,11 @@ final class PlayerCore {
                             "[Mashup] stem bake skipped — missing local A/B (out:\(outURLForBake != nil) in:\(inURLForBake != nil))",
                             tag: "AUDIO"
                         )
+                        AutoMixSessionLog.shared.event(
+                            "bake.skip missingLocal out=\(outURLForBake != nil) in=\(inURLForBake != nil)"
+                        )
+                    } else {
+                        AutoMixSessionLog.shared.event("bake.start blend=\(String(format: "%.1f", self.transitionDuration))s")
                     }
                 }
                 let shouldBakeStems = mashup && outURLForBake != nil && inURLForBake != nil
@@ -2595,6 +2641,17 @@ final class PlayerCore {
                         SonivoDiagnostics.log(
                             "[Mashup] \(duetBake ? "DUET" : "ONE VOCAL") dual-stem bake · A×\(String(format: "%.3f", rates.outgoing)) B×\(String(format: "%.3f", rates.incoming)) · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
                             tag: "AUDIO"
+                        )
+                        AutoMixSessionLog.shared.event(
+                            String(
+                                format: "bake.ready %@ lag=%.2fs cueA=%.1f cueB=%.1f rateA=%.3f rateB=%.3f",
+                                duetBake ? "duet" : "automix",
+                                bakeLag,
+                                cueA,
+                                cueB,
+                                rates.outgoing,
+                                rates.incoming
+                            )
                         )
                         self.startTransitionTimer()
                         self.transitionPreparationTask = nil
@@ -3017,6 +3074,14 @@ final class PlayerCore {
                 "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", handoffPos))s",
                 tag: "AUTOMIX"
             )
+            AutoMixSessionLog.shared.event(
+                String(
+                    format: "land.hardcut B=%@ pos=%.1f syncLocal=%d",
+                    nextTrack.title,
+                    handoffPos,
+                    handedOff ? 1 : 0
+                )
+            )
             lastNowPlayingSync = nil
             updateNowPlayingInfo()
             savePlaybackState()
@@ -3203,6 +3268,9 @@ final class PlayerCore {
     }
 
     private func cancelTransition() {
+        if isTransitioning || transitionScheduled {
+            AutoMixSessionLog.shared.event("transition.cancel")
+        }
         transitionRequestID = UUID()
         transitionPreparationTask?.cancel()
         transitionPreparationTask = nil
