@@ -61,7 +61,7 @@ npm run dev
 | Режим | Поведение |
 |---|---|
 | **AutoMix** | Beatmatch + mashup craft; при сбое плана — Crossfade fallback |
-| **Duet** | Adaptive Duet — слушает фразы A/B, сам выбирает длину (2–12 bars), **B ведёт** / A ducked → ранний LAND B (не караоке 1:1 и не ONE VOCAL bake) |
+| **Duet** | Full-stack Adaptive Duet: слушает vocal/energy/LRC, выбирает **bars/beats**, beatmatch+stretch, Camelot pitch, soft Mid/Side carve A, LPF invite / HPF+echo LAND, ONE BASS/kick, B-led dual → LAND (без nuclear bake) |
 | **Crossfade** | Equal-power 1–12 с, без stems/FX |
 | **Off** | Без overlap → следующий трек |
 

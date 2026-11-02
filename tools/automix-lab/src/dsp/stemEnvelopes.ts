@@ -48,10 +48,16 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
 
   // Relay keeps A's lead carved through LAND. Other modes may ease the carve
   // only after the exit — never snap it back on (that reopens a second vocal).
+  // Duet: soft Mid/Side only through the dual, then release (A exits by volume/HPF).
+  const duet = dsp.mashupMode === "oneBarDuet";
   let instrumentalA = 0;
   if (instrPeak > 0.02 && !safe) {
     const risen = seg(p, 0, instrAt, 0, instrPeak);
-    if (relay || p <= handoff) instrumentalA = risen;
+    if (duet) {
+      const atHandoff = seg(handoff, 0, instrAt, 0, instrPeak);
+      instrumentalA =
+        p <= handoff ? risen : seg(p, handoff, Math.min(0.94, handoff + 0.18), atHandoff, 0);
+    } else if (relay || p <= handoff) instrumentalA = risen;
     else {
       const atHandoff = seg(handoff, 0, instrAt, 0, instrPeak);
       instrumentalA = seg(p, handoff, 1, atHandoff, atHandoff * 0.65);

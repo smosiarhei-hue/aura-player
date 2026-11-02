@@ -115,6 +115,18 @@ export function snapProgressToBar(
 export function buildLandRecipe(params: MashupParams): LandRecipe {
   const bpm = params.targetBPM > 30 ? params.targetBPM : 120;
   const landAt = snapProgressToBar(params.handoffAt, params.blendDurationSec, bpm, 1);
+  // Duet: early LAND, moderate echo, never force instrumental bake.
+  if (params.dsp.mashupMode === "oneBarDuet") {
+    const duetLand = Math.min(0.7, landAt);
+    return {
+      landAt: duetLand,
+      keepAInstr: false,
+      hpfFloor: Math.max(0.7, params.dsp.hpfAPeak || 0.7),
+      echoPeak: Math.min(0.28, Math.max(0.14, params.dsp.echoAPeak || 0.2)),
+      settleBy: Math.min(0.96, duetLand + 0.18),
+      story: "LAND · Duet HPF/echo → B home",
+    };
+  }
   const safe = params.dsp.mashupMode === "safeExit" || params.archetype === "cutOnOne";
   const echo =
     params.archetype === "echoOut"
@@ -206,6 +218,12 @@ export function premiumLandBlurb(plan: AIMixPlan | null): string {
   if (mode === "acapellaDrop") {
     const sec = plan.params.blendDurationSec;
     return `Acapella Drop · ${sec >= 1 ? `${sec.toFixed(0)}s` : "mashup"} → ONE BASS → LAND`;
+  }
+  if (mode === "oneBarDuet") {
+    const sec = plan.params.blendDurationSec;
+    const bpm = plan.params.targetBPM > 30 ? plan.params.targetBPM : 120;
+    const bars = Math.max(1, Math.round(sec / (240 / bpm)));
+    return `Duet · ${bars} bars · ${sec >= 1 ? `${sec.toFixed(0)}s` : "phrase"} · B-led → LAND`;
   }
   return `${plan.story}`;
 }

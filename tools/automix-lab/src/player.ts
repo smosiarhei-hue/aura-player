@@ -469,7 +469,7 @@ function render(s: WaveRadioSnapshot) {
           : s.transitionMode === "off"
             ? "Play to the end, then the next song"
             : s.transitionMode === "duet"
-              ? "Adaptive Duet · listens · B-led dual · LAND B"
+              ? "Duet · listens · stretch/key · B-led · stems/FX · LAND"
               : "Beatmatched blend · Crossfade if the plan is late";
     }
     const row = document.querySelector<HTMLElement>("#xfadeRow");

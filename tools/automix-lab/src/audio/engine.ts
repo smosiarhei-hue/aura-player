@@ -703,11 +703,13 @@ export class AutomixEngine {
     this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
     this.chainB.eq.setBassGainDb(bass.incoming, audioTime, immediate);
 
-    // Mid duck: Duet ducks A under B-led dual; AutoMix ducks gated B only.
+    // Mid duck: Duet ducks A under B-led dual (sidechainA scales depth);
+    // AutoMix ducks gated B only.
     const duet = this.params.dsp.mashupMode === "oneBarDuet";
+    const side = Math.min(1, Math.max(0, this.params.dsp.sidechainA || 0.4));
     const duetDuckA =
       duet && progress < this.params.handoffAt
-        ? -7.5 * Math.min(1, Math.max(0, vols.incoming))
+        ? -(6 + 6 * side) * Math.min(1, Math.max(0, vols.incoming))
         : 0;
     this.chainA.eq.setVocalDuckDb(duetDuckA, audioTime, immediate);
     this.chainB.eq.setVocalDuckDb(duet ? 0 : fx.vocalDuckBDb, audioTime, immediate);

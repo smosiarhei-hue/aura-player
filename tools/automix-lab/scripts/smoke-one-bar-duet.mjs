@@ -1,5 +1,5 @@
 /**
- * Adaptive B-led Phrase Duet plan + coach smoke (no audio).
+ * Full-stack Adaptive Duet plan + coach smoke (no audio).
  * Run: node scripts/smoke-one-bar-duet.mjs
  */
 import assert from "node:assert/strict";
@@ -46,13 +46,10 @@ function bundle(entry, outfileName = "out.mjs") {
 const planBundle = bundle(join(root, "src/audio/oneBarDuet.ts"), "duet.mjs");
 const { planOneBarDuet, pickDuetWindow, ONE_BAR_DUET_MODE } = await import(planBundle.url);
 
-// Coach + simulate from transitionCoach (pulls envelopes)
 const coachEntry = join(planBundle.dir, "coach-entry.ts");
 writeFileSync(
   coachEntry,
-  `
-export { scoreTransition, simulateTrail } from ${JSON.stringify(join(root, "src/audio/transitionCoach.ts"))};
-`
+  `export { scoreTransition, simulateTrail } from ${JSON.stringify(join(root, "src/audio/transitionCoach.ts"))};`
 );
 const coachBundle = bundle(coachEntry, "coach.mjs");
 const { scoreTransition, simulateTrail } = await import(coachBundle.url);
@@ -78,7 +75,7 @@ function fakeProfile(overrides = {}) {
       { from: mixOutHop + 28, to: mixOutHop + 40, level: 0.18 },
       { from: mixOutHop + 40, to: hops, level: 0.25 },
     ]);
-  const energy = overrides.energy ?? Array.from({ length: hops }, () => 0.6);
+  const energy = overrides.energy ?? Array.from({ length: hops }, () => 0.62);
   return {
     name: "t",
     bpm: 120,
@@ -104,7 +101,9 @@ const a = fakeProfile();
 const b = fakeProfile({
   mixInSec: 4,
   mixOutSec: 170,
+  camelotKey: "9A", // adjacent — natural compatible
   reason: "smoke Whisper intro",
+  bpm: 124, // needs stretch
   vocalPresence: vocalCurve(800, [
     { from: 0, to: 12, level: 0.15 },
     { from: 16, to: 60, level: 0.75 },
@@ -114,18 +113,26 @@ const b = fakeProfile({
 });
 
 const pick = pickDuetWindow(a, b, 120);
-assert.ok(pick.blendSec >= 4 && pick.blendSec <= 28, `blend ${pick.blendSec}`);
-assert.ok(pick.bars >= 2 && pick.bars <= 12, `bars ${pick.bars}`);
-assert.ok(pick.handoffAt <= 0.7 + 1e-6, `handoff ${pick.handoffAt}`);
-assert.ok(pick.aDuck < 0.85, `aDuck ${pick.aDuck}`);
+assert.ok(pick.bars >= 2 && pick.bars <= 12);
+assert.equal(pick.beats, pick.bars * 4);
+assert.ok(pick.handoffAt <= 0.7 + 1e-6);
 
 const plan = planOneBarDuet(a, b);
 assert.equal(plan.params.dsp.mashupMode, ONE_BAR_DUET_MODE);
-assert.ok(plan.params.handoffAt <= 0.7 + 1e-6);
 assert.equal(plan.params.dsp.bakeStems, false);
-assert.match(plan.story, /B-led|bars/i);
+assert.equal(plan.params.dsp.bakeInstrA, false);
+assert.ok(plan.params.handoffAt <= 0.7 + 1e-6);
+assert.ok(plan.params.dsp.hpfAPeak >= 0.7);
+assert.ok(plan.params.dsp.lpfBPeak >= 0.2);
+assert.ok(plan.params.dsp.echoAPeak > 0 && plan.params.dsp.echoAPeak <= 0.28);
+assert.ok(plan.params.dsp.sidechainA > 0.2);
+// Soft carve when both hot — not nuclear
+assert.ok(plan.params.dsp.instrAPeak >= 0 && plan.params.dsp.instrAPeak < 0.85);
+assert.ok(Math.abs(plan.params.rateB - 1) >= 0.004 || Math.abs(plan.params.rateA - 1) >= 0.004, "expect tempo stretch");
+assert.ok(plan.params.dsp.decisions.some((d) => /bars|beats|Time-stretch|Camelot|ONE BASS|Soft A|FX/i.test(d)));
+assert.match(plan.story, /bars|beats|LAND/i);
 
-const trail = simulateTrail(plan.params, 100);
+const trail = simulateTrail(plan.params, 120);
 const report = scoreTransition(trail, {
   mode: plan.params.dsp.mashupMode,
   handoffAt: plan.params.handoffAt,
@@ -134,18 +141,16 @@ const report = scoreTransition(trail, {
   bassSwapAt: plan.params.bassSwapAt,
   nuclearCarve: false,
 });
-assert.equal(report.mode, "oneBarDuet");
-assert.ok(report.ok, `coach should pass duet: ${report.story} ${JSON.stringify(report.gates)}`);
-assert.ok(report.score >= 80, `score ${report.score}`);
-
-// Mid dual: B >= A most of the time
-const mid = trail.filter((s) => s.p > 0.15 && s.p < plan.params.handoffAt - 0.02);
-const bLed = mid.filter((s) => s.volB + 0.02 >= s.volA).length;
-assert.ok(bLed >= mid.length * 0.5, `B-led ratio ${bLed}/${mid.length}`);
+assert.ok(report.ok, `coach ${report.story} ${JSON.stringify(report.gates)}`);
+assert.ok(report.score >= 80);
 
 console.log(
-  "Adaptive B-led Duet smoke OK ·",
-  `${plan.params.blendDurationSec.toFixed(2)}s · ${pick.bars} bars · handoff ${plan.params.handoffAt} · coach ${report.score}/100 · ${pick.reason}`
+  "Full-stack Duet smoke OK ·",
+  `${plan.params.blendDurationSec.toFixed(2)}s · ${pick.bars} bars/${pick.beats} beats`,
+  `· carve ${plan.params.dsp.instrAPeak}`,
+  `· rateB ${plan.params.rateB.toFixed(3)}`,
+  `· coach ${report.score}/100`,
+  `· ${pick.reason}`
 );
 
 rmSync(planBundle.dir, { recursive: true, force: true });

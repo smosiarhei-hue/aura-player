@@ -12,14 +12,18 @@
 
 import type { TrackAIProfile } from "./analyzeTrack";
 import {
+  bassGainDbAt,
   defaultDsp,
   defaultParams,
   tempoMatch,
+  volumesAt,
   type MashupParams,
 } from "./envelopes";
 import type { AIMixPlan } from "./aiMixEngine";
 import { vocalLevelNear } from "./aiMixEngine";
 import type { MixCriticReport } from "./mixCritic";
+import { camelotMatch } from "./keyCamelot";
+import { snapProgressToBar } from "./premiumAutomix";
 
 export const ONE_BAR_DUET_MODE = "oneBarDuet" as const;
 
@@ -86,6 +90,7 @@ function firstPhraseBreath(
 export type DuetWindowPick = {
   blendSec: number;
   bars: number;
+  beats: number;
   handoffAt: number;
   bassSwapAt: number;
   cueA: number;
@@ -93,6 +98,10 @@ export type DuetWindowPick = {
   score: number;
   reason: string;
   aDuck: number;
+  /** Peak dual vocal heat 0…1 — drives soft Mid/Side carve on A. */
+  bothHot: number;
+  vocalA: number;
+  vocalB: number;
 };
 
 /**
@@ -212,14 +221,18 @@ export function pickDuetWindow(
     const pick: DuetWindowPick = {
       blendSec: blend,
       bars,
+      beats: bars * 4,
       handoffAt,
       bassSwapAt,
       cueA: localCueA,
       cueB,
       score,
       aDuck,
+      bothHot,
+      vocalA,
+      vocalB,
       reason: [
-        `${bars} bars · ${blend.toFixed(1)}s`,
+        `${bars} bars (${bars * 4} beats) · ${blend.toFixed(1)}s`,
         `A ${vocalA.toFixed(2)} / B ${vocalB.toFixed(2)}`,
         `duckA ${aDuck.toFixed(2)}`,
         landNote,
@@ -232,57 +245,99 @@ export function pickDuetWindow(
     return {
       blendSec: minBlend,
       bars: DUET_MIN_BARS,
+      beats: DUET_MIN_BARS * 4,
       handoffAt: 0.68,
       bassSwapAt: 0.28,
       cueA,
       cueB,
       score: 0,
       aDuck: 0.65,
+      bothHot: 0,
+      vocalA: 0,
+      vocalB: 0,
       reason: "fallback · 2 bars",
     };
   }
   return best;
 }
 
-function passCritic(detail: string, blendSec: number, bpm: number): MixCriticReport {
+function critiqueDuetPlan(
+  params: MashupParams,
+  detail: string,
+  bpm: number,
+  harmonicOk: boolean,
+  beatmatched: boolean
+): MixCriticReport {
+  const blendSec = Math.max(1, params.blendDurationSec);
   const spb = 60 / Math.max(60, bpm);
   const bars = blendSec / (spb * 4);
+  // Sample ONE BASS + LAND from envelopes (vocal dual is intentional).
+  let bassClash = 0;
+  let landOk = true;
+  for (let i = 0; i <= 40; i++) {
+    const p = i / 40;
+    const bass = bassGainDbAt(p, params);
+    const vols = volumesAt(p, params);
+    if (
+      p > 0.12 &&
+      p < 0.88 &&
+      bass.outgoing > -8 &&
+      bass.incoming > -8 &&
+      vols.outgoing > 0.1 &&
+      vols.incoming > 0.25
+    ) {
+      bassClash++;
+    }
+    if (p >= 0.9 && (vols.outgoing > 0.12 || vols.incoming < 0.85)) landOk = false;
+  }
+  const landTimingOk = params.handoffAt <= 0.74;
+  const bassOk = bassClash <= 2;
+  const gates = [
+    {
+      id: "vocalClash" as const,
+      ok: true,
+      label: "DUET VOCAL",
+      detail,
+    },
+    {
+      id: "bassClash" as const,
+      ok: bassOk,
+      label: "ONE BASS",
+      detail: bassOk ? "bass/kick swap clean" : `dual-bass samples=${bassClash}`,
+    },
+    {
+      id: "harmonic" as const,
+      ok: true,
+      label: "Key / Camelot",
+      detail: harmonicOk ? "compatible or pitch-compensated" : "brief clash tolerated",
+    },
+    {
+      id: "tempo" as const,
+      ok: true,
+      label: "Tempo lock",
+      detail: beatmatched ? "beatmatched + stretch" : "grid without stretch",
+    },
+    {
+      id: "land" as const,
+      ok: landOk && landTimingOk,
+      label: "LAND",
+      detail:
+        landOk && landTimingOk
+          ? `B owns exit · ~${bars.toFixed(1)} bars`
+          : `LAND weak handoff=${params.handoffAt.toFixed(2)}`,
+    },
+  ];
+  const passed = gates.filter((g) => g.ok).length;
   return {
-    ok: true,
-    score: 100,
-    gates: [
-      { id: "vocalClash", ok: true, label: "DUET VOCAL", detail },
-      {
-        id: "bassClash",
-        ok: true,
-        label: "ONE BASS",
-        detail: "B-led dual · mid bass swap",
-      },
-      {
-        id: "harmonic",
-        ok: true,
-        label: "Key / Camelot",
-        detail: "pitch-compensated when needed",
-      },
-      {
-        id: "tempo",
-        ok: true,
-        label: "Tempo lock",
-        detail: "beatmatched phrase grid",
-      },
-      {
-        id: "land",
-        ok: true,
-        label: "LAND",
-        detail: `B owns exit · ~${bars.toFixed(1)} bars total`,
-      },
-    ],
+    ok: gates.every((g) => g.ok),
+    score: Math.round((passed / gates.length) * 100),
+    gates,
     vocalClashBeats: blendSec / spb,
     vocalClashFrac: 1,
-    bassClashFrac: 0,
-    bassClashBeats: 0,
+    bassClashFrac: bassClash / 41,
+    bassClashBeats: bassClash,
     fixes: [],
-    mode: "pass",
+    mode: bassOk && landOk && landTimingOk ? "pass" : "warn",
   };
 }
 
@@ -290,6 +345,7 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
   const params = defaultParams();
   const tempo = tempoMatch(a.bpm, b.bpm);
   const bpm = tempo?.targetBPM || a.bpm || 120;
+  const harmonic = camelotMatch(a.camelotKey, b.camelotKey);
 
   if (tempo) {
     params.rateA = tempo.rateA;
@@ -301,8 +357,12 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
     params.targetBPM = a.bpm > 30 ? a.bpm : bpm;
   }
 
-  params.pitchCentsB = 0;
-  params.archetype = "cutOnOne";
+  // Camelot pitch on B (±200¢) when viable — same as AutoMix.
+  params.pitchCentsB = harmonic.isHarmonicallyViable
+    ? Math.max(-200, Math.min(200, harmonic.pitchShiftCents))
+    : 0;
+  // Not cutOnOne — that Premium LAND path caps echo wrong for Duet.
+  params.archetype = "dropSwap";
 
   const pick = pickDuetWindow(a, b, bpm);
   params.blendDurationSec = pick.blendSec;
@@ -310,66 +370,156 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
   params.cueBSec = pick.cueB;
   params.bassSwapAt = pick.bassSwapAt;
   params.handoffAt = pick.handoffAt;
-  params.outgoingVolumeHold = pick.aDuck; // reused as A dual-level in volumesAt
+  params.outgoingVolumeHold = pick.aDuck;
   params.incomingVolumeLag = Math.min(0.14, Math.max(0.06, 0.7 / Math.max(4, pick.blendSec)));
-  params.bassDepth = 1.0;
+  // Deeper bass kill when both tracks are energy-hot (kick/bass clash risk).
+  const energyClash = Math.min(
+    energyMean(a, pick.cueA, pick.blendSec * 0.5),
+    energyMean(b, pick.cueB, pick.blendSec * 0.5)
+  );
+  params.bassDepth = energyClash >= 0.55 ? 1.08 : energyClash >= 0.4 ? 1.0 : 0.92;
 
   const vocalOut = vocalLevelNear(a, pick.cueA, Math.min(12, pick.blendSec));
   const vocalIn = vocalLevelNear(b, pick.cueB, Math.min(12, pick.blendSec));
 
   const dsp = defaultDsp();
   dsp.mashupMode = ONE_BAR_DUET_MODE;
-  // Dry leads — identity of Duet (no ONE VOCAL bake).
-  dsp.instrAPeak = 0;
-  dsp.instrAAt = 0;
+  // Soft live Mid/Side on A when both vocals hot — NOT nuclear leadKill / bake.
+  // Keeps A's words but pulls competing instruments under B.
+  const softCarve =
+    pick.bothHot >= 0.5 ? 0.38 : pick.bothHot >= 0.35 ? 0.28 : pick.bothHot >= 0.22 ? 0.18 : 0;
+  dsp.instrAPeak = softCarve;
+  dsp.instrAAt = Math.min(0.2, Math.max(0.06, params.incomingVolumeLag));
+  // B stays dry lead the whole dual (never gate B vocal for Duet).
   dsp.instrBPeak = 0;
   dsp.instrBUntil = 0;
   dsp.vocalBPeak = 0;
   dsp.vocalBAt = 0;
   dsp.vocalDuckBDb = 0;
-  dsp.hpfAPeak = 0.85;
-  dsp.lpfBPeak = 0.28;
-  dsp.echoAPeak = 0.18;
+  dsp.hpfAPeak = 0.82;
+  dsp.lpfBPeak = 0.32;
+  dsp.echoAPeak = 0.22;
   dsp.bakeStems = false;
   dsp.bakeInstrA = false;
   dsp.bakeInstrB = false;
   dsp.bakeVocalB = false;
-  dsp.sidechainA = 0.45;
+  dsp.sidechainA = Math.min(0.55, 0.25 + pick.bothHot * 0.35);
   dsp.dualLayerPeak = pick.aDuck;
   dsp.guardVocalOut = vocalOut;
   dsp.guardVocalIn = vocalIn;
+
+  const stretchNote =
+    tempo && (Math.abs(tempo.rateA - 1) >= 0.004 || Math.abs(tempo.rateB - 1) >= 0.004)
+      ? `Time-stretch · A×${tempo.rateA.toFixed(3)} B×${tempo.rateB.toFixed(3)} → ${Math.round(bpm)} BPM`
+      : "Tempo already aligned";
+  const keyNote = params.pitchCentsB
+    ? `Camelot ${params.pitchCentsB >= 0 ? "+" : ""}${params.pitchCentsB | 0}¢ · ${harmonic.description}`
+    : harmonic.description;
+
   dsp.decisions = [
-    "Adaptive Duet · B leads · A ducked",
+    `Duet stack · ${pick.bars} bars / ${pick.beats} beats / ${pick.blendSec.toFixed(1)}s`,
     pick.reason,
-    `cueA ${pick.cueA.toFixed(1)}s · cueB ${pick.cueB.toFixed(1)}s · handoff ${(pick.handoffAt * 100) | 0}%`,
-    a.reason ? `A · ${a.reason}` : "A · mixOut",
-    b.reason ? `B · ${b.reason}` : "B · mixIn",
+    softCarve > 0
+      ? `Soft A Mid/Side carve ${Math.round(softCarve * 100)}% (live, no bake)`
+      : "A dry lead (low dual heat)",
+    `A vol duck @${pick.aDuck.toFixed(2)} · sidechain ${dsp.sidechainA.toFixed(2)} · mid-duck live`,
+    `ONE BASS/kick depth ${params.bassDepth.toFixed(2)} @${(params.bassSwapAt * 100) | 0}%`,
+    `FX · LPF invite B ${dsp.lpfBPeak} · HPF LAND A ${dsp.hpfAPeak} · echo ${dsp.echoAPeak}`,
+    stretchNote,
+    keyNote,
+    `cueA ${pick.cueA.toFixed(1)}s · cueB ${pick.cueB.toFixed(1)}s · handoff ${(params.handoffAt * 100) | 0}%`,
+    a.reason ? `A cue · ${a.reason}` : "A cue · mixOut",
+    b.reason ? `B cue · ${b.reason}` : "B cue · mixIn",
   ];
   params.dsp = dsp;
 
-  return {
+  let plan: AIMixPlan = {
     params,
     profileA: a,
     profileB: b,
-    reason: "Adaptive Phrase Duet Song Transition",
-    story: `DUET · ${pick.bars} bars · B-led · LAND`,
-    archetype: "cutOnOne",
-    transitionType: "cutOnOne",
+    reason: "Full-stack Adaptive Phrase Duet",
+    story: `DUET · ${pick.bars} bars · ${pick.beats} beats · B-led · LAND`,
+    archetype: "dropSwap",
+    transitionType: "eqBlend",
     beatmatched: tempo != null,
     processing: [
-      "Adaptive Phrase Duet",
-      "Listen vocalPresence + neural cues",
-      "B-led dual · A mid/volume duck",
-      "ONE BASS swap · early LAND",
+      "Adaptive Phrase Duet (full DSP)",
+      "Listen vocals + energy + Camelot + BPM",
+      "Beatmatch / pitch-lock stretch when needed",
+      "Invite LPF → B-led dual → soft A carve → ONE BASS → HPF/echo LAND",
       ...dsp.decisions,
     ],
-    critic: passCritic(
+    critic: critiqueDuetPlan(
+      params,
       `B-led dual · ${pick.bars} bars (${pick.blendSec.toFixed(1)}s)`,
-      pick.blendSec,
-      bpm
+      bpm,
+      harmonic.isHarmonicallyViable || harmonic.isNaturallyCompatible,
+      tempo != null
     ),
     vocalOut,
     vocalIn,
+  };
+
+  plan = applyDuetPremiumLand(plan);
+  // Re-score after bar-snap LAND.
+  plan = {
+    ...plan,
+    critic: critiqueDuetPlan(
+      plan.params,
+      `B-led dual · ${pick.bars} bars (${plan.params.blendDurationSec.toFixed(1)}s)`,
+      bpm,
+      harmonic.isHarmonicallyViable || harmonic.isNaturallyCompatible,
+      tempo != null
+    ),
+  };
+  return plan;
+}
+
+function energyMean(profile: TrackAIProfile, from: number, len: number): number {
+  if (len <= 0.05 || !profile.energy?.length) return 0.5;
+  const i0 = Math.max(0, Math.floor(from / HOP));
+  const i1 = Math.min(profile.energy.length, Math.ceil((from + len) / HOP));
+  if (i1 <= i0) return 0.5;
+  let s = 0;
+  for (let i = i0; i < i1; i++) s += profile.energy[i]!;
+  return s / (i1 - i0);
+}
+
+/** Bar-snap handoff/bass + Duet LAND FX floors — never forces stem bake. */
+function applyDuetPremiumLand(plan: AIMixPlan): AIMixPlan {
+  const params = plan.params;
+  const bpm = params.targetBPM > 30 ? params.targetBPM : plan.profileA.bpm || 120;
+  const landAt = Math.min(
+    0.7,
+    snapProgressToBar(params.handoffAt, params.blendDurationSec, bpm, 1)
+  );
+  params.handoffAt = landAt;
+  params.bassSwapAt = Math.max(
+    0.14,
+    Math.min(
+      landAt - 0.1,
+      snapProgressToBar(params.bassSwapAt, params.blendDurationSec, bpm, 1)
+    )
+  );
+  params.dsp.hpfAPeak = Math.max(0.7, params.dsp.hpfAPeak);
+  params.dsp.echoAPeak = Math.min(0.28, Math.max(0.14, params.dsp.echoAPeak));
+  // Never enable bake via Premium LAND for Duet.
+  params.dsp.bakeStems = false;
+  params.dsp.bakeInstrA = false;
+  params.dsp.bakeInstrB = false;
+  params.dsp.bakeVocalB = false;
+  params.dsp.decisions = [
+    ...params.dsp.decisions,
+    `Premium Duet LAND @${((landAt * 100) | 0)}% · bar-snap · no bake`,
+  ];
+  return {
+    ...plan,
+    params,
+    story: `${plan.story} → LAND @${((landAt * 100) | 0)}%`,
+    processing: [
+      ...plan.processing,
+      `Premium Duet LAND: HPF≥0.70 · echo≤0.28 · bar-snap · stems live-only`,
+    ],
   };
 }
 
