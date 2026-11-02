@@ -121,10 +121,10 @@ export function buildLandRecipe(params: MashupParams): LandRecipe {
     return {
       landAt: duetLand,
       keepAInstr: false,
-      hpfFloor: Math.max(0.7, params.dsp.hpfAPeak || 0.7),
-      echoPeak: Math.min(0.28, Math.max(0.14, params.dsp.echoAPeak || 0.2)),
+      hpfFloor: Math.max(0.82, params.dsp.hpfAPeak || 0.82),
+      echoPeak: Math.max(0.36, Math.min(0.55, params.dsp.echoAPeak || 0.4)),
       settleBy: Math.min(0.96, duetLand + 0.18),
-      story: "LAND · Duet HPF/echo → B home",
+      story: "LAND · Duet filter/HPF/echo → B home",
     };
   }
   const safe = params.dsp.mashupMode === "safeExit" || params.archetype === "cutOnOne";

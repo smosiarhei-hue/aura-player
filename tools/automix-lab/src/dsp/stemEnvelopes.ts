@@ -108,9 +108,11 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   const hpfEnd = Math.min(0.96, Math.max(hpfStart + 0.14, Math.min(0.9, hpfStart + 0.26)));
   const hpfA = hpfPeak > 0.02 ? hpfPeak * seg(p, hpfStart, hpfEnd, 0, 1) : 0;
 
-  // Soft LPF invite. Open by the bass swap so B is home before LAND.
-  const lpfPeak = Math.min(0.55, Math.max(0, dsp.lpfBPeak));
-  const lpfEnd = Math.max(0.06, Math.min(bassAt, handoff));
+  // Soft LPF invite. Duet keeps the muff longer so the filter is actually heard.
+  const lpfPeak = Math.min(duet ? 0.7 : 0.55, Math.max(0, dsp.lpfBPeak));
+  const lpfEnd = duet
+    ? Math.max(0.1, Math.min(Math.max(bassAt, handoff * 0.55), handoff - 0.05))
+    : Math.max(0.06, Math.min(bassAt, handoff));
   const lpfB = lpfPeak * (1 - seg(p, 0, lpfEnd, 0, 1));
 
   const echoPeak = clamp(dsp.echoAPeak, 0, 1);
@@ -119,9 +121,15 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
     const echoStart =
       params.archetype === "echoOut" || safe
         ? Math.max(0.08, holdFrac(params) * 0.4)
-        : Math.max(bassAt, handoff - 0.1);
-    const echoTop = clamp(Math.max(echoStart + 0.06, safe ? handoff : handoff + 0.02), echoStart + 0.04, 0.82);
-    const echoDie = Math.min(0.9, Math.max(echoTop + 0.1, 0.84));
+        : duet
+          ? Math.max(bassAt * 0.85, handoff - 0.16)
+          : Math.max(bassAt, handoff - 0.1);
+    const echoTop = clamp(
+      Math.max(echoStart + 0.06, safe ? handoff : duet ? handoff + 0.04 : handoff + 0.02),
+      echoStart + 0.04,
+      0.82
+    );
+    const echoDie = Math.min(0.92, Math.max(echoTop + (duet ? 0.14 : 0.1), duet ? 0.86 : 0.84));
     echoA =
       p <= echoTop
         ? echoPeak * seg(p, echoStart, echoTop, 0, 1)

@@ -125,7 +125,15 @@ export function camelotCompatible(a: string | null, b: string | null): boolean {
   return false;
 }
 
-export function camelotMatch(keyA: string | null, keyB: string | null): HarmonicMatch {
+/**
+ * Camelot harmonic match.
+ * @param maxSemitones pitch compensation ceiling (AutoMix ±2, Duet may use ±3).
+ */
+export function camelotMatch(
+  keyA: string | null,
+  keyB: string | null,
+  maxSemitones = 2
+): HarmonicMatch {
   const a = parseCamelot(keyA);
   const b = parseCamelot(keyB);
   if (!a || !b || !keyA || !keyB) {
@@ -158,7 +166,8 @@ export function camelotMatch(keyA: string | null, keyB: string | null): Harmonic
   if (semitones > 6) semitones -= 12;
   if (semitones < -6) semitones += 12;
 
-  if (Math.abs(semitones) <= 2) {
+  const cap = Math.max(0, Math.min(6, Math.round(maxSemitones)));
+  if (Math.abs(semitones) <= cap) {
     const cents = semitones * 100;
     const sign = cents > 0 ? `+${cents}` : `${cents}`;
     return {

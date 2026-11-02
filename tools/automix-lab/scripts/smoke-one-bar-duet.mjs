@@ -119,18 +119,20 @@ assert.ok(pick.handoffAt <= 0.7 + 1e-6);
 
 const plan = planOneBarDuet(a, b);
 assert.equal(plan.params.dsp.mashupMode, ONE_BAR_DUET_MODE);
-assert.equal(plan.params.dsp.bakeStems, false);
+// Modern Duet: bake A as vocal isolate over B's full mix.
+assert.equal(plan.params.dsp.bakeVocalA, true);
+assert.equal(plan.params.dsp.bakeStems, true);
 assert.equal(plan.params.dsp.bakeInstrA, false);
+assert.equal(plan.params.dsp.instrAPeak, 0);
+assert.ok((plan.params.dsp.vocalAPeak || 0) >= 0.78);
 assert.ok(plan.params.handoffAt <= 0.7 + 1e-6);
-assert.ok(plan.params.dsp.hpfAPeak >= 0.7);
-assert.ok(plan.params.dsp.lpfBPeak >= 0.2);
-assert.ok(plan.params.dsp.echoAPeak > 0 && plan.params.dsp.echoAPeak <= 0.28);
-assert.ok(plan.params.dsp.sidechainA > 0.2);
-// Soft carve when both hot — not nuclear
-assert.ok(plan.params.dsp.instrAPeak >= 0 && plan.params.dsp.instrAPeak < 0.85);
+assert.ok(plan.params.dsp.hpfAPeak >= 0.8);
+assert.ok(plan.params.dsp.lpfBPeak >= 0.45);
+assert.ok(plan.params.dsp.echoAPeak >= 0.36 && plan.params.dsp.echoAPeak <= 0.55);
+assert.ok(plan.beatmatched, "Duet requires beatmatch (else Automix fallback)");
 assert.ok(Math.abs(plan.params.rateB - 1) >= 0.004 || Math.abs(plan.params.rateA - 1) >= 0.004, "expect tempo stretch");
-assert.ok(plan.params.dsp.decisions.some((d) => /bars|beats|Time-stretch|Camelot|ONE BASS|Soft A|FX/i.test(d)));
-assert.match(plan.story, /bars|beats|LAND/i);
+assert.ok(plan.params.dsp.decisions.some((d) => /bars|beats|Time-stretch|Camelot|ONE BASS|FX|vocal isolate/i.test(d)));
+assert.match(plan.story, /bars|beats|LAND|DUET/i);
 
 const trail = simulateTrail(plan.params, 120);
 const report = scoreTransition(trail, {

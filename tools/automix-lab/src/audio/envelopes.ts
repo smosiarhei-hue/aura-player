@@ -180,31 +180,57 @@ function landSettle(params: MashupParams): { settleAt: number; settleBy: number 
   return { settleAt, settleBy };
 }
 
+/**
+ * Beatmatch rates. `maxDelta` is the max |rate-1| (AutoMix 0.16, Duet 0.18).
+ * Also tries ×2 / ÷2 on B so 70↔140 locks instead of failing.
+ */
 export function tempoMatch(
   bpmA: number,
-  bpmB: number
+  bpmB: number,
+  maxDelta = 0.16
 ): { targetBPM: number; rateA: number; rateB: number } | null {
   if (!(bpmA > 30 && bpmB > 30)) return null;
+  const cap = Math.min(0.22, Math.max(0.08, maxDelta));
+  const lo = 1 - cap;
+  const hi = 1 + cap;
+  const clampRate = (r: number) => Math.min(hi, Math.max(lo, r));
+
   const direct = bpmA / bpmB;
-  if (Math.abs(direct - 1) <= 0.16) {
-    return { targetBPM: bpmA, rateA: 1, rateB: direct };
+  if (Math.abs(direct - 1) <= cap) {
+    return { targetBPM: bpmA, rateA: 1, rateB: clampRate(direct) };
   }
+
+  // Prefer the octave of B that sits closest to A.
   let b = bpmB;
-  if (Math.abs(bpmA - b * 2) < Math.abs(bpmA - b)) b *= 2;
-  if (Math.abs(bpmA - b / 2) < Math.abs(bpmA - b)) b /= 2;
+  const candidates = [bpmB, bpmB * 2, bpmB / 2];
+  let best = bpmB;
+  let bestDist = Math.abs(bpmA - bpmB);
+  for (const c of candidates) {
+    const d = Math.abs(bpmA - c);
+    if (d < bestDist) {
+      bestDist = d;
+      best = c;
+    }
+  }
+  b = best;
+
   const target = (bpmA + b) / 2;
   const rateA = target / bpmA;
   const rateB = target / b;
-  if (Math.max(Math.abs(rateA - 1), Math.abs(rateB - 1)) > 0.16) {
-    if (Math.abs(direct - 1) <= 0.16) {
-      return { targetBPM: bpmA, rateA: 1, rateB: Math.min(1.16, Math.max(0.84, direct)) };
+  if (Math.max(Math.abs(rateA - 1), Math.abs(rateB - 1)) > cap) {
+    if (Math.abs(direct - 1) <= cap) {
+      return { targetBPM: bpmA, rateA: 1, rateB: clampRate(direct) };
+    }
+    // Last resort: lock B to A if within a slightly wider window.
+    if (Math.abs(bpmA / b - 1) <= cap + 0.02) {
+      return { targetBPM: bpmA, rateA: 1, rateB: clampRate(bpmA / b) };
     }
     return null;
   }
   return {
     targetBPM: target,
-    rateA: Math.min(1.16, Math.max(0.84, rateA)),
-    rateB: Math.min(1.16, Math.max(0.84, rateB)),
+    rateA: clampRate(rateA),
+    rateB: clampRate(rateB),
   };
 }
 
@@ -441,13 +467,19 @@ export function pitchCentsAt(p: number, params: MashupParams): number {
 export function phaseLabel(p: number, params: MashupParams): string {
   if (params.dsp.mashupMode === "oneBarDuet") {
     const handoff = params.handoffAt;
-    if (p < 0.1) {
+    const lockEnd = Math.min(0.16, Math.max(0.08, params.bassSwapAt * 0.55));
+    if (p < lockEnd) {
       return params.targetBPM > 30
         ? `DUET LOCK ${Math.round(params.targetBPM)}`
         : "DUET LOCK";
     }
+    if (Math.abs(params.pitchCentsB) >= 20 && p < Math.min(0.28, params.bassSwapAt + 0.06)) {
+      const sign = params.pitchCentsB >= 0 ? "+" : "";
+      return `DUET KEY ${sign}${Math.round(params.pitchCentsB)}¢`;
+    }
+    if (p < params.bassSwapAt) return "DUET FILTER";
     if (p < handoff - 0.05) return "DUET STACK";
-    if (p < handoff + 0.08) return "DUET LAND";
+    if (p < handoff + 0.1) return "DUET ECHO";
     return "LAND";
   }
   const lockEnd = Math.min(0.18, params.bassSwapAt * 0.65);
