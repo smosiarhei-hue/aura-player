@@ -21,15 +21,20 @@ class PlayerIntentTests(unittest.TestCase):
         for token in [
             'DragGesture(minimumDistance: 10)',
             'PlayerInteractionPolicy.horizontalIntent',
-            'scrubTrackID == (player.displayTrack?.id ?? player.currentTrack?.id)',
-            'guard !mixing, isScrubbing, !scrubRejected',
+            # Live outgoing deck while mashup runs — seek cancels Automix.
+            'scrubTrackID = player.currentTrack?.id ?? player.displayTrack?.id',
+            'guard isScrubbing, !scrubRejected, timelineDuration > 0',
             'start: scrubStartFraction',
             '.accessibilityAdjustableAction',
             '.onChange(of: scrubContact)',
-            'Scrubber disabled while Automix',
+            'seek cancels the mashup',
+            'player.scrubProgress',
         ]:
             self.assertIn(token,block)
         self.assertNotIn('value.location.x',block)
+        # Mixing must not freeze scrub (old Apple-lock contract removed).
+        self.assertNotIn('guard !mixing, isScrubbing',block)
+        self.assertNotIn('Scrubber disabled while Automix',block)
     def test_only_headers_allow_intentional_dismiss_drag(self):
         header=SCREEN.split('private var headerCloseGesture',1)[1].split('private func lyricsPlayerLayout',1)[0]
         self.assertIn('PlayerDismissPolicy.shouldClose',header)

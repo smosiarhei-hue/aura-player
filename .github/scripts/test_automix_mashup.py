@@ -87,8 +87,12 @@ class AutoMixMashupTests(unittest.TestCase):
         timeline = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
         self.assertIn("struct PlayerTimelineSection", timeline)
         self.assertIn("player.isTransitionActive", timeline)
-        self.assertIn("if mixing { tx.animation = nil }", timeline)
-        self.assertIn("Scrubber disabled while Automix", timeline)
+        # Scrub stays live during Automix; seek cancels mashup on the live deck.
+        self.assertIn("if mixing && !isScrubbing { tx.animation = nil }", timeline)
+        self.assertIn("seek cancels the mashup", timeline)
+        self.assertIn("player.scrubProgress", timeline)
+        self.assertIn("player.scrubDuration", timeline)
+        self.assertIn("transitionProgress", timeline)
 
         presentation = (ROOT / "Sonivo/ActivePlayerPresentation.swift").read_text()
         self.assertIn("legacy.displayProgress", presentation)
