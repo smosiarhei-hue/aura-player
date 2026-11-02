@@ -17,6 +17,13 @@ export type TrackAIProfile = {
   hasFadeOut: boolean;
   endsInSilence: boolean;
   tempoStability: number;
+  /**
+   * Kick/downbeat phase in seconds from t=0, modulo one beat.
+   * Crude grid for cue slip — not a transcribed bar number.
+   */
+  downbeatSec?: number;
+  /** 0…1. planAutomix slips cues only when both tracks are high. */
+  downbeatConfidence?: number;
   reason: string;
 };
 
@@ -257,25 +264,129 @@ function detectMixOut(energy: number[], vocal: number[], duration: number): { mi
   return { mixOut, fade, silent };
 }
 
-/** Mix-in: skip padded intro — first sustained energy after quiet head. */
+/**
+ * Mix-in: first sustained body-level groove.
+ * A short lift inside a breakdown (8–12 dB under the chorus) is not a cue —
+ * landing there makes the drop slam in after the blend.
+ */
 function detectMixIn(energy: number[], vocal: number[], duration: number): number {
   const n = energy.length;
-  if (n < 8 || duration < 90) return 0;
+  void vocal;
+  if (n < 8 || duration < 45) return 0;
 
-  const headEnd = Math.min(n, Math.floor((Math.min(48, duration * 0.25)) / HOP_SEC));
-  const body = meanSlice(energy, n * 0.25, n * 0.5);
+  const headEnd = Math.min(n - 16, Math.floor(Math.min(72, duration * 0.45) / HOP_SEC));
+  const body = meanSlice(energy, n * 0.3, n * 0.75);
+  const thresh = Math.max(0.28, body * 0.58);
 
-  for (let i = 2; i < headEnd - 4; i++) {
-    const prev = meanSlice(energy, 0, i);
-    const next = meanSlice(energy, i, i + 6);
-    const vNext = meanSlice(vocal, i, i + 6);
-    // Rise into the groove / vocal
-    if (next > Math.max(0.2, body * 0.55) && next > prev * 1.35 && (vNext > 0.25 || next > 0.35)) {
-      return Math.min(duration * 0.25, i * HOP_SEC);
+  for (let i = 1; i < headEnd; i++) {
+    const next = meanSlice(energy, i, i + 8); // ~2s
+    const hold = meanSlice(energy, i, i + 16); // ~4s, rejects one-bar bumps
+    if (next >= thresh && hold >= thresh * 0.9) {
+      return Math.min(duration * 0.45, i * HOP_SEC);
     }
   }
-  // Fallback: 4–8 bars @ ~120
   return Math.min(32, duration > 180 ? 16 : 8);
+}
+
+/**
+ * Beat-grid phase from a low-passed onset in the body of the track.
+ * `downbeatSec` is in `[0, 60/bpm)`. Confidence stays low on noise.
+ */
+export function estimateDownbeat(
+  samples: Float32Array,
+  sampleRate: number,
+  bpm: number
+): { downbeatSec: number; confidence: number } {
+  const none = { downbeatSec: 0, confidence: 0 };
+  if (!(bpm > 40 && bpm < 220) || !(sampleRate > 1000) || samples.length < 64) return none;
+
+  const hopSec = 0.01;
+  const hop = Math.max(1, Math.floor(sampleRate * hopSec));
+  const beatSec = 60 / bpm;
+  const beatHop = Math.round(beatSec / hopSec);
+  if (beatHop < 8 || beatHop > 500) return none;
+
+  const duration = samples.length / sampleRate;
+  const winSec = Math.min(16, Math.max(0, duration - 0.25));
+  if (winSec < beatSec * 8) return none;
+  const startSec = Math.min(Math.max(0, duration * 0.2), Math.max(0, duration - winSec));
+  const startSample = Math.floor(startSec * sampleRate);
+  const endSample = Math.min(samples.length, startSample + Math.floor(winSec * sampleRate));
+  const nHops = Math.floor((endSample - startSample) / hop);
+  if (nHops < beatHop * 8) return none;
+
+  const env = new Float32Array(nHops);
+  const alpha = 1 - Math.exp((-2 * Math.PI * 180) / sampleRate);
+  let y = 0;
+  let s = startSample;
+  for (let h = 0; h < nHops; h++) {
+    let e = 0;
+    const hEnd = s + hop;
+    for (; s < hEnd; s++) {
+      const x = samples[s] ?? 0;
+      y += alpha * (x - y);
+      e += y * y;
+    }
+    env[h] = Math.sqrt(e / hop);
+  }
+  const onset = new Float32Array(nHops);
+  for (let i = 1; i < nHops; i++) onset[i] = Math.max(0, (env[i] ?? 0) - (env[i - 1] ?? 0));
+
+  const scores = new Float64Array(beatHop);
+  for (let off = 0; off < beatHop; off++) {
+    let sum = 0;
+    let n = 0;
+    for (let i = off; i < nHops; i += beatHop) {
+      sum += onset[i] ?? 0;
+      if (i + 1 < nHops) sum += 0.35 * (onset[i + 1] ?? 0);
+      n++;
+    }
+    scores[off] = n ? sum / n : 0;
+  }
+
+  let bestOff = 0;
+  let best = -1;
+  let total = 0;
+  for (let i = 0; i < beatHop; i++) {
+    const v = scores[i] ?? 0;
+    total += v;
+    if (v > best) {
+      best = v;
+      bestOff = i;
+    }
+  }
+  if (!(best > 1e-8)) return none;
+
+  const sorted = Array.from(scores).sort((a, b) => a - b);
+  const median = sorted[sorted.length >> 1] ?? 0;
+  const p75 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.75))] ?? 0;
+  const offBeat = scores[(bestOff + (beatHop >> 1)) % beatHop] ?? 0;
+  const contrast = (best - median) / best;
+  const peakiness = (best - p75) / best;
+  const ratio = best / (offBeat + 1e-12);
+  let confidence = 0;
+  // No floor: a barely-peaked onset (noise) must stay under the planner gate.
+  if (peakiness >= 0.35 && ratio >= 1.45 && contrast >= 0.28) {
+    const p = Math.min(1, (peakiness - 0.35) / 0.4);
+    const r = Math.min(1, (ratio - 1.45) / 1.15);
+    confidence = Math.min(1, p * 0.72 + r * 0.28);
+  }
+  const mean = total / beatHop;
+  if (best < mean * 1.6) confidence = Math.min(confidence, 0.34);
+
+  const y0 = scores[(bestOff - 1 + beatHop) % beatHop] ?? 0;
+  const y1 = scores[bestOff] ?? 0;
+  const y2 = scores[(bestOff + 1) % beatHop] ?? 0;
+  const denom = y0 - 2 * y1 + y2;
+  let delta = 0;
+  if (denom !== 0) {
+    delta = (0.5 * (y0 - y2)) / denom;
+    if (delta > 0.5) delta = 0.5;
+    if (delta < -0.5) delta = -0.5;
+  }
+  let downbeatSec = startSec + (bestOff + delta) * hopSec;
+  downbeatSec = ((downbeatSec % beatSec) + beatSec) % beatSec;
+  return { downbeatSec, confidence };
 }
 
 function tempoStability(energy: number[], bpm: number): number {
@@ -317,6 +428,7 @@ export async function analyzeTrackBuffer(
   await yieldToUI();
   const tempo = estimateBPMFromSamples(mono, analysisRate);
   const stability = tempoStability(energy, tempo.bpm);
+  const phase = estimateDownbeat(mono, analysisRate, tempo.bpm);
 
   onProgress?.("Key / Camelot…");
   await yieldToUI();
@@ -334,6 +446,9 @@ export async function analyzeTrackBuffer(
     key.camelot ? `Key ${key.camelot}` : "Key ?",
     `mixOut ${out.mixOut.toFixed(1)}s`,
     `mixIn ${mixIn.toFixed(1)}s`,
+    phase.confidence >= 0.45
+      ? `downbeat ${phase.downbeatSec.toFixed(3)}s (${(phase.confidence * 100) | 0}%)`
+      : null,
     out.fade ? "fadeOut" : null,
   ]
     .filter(Boolean)
@@ -353,6 +468,8 @@ export async function analyzeTrackBuffer(
     hasFadeOut: out.fade,
     endsInSilence: out.silent,
     tempoStability: stability,
+    downbeatSec: phase.downbeatSec,
+    downbeatConfidence: phase.confidence,
     reason,
   };
 }

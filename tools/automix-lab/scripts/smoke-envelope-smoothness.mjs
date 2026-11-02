@@ -54,7 +54,7 @@ function maxJump(samples) {
 }
 
 const params = defaultParams();
-params.dsp.mashupMode = "vocalSwap";
+params.dsp.mashupMode = "acapellaDrop";
 params.dsp.instrAPeak = 0.85;
 params.dsp.instrAAt = 0.12;
 params.dsp.instrBPeak = 0.75;

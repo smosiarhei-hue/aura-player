@@ -14,22 +14,33 @@
  */
 
 import { stemFxAt } from "../dsp/stemEnvelopes";
-import type { MashupParams } from "./envelopes";
+import {
+  bakedLeadKill,
+  bassGainDbAt,
+  pitchCentsAt,
+  playbackRatesAt,
+  volumesAt,
+  type MashupParams,
+} from "./envelopes";
 import type { TransitionType } from "./transitionPlanner";
 
 /**
- * Budgets: OpenSonic stem clash is ~1 beat; preset harmonize allows up to 12.
- * Live Mid/Side mashup sits in between — allow a short LAND bloom, reject stacking.
+ * Budgets aligned to OpenSonic verify.py (vocals ≤1.0 beat, bass ≤1.25) with a
+ * small Mid/Side residual allowance — no Demucs stems in Lab, so not byte-identical.
+ * Fail → Vocal Safe / Bass Surgeon. Never trust soft Mid/Side as a free pass.
  */
-export const VOCAL_CLASH_MAX_BEATS = 4.0;
-export const VOCAL_CLASH_MAX_FRAC = 0.18;
-export const BASS_CLASH_MAX_FRAC = 0.22;
+export const VOCAL_CLASH_MAX_BEATS = 1.5;
+export const VOCAL_CLASH_MAX_FRAC = 0.08;
+/** OpenSonic bass budget is 1.25 beats; Lab allows a short handoff. */
+export const BASS_CLASH_MAX_BEATS = 1.5;
+export const BASS_CLASH_MAX_FRAC = 0.12;
 const LEAD_ON = 0.25;
-const BASS_ON = 0.35;
+/** Both lows louder than this (dB) count as shared bass. */
+const BASS_HOT_DB = -8;
 const STEPS = 64;
 
 export type MixCriticGate = {
-  id: "vocalClash" | "bassClash" | "harmonic" | "tempo";
+  id: "vocalClash" | "bassClash" | "harmonic" | "tempo" | "land";
   ok: boolean;
   label: string;
   detail: string;
@@ -42,8 +53,17 @@ export type MixCriticReport = {
   vocalClashBeats: number;
   vocalClashFrac: number;
   bassClashFrac: number;
+  bassClashBeats: number;
   fixes: string[];
-  mode: "pass" | "vocalSafe" | "bassSurgeon" | "vocalSafe+bassSurgeon";
+  mode:
+    | "pass"
+    | "vocalSafe"
+    | "bassSurgeon"
+    | "vocalSafe+bassSurgeon"
+    | "earlierLand"
+    | "vocalSafe+earlierLand"
+    | "bassSurgeon+earlierLand"
+    | "vocalSafe+bassSurgeon+earlierLand";
 };
 
 export type MixCriticInput = {
@@ -61,37 +81,22 @@ function clamp01(x: number): number {
 }
 
 /**
- * Estimate lead audibility after Mid/Side instrumentalize + live stem FX.
- * High instrumental amount ⇒ lead collapses; residual floor keeps realism.
+ * Estimate lead audibility after the carve the engine will actually run.
+ * Soft Mid/Side leaves formants — a high instr envelope is not silence.
+ * Baked leadKill (whole slice) is the only path that may claim a small residual.
  */
-function leadA(vocalOut: number, instrA: number): number {
-  return clamp01(vocalOut * (1 - instrA * 0.92) + vocalOut * 0.04 * (1 - instrA));
+function leadA(vocalOut: number, instrA: number, bakedKill: boolean): number {
+  if (bakedKill) return clamp01(vocalOut * 0.07);
+  const kill = 0.58;
+  const leak = 0.08;
+  return clamp01(vocalOut * (1 - instrA * kill) + vocalOut * leak * (1 - instrA));
 }
 
 function leadB(vocalIn: number, instrB: number, vocalFocus: number): number {
-  // While B is instrumentalized, lead is gated. After release, dry B returns.
-  const gated = vocalIn * (1 - instrB);
-  const opened = vocalIn * Math.max(vocalFocus, 1 - instrB);
-  return clamp01(instrB > 0.08 ? gated * 0.35 : opened);
-}
-
-function bassA(bassDepth: number, killA: number): number {
-  // killA from envelope: 0 = full bass, 1 = killed
-  return clamp01(1 - killA * Math.min(1.2, bassDepth));
-}
-
-function bassB(bassDepth: number, restoreB: number): number {
-  return clamp01(restoreB * Math.min(1.2, bassDepth));
-}
-
-/**
- * Approximate ONE BASS kill/restore from progress (mirrors envelopes.bassEqAt intent).
- */
-function bassOwnership(p: number, bassAt: number): { killA: number; restoreB: number } {
-  const at = Math.min(0.7, Math.max(0.08, bassAt));
-  const killA = p <= 0 ? 0 : p < at ? clamp01(p / at) : 1;
-  const restoreB = p <= 0 ? 0 : p < at ? clamp01(p / at) : 1;
-  return { killA, restoreB };
+  // Full gate: thin residual. Partial tuck still leaks the lead.
+  if (instrB >= 0.85) return clamp01(vocalIn * (1 - instrB) * 0.45);
+  if (instrB > 0.08) return clamp01(vocalIn * (1 - instrB * 0.55));
+  return clamp01(vocalIn * Math.max(vocalFocus, 1 - instrB));
 }
 
 export function critiqueMix(input: MixCriticInput): MixCriticReport {
@@ -100,29 +105,63 @@ export function critiqueMix(input: MixCriticInput): MixCriticReport {
   const spb = 60 / Math.max(60, bpm); // seconds per beat
   const blendBeats = blendSec / spb;
 
+  const bakedKill = bakedLeadKill(params.dsp);
   let vocalBoth = 0;
   let bassBoth = 0;
+  // Audible fader → full lead credit by ~0.18. A whisper (≤0.05) is not a second vocal.
+  const fader = (vol: number) => (vol <= 0.05 ? 0 : Math.min(1, vol / 0.18));
   for (let i = 0; i < STEPS; i++) {
     const p = (i + 0.5) / STEPS;
     const fx = stemFxAt(p, params);
-    const aLead = leadA(vocalOut, fx.instrumentalA);
-    const bLead = leadB(vocalIn, fx.instrumentalB, fx.vocalB);
+    const vols = volumesAt(p, params);
+    const aLead = leadA(vocalOut, fx.instrumentalA, bakedKill) * fader(vols.outgoing);
+    const bLead = leadB(vocalIn, fx.instrumentalB, fx.vocalB) * fader(vols.incoming);
     if (aLead > LEAD_ON && bLead > LEAD_ON) vocalBoth++;
 
-    const own = bassOwnership(p, params.bassSwapAt);
-    const aBass = bassA(params.bassDepth, own.killA);
-    const bBass = bassB(params.bassDepth, own.restoreB);
-    // Mid-window only — invite + land naturally share less ownership conflict.
-    if (p > 0.15 && p < 0.85 && aBass > BASS_ON && bBass > BASS_ON) bassBoth++;
+    const bass = bassGainDbAt(p, params);
+    // Real ONE BASS curve — shallow depth never finishes the kill.
+    if (
+      p > 0.12 &&
+      p < 0.88 &&
+      vols.outgoing > 0.08 &&
+      vols.incoming > 0.2 &&
+      bass.outgoing > BASS_HOT_DB &&
+      bass.incoming > BASS_HOT_DB
+    ) {
+      bassBoth++;
+    }
   }
 
   const vocalClashFrac = vocalBoth / STEPS;
   const bassClashFrac = bassBoth / STEPS;
   const vocalClashBeats = vocalClashFrac * blendBeats;
+  const bassClashBeats = bassClashFrac * blendBeats;
 
   const vocalOk =
     vocalClashBeats <= VOCAL_CLASH_MAX_BEATS && vocalClashFrac <= VOCAL_CLASH_MAX_FRAC;
-  const bassOk = bassClashFrac <= BASS_CLASH_MAX_FRAC;
+  const bassOk =
+    bassClashFrac <= BASS_CLASH_MAX_FRAC && bassClashBeats <= BASS_CLASH_MAX_BEATS;
+
+  // LAND must start with room to settle. A handoff in the last quarter
+  // leaves rate, pitch, and A's exit unfinished — that is a late LAND.
+  let landDetail = "LAND settles";
+  let landOk = params.handoffAt <= 0.74;
+  if (!landOk) landDetail = `late handoff @${(params.handoffAt * 100) | 0}%`;
+  for (const p of [0.93, 0.97]) {
+    const v = volumesAt(p, params);
+    const r = playbackRatesAt(p, params);
+    const cents = Math.abs(pitchCentsAt(p, params));
+    if (v.outgoing > 0.12 || v.incoming < 0.85) {
+      landOk = false;
+      landDetail = `LAND vol A ${v.outgoing.toFixed(2)} B ${v.incoming.toFixed(2)}`;
+    } else if (Math.abs(r.incoming - 1) > 0.045 || Math.abs(r.outgoing - 1) > 0.045) {
+      landOk = false;
+      landDetail = `LAND rate B ${r.incoming.toFixed(3)}`;
+    } else if (cents > 12) {
+      landOk = false;
+      landDetail = `LAND pitch ${cents.toFixed(0)}¢`;
+    }
+  }
   // Echo/cut intentionally tolerate key clash — gate softens there.
   const harmOk =
     harmonicOk || transitionType === "echoOut" || transitionType === "cutOnOne";
@@ -142,8 +181,8 @@ export function critiqueMix(input: MixCriticInput): MixCriticReport {
       ok: bassOk,
       label: "ONE BASS",
       detail: bassOk
-        ? `overlap ${(bassClashFrac * 100) | 0}%`
-        : `overlap ${(bassClashFrac * 100) | 0}% (budget ${(BASS_CLASH_MAX_FRAC * 100) | 0}%)`,
+        ? `overlap ${bassClashBeats.toFixed(1)} beat · ${(bassClashFrac * 100) | 0}%`
+        : `overlap ${bassClashBeats.toFixed(1)} beat · ${(bassClashFrac * 100) | 0}% (budget ${BASS_CLASH_MAX_BEATS} beat / ${(BASS_CLASH_MAX_FRAC * 100) | 0}%)`,
     },
     {
       id: "harmonic",
@@ -165,6 +204,12 @@ export function critiqueMix(input: MixCriticInput): MixCriticReport {
           : `${transitionType} without forced stretch`
         : "BPM too far for blend",
     },
+    {
+      id: "land",
+      ok: landOk,
+      label: "LAND",
+      detail: landDetail,
+    },
   ];
 
   const passed = gates.filter((g) => g.ok).length;
@@ -178,6 +223,7 @@ export function critiqueMix(input: MixCriticInput): MixCriticReport {
     vocalClashBeats,
     vocalClashFrac,
     bassClashFrac,
+    bassClashBeats,
     fixes: [],
     mode: "pass",
   };
@@ -194,6 +240,7 @@ export function applyMixCriticFixes(
   const fixes: string[] = [];
   const needVocal = !report.gates.find((g) => g.id === "vocalClash")!.ok;
   const needBass = !report.gates.find((g) => g.id === "bassClash")!.ok;
+  const needLand = !report.gates.find((g) => g.id === "land")!.ok;
   const dsp = input.params.dsp;
 
   if (needVocal) {
@@ -227,26 +274,41 @@ export function applyMixCriticFixes(
   }
 
   if (needBass) {
-    // DeckGhost "Bass Surgeon": hand bass to B earlier, dig a cleaner kill.
-    input.params.bassSwapAt = Math.max(0.12, Math.min(input.params.bassSwapAt, 0.18));
-    input.params.bassDepth = Math.min(1.35, Math.max(input.params.bassDepth, 1.2));
+    // Bass Surgeon: earlier swap, but never dig a hollow −20 dB hole.
+    input.params.bassSwapAt = Math.max(0.14, Math.min(input.params.bassSwapAt, 0.22));
+    input.params.bassDepth = Math.min(1.05, Math.max(input.params.bassDepth, 0.9));
     dsp.decisions = [
       ...dsp.decisions.filter((d) => !d.startsWith("Mix Critic · Bass")),
-      "Mix Critic · Bass Surgeon: earlier bass swap + deeper kill",
+      "Mix Critic · Bass Surgeon: earlier bass swap (capped depth)",
     ];
     fixes.push("Bass Surgeon");
   }
 
+  if (needLand) {
+    // Pull the exit earlier inside the same phrase — never shorten the window.
+    input.params.handoffAt = Math.min(input.params.handoffAt, 0.62);
+    input.params.outgoingVolumeHold = Math.min(
+      input.params.outgoingVolumeHold,
+      Math.max(0.16, input.params.handoffAt - 0.14)
+    );
+    dsp.decisions = [
+      ...dsp.decisions.filter((d) => !d.startsWith("Mix Critic · LAND")),
+      "Mix Critic · LAND earlier inside the phrase",
+    ];
+    fixes.push("Earlier LAND");
+  }
+
   const again = critiqueMix(input);
   again.fixes = fixes;
-  again.mode =
-    needVocal && needBass
-      ? "vocalSafe+bassSurgeon"
-      : needVocal
-        ? "vocalSafe"
-        : needBass
-          ? "bassSurgeon"
-          : "pass";
+  again.mode = (
+    [
+      needVocal ? "vocalSafe" : "",
+      needBass ? "bassSurgeon" : "",
+      needLand ? "earlierLand" : "",
+    ]
+      .filter(Boolean)
+      .join("+") || "pass"
+  ) as MixCriticReport["mode"];
   return again;
 }
 

@@ -255,6 +255,73 @@ input[type="number"] {
   margin-top: 12px;
 }
 
+.ym-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(145deg, rgba(184, 242, 85, 0.06), transparent 55%),
+    var(--bg2);
+  border: 1px solid var(--line);
+}
+
+.ym-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ym-head strong {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.ym-login {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ym-login[data-on] {
+  color: var(--accent);
+}
+
+.ym-hint {
+  margin: 8px 0 0;
+}
+
+.ym-auth {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.ym-code {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+}
+
+.ym-link {
+  color: var(--deck-a);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.ym-status {
+  margin-top: 10px;
+  color: var(--secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
 button.primary,
 button.ghost,
 button.warn {

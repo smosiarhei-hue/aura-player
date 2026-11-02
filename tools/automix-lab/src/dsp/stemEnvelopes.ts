@@ -14,6 +14,18 @@ function holdFrac(params: MashupParams): number {
   return Math.min(0.72, Math.max(0.12, params.outgoingVolumeHold));
 }
 
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+/** Zero-slope segment — same join rule as the volume envelopes. */
+function seg(p: number, a: number, b: number, y0: number, y1: number): number {
+  if (!(b > a + 1e-5)) return p < b ? y0 : y1;
+  if (p <= a) return y0;
+  if (p >= b) return y1;
+  return y0 + (y1 - y0) * smoothstep((p - a) / (b - a));
+}
+
 export type StemFxAt = {
   instrumentalA: number;
   /** Early: cut B vocal so it doesn’t stack on A. */
@@ -27,99 +39,82 @@ export type StemFxAt = {
 
 export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   const dsp = params.dsp;
-  const bassAt = Math.min(0.7, Math.max(0.12, params.bassSwapAt));
-  const handoff = Math.min(0.85, Math.max(bassAt + 0.08, params.handoffAt));
-  const mashupEnd = Math.min(0.94, handoff + 0.2);
-  const relay =
-    dsp.mashupMode === "vocalSwap" || dsp.mashupMode === "acapellaDrop";
-  const instrPeak = Math.min(1, Math.max(0, dsp.instrAPeak));
-  const instrAt = Math.min(0.7, Math.max(0.04, dsp.instrAAt));
+  const bassAt = clamp(params.bassSwapAt, 0.12, 0.7);
+  const handoff = clamp(params.handoffAt, Math.min(0.8, bassAt + 0.08), 0.86);
+  const relay = dsp.mashupMode === "acapellaDrop";
+  const safe = dsp.mashupMode === "safeExit";
+  const instrPeak = clamp(dsp.instrAPeak, 0, 1);
+  const instrAt = clamp(dsp.instrAAt, 0.04, 0.7);
+
+  // Relay keeps A's lead carved through LAND. Other modes may ease the carve
+  // only after the exit — never snap it back on (that reopens a second vocal).
   let instrumentalA = 0;
-  if (instrPeak > 0.02) {
-    if (p < instrAt) {
-      instrumentalA = instrPeak * smoothstep(p / Math.max(0.001, instrAt));
-    } else if (p < mashupEnd || relay) {
-      // Relay: keep A as instrumental bed through LAND — never re-open A's lead.
-      instrumentalA = instrPeak;
-    } else {
-      instrumentalA =
-        instrPeak * (1 - 0.45 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
+  if (instrPeak > 0.02 && !safe) {
+    const risen = seg(p, 0, instrAt, 0, instrPeak);
+    if (relay || p <= handoff) instrumentalA = risen;
+    else {
+      const atHandoff = seg(handoff, 0, instrAt, 0, instrPeak);
+      instrumentalA = seg(p, handoff, 1, atHandoff, atHandoff * 0.65);
     }
   }
 
-  const instrBPeak = Math.min(1, Math.max(0, dsp.instrBPeak));
-  // B lead may open only after A is a bed (and never before vocalBAt).
-  const aBedAt = instrAt;
-  const vocalAtRaw = Math.min(0.85, Math.max(0.03, dsp.vocalBAt));
-  const vocalAt = Math.max(vocalAtRaw, instrBPeak > 0.2 ? aBedAt + 0.08 : 0);
-  const instrBUntil = Math.min(
-    0.9,
-    Math.max(0.05, Math.max(dsp.instrBUntil, vocalAt))
-  );
-  // ~0.18 of the blend ≈ soft bloom into B dry lead (not a click).
-  const instrBRelease = 0.18;
+  const instrBPeak = clamp(dsp.instrBPeak, 0, 1);
+  const vocalAt = clamp(Math.max(dsp.vocalBAt, relay ? instrAt : 0), 0.03, 0.85);
+  const instrBUntil = clamp(Math.max(dsp.instrBUntil, vocalAt), 0.04, 0.9);
+  const releaseEnd = Math.min(0.96, instrBUntil + 0.22);
   let instrumentalB = 0;
   if (instrBPeak > 0.02) {
-    if (p < instrBUntil) {
-      instrumentalB = instrBPeak;
-    } else if (p < instrBUntil + instrBRelease) {
-      instrumentalB =
-        instrBPeak * (1 - smoothstep((p - instrBUntil) / instrBRelease));
+    const released = instrBPeak * (1 - seg(p, instrBUntil, releaseEnd, 0, 1));
+    if (relay && instrBPeak >= 0.4) {
+      // Smooth ONE VOCAL gate: B stays instrumental until A is a bed and vocalBAt.
+      const aReady = seg(p, Math.max(0, instrAt - 0.06), instrAt + 0.04, 0, 1);
+      const vReady = seg(p, vocalAt, Math.min(0.94, vocalAt + 0.16), 0, 1);
+      const open = Math.min(aReady, vReady);
+      instrumentalB = instrBPeak * (1 - open) + released * open;
     } else {
-      instrumentalB = 0;
+      instrumentalB = released;
     }
   }
 
-  // ONE VOCAL hard gate: while A is still carving, B stays instrumental.
-  if (relay && instrumentalA < Math.min(0.88, instrPeak * 0.9) && instrBPeak >= 0.4) {
-    instrumentalB = Math.max(instrumentalB, instrBPeak);
-  }
-
-  const vocalPeak = Math.min(1, Math.max(0, dsp.vocalBPeak));
+  const vocalPeak = clamp(dsp.vocalBPeak, 0, 1);
   let vocalB = 0;
   if (vocalPeak > 0.02) {
-    if (p < vocalAt) {
-      vocalB = 0;
-    } else if (p < mashupEnd) {
-      vocalB = vocalPeak * smoothstep((p - vocalAt) / Math.max(0.001, mashupEnd - vocalAt));
-    } else {
-      vocalB =
-        vocalPeak * (1 - 0.25 * smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
-    }
+    const openAt = safe ? handoff : vocalAt;
+    const opened = seg(p, openAt, Math.max(openAt + 0.1, Math.min(0.92, handoff)), 0, vocalPeak);
+    // Follow the instrumental release — no hard mute that clicks when it crosses 0.08.
+    const allow = 1 - seg(instrumentalB, 0.02, Math.max(0.28, instrBPeak || 0.28), 0, 1);
+    vocalB = opened * allow;
   }
 
-  if (instrumentalB > 0.08) {
-    vocalB = 0;
-  }
+  // HPF only on the LAND exit. Early HPF muffles the instrumental bed.
+  const hpfPeak = clamp(dsp.hpfAPeak, 0, 1);
+  const hpfStart = safe ? Math.max(0.12, handoff - 0.04) : handoff;
+  const hpfEnd = Math.min(0.96, Math.max(hpfStart + 0.14, Math.min(0.9, hpfStart + 0.26)));
+  const hpfA = hpfPeak > 0.02 ? hpfPeak * seg(p, hpfStart, hpfEnd, 0, 1) : 0;
 
-  // HPF only at LAND — early/mid HPF just muffles the dual layer.
-  const hpfPeak = Math.min(1, Math.max(0, dsp.hpfAPeak));
-  const hpfA =
-    p < handoff ? 0 : hpfPeak * smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
-
-  // Soft LPF invite only when recipe asks — never a heavy blanket muff.
+  // Soft LPF invite. Open by the bass swap so B is home before LAND.
   const lpfPeak = Math.min(0.55, Math.max(0, dsp.lpfBPeak));
-  const lpfB =
-    p >= bassAt ? 0 : lpfPeak * (1 - smoothstep(p / Math.max(0.001, bassAt)));
+  const lpfEnd = Math.max(0.06, Math.min(bassAt, handoff));
+  const lpfB = lpfPeak * (1 - seg(p, 0, lpfEnd, 0, 1));
 
-  const echoPeak = Math.min(1, Math.max(0, dsp.echoAPeak));
+  const echoPeak = clamp(dsp.echoAPeak, 0, 1);
   let echoA = 0;
-  const echoStart =
-    params.archetype === "echoOut"
-      ? Math.max(0.08, holdFrac(params) * 0.5)
-      : Math.max(bassAt, handoff - 0.14);
   if (echoPeak > 0.02) {
-    if (p >= echoStart && p < mashupEnd) {
-      echoA = echoPeak * smoothstep((p - echoStart) / Math.max(0.001, mashupEnd - echoStart));
-    } else if (p >= mashupEnd) {
-      echoA = echoPeak * (1 - smoothstep((p - mashupEnd) / Math.max(0.001, 1 - mashupEnd)));
-    }
+    const echoStart =
+      params.archetype === "echoOut" || safe
+        ? Math.max(0.08, holdFrac(params) * 0.4)
+        : Math.max(bassAt, handoff - 0.1);
+    const echoTop = clamp(Math.max(echoStart + 0.06, safe ? handoff : handoff + 0.02), echoStart + 0.04, 0.82);
+    const echoDie = Math.min(0.9, Math.max(echoTop + 0.1, 0.84));
+    echoA =
+      p <= echoTop
+        ? echoPeak * seg(p, echoStart, echoTop, 0, 1)
+        : echoPeak * (1 - seg(p, echoTop, echoDie, 0, 1));
   }
 
   const duckPeak = Math.min(0, dsp.vocalDuckBDb);
-  const duckUntil = Math.max(instrBUntil, Math.max(bassAt, vocalAt));
-  const vocalDuckBDb =
-    p < duckUntil ? duckPeak * (1 - smoothstep(p / Math.max(0.001, duckUntil))) : 0;
+  const duckUntil = Math.max(instrBUntil, vocalAt);
+  const vocalDuckBDb = duckPeak * (1 - seg(p, 0, Math.max(0.05, duckUntil), 0, 1));
 
   return {
     instrumentalA,

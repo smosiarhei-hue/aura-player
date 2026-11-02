@@ -21,6 +21,13 @@
 - После LAND master удаляется, воспроизведение переключается на реальный файл B
 - Вокал B открывается только на LAND
 
+## Neural cue (LRC / Whisper)
+
+На iOS `AutoMixV2AnalysisRuntime` после BPM/key анализа подтягивает синхронизированный текст
+(Yandex LRC / Musixmatch) и через `NeuralAutomixCue` сдвигает `mixOut` / `mixIn` на конец фразы —
+тот же алгоритм, что Lab `neuralAutomix.ts` + `transcriptCues.ts`. Окно mashup остаётся
+фразным (8–16 тактов / 4–32 с), не слайдером Crossfade.
+
 ## Как это в Sonivo
 
 Сведение считается **под каждую пару** треков: BPM / такт, **Бас от следующего**, **Мэшап-слой** A+B.

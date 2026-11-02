@@ -1,7 +1,24 @@
-# Automix Lab · Modern Mashup
+# Sonivo Automix · Player + Lab
 
-Локальный стенд: AI разбирает пару треков и сводит **окно автомикса** как современный
-мэшап — инструментал A × вокал/грув B, один бас, фраза 8/16 тактов. Не radio-crossfade.
+Полноценный Now Playing плеер (iOS 27 Liquid Glass) с **DJ mashup** через API Яндекс Музыки («Моя волна»).
+
+- Ambient обложка + Dynamic Island фаз Automix
+- Gaze-параллакс на артворке, spring-транспорт
+- **Automix choreography** (Premium motion): shared-element cover A→B, kinetic title, island morph LOCK→LAND
+- Sheets: Текст (караоке), Очередь, Coach/Premium, Яндекс auth
+- Motion skills in repo: `.agents/skills/motion-design`, `.agents/skills/anim` (Emil Kowalski / LottieFiles)
+
+Mashup ≠ кроссфейд. Это короткая DJ-история на стыке треков:
+
+| Акт | Что слышно |
+|---|---|
+| **LOCK** | Темп уже общий |
+| **INVITE B** | B входит гостем |
+| **ONE BASS** | Пол отдаёт один бас |
+| **MASHUP** | Outro A (bed) × вокал/грув B — ощущение ремикса |
+| **LAND** | Уже песня B |
+
+Правило **ONE VOCAL**: dual mashup только если outro A уже инструментал. Иначе **Safe Exit** (Cut / Echo) — без двух лидов.
 
 ## Запуск
 
@@ -11,67 +28,129 @@ npm install
 npm run dev
 ```
 
-Открой [http://127.0.0.1:43187](http://127.0.0.1:43187).
+- **Плеер (главный):** [http://127.0.0.1:43187](http://127.0.0.1:43187)
+- DSP Lab: [http://127.0.0.1:43187/lab.html](http://127.0.0.1:43187/lab.html)
+- iPhone mock: [http://127.0.0.1:43187/iphone.html](http://127.0.0.1:43187/iphone.html)
 
-Макет iPhone: [http://127.0.0.1:43187/iphone.html](http://127.0.0.1:43187/iphone.html).
+## Как слушать
 
-## Modern mashup craft (`modernMashup.ts`)
+1. **Подключить** Яндекс (Device Flow → браузер → код).
+2. **Play** — сразу играет трек A (download+decode). Пока идёт песня, **Automix brain** в фоне:
+   анализ BPM/key/energy, LRC/Whisper, загрузка B, neural cue → план mashup и retarget AM-маркера.
+3. Фазы на Dynamic Island; режим пары — Acapella Drop / Safe Exit / …
 
-| Режим | Когда | Что слышно |
-|---|---|---|
-| **Acapella Drop** | A outro уже инструментал, B с вокалом | A bed (если нужно) × **B full quality** |
-| **Vocal Swap** | оба ещё поют | Carve только lead A → B groove → **B dry** на пике |
-| **Texture Bed** | A поёт, B инструментал | Мягкий carve A × B dry |
-| **Instrumental Wash** | оба beds | Без stem bake / без приглушения |
+Токен: `.ym-token.json` (gitignored). Кэш: `.ym-cache/`.
 
-Без blanket sidechain и без vocal-bake B (они резали качество). Carve / HPF / LPF —
-только где нужно (ONE VOCAL / Filter Sweep / LAND).
+### Почему не FLAC, а HQ 192
 
-Плавность: непрерывные volume/bass/stem огибающие (smoke `npm run smoke:smooth`),
-`cancelAndHold` AudioParam, soft invite B, equal-power bake B instr→dry.
+Код **запрашивает** lossless (`/get-file-info?quality=lossless`). Plus на аккаунте есть — но Яндекс **сам решает**, что выдать. С IP датацентра вне РФ/РБ (например cloud-агент в AWS US) ответ стабильно:
 
-## DSP toolkit (`src/dsp/`)
+`quality: "nq"`, `codec: "aac-mp4"`, `bitrate: 192`
 
-| Модуль | Что делает |
+Тогда мы честно падаем на max `download-info` (часто тоже 192) и пишем причину в бейдж (tooltip) и `/api/ym/status` → `lossless`.
+
+Чтобы получить FLAC:
+
+1. Запусти lab **локально** из Беларуси/РФ, или
+2. Поставь `YM_PROXY=http://user:pass@ru-proxy:port` (HTTP(S) proxy с IP РФ/РБ) перед `npm run dev`.
+
+## Song Transitions (как Apple Music AutoMix)
+
+В **Очередь** — переключатель **AutoMix | Crossfade | Off** (как iOS 26 Music → Song Transitions):
+
+| Режим | Поведение |
 |---|---|
-| `vocalInstrumental.ts` | Multiband Mid/Side bake; `bakeInstrThenDry`; `applySidechainDuck` |
-| `bassEq.ts` | Bass kill/on, mid pocket, air |
-| `filters.ts` | HPF riser / LPF reveal |
-| `echo.ts` | Tempo-sync echo-out |
-| `stemEnvelopes.ts` | Огибающие stem/FX по актам |
+| **AutoMix** | Beatmatch + mashup craft; при сбое плана — Crossfade fallback |
+| **Crossfade** | Equal-power 1–12 с, без stems/FX |
+| **Off** | Без overlap → следующий трек |
 
-Цепь деки:
+Во время сведения на island: **Mixing** (shimmer), covers A→B morph.
 
-```
-source → MidSideStem → BassEq → HPF/LPF → EchoOut → Gain → master
-```
+Спека по публичным источникам Apple: `docs/APPLE-AUTOMIX-SPEC.md` (WWDC 2025 / iOS **26** — не «27»).
 
-Offline bake режет **только окно** сведения (не весь трек), затем dual-deck play.
+## Premium AutoMix (всегда on)
 
-## AI пайплайн
+Платный стек, который реально работает — автоматизирован целиком:
 
-1. Анализ A/B — BPM, Key/Camelot, vocal, mixIn/Out  
-2. Transition Planner §2.4 — EQ Blend / Filter / Echo / Long / Cut / Smart  
-3. `chooseModernMashup` + `planAutomix` — craft + DSP recipe  
-4. Offline bake стемов + sidechain A under B  
-5. Play LOCK → INVITE → ONE BASS → **MASHUP** → LAND  
-
-## DJ 5 актов
-
-`LOCK` → `INVITE B` / `ACAPELLA` → `ONE BASS` / `VOCAL SWAP` → `MASHUP` → `LAND`  
-(см. `src/audio/djCraft.ts`)
-
-## Связь с Sonivo iOS
-
-| Lab | iOS |
+| Функция | Что делает |
 |---|---|
-| `analyzeTrackBuffer` | `TrackAnalyzer` |
-| `modernMashup` + `planAutomix` | `MixPlanner` + `MashupLiveStyle` |
-| stem bake + sidechain | `MidSideStemBaker` (master CAF) |
-| Play mashup | PlayerCore AutoMix Mashup |
+| **HQ / Lossless** | FLAC через `/get-file-info`; если API отдал nq/192 — geo (см. ниже) |
+| **Моя волна** | Rotor + feedback started/finished/skip |
+| **BPM + Camelot** | Beatmatch + harmonic pitch ±200¢ |
+| **Фраза 8/16** | Окно на сетке тактов |
+| **TZ §2.4** | EQ / Filter / Echo / Long / Cut / Smart |
+| **ONE BASS** | Бас A → B на доле |
+| **ONE VOCAL / Safe Exit** | Dual mashup только при instrumental outro A |
+| **Mix Critic** | Vocal Safe + Bass Surgeon |
+| **Premium LAND** | Bar-snap handoff · HPF exit · echo ring · rate/pitch → natural · A→0 · B home |
+| **Prefetch** | Next качается во время PLAY |
 
-## Ограничения
+LAND — не «конец фейда». Это акт, где B уже дома, A выходит чисто.
 
-- Mid/Side ≠ Demucs stems (клубный karaoke-трюк)
-- Rate «виниловый» (темп+питч)
-- Файлы только локально в браузере
+## Архитектура
+
+| Слой | Файлы |
+|---|---|
+| Плеер UI | `src/player.ts` |
+| Радио-цикл | `src/audio/waveRadio.ts` |
+| Premium LAND | `src/audio/premiumAutomix.ts` |
+| Dual-deck DSP | `src/audio/engine.ts` + `src/dsp/*` |
+| Craft / план | `modernMashup.ts`, `aiMixEngine.ts`, `transitionPlanner.ts` |
+| Yandex API | `server/yandexLab.ts` (`@dvxch/yandex-music`, `user:onyourwave`) |
+
+## Текст · караоке + Automix cue
+
+- Трек играет **с начала** (mixIn), mashup — фраза ~8–16 тактов (не прыжок в outro).
+- На таймлайне маркер **AM** — точка Automix; скраббер только до него.
+- Текст: сначала **LRC Яндекса** (`/api/ym/lyrics/:id`), иначе офлайн
+  **Whisper tiny** (`.whisper-cache/`). Строки и слова едут с часами плеера.
+- Whisper/LRC brain слушает **A и B**: mixOut на конце фразы, mixIn на входе следующего.
+- Окно mashup 12–16 тактов с equal-power ride — без дыр по громкости и басу на LAND.
+
+```bash
+# API
+GET  /api/ym/lyrics/:id
+POST /api/whisper/transcribe  { trackId, fileName?, lrc? }
+GET  /api/whisper/transcript/:id
+GET  /api/whisper/status
+```
+
+## Transition Coach (обучающий лог)
+
+Инструмент: каждый live-mashup пишется в `.mix-log.jsonl`, скорится гейтами
+(ONE VOCAL / ONE BASS / LAND…). Если провал — offsets в `.mix-coach.json`
+чуть сдвигаются; следующий план их применяет.
+
+```bash
+# offline train на живой Моей волне (нужен логин)
+npm run train:coach -- --rounds 8
+
+# API
+# GET  /api/mix/coach
+# GET  /api/mix/log?limit=12
+# POST /api/mix/log  { report, pair, learn:true }
+```
+
+В плеере блок **Transition Coach · realtime** показывает последний score.
+
+## Ideal Automix export (HQ MP3)
+
+Offline: score cached `.ym-cache` pairs (coach + critic + neural cues), render
+the winner with stem bake + continuity ride, write lossless WAV + **320 kbps MP3**.
+
+```bash
+npm run render:ideal -- --limit 28
+# → artifacts/sonivo-ideal-automix.{wav,mp3,json}
+```
+
+## Smokes
+
+```bash
+npm run smoke:mashup
+npm run smoke:smooth
+npm run smoke:critic
+npm run smoke:tz
+npm run smoke:land
+npm run smoke:coach
+npm run smoke:transcript
+```

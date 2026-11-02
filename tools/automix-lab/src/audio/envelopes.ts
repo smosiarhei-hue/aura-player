@@ -53,11 +53,40 @@ export type AutoDspRecipe = {
   bakeVocalB: boolean;
   /** Human-readable decisions for UI / preset. */
   decisions: string[];
-  /** Modern mashup mode label (acapellaDrop / vocalSwap / …). */
+  /** Modern mashup mode label (acapellaDrop / safeExit / …). */
   mashupMode: string;
   /** Sidechain duck of A under B groove (0…1), applied offline on bake. */
   sidechainA: number;
+  /**
+   * How loud A stays through the dual-layer window (0…1).
+   * Texture bed keeps this high — a low peak plus a lagged incoming deck is a hole.
+   */
+  dualLayerPeak?: number;
+  /**
+   * Vocal presence at the cues (0…1). Play/render re-run Mix Critic with these
+   * so Vocal Safe / Bass Surgeon still apply after LAND snap or coach offsets.
+   */
+  guardVocalOut?: number;
+  guardVocalIn?: number;
 };
+
+/**
+ * Nuclear center carve (formant + presence), not a soft Mid/Side tuck.
+ * Acapella Drop only when the recipe already asked for a deep bed; any mode
+ * at instrAPeak ≥ 0.9 is the same request.
+ */
+export function wantsLeadKill(dsp: AutoDspRecipe): boolean {
+  const peak = dsp.instrAPeak || 0;
+  // High peak marks "A is a bed" for the gates. Nuclear carve only when we bake
+  // a vocal out — a clean instrumental outro keeps its tone.
+  if (!dsp.bakeInstrA && !dsp.bakeStems) return false;
+  return (dsp.mashupMode === "acapellaDrop" && peak >= 0.85) || peak >= 0.9;
+}
+
+/** True only when that nuclear carve will actually be baked before play. */
+export function bakedLeadKill(dsp: AutoDspRecipe): boolean {
+  return wantsLeadKill(dsp) && (!!dsp.bakeInstrA || !!dsp.bakeStems) && (dsp.instrAPeak || 0) >= 0.85;
+}
 
 export type MashupParams = {
   bassSwapAt: number;
@@ -107,7 +136,7 @@ export const defaultParams = (): MashupParams => ({
   rateB: 1,
   pitchCentsB: 0,
   targetBPM: 0,
-  blendDurationSec: 16,
+  blendDurationSec: 24,
   cueASec: 0,
   cueBSec: 0,
   archetype: "dropSwap",
@@ -117,6 +146,29 @@ export const defaultParams = (): MashupParams => ({
 export function smoothstep(t: number): number {
   const x = Math.min(1, Math.max(0, t));
   return x * x * (3 - 2 * x);
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+/**
+ * Smoothstep between two knots. Slope is 0 at both ends, so adjacent
+ * segments meet without a click (value and derivative).
+ */
+function seg(p: number, a: number, b: number, y0: number, y1: number): number {
+  if (!(b > a + 1e-5)) return p < b ? y0 : y1;
+  if (p <= a) return y0;
+  if (p >= b) return y1;
+  return y0 + (y1 - y0) * smoothstep((p - a) / (b - a));
+}
+
+/** Where LAND unwinds tempo/pitch. Late handoff cannot finish early. */
+function landSettle(params: MashupParams): { settleAt: number; settleBy: number } {
+  const lockAt = Math.min(0.22, Math.max(0.08, params.bassSwapAt * 0.6));
+  const settleAt = Math.min(0.92, Math.max(lockAt + 0.05, params.handoffAt));
+  const settleBy = Math.min(0.985, settleAt + 0.2);
+  return { settleAt, settleBy };
 }
 
 export function tempoMatch(
@@ -147,88 +199,155 @@ export function tempoMatch(
   };
 }
 
+/**
+ * Texture bed / instrumental wash — equal-power dual layer.
+ * A cut that parks B near 0.1 while A's outro is already quieter than the lead
+ * opens a hole, then LAND slams in hot. B is audible from the first samples;
+ * a long incomingVolumeLag is ignored on purpose.
+ */
+function textureLayerVolumes(
+  p: number,
+  params: MashupParams
+): { outgoing: number; incoming: number } {
+  const handoff = clamp(params.handoffAt, 0.42, 0.82);
+  const crafted = params.dsp.dualLayerPeak;
+  const peak = clamp(typeof crafted === "number" && crafted > 0.4 ? crafted : 0.88, 0.72, 0.94);
+  // Partner of `peak`, still a bed (not a second full lead) until LAND.
+  const bed = clamp(Math.sqrt(Math.max(0, 1 - peak * peak)) + 0.22, 0.58, 0.74);
+  const lag = 0.05;
+  const landEnd = Math.min(0.95, Math.max(handoff + 0.14, 0.9));
+  let outgoing = p <= handoff ? seg(p, 0, handoff, 1, peak) : seg(p, handoff, landEnd, peak, 0);
+  let incoming =
+    p <= lag
+      ? seg(p, 0, lag, 0.22, bed)
+      : p <= handoff
+        ? bed
+        : seg(p, handoff, landEnd, bed, 1);
+  // prog≈0 must not be two quiet faders. A holds the lead; B is already a bed.
+  if (p < 0.08 && outgoing < 0.45 && incoming < 0.4) {
+    outgoing = Math.max(outgoing, 0.92);
+    incoming = Math.max(incoming, 0.22);
+  }
+  const pow = Math.hypot(outgoing, incoming);
+  if (p < landEnd && pow < 0.9 && pow > 0.05) {
+    const s = Math.min(1.25, 0.9 / pow);
+    outgoing *= s;
+    incoming *= s;
+  }
+  return {
+    outgoing: clamp(outgoing, 0, 1),
+    incoming: clamp(incoming, 0, 1),
+  };
+}
+
 /** Dual-layer mashup volumes — shaped by TZ transition type. */
 export function volumesAt(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
-  const hold = Math.min(0.72, Math.max(0.12, params.outgoingVolumeHold));
-  const lag = Math.min(0.28, Math.max(0.01, params.incomingVolumeLag));
-  const handoff = Math.min(0.85, Math.max(hold, params.handoffAt));
+  // Safe Exit: A still sings → ONE VOCAL, but this is still AutoMix, not a
+  // 1-second blink. Beatmatched phrase: A holds → multi-bar handoff → B home.
+  // Never stack two full leads; hypot-normalize so ears don't hear a dip/slam.
+  if (params.dsp.mashupMode === "safeExit") {
+    const mid = clamp(params.handoffAt, 0.48, 0.7);
+    // ~28% of the blend ≈ several bars on a 20–32s Automix window.
+    const half = 0.14;
+    const a0 = Math.max(0.18, mid - half);
+    const a1 = Math.min(0.92, mid + half * 0.55);
+    const b0 = Math.max(0.1, a0 - 0.08);
+    const b1 = Math.min(0.94, mid + half);
+    let outgoing = p <= a0 ? 1 : seg(p, a0, a1, 1, 0);
+    let incoming =
+      p <= b0
+        ? seg(p, 0, b0, 0, 0.22)
+        : p <= mid
+          ? seg(p, b0, mid, 0.22, 0.58)
+          : seg(p, mid, b1, 0.58, 1);
+    const pow = Math.hypot(outgoing, incoming);
+    if (p < a1 && pow > 0.05 && pow < 0.92) {
+      const s = Math.min(1.2, 0.92 / pow);
+      outgoing *= s;
+      incoming *= s;
+    }
+    return {
+      outgoing: clamp(outgoing, 0, 1),
+      incoming: clamp(incoming, 0, 1),
+    };
+  }
 
-  // Cut on the 1 — almost no dual-layer; snap at handoff.
+  // Texture / wash: do not use the cut's near-silent incoming park.
+  if (
+    params.dsp.mashupMode === "textureBed" ||
+    params.dsp.mashupMode === "instrumentalWash"
+  ) {
+    return textureLayerVolumes(p, params);
+  }
+
+  // Acapella: B is the lead from the first sample. Parking B near silence
+  // while A falls into a breakdown is a multi-second hole, not a crossfade.
+  if (params.dsp.mashupMode === "acapellaDrop") {
+    const handoff = clamp(params.handoffAt, 0.34, 0.86);
+    const hold = clamp(Math.min(params.outgoingVolumeHold || 0.22, 0.24), 0.08, handoff - 0.1);
+    const bed = 0.42;
+    const guest = 0.88;
+    let outgoing = p <= handoff ? seg(p, 0, hold, 1, bed) : seg(p, handoff, 1, bed, 0);
+    let incoming = p >= handoff ? 1 : seg(p, 0, handoff, guest, 1);
+    const pow = Math.hypot(outgoing, incoming);
+    if (p < 0.95 && pow > 0.05 && pow < 0.9) {
+      const s = Math.min(1.22, 0.9 / pow);
+      outgoing *= s;
+      incoming *= s;
+    }
+    return {
+      outgoing: clamp(outgoing, 0, 1),
+      incoming: clamp(incoming, 0, 1),
+    };
+  }
+
+  // Cut on the 1 — last-resort splice, still ~a bar of fade (not a click).
   if (params.archetype === "cutOnOne") {
-    const cut = Math.max(0.35, Math.min(0.7, handoff));
-    if (p < cut - 0.04) {
-      return { outgoing: 1, incoming: p < lag ? smoothstep(p / Math.max(lag, 0.001)) * 0.15 : 0.2 };
-    }
-    if (p < cut + 0.04) {
-      const t = smoothstep((p - (cut - 0.04)) / 0.08);
-      return { outgoing: 1 - t, incoming: 0.2 + 0.8 * t };
-    }
-    return { outgoing: 0, incoming: 1 };
+    const cut = clamp(params.handoffAt, 0.4, 0.72);
+    const half = 0.08;
+    const a0 = Math.max(0.2, cut - half);
+    const a1 = Math.min(0.92, cut + half);
+    const pre = Math.min(0.2, Math.max(0.08, a0 - 0.05));
+    const incoming =
+      p < a0 ? seg(p, 0, pre, 0, 0.14) : seg(p, a0, a1, 0.14, 1);
+    return { outgoing: seg(p, a0, a1, 1, 0), incoming };
   }
 
-  // Echo Out — A holds into delay while B locks under (dual layer), then LAND.
-  if (params.archetype === "echoOut") {
-    let out: number;
-    if (p <= hold) out = 1 - (p / Math.max(hold, 0.001)) * 0.18;
-    else if (p <= handoff) {
-      const t = smoothstep((p - hold) / Math.max(0.001, handoff - hold));
-      out = Math.max(0.28, 0.82 * (1 - t * 0.55));
-    } else {
-      out = Math.max(0, 0.28 * (1 - smoothstep((p - handoff) / Math.max(0.001, 1 - handoff))));
-    }
-    let inn: number;
-    if (p <= lag) inn = 0.68 * smoothstep(p / Math.max(lag, 0.001));
-    else if (p <= handoff) {
-      const t = smoothstep((p - lag) / Math.max(0.001, handoff - lag));
-      inn = 0.68 + 0.28 * t;
-    } else {
-      inn = Math.min(1, 0.96 + 0.04 * smoothstep((p - handoff) / Math.max(0.001, 1 - handoff)));
-    }
-    return { outgoing: out, incoming: inn };
-  }
+  const modern = params.dsp.mashupMode === "acapellaDrop";
+  const echo = params.archetype === "echoOut";
+  let handoff = clamp(params.handoffAt, 0.34, 0.86);
+  // Keep a real fade after the hold. Collapsing hold onto handoff used to step A by ~0.5.
+  const hold = clamp(params.outgoingVolumeHold, 0.12, handoff - 0.1);
+  const lag = clamp(params.incomingVolumeLag, 0.08, Math.max(0.1, handoff - 0.1));
 
-  // Modern mashup / EQ Blend — both layers stay loud on the remix bar.
-  const modern =
-    params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop";
-  const mashupFloor =
-    params.archetype === "smartCrossfade" ? 0.58 : modern ? 0.78 : 0.72;
-  const mashupPeak =
-    params.archetype === "smartCrossfade" ? 0.92 : modern ? 0.98 : 0.96;
-  const dualFloor =
-    params.archetype === "smartCrossfade" ? 0.28 : modern ? 0.48 : 0.38;
-  // Hold ends exactly at the mid-segment start level (no 0.90→0.92 step).
-  const holdEnd = params.archetype === "smartCrossfade" ? 0.75 : 0.92;
-  // Mid segment lands exactly on dualFloor at handoff (no step into LAND).
-  const midDrop = Math.max(0.05, 1 - dualFloor / Math.max(0.001, holdEnd));
+  // Acapella: A stays an audible instrumental bed under B, then exits on LAND.
+  // Echo: A stays a little hotter so the delay has a source. Never a whisper-only bed.
+  const bed = modern ? 0.38 : echo ? 0.46 : params.archetype === "smartCrossfade" ? 0.34 : 0.44;
+  const guest = modern ? 0.7 : echo ? 0.62 : 0.56;
 
-  let out: number;
-  if (p <= hold) {
-    out = 1.0 - (p / Math.max(hold, 0.001)) * (1 - holdEnd);
-  } else if (p <= handoff) {
-    const t = smoothstep((p - hold) / Math.max(0.001, handoff - hold));
-    // Keep A texture present through mashup peak (instrumental bed under B vocal).
-    out = Math.max(dualFloor, holdEnd * (1 - t * midDrop));
-  } else {
-    const t = smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
-    out = Math.max(0, dualFloor * (1 - t));
+  let outgoing =
+    p <= handoff ? seg(p, 0, hold, 1, bed) : seg(p, handoff, 1, bed, 0);
+  let incoming =
+    p >= handoff
+      ? 1
+      : p <= lag
+        ? seg(p, 0, lag, 0, guest)
+        : seg(p, lag, handoff, guest, 1);
+  // Equal-power ride through the invite → LAND so levels stay ear-even.
+  const landEnd = Math.min(0.96, Math.max(handoff + 0.12, 0.88));
+  const pow = Math.hypot(outgoing, incoming);
+  if (p < landEnd && pow > 0.05 && pow < 0.9) {
+    const s = Math.min(1.22, 0.9 / pow);
+    outgoing *= s;
+    incoming *= s;
   }
-
-  let inn: number;
-  if (p <= lag) {
-    // Gentler invite (smoothstep²) — B rises as a guest, not a slam to mashupFloor.
-    const t = smoothstep(p / Math.max(lag, 0.001));
-    inn = mashupFloor * smoothstep(t);
-  } else if (p <= handoff) {
-    const t = smoothstep((p - lag) / Math.max(0.001, handoff - lag));
-    inn = mashupFloor + (mashupPeak - mashupFloor) * t;
-  } else {
-    const t = smoothstep((p - handoff) / Math.max(0.001, 1 - handoff));
-    inn = Math.min(1, mashupPeak + (1 - mashupPeak) * t);
-  }
-  return { outgoing: out, incoming: inn };
+  return {
+    outgoing: clamp(outgoing, 0, 1),
+    incoming: clamp(incoming, 0, 1),
+  };
 }
 
 export function bassGainDbAt(
@@ -236,15 +355,18 @@ export function bassGainDbAt(
   params: MashupParams
 ): { outgoing: number; incoming: number } {
   const bassAt = Math.min(0.7, Math.max(0.12, params.bassSwapAt));
-  // Cap depth so ONE BASS doesn't dig a −20 dB hole that the limiter then "muffles".
-  const depth = Math.min(1.15, Math.max(0.5, params.bassDepth));
-  const killA = smoothstep(p / Math.max(0.001, bassAt * 0.9));
+  // ONE BASS: dig A fully before B rises — brief quiet handoff, never dual-hot mud.
+  // Cap depth so the quiet gap isn't a −20 dB hole.
+  const depth = Math.min(1.05, Math.max(0.55, params.bassDepth));
+  const killDb = -11 * depth;
+  // A is dug by ~70% of bassAt; B starts rising just after that.
+  const killA = smoothstep(p / Math.max(0.001, bassAt * 0.7));
   const restoreB = smoothstep(
-    (p - bassAt * 0.28) / Math.max(0.001, bassAt + 0.18 - bassAt * 0.28)
+    (p - bassAt * 0.72) / Math.max(0.001, bassAt * 0.45 + 0.08)
   );
   return {
-    outgoing: -12 * depth * killA,
-    incoming: -12 * depth * (1 - Math.min(1, Math.max(0, restoreB))),
+    outgoing: killDb * killA,
+    incoming: killDb * (1 - Math.min(1, Math.max(0, restoreB))),
   };
 }
 
@@ -252,36 +374,32 @@ export function playbackRatesAt(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
-  const lockAt = Math.min(0.28, Math.max(0.1, params.bassSwapAt * 0.72));
-  const settleAt = Math.max(
-    params.handoffAt + 0.08,
-    Math.min(0.88, Math.max(0.62, params.handoffAt + 0.2))
-  );
-  if (p < lockAt) {
-    const t = smoothstep(p / Math.max(0.001, lockAt));
-    return {
-      outgoing: 1 + (params.rateA - 1) * t,
-      incoming: 1 + (params.rateB - 1) * t,
-    };
-  }
-  if (p < settleAt) {
-    return { outgoing: params.rateA, incoming: params.rateB };
-  }
-  const t = smoothstep((p - settleAt) / Math.max(0.001, 1 - settleAt));
-  return {
-    outgoing: params.rateA + (1 - params.rateA) * t,
-    incoming: params.rateB + (1 - params.rateB) * t,
-  };
+  const lockAt = Math.min(0.22, Math.max(0.08, params.bassSwapAt * 0.6));
+  const { settleAt, settleBy } = landSettle(params);
+  const out =
+    p < lockAt
+      ? seg(p, 0, lockAt, 1, params.rateA)
+      : p < settleAt
+        ? params.rateA
+        : seg(p, settleAt, settleBy, params.rateA, 1);
+  const inn =
+    p < lockAt
+      ? seg(p, 0, lockAt, 1, params.rateB)
+      : p < settleAt
+        ? params.rateB
+        : seg(p, settleAt, settleBy, params.rateB, 1);
+  return { outgoing: out, incoming: inn };
 }
 
 export function pitchCentsAt(p: number, params: MashupParams): number {
-  if (Math.abs(params.pitchCentsB) < 0.5) return 0;
-  const rampIn = Math.min(0.22, Math.max(0.08, params.bassSwapAt * 0.72));
-  const holdEnd = Math.max(rampIn + 0.05, params.handoffAt);
-  if (p < rampIn) return params.pitchCentsB * smoothstep(p / Math.max(0.001, rampIn));
-  if (p <= holdEnd) return params.pitchCentsB;
-  const t = smoothstep((p - holdEnd) / Math.max(0.001, 1 - holdEnd));
-  return params.pitchCentsB * (1 - t);
+  const target = params.pitchCentsB;
+  if (Math.abs(target) < 0.5) return 0;
+  const rampIn = clamp(params.bassSwapAt * 0.65, 0.08, 0.2);
+  const { settleAt, settleBy } = landSettle(params);
+  const holdEnd = Math.max(rampIn + 0.05, Math.min(settleAt, rampIn + 0.5));
+  if (p <= rampIn) return seg(p, 0, rampIn, 0, target);
+  if (p <= holdEnd) return target;
+  return seg(p, holdEnd, settleBy, target, 0);
 }
 
 export function phaseLabel(p: number, params: MashupParams): string {
@@ -297,22 +415,20 @@ export function phaseLabel(p: number, params: MashupParams): string {
   }
   const aReady = Math.max(0.04, params.dsp.instrAAt);
   const bOpen = Math.max(aReady + 0.05, params.dsp.vocalBAt);
-  if (
-    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
-    p >= aReady &&
-    p < bOpen
-  ) {
+  if (params.dsp.mashupMode === "acapellaDrop" && p >= aReady && p < bOpen) {
     return "A INSTR";
   }
-  if (
-    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
-    p >= bOpen &&
-    p < params.handoffAt
-  ) {
+  if (params.dsp.mashupMode === "acapellaDrop" && p >= bOpen && p < params.handoffAt) {
     return "B VOCAL";
   }
+  if (params.dsp.mashupMode === "safeExit") {
+    if (p < params.bassSwapAt) return "INVITE B";
+    if (p < params.handoffAt - 0.06) return "ONE BASS";
+    if (p < params.handoffAt + 0.12) return "ECHO EXIT";
+    return "LAND";
+  }
   if (params.archetype === "cutOnOne") {
-    if (p < params.handoffAt - 0.05) return "PHRASE";
+    if (p < params.handoffAt - 0.05) return "SAFE EXIT";
     if (p < params.handoffAt + 0.08) return "CUT ON 1";
     return "LAND";
   }
@@ -327,14 +443,10 @@ export function phaseLabel(p: number, params: MashupParams): string {
     return "INVITE B";
   }
   if (p < params.handoffAt) {
-    if (params.dsp.vocalBAt <= p && params.dsp.mashupMode === "vocalSwap") return "VOCAL SWAP";
     return "ONE BASS";
   }
   if (p < Math.min(0.88, params.handoffAt + 0.22)) {
     if (params.archetype === "seamlessLoop") return "LONG BLEND";
-    if (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") {
-      return "MASHUP";
-    }
     return "MASHUP";
   }
   return "LAND";

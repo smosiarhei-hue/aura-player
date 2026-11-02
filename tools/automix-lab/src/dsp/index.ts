@@ -8,6 +8,7 @@
  *   FilterSweepNode     — HPF riser / LPF reveal
  *   EchoOutNode         — tempo-synced echo-out
  *   stemFxAt            — envelopes that drive stems+FX through DJ acts
+ *   timeStretchBuffer   — offline WSOLA-lite tempo change, original pitch
  */
 
 export {
@@ -18,9 +19,18 @@ export {
   applySidechainDuck,
   sliceBuffer,
   type StemMode,
+  type InstrCarve,
 } from "./vocalInstrumental";
 export { BassEqNode } from "./bassEq";
 export { FilterSweepNode } from "./filters";
 export { EchoOutNode } from "./echo";
 export { stemFxAt, type StemFxAt } from "./stemEnvelopes";
 export { setParam, clamp } from "./param";
+export {
+  timeStretchBuffer,
+  stretchPlaybackWindow,
+  beatmatchTransport,
+  tempoNeedsPitchLock,
+  tempoPitchCompensationCents,
+  type BeatmatchTransport,
+} from "./timeStretch";

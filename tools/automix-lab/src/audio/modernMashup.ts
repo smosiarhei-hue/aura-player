@@ -1,21 +1,21 @@
 /**
  * Modern mashup craft — how the Automix window should *sound*.
  *
- * Canonical handoff the user wants:
- *   A → instrumental bed (lead gone)
- *   B → vocal on the grid (BPM / bar / Camelot)
- *   Never two leads stacked.
+ * Hard product rule:
+ *   Dual mashup (A bed × B vocal) ONLY when A outro is already instrumental.
+ *   If A still sings at the mix-out → Safe Exit — still a long AutoMix phrase
+ *   (LOCK / bass / echo LAND), never a 1s blink and never two full leads.
  *
  * Modes:
  *   acapellaDrop  — A outro already a bed → B vocal invites early
- *   vocalSwap     — both still sing → carve A first, only then open B lead
+ *   safeExit      — A still sings → phrase-length Automix, one lead
  *   textureBed    — A still sings × B instrumental bed (no B vocalize)
  *   instrumentalWash — both beds → filter/texture drama
  */
 
 export type ModernMashupMode =
   | "acapellaDrop"
-  | "vocalSwap"
+  | "safeExit"
   | "textureBed"
   | "instrumentalWash";
 
@@ -42,7 +42,7 @@ export type ModernMashupCraft = {
 
 /**
  * Pick the modern mashup grammar from measured vocal presence at cues.
- * Hard rule when B has a lead: A becomes the bed BEFORE B vocal opens.
+ * Dual-layer B vocal is allowed ONLY when A outro is already a bed.
  */
 export function chooseModernMashup(
   vocalOut: number,
@@ -50,20 +50,22 @@ export function chooseModernMashup(
   bassSwapAt: number,
   handoffAt: number
 ): ModernMashupCraft {
-  const aHasVocal = vocalOut >= 0.42;
+  // Strict: "instrumental outro" — not Mid/Side hope.
+  const aIsInstrOutro = vocalOut < 0.35;
   const bHasVocal = vocalIn >= 0.4;
   const bass = Math.min(0.55, Math.max(0.14, bassSwapAt));
   const handoff = Math.min(0.78, Math.max(bass + 0.12, handoffAt));
 
   // Ideal: A outro already a bed × B full mix.
-  if (!aHasVocal && bHasVocal) {
+  // B's lead opens just after A is a bed — still inside the invite, not at LAND.
+  if (aIsInstrOutro && bHasVocal) {
     return {
       mode: "acapellaDrop",
       label: "Acapella Drop",
-      aInstrReadyAt: 0.06,
-      bVocalOpenAt: 0.08,
-      dualLayerPeak: 0.92,
-      bakeInstrA: vocalOut >= 0.28, // residual lead still in A → carve it
+      aInstrReadyAt: 0.08,
+      bVocalOpenAt: 0.12,
+      dualLayerPeak: 0.86,
+      bakeInstrA: vocalOut >= 0.18, // residual center vocal → carve, clean beds stay dry
       bakeInstrB: false,
       bakeVocalB: false,
       sidechainA: 0,
@@ -71,35 +73,31 @@ export function chooseModernMashup(
     };
   }
 
-  // Both still sing: A must finish instrumentalize before B lead opens.
-  if (aHasVocal && bHasVocal) {
-    const aReady = Math.min(0.14, Math.max(0.06, bass * 0.4));
-    // At least ~22% of the blend (~1–2 bars) of A-as-bed under B groove, then B vocal.
-    const bOpen = Math.min(
-      Math.max(aReady + 0.22, bass + 0.14, 0.34),
-      Math.max(aReady + 0.22, handoff - 0.06)
-    );
+  // A still sings → NO dual mashup. Still a full Automix phrase (not Crossfade).
+  if (!aIsInstrOutro && bHasVocal) {
     return {
-      mode: "vocalSwap",
-      label: "Vocal Relay",
-      aInstrReadyAt: aReady,
-      bVocalOpenAt: bOpen,
-      dualLayerPeak: 0.9,
-      bakeInstrA: true,
-      bakeInstrB: true,
+      mode: "safeExit",
+      label: "Safe Exit",
+      aInstrReadyAt: 0.48,
+      bVocalOpenAt: 0.58,
+      dualLayerPeak: 0.22,
+      bakeInstrA: false,
+      bakeInstrB: false,
       bakeVocalB: false,
       sidechainA: 0,
-      story: "A → instrumental · then B vocal on grid (BPM/bar/key) · no dual lead",
+      story: "A outro still sings → LOCK · ONE BASS · Echo Exit · LAND",
     };
   }
 
-  if (aHasVocal && !bHasVocal) {
+  if (!aIsInstrOutro && !bHasVocal) {
     return {
       mode: "textureBed",
       label: "Texture Bed",
       aInstrReadyAt: 0.28,
       bVocalOpenAt: 0.55,
-      dualLayerPeak: 0.7,
+      // 0.7 left A short while incoming lag kept B quiet — a hole at prog≈0.
+      // Stay near the lead; the bed fills under it instead of arriving late.
+      dualLayerPeak: 0.88,
       bakeInstrA: vocalOut >= 0.5,
       bakeInstrB: false,
       bakeVocalB: false,
@@ -108,6 +106,7 @@ export function chooseModernMashup(
     };
   }
 
+  void handoff;
   return {
     mode: "instrumentalWash",
     label: "Instrumental Wash",

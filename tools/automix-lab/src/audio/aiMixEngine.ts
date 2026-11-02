@@ -20,6 +20,7 @@ import {
 } from "./transitionPlanner";
 import { chooseModernMashup } from "./modernMashup";
 import { runMixCritic, type MixCriticReport } from "./mixCritic";
+import { applyPremiumLand } from "./premiumAutomix";
 
 export type AIMixPlan = {
   params: MashupParams;
@@ -34,6 +35,9 @@ export type AIMixPlan = {
   processing: string[];
   /** OpenSonic/DeckGhost-style preflight — Vocal Safe / Bass Surgeon if needed. */
   critic: MixCriticReport;
+  /** Vocal presence measured at the planned cues. */
+  vocalOut: number;
+  vocalIn: number;
 };
 
 function meanTail(values: number[], fromFrac = 0.7): number {
@@ -49,7 +53,7 @@ function meanTail(values: number[], fromFrac = 0.7): number {
 }
 
 /** Vocal level specifically around mixOut / mixIn windows. */
-function vocalNear(profile: TrackAIProfile, sec: number, windowSec = 8): number {
+export function vocalLevelNear(profile: TrackAIProfile, sec: number, windowSec = 8): number {
   const hop = 0.25;
   const i0 = Math.max(0, Math.floor((sec - windowSec * 0.25) / hop));
   const i1 = Math.min(profile.vocalPresence.length, Math.ceil((sec + windowSec * 0.75) / hop));
@@ -67,6 +71,36 @@ function energyNear(profile: TrackAIProfile, sec: number, windowSec = 8): number
   let s = 0;
   for (let i = i0; i < i1; i++) s += profile.energy[i]!;
   return s / (i1 - i0);
+}
+
+/**
+ * Prefer an earlier instrumental bed so Acapella Drop can fire instead of Safe Exit.
+ * Scans [earliest, latest] for the lowest vocal window that still has energy.
+ */
+function findBestInstrumentalCue(
+  profile: TrackAIProfile,
+  earliest: number,
+  latest: number,
+  bpm: number
+): { cue: number; vocal: number } {
+  const hop = 0.25;
+  const lo = Math.max(0, earliest);
+  const hi = Math.max(lo, latest);
+  let bestSec = snapToBar(Math.min(hi, Math.max(lo, profile.mixOutSec)), bpm);
+  let bestVocal = vocalLevelNear(profile, bestSec, 8);
+  let bestScore = -1e9;
+  for (let sec = lo; sec <= hi; sec += hop * 4) {
+    const v = vocalLevelNear(profile, sec, 8);
+    const e = energyNear(profile, sec, 8);
+    // Prefer bed (low vocal) with remaining groove; slight bias toward later exits.
+    const score = (1 - v) * 1.35 + e * 0.45 + ((sec - lo) / Math.max(1, hi - lo)) * 0.12;
+    if (score > bestScore) {
+      bestScore = score;
+      bestVocal = v;
+      bestSec = sec;
+    }
+  }
+  return { cue: snapToBar(bestSec, bpm), vocal: bestVocal };
 }
 
 function snapToBar(sec: number, bpm: number): number {
@@ -91,9 +125,12 @@ function phraseBars(
   barSec: number,
   archetype: MashupParams["archetype"]
 ): number {
+  // Prefer a full 16-bar story — rushed 4-bar mashups feel like a blink.
   if (archetype === "seamlessLoop" && availableOutro >= barSec * 14) return 16;
   if (availableOutro >= barSec * 14) return 16;
+  if (availableOutro >= barSec * 10) return 12;
   if (availableOutro >= barSec * 7) return 8;
+  if (availableOutro >= barSec * 5) return 6;
   if (availableOutro >= barSec * 3.5) return 4;
   return Math.max(2, availableOutro / barSec);
 }
@@ -125,12 +162,14 @@ function buildDspRecipe(
   );
   dsp.mashupMode = craft.mode;
   dsp.sidechainA = craft.sidechainA;
+  dsp.dualLayerPeak = craft.dualLayerPeak;
   decisions.push(`Mashup craft: ${craft.label} — ${craft.story}`);
 
   switch (craft.mode) {
     case "acapellaDrop": {
-      // A is (or becomes) the bed; B keeps full dry vocal on the grid.
-      dsp.instrAPeak = craft.bakeInstrA ? 0.95 : 0.35;
+      // A is the bed under B's dry lead. Peak stays high so gates see one vocal;
+      // bake (nuclear carve) only when the outro still has a center vocal.
+      dsp.instrAPeak = 0.96;
       dsp.instrAAt = craft.aInstrReadyAt;
       dsp.instrBPeak = 0;
       dsp.instrBUntil = 0.04;
@@ -145,22 +184,22 @@ function buildDspRecipe(
       decisions.push("Acapella Drop: A instrumental bed × B vocal on grid");
       break;
     }
-    case "vocalSwap": {
-      // Hard relay: A fully instrumental BEFORE B lead opens — no dual stack.
-      dsp.instrAPeak = 0.98;
-      dsp.instrAAt = craft.aInstrReadyAt;
-      dsp.instrBPeak = 0.95;
-      dsp.instrBUntil = craft.bVocalOpenAt;
-      dsp.vocalBPeak = 0; // dry B after open (full lead, not thinned vocalize)
-      dsp.vocalBAt = craft.bVocalOpenAt;
-      dsp.vocalDuckBDb = -3;
-      dsp.bakeInstrA = true;
-      dsp.bakeInstrB = true;
+    case "safeExit": {
+      // A outro still sings — refuse dual mashup, keep a full AutoMix phrase.
+      dsp.instrAPeak = 0;
+      dsp.instrAAt = 0.5;
+      dsp.instrBPeak = 0;
+      dsp.instrBUntil = 0.05;
+      dsp.vocalBPeak = 0;
+      dsp.vocalBAt = 0.85;
+      dsp.vocalDuckBDb = 0;
+      dsp.bakeInstrA = false;
+      dsp.bakeInstrB = false;
       dsp.bakeVocalB = false;
-      dsp.bakeStems = true;
+      dsp.bakeStems = false;
       dsp.sidechainA = 0;
       decisions.push(
-        `Vocal Relay: A instr @ ${((craft.aInstrReadyAt * 100) | 0)}% → B vocal @ ${((craft.bVocalOpenAt * 100) | 0)}%`
+        "Safe Exit: A still sings → phrase Automix (LOCK/bass/echo), one lead"
       );
       break;
     }
@@ -177,6 +216,8 @@ function buildDspRecipe(
       dsp.bakeVocalB = false;
       dsp.bakeStems = craft.bakeInstrA;
       dsp.sidechainA = 0;
+      // A long lag parks B at silence under a quieter outro (level hole).
+      params.incomingVolumeLag = Math.min(params.incomingVolumeLag, 0.05);
       decisions.push("Texture Bed: мягкий carve A × B dry");
       break;
     }
@@ -262,6 +303,120 @@ function buildDspRecipe(
   return dsp;
 }
 
+const PHASE_ALIGN_MIN_CONFIDENCE = 0.62;
+
+export type PhaseAlign = {
+  cueA: number;
+  cueB: number;
+  nudged: boolean;
+  deltaA: number;
+  deltaB: number;
+  note: string | null;
+};
+
+function beatFraction(sec: number, downbeatSec: number, beatSec: number): number {
+  const x = (sec - downbeatSec) / beatSec;
+  let f = x - Math.floor(x);
+  if (f < 0) f += 1;
+  return f;
+}
+
+/** Signed distance in cycles, wrapped to (-0.5, 0.5]. */
+function wrapHalf(delta: number): number {
+  let x = delta - Math.floor(delta);
+  if (x > 0.5) x -= 1;
+  return x;
+}
+
+function clampMove(
+  cue: number,
+  delta: number,
+  beatSec: number,
+  lo: number,
+  hi: number
+): number {
+  const half = 0.5 * beatSec;
+  let d = delta;
+  if (d > half) d = half;
+  if (d < -half) d = -half;
+  const minD = lo - cue;
+  const maxD = hi - cue;
+  if (d < minD) d = minD;
+  if (d > maxD) d = maxD;
+  if (d > half) d = half;
+  if (d < -half) d = -half;
+  return d;
+}
+
+/**
+ * Slip cueA/cueB by at most half a beat so their kick phases match.
+ * No-op unless both downbeat confidences are high.
+ */
+export function alignBeatPhase(opts: {
+  cueA: number;
+  cueB: number;
+  bpmA: number;
+  bpmB: number;
+  downbeatA: number;
+  downbeatB: number;
+  confidenceA: number;
+  confidenceB: number;
+  bpmConfidenceA?: number;
+  bpmConfidenceB?: number;
+  limitA: [number, number];
+  limitB: [number, number];
+}): PhaseAlign {
+  const stay: PhaseAlign = {
+    cueA: opts.cueA,
+    cueB: opts.cueB,
+    nudged: false,
+    deltaA: 0,
+    deltaB: 0,
+    note: null,
+  };
+  if (!(opts.bpmA > 30 && opts.bpmB > 30)) return stay;
+  if (
+    opts.confidenceA < PHASE_ALIGN_MIN_CONFIDENCE ||
+    opts.confidenceB < PHASE_ALIGN_MIN_CONFIDENCE
+  ) {
+    return stay;
+  }
+  if ((opts.bpmConfidenceA ?? 1) < 0.35 || (opts.bpmConfidenceB ?? 1) < 0.35) return stay;
+
+  const beatA = 60 / opts.bpmA;
+  const beatB = 60 / opts.bpmB;
+  const fracA = beatFraction(opts.cueA, opts.downbeatA, beatA);
+  const fracB = beatFraction(opts.cueB, opts.downbeatB, beatB);
+  // Beats to add to B's fraction (and remove from A's) so the grids meet.
+  const error = wrapHalf(fracA - fracB);
+  if (Math.abs(error) < 0.04) return stay;
+
+  const loA = Math.min(opts.limitA[0], opts.limitA[1]);
+  const hiA = Math.max(opts.limitA[0], opts.limitA[1]);
+  const loB = Math.min(opts.limitB[0], opts.limitB[1]);
+  const hiB = Math.max(opts.limitB[0], opts.limitB[1]);
+
+  let dA = clampMove(opts.cueA, (-error / 2) * beatA, beatA, loA, hiA);
+  let dB = clampMove(opts.cueB, (error / 2) * beatB, beatB, loB, hiB);
+  let remain = error - (dB / beatB - dA / beatA);
+  if (Math.abs(remain) > 0.03) {
+    dB = clampMove(opts.cueB, dB + remain * beatB, beatB, loB, hiB);
+    remain = error - (dB / beatB - dA / beatA);
+    dA = clampMove(opts.cueA, dA - remain * beatA, beatA, loA, hiA);
+  }
+  if (Math.abs(dA) < 0.004 && Math.abs(dB) < 0.004) return stay;
+
+  const ms = (s: number) => `${s >= 0 ? "+" : ""}${Math.round(s * 1000)}ms`;
+  return {
+    cueA: opts.cueA + dA,
+    cueB: opts.cueB + dB,
+    nudged: true,
+    deltaA: dA,
+    deltaB: dB,
+    note: `phase align A ${ms(dA)} · B ${ms(dB)}`,
+  };
+}
+
 /**
  * Full auto plan per TZ: Analyzer → Transition Planner → DSP recipe → play.
  */
@@ -316,51 +471,126 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   let cueA = snapToBar(a.mixOutSec, a.bpm || bpmGrid);
   let cueB = snapMixIn(b.mixInSec, b.bpm || bpmGrid);
 
+  // AutoMix wants a real phrase (12–16 bars), not a Crossfade blink.
+  // Prefer an instrumental bed when one exists so Acapella Drop can fire —
+  // but never discard a confident Whisper/LRC phrase exit for a random bed.
+  const introVocal = vocalLevelNear(b, Math.max(0, b.mixInSec), 8);
   const minOutroSec =
     decision.type === "cutOnOne"
-      ? Math.max(4, barSec * 2)
-      : decision.type === "echoOut"
-        ? Math.max(16, barSec * 8) // leave a full phrase for echo→LAND
-        : Math.max(16, barSec * 8);
+      ? Math.max(12, barSec * 6)
+      : Math.max(24, barSec * 12);
   const latestCueA = Math.max(0, a.durationSec - minOutroSec);
-  const earliestCueA = Math.min(latestCueA, a.durationSec * 0.7);
-  cueA = Math.min(latestCueA, Math.max(earliestCueA, cueA));
+  const earliestCueA = Math.min(latestCueA, a.durationSec * 0.58);
+  const neuralTrusted =
+    /neural|LRC|Whisper|energy×lyrics|lyrics/i.test(a.reason || "") &&
+    a.mixOutSec >= earliestCueA &&
+    a.mixOutSec <= latestCueA + 0.5;
+  const bedHunt = findBestInstrumentalCue(
+    a,
+    earliestCueA,
+    latestCueA,
+    a.bpm || bpmGrid
+  );
+  const neuralVocal = vocalLevelNear(a, cueA, 8);
+  // Steal Acapella only when the bed is clearly cleaner than the neural cue
+  // and lyrics didn't already plant a strong phrase exit mid-vocal.
+  const preferBed =
+    bedHunt.vocal < 0.32 &&
+    introVocal >= 0.4 &&
+    (!neuralTrusted || neuralVocal >= 0.42) &&
+    bedHunt.vocal + 0.08 < neuralVocal;
+  const acapellaCandidate = preferBed || (neuralVocal < 0.35 && introVocal >= 0.4);
+  if (preferBed) {
+    cueA = bedHunt.cue;
+  } else if (neuralTrusted) {
+    cueA = Math.min(latestCueA, Math.max(earliestCueA, a.mixOutSec));
+  } else {
+    cueA = Math.min(latestCueA, Math.max(earliestCueA, cueA));
+  }
   cueA = snapToBar(cueA, a.bpm || bpmGrid);
-  if (cueA > latestCueA) cueA = Math.max(0, latestCueA - (latestCueA % Math.max(barSec, 0.001)));
+  if (cueA > latestCueA) {
+    cueA = Math.max(0, latestCueA - (latestCueA % Math.max(barSec, 0.001)));
+  }
 
   const maxCueB = Math.max(barSec * 2, Math.min(b.durationSec * 0.28, 48));
-  if (b.mixInSec > 0.5 && cueB < 0.5) cueB = snapMixIn(b.mixInSec, b.bpm || bpmGrid);
+  // B mixIn: trust lyrics/neural intro when present (written onto profile.mixInSec).
+  if (b.mixInSec > 0.5) cueB = snapMixIn(b.mixInSec, b.bpm || bpmGrid);
   cueB = Math.min(Math.max(0, cueB), maxCueB);
 
   const availableOutro = Math.max(minOutroSec, a.durationSec - cueA);
   const bars = phraseBars(availableOutro, barSec, archetype);
-  let blend = Math.min(36, Math.max(minOutroSec, Math.min(bars * barSec, availableOutro)));
+  // Cap 48s — DJ mashup story, not a blink. Floor ~12 bars when outro allows.
+  let blend = Math.min(48, Math.max(minOutroSec, Math.min(bars * barSec, availableOutro)));
   if (decision.type === "cutOnOne") {
-    blend = Math.min(blend, Math.max(barSec * 2, 4));
+    // Last-resort splice — still several bars, never a sample blink.
+    blend = Math.min(blend, Math.max(barSec * 6, 12));
   } else if (decision.type === "echoOut") {
-    // Echo needs a real phrase: 8 bars when outro allows, never a 8–10s limp fade.
-    const echoFloor = Math.max(barSec * 8, 16);
-    const echoCeil = Math.max(echoFloor, Math.min(availableOutro, barSec * 12));
+    const echoFloor = Math.max(barSec * 12, 24);
+    const echoCeil = Math.max(echoFloor, Math.min(availableOutro, barSec * 16));
     blend = Math.min(Math.max(blend, echoFloor), echoCeil);
-  } else if (decision.type === "longBlend") {
+  } else if (decision.type === "longBlend" || acapellaCandidate) {
     blend = Math.max(blend, Math.min(availableOutro, barSec * 16));
+  } else {
+    // EQ / Filter / Smart — at least ~12 bars when outro allows.
+    blend = Math.max(blend, Math.min(availableOutro, Math.max(barSec * 12, 24)));
   }
-  // TZ §5: incompatible keys → avoid *long* harmonic blend (32s), keep an 8-bar phrase.
+  // TZ §5: incompatible keys → keep a phrase, not a 4s cut unless forced.
   if (!decision.harmonic.isNaturallyCompatible && decision.type !== "cutOnOne") {
-    const phrase8 = Math.max(barSec * 8, 16);
     const phrase12 = Math.max(barSec * 12, 24);
+    const phrase16 = Math.max(barSec * 16, 28);
     if (decision.type === "longBlend" || decision.type === "eqBlend") {
-      blend = Math.min(blend, phrase12);
+      blend = Math.min(Math.max(blend, phrase12), Math.min(availableOutro, phrase16));
     } else if (decision.type === "smartCrossfade") {
-      blend = Math.max(Math.min(blend, phrase8), Math.min(phrase8, availableOutro));
+      blend = Math.max(Math.min(blend, phrase12), Math.min(phrase12, availableOutro));
     }
+  }
+  // Never park cue so late that AutoMix collapses into Crossfade length.
+  {
+    const want = Math.min(48, Math.max(blend, Math.min(availableOutro, barSec * 12)));
+    const notBefore = Math.max(0, a.durationSec - want);
+    if (cueA > notBefore) {
+      cueA = snapToBar(notBefore, a.bpm || bpmGrid);
+      if (cueA > notBefore) cueA = Math.max(0, notBefore);
+    }
+    const room = Math.max(4, a.durationSec - cueA);
+    blend = Math.max(4, Math.min(Math.max(blend, Math.min(room, want)), room));
   }
   params.blendDurationSec = blend;
   params.cueASec = cueA;
   params.cueBSec = cueB;
 
-  const vocalOut = vocalNear(a, cueA, Math.min(12, params.blendDurationSec));
-  const vocalIn = vocalNear(b, cueB, Math.min(12, params.blendDurationSec));
+  // Beat phase: slip at most half a beat when the kick grid is confident.
+  // Bar snap already ran — this is a small correction, not a new phrase.
+  let phaseNote: string | null = null;
+  if (tempo && !abandonStretch) {
+    const latestA = Math.max(0, a.durationSec - Math.max(4, params.blendDurationSec));
+    const aligned = alignBeatPhase({
+      cueA,
+      cueB,
+      bpmA: a.bpm,
+      bpmB: b.bpm,
+      downbeatA: a.downbeatSec ?? 0,
+      downbeatB: b.downbeatSec ?? 0,
+      confidenceA: a.downbeatConfidence ?? 0,
+      confidenceB: b.downbeatConfidence ?? 0,
+      bpmConfidenceA: a.bpmConfidence,
+      bpmConfidenceB: b.bpmConfidence,
+      limitA: [0, latestA],
+      limitB: [0, maxCueB],
+    });
+    if (aligned.nudged) {
+      cueA = aligned.cueA;
+      cueB = aligned.cueB;
+      params.cueASec = cueA;
+      params.cueBSec = cueB;
+      const room = Math.max(4, a.durationSec - cueA);
+      if (params.blendDurationSec > room) params.blendDurationSec = room;
+      phaseNote = aligned.note;
+    }
+  }
+
+  let vocalOut = vocalLevelNear(a, cueA, Math.min(12, params.blendDurationSec));
+  let vocalIn = vocalLevelNear(b, cueB, Math.min(12, params.blendDurationSec));
   const energyOut = energyNear(a, cueA, 10);
   const energyIn = energyNear(b, cueB, 10);
 
@@ -410,14 +640,21 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
   }
 
   if (vocalOut < 0.42) {
-    // A already a bed — invite B sooner, but keep lag ≥0.06 so volumes stay smooth.
-    params.incomingVolumeLag = Math.max(0.06, params.incomingVolumeLag * 0.7);
+    // A already a bed — invite B sooner, but keep lag ≥0.08 so volumes stay smooth.
+    params.incomingVolumeLag = Math.max(0.08, params.incomingVolumeLag * 0.85);
     params.outgoingVolumeHold = Math.min(0.7, params.outgoingVolumeHold + 0.1);
-    params.bassSwapAt = Math.max(0.14, params.bassSwapAt - 0.04);
+    params.bassSwapAt = Math.max(0.16, params.bassSwapAt - 0.03);
   } else {
-    params.outgoingVolumeHold = Math.max(0.28, params.outgoingVolumeHold - 0.06);
-    params.incomingVolumeLag = Math.min(0.2, params.incomingVolumeLag + 0.04);
-    params.handoffAt = Math.min(0.62, params.handoffAt + 0.04);
+    params.outgoingVolumeHold = Math.max(0.3, params.outgoingVolumeHold - 0.04);
+    params.incomingVolumeLag = Math.min(0.22, params.incomingVolumeLag + 0.05);
+    params.handoffAt = Math.min(0.64, params.handoffAt + 0.05);
+  }
+
+  // Long windows: stretch invite/handoff so mashup doesn't feel like a blink.
+  if (params.blendDurationSec >= 20 && decision.type !== "cutOnOne") {
+    params.incomingVolumeLag = Math.max(0.1, Math.min(0.22, params.incomingVolumeLag + 0.03));
+    params.outgoingVolumeHold = Math.max(params.outgoingVolumeHold, 0.36);
+    params.handoffAt = Math.min(0.66, Math.max(params.handoffAt, 0.56));
   }
 
   if (vocalIn > 0.55 && vocalOut < 0.45) {
@@ -437,35 +674,117 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
 
   params.dsp = buildDspRecipe(a, b, params, vocalOut, vocalIn, energyOut, energyIn);
 
-  // Vocal Relay: A bed first, then B vocal — handoff after B lead opens.
-  if (
-    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
-    params.dsp.instrAPeak >= 0.5
-  ) {
-    const aReady = params.dsp.instrAAt;
-    const open = Math.max(params.dsp.vocalBAt, aReady + 0.18);
-    params.dsp.vocalBAt = open;
-    params.dsp.instrBUntil = Math.max(params.dsp.instrBUntil, open);
-    params.handoffAt = Math.min(0.8, Math.max(open + 0.1, params.handoffAt));
-    // Keep A texture under B vocal (instrumental bed), not A's lead.
-    params.outgoingVolumeHold = Math.min(params.outgoingVolumeHold, Math.max(0.2, open - 0.06));
+  if (params.dsp.mashupMode === "acapellaDrop") {
+    const twelve = Math.max(barSec * 12, 20);
+    const sixteen = Math.min(48, Math.max(twelve, barSec * 16));
+    const roomNow = Math.max(4, a.durationSec - params.cueASec);
+    if (roomNow < twelve * 0.85) {
+      const earlier = Math.max(0, a.durationSec - sixteen);
+      const mixOut = snapToBar(Math.max(0, a.mixOutSec), a.bpm || bpmGrid);
+      const pulled = snapToBar(
+        Math.max(earlier, Math.min(params.cueASec, mixOut)),
+        a.bpm || bpmGrid
+      );
+      if (vocalLevelNear(a, pulled, 8) < 0.35) {
+        params.cueASec = Math.max(0, Math.min(pulled, Math.max(0, a.durationSec - 4)));
+      }
+    }
+    const room = Math.max(4, a.durationSec - params.cueASec);
+    params.blendDurationSec = Math.min(
+      48,
+      Math.max(params.blendDurationSec, Math.min(room, sixteen))
+    );
+    vocalOut = vocalLevelNear(a, params.cueASec, Math.min(12, params.blendDurationSec));
+    vocalIn = vocalLevelNear(b, params.cueBSec, Math.min(12, params.blendDurationSec));
   }
 
-  // Relay wants a real tempo lock + Camelot pitch when the stretch is viable.
+  // Safe Exit: A still sings. Full AutoMix phrase (LOCK→bass→echo LAND), one lead.
+  if (params.dsp.mashupMode === "safeExit") {
+    // Prefer Echo Out drama over Cut — Cut only when tempos truly refuse lock.
+    if (params.archetype === "cutOnOne" && beatmatched) {
+      params.archetype = "echoOut";
+    } else if (params.archetype !== "cutOnOne") {
+      params.archetype = "echoOut";
+    }
+    const twelve = Math.max(barSec * 12, 24);
+    const sixteen = Math.min(48, Math.max(twelve, barSec * 16));
+    const room = Math.max(4, a.durationSec - params.cueASec);
+    params.blendDurationSec = Math.min(
+      48,
+      Math.max(params.blendDurationSec, Math.min(room, sixteen))
+    );
+    params.handoffAt = Math.min(0.68, Math.max(0.52, params.handoffAt));
+    params.outgoingVolumeHold = Math.min(params.outgoingVolumeHold, params.handoffAt - 0.18);
+    params.incomingVolumeLag = Math.max(0.1, params.incomingVolumeLag);
+    params.bassSwapAt = Math.min(
+      Math.max(0.22, params.bassSwapAt),
+      params.handoffAt - 0.14
+    );
+    params.dsp.echoAPeak = Math.max(0.45, Math.min(0.75, params.dsp.echoAPeak || 0.55));
+    params.dsp.hpfAPeak = Math.max(0.55, params.dsp.hpfAPeak);
+    params.dsp.decisions = [
+      ...params.dsp.decisions,
+      `Safe Exit · AutoMix phrase ${params.blendDurationSec.toFixed(0)}s · LOCK → ONE BASS → Echo LAND`,
+    ];
+  }
+
+  // Acapella Drop only: quiet A bed under B vocal, capped echo.
+  if (params.dsp.mashupMode === "acapellaDrop" && params.dsp.instrAPeak >= 0.2) {
+    const open = Math.max(0.06, params.dsp.vocalBAt);
+    params.dsp.vocalBAt = open;
+    params.handoffAt = Math.min(0.8, Math.max(open + 0.12, params.handoffAt));
+    params.outgoingVolumeHold = Math.min(params.outgoingVolumeHold, 0.28);
+    params.dsp.echoAPeak = Math.min(0.22, params.dsp.echoAPeak * 0.35);
+    params.dsp.decisions = [
+      ...params.dsp.decisions,
+      "Acapella Drop: A bed under B · echo capped",
+    ];
+  }
+
+  // Acapella wants tempo lock when stretch is viable.
   if (
-    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
+    params.dsp.mashupMode === "acapellaDrop" &&
     tempo &&
-    !beatmatched &&
     Math.max(Math.abs(tempo.rateA - 1), Math.abs(tempo.rateB - 1)) <= 0.16
   ) {
     params.rateA = tempo.rateA;
     params.rateB = tempo.rateB;
     params.targetBPM = tempo.targetBPM;
+    beatmatched = true;
   }
+
+  params.dsp.guardVocalOut = vocalOut;
+  params.dsp.guardVocalIn = vocalIn;
+
+  // Phrase-snap LAND first so the critic can still pull bass/vocals back into budget.
+  const drafted = applyPremiumLand({
+    params,
+    profileA: a,
+    profileB: b,
+    reason: "",
+    story: "",
+    archetype,
+    transitionType: decision.type,
+    beatmatched,
+    processing: [],
+    critic: {
+      ok: true,
+      score: 0,
+      gates: [],
+      vocalClashBeats: 0,
+      vocalClashFrac: 0,
+      bassClashFrac: 0,
+      bassClashBeats: 0,
+      fixes: [],
+      mode: "pass",
+    },
+    vocalOut,
+    vocalIn,
+  });
 
   // Mix Critic (OpenSonic verify + DeckGhost Vocal Safe / Bass Surgeon).
   const critic = runMixCritic({
-    params,
+    params: drafted.params,
     vocalOut,
     vocalIn,
     bpm: bpmGrid,
@@ -476,10 +795,10 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
 
   const craftLabel =
     params.dsp.mashupMode === "acapellaDrop"
-      ? "B vocal early"
-      : params.dsp.mashupMode === "vocalSwap"
-        ? "Vocal Swap"
-        : vocalOut < 0.42
+      ? "A instr × B vocal"
+      : params.dsp.mashupMode === "safeExit"
+        ? "Safe Exit (A still sings)"
+        : vocalOut < 0.35
           ? "INVITE B vocal"
           : "INVITE B drums";
 
@@ -487,8 +806,11 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     transitionTypeLabel(decision.type),
     craftLabel,
     decision.type === "cutOnOne" ? "CUT" : "ONE BASS",
+    params.pitchCentsB ? `KEY ${params.pitchCentsB >= 0 ? "+" : ""}${params.pitchCentsB | 0}¢` : null,
     decision.type === "echoOut" ? "ECHO→LAND" : "MASHUP→LAND",
-  ].join(" → ");
+  ]
+    .filter(Boolean)
+    .join(" → ");
 
   const criticLine = critic.ok
     ? `Mix Critic ${critic.score}/100 · pass`
@@ -506,21 +828,49 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
     params.pitchCentsB
       ? `Camelot pitch B ${params.pitchCentsB >= 0 ? "+" : ""}${params.pitchCentsB | 0}¢`
       : null,
-    `cues A@${cueA.toFixed(1)}s → B@${cueB.toFixed(1)}s · ${bars | 0} bars · ${params.blendDurationSec.toFixed(1)}s`,
+    phaseNote,
+    `cues A@${params.cueASec.toFixed(1)}s → B@${params.cueBSec.toFixed(1)}s · ${(params.blendDurationSec / barSec) | 0} bars · ${params.blendDurationSec.toFixed(1)}s`,
     `vocalOut ${(vocalOut * 100) | 0}% / vocalIn ${(vocalIn * 100) | 0}% · B vocal @ ${((params.dsp.vocalBAt * 100) | 0)}%`,
     ...params.dsp.decisions,
   ].filter(Boolean) as string[];
 
   return {
-    params,
-    profileA: a,
-    profileB: b,
+    ...drafted,
     reason: processing.slice(0, 2).join(" · "),
-    story,
-    archetype,
-    transitionType: decision.type,
-    beatmatched,
-    processing,
+    story: `${story} → ${drafted.story.replace(/^\s*→\s*/, "")}`,
+    processing: [
+      ...processing,
+      ...drafted.processing.filter((line) => line.startsWith("Premium") || line.startsWith("✓")),
+    ],
     critic,
+    vocalOut,
+    vocalIn,
   };
+}
+
+/**
+ * Re-measure isn't required — callers pass cue vocals after coach/LAND mutations.
+ * Mutates params when Vocal Safe or Bass Surgeon still fail.
+ */
+export function recheckMix(
+  plan: AIMixPlan,
+  vocalOut = plan.vocalOut,
+  vocalIn = plan.vocalIn
+): AIMixPlan {
+  plan.vocalOut = vocalOut;
+  plan.vocalIn = vocalIn;
+  plan.params.dsp.guardVocalOut = vocalOut;
+  plan.params.dsp.guardVocalIn = vocalIn;
+  const bpm =
+    plan.params.targetBPM > 30 ? plan.params.targetBPM : plan.profileB.bpm || 120;
+  plan.critic = runMixCritic({
+    params: plan.params,
+    vocalOut,
+    vocalIn,
+    bpm,
+    transitionType: plan.transitionType,
+    harmonicOk: plan.critic?.gates?.find((g) => g.id === "harmonic")?.ok ?? true,
+    beatmatched: plan.beatmatched,
+  });
+  return plan;
 }

@@ -14,6 +14,21 @@ const profiles: { a: TrackAIProfile | null; b: TrackAIProfile | null } = {
   b: null,
 };
 
+/** Last Auto Mix plan + meter trail for Playwright / computerUse proofs. */
+type MeterSample = {
+  t: number;
+  p: number;
+  phase: string;
+  instrA: number;
+  instrB: number;
+  volA: number;
+  volB: number;
+};
+let lastPlan: ReturnType<typeof planAutomix> | null = null;
+const meterTrail: MeterSample[] = [];
+/** Keep full blend (~16s @ 60fps) so Vocal Relay proof sees early A-bed window. */
+const MAX_TRAIL = 1200;
+
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <header class="hero">
@@ -21,10 +36,12 @@ app.innerHTML = `
     <p>
       Консоль сведения Sonivo: BPM и Camelot → тип перехода → bake вокал/инструментал
       на окне A+B → LOCK → MASHUP → LAND. Один проход через Auto Mix.
+      Dual mashup только если outro A уже инструментал — иначе Safe Exit.
     </p>
     <p class="hint">
-      <a href="/iphone.html">Макет Sonivo на iPhone</a>
-      — плеер и ручки как в приложении.
+      <a href="/">← Плеер Моя волна</a>
+      · DSP-консоль ниже ·
+      <a href="/iphone.html">макет iPhone</a>
     </p>
   </header>
 
@@ -82,7 +99,28 @@ app.innerHTML = `
 
       <div class="actions tight">
         <button class="ghost" id="loadSamples" type="button">Demo Midnight → Neon</button>
-        <button class="ghost" id="loadRealPair" type="button">nkeeei → Kai Angel</button>
+      </div>
+
+      <div class="ym-panel" id="ymPanel">
+        <div class="ym-head">
+          <strong>Яндекс Музыка · Моя волна</strong>
+          <span class="ym-login" id="ymLogin">не подключено</span>
+        </div>
+        <p class="hint ym-hint">
+          Device Flow → браузер → два трека из «Моей волны» на деки → Auto Mix.
+          Тест на реальных треках, не на промптах.
+        </p>
+        <div class="actions tight">
+          <button class="primary" id="ymConnect" type="button">Подключить Яндекс</button>
+          <button class="primary ai" id="ymWave" type="button" disabled>Моя волна → A/B</button>
+          <button class="ghost" id="ymLogout" type="button" disabled>Выйти</button>
+        </div>
+        <div class="ym-auth" id="ymAuth" hidden>
+          <div class="ym-code" id="ymCode">————</div>
+          <a class="ym-link" id="ymLink" href="#" target="_blank" rel="noopener">Открыть авторизацию</a>
+          <p class="hint" id="ymAuthHint">Введи код на странице Яндекса — Lab сам подхватит токен.</p>
+        </div>
+        <div class="ym-status" id="ymStatus">Ждём подключения…</div>
       </div>
 
       <div class="transport">
@@ -344,6 +382,8 @@ function runPlanFromProfiles() {
     throw new Error("Нужен AI-анализ обоих треков");
   }
   const plan = planAutomix(profiles.a, profiles.b);
+  lastPlan = plan;
+  meterTrail.length = 0;
   // Keep AI dsp recipe intact while syncing numeric knobs.
   const dsp = plan.params.dsp;
   applyParamsToUI(plan.params, plan.profileA.bpm, plan.profileB.bpm);
@@ -409,18 +449,214 @@ document.querySelector("#fileB")?.addEventListener("change", (e) => {
   void onFile("b", f);
 });
 
-async function loadUrlPair(urlA: string, urlB: string, nameA: string, nameB: string) {
+async function loadUrlPair(
+  urlA: string,
+  urlB: string,
+  nameA: string,
+  nameB: string,
+  opts?: { mime?: string; ext?: string }
+) {
   const err = document.querySelector("#error")!;
   err.textContent = "";
   setAiStatus(`Загрузка ${nameA} / ${nameB}…`);
   const [ra, rb] = await Promise.all([fetch(urlA), fetch(urlB)]);
   if (!ra.ok || !rb.ok) throw new Error("Не удалось скачать samples");
   const [ba, bb] = await Promise.all([ra.arrayBuffer(), rb.arrayBuffer()]);
-  const fa = new File([ba], `${nameA}.wav`, { type: "audio/wav" });
-  const fb = new File([bb], `${nameB}.wav`, { type: "audio/wav" });
+  const mime = opts?.mime ?? "audio/wav";
+  const ext = opts?.ext ?? "wav";
+  const fa = new File([ba], `${nameA}.${ext}`, { type: mime });
+  const fb = new File([bb], `${nameB}.${ext}`, { type: mime });
   await onFile("a", fa);
   await onFile("b", fb);
 }
+
+/* ─── Yandex Music · Моя волна ─────────────────────────────────────── */
+
+type YmStatus = {
+  connected: boolean;
+  login: string | null;
+  pending: {
+    userCode: string;
+    verificationUrl: string;
+    expiresAt: number;
+  } | null;
+};
+
+type YmWavePair = {
+  a: { id: string; title: string; artists: string; url: string; fileName: string };
+  b: { id: string; title: string; artists: string; url: string; fileName: string };
+};
+
+let ymPollTimer: number | null = null;
+
+function setYmStatus(msg: string) {
+  const el = document.querySelector("#ymStatus");
+  if (el) el.textContent = msg;
+}
+
+function setYmConnected(login: string | null) {
+  const loginEl = document.querySelector<HTMLElement>("#ymLogin")!;
+  const waveBtn = document.querySelector<HTMLButtonElement>("#ymWave")!;
+  const logoutBtn = document.querySelector<HTMLButtonElement>("#ymLogout")!;
+  const authEl = document.querySelector<HTMLElement>("#ymAuth")!;
+  if (login) {
+    loginEl.textContent = login;
+    loginEl.dataset.on = "1";
+    waveBtn.disabled = false;
+    logoutBtn.disabled = false;
+    authEl.hidden = true;
+    setYmStatus(`Подключено как ${login}. Жми «Моя волна → A/B».`);
+  } else {
+    loginEl.textContent = "не подключено";
+    delete loginEl.dataset.on;
+    waveBtn.disabled = true;
+    logoutBtn.disabled = true;
+  }
+}
+
+async function ymFetchStatus(): Promise<YmStatus> {
+  const r = await fetch("/api/ym/status");
+  if (!r.ok) throw new Error(`ym status ${r.status}`);
+  return (await r.json()) as YmStatus;
+}
+
+function stopYmPoll() {
+  if (ymPollTimer != null) {
+    window.clearInterval(ymPollTimer);
+    ymPollTimer = null;
+  }
+}
+
+async function ymPollOnce(): Promise<"ok" | "pending" | "expired"> {
+  const r = await fetch("/api/ym/auth/poll", { method: "POST" });
+  if (r.status === 202) return "pending";
+  if (r.status === 410) return "expired";
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error || `poll ${r.status}`);
+  }
+  const body = (await r.json()) as { status: string; login?: string };
+  if (body.status === "ok") {
+    setYmConnected(body.login || "yandex");
+    stopYmPoll();
+    return "ok";
+  }
+  return "pending";
+}
+
+function startYmPoll(intervalMs: number) {
+  stopYmPoll();
+  const tick = async () => {
+    try {
+      const st = await ymPollOnce();
+      if (st === "pending") setYmStatus("Ждём подтверждения в браузере Яндекса…");
+      if (st === "expired") {
+        stopYmPoll();
+        setYmStatus("Код истёк — нажми «Подключить Яндекс» снова.");
+      }
+    } catch (e) {
+      stopYmPoll();
+      setYmStatus(e instanceof Error ? e.message : String(e));
+    }
+  };
+  void tick();
+  ymPollTimer = window.setInterval(() => void tick(), Math.max(3000, intervalMs));
+}
+
+async function ymConnect() {
+  const err = document.querySelector("#error")!;
+  err.textContent = "";
+  stopYmPoll();
+  setYmStatus("Запрашиваю код устройства…");
+  const r = await fetch("/api/ym/auth/start", { method: "POST" });
+  const body = (await r.json()) as {
+    userCode?: string;
+    verificationUrl?: string;
+    intervalMs?: number;
+    error?: string;
+  };
+  if (!r.ok || !body.userCode || !body.verificationUrl) {
+    throw new Error(body.error || "не удалось начать авторизацию");
+  }
+  const authEl = document.querySelector<HTMLElement>("#ymAuth")!;
+  const codeEl = document.querySelector("#ymCode")!;
+  const linkEl = document.querySelector<HTMLAnchorElement>("#ymLink")!;
+  authEl.hidden = false;
+  codeEl.textContent = body.userCode;
+  linkEl.href = body.verificationUrl;
+  linkEl.textContent = body.verificationUrl.replace(/^https?:\/\//, "");
+  setYmStatus(`Открой ссылку и введи код ${body.userCode}`);
+  // Open auth page for the user (same machine / forwarded browser).
+  window.open(body.verificationUrl, "_blank", "noopener");
+  startYmPoll(body.intervalMs || 5000);
+}
+
+async function ymLoadWavePair() {
+  const err = document.querySelector("#error")!;
+  err.textContent = "";
+  setYmStatus("Тяну пару из «Моей волны»…");
+  setAiStatus("Яндекс · Моя волна → скачиваю A/B…");
+  const r = await fetch("/api/ym/wave/pair", { method: "POST" });
+  const body = (await r.json()) as YmWavePair & { error?: string };
+  if (!r.ok) throw new Error(body.error || `wave ${r.status}`);
+  const labelA = `${body.a.artists} — ${body.a.title}`;
+  const labelB = `${body.b.artists} — ${body.b.title}`;
+  setYmStatus(`A: ${labelA}\nB: ${labelB}`);
+  await loadUrlPair(body.a.url, body.b.url, labelA, labelB, {
+    mime: "audio/mpeg",
+    ext: "mp3",
+  });
+  setYmStatus(`На деках: ${labelA} → ${labelB}. Жми Auto Mix.`);
+  setAiStatus(`Яндекс · готово · ${labelA} → ${labelB}`);
+}
+
+async function ymLogout() {
+  stopYmPoll();
+  await fetch("/api/ym/logout", { method: "POST" });
+  setYmConnected(null);
+  document.querySelector<HTMLElement>("#ymAuth")!.hidden = true;
+  setYmStatus("Вышел. Можно подключить снова.");
+}
+
+document.querySelector("#ymConnect")?.addEventListener("click", () => {
+  void ymConnect().catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+    setYmStatus("Ошибка авторизации");
+  });
+});
+document.querySelector("#ymWave")?.addEventListener("click", () => {
+  void ymLoadWavePair().catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+    setYmStatus(e instanceof Error ? e.message : String(e));
+  });
+});
+document.querySelector("#ymLogout")?.addEventListener("click", () => {
+  void ymLogout().catch((e) => {
+    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
+  });
+});
+
+void ymFetchStatus()
+  .then((s) => {
+    if (s.connected) setYmConnected(s.login);
+    else if (s.pending) {
+      const authEl = document.querySelector<HTMLElement>("#ymAuth")!;
+      const codeEl = document.querySelector("#ymCode")!;
+      const linkEl = document.querySelector<HTMLAnchorElement>("#ymLink")!;
+      authEl.hidden = false;
+      codeEl.textContent = s.pending.userCode;
+      linkEl.href = s.pending.verificationUrl;
+      linkEl.textContent = s.pending.verificationUrl.replace(/^https?:\/\//, "");
+      setYmStatus(`Ждём код ${s.pending.userCode}…`);
+      startYmPoll(5000);
+    } else {
+      setYmConnected(null);
+      setYmStatus("Подключи Яндекс, чтобы слушать «Мою волну» в Lab.");
+    }
+  })
+  .catch(() => {
+    setYmStatus("API Яндекса недоступен — перезапусти npm run dev.");
+  });
 
 document.querySelector("#loadSamples")?.addEventListener("click", () => {
   void loadUrlPair(
@@ -432,17 +668,6 @@ document.querySelector("#loadSamples")?.addEventListener("click", () => {
     document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
   });
 });
-document.querySelector("#loadRealPair")?.addEventListener("click", () => {
-  void loadUrlPair(
-    "/samples/track-a-nkeeei.wav",
-    "/samples/track-b-kai-angel.wav",
-    "nkeeei",
-    "kai-angel"
-  ).catch((e) => {
-    document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
-  });
-});
-
 document.querySelector("#analyzeA")?.addEventListener("click", () => {
   void analyzeDeck("a").catch((e) => {
     document.querySelector("#error")!.textContent = e instanceof Error ? e.message : String(e);
@@ -606,10 +831,149 @@ engine.onUpdate((snap) => {
   document.querySelector<HTMLElement>("#lpfB")!.style.width = `${snap.lpfB * 100}%`;
   document.querySelector<HTMLElement>("#echoA")!.style.width = `${snap.echoA * 100}%`;
   document.querySelector("#mixing")!.classList.toggle("on", snap.playing && snap.phase !== "READY");
-  if (snap.processingNote && snap.playing) {
-    // keep phase as DJ act; status already set during bake
+  if (snap.playing) {
+    meterTrail.push({
+      t: performance.now(),
+      p: snap.progress,
+      phase: snap.phase,
+      instrA: snap.instrA,
+      instrB: snap.instrB,
+      volA: snap.volA,
+      volB: snap.volB,
+    });
+    if (meterTrail.length > MAX_TRAIL) meterTrail.shift();
   }
 });
+
+/** Playwright / computerUse: drive Lab without clicking. */
+type AutomixLabDebug = {
+  loadDemo: () => Promise<void>;
+  loadWave: () => Promise<void>;
+  ymStatus: () => Promise<YmStatus>;
+  autoMix: () => Promise<void>;
+  stop: () => void;
+  getTrail: () => MeterSample[];
+  getPlan: () => {
+    mode: string | null;
+    vocalBAt: number;
+    instrAAt: number;
+    instrBUntil: number;
+    story: string | null;
+    criticOk: boolean | null;
+  };
+  relayProof: () => {
+    ok: boolean;
+    detail: string;
+    aBedBeforeB: boolean;
+    bOpenLate: boolean;
+    noDualLead: boolean;
+    samples: number;
+  };
+};
+(window as unknown as { __automixLab: AutomixLabDebug }).__automixLab = {
+  async loadDemo() {
+    await loadUrlPair(
+      "/samples/track-a-midnight.wav",
+      "/samples/track-b-neon.wav",
+      "midnight",
+      "neon"
+    );
+  },
+  async loadWave() {
+    await ymLoadWavePair();
+  },
+  async ymStatus() {
+    return ymFetchStatus();
+  },
+  async autoMix() {
+    meterTrail.length = 0;
+    if (!engine.getDeck("a").buffer || !engine.getDeck("b").buffer) {
+      await this.loadDemo();
+    }
+    if (!profiles.a) await analyzeDeck("a");
+    if (!profiles.b) await analyzeDeck("b");
+    const plan = runPlanFromProfiles();
+    setAiStatus(`4/4 · ${plan.story}`);
+    await engine.playAutoMashup((msg) => setAiStatus(msg));
+  },
+  stop() {
+    engine.stop();
+  },
+  getTrail() {
+    return meterTrail.slice();
+  },
+  getPlan() {
+    const dsp = lastPlan?.params.dsp;
+    return {
+      mode: dsp?.mashupMode ?? null,
+      vocalBAt: dsp?.vocalBAt ?? 0,
+      instrAAt: dsp?.instrAAt ?? 0,
+      instrBUntil: dsp?.instrBUntil ?? 0,
+      story: lastPlan?.story ?? null,
+      criticOk: lastPlan?.critic?.ok ?? null,
+    };
+  },
+  relayProof() {
+    const plan = this.getPlan();
+    const trail = meterTrail;
+    if (!trail.length) {
+      return {
+        ok: false,
+        detail: "no meter samples",
+        aBedBeforeB: false,
+        bOpenLate: false,
+        noDualLead: false,
+        samples: 0,
+      };
+    }
+    const open = plan.vocalBAt || 0.4;
+    const aReady = Math.max(0.08, plan.instrAAt || 0.1);
+    // Early window AFTER A carve completes: A bed + B still gated until open.
+    const early = trail.filter((s) => s.p >= aReady + 0.02 && s.p < open - 0.02);
+    // After instrB bloom (~0.18) settles — B dry lead, A still carved + quiet.
+    const settled = Math.min(0.88, open + 0.2);
+    const late = trail.filter((s) => s.p >= settled && s.p <= Math.min(0.92, settled + 0.2));
+    const aBedBeforeB =
+      early.length >= 8 &&
+      early.every((s) => s.instrA >= 0.85) &&
+      early.every((s) => s.instrB >= 0.7);
+    const bOpenLate =
+      late.length >= 8 &&
+      late.every((s) => s.instrA >= 0.85) &&
+      late.every((s) => s.instrB <= 0.2) &&
+      late.every((s) => s.volA <= s.volB * 0.45 + 0.06);
+    // Dual lead = A not carved while B already dry.
+    const clash = trail.filter(
+      (s) =>
+        s.p > 0.1 &&
+        s.p < 0.9 &&
+        s.instrA < 0.75 &&
+        s.instrB < 0.35 &&
+        s.volA > 0.35 &&
+        s.volB > 0.55
+    );
+    const noDualLead = clash.length === 0;
+    // ONE VOCAL:
+    //   acapellaDrop — A bed × B vocal with early gate + late dry B
+    //   safeExit     — A still sings → no dual mashup; noDualLead is enough
+    const relay =
+      plan.mode === "acapellaDrop" && aBedBeforeB && bOpenLate && noDualLead;
+    const safe = plan.mode === "safeExit" && noDualLead;
+    const ok = relay || safe;
+    return {
+      ok,
+      detail: ok
+        ? plan.mode === "safeExit"
+          ? `Safe Exit ok · ONE VOCAL · dual=${clash.length}`
+          : `Vocal Relay ok · open@${((open * 100) | 0)}% · early=${early.length} late=${late.length}`
+        : `fail mode=${plan.mode} aBed=${aBedBeforeB} bOpen=${bOpenLate} dual=${!noDualLead} early=${early.length} late=${late.length}`,
+      aBedBeforeB,
+      bOpenLate,
+      noDualLead,
+      samples: trail.length,
+    };
+  },
+};
 
 /** Offline Mid/Side stem preview (instrumentalize A / vocalize B). */
 async function previewStem(id: "a" | "b", mode: "instrumental" | "vocal") {

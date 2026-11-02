@@ -76,7 +76,7 @@ function baseParams(overrides = {}) {
       bakeInstrB: false,
       bakeVocalB: false,
       decisions: [],
-      mashupMode: "vocalSwap",
+      mashupMode: "acapellaDrop",
       sidechainA: 0,
       ...overrides.dsp,
     },
@@ -209,7 +209,111 @@ function check(name, cond, extra = "") {
   check(
     "acapellaDrop-like recipe → critic pass",
     report.ok && report.mode === "pass",
-    `score=${report.score} vocalBeats=${report.vocalClashBeats.toFixed(2)}`
+    `score=${report.score} vocalBeats=${report.vocalClashBeats.toFixed(2)} gates=${report.gates.map((g) => g.id + (g.ok ? "" : "!")).join(",")}`
+  );
+}
+
+// Late handoff leaves no room to settle rate/pitch/level.
+{
+  const params = baseParams({
+    handoffAt: 0.9,
+    bassSwapAt: 0.24,
+    bassDepth: 1.1,
+    dsp: {
+      instrAPeak: 0.95,
+      instrAAt: 0.08,
+      instrBPeak: 0,
+      instrBUntil: 0.06,
+      vocalBPeak: 0,
+      vocalBAt: 0.1,
+      vocalDuckBDb: 0,
+      hpfAPeak: 0.7,
+      lpfBPeak: 0.1,
+      echoAPeak: 0.2,
+      bakeStems: true,
+      bakeInstrA: true,
+      bakeInstrB: false,
+      bakeVocalB: false,
+      decisions: [],
+      mashupMode: "acapellaDrop",
+      sidechainA: 0,
+    },
+  });
+  const report = critiqueMix({
+    params,
+    vocalOut: 0.2,
+    vocalIn: 0.7,
+    bpm: 120,
+    transitionType: "eqBlend",
+    harmonicOk: true,
+    beatmatched: true,
+  });
+  const land = report.gates.find((g) => g.id === "land");
+  check(
+    "late handoff → LAND fail",
+    land && !land.ok && !report.ok,
+    land ? land.detail : "no land gate"
+  );
+}
+
+// High instr envelope without a baked leadKill is still a dual lead.
+{
+  const params = baseParams({
+    bassSwapAt: 0.2,
+    bassDepth: 1.15,
+    handoffAt: 0.55,
+    dsp: {
+      instrAPeak: 0.95,
+      instrAAt: 0.08,
+      instrBPeak: 0,
+      instrBUntil: 0.05,
+      vocalBPeak: 0.8,
+      vocalBAt: 0.1,
+      vocalDuckBDb: 0,
+      hpfAPeak: 0.55,
+      lpfBPeak: 0.1,
+      echoAPeak: 0.2,
+      bakeStems: false,
+      bakeInstrA: false,
+      bakeInstrB: false,
+      bakeVocalB: false,
+      decisions: [],
+      mashupMode: "textureBed",
+      sidechainA: 0,
+    },
+  });
+  const before = critiqueMix({
+    params,
+    vocalOut: 0.82,
+    vocalIn: 0.82,
+    bpm: 120,
+    transitionType: "eqBlend",
+    harmonicOk: true,
+    beatmatched: true,
+  });
+  check(
+    "soft high instr without bake → vocalClash fail",
+    !before.gates.find((g) => g.id === "vocalClash").ok,
+    `beats=${before.vocalClashBeats.toFixed(2)}`
+  );
+  const report = runMixCritic({
+    params,
+    vocalOut: 0.82,
+    vocalIn: 0.82,
+    bpm: 120,
+    transitionType: "eqBlend",
+    harmonicOk: true,
+    beatmatched: true,
+  });
+  check(
+    "Vocal Safe bakes the bed",
+    report.fixes.includes("Vocal Safe") && params.dsp.bakeInstrA && params.dsp.bakeStems,
+    `mode=${report.mode} peak=${params.dsp.instrAPeak}`
+  );
+  check(
+    "vocal gate passes once the carve is real",
+    report.gates.find((g) => g.id === "vocalClash").ok,
+    `beats=${report.vocalClashBeats.toFixed(2)}`
   );
 }
 

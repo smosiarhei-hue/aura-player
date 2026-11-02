@@ -140,7 +140,10 @@ final class AutoMixV2AnalysisRuntime {
             do {
                 let currentFile = try await self.resolveFile(for: current, id: currentID, allowDownload: allowDownload)
                 let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)
-                let a = await TrackProfileEnricher.enrich(rawA, fileURL: currentFile)
+                var a = await TrackProfileEnricher.enrich(rawA, fileURL: currentFile)
+                // LRC / synced lyrics refine mixOut while the song plays (lab neuralAutomix).
+                pipelineStatus = "Automix · текст / neural cue…"
+                a = await self.applyNeuralCue(to: a, track: current, role: .outgoing)
                 guard !Task.isCancelled, observedPair == key else { return }
                 currentProfile = a
                 guard let next, let nextID else {
@@ -150,7 +153,8 @@ final class AutoMixV2AnalysisRuntime {
                 pipelineStatus = "Анализ следующего трека"
                 let nextFile = try await self.resolveFile(for: next, id: nextID, allowDownload: allowDownload)
                 let rawB = try await analyzer.profile(for: nextID, fileURL: nextFile)
-                let b = await TrackProfileEnricher.enrich(rawB, fileURL: nextFile)
+                var b = await TrackProfileEnricher.enrich(rawB, fileURL: nextFile)
+                b = await self.applyNeuralCue(to: b, track: next, role: .incoming)
                 guard !Task.isCancelled, observedPair == key else { return }
                 nextProfile = b
                 let settings = MixSettings(
@@ -172,7 +176,7 @@ final class AutoMixV2AnalysisRuntime {
                 plannedPair = pairKey(currentID, nextID)
                 pipelineStatus = plan.type == .none
                     ? "План запретил музыкальный переход; будет кроссфейд"
-                    : "План перехода готов · \(plan.archetype.rawValue)"
+                    : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
             } catch {
                 guard observedPair == key, !Self.isCancellation(error) else { return }
                 transitionPlan = nil
@@ -182,6 +186,18 @@ final class AutoMixV2AnalysisRuntime {
                 pipelineStatus = "Эвристика mashup (анализ недоступен)"
             }
         }
+    }
+
+    /// Fuse energy analysis with Yandex LRC / synced lyrics (lab Whisper brain).
+    private func applyNeuralCue(
+        to profile: TrackProfile,
+        track: Track,
+        role: NeuralCueRole
+    ) async -> TrackProfile {
+        let lyrics = try? await LyricsService.shared.fetchLyrics(for: track)
+        let transcript = AutomixLyricsBridge.transcript(from: lyrics)
+        guard transcript != nil || !profile.energyCurve.isEmpty else { return profile }
+        return NeuralAutomixCue.applying(to: profile, transcript: transcript, role: role)
     }
 
     private func resolveFile(for track: Track, id: TrackID, allowDownload: Bool) async throws -> URL {

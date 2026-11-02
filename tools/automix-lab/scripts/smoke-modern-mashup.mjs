@@ -53,14 +53,10 @@ const cases = [
       c.mode === "acapellaDrop" && c.bVocalOpenAt < 0.15 && !c.bakeVocalB && c.sidechainA === 0,
   },
   {
-    name: "both vocal → Vocal Relay opens B only after A bed",
+    name: "A still sings × B vocal → Safe Exit (no dual mashup)",
     run: () => chooseModernMashup(0.7, 0.7, 0.22, 0.55),
     expect: (c) =>
-      c.mode === "vocalSwap" &&
-      c.bakeInstrA &&
-      c.bakeInstrB &&
-      c.bVocalOpenAt >= c.aInstrReadyAt + 0.2 &&
-      c.bVocalOpenAt <= 0.55,
+      c.mode === "safeExit" && !c.bakeInstrA && !c.bakeInstrB && c.dualLayerPeak <= 0.25,
   },
   {
     name: "A vocal × B instr → textureBed",
