@@ -188,7 +188,7 @@ class AutoMixMashupTests(unittest.TestCase):
         player = (ROOT / "Sonivo/playercore.swift").read_text()
         self.assertIn("applyDuetPlaybackCharacter", player)
         self.assertIn("applyAutomixPlaybackCharacter", player)
-        self.assertIn("Always offline-bake the mashup window", player)
+        self.assertIn("Mashup/Duet need real local PCM for stem bake", player)
         self.assertIn("transitionMode == .duet || style.isDuet", player)
         self.assertIn("bakeDuetStemPair", player)
         self.assertIn("bakeAutomixStemPair", player)
@@ -197,8 +197,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("stemPadSec", player)
         self.assertIn("mashupHardCut", player)
         self.assertIn("LAND hard-cut", player)
-        # Mashup/Duet LAND uses the proven start(at:) path so B never freezes.
-        self.assertIn("start(at: handoffPos)", player)
+        self.assertIn("materializeLocalAudio", player)
+        self.assertIn("handoffLocalPlayback", player)
+        self.assertIn("suppressTrackFinishUntil", player)
+        self.assertIn("Ignoring track-finish during LAND handoff window", player)
 
         baker = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift"

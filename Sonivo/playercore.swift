@@ -537,6 +537,9 @@ final class PlayerCore {
     /// Prevents stem-completion + timer from double-entering `completeTransition`
     /// (second pass stopped the freshly scheduled B and left playback frozen).
     private var isCompletingTransition = false
+    /// After LAND, drained stem completions must not call `handleTrackFinish`
+    /// (that skipped/killed the freshly started next track).
+    private var suppressTrackFinishUntil: Date?
     private var transitionScheduled = false
     private var transitionStartTime: Date?
     private var transitionDuration: Double = 3.0
@@ -2173,6 +2176,108 @@ final class PlayerCore {
         return nil
     }
 
+    /// Download a stream into `InternalAudioCache` so Automix/Duet can stem-bake.
+    /// Returns nil when the track cannot be materialized (caller falls back to live path).
+    private func materializeLocalAudio(for track: Track) async throws -> URL? {
+        if let cached = findLocalOrCachedAudioFile(for: track, respectingQuality: false) {
+            return cached
+        }
+        if !track.isStream, track.url.isFileURL {
+            return FileManager.default.fileExists(atPath: track.url.path) ? track.url : nil
+        }
+
+        let streamURL: URL?
+        if let active = activeStreamURL, currentTrack?.id == track.id {
+            streamURL = active
+        } else if let str = track.streamUrlString, let u = URL(string: str),
+                  u.scheme == "http" || u.scheme == "https" {
+            streamURL = u
+        } else if track.url.scheme == "http" || track.url.scheme == "https" {
+            streamURL = track.url
+        } else {
+            let ymID = Self.yandexTrackID(from: track)
+            guard !ymID.isEmpty else { return nil }
+            let info = try await YandexMusicService.shared.getStreamInfo(
+                for: ymID,
+                preferredQuality: audioQuality,
+                preferredBitrate: audioQuality.targetBitrate
+            )
+            streamURL = info.url
+            if currentTrack?.id == track.id {
+                currentTrack?.streamUrlString = info.url.absoluteString
+            }
+        }
+        guard let remote = streamURL else { return nil }
+        if remote.isFileURL {
+            return FileManager.default.fileExists(atPath: remote.path) ? remote : nil
+        }
+
+        let ext = remote.pathExtension.isEmpty ? "mp3" : remote.pathExtension
+        let (temporaryURL, response) = try await URLSession.shared.download(from: remote)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            return nil
+        }
+        // Validate before committing to the playback cache.
+        let validated = try AVAudioFile(forReading: temporaryURL)
+        guard validated.length > 0 else {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            return nil
+        }
+        return try InternalAudioCache.store(temporaryURL: temporaryURL, for: track.id, fileExtension: ext)
+    }
+
+    /// Synchronous local handoff used at Automix LAND — sets anchors immediately so
+    /// the UI never freezes waiting on an async `startLocal` Task.
+    private func handoffLocalPlayback(track: Track, fileURL: URL, at seconds: Double) throws {
+        let audioFile = try AVAudioFile(forReading: fileURL)
+        guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        isUsingStreamPlayer = false
+        streamingPlayerA.pause()
+        streamingPlayerB.pause()
+        streamingPlayerA.replaceCurrentItem(with: nil)
+        streamingPlayerB.replaceCurrentItem(with: nil)
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
+
+        localSegmentTokens.removeAll()
+        lyricsLocalSegments.removeAll()
+        playerA.stop()
+        playerB.stop()
+        stopBeatLoop()
+        activePlayer = playerA
+        playerA.volume = 1
+        playerB.volume = 0
+        timePitchA.rate = 1
+        timePitchA.pitch = 0
+        timePitchA.bypass = true
+        timePitchB.rate = 1
+        timePitchB.pitch = 0
+        timePitchB.bypass = true
+
+        if !engine.isRunning { try engine.start() }
+
+        let pos = PlaybackResumePolicy.position(seconds, duration: track.duration)
+        activeLocalURL = fileURL
+        activeAudioFile = audioFile
+        incomingAudioFile = nil
+        let facts = LocalAudioQualityReader.read(audioFile)
+        currentCodec = facts.codec
+        currentBitrate = facts.bitrate
+        scheduleLocalSegment(audioFile, on: playerA, at: pos)
+        playerA.play()
+        isPlaying = true
+        anchorDate = Date()
+        anchorOffset = pos
+        pausedProgress = pos
+        progress = pos
+        streamDuration = track.duration
+        startTimer()
+        applyEQ()
+    }
+
     /// Migrates streaming playback from AVPlayer to AVAudioEngine so raw PCM samples can be processed in real time
     func migrateStreamToAudioEngineIfNeeded() async {
         guard isUsingStreamPlayer, isPlaying, !streamMigrationInFlight, let track = currentTrack else { return }
@@ -2368,7 +2473,8 @@ final class PlayerCore {
         AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || mashup
         AutoMixDJEngine.shared.activeStrategyName = mashup ? strategyName : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
-        AutoMixDJEngine.shared.statusBadge = mashup ? activeMashupStyle.phaseLabel(progress: 0) : nil
+        // Mixing badge only when the blend is actually audible (lane ready) — not while baking.
+        AutoMixDJEngine.shared.statusBadge = nil
         AutoMixDJEngine.shared.currentBPM = mashup ? Double(activeMashupStyle.targetBPM) : 0
         // Lock outgoing tempo immediately so B can meet A on the grid.
         if mashup {
@@ -2396,13 +2502,27 @@ final class PlayerCore {
         transitionPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                // Always offline-bake the mashup window when both files are local.
-                // Lab path: dual-stem CAFs on dual decks + live beatmatch rates/volumes.
-                // Automix = A instrumental + B instr→dry; Duet = A vocal isolate + B full.
-                let inURLForBake = nextURL ?? self.findLocalOrCachedAudioFile(for: nextTrack)
-                let shouldBakeStems = mashup && outgoingCacheURL != nil && inURLForBake != nil
+                // Mashup/Duet need real local PCM for stem bake. Yandex streams often
+                // have no cache yet — materialize both sides or the mix is just a badge.
+                var outURLForBake = outgoingCacheURL
+                var inURLForBake = nextURL ?? self.findLocalOrCachedAudioFile(for: nextTrack)
+                if mashup {
+                    if outURLForBake == nil {
+                        outURLForBake = try? await self.materializeLocalAudio(for: current)
+                    }
+                    if inURLForBake == nil {
+                        inURLForBake = try? await self.materializeLocalAudio(for: nextTrack)
+                    }
+                    if outURLForBake == nil || inURLForBake == nil {
+                        SonivoDiagnostics.log(
+                            "[Mashup] stem bake skipped — missing local A/B (out:\(outURLForBake != nil) in:\(inURLForBake != nil))",
+                            tag: "AUDIO"
+                        )
+                    }
+                }
+                let shouldBakeStems = mashup && outURLForBake != nil && inURLForBake != nil
                 if shouldBakeStems,
-                   let outURL = outgoingCacheURL,
+                   let outURL = outURLForBake,
                    let inURL = inURLForBake {
                     let blend = self.transitionDuration
                     let style = self.activeMashupStyle
@@ -2826,13 +2946,14 @@ final class PlayerCore {
         let wasStream = isUsingStreamPlayer
 
         if mashupHardCut {
-            // Reliable LAND: tear down stem decks, then use the normal start(at:)
-            // path for dry B. Custom stop/reschedule left B silent with a frozen clock.
+            // Reliable LAND: kill stem decks, then sync-play dry B so the clock
+            // cannot freeze waiting on async startLocal / stem-finish races.
             NotificationCenter.default.post(
                 name: .didTriggerAutoMixDrop,
                 object: nil,
                 userInfo: ["trackID": nextTrack.id.uuidString]
             )
+            suppressTrackFinishUntil = Date().addingTimeInterval(1.5)
             localSegmentTokens.removeAll()
             lyricsLocalSegments.removeAll()
             activePlayer.stop()
@@ -2847,6 +2968,8 @@ final class PlayerCore {
             idleTimePitch.bypass = true
             streamingPlayerA.pause()
             streamingPlayerB.pause()
+            let realURL = mashupBakeRealIncomingURL
+                ?? findLocalOrCachedAudioFile(for: nextTrack, respectingQuality: false)
             clearMashupBakeTemps()
             incomingTrack = nil
             incomingLaneReady = false
@@ -2871,8 +2994,20 @@ final class PlayerCore {
             streamDuration = nextTrack.duration
             currentCodec = nil
             currentBitrate = nil
-            // Full proven playback path — never leave a drained stem node as "B".
-            start(at: handoffPos)
+
+            var handedOff = false
+            if let realURL {
+                do {
+                    try handoffLocalPlayback(track: nextTrack, fileURL: realURL, at: handoffPos)
+                    handedOff = true
+                } catch {
+                    SonivoDiagnostics.log("[AutoMix] sync LAND handoff failed: \(error)", tag: "AUTOMIX")
+                }
+            }
+            if !handedOff {
+                // Stream / missing cache — full start path (still suppress stem finishes).
+                start(at: handoffPos)
+            }
             AutoMixDJEngine.shared.isPostMixActive = true
             SonivoDiagnostics.log(
                 "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", handoffPos))s",
@@ -3071,6 +3206,7 @@ final class PlayerCore {
         transitionScheduled = false
         isTransitioning = false
         isCompletingTransition = false
+        suppressTrackFinishUntil = nil
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
@@ -3148,6 +3284,13 @@ final class PlayerCore {
     }
 
     private func handleTrackFinish() {
+        if let until = suppressTrackFinishUntil {
+            if Date() < until {
+                SonivoDiagnostics.log("[AutoMix] Ignoring track-finish during LAND handoff window", tag: "AUTOMIX")
+                return
+            }
+            suppressTrackFinishUntil = nil
+        }
         if isTransitioning || transitionScheduled {
             if let target = incomingTrack, (incomingLaneReady || idleStreamingPlayer.currentItem != nil || incomingAudioFile != nil) {
                 SonivoDiagnostics.log("[AutoMix] Track finished during transition: completing immediately to \(target.title)", tag: "AUTOMIX")
