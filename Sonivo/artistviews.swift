@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Страница артиста (Sonivo cinematic 2026)
+// MARK: - Страница артиста (reference match: blur dissolve hero)
 
 struct ArtistView: View {
     let artistId: String
@@ -15,7 +15,7 @@ struct ArtistView: View {
     @State private var presentation = ActivePlayerPresentation.shared
     @State private var scrollOffsetY: CGFloat = 0
     @State private var heroAppeared = false
-    private let heroHeaderHeight: CGFloat = 420
+    private let heroHeaderHeight: CGFloat = 380
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -45,33 +45,25 @@ struct ArtistView: View {
         .task {
             loadFavoriteState()
             await load()
-            withAnimation(.easeOut(duration: 0.85)) { heroAppeared = true }
+            withAnimation(.easeOut(duration: 0.7)) { heroAppeared = true }
         }
     }
 
-    // MARK: - Floating Navigation Bar
+    // MARK: - Floating Navigation (separate glass circles)
 
     private var navBarOpacity: Double {
-        let threshold: CGFloat = 180
-        guard scrollOffsetY < -60 else { return 0 }
-        let progress = min(CGFloat(1), max(CGFloat(0), (-scrollOffsetY - 60) / threshold))
+        let threshold: CGFloat = 160
+        guard scrollOffsetY < -40 else { return 0 }
+        let progress = min(CGFloat(1), max(CGFloat(0), (-scrollOffsetY - 40) / threshold))
         return Double(progress)
     }
 
     private var floatingNavBar: some View {
         HStack(spacing: 12) {
-            Button {
+            glassCircleButton(systemName: "chevron.left") {
                 Haptics.tap(.light)
                 dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 42, height: 42)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
             }
-            .buttonStyle(TactileButtonStyle(scale: 0.92))
 
             Text(artist?.name ?? "")
                 .font(SN.display(.headline, .bold))
@@ -80,87 +72,105 @@ struct ArtistView: View {
                 .frame(maxWidth: .infinity)
                 .opacity(navBarOpacity)
 
-            HStack(spacing: 4) {
-                if let artist {
-                    let shareURL = URL(string: "https://music.yandex.ru/artist/\(artist.id)")
-                        ?? URL(string: "https://music.yandex.ru")!
-                    ShareLink(item: shareURL) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                    }
-                }
-
-                Divider()
-                    .frame(height: 16)
-                    .background(Color.white.opacity(0.2))
-
-                Menu {
-                    if let artist {
-                        Button { playArtistWave(artist) } label: {
-                            Label(l10n.artistWave, systemImage: "dot.radiowaves.left.and.right")
-                        }
-                        Button { toggleFavorite() } label: {
-                            Label(isFavorite ? l10n.removeFromFavorites : l10n.addToFavorites,
-                                  systemImage: isFavorite ? "star.slash" : "star")
-                        }
-                        if let first = artist.popularTracks.first {
-                            Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
-                                Label(l10n.play, systemImage: "play.fill")
-                            }
-                        }
-                        Button { showingInfoSheet = true } label: {
-                            Label(l10n.aboutArtist, systemImage: "info.circle")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .bold))
+            if let artist {
+                let shareURL = URL(string: "https://music.yandex.ru/artist/\(artist.id)")
+                    ?? URL(string: "https://music.yandex.ru")!
+                ShareLink(item: shareURL) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
+                        .frame(width: 42, height: 42)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5))
                 }
             }
-            .padding(.horizontal, 4)
-            .frame(height: 42)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+
+            Menu {
+                if let artist {
+                    Button { playArtistWave(artist) } label: {
+                        Label(l10n.artistWave, systemImage: "dot.radiowaves.left.and.right")
+                    }
+                    Button { toggleFavorite() } label: {
+                        Label(isFavorite ? l10n.removeFromFavorites : l10n.addToFavorites,
+                              systemImage: isFavorite ? "star.slash" : "star")
+                    }
+                    if let first = artist.popularTracks.first {
+                        Button { SonivoPlay.track(first, in: artist.popularTracks) } label: {
+                            Label(l10n.play, systemImage: "play.fill")
+                        }
+                    }
+                    Button { showingInfoSheet = true } label: {
+                        Label(l10n.aboutArtist, systemImage: "info.circle")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .background {
             Rectangle()
-                .fill(SN.bg.opacity(navBarOpacity * 0.92))
+                .fill(SN.bg.opacity(navBarOpacity * 0.9))
                 .background(.ultraThinMaterial.opacity(navBarOpacity))
                 .ignoresSafeArea(edges: .top)
         }
     }
 
-    // MARK: - Main Content
+    private func glassCircleButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5))
+        }
+        .buttonStyle(TactileButtonStyle(scale: 0.92))
+    }
+
+    // MARK: - Main
 
     private func mainContentView(_ artist: YandexMusicService.YMArtistItem) -> some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
                 GeometryReader { proxy in
-                    let minY = proxy.frame(in: .global).minY
-                    Color.clear
-                        .preference(key: ArtistScrollOffsetKey.self, value: minY)
+                    Color.clear.preference(
+                        key: ArtistScrollOffsetKey.self,
+                        value: proxy.frame(in: .global).minY
+                    )
                 }
                 .frame(height: 0)
 
-                blurredHero(artist)
+                heroSection(artist)
 
-                VStack(spacing: 28) {
+                // Name + action trio sit in the dissolve, pulled up into the photo
+                artistHeaderContent(artist)
+                    .offset(y: -56)
+                    .padding(.bottom, -36)
+
+                VStack(spacing: 22) {
+                    if let latest = sortedAlbums(artist.albums).first {
+                        latestReleaseCard(latest)
+                    }
+
                     topSongsSection(artist)
+
                     playlistsSection(artist)
+
                     if !artist.albums.isEmpty {
                         albumsSection(artist)
                     }
+
                     if !artist.similarArtists.isEmpty {
                         similarArtistsSection(artist)
                     }
                 }
-                .padding(.top, 8)
                 .padding(.bottom, 130)
             }
         }
@@ -169,48 +179,63 @@ struct ArtistView: View {
         .ignoresSafeArea(edges: .top)
     }
 
-    // MARK: - Blurred Hero
+    // MARK: - Hero: sharp photo + bottom blur dissolve (reference)
 
-    private func blurredHero(_ artist: YandexMusicService.YMArtistItem) -> some View {
+    private func heroSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         GeometryReader { proxy in
             let minY = proxy.frame(in: .global).minY
             let pull = max(0, minY)
             let height = heroHeaderHeight + pull
-            let parallax = minY > 0 ? -minY : minY * 0.28
+            let parallax = minY > 0 ? -minY : minY * 0.32
+            let cover = artist.heroCoverUrlString ?? artist.coverUrlString
 
             ZStack(alignment: .bottom) {
-                // Soft blurred atmosphere (scaled past edges so blur never hard-crops)
-                RemoteArtwork(urlString: artist.heroCoverUrlString ?? artist.coverUrlString, corner: 0)
+                // Base photo — subject readable
+                RemoteArtwork(urlString: cover, corner: 0)
                     .scaledToFill()
                     .frame(width: proxy.size.width, height: height)
-                    .scaleEffect(1.18)
-                    .blur(radius: heroAppeared ? 26 : 8)
-                    .opacity(heroAppeared ? 1 : 0.55)
                     .clipped()
+                    .opacity(heroAppeared ? 1 : 0.7)
                     .offset(y: parallax)
 
-                // Warm amber wash sampled from stage light
+                // Blurred twin, masked so only the lower half softens into the page
+                RemoteArtwork(urlString: cover, corner: 0)
+                    .scaledToFill()
+                    .frame(width: proxy.size.width, height: height)
+                    .scaleEffect(1.08)
+                    .blur(radius: 28)
+                    .clipped()
+                    .mask(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.28),
+                                .init(color: .white.opacity(0.35), location: 0.52),
+                                .init(color: .white.opacity(0.85), location: 0.72),
+                                .init(color: .white, location: 1.0)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .offset(y: parallax)
+
+                // Soft dark vignette at top for nav contrast
                 LinearGradient(
-                    colors: [
-                        SN.amber.opacity(0.18),
-                        Color.clear,
-                        SN.ember.opacity(0.12)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    colors: [Color.black.opacity(0.35), Color.clear],
+                    startPoint: .top,
+                    endPoint: .center
                 )
-                .blendMode(.softLight)
-                .frame(width: proxy.size.width, height: height)
+                .frame(height: height * 0.45)
+                .frame(maxHeight: .infinity, alignment: .top)
                 .offset(y: parallax)
 
-                // Multi-stop dissolve into canvas — soft cinematic transitions
+                // Multi-stop dissolve into canvas — matches reference fade
                 LinearGradient(
                     stops: [
-                        .init(color: .black.opacity(0.35), location: 0.0),
-                        .init(color: .clear, location: 0.22),
-                        .init(color: SN.bg.opacity(0.15), location: 0.48),
-                        .init(color: SN.bg.opacity(0.55), location: 0.68),
-                        .init(color: SN.bg.opacity(0.88), location: 0.86),
+                        .init(color: .clear, location: 0.35),
+                        .init(color: SN.bg.opacity(0.25), location: 0.55),
+                        .init(color: SN.bg.opacity(0.70), location: 0.75),
+                        .init(color: SN.bg.opacity(0.92), location: 0.90),
                         .init(color: SN.bg, location: 1.0)
                     ],
                     startPoint: .top,
@@ -218,21 +243,6 @@ struct ArtistView: View {
                 )
                 .frame(width: proxy.size.width, height: height)
                 .offset(y: parallax)
-
-                // Extra bottom feather so content joins without a hard cut
-                LinearGradient(
-                    colors: [Color.clear, SN.bg],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 96)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-
-                heroIdentity(artist)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 28)
-                    .opacity(heroAppeared ? 1 : 0)
-                    .offset(y: heroAppeared ? 0 : 18)
             }
             .frame(width: proxy.size.width, height: height)
             .clipped()
@@ -241,24 +251,33 @@ struct ArtistView: View {
         .frame(height: heroHeaderHeight)
     }
 
-    private func heroIdentity(_ artist: YandexMusicService.YMArtistItem) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(artist.name)
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.45), radius: 16, y: 6)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.78)
+    // MARK: - Centered name + Info / Play / Star
 
-                if !artist.subtitle.isEmpty {
-                    Text(artist.subtitle)
-                        .font(SN.text(.subheadline, .medium))
-                        .foregroundStyle(Color.white.opacity(0.78))
+    private func artistHeaderContent(_ artist: YandexMusicService.YMArtistItem) -> some View {
+        VStack(spacing: 18) {
+            Text(artist.name.uppercased())
+                .font(.system(size: 34, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.75)
+                .shadow(color: .black.opacity(0.55), radius: 14, y: 4)
+                .padding(.horizontal, 24)
+
+            HStack(spacing: 28) {
+                Button {
+                    Haptics.tap(.light)
+                    showingInfoSheet = true
+                } label: {
+                    Image(systemName: "info")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 52, height: 52)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
                 }
-            }
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
 
-            HStack(spacing: 12) {
                 Button {
                     Haptics.tap(.heavy)
                     if let first = artist.popularTracks.first {
@@ -267,53 +286,124 @@ struct ArtistView: View {
                         playArtistWave(artist)
                     }
                 } label: {
-                    Label(l10n.play, systemImage: "play.fill")
-                        .font(SN.text(.subheadline, .bold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 22)
-                        .frame(height: 46)
-                        .background(SN.amber, in: Capsule())
+                    ZStack {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 72, height: 72)
+                            .shadow(color: .black.opacity(0.35), radius: 12, y: 5)
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 28, weight: .black))
+                            .foregroundStyle(Color.black.opacity(0.92))
+                            .offset(x: 2)
+                    }
                 }
-                .buttonStyle(TactileButtonStyle(scale: 0.96))
+                .buttonStyle(TactileButtonStyle(scale: 0.94))
 
                 Button {
                     toggleFavorite()
                 } label: {
-                    Text(isFavorite ? l10n.following : l10n.follow)
-                        .font(SN.text(.subheadline, .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 20)
-                        .frame(height: 46)
-                        .background(Color.white.opacity(0.12), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.8))
-                }
-                .buttonStyle(TactileButtonStyle(scale: 0.96))
-
-                Spacer(minLength: 0)
-
-                Button {
-                    Haptics.tap(.light)
-                    showingInfoSheet = true
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .frame(width: 46, height: 46)
-                        .background(Color.white.opacity(0.10), in: Circle())
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+                    Image(systemName: isFavorite ? "star.fill" : "star")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(isFavorite ? SN.amber : Color.white.opacity(0.92))
+                        .frame(width: 52, height: 52)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(
+                            Circle().strokeBorder(
+                                isFavorite ? SN.amber.opacity(0.4) : Color.white.opacity(0.18),
+                                lineWidth: 0.5
+                            )
+                        )
+                        .scaleEffect(isFavorite ? 1.06 : 1.0)
                 }
                 .buttonStyle(TactileButtonStyle(scale: 0.94))
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .opacity(heroAppeared ? 1 : 0)
+        .offset(y: heroAppeared ? 0 : 12)
     }
 
-    // MARK: - Popular Tracks
+    // MARK: - Latest release glass card
+
+    private func latestReleaseCard(_ album: YandexMusicService.YMAlbumItem) -> some View {
+        NavigationLink {
+            AlbumView(albumId: String(album.id), title: album.displayTitle)
+        } label: {
+            HStack(spacing: 14) {
+                RemoteArtwork(urlString: album.coverUrlString, corner: 14)
+                    .frame(width: 68, height: 68)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(releaseEyebrow(album))
+                        .font(SN.text(.caption2, .bold))
+                        .foregroundStyle(SN.inkMuted)
+                        .textCase(.uppercase)
+
+                    Text(album.displayTitle)
+                        .font(SN.text(.subheadline, .bold))
+                        .foregroundStyle(SN.ink)
+                        .lineLimit(1)
+
+                    Text(albumSubtitle(album))
+                        .font(SN.text(.caption, .medium))
+                        .foregroundStyle(SN.inkMuted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(SN.ink)
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(0.12), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+            )
+            .padding(.horizontal, 16)
+        }
+        .buttonStyle(CardPressStyle(scale: 0.98, haptic: false))
+    }
+
+    private func releaseEyebrow(_ album: YandexMusicService.YMAlbumItem) -> String {
+        if let year = album.year {
+            return "\(String(format: "%d", year)) · \(l10n.releaseBadge)"
+        }
+        return l10n.latestRelease
+    }
+
+    private func albumSubtitle(_ album: YandexMusicService.YMAlbumItem) -> String {
+        var parts: [String] = []
+        if let count = album.trackCount {
+            parts.append("\(count) " + (l10n.isRussian
+                ? (count == 1 ? "песня" : (count < 5 ? "песни" : "песен"))
+                : (count == 1 ? "Song" : "Songs")))
+        }
+        if let genre = album.genre, !genre.isEmpty {
+            parts.append(genre.capitalized)
+        }
+        return parts.isEmpty ? (l10n.isRussian ? "Релиз" : "Release") : parts.joined(separator: " · ")
+    }
+
+    // MARK: - Top Songs
 
     private func topSongsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         Group {
             if !artist.popularTracks.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     NavigationLink {
                         TopSongsView(artist: artist)
                     } label: {
@@ -322,19 +412,19 @@ struct ArtistView: View {
                                 .font(SN.display(.title3, .bold))
                                 .foregroundStyle(SN.ink)
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(SN.inkMuted)
                             Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 16)
+                        .padding(.bottom, 2)
                     }
                     .buttonStyle(.plain)
 
                     LazyVStack(spacing: 2) {
-                        ForEach(Array(artist.popularTracks.prefix(5).enumerated()), id: \.element.id) { index, item in
+                        ForEach(artist.popularTracks.prefix(5)) { item in
                             AppleTrackRowView(
                                 item: item,
-                                rank: index + 1,
                                 isPlaying: isItemPlaying(item),
                                 onPlay: { SonivoPlay.track(item, in: artist.popularTracks) },
                                 onWave: { startTrackWave(item) }
@@ -347,7 +437,7 @@ struct ArtistView: View {
         }
     }
 
-    // MARK: - Playlists (artist spotlights)
+    // MARK: - Playlists
 
     private enum ArtistSpotlight: Identifiable {
         case wave
@@ -386,7 +476,7 @@ struct ArtistView: View {
                                                 .frame(width: 148, height: 148)
                                                 .overlay(
                                                     LinearGradient(
-                                                        colors: [.clear, .black.opacity(0.55)],
+                                                        colors: [.clear, .black.opacity(0.5)],
                                                         startPoint: .center,
                                                         endPoint: .bottom
                                                     )
@@ -403,7 +493,7 @@ struct ArtistView: View {
                                                 .padding(12)
                                         }
 
-                                        Text(spotlightTitle(card, artist: artist))
+                                        Text(spotlightTitle(card))
                                             .font(SN.text(.subheadline, .semibold))
                                             .foregroundStyle(SN.ink)
                                             .lineLimit(2)
@@ -424,11 +514,11 @@ struct ArtistView: View {
     private func artistSpotlights(_ artist: YandexMusicService.YMArtistItem) -> [ArtistSpotlight] {
         var cards: [ArtistSpotlight] = [.wave]
         if !artist.popularTracks.isEmpty { cards.append(.popular) }
-        cards.append(contentsOf: sortedAlbums(artist.albums).prefix(4).map(ArtistSpotlight.album))
+        cards.append(contentsOf: sortedAlbums(artist.albums).dropFirst().prefix(4).map(ArtistSpotlight.album))
         return Array(cards.prefix(8))
     }
 
-    private func spotlightTitle(_ card: ArtistSpotlight, artist: YandexMusicService.YMArtistItem) -> String {
+    private func spotlightTitle(_ card: ArtistSpotlight) -> String {
         switch card {
         case .wave: return l10n.artistWave
         case .popular: return l10n.topSongs
@@ -476,7 +566,7 @@ struct ArtistView: View {
 
     private func albumsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(l10n.albums)
+            Text(l10n.albumsAndSingles)
                 .font(SN.display(.title3, .bold))
                 .foregroundStyle(SN.ink)
                 .padding(.horizontal, 16)
@@ -517,7 +607,7 @@ struct ArtistView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Similar Artists
+    // MARK: - Similar
 
     private func similarArtistsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -561,13 +651,15 @@ struct ArtistView: View {
             Rectangle()
                 .fill(Color.white.opacity(0.06))
                 .frame(height: heroHeaderHeight)
-                .overlay {
-                    LinearGradient(
-                        colors: [.clear, SN.bg],
-                        startPoint: .center,
-                        endPoint: .bottom
-                    )
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [.clear, SN.bg], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 120)
                 }
+
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 96)
+                .padding(.horizontal, 16)
 
             VStack(spacing: 8) {
                 ForEach(0..<4, id: \.self) { _ in
