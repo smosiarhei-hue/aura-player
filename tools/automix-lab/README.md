@@ -30,7 +30,7 @@ npm run dev
 
 - **Плеер (главный):** [http://127.0.0.1:43187](http://127.0.0.1:43187)
 - DSP Lab: [http://127.0.0.1:43187/lab.html](http://127.0.0.1:43187/lab.html)
-- iPhone mock: [http://127.0.0.1:43187/iphone.html](http://127.0.0.1:43187/iphone.html)
+- iPhone 17 Pro Cosmic Orange (живой экран): [http://127.0.0.1:43187/iphone.html](http://127.0.0.1:43187/iphone.html)
 
 ## Как слушать
 
