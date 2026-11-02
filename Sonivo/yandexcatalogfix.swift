@@ -82,12 +82,88 @@ private struct YMCatalogSimilarArtist: Decodable {
     let cover: YMCatalogArtistCover?
 }
 
+private struct YMCatalogCoverURI: Decodable {
+    let uri: String?
+}
+
+private struct YMCatalogArtistPlaylist: Decodable {
+    let uid: Int?
+    let kind: Int?
+    let title: String?
+    let trackCount: Int?
+    let cover: YMCatalogCoverURI?
+    let ogImage: String?
+    let coverUri: String?
+
+    enum CodingKeys: String, CodingKey {
+        case uid, kind, title, trackCount, cover, ogImage, coverUri
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let n = try? c.decode(Int.self, forKey: .uid) {
+            uid = n
+        } else if let s = try? c.decode(String.self, forKey: .uid), let n = Int(s) {
+            uid = n
+        } else {
+            uid = nil
+        }
+        if let n = try? c.decode(Int.self, forKey: .kind) {
+            kind = n
+        } else if let s = try? c.decode(String.self, forKey: .kind), let n = Int(s) {
+            kind = n
+        } else {
+            kind = nil
+        }
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        trackCount = try c.decodeIfPresent(Int.self, forKey: .trackCount)
+        cover = try c.decodeIfPresent(YMCatalogCoverURI.self, forKey: .cover)
+        ogImage = try c.decodeIfPresent(String.self, forKey: .ogImage)
+        coverUri = try c.decodeIfPresent(String.self, forKey: .coverUri)
+    }
+}
+
 private struct YMCatalogArtistResponse: Decodable {
     struct Result: Decodable {
         let artist: YMCatalogArtistDetails?
-        let popularTracks: [YandexMusicService.YMTrackItem]?
+        /// API sometimes returns a bare array, sometimes `{ "tracks": [...] }`.
+        let popularTracks: PopularTracksFlex?
         let albums: [YandexMusicService.YMAlbumItem]?
-        let similarArtists: [YMCatalogSimilarArtist]?
+        let alsoAlbums: [YandexMusicService.YMAlbumItem]?
+        let lastReleases: [YandexMusicService.YMAlbumItem]?
+        let discography: DiscographyBlock?
+        let playlists: [YMCatalogArtistPlaylist]?
+        let similarArtists: SimilarArtistsFlex?
+
+        struct DiscographyBlock: Decodable {
+            let albums: [YandexMusicService.YMAlbumItem]?
+        }
+
+        struct PopularTracksFlex: Decodable {
+            let tracks: [YandexMusicService.YMTrackItem]
+            private enum CodingKeys: String, CodingKey { case tracks }
+            init(from decoder: Decoder) throws {
+                if let keyed = try? decoder.container(keyedBy: CodingKeys.self),
+                   keyed.contains(.tracks) {
+                    tracks = try keyed.decodeIfPresent([YandexMusicService.YMTrackItem].self, forKey: .tracks) ?? []
+                    return
+                }
+                tracks = (try? decoder.singleValueContainer().decode([YandexMusicService.YMTrackItem].self)) ?? []
+            }
+        }
+
+        struct SimilarArtistsFlex: Decodable {
+            let artists: [YMCatalogSimilarArtist]
+            private enum CodingKeys: String, CodingKey { case similarArtists }
+            init(from decoder: Decoder) throws {
+                if let keyed = try? decoder.container(keyedBy: CodingKeys.self),
+                   keyed.contains(.similarArtists) {
+                    artists = try keyed.decodeIfPresent([YMCatalogSimilarArtist].self, forKey: .similarArtists) ?? []
+                    return
+                }
+                artists = (try? decoder.singleValueContainer().decode([YMCatalogSimilarArtist].self)) ?? []
+            }
+        }
     }
     let result: Result?
 }
@@ -207,15 +283,23 @@ extension YandexMusicService {
             ),
             popularTracks: tracks,
             albums: albums,
+            lastReleases: [],
+            alsoAlbums: [],
+            playlists: [],
             similarArtists: []
         )
     }
 
-    private func loadArtistBrief(artistId: String) async -> YMArtistItem? {
+    func loadArtistBrief(artistId: String) async -> YMArtistItem? {
         guard var components = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info") else { return nil }
+        // Ask for the full brief-info surface Yandex ships on the artist page.
         components.queryItems = [
             URLQueryItem(name: "popularTracks", value: "true"),
+            URLQueryItem(name: "albums", value: "true"),
+            URLQueryItem(name: "alsoAlbums", value: "true"),
+            URLQueryItem(name: "lastReleases", value: "true"),
             URLQueryItem(name: "discography", value: "true"),
+            URLQueryItem(name: "playlists", value: "true"),
             URLQueryItem(name: "similarArtists", value: "true")
         ]
         guard let url = components.url,
@@ -227,9 +311,26 @@ extension YandexMusicService {
             return nil
         }
 
-        let popular = Self.playable(decoded.result?.popularTracks ?? [])
-        let albums = (decoded.result?.albums ?? []).filter { $0.id != 0 }
-        let similar = (decoded.result?.similarArtists ?? []).compactMap { raw -> YMArtistBrief? in
+        let popular = Self.playable(decoded.result?.popularTracks?.tracks ?? [])
+        let directAlbums = (decoded.result?.albums ?? []).filter { $0.id != 0 }
+        let discog = (decoded.result?.discography?.albums ?? []).filter { $0.id != 0 }
+        let albums = Self.uniqueAlbums(directAlbums.isEmpty ? discog : directAlbums + discog)
+        let alsoAlbums = Self.uniqueAlbums(decoded.result?.alsoAlbums ?? [])
+        let lastReleases = Self.uniqueAlbums(decoded.result?.lastReleases ?? [])
+        let playlists = (decoded.result?.playlists ?? []).compactMap { raw -> YMArtistItem.YMArtistPlaylistBrief? in
+            guard let uid = raw.uid, let kind = raw.kind else { return nil }
+            let title = (raw.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+            let cover = raw.coverUri ?? raw.cover?.uri ?? raw.ogImage
+            return YMArtistItem.YMArtistPlaylistBrief(
+                uid: uid,
+                kind: kind,
+                title: title,
+                coverUri: cover,
+                trackCount: raw.trackCount
+            )
+        }
+        let similar = (decoded.result?.similarArtists?.artists ?? []).compactMap { raw -> YMArtistBrief? in
             guard let id = raw.id, let name = raw.name else { return nil }
             return YMArtistBrief(
                 id: String(id),
@@ -249,8 +350,16 @@ extension YandexMusicService {
             ),
             popularTracks: popular,
             albums: albums,
+            lastReleases: lastReleases,
+            alsoAlbums: alsoAlbums,
+            playlists: playlists,
             similarArtists: similar
         )
+    }
+
+    private static func uniqueAlbums(_ albums: [YMAlbumItem]) -> [YMAlbumItem] {
+        var seen = Set<Int>()
+        return albums.filter { $0.id != 0 && seen.insert($0.id).inserted }
     }
 
     private func albumsFromTracks(_ tracks: [YMTrackItem]) async -> [YMAlbumItem] {

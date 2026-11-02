@@ -50,6 +50,7 @@ final class SonivoL10n {
     var album: String { isRussian ? "Альбом" : "Album" }
     var albumsAndSingles: String { isRussian ? "Альбомы и синглы" : "Albums & Singles" }
     var albums: String { isRussian ? "Альбомы" : "Albums" }
+    var alsoAppearsOn: String { isRussian ? "Также участвует" : "Also Appears On" }
     var playlists: String { isRussian ? "Плейлисты" : "Playlists" }
     var similarArtists: String { isRussian ? "Похожие исполнители" : "Similar Artists" }
     var follow: String { isRussian ? "Подписаться" : "Follow" }

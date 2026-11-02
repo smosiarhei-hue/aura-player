@@ -155,16 +155,22 @@ struct ArtistView: View {
                     .padding(.bottom, -36)
 
                 VStack(spacing: 22) {
-                    if let latest = sortedAlbums(artist.albums).first {
+                    if let latest = artist.featuredRelease {
                         latestReleaseCard(latest)
                     }
 
                     topSongsSection(artist)
 
-                    playlistsSection(artist)
+                    if !artist.playlists.isEmpty {
+                        playlistsSection(artist)
+                    }
 
                     if !artist.albums.isEmpty {
                         albumsSection(artist)
+                    }
+
+                    if !artist.alsoAlbums.isEmpty {
+                        alsoAlbumsSection(artist)
                     }
 
                     if !artist.similarArtists.isEmpty {
@@ -437,129 +443,51 @@ struct ArtistView: View {
         }
     }
 
-    // MARK: - Playlists
-
-    private enum ArtistSpotlight: Identifiable {
-        case wave
-        case popular
-        case album(YandexMusicService.YMAlbumItem)
-
-        var id: String {
-            switch self {
-            case .wave: return "wave"
-            case .popular: return "popular"
-            case .album(let album): return "album-\(album.id)"
-            }
-        }
-    }
+    // MARK: - Playlists (Yandex brief-info `playlists`)
 
     private func playlistsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
-        let cards = artistSpotlights(artist)
-        return Group {
-            if !cards.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(l10n.playlists)
-                        .font(SN.display(.title3, .bold))
-                        .foregroundStyle(SN.ink)
-                        .padding(.horizontal, 16)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(l10n.playlists)
+                .font(SN.display(.title3, .bold))
+                .foregroundStyle(SN.ink)
+                .padding(.horizontal, 16)
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 14) {
-                            ForEach(cards) { card in
-                                Button {
-                                    Haptics.tap(.medium)
-                                    playSpotlight(card, artist: artist)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 10) {
-                                        ZStack(alignment: .bottomLeading) {
-                                            RemoteArtwork(urlString: spotlightCover(card, artist: artist), corner: 18)
-                                                .frame(width: 148, height: 148)
-                                                .overlay(
-                                                    LinearGradient(
-                                                        colors: [.clear, .black.opacity(0.5)],
-                                                        startPoint: .center,
-                                                        endPoint: .bottom
-                                                    )
-                                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                                )
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
-                                                )
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(artist.playlists.prefix(12)) { playlist in
+                        NavigationLink {
+                            YandexCatalogPlaylistView(playlist: playlist)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 10) {
+                                RemoteArtwork(urlString: playlist.coverUrlString, corner: 18)
+                                    .frame(width: 148, height: 148)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                                    )
 
-                                            Image(systemName: spotlightSymbol(card))
-                                                .font(.system(size: 16, weight: .bold))
-                                                .foregroundStyle(.white)
-                                                .padding(12)
-                                        }
+                                Text(playlist.title)
+                                    .font(SN.text(.subheadline, .semibold))
+                                    .foregroundStyle(SN.ink)
+                                    .lineLimit(2)
+                                    .frame(width: 148, alignment: .leading)
 
-                                        Text(spotlightTitle(card))
-                                            .font(SN.text(.subheadline, .semibold))
-                                            .foregroundStyle(SN.ink)
-                                            .lineLimit(2)
-                                            .frame(width: 148, alignment: .leading)
-                                    }
+                                if let count = playlist.trackCount {
+                                    Text("\(count) " + (l10n.isRussian
+                                        ? (count == 1 ? "трек" : (count < 5 ? "трека" : "треков"))
+                                        : (count == 1 ? "track" : "tracks")))
+                                        .font(SN.text(.caption, .medium))
+                                        .foregroundStyle(SN.inkMuted)
                                 }
-                                .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
                             }
                         }
-                        .padding(.horizontal, 16)
+                        .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
             }
         }
-    }
-
-    private func artistSpotlights(_ artist: YandexMusicService.YMArtistItem) -> [ArtistSpotlight] {
-        var cards: [ArtistSpotlight] = [.wave]
-        if !artist.popularTracks.isEmpty { cards.append(.popular) }
-        cards.append(contentsOf: sortedAlbums(artist.albums).dropFirst().prefix(4).map(ArtistSpotlight.album))
-        return Array(cards.prefix(8))
-    }
-
-    private func spotlightTitle(_ card: ArtistSpotlight) -> String {
-        switch card {
-        case .wave: return l10n.artistWave
-        case .popular: return l10n.topSongs
-        case .album(let album): return album.displayTitle
-        }
-    }
-
-    private func spotlightCover(_ card: ArtistSpotlight, artist: YandexMusicService.YMArtistItem) -> String? {
-        switch card {
-        case .wave: return artist.coverUrlString
-        case .popular: return artist.popularTracks.first?.coverUrlString ?? artist.coverUrlString
-        case .album(let album): return album.coverUrlString
-        }
-    }
-
-    private func spotlightSymbol(_ card: ArtistSpotlight) -> String {
-        switch card {
-        case .wave: return "dot.radiowaves.left.and.right"
-        case .popular: return "chart.bar.fill"
-        case .album: return "opticaldisc"
-        }
-    }
-
-    private func playSpotlight(_ card: ArtistSpotlight, artist: YandexMusicService.YMArtistItem) {
-        switch card {
-        case .wave:
-            playArtistWave(artist)
-        case .popular:
-            if let first = artist.popularTracks.first {
-                SonivoPlay.track(first, in: artist.popularTracks)
-            }
-        case .album(let album):
-            let related = artist.popularTracks.filter { track in
-                track.albums?.contains(where: { $0.id == album.id }) == true
-            }
-            if let first = related.first {
-                SonivoPlay.track(first, in: related)
-            } else if let first = artist.popularTracks.first {
-                SonivoPlay.track(first, in: artist.popularTracks)
-            }
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Albums
@@ -596,6 +524,51 @@ struct ArtistView: View {
                                         .font(SN.text(.caption, .medium))
                                         .foregroundStyle(SN.inkMuted)
                                 }
+                            }
+                        }
+                        .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Also appears on (Yandex `alsoAlbums`)
+
+    private func alsoAlbumsSection(_ artist: YandexMusicService.YMArtistItem) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(l10n.alsoAppearsOn)
+                .font(SN.display(.title3, .bold))
+                .foregroundStyle(SN.ink)
+                .padding(.horizontal, 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(artist.alsoAlbums.prefix(14)) { album in
+                        NavigationLink {
+                            AlbumView(albumId: String(album.id), title: album.displayTitle)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                RemoteArtwork(urlString: album.coverUrlString, corner: 16)
+                                    .frame(width: 148, height: 148)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                                    )
+
+                                Text(album.displayTitle)
+                                    .font(SN.text(.subheadline, .semibold))
+                                    .foregroundStyle(SN.ink)
+                                    .lineLimit(2)
+                                    .frame(width: 148, alignment: .leading)
+
+                                Text(album.artistName)
+                                    .font(SN.text(.caption, .medium))
+                                    .foregroundStyle(SN.inkMuted)
+                                    .lineLimit(1)
+                                    .frame(width: 148, alignment: .leading)
                             }
                         }
                         .buttonStyle(CardPressStyle(scale: 0.96, haptic: true))
@@ -922,6 +895,109 @@ struct ArtistInfoSheet: View {
         .padding(.vertical, 14)
         .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5))
+    }
+}
+
+
+// MARK: - Yandex catalog playlist (from artist brief-info)
+
+struct YandexCatalogPlaylistView: View {
+    let playlist: YandexMusicService.YMArtistItem.YMArtistPlaylistBrief
+    @Environment(\.dismiss) private var dismiss
+    @State private var tracks: [YandexMusicService.YMTrackItem] = []
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var presentation = ActivePlayerPresentation.shared
+    @State private var l10n = SonivoL10n.shared
+
+    var body: some View {
+        ZStack {
+            SN.bg.ignoresSafeArea()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 14) {
+                        RemoteArtwork(urlString: playlist.coverUrlString, corner: 16)
+                            .frame(width: 96, height: 96)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(playlist.title)
+                                .font(SN.display(.title3, .bold))
+                                .foregroundStyle(SN.ink)
+                                .lineLimit(3)
+                            if let count = playlist.trackCount {
+                                Text("\(count) " + (l10n.isRussian ? "треков" : "tracks"))
+                                    .font(SN.text(.caption, .medium))
+                                    .foregroundStyle(SN.inkMuted)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+
+                    if let first = tracks.first {
+                        Button {
+                            Haptics.tap(.heavy)
+                            SonivoPlay.track(first, in: tracks)
+                        } label: {
+                            Label(l10n.play, systemImage: "play.fill")
+                                .font(SN.text(.subheadline, .bold))
+                                .foregroundStyle(.black)
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                                .background(Color.white, in: Capsule())
+                        }
+                        .buttonStyle(TactileButtonStyle(scale: 0.97))
+                        .padding(.horizontal, 16)
+                    }
+
+                    if isLoading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 24)
+                    } else if let error {
+                        Text(error)
+                            .font(SN.text(.footnote, .medium))
+                            .foregroundStyle(SN.inkMuted)
+                            .padding(.horizontal, 16)
+                    } else {
+                        LazyVStack(spacing: 2) {
+                            ForEach(tracks) { item in
+                                AppleTrackRowView(
+                                    item: item,
+                                    isPlaying: isPlaying(item),
+                                    onPlay: { SonivoPlay.track(item, in: tracks) },
+                                    onWave: {
+                                        playTrackWave(from: YandexMusicService.shared.convertToTrack(item))
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, 120)
+            }
+        }
+        .navigationTitle(playlist.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func isPlaying(_ item: YandexMusicService.YMTrackItem) -> Bool {
+        guard let current = presentation.displayTrack else { return false }
+        return current.title == item.title && current.artist == item.artistName
+    }
+
+    private func load() async {
+        isLoading = true
+        error = nil
+        do {
+            tracks = try await YandexMusicService.shared.getCatalogPlaylistTracks(
+                uid: playlist.uid,
+                kind: playlist.kind
+            )
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isLoading = false
     }
 }
 

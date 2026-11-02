@@ -256,7 +256,7 @@ final class YandexMusicService {
         static func == (lhs: YMAlbumItem, rhs: YMAlbumItem) -> Bool { lhs.id == rhs.id }
     }
 
-    /// Полная карточка артиста с популярными треками и альбомами.
+    /// Полная карточка артиста — поля из Yandex `/artists/{id}/brief-info`.
     struct YMArtistItem: Identifiable, Equatable {
         let id: String
         let name: String
@@ -264,7 +264,14 @@ final class YandexMusicService {
         let genres: [String]
         let counts: ArtistCounts?
         var popularTracks: [YMTrackItem] = []
+        /// Direct / discography albums from brief-info.
         var albums: [YMAlbumItem] = []
+        /// `lastReleases` from brief-info (prefer for featured card).
+        var lastReleases: [YMAlbumItem] = []
+        /// Compilations / appearances (`alsoAlbums`).
+        var alsoAlbums: [YMAlbumItem] = []
+        /// Editorial / artist playlists from brief-info (not synthetic).
+        var playlists: [YMArtistPlaylistBrief] = []
         var similarArtists: [YMArtistBrief] = []
 
         struct ArtistCounts: Equatable {
@@ -276,6 +283,22 @@ final class YandexMusicService {
             let id: String
             let name: String
             let coverUri: String?
+            var coverUrlString: String? {
+                guard let uri = coverUri, !uri.isEmpty else { return nil }
+                return "https://" + uri.replacingOccurrences(of: "%%", with: "400x400")
+            }
+        }
+
+        /// Playlist row from brief-info `playlists[]`.
+        struct YMArtistPlaylistBrief: Identifiable, Equatable, Hashable {
+            let uid: Int
+            let kind: Int
+            let title: String
+            let coverUri: String?
+            let trackCount: Int?
+
+            var id: String { "\(uid):\(kind)" }
+
             var coverUrlString: String? {
                 guard let uri = coverUri, !uri.isEmpty else { return nil }
                 return "https://" + uri.replacingOccurrences(of: "%%", with: "400x400")
@@ -301,6 +324,15 @@ final class YandexMusicService {
             if let c = counts?.tracks { parts.append(String(c) + " треков") }
             if let g = genres.first { parts.append(g.capitalized) }
             return parts.joined(separator: " · ")
+        }
+
+        /// Featured release: API lastReleases first, else newest album.
+        var featuredRelease: YMAlbumItem? {
+            if let first = lastReleases.first { return first }
+            return albums.sorted {
+                if $0.year != $1.year { return ($0.year ?? 0) > ($1.year ?? 0) }
+                return $0.id > $1.id
+            }.first
         }
     }
 
@@ -345,67 +377,26 @@ final class YandexMusicService {
 
     func getArtist(artistId: String) async throws -> YMArtistItem {
         if let cached = artistCache[artistId] { return cached }
-        guard var comps = URLComponents(string: Self.apiBase + "/artists/" + artistId + "/brief-info") else { throw URLError(.badURL) }
-        comps.queryItems = [
-            URLQueryItem(name: "popularTracks", value: "true"),
-            URLQueryItem(name: "discography", value: "true"),
-            URLQueryItem(name: "similarArtists", value: "true")
-        ]
-        guard let url = comps.url else { throw URLError(.badURL) }
-        let (data, _) = try await sessionData(for: authorizedRequest(url: url))
+        if let brief = await loadArtistBrief(artistId: artistId) {
+            artistCache[artistId] = brief
+            return brief
+        }
+        throw URLError(.cannotParseResponse)
+    }
 
+    /// Tracks for a catalog playlist from artist brief-info (`/users/{uid}/playlists/{kind}`).
+    func getCatalogPlaylistTracks(uid: Int, kind: Int) async throws -> [YMTrackItem] {
+        guard let url = URL(string: Self.apiBase + "/users/\(uid)/playlists/\(kind)") else {
+            throw URLError(.badURL)
+        }
+        let (data, _) = try await sessionData(for: authorizedRequest(url: url))
         struct Response: Decodable {
-            struct Result: Decodable {
-                struct ArtistBlock: Decodable {
-                    let id: Int?
-                    let name: String?
-                    let coverUri: String?
-                    let genres: [String]?
-                    let counts: Counts?
-                    struct Counts: Decodable {
-                        let tracks: Int?
-                        let directAlbums: Int?
-                    }
-                }
-                let artist: ArtistBlock?
-                struct TracksBlock: Decodable { let tracks: [YMTrackItem]? }
-                struct AlbumsBlock: Decodable { let albums: [YMAlbumItem]? }
-                struct SimilarBlock: Decodable {
-                    struct Raw: Decodable {
-                        let id: Int?
-                        let name: String?
-                        let coverUri: String?
-                    }
-                    let similarArtists: [Raw]?
-                }
-                let popularTracks: TracksBlock?
-                let discography: AlbumsBlock?
-                let similarArtists: SimilarBlock?
-            }
+            struct Entry: Decodable { let track: YMTrackItem? }
+            struct Result: Decodable { let tracks: [Entry]? }
             let result: Result?
         }
-
-        let resp = try JSONDecoder().decode(Response.self, from: data)
-        guard let raw = resp.result?.artist,
-              let id = raw.id,
-              let name = raw.name else { throw URLError(.cannotParseResponse) }
-
-        var item = YMArtistItem(
-            id: String(id),
-            name: name,
-            coverUri: raw.coverUri,
-            genres: raw.genres ?? [],
-            counts: YMArtistItem.ArtistCounts(tracks: raw.counts?.tracks, directAlbums: raw.counts?.directAlbums)
-        )
-        item.popularTracks = Self.playable(resp.result?.popularTracks?.tracks ?? [])
-        item.albums = (resp.result?.discography?.albums ?? []).filter { $0.id != 0 }
-        item.similarArtists = (resp.result?.similarArtists?.similarArtists ?? []).compactMap { raw in
-            guard let id = raw.id, let name = raw.name else { return nil }
-            return YMArtistItem.YMArtistBrief(id: String(id), name: name, coverUri: raw.coverUri)
-        }
-
-        artistCache[artistId] = item
-        return item
+        let entries = (try JSONDecoder().decode(Response.self, from: data)).result?.tracks ?? []
+        return Self.playable(entries.compactMap(\.track))
     }
 
     /// Популярные треки артиста (отдельно, если нужно больше).
