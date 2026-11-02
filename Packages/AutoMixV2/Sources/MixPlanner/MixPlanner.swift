@@ -103,27 +103,16 @@ public enum MixPlanner {
         let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey, maxSemitones: 3)
 
         if tempo == nil || !harmonic.isHarmonicallyViable {
-            var automixSettings = settings
-            automixSettings.mode = .automix
-            let fallback = plan(from: a, to: b, aMeta: aMeta, bMeta: bMeta, settings: automixSettings)
+            // Soft Duet: still dual-vocal window with content cues — never ONE VOCAL Automix.
+            // Planner adapts length/cues; rates stay natural when the grid cannot lock.
             let why: [String] = [
                 tempo == nil ? "BPM far" : nil,
                 !harmonic.isHarmonicallyViable ? harmonic.description : nil
             ].compactMap { $0 }
-            return TransitionPlan(
-                type: fallback.type,
-                archetype: fallback.archetype,
-                aOutStartSec: fallback.aOutStartSec,
-                bInStartSec: fallback.bInStartSec,
-                bars: fallback.bars,
-                tempoTargetBPM: fallback.tempoTargetBPM,
-                rateA: fallback.rateA,
-                rateB: fallback.rateB,
-                pitchShiftCentsB: fallback.pitchShiftCentsB,
-                gainOffsetBdB: fallback.gainOffsetBdB,
-                loopBarsA: fallback.loopBarsA,
-                fx: fallback.fx,
-                reason: "DUET SAFE · Automix (\(why.joined(separator: " · "))) · \(fallback.reason)"
+            return planSoftDuet(
+                from: a, to: b, settings: settings,
+                tempo: tempo, harmonic: harmonic,
+                note: why.joined(separator: " · ")
             )
         }
 
@@ -211,6 +200,67 @@ public enum MixPlanner {
             fx: events,
             reason: "DUET · \(Int(round(bars))) bars · vocal A + vocal B · instr B · LAND · \(harmonic.description)"
         )
+    }
+
+    /// Content-aware Duet when hard tempo/key lock is unavailable.
+    private static func planSoftDuet(
+        from a: TrackProfile, to b: TrackProfile,
+        settings: MixSettings,
+        tempo: BeatGridSynchronization.TempoMatch?,
+        harmonic: HarmonicMatch,
+        note: String
+    ) -> TransitionPlan {
+        let bpm: Float = tempo?.targetBPM
+            ?? (a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120))
+        let rateA: Float = tempo.map { clampRate($0.rateA) } ?? 1
+        let rateB: Float = tempo.map { clampRate($0.rateB) } ?? 1
+        let barSec = 240.0 / Double(max(60, bpm))
+        let bars = 4.0
+        let blendSec = max(4, bars * barSec)
+        let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: blendSec)
+        let outCue = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
+        let rawIn = BeatGridSynchronization.incomingCue(profile: b, duration: blendSec)
+        let incoming = b.downbeatsSec.min(by: { abs($0 - rawIn) < abs($1 - rawIn) }) ?? rawIn
+        let handoffBar = bars * 0.65
+        let bassBar = bars * 0.35
+        let events: [FxEvent] = [
+            FxEvent(target: .a, kind: .volume, startBar: 0, endBar: bars,
+                    fromValue: 0, toValue: -60, curve: .sCurve),
+            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: min(1.5, bars * 0.4),
+                    fromValue: -18, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .bassKill, startBar: 0, endBar: bassBar,
+                    fromValue: 0, toValue: 1, curve: .sCurve),
+            FxEvent(target: .b, kind: .bassOn, startBar: bassBar, endBar: min(bars, bassBar + 1),
+                    fromValue: 1, toValue: 0, curve: .sCurve),
+            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: handoffBar,
+                    fromValue: -4, toValue: 0, curve: .sCurve),
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: min(2, bars * 0.45),
+                    fromValue: 1100, toValue: 20_000, curve: .exp),
+            FxEvent(target: .a, kind: .highPass, startBar: max(0, handoffBar - 0.4), endBar: bars,
+                    fromValue: 20, toValue: 4200, curve: .exp),
+            FxEvent(target: .a, kind: .echoOut, startBar: max(0, handoffBar), endBar: bars,
+                    fromValue: 0, toValue: 42, curve: .sCurve, param: 50)
+        ]
+        return TransitionPlan(
+            type: tempo == nil ? .filterEcho : .beatmatchedShort,
+            archetype: .dropSwap,
+            aOutStartSec: outCue,
+            bInStartSec: incoming,
+            bars: bars,
+            tempoTargetBPM: tempo == nil ? 0 : bpm,
+            rateA: rateA,
+            rateB: rateB,
+            pitchShiftCentsB: harmonic.isHarmonicallyViable ? harmonic.pitchShiftCents : 0,
+            gainOffsetBdB: normalizationGain(profile: b, settings: settings),
+            loopBarsA: 0,
+            fx: events,
+            reason: "DUET · soft · vocal A + vocal B · \(note.isEmpty ? harmonic.description : note)"
+        )
+    }
+
+    private static func clampRate(_ rate: Float) -> Float {
+        guard rate.isFinite, rate > 0 else { return 1 }
+        return max(0.84, min(1.16, rate))
     }
 
     // 1. Архетип Seamless Loop: длинное перетекание (16-32 такта) без среза середины

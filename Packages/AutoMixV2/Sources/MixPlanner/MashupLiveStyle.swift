@@ -267,6 +267,41 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return (min(1, max(0, outgoing)), min(1, max(0, incoming)))
     }
 
+    /// When the user chose Duet, keep dual-vocal grammar even if MixPlanner
+    /// could not hard-lock tempo/key (never fall into ONE VOCAL carve).
+    public mutating func applyDuetPlaybackCharacter() {
+        isDuet = true
+        oneVocalConflict = false
+        archetypeName = "duet"
+        handoffAt = min(0.70, max(0.55, handoffAt > 0 ? handoffAt : 0.66))
+        bassSwapAt = max(0.12, min(handoffAt - 0.18, max(0.12, bassSwapAt)))
+        vocalHoldUntil = handoffAt
+        vocalPocketUntil = min(0.94, handoffAt + 0.16)
+        outgoingVolumeHold = max(0.82, outgoingVolumeHold)
+        incomingVolumeLag = min(0.12, max(0.05, incomingVolumeLag))
+        if !reason.uppercased().contains("DUET") {
+            reason = "Duet · \(reason)"
+        }
+    }
+
+    /// Live Automix without stem bake: force ONE VOCAL grammar (A instr bed + B lead).
+    public mutating func applyAutomixPlaybackCharacter() {
+        isDuet = false
+        oneVocalConflict = true
+        if archetypeName == "duet" { archetypeName = "dropSwap" }
+        handoffAt = min(0.62, max(0.42, handoffAt > 0 ? handoffAt : 0.52))
+        bassSwapAt = min(handoffAt, max(0.12, handoffAt - 0.28))
+        vocalHoldUntil = min(0.78, handoffAt + 0.10)
+        vocalPocketUntil = min(0.94, handoffAt + 0.28)
+        outgoingVolumeHold = min(0.62, max(0.28, outgoingVolumeHold))
+        incomingVolumeLag = max(0.04, min(0.14, incomingVolumeLag))
+        hpfDepth = max(1.05, hpfDepth)
+        bassDepth = max(1.0, bassDepth)
+        if !reason.uppercased().contains("ONE VOCAL") {
+            reason = "ONE VOCAL · \(reason)"
+        }
+    }
+
     public func phaseLabel(progress: Double) -> String {
         let p = min(1, max(0, progress))
         if isDuet {

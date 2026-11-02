@@ -67,8 +67,8 @@ struct MixPlannerStage2Tests {
         #expect(!plan.fx.contains { $0.kind == .instrumentalize })
     }
 
-    @Test("Duet falls back to Automix when BPM cannot lock")
-    func duetQualityGateFallback() {
+    @Test("Duet stays dual-vocal soft plan when BPM cannot lock")
+    func duetQualityGateSoft() {
         let a = profile("a", bpm: 90, key: "8A")
         let b = profile("b", bpm: 140, key: "8A")
         let plan = MixPlanner.plan(
@@ -76,7 +76,9 @@ struct MixPlannerStage2Tests {
             aMeta: meta("a"), bMeta: meta("b"),
             settings: MixSettings(mode: .duet, skipTransitionsWithinAlbum: false)
         )
-        #expect(plan.reason.hasPrefix("DUET SAFE · Automix"))
+        #expect(plan.reason.hasPrefix("DUET · soft"))
+        #expect(!plan.fx.contains { $0.kind == .instrumentalize })
+        #expect(plan.fx.contains { $0.kind == .echoOut })
     }
 
     private func meta(_ id: String, album: String? = nil, duration: Double = 180) -> TrackMeta {

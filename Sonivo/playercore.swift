@@ -1024,13 +1024,13 @@ final class PlayerCore {
     /// Publish mashup envelopes to stream taps and/or native EQ decks for any mix of backends.
     /// Writes immediately (no multi-hundred-ms ramp) so 30 Hz transition ticks stay click-free.
     private func applyMashupTransitionEQ(progress: Double) {
-        // When Mid/Side bake already shaped the window, skip live vocal/duet EQ gates
-        // so we don't double-carve mids on top of the baked stem.
-        var style = activeMashupStyle
-        if mashupBakeRealIncomingURL != nil {
-            style.oneVocalConflict = false
-            style.isDuet = false
+        // Dual-stem / master bake already carved Mid/Side — flat EQ only.
+        // Re-running dropSwap/Duet gates on top is what made device mixes muddy.
+        if mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake {
+            resetTransitionEQOffsets()
+            return
         }
+        let style = activeMashupStyle
         let shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: style)
         let activeOff = Self.normalized(shaped.outgoing)
         let idleOff = Self.normalized(shaped.incoming)
@@ -2271,13 +2271,21 @@ final class PlayerCore {
         let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
         let plan = (outProfile != nil && inProfile != nil) ? analysis.transitionPlan : nil
         let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
-        return MashupLiveStyle.resolve(
+        var style = MashupLiveStyle.resolve(
             plan: plan,
             outgoing: outProfile,
             incoming: inProfile,
             outgoingDuration: totalDur,
             incomingDuration: incomingDur
         )
+        // User selected Duet → keep dual-vocal grammar (never slide into ONE VOCAL Automix).
+        if transitionMode == .duet {
+            style.applyDuetPlaybackCharacter()
+        } else if transitionMode == .automix {
+            // Live/stream Automix without stems must ONE-VOCAL carve — two dry mixes = mud.
+            style.applyAutomixPlaybackCharacter()
+        }
+        return style
     }
 
     /// Prefer analysed TrackProfile cues from AutoMixV2 analysis when present;
@@ -2377,47 +2385,38 @@ final class PlayerCore {
         transitionPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                // Lab offline master: ONE VOCAL (A instr + B) or Duet (A vocal + B dry).
-                let shouldBakeMaster = mashup && (
-                    self.activeMashupStyle.isDuet || self.activeMashupStyle.oneVocalConflict
-                )
-                if shouldBakeMaster,
+                // Always offline-bake the mashup window when both files are local.
+                // Lab path: dual-stem CAFs on dual decks + live beatmatch rates/volumes.
+                // Automix = A instrumental + B instr→dry; Duet = A vocal isolate + B full.
+                let inURLForBake = nextURL ?? self.findLocalOrCachedAudioFile(for: nextTrack)
+                let shouldBakeStems = mashup && outgoingCacheURL != nil && inURLForBake != nil
+                if shouldBakeStems,
                    let outURL = outgoingCacheURL,
-                   let inURL = nextURL ?? self.findLocalOrCachedAudioFile(for: nextTrack) {
+                   let inURL = inURLForBake {
                     let blend = self.transitionDuration
                     let style = self.activeMashupStyle
-                    let duetBake = style.isDuet
+                    let duetBake = self.transitionMode == .duet || style.isDuet
                     let handoff = style.handoffAt
                     let cueA = max(0, cueAForBake)
                     let cueB = max(0, startAt)
-                    let hold = style.outgoingVolumeHold
-                    let lag = style.incomingVolumeLag
-                    let beatmatched = style.isBeatmatched
                     let bakeStartedAt = Date()
-                    let masterURL: URL? = await Task.detached(priority: .userInitiated) {
+                    let stemPair: (outgoing: URL, incoming: URL)? = await Task.detached(priority: .userInitiated) {
                         if duetBake {
-                            return try? MidSideStemBaker.bakeDuetMaster(
+                            return try? MidSideStemBaker.bakeDuetStemPair(
                                 outgoingURL: outURL,
                                 incomingURL: inURL,
                                 cueA: cueA,
                                 cueB: cueB,
-                                blendSec: blend,
-                                handoffProgress: handoff,
-                                outgoingVolumeHold: hold,
-                                incomingVolumeLag: lag,
-                                isBeatmatched: beatmatched
+                                blendSec: blend
                             )
                         }
-                        return try? MidSideStemBaker.bakeOneVocalMaster(
+                        return try? MidSideStemBaker.bakeAutomixStemPair(
                             outgoingURL: outURL,
                             incomingURL: inURL,
                             cueA: cueA,
                             cueB: cueB,
                             blendSec: blend,
-                            handoffProgress: handoff,
-                            outgoingVolumeHold: hold,
-                            incomingVolumeLag: lag,
-                            isBeatmatched: beatmatched
+                            handoffProgress: handoff
                         )
                     }.value
                     // Bake ran while live A kept playing — enter the CAF mid-window so the
@@ -2425,24 +2424,33 @@ final class PlayerCore {
                     let bakeLag = min(max(0, Date().timeIntervalSince(bakeStartedAt)), max(0, blend - 1.5))
                     guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
-                        if let masterURL { MidSideStemBaker.removeTempFiles([masterURL]) }
+                        if let stemPair {
+                            MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                        }
                         return
                     }
-                    if let masterURL {
+                    if let stemPair {
                         self.clearMashupBakeTemps()
-                        self.mashupBakeTempURLs = [masterURL]
+                        self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
                         self.mashupBakeRealIncomingURL = inURL
                         self.mashupBakeIncomingBaseCue = cueB + bakeLag
-                        try self.playMashupMasterBake(masterURL, startOffsetSec: bakeLag)
+                        try self.playMashupStemPair(
+                            outgoingURL: stemPair.outgoing,
+                            incomingURL: stemPair.incoming,
+                            startOffsetSec: bakeLag
+                        )
                         self.incomingLaneReady = true
                         self.transitionStartTime = Date()
-                        // Master already contains volumes + stems; bypass dual-deck EQ carve.
+                        // Stems already carved; volumes + rates stay live on the dual decks.
+                        let rates = self.activeMashupStyle.playbackRates(progress: min(1, bakeLag / max(0.001, blend)))
+                        self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+                        self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
                         self.applyMashupTransitionEQ(progress: 0)
                         AutoMixDJEngine.shared.markMashupProgress(0)
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
                         AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
                         SonivoDiagnostics.log(
-                            "[Mashup] \(duetBake ? "DUET" : "ONE VOCAL") master bake · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
+                            "[Mashup] \(duetBake ? "DUET" : "ONE VOCAL") dual-stem bake · A×\(String(format: "%.3f", rates.outgoing)) B×\(String(format: "%.3f", rates.incoming)) · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
                             tag: "AUDIO"
                         )
                         self.startTransitionTimer()
@@ -2717,6 +2725,47 @@ final class PlayerCore {
         activePlayer.volume = 1
         if !engine.isRunning { try engine.start() }
         activePlayer.play()
+    }
+
+    /// Lab dual-deck path: stem-baked A + B on separate nodes; rates/volumes stay live.
+    private func playMashupStemPair(
+        outgoingURL: URL,
+        incomingURL: URL,
+        startOffsetSec: Double = 0
+    ) throws {
+        let outFile = try AVAudioFile(forReading: outgoingURL)
+        let inFile = try AVAudioFile(forReading: incomingURL)
+        guard outFile.length > 0, inFile.length > 0 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        isUsingStreamPlayer = false
+        incomingIsStream = false
+        mashupPlayingMasterBake = false
+        activeStreamingPlayer.pause()
+        idleStreamingPlayer.pause()
+        activeStreamingPlayer.volume = 0
+        idleStreamingPlayer.volume = 0
+
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
+        activePlayer.stop()
+        idlePlayer.stop()
+
+        let offset = max(0, startOffsetSec)
+        activeAudioFile = outFile
+        incomingAudioFile = inFile
+        activeLocalURL = outgoingURL
+        incomingStartPosition = offset
+
+        scheduleLocalSegment(outFile, on: activePlayer, at: offset)
+        scheduleLocalSegment(inFile, on: idlePlayer, at: offset)
+        let vols = activeMashupStyle.volumes(progress: 0)
+        activePlayer.volume = vols.outgoing
+        idlePlayer.volume = vols.incoming
+        if !engine.isRunning { try engine.start() }
+        activePlayer.play()
+        idlePlayer.play()
     }
 
     private func completeTransition(to nextTrack: Track) {

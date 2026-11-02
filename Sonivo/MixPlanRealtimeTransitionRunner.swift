@@ -116,6 +116,7 @@ enum MashupLiveEQEnvelope {
 
     /// Lab Modern Duet on the live EQ path: keep A vocal presence, B full mix,
     /// LPF invite on B, HPF/echo-ish exit on A at LAND.
+    /// Gentle presence only — heavy mid boosts made stream Duets muddy/uneven.
     private static func applyDuetGate(
         _ shaped: (outgoing: [Float], incoming: [Float]),
         p: Double,
@@ -125,29 +126,30 @@ enum MashupLiveEQEnvelope {
     ) -> (outgoing: [Float], incoming: [Float]) {
         var out = shaped.outgoing
         var inn = shaped.incoming
-        // A: lift vocal presence through the stack; HPF carve after handoff.
+        // A: soft vocal focus through the stack; HPF carve after handoff.
         let stack = 1 - ramp(p, from: handoff - 0.02, to: min(0.96, handoff + 0.12))
         let land = ramp(p, from: handoff, to: min(1, handoff + 0.22))
         if out.count >= 10 {
-            out[0] = clampDB(min(out[0], -10 * ramp(p, from: 0, to: bassAt))) // hand bass to B
-            out[1] = clampDB(min(out[1], -8 * ramp(p, from: 0, to: bassAt)))
-            out[5] = clampDB(max(out[5], 3.5 * stack))
-            out[6] = clampDB(max(out[6], 4.5 * stack))
-            out[7] = clampDB(max(out[7], 3.0 * stack))
-            out[3] = clampDB(min(out[3], -6 * hpfD * land))
-            out[4] = clampDB(min(out[4], -8 * hpfD * land))
-            out[8] = clampDB(min(out[8], -5 * land))
-            out[9] = clampDB(min(out[9], -4 * land))
+            out[0] = clampDB(min(out[0], -11 * ramp(p, from: 0, to: bassAt))) // hand bass to B
+            out[1] = clampDB(min(out[1], -9 * ramp(p, from: 0, to: bassAt)))
+            out[2] = clampDB(min(out[2], -4 * ramp(p, from: 0.05, to: bassAt)))
+            out[5] = clampDB(max(out[5], 1.8 * stack))
+            out[6] = clampDB(max(out[6], 2.4 * stack))
+            out[7] = clampDB(max(out[7], 1.6 * stack))
+            out[3] = clampDB(min(out[3], -5 * hpfD * land))
+            out[4] = clampDB(min(out[4], -7 * hpfD * land))
+            out[8] = clampDB(min(out[8], -6 * land))
+            out[9] = clampDB(min(out[9], -5 * land))
         }
         // B: soft LPF invite early, then open; light mid duck during dual stack.
         let invite = 1 - ramp(p, from: 0.02, to: max(0.18, bassAt))
         let dual = stack
         if inn.count >= 10 {
-            inn[8] = clampDB(min(inn[8], -7 * invite))
-            inn[9] = clampDB(min(inn[9], -9 * invite))
-            inn[5] = clampDB(min(inn[5], -3.5 * dual))
-            inn[6] = clampDB(min(inn[6], -4.5 * dual))
-            inn[0] = clampDB(max(inn[0], 1.5 * ramp(p, from: bassAt * 0.4, to: bassAt + 0.1)))
+            inn[8] = clampDB(min(inn[8], -6 * invite))
+            inn[9] = clampDB(min(inn[9], -8 * invite))
+            inn[5] = clampDB(min(inn[5], -2.8 * dual))
+            inn[6] = clampDB(min(inn[6], -3.6 * dual))
+            inn[0] = clampDB(max(inn[0], 1.2 * ramp(p, from: bassAt * 0.4, to: bassAt + 0.1)))
         }
         return (out, inn)
     }

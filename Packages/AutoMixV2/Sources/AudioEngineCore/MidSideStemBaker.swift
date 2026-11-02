@@ -301,6 +301,79 @@ public enum MidSideStemBaker {
         )
     }
 
+    /// Lab-faithful dual-deck stems: A vocal isolate + B dry. Rates stay on the decks.
+    public static func bakeDuetStemPair(
+        outgoingURL: URL,
+        incomingURL: URL,
+        cueA: Double,
+        cueB: Double,
+        blendSec: Double
+    ) throws -> (outgoing: URL, incoming: URL) {
+        let duration = min(maximumDurationSec, max(4, blendSec))
+        let aURL = try bakeToTempFile(
+            MidSideBakeRequest(
+                fileURL: outgoingURL,
+                cueSec: cueA,
+                durationSec: duration,
+                mode: .vocal,
+                amount: 0.92
+            )
+        )
+        do {
+            let bURL = try bakeToTempFile(
+                MidSideBakeRequest(
+                    fileURL: incomingURL,
+                    cueSec: cueB,
+                    durationSec: duration,
+                    mode: .dry,
+                    amount: 0
+                )
+            )
+            return (aURL, bURL)
+        } catch {
+            removeTempFiles([aURL])
+            throw error
+        }
+    }
+
+    /// Lab ONE VOCAL dual-deck stems: A instrumental bed + B instr→dry at LAND.
+    public static func bakeAutomixStemPair(
+        outgoingURL: URL,
+        incomingURL: URL,
+        cueA: Double,
+        cueB: Double,
+        blendSec: Double,
+        handoffProgress: Double
+    ) throws -> (outgoing: URL, incoming: URL) {
+        let duration = min(maximumDurationSec, max(4, blendSec))
+        let handoff = min(0.85, max(0.35, handoffProgress))
+        let aURL = try bakeToTempFile(
+            MidSideBakeRequest(
+                fileURL: outgoingURL,
+                cueSec: cueA,
+                durationSec: duration,
+                mode: .instrumental,
+                amount: 0.92
+            )
+        )
+        do {
+            let bURL = try bakeToTempFile(
+                MidSideBakeRequest(
+                    fileURL: incomingURL,
+                    cueSec: cueB,
+                    durationSec: duration,
+                    mode: .instrumental,
+                    amount: 0.90,
+                    instrumentalUntilSec: duration * handoff
+                )
+            )
+            return (aURL, bURL)
+        } catch {
+            removeTempFiles([aURL])
+            throw error
+        }
+    }
+
     // MARK: - Single-stem bake (tests / DualDeck helpers)
 
     /// Bake one mashup slice to a temp CAF. Caller must delete the URL when done.
@@ -607,11 +680,15 @@ public enum MidSideStemBaker {
                 processedL = midKeep + sideBoost
                 processedR = midKeep - sideBoost
             case .vocal:
-                // Light vocal focus — don't collapse stereo image / air.
-                let sideKeep = side * (1 - 0.45 * a)
-                let midBoost = midLp + midBody * (1 + 0.05 * a) + midPres * (1 + 0.2 * a)
-                processedL = midBoost + sideKeep
-                processedR = midBoost - sideKeep
+                // Duet A = center vocal isolate (Lab karaoke invert): drop sides + sub,
+                // keep lead presence. This is the stem recipe — not a loudness boost.
+                let midKeep =
+                    midLp * (1 - 0.90 * a)
+                    + midBody * (1 - 0.30 * a)
+                    + midPres * (1 + 0.75 * a)
+                let sideKeep = side * (1 - 0.95 * a)
+                processedL = midKeep + sideKeep
+                processedR = midKeep - sideKeep
             }
 
             // Instr→dry crossfade near LAND (B lead returns).

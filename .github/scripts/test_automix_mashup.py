@@ -173,16 +173,33 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("Echo Out + beatmatch", planner)
         self.assertIn("bpmClose && !harmonic.isNaturallyCompatible", planner)
         self.assertIn("planDuet", planner)
+        self.assertIn("planSoftDuet", planner)
         self.assertIn("case duet", (ROOT / "Packages/AutoMixV2/Sources/MixModels/MixSettings.swift").read_text())
         self.assertIn("DUET ·", planner)
-        self.assertIn("DUET SAFE", planner)
         self.assertIn("maximumRateChange: 0.18", planner)
         self.assertIn("maxSemitones: 3", planner)
+
+        style = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
+        ).read_text()
+        self.assertIn("applyDuetPlaybackCharacter", style)
+        self.assertIn("applyAutomixPlaybackCharacter", style)
+
+        player = (ROOT / "Sonivo/playercore.swift").read_text()
+        self.assertIn("applyDuetPlaybackCharacter", player)
+        self.assertIn("applyAutomixPlaybackCharacter", player)
+        self.assertIn("Always offline-bake the mashup window", player)
+        self.assertIn("transitionMode == .duet || style.isDuet", player)
+        self.assertIn("bakeDuetStemPair", player)
+        self.assertIn("bakeAutomixStemPair", player)
+        self.assertIn("playMashupStemPair", player)
 
         baker = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift"
         ).read_text()
         self.assertIn("bakeDuetMaster", baker)
+        self.assertIn("bakeDuetStemPair", baker)
+        self.assertIn("bakeAutomixStemPair", baker)
         self.assertIn("useDuetVolumes", baker)
         self.assertIn("outgoingMode: .vocal", baker)
         self.assertIn("incomingMode: .dry", baker)
