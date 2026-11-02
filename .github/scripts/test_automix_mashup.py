@@ -23,13 +23,17 @@ class AutoMixMashupTests(unittest.TestCase):
     def test_live_player_enables_automix_mashup(self):
         models = (ROOT / "Sonivo/models.swift").read_text()
         self.assertIn('case automix = "AutoMix Mashup"', models)
+        self.assertIn('case duet = "Duet"', models)
         self.assertIn("markMashupProgress", models)
         self.assertIn("шкала и обложка снэпаются", models.lower())
         # Equal-power volume contract stays intact for CI purity checks.
         self.assertIn("return (outVol, inVol, 0.0, 0.0, 1.0)", models)
 
         player = (ROOT / "Sonivo/playercore.swift").read_text()
-        self.assertIn("transitionMode == .crossfade || transitionMode == .automix", player)
+        # Automix + Duet share the beatmatched mashup path via isMashupTransitionMode.
+        self.assertIn("isMashupTransitionMode", player)
+        self.assertIn("transitionMode == .automix || transitionMode == .duet", player)
+        self.assertIn("transitionMode == .crossfade || isMashupTransitionMode", player)
         self.assertIn("applyMashupTransitionEQ(progress: p)", player)
         self.assertIn("applyMashupTransitionEQ(progress: 0)", player)
         self.assertIn("setItemEQOverride", player)
@@ -113,6 +117,7 @@ class AutoMixMashupTests(unittest.TestCase):
 
         settings = (ROOT / "Sonivo/settingsview.swift").read_text()
         self.assertIn("TransitionMode.automix", settings)
+        self.assertIn("TransitionMode.duet", settings)
         # Duration slider is crossfade-only; mashup auto-adjusts from blend detection.
         self.assertIn("player.transitionMode == .crossfade", settings)
         self.assertNotIn("Длительность mashup", settings)
@@ -153,14 +158,34 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("bass from B", style)
         self.assertIn("oneVocalConflict", style)
         self.assertIn("ONE VOCAL", style)
+        self.assertIn("isDuet", style)
+        self.assertIn("DUET LOCK", style)
+        self.assertIn("DUET STACK", style)
+        self.assertIn("duetVolumes", style)
 
         runner = (ROOT / "Sonivo/MixPlanRealtimeTransitionRunner.swift").read_text()
         self.assertIn("applyOneVocalGate", runner)
+        self.assertIn("applyDuetGate", runner)
         self.assertIn("oneVocalConflict", runner)
+        self.assertIn("isDuet", runner)
 
         planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
         self.assertIn("Echo Out + beatmatch", planner)
         self.assertIn("bpmClose && !harmonic.isNaturallyCompatible", planner)
+        self.assertIn("planDuet", planner)
+        self.assertIn("case duet", (ROOT / "Packages/AutoMixV2/Sources/MixModels/MixSettings.swift").read_text())
+        self.assertIn("DUET ·", planner)
+        self.assertIn("DUET SAFE", planner)
+        self.assertIn("maximumRateChange: 0.18", planner)
+        self.assertIn("maxSemitones: 3", planner)
+
+        baker = (
+            ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift"
+        ).read_text()
+        self.assertIn("bakeDuetMaster", baker)
+        self.assertIn("useDuetVolumes", baker)
+        self.assertIn("outgoingMode: .vocal", baker)
+        self.assertIn("incomingMode: .dry", baker)
 
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
         self.assertIn("LOCK", l10n)
@@ -170,6 +195,9 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("Эхо-выход", l10n)
         self.assertIn("Мэшап", l10n)
         self.assertIn("Лок темпа", l10n)
+        self.assertIn("var duet", l10n)
+        self.assertIn("DUET LOCK", l10n)
+        self.assertIn("DUET STACK", l10n)
 
         scheduler = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupBlendScheduler.swift"
@@ -179,8 +207,13 @@ class AutoMixMashupTests(unittest.TestCase):
 
         analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
         self.assertIn("transitionMode == .automix", analysis)
+        self.assertIn("transitionMode == .duet", analysis)
         self.assertIn("shouldAnalyse", analysis)
         self.assertIn("allowDownload", analysis)
+        self.assertIn("mixSettingsMode", analysis)
+
+        badge = (ROOT / "Sonivo/Dify/AIDJTransitionBadgeView.swift").read_text()
+        self.assertIn("l10n.duet", badge)
 
     def test_drop_swap_plan_still_encodes_mashup_fx(self):
         planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
