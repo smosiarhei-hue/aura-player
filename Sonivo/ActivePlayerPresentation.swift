@@ -69,16 +69,24 @@ final class ActivePlayerPresentation {
         guard AutoMixDJEngine.shared.isTransitionActive else { return nil }
         return AutoMixDJEngine.shared.statusBadge
     }
-    /// Timeline position for the player chrome (snaps to B at Automix handoff).
+    /// Timeline position for the player chrome.
+    /// During Automix/Duet the bar stays on the live outgoing clock until LAND;
+    /// after handoff `currentTrack` is already B so this follows B naturally.
     var progress: Double {
-        legacy.displayProgress
+        if isTransitionActive {
+            return legacy.playbackProgress
+        }
+        return legacy.displayProgress
     }
     var lyricsPresentationPosition: Double { legacy.lyricsPresentationPosition }
-    /// Timeline duration paired with `progress` / `displayTrack`.
+    /// Timeline duration paired with `progress` / live deck during Automix.
     var duration: Double {
-        legacy.displayDuration
+        if isTransitionActive {
+            return max(legacy.playbackDuration, 0.01)
+        }
+        return legacy.displayDuration
     }
-    /// Live deck position for scrubbing during Automix (never the B handoff snap).
+    /// Live deck position for scrubbing during Automix.
     /// Seek cancels mashup and applies against this timeline.
     var scrubProgress: Double {
         if isTransitionActive {

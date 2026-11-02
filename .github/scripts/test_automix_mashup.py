@@ -96,7 +96,13 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("seek cancels the mashup", timeline)
         self.assertIn("player.scrubProgress", timeline)
         self.assertIn("player.scrubDuration", timeline)
+        # Cover choreography may use transitionProgress; the timeline bar must not.
         self.assertIn("transitionProgress", timeline)
+        self.assertIn("Never replace it with a separate mashup", timeline)
+        self.assertIn(
+            "min(1, max(0, effectiveProgress / timelineDuration))",
+            timeline,
+        )
 
         presentation = (ROOT / "Sonivo/ActivePlayerPresentation.swift").read_text()
         self.assertIn("legacy.displayProgress", presentation)
@@ -189,8 +195,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("playMashupStemPair", player)
         self.assertIn("isCompletingTransition", player)
         self.assertIn("stemPadSec", player)
-        self.assertIn("completeAt", player)
-        self.assertIn("LAND→real reload failed", player)
+        self.assertIn("mashupHardCut", player)
+        self.assertIn("LAND hard-cut", player)
+        # Mashup/Duet LAND uses the proven start(at:) path so B never freezes.
+        self.assertIn("start(at: handoffPos)", player)
 
         baker = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift"

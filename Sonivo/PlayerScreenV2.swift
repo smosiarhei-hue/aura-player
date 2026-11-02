@@ -1787,16 +1787,10 @@ struct PlayerTimelineSection<Center: View>: View {
         if let pending = pendingSeekProgress { return pending }
         return player.progress
     }
-    /// Lab-style: while Mixing (and not scrubbing), the fill rides mashup 0→1
-    /// so the bar stays alive instead of freezing on A's outro / B snap.
+    /// Apple Automix: the bar always follows the real track clock (A until LAND,
+    /// then B). Never replace it with a separate mashup 0→1 meter.
     private var barFraction: Double {
-        if isScrubbing || pendingSeekProgress != nil {
-            return min(1, max(0, effectiveProgress / timelineDuration))
-        }
-        if mixing {
-            return min(1, max(0, player.transitionProgress))
-        }
-        return min(1, max(0, effectiveProgress / timelineDuration))
+        min(1, max(0, effectiveProgress / timelineDuration))
     }
 
     var body: some View {
@@ -1904,22 +1898,19 @@ struct PlayerTimelineSection<Center: View>: View {
                 }
             }
 
-            // Apple layout: elapsed | Automix | remaining on one row under the bar.
+            // Apple layout: elapsed | Mixing | remaining — same track clock as the bar.
             HStack {
                 Text(player.formatted(effectiveProgress))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
                     .foregroundStyle(SN.inkMuted)
-                    .contentTransition(mixing && !isScrubbing ? .identity : .numericText())
+                    .contentTransition(.numericText())
                 Spacer()
                 center
                 Spacer()
                 Text("-" + player.formatted(max(0, timelineDuration - effectiveProgress)))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
                     .foregroundStyle(SN.inkMuted)
-                    .contentTransition(mixing && !isScrubbing ? .identity : .numericText())
-            }
-            .transaction { tx in
-                if mixing && !isScrubbing { tx.animation = nil }
+                    .contentTransition(.numericText())
             }
         }
         .onChange(of: scrubContact) { _, active in

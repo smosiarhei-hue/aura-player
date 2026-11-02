@@ -592,18 +592,18 @@ final class PlayerCore {
         duration
     }
 
-    /// Timeline seconds shown in the player chrome. After the Automix handoff snap,
-    /// this follows the incoming cue (e.g. 0:25) instead of staying on A's outro.
+    /// Timeline seconds for chrome. Crossfade may still snap via metadataSwapped;
+    /// Automix/Duet keep the live outgoing clock until LAND (`start(at:)` on B).
     var displayProgress: Double {
-        if metadataSwapped, isTransitioning {
+        if metadataSwapped, isTransitioning, !isMashupTransitionMode {
             return incomingDisplayPosition()
         }
         return playbackProgress
     }
 
-    /// Duration paired with `displayProgress` / `displayTrack` during Automix snap.
+    /// Duration paired with `displayProgress` / `displayTrack`.
     var displayDuration: Double {
-        if metadataSwapped, isTransitioning,
+        if metadataSwapped, isTransitioning, !isMashupTransitionMode,
            let incoming = metadataTrack ?? incomingTrack,
            incoming.duration > 0 {
             return incoming.duration
@@ -2667,22 +2667,27 @@ final class PlayerCore {
             applyMashupTransitionEQ(progress: p)
         }
 
-        // Apple Automix: hard-cut artwork + timeline + dry B at musical LAND
-        // (handoffAt), not at the window end — matches IMG_7144.
-        let swapAt = mashup ? activeMashupStyle.handoffAt : 0.75
-        if !metadataSwapped, let incomingTrack, p >= swapAt {
-            metadataSwapped = true
-            metadataTrack = incomingTrack
-            NotificationCenter.default.post(
-                name: .didTriggerAutoMixDrop,
-                object: nil,
-                userInfo: ["trackID": incomingTrack.id.uuidString]
-            )
-        }
-
-        let completeAt = mashup ? activeMashupStyle.handoffAt : 1.0
-        if p >= completeAt, let incomingTrack {
-            completeTransition(to: incomingTrack)
+        // Apple Automix / Duet / Mashup: one hard cut at LAND — artwork, timeline,
+        // and dry B switch together. No mid-mix timeline snap to a second clock.
+        if mashup {
+            let landAt = activeMashupStyle.handoffAt
+            if p >= landAt, let incomingTrack {
+                completeTransition(to: incomingTrack)
+            }
+        } else {
+            let swapAt = 0.75
+            if !metadataSwapped, let incomingTrack, p >= swapAt {
+                metadataSwapped = true
+                metadataTrack = incomingTrack
+                NotificationCenter.default.post(
+                    name: .didTriggerAutoMixDrop,
+                    object: nil,
+                    userInfo: ["trackID": incomingTrack.id.uuidString]
+                )
+            }
+            if p >= 1.0, let incomingTrack {
+                completeTransition(to: incomingTrack)
+            }
         }
     }
 
@@ -2804,7 +2809,13 @@ final class PlayerCore {
         let nativeIncomingPosition = usedBake
             ? max(0, mashupBakeIncomingBaseCue + elapsed)
             : max(0, incomingStartPosition + elapsed)
-        let bakeRealURL = mashupBakeRealIncomingURL
+        let mashupHardCut = isMashupTransitionMode && (usedBake || !incomingIsStream)
+        let handoffPos = max(
+            0,
+            usedBake
+                ? nativeIncomingPosition
+                : (mashupIncomingCueSec > 0 ? mashupIncomingCueSec + elapsed : nativeIncomingPosition)
+        )
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil
@@ -2814,61 +2825,63 @@ final class PlayerCore {
 
         let wasStream = isUsingStreamPlayer
 
-        if usedBake, let realURL = bakeRealURL {
-            // LAND → load real next track at cue + elapsed (dry B continues solo).
-            isUsingStreamPlayer = false
-            streamingPlayerA.pause()
-            streamingPlayerB.pause()
-            // Invalidate stem completions before stop to block re-entrant finish.
-            localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
-            localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
+        if mashupHardCut {
+            // Reliable LAND: tear down stem decks, then use the normal start(at:)
+            // path for dry B. Custom stop/reschedule left B silent with a frozen clock.
+            NotificationCenter.default.post(
+                name: .didTriggerAutoMixDrop,
+                object: nil,
+                userInfo: ["trackID": nextTrack.id.uuidString]
+            )
+            localSegmentTokens.removeAll()
+            lyricsLocalSegments.removeAll()
             activePlayer.stop()
             idlePlayer.stop()
+            activePlayer.volume = 0
+            idlePlayer.volume = 0
             activeTimePitch.rate = 1
             activeTimePitch.pitch = 0
             activeTimePitch.bypass = true
             idleTimePitch.rate = 1
             idleTimePitch.pitch = 0
             idleTimePitch.bypass = true
-            idlePlayer.volume = 0
+            streamingPlayerA.pause()
+            streamingPlayerB.pause()
+            clearMashupBakeTemps()
+            incomingTrack = nil
+            incomingLaneReady = false
+            incomingAudioFile = nil
             incomingIsStream = false
-            mashupPlayingMasterBake = false
-            do {
-                let realFile = try AVAudioFile(forReading: realURL)
-                if !engine.isRunning { try engine.start() }
-                activeAudioFile = realFile
-                activeLocalURL = realURL
-                incomingAudioFile = nil
-                clearMashupBakeTemps()
-                scheduleLocalSegment(realFile, on: activePlayer, at: nativeIncomingPosition)
-                activePlayer.volume = 1
-                // Always resume B after LAND — Automix must leave a playing deck.
-                isPlaying = true
-                activePlayer.play()
-                applyEQ()
-            } catch {
-                let fallbackCue = max(0, mashupIncomingCueSec > 0 ? mashupIncomingCueSec : nativeIncomingPosition)
-                SonivoDiagnostics.log("[Mashup] LAND→real reload failed: \(error)", tag: "AUDIO")
-                clearMashupBakeTemps()
-                applyEQ()
-                // Last resort: restart the incoming track from its musical cue.
-                incomingTrack = nil
-                incomingLaneReady = false
-                incomingAudioFile = nil
-                metadataTrack = nil
-                metadataSwapped = false
-                isTransitioning = false
-                transitionScheduled = false
-                AutoMixDJEngine.shared.isTransitionActive = false
-                AutoMixDJEngine.shared.transitionProgress = 0
-                AutoMixDJEngine.shared.statusBadge = nil
-                AutoMixDJEngine.shared.resetDrop()
-                AutoMixDJEngine.shared.isPostMixActive = true
-                currentTrack = nextTrack
-                streamDuration = nextTrack.duration
-                start(at: fallbackCue)
-                return
-            }
+            prebufferedTrackId = nil
+            plannedNextTrack = nil
+            metadataTrack = nil
+            metadataSwapped = false
+            incomingQuality = nil
+            isTransitioning = false
+            transitionScheduled = false
+            resetTransitionEQOffsets()
+            activeMashupStyle = .fallback
+            rateReleaseTimer?.invalidate()
+            rateReleaseTimer = nil
+            AutoMixDJEngine.shared.isTransitionActive = false
+            AutoMixDJEngine.shared.transitionProgress = 0
+            AutoMixDJEngine.shared.statusBadge = nil
+            AutoMixDJEngine.shared.resetDrop()
+            currentTrack = nextTrack
+            streamDuration = nextTrack.duration
+            currentCodec = nil
+            currentBitrate = nil
+            // Full proven playback path — never leave a drained stem node as "B".
+            start(at: handoffPos)
+            AutoMixDJEngine.shared.isPostMixActive = true
+            SonivoDiagnostics.log(
+                "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", handoffPos))s",
+                tag: "AUTOMIX"
+            )
+            lastNowPlayingSync = nil
+            updateNowPlayingInfo()
+            savePlaybackState()
+            return
         } else if incomingIsStream {
             if !wasStream {
                 isUsingStreamPlayer = true
