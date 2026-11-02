@@ -5,6 +5,7 @@
  * Dual mashup only when A outro is instrumental; else Safe Exit (phrase Automix).
  */
 import { AutomixEngine, type AudioMeter, type EngineSnapshot } from "./engine";
+import { wantsLeadKill } from "./envelopes";
 import { analyzeTrackBuffer, type TrackAIProfile } from "./analyzeTrack";
 import { planAutomix, recheckMix, vocalLevelNear, type AIMixPlan } from "./aiMixEngine";
 import { planOneBarDuet } from "./oneBarDuet";
@@ -117,6 +118,8 @@ export type WaveRadioSnapshot = {
   crossfadeSec: number;
   /** Current track BPM for beat-synced UI. */
   bpm: number;
+  /** Active DSP kills / guards for the planned or live mix (one strip in UI). */
+  kills: string[];
 };
 
 type Listener = (s: WaveRadioSnapshot) => void;
@@ -258,7 +261,29 @@ export class WaveRadio {
         this.state === "mixing" && this.lastEngine?.displayDeck === "b"
           ? this.engine.getBpm("b")
           : this.profileA?.bpm || this.engine.getBpm("a"),
+      kills: this.activeKills(),
     };
+  }
+
+  /** Compact kill chips: Lead / stems / Vocal Safe / Bass Surgeon / duck. */
+  private activeKills(): string[] {
+    const dsp = this.plan?.params.dsp;
+    if (!dsp) return [];
+    const kills: string[] = [];
+    const dec = (dsp.decisions || []).join(" · ");
+    if (wantsLeadKill(dsp) || /lead.?kill|acapella drop/i.test(dec)) kills.push("Lead kill");
+    else if (dsp.bakeInstrA || (dsp.instrAPeak || 0) >= 0.35) kills.push("Instr A");
+    if (dsp.bakeInstrB || (dsp.instrBPeak || 0) >= 0.35) kills.push("Instr B");
+    if (dsp.bakeVocalB || (dsp.vocalBPeak || 0) >= 0.4) kills.push("Vocal B");
+    if (/vocal safe/i.test(dec)) kills.push("Vocal Safe");
+    if (/bass surgeon/i.test(dec)) kills.push("Bass Surgeon");
+    if ((dsp.vocalDuckBDb || 0) <= -3) kills.push("Mid duck");
+    if ((dsp.sidechainA || 0) >= 0.25) kills.push("Sidechain");
+    if ((dsp.echoAPeak || 0) >= 0.35) kills.push("Echo out");
+    if ((dsp.hpfAPeak || 0) >= 0.4) kills.push("HPF A");
+    if ((dsp.lpfBPeak || 0) >= 0.35) kills.push("LPF B");
+    // Cap so the strip stays one calm row.
+    return kills.slice(0, 5);
   }
 
   /** Live spectrum for ambient pulse (bass/mid/treble/level). */

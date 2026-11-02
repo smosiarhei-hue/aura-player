@@ -37,11 +37,8 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <div class="stage" id="stage">
     <div class="ambient" id="ambient" aria-hidden="true">
-      <span class="amb-wave amb-w1"></span>
-      <span class="amb-wave amb-w2"></span>
-      <span class="amb-wave amb-w3"></span>
-      <span class="amb-shimmer"></span>
-      <span class="amb-flash"></span>
+      <span class="amb-veil"></span>
+      <span class="amb-pulse"></span>
     </div>
     <div class="specular" id="specular" aria-hidden="true"></div>
 
@@ -59,6 +56,7 @@ app.innerHTML = `
     <main class="now">
       <div class="art-wrap" id="artWrap">
         <div class="art-orbit" aria-hidden="true"></div>
+        <div class="art-pulse" id="artPulse" aria-hidden="true"></div>
         <div class="mix-veil" id="mixVeil" aria-hidden="true"></div>
         <div class="art-card" id="artStage">
           <div class="art-fallback" id="artFallback">S</div>
@@ -67,6 +65,8 @@ app.innerHTML = `
           <div class="mix-badge-float" id="mixFloat" hidden>MASHUP</div>
         </div>
       </div>
+
+      <div class="kill-strip" id="killStrip" hidden aria-label="Активные киллы"></div>
 
       <div class="meta" id="metaBlock">
         <div class="title-mask">
@@ -416,19 +416,17 @@ function sampleArtColor(url: string | null | undefined) {
   img.src = url;
 }
 
-/* ── Cover-driven beat ambient ─────────────────────────────────── */
+/* ── Minimal beat flicker (Apple Music-ish, one focal pulse) ───── */
 
 {
   const ambient = document.querySelector<HTMLElement>("#ambient")!;
   const specular = document.querySelector<HTMLElement>("#specular")!;
+  const artPulse = document.querySelector<HTMLElement>("#artPulse")!;
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let raf = 0;
-  let bassSm = 0;
-  let midSm = 0;
-  let levelSm = 0;
   let flashSm = 0;
+  let veilSm = 0.08;
   let lastBeat = -1;
-  let drift = 0;
 
   const tick = () => {
     const s = radio.snapshot();
@@ -437,42 +435,29 @@ function sampleArtColor(url: string | null | undefined) {
     const bpm = Math.max(60, Math.min(200, s.bpm || 120));
     const elapsed = s.elapsed || 0;
 
-    // Soft continuum + hard kick from BPM phase (works even if analyser is quiet).
+    // Short white flicker on the kick — not a full-stage wave circus.
     const beatPhase = ((elapsed * bpm) / 60) % 1;
     const beatIdx = Math.floor((elapsed * bpm) / 60);
-    const kickEnv = Math.pow(1 - beatPhase, 10);
+    const kickEnv = Math.pow(1 - beatPhase, 14);
     if (live && beatIdx !== lastBeat) {
       lastBeat = beatIdx;
-      flashSm = Math.max(flashSm, 0.55 + meter.bass * 0.45);
+      flashSm = Math.min(1, 0.38 + meter.bass * 0.42 + kickEnv * 0.2);
     }
 
-    const targetBass = live ? Math.max(meter.bass, kickEnv * 0.72) : 0;
-    const targetMid = live ? Math.max(meter.mid, kickEnv * 0.28) : 0;
-    const targetLevel = live
-      ? Math.max(meter.level, kickEnv * 0.4 + Math.sin(elapsed * 0.7) * 0.04 + 0.08)
-      : 0.04;
+    const targetVeil = live
+      ? 0.1 + meter.level * 0.1 + Math.sin(elapsed * 0.35) * 0.015
+      : 0.06;
+    veilSm += (targetVeil - veilSm) * 0.08;
+    flashSm *= 0.78;
+    if (flashSm < 0.015) flashSm = 0;
 
-    bassSm += (targetBass - bassSm) * 0.28;
-    midSm += (targetMid - midSm) * 0.18;
-    levelSm += (targetLevel - levelSm) * 0.14;
-    flashSm *= 0.82;
-    if (flashSm < 0.02) flashSm = 0;
-    drift += 0.004 + bassSm * 0.012;
-
-    const pulse = Math.min(1, bassSm * 0.85 + flashSm * 0.55);
-    const shimmer = Math.min(1, midSm * 0.6 + levelSm * 0.35 + flashSm * 0.4);
-    const breathe = 0.92 + levelSm * 0.14 + bassSm * 0.08;
-
-    ambient.style.setProperty("--beat", pulse.toFixed(3));
-    ambient.style.setProperty("--bass", bassSm.toFixed(3));
-    ambient.style.setProperty("--energy", levelSm.toFixed(3));
-    ambient.style.setProperty("--flash", flashSm.toFixed(3));
-    ambient.style.setProperty("--shimmer", shimmer.toFixed(3));
-    ambient.style.setProperty("--drift", `${(drift % 360).toFixed(2)}deg`);
-    ambient.style.setProperty("--breathe", breathe.toFixed(3));
+    const flash = flashSm.toFixed(3);
+    ambient.style.setProperty("--flash", flash);
+    ambient.style.setProperty("--veil", veilSm.toFixed(3));
     ambient.classList.toggle("is-live", live);
-    specular.style.setProperty("--flash", flashSm.toFixed(3));
-    specular.style.setProperty("--shimmer", shimmer.toFixed(3));
+    specular.style.setProperty("--flash", flash);
+    artPulse.style.setProperty("--flash", flash);
+    artPulse.classList.toggle("on", live && flashSm > 0.04);
 
     raf = requestAnimationFrame(tick);
   };
@@ -480,12 +465,8 @@ function sampleArtColor(url: string | null | undefined) {
   if (!reduce) {
     raf = requestAnimationFrame(tick);
   } else {
-    ambient.style.setProperty("--beat", "0");
-    ambient.style.setProperty("--bass", "0");
-    ambient.style.setProperty("--energy", "0.06");
     ambient.style.setProperty("--flash", "0");
-    ambient.style.setProperty("--shimmer", "0");
-    ambient.style.setProperty("--breathe", "1");
+    ambient.style.setProperty("--veil", "0.08");
   }
   void raf;
 }
@@ -665,6 +646,24 @@ function render(s: WaveRadioSnapshot) {
     modeChip.textContent = s.planBlurb || s.planMode || "";
   } else {
     modeChip.hidden = true;
+  }
+
+  const killStrip = document.querySelector<HTMLElement>("#killStrip")!;
+  const kills = s.kills || [];
+  if (kills.length && (s.state === "playing" || s.state === "mixing" || s.state === "loading")) {
+    killStrip.hidden = false;
+    killStrip.replaceChildren(
+      ...kills.map((label) => {
+        const chip = document.createElement("span");
+        chip.className = "kill-chip";
+        if (/lead|vocal safe|bass surgeon/i.test(label)) chip.classList.add("hot");
+        chip.textContent = label;
+        return chip;
+      })
+    );
+  } else {
+    killStrip.hidden = true;
+    killStrip.replaceChildren();
   }
 
   const dur = s.duration || 1;
