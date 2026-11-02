@@ -12,6 +12,7 @@
     "smoke:smooth": "node scripts/smoke-envelope-smoothness.mjs",
     "smoke:critic": "node scripts/smoke-mix-critic.mjs",
     "smoke:relay": "node scripts/smoke-vocal-relay.mjs",
+    "smoke:duet": "node scripts/smoke-one-bar-duet.mjs",
     "smoke:land": "node scripts/smoke-premium-land.mjs",
     "smoke:coach": "node scripts/smoke-transition-coach.mjs",
     "smoke:transcript": "node scripts/smoke-transcript-cues.mjs",

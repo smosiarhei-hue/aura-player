@@ -7,6 +7,7 @@
 import { AutomixEngine, type EngineSnapshot } from "./engine";
 import { analyzeTrackBuffer, type TrackAIProfile } from "./analyzeTrack";
 import { planAutomix, recheckMix, vocalLevelNear, type AIMixPlan } from "./aiMixEngine";
+import { planOneBarDuet } from "./oneBarDuet";
 import { defaultParams } from "./envelopes";
 import { premiumLandBlurb } from "./premiumAutomix";
 import {
@@ -51,8 +52,8 @@ export type WaveRadioState =
   | "mixing"
   | "error";
 
-/** Apple Music Song Transitions: AutoMix | Crossfade | Off. */
-export type TransitionMode = "automix" | "crossfade" | "off";
+/** Song Transitions: AutoMix | Duet (1-bar dual vocal) | Crossfade | Off. */
+export type TransitionMode = "automix" | "duet" | "crossfade" | "off";
 
 const TRANSITION_KEY = "sonivo-song-transitions";
 
@@ -61,7 +62,7 @@ const CROSSFADE_KEY = "sonivo-song-transitions-sec";
 function loadTransitionMode(): TransitionMode {
   try {
     const v = localStorage.getItem(TRANSITION_KEY);
-    if (v === "automix" || v === "crossfade" || v === "off") return v;
+    if (v === "automix" || v === "duet" || v === "crossfade" || v === "off") return v;
   } catch {
     /* SSR / private */
   }
@@ -252,12 +253,23 @@ export class WaveRadio {
   }
 
   setTransitionMode(mode: TransitionMode) {
-    if (mode !== "automix" && mode !== "crossfade" && mode !== "off") return;
+    if (
+      mode !== "automix" &&
+      mode !== "duet" &&
+      mode !== "crossfade" &&
+      mode !== "off"
+    ) {
+      return;
+    }
     this.transitionMode = mode;
     try {
       localStorage.setItem(TRANSITION_KEY, mode);
     } catch {
       /* ignore */
+    }
+    // Re-plan when switching into/out of Duet so cue + blend match the mode.
+    if (this.profileA && this.profileB && this.state !== "mixing") {
+      void this.planPair({ retarget: true }).catch(() => undefined);
     }
     this.retargetForMode();
     this.emit();
@@ -322,7 +334,10 @@ export class WaveRadio {
   /** Move the live solo end when the listener changes mode mid-song. */
   private retargetForMode() {
     if (this.state === "mixing" || !this.engine.isSoloPlaying()) return;
-    if (this.transitionMode === "automix" && this.plan) {
+    if (
+      (this.transitionMode === "automix" || this.transitionMode === "duet") &&
+      this.plan
+    ) {
       this.retargetCueFromPlan();
       return;
     }
@@ -339,7 +354,7 @@ export class WaveRadio {
     let from = fromSec;
     while (this.running && gen === this.loopGen) {
       const until =
-        this.transitionMode === "automix"
+        this.transitionMode === "automix" || this.transitionMode === "duet"
           ? (this.plan?.params.cueASec ?? softUntilSec)
           : softUntilSec;
       if (from >= until - 0.25) return "reached";
@@ -389,10 +404,10 @@ export class WaveRadio {
     return Boolean(this.plan && this.profileB) && !timedOut;
   }
 
-  /** Hot-retarget Automix cue while the song is playing. */
+  /** Hot-retarget Automix / Duet cue while the song is playing. */
   private retargetCueFromPlan() {
     if (!this.plan || this.state === "mixing") return;
-    if (this.transitionMode !== "automix") {
+    if (this.transitionMode !== "automix" && this.transitionMode !== "duet") {
       if (this.engine.isSoloPlaying()) this.engine.setSoloUntil(this.softUntilSec());
       this.brainStatus =
         this.transitionMode === "crossfade"
@@ -592,8 +607,14 @@ export class WaveRadio {
       this.profileB = withNeuralCue(this.profileB, this.transcriptB, "incoming");
     }
     await this.refreshCoach();
-    this.plan = planAutomix(this.profileA, this.profileB);
-    applyCoachOffsets(this.plan.params, this.coach);
+    this.plan =
+      this.transitionMode === "duet"
+        ? planOneBarDuet(this.profileA, this.profileB)
+        : planAutomix(this.profileA, this.profileB);
+    // Coach offsets are for long AutoMix phrases — skip on the 1-bar duet.
+    if (this.transitionMode !== "duet") {
+      applyCoachOffsets(this.plan.params, this.coach);
+    }
     const blend = this.plan.params.blendDurationSec;
     recheckMix(
       this.plan,
@@ -781,7 +802,10 @@ export class WaveRadio {
 
       while (this.running && gen === this.loopGen) {
         const soft = this.softUntilSec();
-        const rate = this.transitionMode === "automix" ? (this.plan?.params.rateA ?? 1) : 1;
+        const rate =
+          this.transitionMode === "automix" || this.transitionMode === "duet"
+            ? (this.plan?.params.rateA ?? 1)
+            : 1;
 
         this.setStatus(
           "playing",
@@ -806,15 +830,28 @@ export class WaveRadio {
 
         if (!liveNext || !this.engine.getDeck("b").buffer) {
           this.setStatus("loading", "Жду следующий трек…");
-          await this.waitForPlan(gen, this.transitionMode === "automix" ? 90_000 : 25_000);
+          await this.waitForPlan(
+            gen,
+            this.transitionMode === "automix" || this.transitionMode === "duet"
+              ? 90_000
+              : 25_000
+          );
           livePlan = this.plan as AIMixPlan | null;
           liveNext = this.next as WaveTrackMeta | null;
           liveProfileB = this.profileB as TrackAIProfile | null;
           if (!liveNext || !this.engine.getDeck("b").buffer) {
             throw new Error("Следующий трек не готов");
           }
-        } else if (this.transitionMode === "automix" && !livePlan) {
-          this.setStatus("loading", "Automix · добираю план сведения…");
+        } else if (
+          (this.transitionMode === "automix" || this.transitionMode === "duet") &&
+          !livePlan
+        ) {
+          this.setStatus(
+            "loading",
+            this.transitionMode === "duet"
+              ? "Duet · добираю 1-bar план…"
+              : "Automix · добираю план сведения…"
+          );
           await this.waitForPlan(gen);
           livePlan = this.plan as AIMixPlan | null;
           liveNext = this.next as WaveTrackMeta | null;
@@ -953,7 +990,7 @@ export class WaveRadio {
 
         resumeFrom = this.engine.getSoloPosition();
         if (
-          this.transitionMode === "automix" &&
+          (this.transitionMode === "automix" || this.transitionMode === "duet") &&
           readyPlan &&
           resumeFrom >= readyPlan.params.cueASec - 0.2
         ) {

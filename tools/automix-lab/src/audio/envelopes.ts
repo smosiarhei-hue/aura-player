@@ -245,6 +245,31 @@ export function volumesAt(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
+  // One-Bar Duet: intentional dual lead for ~1 bar, then LAND to B.
+  if (params.dsp.mashupMode === "oneBarDuet") {
+    // Lazy import avoided — keep curves local so envelopes stay dependency-light.
+    const handoff = Math.min(0.78, Math.max(0.48, params.handoffAt));
+    const invite = Math.min(0.22, Math.max(0.06, params.incomingVolumeLag || 0.06));
+    let outgoing =
+      p <= handoff ? 1 : Math.max(0, 1 - (p - handoff) / Math.max(0.08, 1 - handoff));
+    let incoming =
+      p <= invite
+        ? p / invite
+        : p >= handoff
+          ? 1
+          : 0.92 + 0.08 * ((p - invite) / Math.max(0.001, handoff - invite));
+    const pow = Math.hypot(outgoing, incoming);
+    if (p < handoff && pow > 0.05) {
+      const s = Math.min(1.15, 0.95 / pow);
+      outgoing *= s;
+      incoming *= s;
+    }
+    return {
+      outgoing: Math.min(1, Math.max(0, outgoing)),
+      incoming: Math.min(1, Math.max(0, incoming)),
+    };
+  }
+
   // Safe Exit: A still sings → ONE VOCAL, but this is still AutoMix, not a
   // 1-second blink. Beatmatched phrase: A holds → multi-bar handoff → B home.
   // Never stack two full leads; hypot-normalize so ears don't hear a dip/slam.
@@ -403,6 +428,17 @@ export function pitchCentsAt(p: number, params: MashupParams): number {
 }
 
 export function phaseLabel(p: number, params: MashupParams): string {
+  if (params.dsp.mashupMode === "oneBarDuet") {
+    const handoff = params.handoffAt;
+    if (p < 0.12) {
+      return params.targetBPM > 30
+        ? `DUET LOCK ${Math.round(params.targetBPM)}`
+        : "DUET LOCK";
+    }
+    if (p < handoff - 0.08) return "DUET · A+B";
+    if (p < handoff + 0.1) return "DUET LAND";
+    return "LAND";
+  }
   const lockEnd = Math.min(0.18, params.bassSwapAt * 0.65);
   if (p < lockEnd) {
     return params.targetBPM > 30

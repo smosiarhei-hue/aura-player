@@ -161,6 +161,10 @@ const sheetBodies = {
           <span class="platters mini" aria-hidden="true"><i></i><i></i></span>
           <span>AutoMix</span>
         </button>
+        <button type="button" class="tmode" role="radio" data-mode="duet" aria-checked="false" title="One-Bar Duet — both vocals for 1 bar, then LAND B">
+          <span class="platters mini" aria-hidden="true"><i></i><i></i></span>
+          <span>Duet</span>
+        </button>
         <button type="button" class="tmode" role="radio" data-mode="crossfade" aria-checked="false" title="Crossfade 1–12s">
           <span class="platters mini" aria-hidden="true"><i></i><i></i></span>
           <span>Crossfade</span>
@@ -256,7 +260,7 @@ function wireTransitionControls() {
   modes.dataset.wired = "1";
   modes.querySelectorAll<HTMLButtonElement>(".tmode").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const mode = btn.dataset.mode as "automix" | "crossfade" | "off";
+      const mode = btn.dataset.mode as "automix" | "duet" | "crossfade" | "off";
       if (mode) radio.setTransitionMode(mode);
     });
   });
@@ -464,7 +468,9 @@ function render(s: WaveRadioSnapshot) {
           ? `Equal-power · ${s.crossfadeSec}s`
           : s.transitionMode === "off"
             ? "Play to the end, then the next song"
-            : "Beatmatched blend · Crossfade if the plan is late";
+            : s.transitionMode === "duet"
+              ? "One-Bar Duet · both vocals · LAND B"
+              : "Beatmatched blend · Crossfade if the plan is late";
     }
     const row = document.querySelector<HTMLElement>("#xfadeRow");
     if (row) row.hidden = s.transitionMode !== "crossfade";
@@ -531,7 +537,10 @@ function render(s: WaveRadioSnapshot) {
   const cueRest = document.querySelector("#cueRest")!;
   const scrub = document.querySelector<HTMLElement>("#scrub")!;
   const showMark =
-    s.transitionMode === "automix" && s.automixAtSec != null && dur > 0 && !s.mixing;
+    (s.transitionMode === "automix" || s.transitionMode === "duet") &&
+    s.automixAtSec != null &&
+    dur > 0 &&
+    !s.mixing;
   if (showMark && s.automixAtSec != null) {
     const markPct = Math.min(98, Math.max(2, (s.automixAtSec / dur) * 100));
     mark.hidden = false;
@@ -546,7 +555,9 @@ function render(s: WaveRadioSnapshot) {
   } else {
     mixingWord.hidden = true;
     cueLine.classList.remove("is-mixing");
-    if (s.transitionMode === "automix" && s.automixAtSec != null && dur > 0) {
+    if (s.transitionMode === "duet" && s.automixAtSec != null && dur > 0) {
+      cueRest.textContent = `Duet @ ${fmt(s.automixAtSec)} · 1 bar`;
+    } else if (s.transitionMode === "automix" && s.automixAtSec != null && dur > 0) {
       cueRest.textContent = `Automix @ ${fmt(s.automixAtSec)}`;
     } else if (s.transitionMode === "crossfade" && dur > 0 && s.duration > 0) {
       cueRest.textContent = `Crossfade ${s.crossfadeSec}s`;

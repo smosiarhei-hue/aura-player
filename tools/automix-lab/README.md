@@ -56,11 +56,12 @@ npm run dev
 
 ## Song Transitions (как Apple Music AutoMix)
 
-В **Очередь** — переключатель **AutoMix | Crossfade | Off** (как iOS 26 Music → Song Transitions):
+В **Очередь** — переключатель **AutoMix | Duet | Crossfade | Off**:
 
 | Режим | Поведение |
 |---|---|
 | **AutoMix** | Beatmatch + mashup craft; при сбое плана — Crossfade fallback |
+| **Duet** | One-Bar Duet — оба вокала ~1 такт на сетке → LAND B (отдельный режим, не ONE VOCAL) |
 | **Crossfade** | Equal-power 1–12 с, без stems/FX |
 | **Off** | Без overlap → следующий трек |
 

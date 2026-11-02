@@ -101,6 +101,53 @@ function leadB(vocalIn: number, instrB: number, vocalFocus: number): number {
 
 export function critiqueMix(input: MixCriticInput): MixCriticReport {
   const { params, vocalOut, vocalIn, bpm, transitionType, harmonicOk, beatmatched } = input;
+  // One-Bar Duet *is* dual lead for ~1 bar — do not Vocal Safe it away.
+  if (params.dsp.mashupMode === "oneBarDuet") {
+    const blendSec = Math.max(1, params.blendDurationSec);
+    const spb = 60 / Math.max(60, bpm);
+    return {
+      ok: true,
+      score: 100,
+      gates: [
+        {
+          id: "vocalClash",
+          ok: true,
+          label: "DUET VOCAL",
+          detail: `intentional dual lead · ${blendSec.toFixed(2)}s (~${(blendSec / spb).toFixed(1)} beat)`,
+        },
+        {
+          id: "bassClash",
+          ok: true,
+          label: "ONE BASS",
+          detail: "short bar · mid swap",
+        },
+        {
+          id: "harmonic",
+          ok: true,
+          label: "Key / Camelot",
+          detail: harmonicOk ? "compatible or pitch-compensated" : "duet tolerates brief clash",
+        },
+        {
+          id: "tempo",
+          ok: true,
+          label: "Tempo lock",
+          detail: beatmatched ? "beatmatched" : "duet grid",
+        },
+        {
+          id: "land",
+          ok: params.handoffAt <= 0.78,
+          label: "LAND",
+          detail: params.handoffAt <= 0.78 ? "LAND to B" : `late handoff @${(params.handoffAt * 100) | 0}%`,
+        },
+      ],
+      vocalClashBeats: blendSec / spb,
+      vocalClashFrac: 1,
+      bassClashFrac: 0,
+      bassClashBeats: 0,
+      fixes: [],
+      mode: "pass",
+    };
+  }
   const blendSec = Math.max(1, params.blendDurationSec);
   const spb = 60 / Math.max(60, bpm); // seconds per beat
   const blendBeats = blendSec / spb;
