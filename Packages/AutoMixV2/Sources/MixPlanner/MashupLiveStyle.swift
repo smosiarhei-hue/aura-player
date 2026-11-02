@@ -239,7 +239,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let p = min(1, max(0, progress))
         let handoff = min(0.72, max(0.52, handoffAt))
         let invite = min(0.14, max(0.05, incomingVolumeLag))
-        let aDual = min(0.92, max(0.72, outgoingVolumeHold))
+        let aDual = Float(min(0.92, max(0.72, outgoingVolumeHold)))
         let landEnd = 0.94
 
         let outgoing: Float
@@ -249,7 +249,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
             let t = Float((p - invite) / max(0.001, handoff - invite))
             outgoing = 1 - t * (1 - aDual)
         } else if p <= landEnd {
-            outgoing = aDual * Float(1 - (p - handoff) / max(0.1, landEnd - handoff))
+            let landT = Float((p - handoff) / max(0.1, landEnd - handoff))
+            outgoing = aDual * (1 - landT)
         } else {
             outgoing = 0
         }
