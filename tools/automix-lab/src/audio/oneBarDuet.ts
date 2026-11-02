@@ -105,7 +105,7 @@ export type DuetWindowPick = {
 };
 
 /**
- * Listen to A outro + B intro; pick collide length with B-led dual + early LAND.
+ * Listen to A outro + B intro; pick collide length for vocal stack + early LAND.
  */
 export function pickDuetWindow(
   a: TrackAIProfile,
