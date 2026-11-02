@@ -457,7 +457,7 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
     ],
     critic: critiqueDuetPlan(
       params,
-      `B-led dual · ${pick.bars} bars (${pick.blendSec.toFixed(1)}s)`,
+      `vocal stack · ${pick.bars} bars (${pick.blendSec.toFixed(1)}s)`,
       bpm,
       harmonic.isHarmonicallyViable || harmonic.isNaturallyCompatible,
       tempo != null
@@ -472,7 +472,7 @@ export function planOneBarDuet(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan 
     ...plan,
     critic: critiqueDuetPlan(
       plan.params,
-      `B-led dual · ${pick.bars} bars (${plan.params.blendDurationSec.toFixed(1)}s)`,
+      `vocal stack · ${pick.bars} bars (${plan.params.blendDurationSec.toFixed(1)}s)`,
       bpm,
       harmonic.isHarmonicallyViable || harmonic.isNaturallyCompatible,
       tempo != null

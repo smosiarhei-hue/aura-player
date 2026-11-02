@@ -223,7 +223,7 @@ export function premiumLandBlurb(plan: AIMixPlan | null): string {
     const sec = plan.params.blendDurationSec;
     const bpm = plan.params.targetBPM > 30 ? plan.params.targetBPM : 120;
     const bars = Math.max(1, Math.round(sec / (240 / bpm)));
-    return `Duet · ${bars} bars · ${sec >= 1 ? `${sec.toFixed(0)}s` : "phrase"} · B-led → LAND`;
+    return `Duet · ${bars} bars · ${sec >= 1 ? `${sec.toFixed(0)}s` : "phrase"} · vocal A+B · instr B → LAND`;
   }
   return `${plan.story}`;
 }
