@@ -283,8 +283,17 @@ final class YandexMusicService {
         }
 
         var coverUrlString: String? {
+            coverURL(size: "400x400")
+        }
+
+        /// High-res cover for artist hero blur / atmosphere.
+        var heroCoverUrlString: String? {
+            coverURL(size: "1000x1000")
+        }
+
+        func coverURL(size: String) -> String? {
             guard let uri = coverUri, !uri.isEmpty else { return nil }
-            return "https://" + uri.replacingOccurrences(of: "%%", with: "400x400")
+            return "https://" + uri.replacingOccurrences(of: "%%", with: size)
         }
 
         var subtitle: String {

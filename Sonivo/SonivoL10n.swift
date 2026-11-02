@@ -49,7 +49,11 @@ final class SonivoL10n {
     var single: String { isRussian ? "Сингл" : "Single" }
     var album: String { isRussian ? "Альбом" : "Album" }
     var albumsAndSingles: String { isRussian ? "Альбомы и синглы" : "Albums & Singles" }
+    var albums: String { isRussian ? "Альбомы" : "Albums" }
+    var playlists: String { isRussian ? "Плейлисты" : "Playlists" }
     var similarArtists: String { isRussian ? "Похожие исполнители" : "Similar Artists" }
+    var follow: String { isRussian ? "Подписаться" : "Follow" }
+    var following: String { isRussian ? "В избранном" : "Following" }
     var play: String { isRussian ? "Воспроизвести" : "Play" }
     var shuffle: String { isRussian ? "Перемешать" : "Shuffle" }
     var listenNow: String { isRussian ? "Слушать сейчас" : "Listen Now" }
