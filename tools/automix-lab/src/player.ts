@@ -74,10 +74,10 @@ app.innerHTML = `
       </div>
 
       <div class="timeline">
-        <div class="scrub" id="scrub" role="slider" aria-label="Перемотка до Automix" tabindex="0">
+        <div class="scrub" id="scrub" role="slider" aria-label="Перемотка" tabindex="0">
           <div class="scrub-track">
             <i class="scrub-fill" id="fill"></i>
-            <b class="automix-mark" id="automixMark" hidden title="Automix"></b>
+            <b class="automix-mark" id="automixMark" hidden data-label="AM" title="Automix"></b>
             <span class="scrub-thumb" id="scrubThumb"></span>
           </div>
         </div>
@@ -440,7 +440,7 @@ function render(s: WaveRadioSnapshot) {
         : s.transitionMode === "off"
           ? "Off"
           : s.automixAtSec != null && !s.brainStatus?.includes("счита")
-            ? `AM ${fmt(s.automixAtSec)}`
+            ? `${s.transitionMode === "duet" ? "Duet" : "AM"} ${fmt(s.automixAtSec)}`
             : s.phase && s.phase !== "PLAY"
               ? s.phase
               : "";
@@ -545,6 +545,11 @@ function render(s: WaveRadioSnapshot) {
     const markPct = Math.min(98, Math.max(2, (s.automixAtSec / dur) * 100));
     mark.hidden = false;
     mark.style.left = `${markPct}%`;
+    mark.dataset.label = s.transitionMode === "duet" ? "DUET" : "AM";
+    mark.title =
+      s.transitionMode === "duet"
+        ? `Duet с ${fmt(s.automixAtSec)}`
+        : `Automix с ${fmt(s.automixAtSec)}`;
   } else {
     mark.hidden = true;
   }
@@ -570,9 +575,21 @@ function render(s: WaveRadioSnapshot) {
     }
   }
   scrub.classList.toggle("seekable", Boolean(s.canSeek));
+  scrub.setAttribute(
+    "aria-label",
+    s.transitionMode === "duet"
+      ? "Перемотка до Duet"
+      : s.transitionMode === "automix"
+        ? "Перемотка до Automix"
+        : "Перемотка"
+  );
   scrub.setAttribute("aria-valuemin", "0");
-  scrub.setAttribute("aria-valuemax", String(s.scrubMaxSec ?? dur));
+  scrub.setAttribute(
+    "aria-valuemax",
+    String(s.scrubMaxSec != null && s.scrubMaxSec > 0 ? s.scrubMaxSec : dur)
+  );
   scrub.setAttribute("aria-valuenow", String(elapsed));
+  scrub.setAttribute("aria-disabled", s.canSeek ? "false" : "true");
 
   art.classList.toggle("mixing", s.mixing);
   art.classList.toggle("land", isLand);
@@ -733,9 +750,14 @@ function seekFromClientX(clientX: number) {
   const rect = scrub.getBoundingClientRect();
   const t = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
   const snap = radio.snapshot();
-  const dur = snap.duration || 1;
-  const max = snap.scrubMaxSec ?? dur;
-  radio.seekTo(t * dur > max ? max : t * dur);
+  if (!snap.canSeek) return;
+  const dur = Math.max(1, snap.duration || 1);
+  const max =
+    snap.scrubMaxSec != null && snap.scrubMaxSec > 0
+      ? snap.scrubMaxSec
+      : Math.max(0, dur - 0.35);
+  const target = Math.min(max, Math.max(0, t * dur));
+  radio.seekTo(target);
 }
 
 /* ── Gaze / parallax on artwork ─────────────────────────────────── */

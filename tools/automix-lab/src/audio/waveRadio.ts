@@ -205,7 +205,10 @@ export class WaveRadio {
       phase: this.lastEngine?.phase ?? "",
       mixing: this.state === "mixing",
       progress: this.lastEngine?.progress ?? 0,
-      elapsed: this.lastEngine?.displayElapsed ?? 0,
+      elapsed:
+        this.scrubbing && this.pendingSeek != null
+          ? this.pendingSeek
+          : (this.lastEngine?.displayElapsed ?? 0),
       duration: this.lastEngine?.displayDuration ?? 0,
       planMode: this.plan?.params.dsp.mashupMode ?? null,
       blendSec: this.plan?.params.blendDurationSec ?? null,
@@ -227,7 +230,8 @@ export class WaveRadio {
       coachAvg: this.coach.samples > 0 ? this.coach.avgScore : null,
       automixAtSec: this.automixAt(),
       scrubMaxSec: this.scrubMax(),
-      canSeek: this.state === "playing" && !this.loggingMashup && this.automixAt() != null,
+      // Seek anytime during solo play — don't wait for Automix/Duet plan.
+      canSeek: this.state === "playing" && !this.loggingMashup,
       // After LAND the display clock is B — don't paint A's LRC on B's timeline.
       transcript:
         this.state === "mixing" && this.lastEngine?.displayDeck === "b"
@@ -300,23 +304,29 @@ export class WaveRadio {
     return null;
   }
 
-  private scrubMax(): number | null {
+  /** Max scrub position: Automix/Duet cue if known, else near track end. */
+  private scrubMax(): number {
+    const metaDur = this.current?.durationMs ? this.current.durationMs / 1000 : 0;
+    const dur =
+      this.profileA?.durationSec || this.engine.getDeck("a").duration || metaDur || 0;
     const at = this.automixAt();
-    if (at == null) return null;
-    return Math.max(0, at - 0.35);
+    if (at != null && at > 1) return Math.max(0, at - 0.35);
+    if (dur > 2) return Math.max(0, Math.min(this.softUntilSec(), dur - 0.35));
+    return Math.max(30, this.engine.getSoloPosition() + 15);
   }
 
   /**
-   * Scrub current track. Only allowed before Automix cue (not during mashup).
+   * Scrub current track during solo play (before mashup).
+   * Works even while the Automix brain is still planning.
    */
   seekTo(sec: number) {
     if (this.state !== "playing" || this.loggingMashup) return;
     const max = this.scrubMax();
-    if (max == null) return;
     const clamped = Math.max(0, Math.min(sec, max));
     this.pendingSeek = clamped;
     this.scrubbing = true;
     this.engine.interruptSolo();
+    this.emit();
   }
 
   /** Where solo playback should hand off, given the current Song Transitions mode. */

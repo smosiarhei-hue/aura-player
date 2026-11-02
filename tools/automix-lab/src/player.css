@@ -740,7 +740,7 @@ a {
 }
 
 .automix-mark::after {
-  content: "AM";
+  content: attr(data-label);
   position: absolute;
   top: -15px;
   left: 50%;
