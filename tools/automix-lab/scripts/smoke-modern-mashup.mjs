@@ -53,14 +53,14 @@ const cases = [
       c.mode === "acapellaDrop" && c.bVocalOpenAt < 0.15 && !c.bakeVocalB && c.sidechainA === 0,
   },
   {
-    name: "both vocal → vocalSwap opens B before handoff",
+    name: "both vocal → Vocal Relay opens B only after A bed",
     run: () => chooseModernMashup(0.7, 0.7, 0.22, 0.55),
     expect: (c) =>
       c.mode === "vocalSwap" &&
       c.bakeInstrA &&
       c.bakeInstrB &&
-      c.bVocalOpenAt < 0.55 &&
-      c.bVocalOpenAt > c.aInstrReadyAt,
+      c.bVocalOpenAt >= c.aInstrReadyAt + 0.2 &&
+      c.bVocalOpenAt <= 0.55,
   },
   {
     name: "A vocal × B instr → textureBed",

@@ -30,14 +30,16 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   const bassAt = Math.min(0.7, Math.max(0.12, params.bassSwapAt));
   const handoff = Math.min(0.85, Math.max(bassAt + 0.08, params.handoffAt));
   const mashupEnd = Math.min(0.94, handoff + 0.2);
+  const relay =
+    dsp.mashupMode === "vocalSwap" || dsp.mashupMode === "acapellaDrop";
   const instrPeak = Math.min(1, Math.max(0, dsp.instrAPeak));
   const instrAt = Math.min(0.7, Math.max(0.04, dsp.instrAAt));
   let instrumentalA = 0;
   if (instrPeak > 0.02) {
     if (p < instrAt) {
       instrumentalA = instrPeak * smoothstep(p / Math.max(0.001, instrAt));
-    } else if (p < mashupEnd) {
-      // Hold A as instrumental bed through the remix bar.
+    } else if (p < mashupEnd || relay) {
+      // Relay: keep A as instrumental bed through LAND — never re-open A's lead.
       instrumentalA = instrPeak;
     } else {
       instrumentalA =
@@ -46,9 +48,16 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   }
 
   const instrBPeak = Math.min(1, Math.max(0, dsp.instrBPeak));
-  const instrBUntil = Math.min(0.9, Math.max(0.05, dsp.instrBUntil));
-  // ~0.16 of the blend window ≈ musical phrase of release (not an 80ms gate).
-  const instrBRelease = 0.16;
+  // B lead may open only after A is a bed (and never before vocalBAt).
+  const aBedAt = instrAt;
+  const vocalAtRaw = Math.min(0.85, Math.max(0.03, dsp.vocalBAt));
+  const vocalAt = Math.max(vocalAtRaw, instrBPeak > 0.2 ? aBedAt + 0.08 : 0);
+  const instrBUntil = Math.min(
+    0.9,
+    Math.max(0.05, Math.max(dsp.instrBUntil, vocalAt))
+  );
+  // ~0.18 of the blend ≈ soft bloom into B dry lead (not a click).
+  const instrBRelease = 0.18;
   let instrumentalB = 0;
   if (instrBPeak > 0.02) {
     if (p < instrBUntil) {
@@ -61,11 +70,12 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
     }
   }
 
+  // ONE VOCAL hard gate: while A is still carving, B stays instrumental.
+  if (relay && instrumentalA < Math.min(0.88, instrPeak * 0.9) && instrBPeak >= 0.4) {
+    instrumentalB = Math.max(instrumentalB, instrBPeak);
+  }
+
   const vocalPeak = Math.min(1, Math.max(0, dsp.vocalBPeak));
-  const vocalAt = Math.max(
-    Math.min(0.85, Math.max(0.03, dsp.vocalBAt)),
-    instrBPeak > 0.2 ? instrBUntil : 0
-  );
   let vocalB = 0;
   if (vocalPeak > 0.02) {
     if (p < vocalAt) {

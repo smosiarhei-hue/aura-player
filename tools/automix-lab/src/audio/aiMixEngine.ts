@@ -129,37 +129,38 @@ function buildDspRecipe(
 
   switch (craft.mode) {
     case "acapellaDrop": {
-      dsp.instrAPeak = craft.bakeInstrA ? 0.55 : 0.1;
+      // A is (or becomes) the bed; B keeps full dry vocal on the grid.
+      dsp.instrAPeak = craft.bakeInstrA ? 0.95 : 0.35;
       dsp.instrAAt = craft.aInstrReadyAt;
       dsp.instrBPeak = 0;
       dsp.instrBUntil = 0.04;
-      dsp.vocalBPeak = 0; // keep B dry/full quality — no live vocalize thinning
+      dsp.vocalBPeak = 0; // dry B — full fidelity lead
       dsp.vocalBAt = craft.bVocalOpenAt;
       dsp.vocalDuckBDb = 0;
-      dsp.bakeInstrA = craft.bakeInstrA;
+      dsp.bakeInstrA = craft.bakeInstrA || vocalOut >= 0.28;
       dsp.bakeInstrB = false;
       dsp.bakeVocalB = false;
-      dsp.bakeStems = craft.bakeInstrA;
+      dsp.bakeStems = dsp.bakeInstrA;
       dsp.sidechainA = 0;
-      decisions.push("Acapella Drop: A bed (если нужно) × B full quality");
+      decisions.push("Acapella Drop: A instrumental bed × B vocal on grid");
       break;
     }
     case "vocalSwap": {
-      // Carve A lead only; B short groove then dry at full quality.
-      dsp.instrAPeak = 0.85;
+      // Hard relay: A fully instrumental BEFORE B lead opens — no dual stack.
+      dsp.instrAPeak = 0.98;
       dsp.instrAAt = craft.aInstrReadyAt;
-      dsp.instrBPeak = 0.75;
+      dsp.instrBPeak = 0.95;
       dsp.instrBUntil = craft.bVocalOpenAt;
-      dsp.vocalBPeak = 0; // dry B after open — don't re-thin with vocalize
+      dsp.vocalBPeak = 0; // dry B after open (full lead, not thinned vocalize)
       dsp.vocalBAt = craft.bVocalOpenAt;
-      dsp.vocalDuckBDb = -4; // light pocket only while B still gated
+      dsp.vocalDuckBDb = -3;
       dsp.bakeInstrA = true;
       dsp.bakeInstrB = true;
       dsp.bakeVocalB = false;
       dsp.bakeStems = true;
       dsp.sidechainA = 0;
       decisions.push(
-        `Vocal Swap: carve A lead + B groove→dry @ ${(craft.bVocalOpenAt * 100) | 0}% (без sidechain/muffle)`
+        `Vocal Relay: A instr @ ${((craft.aInstrReadyAt * 100) | 0)}% → B vocal @ ${((craft.bVocalOpenAt * 100) | 0)}%`
       );
       break;
     }
@@ -283,7 +284,7 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
 
   // Beatmatch whenever tempos are within lock range — including Echo Out on key clash.
   // Only abandon stretch when cut/echo was chosen because BPM itself is too far.
-  const beatmatched = decision.beatmatch && tempo != null;
+  let beatmatched = decision.beatmatch && tempo != null;
   const abandonStretch =
     !beatmatched && (decision.type === "cutOnOne" || decision.type === "echoOut");
   if (beatmatched && tempo) {
@@ -436,13 +437,30 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
 
   params.dsp = buildDspRecipe(a, b, params, vocalOut, vocalIn, energyOut, energyIn);
 
-  // Vocal Swap: keep handoff after B vocal opens so LAND still has a phrase of dual layer.
-  if (params.dsp.mashupMode === "vocalSwap" && params.dsp.instrBPeak >= 0.5) {
-    const open = params.dsp.vocalBAt;
-    params.handoffAt = Math.min(0.78, Math.max(open + 0.12, params.handoffAt));
-    params.dsp.instrBUntil = open;
-    // Dual-layer volumes: hold A texture through the remix bar.
-    params.outgoingVolumeHold = Math.min(params.outgoingVolumeHold, Math.max(0.22, open - 0.04));
+  // Vocal Relay: A bed first, then B vocal — handoff after B lead opens.
+  if (
+    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
+    params.dsp.instrAPeak >= 0.5
+  ) {
+    const aReady = params.dsp.instrAAt;
+    const open = Math.max(params.dsp.vocalBAt, aReady + 0.18);
+    params.dsp.vocalBAt = open;
+    params.dsp.instrBUntil = Math.max(params.dsp.instrBUntil, open);
+    params.handoffAt = Math.min(0.8, Math.max(open + 0.1, params.handoffAt));
+    // Keep A texture under B vocal (instrumental bed), not A's lead.
+    params.outgoingVolumeHold = Math.min(params.outgoingVolumeHold, Math.max(0.2, open - 0.06));
+  }
+
+  // Relay wants a real tempo lock + Camelot pitch when the stretch is viable.
+  if (
+    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
+    tempo &&
+    !beatmatched &&
+    Math.max(Math.abs(tempo.rateA - 1), Math.abs(tempo.rateB - 1)) <= 0.16
+  ) {
+    params.rateA = tempo.rateA;
+    params.rateB = tempo.rateB;
+    params.targetBPM = tempo.targetBPM;
   }
 
   // Mix Critic (OpenSonic verify + DeckGhost Vocal Safe / Bass Surgeon).

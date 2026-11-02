@@ -1,12 +1,14 @@
 /**
  * Modern mashup craft — how the Automix window should *sound*.
  *
- * Not a radio crossfade. A short remix bar:
- *   A instrumental bed × B vocal + groove, one bass, phrase-locked.
+ * Canonical handoff the user wants:
+ *   A → instrumental bed (lead gone)
+ *   B → vocal on the grid (BPM / bar / Camelot)
+ *   Never two leads stacked.
  *
- * Modes (chosen from vocal presence at cues):
- *   acapellaDrop  — A outro already instrumental → B vocal invites early
- *   vocalSwap     — both still sing → carve A fast, B groove then B lead on mashup peak
+ * Modes:
+ *   acapellaDrop  — A outro already a bed → B vocal invites early
+ *   vocalSwap     — both still sing → carve A first, only then open B lead
  *   textureBed    — A still sings × B instrumental bed (no B vocalize)
  *   instrumentalWash — both beds → filter/texture drama
  */
@@ -40,7 +42,7 @@ export type ModernMashupCraft = {
 
 /**
  * Pick the modern mashup grammar from measured vocal presence at cues.
- * Thresholds match planAutomix / ONE VOCAL intent.
+ * Hard rule when B has a lead: A becomes the bed BEFORE B vocal opens.
  */
 export function chooseModernMashup(
   vocalOut: number,
@@ -53,37 +55,41 @@ export function chooseModernMashup(
   const bass = Math.min(0.55, Math.max(0.14, bassSwapAt));
   const handoff = Math.min(0.78, Math.max(bass + 0.12, handoffAt));
 
-  // Ideal: A outro already a bed × B full mix (keep B quality — no vocal bake that thins it).
+  // Ideal: A outro already a bed × B full mix.
   if (!aHasVocal && bHasVocal) {
     return {
       mode: "acapellaDrop",
       label: "Acapella Drop",
-      aInstrReadyAt: 0.08,
-      bVocalOpenAt: 0.06,
+      aInstrReadyAt: 0.06,
+      bVocalOpenAt: 0.08,
       dualLayerPeak: 0.92,
-      bakeInstrA: vocalOut >= 0.35, // only if residual lead still sits in A
+      bakeInstrA: vocalOut >= 0.28, // residual lead still in A → carve it
       bakeInstrB: false,
-      bakeVocalB: false, // dry B — full fidelity
-      sidechainA: 0, // no blanket duck / muffling
-      story: "A bed × B full → ONE BASS → MASHUP → LAND",
+      bakeVocalB: false,
+      sidechainA: 0,
+      story: "A instrumental bed × B vocal → ONE BASS → MASHUP → LAND",
     };
   }
 
-  // Both still sing: carve only A's lead (needed); B stays dry after a short groove invite.
+  // Both still sing: A must finish instrumentalize before B lead opens.
   if (aHasVocal && bHasVocal) {
-    const aReady = Math.min(0.18, Math.max(0.08, bass * 0.55));
-    const bOpen = Math.min(handoff - 0.06, Math.max(aReady + 0.1, bass + 0.04));
+    const aReady = Math.min(0.14, Math.max(0.06, bass * 0.4));
+    // At least ~22% of the blend (~1–2 bars) of A-as-bed under B groove, then B vocal.
+    const bOpen = Math.min(
+      Math.max(aReady + 0.22, bass + 0.14, 0.34),
+      Math.max(aReady + 0.22, handoff - 0.06)
+    );
     return {
       mode: "vocalSwap",
-      label: "Vocal Swap Mashup",
+      label: "Vocal Relay",
       aInstrReadyAt: aReady,
       bVocalOpenAt: bOpen,
-      dualLayerPeak: 0.95,
-      bakeInstrA: true, // needed — kill A lead so B can open
-      bakeInstrB: true, // only until open, then dry B at full quality
+      dualLayerPeak: 0.9,
+      bakeInstrA: true,
+      bakeInstrB: true,
       bakeVocalB: false,
       sidechainA: 0,
-      story: "Carve A lead → B groove → B dry lead on mashup peak × A instr → LAND",
+      story: "A → instrumental · then B vocal on grid (BPM/bar/key) · no dual lead",
     };
   }
 
@@ -91,14 +97,14 @@ export function chooseModernMashup(
     return {
       mode: "textureBed",
       label: "Texture Bed",
-      aInstrReadyAt: 0.4,
+      aInstrReadyAt: 0.28,
       bVocalOpenAt: 0.55,
       dualLayerPeak: 0.7,
-      bakeInstrA: vocalOut >= 0.6,
+      bakeInstrA: vocalOut >= 0.5,
       bakeInstrB: false,
       bakeVocalB: false,
       sidechainA: 0,
-      story: "Soft A carve × B instrumental bed → LAND",
+      story: "A carve × B instrumental bed → LAND",
     };
   }
 

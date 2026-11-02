@@ -295,6 +295,22 @@ export function phaseLabel(p: number, params: MashupParams): string {
     const sign = params.pitchCentsB >= 0 ? "+" : "";
     return `KEY ${sign}${Math.round(params.pitchCentsB)}¢`;
   }
+  const aReady = Math.max(0.04, params.dsp.instrAAt);
+  const bOpen = Math.max(aReady + 0.05, params.dsp.vocalBAt);
+  if (
+    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
+    p >= aReady &&
+    p < bOpen
+  ) {
+    return "A INSTR";
+  }
+  if (
+    (params.dsp.mashupMode === "vocalSwap" || params.dsp.mashupMode === "acapellaDrop") &&
+    p >= bOpen &&
+    p < params.handoffAt
+  ) {
+    return "B VOCAL";
+  }
   if (params.archetype === "cutOnOne") {
     if (p < params.handoffAt - 0.05) return "PHRASE";
     if (p < params.handoffAt + 0.08) return "CUT ON 1";

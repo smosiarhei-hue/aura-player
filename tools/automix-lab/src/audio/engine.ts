@@ -173,23 +173,23 @@ export class AutomixEngine {
     let liveInstrScale = 1;
 
     if (dsp.bakeStems) {
-      // Bake only where ONE VOCAL needs a carve — never blanket-duck / thin the mix.
+      // ONE VOCAL relay: bake A as instrumental bed; B groove→dry only after A is ready.
       if (dsp.bakeInstrA && dsp.instrAPeak >= 0.35) {
-        onStatus?.(`Bake A lead carve ${Math.round(dsp.instrAPeak * 100)}%…`);
-        // Softer amount so the bed stays bright; live graph can reinforce if needed.
-        const amt = Math.min(0.85, dsp.instrAPeak);
+        onStatus?.(`Bake A instrumental bed ${Math.round(dsp.instrAPeak * 100)}%…`);
+        // Strong carve — Mid/Side demuffle keeps body/air; residual killed live.
+        const amt = Math.min(0.96, Math.max(0.88, dsp.instrAPeak));
         bufA = bakeStemSlice(ctx, a, cueA, blend, "instrumental", amt);
         offsetA = 0;
-        liveInstrScale = 0.25; // avoid double-muffling on top of bake
+        liveInstrScale = 0.4;
       }
 
       if (dsp.bakeInstrB && dsp.instrBPeak >= 0.5) {
         const untilSec = Math.max(
-          0.4,
-          blend * Math.min(0.75, Math.max(0.12, dsp.instrBUntil))
+          0.5,
+          blend * Math.min(0.72, Math.max(dsp.instrAAt + 0.18, dsp.instrBUntil))
         );
         onStatus?.(
-          `Bake B groove → dry @ ${untilSec.toFixed(1)}s (${modeLabel})…`
+          `Bake B instr → vocal @ ${untilSec.toFixed(1)}s (${modeLabel})…`
         );
         bufB = bakeInstrThenDry(
           ctx,
@@ -197,7 +197,7 @@ export class AutomixEngine {
           cueB,
           blend,
           untilSec,
-          Math.min(0.8, dsp.instrBPeak)
+          Math.min(0.92, Math.max(0.85, dsp.instrBPeak))
         );
         offsetB = 0;
       }
@@ -357,13 +357,17 @@ export class AutomixEngine {
     this.chainB.eq.setAirDb(0, audioTime, immediate);
 
     // Continuous stem amounts (0 ≡ dry) — never hard-switch setDry/setInstrumental.
-    const liveA = fx.instrumentalA * this.liveInstrScale;
+    const liveA = Math.max(fx.instrumentalA * this.liveInstrScale, fx.instrumentalA >= 0.85 ? 0.35 : 0);
     this.chainA.stem.setInstrumental(liveA, audioTime, immediate);
     const conflictGate = this.params.dsp.instrBPeak >= 0.5;
-    const beforeVocalOpen = progress < Math.max(0.05, this.params.dsp.vocalBAt);
+    const aIsBed =
+      progress >= Math.max(0.05, this.params.dsp.instrAAt) && fx.instrumentalA >= 0.8;
+    const beforeVocalOpen =
+      progress < Math.max(0.05, this.params.dsp.vocalBAt) || !aIsBed;
+    // Hard relay: B stays instrumental until A is a bed AND vocalBAt is reached.
     const liveB = Math.min(
-      0.85,
-      Math.max(fx.instrumentalB, conflictGate && beforeVocalOpen ? 0.7 : 0)
+      0.95,
+      Math.max(fx.instrumentalB, conflictGate && beforeVocalOpen ? 0.88 : 0)
     );
     this.chainB.stem.setInstrumental(liveB, audioTime, immediate);
 
