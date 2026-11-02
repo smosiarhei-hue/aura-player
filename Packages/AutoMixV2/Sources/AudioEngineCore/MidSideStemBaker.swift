@@ -461,7 +461,7 @@ public enum MidSideStemBaker {
         let p = min(1, max(0, progress))
         let handoff = min(0.72, max(0.52, rawHandoff))
         let invite = min(0.14, max(0.05, rawLag))
-        let aDual = min(0.92, max(0.72, rawHold))
+        let aDual = Float(min(0.92, max(0.72, rawHold)))
         let landEnd = 0.94
 
         let out: Float
@@ -471,7 +471,8 @@ public enum MidSideStemBaker {
             let t = Float((p - invite) / max(0.001, handoff - invite))
             out = 1 - t * (1 - aDual)
         } else if p <= landEnd {
-            out = aDual * Float(1 - (p - handoff) / max(0.1, landEnd - handoff))
+            let landT = Float((p - handoff) / max(0.1, landEnd - handoff))
+            out = aDual * (1 - landT)
         } else {
             out = 0
         }
