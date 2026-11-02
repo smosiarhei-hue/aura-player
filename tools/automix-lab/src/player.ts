@@ -36,8 +36,14 @@ function fmt(sec: number): string {
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <div class="stage" id="stage">
-    <div class="ambient" id="ambient" aria-hidden="true"></div>
-    <div class="specular" aria-hidden="true"></div>
+    <div class="ambient" id="ambient" aria-hidden="true">
+      <span class="amb-wave amb-w1"></span>
+      <span class="amb-wave amb-w2"></span>
+      <span class="amb-wave amb-w3"></span>
+      <span class="amb-shimmer"></span>
+      <span class="amb-flash"></span>
+    </div>
+    <div class="specular" id="specular" aria-hidden="true"></div>
 
     <header class="chrome">
       <div class="brand-row">
@@ -306,11 +312,29 @@ function setCover(img: HTMLImageElement, url: string | null | undefined, fallbac
   if (img.src !== url) img.src = url;
 }
 
+type Rgb = { r: number; g: number; b: number };
+
+function rgbCss(c: Rgb, a = 1) {
+  return a >= 1 ? `rgb(${c.r}, ${c.g}, ${c.b})` : `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`;
+}
+
+function boostSat(c: Rgb, amount = 1.35): Rgb {
+  const avg = (c.r + c.g + c.b) / 3;
+  return {
+    r: Math.min(255, Math.max(0, Math.round(avg + (c.r - avg) * amount))),
+    g: Math.min(255, Math.max(0, Math.round(avg + (c.g - avg) * amount))),
+    b: Math.min(255, Math.max(0, Math.round(avg + (c.b - avg) * amount))),
+  };
+}
+
 function sampleArtColor(url: string | null | undefined) {
   const ambient = document.querySelector<HTMLElement>("#ambient")!;
   if (!url) {
     ambient.style.removeProperty("--art-url");
     ambient.style.setProperty("--art-glow", "#3a2a40");
+    ambient.style.setProperty("--c1", "#5a3a58");
+    ambient.style.setProperty("--c2", "#1a3048");
+    ambient.style.setProperty("--c3", "#2a1840");
     return;
   }
   ambient.style.setProperty("--art-url", `url("${url}")`);
@@ -319,31 +343,151 @@ function sampleArtColor(url: string | null | undefined) {
   img.onload = () => {
     try {
       const c = document.createElement("canvas");
-      c.width = 16;
-      c.height = 16;
+      c.width = 24;
+      c.height = 24;
       const ctx = c.getContext("2d");
       if (!ctx) return;
-      ctx.drawImage(img, 0, 0, 16, 16);
-      const data = ctx.getImageData(0, 0, 16, 16).data;
+      ctx.drawImage(img, 0, 0, 24, 24);
+      const data = ctx.getImageData(0, 0, 24, 24).data;
+      const buckets = new Map<string, { n: number; r: number; g: number; b: number }>();
       let r = 0;
       let g = 0;
       let b = 0;
       let n = 0;
-      for (let i = 0; i < data.length; i += 16) {
-        r += data[i]!;
-        g += data[i + 1]!;
-        b += data[i + 2]!;
+      for (let i = 0; i < data.length; i += 4) {
+        const pr = data[i]!;
+        const pg = data[i + 1]!;
+        const pb = data[i + 2]!;
+        const lum = 0.2126 * pr + 0.7152 * pg + 0.0722 * pb;
+        if (lum < 18 || lum > 242) continue;
+        r += pr;
+        g += pg;
+        b += pb;
         n++;
+        const key = `${pr >> 4},${pg >> 4},${pb >> 4}`;
+        const hit = buckets.get(key);
+        if (hit) {
+          hit.n++;
+          hit.r += pr;
+          hit.g += pg;
+          hit.b += pb;
+        } else {
+          buckets.set(key, { n: 1, r: pr, g: pg, b: pb });
+        }
       }
-      r = (r / n) | 0;
-      g = (g / n) | 0;
-      b = (b / n) | 0;
-      ambient.style.setProperty("--art-glow", `rgb(${r}, ${g}, ${b})`);
+      if (!n) return;
+      const mean: Rgb = {
+        r: (r / n) | 0,
+        g: (g / n) | 0,
+        b: (b / n) | 0,
+      };
+      const ranked = [...buckets.values()]
+        .sort((a, b2) => b2.n - a.n)
+        .slice(0, 6)
+        .map((x) => ({
+          r: (x.r / x.n) | 0,
+          g: (x.g / x.n) | 0,
+          b: (x.b / x.n) | 0,
+          n: x.n,
+        }));
+      const dist = (a: Rgb, b2: Rgb) =>
+        Math.abs(a.r - b2.r) + Math.abs(a.g - b2.g) + Math.abs(a.b - b2.b);
+      const c1 = boostSat(ranked[0] ?? mean, 1.4);
+      let c2 = ranked.find((x) => dist(x, c1) > 55) ?? {
+        r: Math.min(255, mean.r + 30),
+        g: Math.min(255, mean.g + 10),
+        b: Math.min(255, mean.b + 40),
+      };
+      c2 = boostSat(c2, 1.25);
+      let c3 = ranked.find((x) => dist(x, c1) > 40 && dist(x, c2) > 40) ?? {
+        r: Math.max(0, mean.r - 20),
+        g: Math.min(255, mean.g + 25),
+        b: Math.min(255, mean.b + 15),
+      };
+      c3 = boostSat(c3, 1.2);
+      ambient.style.setProperty("--art-glow", rgbCss(mean));
+      ambient.style.setProperty("--c1", rgbCss(c1));
+      ambient.style.setProperty("--c2", rgbCss(c2));
+      ambient.style.setProperty("--c3", rgbCss(c3));
     } catch {
       /* CORS-tainted covers still drive blur via CSS url */
     }
   };
   img.src = url;
+}
+
+/* ── Cover-driven beat ambient ─────────────────────────────────── */
+
+{
+  const ambient = document.querySelector<HTMLElement>("#ambient")!;
+  const specular = document.querySelector<HTMLElement>("#specular")!;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let raf = 0;
+  let bassSm = 0;
+  let midSm = 0;
+  let levelSm = 0;
+  let flashSm = 0;
+  let lastBeat = -1;
+  let drift = 0;
+
+  const tick = () => {
+    const s = radio.snapshot();
+    const live = s.state === "playing" || s.state === "mixing" || s.state === "loading";
+    const meter = live ? radio.getMeter() : { bass: 0, mid: 0, treble: 0, level: 0 };
+    const bpm = Math.max(60, Math.min(200, s.bpm || 120));
+    const elapsed = s.elapsed || 0;
+
+    // Soft continuum + hard kick from BPM phase (works even if analyser is quiet).
+    const beatPhase = ((elapsed * bpm) / 60) % 1;
+    const beatIdx = Math.floor((elapsed * bpm) / 60);
+    const kickEnv = Math.pow(1 - beatPhase, 10);
+    if (live && beatIdx !== lastBeat) {
+      lastBeat = beatIdx;
+      flashSm = Math.max(flashSm, 0.55 + meter.bass * 0.45);
+    }
+
+    const targetBass = live ? Math.max(meter.bass, kickEnv * 0.72) : 0;
+    const targetMid = live ? Math.max(meter.mid, kickEnv * 0.28) : 0;
+    const targetLevel = live
+      ? Math.max(meter.level, kickEnv * 0.4 + Math.sin(elapsed * 0.7) * 0.04 + 0.08)
+      : 0.04;
+
+    bassSm += (targetBass - bassSm) * 0.28;
+    midSm += (targetMid - midSm) * 0.18;
+    levelSm += (targetLevel - levelSm) * 0.14;
+    flashSm *= 0.82;
+    if (flashSm < 0.02) flashSm = 0;
+    drift += 0.004 + bassSm * 0.012;
+
+    const pulse = Math.min(1, bassSm * 0.85 + flashSm * 0.55);
+    const shimmer = Math.min(1, midSm * 0.6 + levelSm * 0.35 + flashSm * 0.4);
+    const breathe = 0.92 + levelSm * 0.14 + bassSm * 0.08;
+
+    ambient.style.setProperty("--beat", pulse.toFixed(3));
+    ambient.style.setProperty("--bass", bassSm.toFixed(3));
+    ambient.style.setProperty("--energy", levelSm.toFixed(3));
+    ambient.style.setProperty("--flash", flashSm.toFixed(3));
+    ambient.style.setProperty("--shimmer", shimmer.toFixed(3));
+    ambient.style.setProperty("--drift", `${(drift % 360).toFixed(2)}deg`);
+    ambient.style.setProperty("--breathe", breathe.toFixed(3));
+    ambient.classList.toggle("is-live", live);
+    specular.style.setProperty("--flash", flashSm.toFixed(3));
+    specular.style.setProperty("--shimmer", shimmer.toFixed(3));
+
+    raf = requestAnimationFrame(tick);
+  };
+
+  if (!reduce) {
+    raf = requestAnimationFrame(tick);
+  } else {
+    ambient.style.setProperty("--beat", "0");
+    ambient.style.setProperty("--bass", "0");
+    ambient.style.setProperty("--energy", "0.06");
+    ambient.style.setProperty("--flash", "0");
+    ambient.style.setProperty("--shimmer", "0");
+    ambient.style.setProperty("--breathe", "1");
+  }
+  void raf;
 }
 
 let lastTitleKey = "";

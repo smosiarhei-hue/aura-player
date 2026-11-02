@@ -4,7 +4,7 @@
  * PLAY current → near mixOut → LOCK…MASHUP…LAND → promote B → prefetch next → …
  * Dual mashup only when A outro is instrumental; else Safe Exit (phrase Automix).
  */
-import { AutomixEngine, type EngineSnapshot } from "./engine";
+import { AutomixEngine, type AudioMeter, type EngineSnapshot } from "./engine";
 import { analyzeTrackBuffer, type TrackAIProfile } from "./analyzeTrack";
 import { planAutomix, recheckMix, vocalLevelNear, type AIMixPlan } from "./aiMixEngine";
 import { planOneBarDuet } from "./oneBarDuet";
@@ -102,8 +102,8 @@ export type WaveRadioSnapshot = {
   coachAvg: number | null;
   /** Seconds where Automix mashup starts (scrub limit). */
   automixAtSec: number | null;
-  /** Max scrub position (= automixAtSec - epsilon while playing body). */
-  scrubMaxSec: number | null;
+  /** Max scrub position (Automix/Duet cue, or near end before plan). */
+  scrubMaxSec: number;
   canSeek: boolean;
   transcript: TrackTranscript | null;
   transcriptStatus: string | null;
@@ -115,6 +115,8 @@ export type WaveRadioSnapshot = {
   transitionMode: TransitionMode;
   /** Fixed crossfade length when mode=crossfade (1…12). */
   crossfadeSec: number;
+  /** Current track BPM for beat-synced UI. */
+  bpm: number;
 };
 
 type Listener = (s: WaveRadioSnapshot) => void;
@@ -252,7 +254,16 @@ export class WaveRadio {
       engine: this.lastEngine,
       transitionMode: this.transitionMode,
       crossfadeSec: this.crossfadeSec,
+      bpm:
+        this.state === "mixing" && this.lastEngine?.displayDeck === "b"
+          ? this.engine.getBpm("b")
+          : this.profileA?.bpm || this.engine.getBpm("a"),
     };
+  }
+
+  /** Live spectrum for ambient pulse (bass/mid/treble/level). */
+  getMeter(): AudioMeter {
+    return this.engine.getMeter();
   }
 
   getTransitionMode(): TransitionMode {

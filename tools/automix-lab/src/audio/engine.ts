@@ -65,9 +65,22 @@ type SourceChain = {
   startOffset: number;
 };
 
+export type AudioMeter = {
+  /** 0…1 low-band energy (kick / bass). */
+  bass: number;
+  /** 0…1 mid energy. */
+  mid: number;
+  /** 0…1 high energy. */
+  treble: number;
+  /** 0…1 broadband level. */
+  level: number;
+};
+
 export class AutomixEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private analyserBuf: Uint8Array<ArrayBuffer> | null = null;
   private decks: Record<DeckId, DeckState> = {
     a: { name: "Track A", buffer: null, duration: 0, bpm: 120 },
     b: { name: "Track B", buffer: null, duration: 0, bpm: 124 },
@@ -113,10 +126,50 @@ export class AutomixEngine {
       this.ctx = new AudioContext();
       this.master = this.ctx.createGain();
       this.master.gain.value = 0.95;
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 512;
+      this.analyser.smoothingTimeConstant = 0.62;
+      this.analyserBuf = new Uint8Array(
+        this.analyser.frequencyBinCount
+      ) as Uint8Array<ArrayBuffer>;
+      // Parallel tap — never interrupt the audible path.
       this.master.connect(this.ctx.destination);
+      this.master.connect(this.analyser);
     }
     if (this.ctx.state === "suspended") await this.ctx.resume();
     return this.ctx;
+  }
+
+  /** Live spectrum bands for UI (ambient / pulse). Safe when silent. */
+  getMeter(): AudioMeter {
+    const empty = { bass: 0, mid: 0, treble: 0, level: 0 };
+    if (!this.analyser || !this.analyserBuf || !this.playing) return empty;
+    this.analyser.getByteFrequencyData(this.analyserBuf);
+    const buf = this.analyserBuf;
+    const n = buf.length;
+    if (n < 8) return empty;
+    const band = (from: number, to: number) => {
+      let sum = 0;
+      let c = 0;
+      const a = Math.max(0, Math.min(n, from | 0));
+      const b = Math.max(a + 1, Math.min(n, to | 0));
+      for (let i = a; i < b; i++) {
+        sum += buf[i]!;
+        c++;
+      }
+      return c ? sum / (c * 255) : 0;
+    };
+    // ~0–180 Hz / mids / highs at 44.1k + fft 512
+    const bass = Math.min(1, band(1, 6) * 1.55);
+    const mid = Math.min(1, band(6, 40) * 1.25);
+    const treble = Math.min(1, band(40, n) * 1.35);
+    const level = Math.min(1, bass * 0.45 + mid * 0.35 + treble * 0.2);
+    return { bass, mid, treble, level };
+  }
+
+  /** BPM of the deck currently driving display (A during solo). */
+  getBpm(id: DeckId = "a"): number {
+    return this.decks[id].bpm || 120;
   }
 
   async loadFile(id: DeckId, file: File) {

@@ -30,6 +30,16 @@
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --art-glow: #3a2a40;
+  --c1: #5a3a58;
+  --c2: #1a3048;
+  --c3: #2a1840;
+  --beat: 0;
+  --bass: 0;
+  --energy: 0.06;
+  --flash: 0;
+  --shimmer: 0;
+  --drift: 0deg;
+  --breathe: 1;
 }
 
 * {
@@ -79,14 +89,22 @@ a {
 
 .ambient {
   position: absolute;
-  inset: -8%;
+  inset: -12%;
   z-index: 0;
+  overflow: hidden;
   background:
-    radial-gradient(120% 80% at 50% 18%, var(--art-glow) 0%, transparent 58%),
-    radial-gradient(90% 70% at 80% 90%, #122033 0%, transparent 55%),
+    radial-gradient(
+      120% 80% at calc(48% + var(--bass) * 4%) calc(16% - var(--beat) * 3%),
+      color-mix(in oklab, var(--art-glow) 88%, white) 0%,
+      transparent 58%
+    ),
+    radial-gradient(90% 70% at 82% 92%, color-mix(in oklab, var(--c2) 80%, #122033) 0%, transparent 55%),
     #07070a;
-  filter: saturate(1.15);
-  transition: background 700ms var(--ease);
+  filter: saturate(calc(1.12 + var(--energy) * 0.35));
+  transform: scale(var(--breathe));
+  transform-origin: 50% 40%;
+  will-change: transform, filter;
+  transition: background-color 700ms var(--ease);
 }
 
 .ambient::before {
@@ -96,10 +114,11 @@ a {
   background-image: var(--art-url, none);
   background-size: cover;
   background-position: center;
-  opacity: 0.34;
-  filter: blur(54px) saturate(1.4);
-  transform: scale(1.18);
-  transition: opacity 600ms var(--ease);
+  opacity: calc(0.28 + var(--energy) * 0.16);
+  filter: blur(54px) saturate(calc(1.35 + var(--bass) * 0.45));
+  transform: scale(calc(1.16 + var(--beat) * 0.04)) rotate(calc(var(--drift) * 0.04));
+  transition: opacity 400ms var(--ease);
+  will-change: transform, filter, opacity;
 }
 
 .ambient::after {
@@ -107,9 +126,164 @@ a {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(5, 5, 8, 0.18) 0%, rgba(5, 5, 8, 0.72) 58%, #050508 100%),
-    radial-gradient(circle at 50% 0%, transparent 30%, rgba(0, 0, 0, 0.35) 100%);
+    linear-gradient(180deg, rgba(5, 5, 8, 0.14) 0%, rgba(5, 5, 8, 0.7) 58%, #050508 100%),
+    radial-gradient(circle at 50% 0%, transparent 28%, rgba(0, 0, 0, 0.38) 100%);
   pointer-events: none;
+  z-index: 4;
+}
+
+.amb-wave {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(28px);
+  mix-blend-mode: screen;
+  opacity: 0.55;
+  pointer-events: none;
+  will-change: transform, opacity;
+  z-index: 1;
+}
+
+.amb-w1 {
+  width: 78%;
+  height: 52%;
+  left: -8%;
+  top: 6%;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    color-mix(in oklab, var(--c1) 75%, white) 0%,
+    transparent 68%
+  );
+  opacity: calc(0.35 + var(--bass) * 0.45);
+  transform: translate3d(
+      calc(var(--bass) * 18px - 6px),
+      calc(var(--beat) * -14px),
+      0
+    )
+    scale(calc(0.92 + var(--bass) * 0.22));
+  animation: amb-drift-a 11s ease-in-out infinite alternate;
+}
+
+.amb-w2 {
+  width: 70%;
+  height: 48%;
+  right: -12%;
+  bottom: 8%;
+  background: radial-gradient(
+    ellipse at 40% 40%,
+    color-mix(in oklab, var(--c2) 70%, #64d2ff) 0%,
+    transparent 70%
+  );
+  opacity: calc(0.28 + var(--energy) * 0.4);
+  transform: translate3d(
+      calc(var(--energy) * -16px),
+      calc(var(--bass) * 12px),
+      0
+    )
+    scale(calc(0.9 + var(--energy) * 0.2));
+  animation: amb-drift-b 14s ease-in-out infinite alternate;
+}
+
+.amb-w3 {
+  width: 88%;
+  height: 40%;
+  left: 6%;
+  top: 42%;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    color-mix(in oklab, var(--c3) 65%, white) 0%,
+    transparent 72%
+  );
+  opacity: calc(0.22 + var(--shimmer) * 0.38);
+  transform: translate3d(
+      calc(var(--shimmer) * 12px - 4px),
+      calc(var(--beat) * 10px - 4px),
+      0
+    )
+    scale(calc(0.95 + var(--shimmer) * 0.18));
+  animation: amb-drift-c 9s ease-in-out infinite alternate;
+}
+
+.amb-shimmer {
+  position: absolute;
+  inset: -25%;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      calc(118deg + var(--drift)),
+      transparent 32%,
+      rgba(255, 255, 255, calc(0.045 + var(--shimmer) * 0.16)) 50%,
+      transparent 64%
+    ),
+    radial-gradient(
+      40% 30% at calc(30% + var(--bass) * 20%) calc(20% + var(--beat) * 10%),
+      rgba(255, 255, 255, calc(0.05 + var(--shimmer) * 0.14)),
+      transparent 70%
+    );
+  mix-blend-mode: soft-light;
+  opacity: calc(0.55 + var(--energy) * 0.45);
+  transform: translate3d(calc(var(--bass) * 2%), calc(var(--beat) * -1%), 0);
+  animation: amb-shimmer-sweep 8s ease-in-out infinite alternate;
+}
+
+.amb-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      70% 55% at 50% 38%,
+      rgba(255, 255, 255, calc(var(--flash) * 0.28)) 0%,
+      transparent 62%
+    ),
+    radial-gradient(
+      50% 40% at 48% 70%,
+      color-mix(in oklab, var(--c1) calc(var(--flash) * 35%), transparent) 0%,
+      transparent 70%
+    );
+  mix-blend-mode: screen;
+  opacity: calc(0.15 + var(--flash) * 0.85);
+}
+
+.ambient.is-live .amb-w1 {
+  animation-duration: calc(11s - var(--bass) * 3s);
+}
+
+@keyframes amb-drift-a {
+  from {
+    filter: blur(26px) hue-rotate(-8deg);
+  }
+  to {
+    filter: blur(36px) hue-rotate(12deg);
+  }
+}
+
+@keyframes amb-drift-b {
+  from {
+    filter: blur(30px) hue-rotate(6deg);
+  }
+  to {
+    filter: blur(42px) hue-rotate(-14deg);
+  }
+}
+
+@keyframes amb-drift-c {
+  from {
+    filter: blur(28px) hue-rotate(-4deg);
+  }
+  to {
+    filter: blur(38px) hue-rotate(8deg);
+  }
+}
+
+@keyframes amb-shimmer-sweep {
+  from {
+    filter: hue-rotate(-4deg) brightness(0.96);
+  }
+  to {
+    filter: hue-rotate(8deg) brightness(1.08);
+  }
 }
 
 .specular {
@@ -118,10 +292,24 @@ a {
   z-index: 1;
   pointer-events: none;
   background:
-    radial-gradient(42% 28% at 18% 8%, rgba(255, 255, 255, 0.16), transparent 70%),
-    radial-gradient(30% 20% at 88% 22%, rgba(255, 255, 255, 0.08), transparent 70%);
+    radial-gradient(
+      42% 28% at 18% 8%,
+      rgba(255, 255, 255, calc(0.14 + var(--flash, 0) * 0.22)),
+      transparent 70%
+    ),
+    radial-gradient(
+      30% 20% at 88% 22%,
+      rgba(255, 255, 255, calc(0.07 + var(--shimmer, 0) * 0.16)),
+      transparent 70%
+    ),
+    radial-gradient(
+      55% 40% at 50% 60%,
+      rgba(255, 255, 255, calc(var(--flash, 0) * 0.1)),
+      transparent 75%
+    );
   mix-blend-mode: soft-light;
-  opacity: 0.85;
+  opacity: calc(0.75 + var(--flash, 0) * 0.25);
+  transition: opacity 80ms linear;
 }
 
 .stage > *:not(.ambient):not(.specular) {
