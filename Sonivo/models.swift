@@ -8,6 +8,7 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case crossfade = "Кроссфейд"
     case off = "Выключено"
     case automix = "AutoMix Mashup"
+    case duet = "Duet"
 
     var id: String { rawValue }
 
@@ -21,6 +22,8 @@ enum TransitionMode: String, CaseIterable, Codable, Identifiable, Sendable {
             return "Стандартное раздельное воспроизведение треков."
         case .automix:
             return "Как Apple Automix: BPM в такт, бас от следующего, мэшап A+B вместе. Шкала и обложка снэпаются на handoff."
+        case .duet:
+            return "Modern Duet: вокал A поверх полного микса B на общей сетке, затем LAND. Нужен beatmatch и совместимый ключ — иначе Automix."
         }
     }
 }
@@ -73,7 +76,9 @@ final class AutoMixDJEngine {
     func markMashupProgress(_ progress: Double) {
         isTransitionActive = true
         transitionProgress = max(0, min(1, progress))
-        activeStrategyName = "MASHUP"
+        if activeStrategyName != "DUET" {
+            activeStrategyName = "MASHUP"
+        }
         dropProgress = progress
         isPostMixActive = progress >= 0.82
     }

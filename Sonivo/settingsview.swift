@@ -243,7 +243,7 @@ struct SettingsView: View {
                     Text("Работает через iOS на совместимых наушниках. Режим выбирается в Пункте управления. Стерео не становится Dolby Atmos; для защищённых и Dolby-потоков EQ может быть недоступен.")
                 }
                 Section {
-                    ForEach([TransitionMode.gapless, TransitionMode.crossfade, TransitionMode.automix, TransitionMode.off], id: \.rawValue) { mode in
+                    ForEach([TransitionMode.gapless, TransitionMode.crossfade, TransitionMode.automix, TransitionMode.duet, TransitionMode.off], id: \.rawValue) { mode in
                         Button { player.transitionMode = mode } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -270,7 +270,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Переходы между треками")
                 } footer: {
-                    Text("Gapless — без пауз. Кроссфейд — по слайдеру. AutoMix Mashup — beatmatch BPM + вокал/инструментал следующей пары на сетке; длительность без слайдера.")
+                    Text("Gapless — без пауз. Кроссфейд — по слайдеру. AutoMix Mashup — beatmatch + мэшап. Duet — вокал A + полный микс B, затем LAND (иначе Automix).")
                 }
 
     }

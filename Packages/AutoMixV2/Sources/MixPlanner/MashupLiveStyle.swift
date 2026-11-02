@@ -32,6 +32,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
     public var isBeatmatched: Bool
     /// Both leads present around the cues — never stack two vocals before LAND.
     public var oneVocalConflict: Bool
+    /// Lab Modern Duet: intentional dual vocal (A isolate over B full mix).
+    public var isDuet: Bool
     public var reason: String
     public var archetypeName: String
 
@@ -52,6 +54,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         targetBPM: 0,
         isBeatmatched: false,
         oneVocalConflict: false,
+        isDuet: false,
         reason: "Default mashup style",
         archetypeName: "dropSwap"
     )
@@ -73,6 +76,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         targetBPM: Float,
         isBeatmatched: Bool,
         oneVocalConflict: Bool = false,
+        isDuet: Bool = false,
         reason: String,
         archetypeName: String
     ) {
@@ -92,6 +96,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         self.targetBPM = targetBPM
         self.isBeatmatched = isBeatmatched
         self.oneVocalConflict = oneVocalConflict
+        self.isDuet = isDuet
         self.reason = reason
         self.archetypeName = archetypeName
     }
@@ -188,6 +193,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
     /// A = outro instrumental layer; B = next track already with vocals + instrumental.
     /// Not a quiet bed under A, and not a simple equal-power crossfade.
     public func volumes(progress: Double) -> (outgoing: Float, incoming: Float) {
+        if isDuet { return duetVolumes(progress: progress) }
+
         let p = min(1, max(0, progress))
         let hold = min(0.72, max(0.18, outgoingVolumeHold))
         let lag = min(0.28, max(0.02, incomingVolumeLag * 0.55))
@@ -227,9 +234,52 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return (out, inVol)
     }
 
-    public func phaseLabel(progress: Double) -> String {
-        // DJ “wow” 5-act story: LOCK → INVITE → ONE BASS → MASHUP → LAND.
+    /// Lab `oneBarDuetVolumes`: invite → vocal stack (A stays strong) → LAND A out.
+    private func duetVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
+        let handoff = min(0.72, max(0.52, handoffAt))
+        let invite = min(0.14, max(0.05, incomingVolumeLag))
+        let aDual = min(0.92, max(0.72, outgoingVolumeHold))
+        let landEnd = 0.94
+
+        let outgoing: Float
+        if p <= invite {
+            outgoing = 1
+        } else if p <= handoff {
+            let t = Float((p - invite) / max(0.001, handoff - invite))
+            outgoing = 1 - t * (1 - aDual)
+        } else if p <= landEnd {
+            outgoing = aDual * Float(1 - (p - handoff) / max(0.1, landEnd - handoff))
+        } else {
+            outgoing = 0
+        }
+
+        let incoming: Float
+        if p <= invite {
+            incoming = Float(p / invite) * 0.78
+        } else if p < handoff {
+            let t = Float((p - invite) / max(0.001, handoff - invite))
+            incoming = 0.78 + 0.22 * t
+        } else {
+            incoming = 1
+        }
+        return (min(1, max(0, outgoing)), min(1, max(0, incoming)))
+    }
+
+    public func phaseLabel(progress: Double) -> String {
+        let p = min(1, max(0, progress))
+        if isDuet {
+            if p < 0.1 {
+                if isBeatmatched, targetBPM > 30 {
+                    return String(format: "DUET LOCK %.0f", targetBPM)
+                }
+                return "DUET LOCK"
+            }
+            if p < handoffAt - 0.05 { return "DUET STACK" }
+            if p < handoffAt + 0.08 { return "DUET LAND" }
+            return "LAND"
+        }
+        // DJ “wow” 5-act story: LOCK → INVITE → ONE BASS → MASHUP → LAND.
         let lockEnd = min(0.18, bassSwapAt * 0.65)
         if p < lockEnd {
             if isBeatmatched, targetBPM > 30 {
@@ -259,15 +309,36 @@ public struct MashupLiveStyle: Sendable, Equatable {
         outgoing: TrackProfile?,
         incoming: TrackProfile?
     ) -> MashupLiveStyle {
+        let isDuetPlan = plan.reason.hasPrefix("DUET ·")
         var style = base(for: plan.archetype)
         style.reason = plan.reason
-        style.archetypeName = plan.archetype.rawValue
+        style.archetypeName = isDuetPlan ? "duet" : plan.archetype.rawValue
+        style.isDuet = isDuetPlan
         let matched = abs(plan.rateA - 1) > 0.002 || abs(plan.rateB - 1) > 0.002 || plan.tempoTargetBPM > 30
         style.isBeatmatched = matched && plan.type != .crossfade && plan.type != .none
         style.rateA = clampRate(plan.rateA)
         style.rateB = clampRate(plan.rateB)
-        style.pitchCentsB = max(-200, min(200, plan.pitchShiftCentsB))
+        // Duet may push ±300¢ when Camelot needs it.
+        style.pitchCentsB = isDuetPlan
+            ? max(-300, min(300, plan.pitchShiftCentsB))
+            : max(-200, min(200, plan.pitchShiftCentsB))
         style.targetBPM = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : 0
+        if isDuetPlan {
+            style.handoffAt = 0.68
+            style.bassSwapAt = max(0.14, style.handoffAt - 0.22)
+            style.vocalHoldUntil = style.handoffAt
+            style.vocalPocketUntil = min(0.94, style.handoffAt + 0.18)
+            style.outgoingVolumeHold = abs(plan.pitchShiftCentsB) >= 80 ? 0.78 : 0.86
+            style.incomingVolumeLag = min(0.16, max(0.07, 0.85 / max(4, plan.bars)))
+            style.oneVocalConflict = false
+            style.hpfDepth = 1.15
+            style.bassDepth = 1.05
+            style.bodyLift = 1.1
+            if style.isBeatmatched {
+                style.reason = "Duet beatmatch \(Int(round(style.targetBPM))) BPM · \(plan.reason)"
+            }
+            return style
+        }
         // Bass from B locks early; dual-layer mashup fills the window until handoff.
         style.handoffAt = 0.52
         style.bassSwapAt = min(style.handoffAt, max(0.14, style.handoffAt - 0.28))
@@ -436,6 +507,12 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let vocalOut = a.map { meanTail($0.vocalPresence) ?? meanTail($0.energyCurve) ?? 0.5 } ?? 0.5
         let vocalIn = b.map { meanHead($0.vocalPresence) ?? meanHead($0.energyCurve) ?? 0.45 } ?? 0.45
         let conflict = vocalOut >= 0.42 && vocalIn >= 0.4
+
+        if style.isDuet {
+            // Intentional dual lead — never apply ONE VOCAL carve.
+            style.oneVocalConflict = false
+            return
+        }
 
         if conflict {
             // ONE VOCAL: never two leads in the dual-layer window.

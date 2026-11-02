@@ -55,6 +55,12 @@ public struct MidSideMasterBakeRequest: Sendable, Equatable {
     public var outgoingVolumeHold: Double
     public var incomingVolumeLag: Double
     public var isBeatmatched: Bool
+    /// Stem carve for outgoing (A). Duet uses `.vocal`.
+    public var outgoingMode: MidSideStemMode
+    /// Stem carve for incoming (B). Duet uses `.dry` (full mix).
+    public var incomingMode: MidSideStemMode
+    /// Lab Duet volume curve (invite → stack → LAND).
+    public var useDuetVolumes: Bool
 
     public init(
         outgoingURL: URL,
@@ -65,7 +71,10 @@ public struct MidSideMasterBakeRequest: Sendable, Equatable {
         handoffProgress: Double,
         outgoingVolumeHold: Double = 0.42,
         incomingVolumeLag: Double = 0.18,
-        isBeatmatched: Bool = true
+        isBeatmatched: Bool = true,
+        outgoingMode: MidSideStemMode = .instrumental,
+        incomingMode: MidSideStemMode = .instrumental,
+        useDuetVolumes: Bool = false
     ) {
         self.outgoingURL = outgoingURL
         self.incomingURL = incomingURL
@@ -76,6 +85,9 @@ public struct MidSideMasterBakeRequest: Sendable, Equatable {
         self.outgoingVolumeHold = outgoingVolumeHold
         self.incomingVolumeLag = incomingVolumeLag
         self.isBeatmatched = isBeatmatched
+        self.outgoingMode = outgoingMode
+        self.incomingMode = incomingMode
+        self.useDuetVolumes = useDuetVolumes
     }
 }
 
@@ -173,8 +185,8 @@ public enum MidSideStemBaker {
                     output: bufA,
                     frames: got,
                     channels: chA,
-                    mode: .instrumental,
-                    amount: 1,
+                    mode: request.outgoingMode,
+                    amount: request.outgoingMode == .dry ? 0 : 1,
                     absoluteFrame: written,
                     untilFrame: 0,
                     fadeFrames: fadeFrames,
@@ -190,10 +202,10 @@ public enum MidSideStemBaker {
                     output: bufB,
                     frames: got,
                     channels: chB,
-                    mode: .instrumental,
-                    amount: 1,
+                    mode: request.incomingMode,
+                    amount: request.incomingMode == .dry ? 0 : 1,
                     absoluteFrame: written,
-                    untilFrame: untilFrame,
+                    untilFrame: request.incomingMode == .instrumental ? untilFrame : 0,
                     fadeFrames: fadeFrames,
                     midLp: &bLp,
                     midBody: &bBody,
@@ -215,7 +227,8 @@ public enum MidSideStemBaker {
                     handoff: handoff,
                     hold: hold,
                     lag: lag,
-                    beatmatched: beatmatched
+                    beatmatched: beatmatched,
+                    useDuetVolumes: request.useDuetVolumes
                 )
 
                 try output.write(from: bufOut)
@@ -254,6 +267,36 @@ public enum MidSideStemBaker {
                 outgoingVolumeHold: outgoingVolumeHold,
                 incomingVolumeLag: incomingVolumeLag,
                 isBeatmatched: isBeatmatched
+            )
+        )
+    }
+
+    /// Lab Modern Duet: A vocal isolate + B full mix → one stereo master.
+    public static func bakeDuetMaster(
+        outgoingURL: URL,
+        incomingURL: URL,
+        cueA: Double,
+        cueB: Double,
+        blendSec: Double,
+        handoffProgress: Double,
+        outgoingVolumeHold: Double,
+        incomingVolumeLag: Double,
+        isBeatmatched: Bool
+    ) throws -> URL {
+        try bakeTransitionMaster(
+            MidSideMasterBakeRequest(
+                outgoingURL: outgoingURL,
+                incomingURL: incomingURL,
+                cueA: cueA,
+                cueB: cueB,
+                durationSec: blendSec,
+                handoffProgress: handoffProgress,
+                outgoingVolumeHold: outgoingVolumeHold,
+                incomingVolumeLag: incomingVolumeLag,
+                isBeatmatched: isBeatmatched,
+                outgoingMode: .vocal,
+                incomingMode: .dry,
+                useDuetVolumes: true
             )
         )
     }
@@ -361,8 +404,17 @@ public enum MidSideStemBaker {
         hold rawHold: Double,
         lag rawLag: Double,
         handoff rawHandoff: Double,
-        beatmatched: Bool
+        beatmatched: Bool,
+        useDuetVolumes: Bool = false
     ) -> (outgoing: Float, incoming: Float) {
+        if useDuetVolumes {
+            return duetVolumes(
+                progress: progress,
+                hold: rawHold,
+                lag: rawLag,
+                handoff: rawHandoff
+            )
+        }
         let p = min(1, max(0, progress))
         let hold = min(0.72, max(0.18, rawHold))
         let lag = min(0.28, max(0.02, rawLag * 0.55))
@@ -399,6 +451,43 @@ public enum MidSideStemBaker {
         return (out, inVol)
     }
 
+    /// Lab `oneBarDuetVolumes` — A vocal stays strong through stack, then LAND.
+    private static func duetVolumes(
+        progress: Double,
+        hold rawHold: Double,
+        lag rawLag: Double,
+        handoff rawHandoff: Double
+    ) -> (outgoing: Float, incoming: Float) {
+        let p = min(1, max(0, progress))
+        let handoff = min(0.72, max(0.52, rawHandoff))
+        let invite = min(0.14, max(0.05, rawLag))
+        let aDual = min(0.92, max(0.72, rawHold))
+        let landEnd = 0.94
+
+        let out: Float
+        if p <= invite {
+            out = 1
+        } else if p <= handoff {
+            let t = Float((p - invite) / max(0.001, handoff - invite))
+            out = 1 - t * (1 - aDual)
+        } else if p <= landEnd {
+            out = aDual * Float(1 - (p - handoff) / max(0.1, landEnd - handoff))
+        } else {
+            out = 0
+        }
+
+        let inVol: Float
+        if p <= invite {
+            inVol = Float(p / invite) * 0.78
+        } else if p < handoff {
+            let t = Float((p - invite) / max(0.001, handoff - invite))
+            inVol = 0.78 + 0.22 * t
+        } else {
+            inVol = 1
+        }
+        return (min(1, max(0, out)), min(1, max(0, inVol)))
+    }
+
     private static func smoothstep(_ x: Double) -> Float {
         let t = min(1, max(0, x))
         return Float(t * t * (3 - 2 * t))
@@ -416,7 +505,8 @@ public enum MidSideStemBaker {
         handoff: Double,
         hold: Double,
         lag: Double,
-        beatmatched: Bool
+        beatmatched: Bool,
+        useDuetVolumes: Bool = false
     ) {
         let aL = outgoing.floatChannelData?[0]
         let aR = channelsA > 1 ? outgoing.floatChannelData?[1] : aL
@@ -435,7 +525,8 @@ public enum MidSideStemBaker {
                 hold: hold,
                 lag: lag,
                 handoff: handoff,
-                beatmatched: beatmatched
+                beatmatched: beatmatched,
+                useDuetVolumes: useDuetVolumes
             )
             // Soft ceiling so A+B mashup floor doesn't clip the master.
             oL[i] = softClip(aL[i] * vols.outgoing + bL[i] * vols.incoming)

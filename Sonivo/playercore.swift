@@ -1024,11 +1024,12 @@ final class PlayerCore {
     /// Publish mashup envelopes to stream taps and/or native EQ decks for any mix of backends.
     /// Writes immediately (no multi-hundred-ms ramp) so 30 Hz transition ticks stay click-free.
     private func applyMashupTransitionEQ(progress: Double) {
-        // When Mid/Side bake already instrumentalized the window, skip ONE VOCAL EQ gate
+        // When Mid/Side bake already shaped the window, skip live vocal/duet EQ gates
         // so we don't double-carve mids on top of the baked stem.
         var style = activeMashupStyle
         if mashupBakeRealIncomingURL != nil {
             style.oneVocalConflict = false
+            style.isDuet = false
         }
         let shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: style)
         let activeOff = Self.normalized(shaped.outgoing)
@@ -2224,15 +2225,20 @@ final class PlayerCore {
         }
     }
 
+    /// Beatmatched mashup modes (AutoMix ONE VOCAL + Modern Duet).
+    private var isMashupTransitionMode: Bool {
+        transitionMode == .automix || transitionMode == .duet
+    }
+
     private func scheduleTransitionIfNeeded() {
-        guard transitionMode == .crossfade || transitionMode == .automix,
+        guard transitionMode == .crossfade || isMashupTransitionMode,
               !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
 
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let totalDur = duration
         guard totalDur > 5, let nextTrack = peekNext(auto: true) else { return }
 
-        if transitionMode == .automix {
+        if isMashupTransitionMode {
             let blend = resolveMashupBlend(outgoing: current, incoming: nextTrack, duration: totalDur)
             guard currentPos >= blend.outgoingCueSec else { return }
             let style = resolveMashupStyle(outgoing: current, incoming: nextTrack, duration: totalDur)
@@ -2338,9 +2344,10 @@ final class PlayerCore {
         metadataTrack = nil
         incomingStartPosition = max(0, incomingStart)
         activeMashupStyle = mashupStyle ?? .fallback
-        let mashup = transitionMode == .automix
+        let mashup = isMashupTransitionMode
+        let strategyName = activeMashupStyle.isDuet ? "DUET" : "MASHUP"
         AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || mashup
-        AutoMixDJEngine.shared.activeStrategyName = mashup ? "MASHUP" : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
+        AutoMixDJEngine.shared.activeStrategyName = mashup ? strategyName : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
         AutoMixDJEngine.shared.statusBadge = mashup ? activeMashupStyle.phaseLabel(progress: 0) : nil
         AutoMixDJEngine.shared.currentBPM = mashup ? Double(activeMashupStyle.targetBPM) : 0
@@ -2370,13 +2377,16 @@ final class PlayerCore {
         transitionPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                // Lab ONE VOCAL: offline master of A+B (instr + volumes) → one temp CAF.
-                if mashup,
-                   self.activeMashupStyle.oneVocalConflict,
+                // Lab offline master: ONE VOCAL (A instr + B) or Duet (A vocal + B dry).
+                let shouldBakeMaster = mashup && (
+                    self.activeMashupStyle.isDuet || self.activeMashupStyle.oneVocalConflict
+                )
+                if shouldBakeMaster,
                    let outURL = outgoingCacheURL,
                    let inURL = nextURL ?? self.findLocalOrCachedAudioFile(for: nextTrack) {
                     let blend = self.transitionDuration
                     let style = self.activeMashupStyle
+                    let duetBake = style.isDuet
                     let handoff = style.handoffAt
                     let cueA = max(0, cueAForBake)
                     let cueB = max(0, startAt)
@@ -2385,7 +2395,20 @@ final class PlayerCore {
                     let beatmatched = style.isBeatmatched
                     let bakeStartedAt = Date()
                     let masterURL: URL? = await Task.detached(priority: .userInitiated) {
-                        try? MidSideStemBaker.bakeOneVocalMaster(
+                        if duetBake {
+                            return try? MidSideStemBaker.bakeDuetMaster(
+                                outgoingURL: outURL,
+                                incomingURL: inURL,
+                                cueA: cueA,
+                                cueB: cueB,
+                                blendSec: blend,
+                                handoffProgress: handoff,
+                                outgoingVolumeHold: hold,
+                                incomingVolumeLag: lag,
+                                isBeatmatched: beatmatched
+                            )
+                        }
+                        return try? MidSideStemBaker.bakeOneVocalMaster(
                             outgoingURL: outURL,
                             incomingURL: inURL,
                             cueA: cueA,
@@ -2419,7 +2442,7 @@ final class PlayerCore {
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
                         AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
                         SonivoDiagnostics.log(
-                            "[Mashup] ONE VOCAL master bake · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
+                            "[Mashup] \(duetBake ? "DUET" : "ONE VOCAL") master bake · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
                             tag: "AUDIO"
                         )
                         self.startTransitionTimer()
@@ -2488,7 +2511,7 @@ final class PlayerCore {
                 self.incomingLaneReady = true
                 self.transitionStartTime = Date()
                 // Seed beatmatch + mashup EQ so the first frames already lock tempo / vocal bed.
-                if self.transitionMode == .automix {
+                if self.isMashupTransitionMode {
                     if self.isUsingStreamPlayer, let item = self.activeStreamingPlayer.currentItem {
                         StreamBeatTap.shared.attach(to: item)
                     }
@@ -2535,7 +2558,9 @@ final class PlayerCore {
         AutoMixDJEngine.shared.isTransitionActive = false
         AutoMixDJEngine.shared.transitionProgress = 0
         AutoMixDJEngine.shared.statusBadge = nil
-        AutoMixDJEngine.shared.activeStrategyName = transitionMode == .automix ? "MASHUP" : "GAPLESS"
+        AutoMixDJEngine.shared.activeStrategyName = isMashupTransitionMode
+            ? (activeMashupStyle.isDuet ? "DUET" : "MASHUP")
+            : "GAPLESS"
         AutoMixDJEngine.shared.resetDrop()
         resetTransitionEQOffsets()
     }
@@ -2556,7 +2581,7 @@ final class PlayerCore {
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
 
-        let mashup = transitionMode == .automix
+        let mashup = isMashupTransitionMode
         // Offline A+B master already has volumes + stems summed — keep unity gain.
         if mashupPlayingMasterBake {
             if isUsingStreamPlayer {
@@ -2838,7 +2863,7 @@ final class PlayerCore {
         AutoMixDJEngine.shared.resetDrop()
         AutoMixDJEngine.shared.isPostMixActive = true
         SonivoDiagnostics.log(
-            "[AutoMix] Transition completed (\(transitionMode == .automix ? "mashup" : "crossfade")): now playing \(nextTrack.title)",
+            "[AutoMix] Transition completed (\(isMashupTransitionMode ? (activeMashupStyle.isDuet ? "duet" : "mashup") : "crossfade")): now playing \(nextTrack.title)",
             tag: "AUTOMIX"
         )
 

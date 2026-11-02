@@ -2,7 +2,7 @@
 //
 // Analyzes the current/next track pair for MixPlanner plans + TrackProfiles.
 // Runs when AutoMix V2 ownership is on OR when live PlayerCore is in
-// AutoMix Mashup mode — so each mashup transition can be pair-specific
+// AutoMix Mashup / Duet mode — so each mashup transition can be pair-specific
 // without enabling DualDeck V2 ownership.
 
 import Foundation
@@ -82,6 +82,16 @@ final class AutoMixV2AnalysisRuntime {
     private var shouldAnalyse: Bool {
         AutoMixEngineSelectionStore.shared.isV2Enabled
             || PlayerCore.shared.transitionMode == .automix
+            || PlayerCore.shared.transitionMode == .duet
+    }
+
+    private var mixSettingsMode: MixModels.TransitionMode {
+        switch PlayerCore.shared.transitionMode {
+        case .duet: return .duet
+        case .automix: return .automix
+        case .crossfade: return .crossfade
+        case .off, .gapless: return .off
+        }
     }
 
     private func refreshPairIfNeeded() {
@@ -120,7 +130,8 @@ final class AutoMixV2AnalysisRuntime {
         let index = queue.firstIndex(where: { $0.id == current.id })
         let next = index.flatMap { $0 + 1 < queue.count ? queue[$0 + 1] : nil }
         let nextID = next.flatMap(trackID)
-        let key = currentID.raw + "|" + (nextID?.raw ?? "")
+        // Include mode so Automix ↔ Duet switches re-plan the same pair.
+        let key = currentID.raw + "|" + (nextID?.raw ?? "") + "|" + mixSettingsMode.rawValue
         guard key != observedPair else { return }
 
         observedPair = key
@@ -131,9 +142,11 @@ final class AutoMixV2AnalysisRuntime {
         lastError = nil
         analysisTask?.cancel()
 
-        // Mashup needs real BPM/grid for beatmatch — allow download when AutoMix Mashup is on.
+        // Mashup / Duet needs real BPM/grid for beatmatch — allow download when those modes are on.
         let allowDownload = AutoMixEngineSelectionStore.shared.isV2Enabled
             || PlayerCore.shared.transitionMode == .automix
+            || PlayerCore.shared.transitionMode == .duet
+        let planMode = mixSettingsMode
         analysisTask = Task { @MainActor [weak self] in
             guard let self else { return }
             pipelineStatus = allowDownload ? "Анализ / подготовка BPM пары" : "Анализ текущего трека"
@@ -142,7 +155,7 @@ final class AutoMixV2AnalysisRuntime {
                 let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)
                 var a = await TrackProfileEnricher.enrich(rawA, fileURL: currentFile)
                 // LRC / synced lyrics refine mixOut while the song plays (lab neuralAutomix).
-                pipelineStatus = "Automix · текст / neural cue…"
+                pipelineStatus = planMode == .duet ? "Duet · текст / neural cue…" : "Automix · текст / neural cue…"
                 a = await self.applyNeuralCue(to: a, track: current, role: .outgoing)
                 guard !Task.isCancelled, observedPair == key else { return }
                 currentProfile = a
@@ -158,7 +171,7 @@ final class AutoMixV2AnalysisRuntime {
                 guard !Task.isCancelled, observedPair == key else { return }
                 nextProfile = b
                 let settings = MixSettings(
-                    mode: .automix,
+                    mode: planMode == .duet ? .duet : .automix,
                     crossfadeSeconds: MashupBlendScheduler.defaultPreferredBlendSec,
                     skipTransitionsWithinAlbum: false,
                     dontCutEndings: false,

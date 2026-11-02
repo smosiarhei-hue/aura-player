@@ -94,6 +94,42 @@ struct MashupLiveStyleTests {
         #expect(style.phaseLabel(progress: 0.95).contains("LAND"))
     }
 
+    @Test("Duet plan keeps dual vocal volumes and DUET phase labels")
+    func duetVolumesAndPhases() {
+        let plan = TransitionPlan(
+            type: .beatmatchedShort,
+            archetype: .dropSwap,
+            aOutStartSec: 150,
+            bInStartSec: 8,
+            bars: 6,
+            tempoTargetBPM: 124,
+            rateA: 1.0,
+            rateB: 1.03,
+            pitchShiftCentsB: 0,
+            gainOffsetBdB: 0,
+            loopBarsA: 0,
+            fx: [],
+            reason: "DUET · 6 bars · vocal A + vocal B · instr B · LAND · Точное совпадение ключа (8A)"
+        )
+        let style = MashupLiveStyle.resolve(
+            plan: plan,
+            outgoing: nil,
+            incoming: nil,
+            outgoingDuration: 210,
+            incomingDuration: 200
+        )
+        #expect(style.isDuet)
+        #expect(!style.oneVocalConflict)
+        #expect(style.handoffAt >= 0.6)
+        let mid = style.volumes(progress: 0.4)
+        #expect(mid.outgoing > 0.72)
+        #expect(mid.incoming > 0.75)
+        #expect(style.phaseLabel(progress: 0.05).contains("DUET LOCK"))
+        #expect(style.phaseLabel(progress: 0.4).contains("DUET STACK"))
+        #expect(style.phaseLabel(progress: 0.7).contains("DUET LAND")
+            || style.phaseLabel(progress: 0.7) == "LAND")
+    }
+
     @Test("Profile tempo match produces beatmatch style")
     func profilesBeatmatch() {
         let a = profile("a", bpm: 124, key: "8A", mixIn: 8, mixOut: 168)

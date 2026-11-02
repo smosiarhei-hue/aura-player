@@ -77,6 +77,33 @@ struct MidSideStemBakerTests {
         #expect(FileManager.default.fileExists(atPath: master.path))
     }
 
+    @Test("Duet master: A vocal + B dry for the mashup window")
+    func duetMaster() throws {
+        let dir = try temporaryBakeDirectory()
+        defer { removeBakeItem(at: dir) }
+        let a = try makeStereoTone(in: dir, name: "duet-a.caf", rate: 44_100, duration: 30)
+        let b = try makeStereoTone(in: dir, name: "duet-b.caf", rate: 44_100, duration: 30)
+        let master = try MidSideStemBaker.bakeDuetMaster(
+            outgoingURL: a,
+            incomingURL: b,
+            cueA: 12,
+            cueB: 4,
+            blendSec: 10,
+            handoffProgress: 0.68,
+            outgoingVolumeHold: 0.86,
+            incomingVolumeLag: 0.1,
+            isBeatmatched: true
+        )
+        defer { MidSideStemBaker.removeTempFiles([master]) }
+
+        let file = try AVAudioFile(forReading: master)
+        let sec = Double(file.length) / file.processingFormat.sampleRate
+        #expect(file.processingFormat.channelCount == 2)
+        #expect(sec >= 8)
+        #expect(sec <= MidSideStemBaker.maximumDurationSec + 1.5)
+        #expect(FileManager.default.fileExists(atPath: master.path))
+    }
+
     @Test("removeTempFiles deletes baked CAF slices")
     func removesTemps() throws {
         let dir = try temporaryBakeDirectory()

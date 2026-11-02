@@ -6,6 +6,8 @@ public enum TransitionMode: String, Sendable, Codable, Equatable {
     case off
     case crossfade
     case automix
+    /// Adaptive Phrase Duet: A vocal isolate over B full mix, then LAND.
+    case duet
 }
 
 public struct MixSettings: Sendable, Codable, Equatable {

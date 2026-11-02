@@ -13,6 +13,9 @@ public enum MixPlanner {
         if a.durationSec < 45 || b.durationSec < 45 {
             return none(a: a, reason: "Трек короче 45 секунд")
         }
+        if settings.mode == .duet {
+            return planDuet(from: a, to: b, aMeta: aMeta, bMeta: bMeta, settings: settings)
+        }
         guard settings.mode == .automix else { return crossfade(a, b, settings, "Пользовательский кроссфейд") }
 
         guard a.mixable, b.mixable else {
@@ -85,6 +88,129 @@ public enum MixPlanner {
         case .energyWash:
             return planEnergyWash(from: a, to: b, settings: settings, harmonic: harmonic)
         }
+    }
+
+    /// Modern Adaptive Phrase Duet (Lab `oneBarDuet`).
+    /// Quality gate: beatmatch ±18% + Camelot ±3 semitones, else Automix fallback.
+    private static func planDuet(from a: TrackProfile, to b: TrackProfile,
+                                 aMeta: TrackMeta, bMeta: TrackMeta,
+                                 settings: MixSettings) -> TransitionPlan {
+        guard a.mixable, b.mixable else {
+            return crossfade(a, b, settings, "Duet → crossfade: трек не для сведения")
+        }
+
+        let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm, maximumRateChange: 0.18)
+        let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey, maxSemitones: 3)
+
+        if tempo == nil || !harmonic.isHarmonicallyViable {
+            var automixSettings = settings
+            automixSettings.mode = .automix
+            let fallback = plan(from: a, to: b, aMeta: aMeta, bMeta: bMeta, settings: automixSettings)
+            let why: [String] = [
+                tempo == nil ? "BPM far" : nil,
+                !harmonic.isHarmonicallyViable ? harmonic.description : nil
+            ].compactMap { $0 }
+            return TransitionPlan(
+                type: fallback.type,
+                archetype: fallback.archetype,
+                aOutStartSec: fallback.aOutStartSec,
+                bInStartSec: fallback.bInStartSec,
+                bars: fallback.bars,
+                tempoTargetBPM: fallback.tempoTargetBPM,
+                rateA: fallback.rateA,
+                rateB: fallback.rateB,
+                pitchShiftCentsB: fallback.pitchShiftCentsB,
+                gainOffsetBdB: fallback.gainOffsetBdB,
+                loopBarsA: fallback.loopBarsA,
+                fx: fallback.fx,
+                reason: "DUET SAFE · Automix (\(why.joined(separator: " · "))) · \(fallback.reason)"
+            )
+        }
+
+        let bpm = tempo!.targetBPM
+        let energyOut = meanTail(a.energyCurve) ?? 0.5
+        let energyIn = meanHead(b.energyCurve) ?? 0.5
+        let energyShift = abs(energyIn - energyOut)
+        let archetype: MixTransitionArchetype =
+            (energyShift >= 0.18 || energyIn >= 0.62) ? .energyWash : .dropSwap
+
+        // Content-aware 2–12 bars; prefer 4–8 for vocal→vocal.
+        let barSec = 240.0 / Double(max(60, bpm))
+        let minBlend = max(4.0, barSec * 2)
+        let maxBlend = min(28.0, max(minBlend, barSec * 12))
+        let cueA = BeatGridSynchronization.outgoingCue(profile: a, duration: minBlend)
+        let available = max(minBlend, a.durationSec - cueA)
+        let room = min(maxBlend, available)
+        var bestBars = 6.0
+        var bestScore = -1.0
+        for bars in stride(from: 2.0, through: 12.0, by: 2.0) {
+            let sec = bars * barSec
+            guard sec >= minBlend - 0.05, sec <= room + 0.05 else { continue }
+            let lengthBias = (bars >= 4 && bars <= 8) ? 0.2 : (bars == 2 ? 0.02 : (bars <= 10 ? 0.06 : -0.05))
+            let score = lengthBias + (bars == 6 ? 0.05 : 0)
+            if score > bestScore {
+                bestScore = score
+                bestBars = bars
+            }
+        }
+        var blendSec = min(room, max(minBlend, bestBars * barSec))
+        var outCue = a.downbeatsSec.min(by: { abs($0 - cueA) < abs($1 - cueA) }) ?? cueA
+        if a.durationSec - outCue < blendSec {
+            outCue = BeatGridSynchronization.outgoingCue(profile: a, duration: blendSec)
+            blendSec = min(blendSec, max(minBlend, a.durationSec - outCue))
+        }
+        let bars = max(2.0, blendSec / barSec)
+        let handoffAt = 0.68
+        let bassSwapAt = max(0.14, handoffAt - 0.22)
+        let handoffBar = bars * handoffAt
+        let bassBar = bars * bassSwapAt
+        let pitched = abs(harmonic.pitchShiftCents) >= 80
+        let cents = max(-300, min(300, harmonic.pitchShiftCents))
+
+        let events: [FxEvent] = [
+            FxEvent(target: .a, kind: .volume, startBar: 0, endBar: bars,
+                    fromValue: 0, toValue: -60, curve: .sCurve),
+            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: min(2, bars * 0.35),
+                    fromValue: -18, toValue: 0, curve: .sCurve),
+            // ONE BASS: kill A early, open B at swap.
+            FxEvent(target: .a, kind: .bassKill, startBar: 0, endBar: bassBar,
+                    fromValue: 0, toValue: 1, curve: .sCurve),
+            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: 0,
+                    fromValue: 1, toValue: 1, curve: .linear),
+            FxEvent(target: .b, kind: .bassOn, startBar: bassBar, endBar: min(bars, bassBar + 1),
+                    fromValue: 1, toValue: 0, curve: .sCurve),
+            // Duet: keep A vocal (no instrumentalize); soft mid-duck on B during stack.
+            FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: handoffBar,
+                    fromValue: pitched ? -7 : -5, toValue: 0, curve: .sCurve),
+            // Audible LAND FX — LPF invite on B, HPF + echo on A.
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: min(2.5, bars * 0.4),
+                    fromValue: archetype == .energyWash ? 900 : 1100, toValue: 20_000, curve: .exp),
+            FxEvent(target: .a, kind: .highPass, startBar: max(0, handoffBar - 0.5), endBar: bars,
+                    fromValue: 20, toValue: 4800, curve: .exp),
+            FxEvent(target: .a, kind: .echoOut, startBar: max(0, handoffBar), endBar: bars,
+                    fromValue: 0, toValue: archetype == .energyWash ? 55 : 48, curve: .sCurve, param: 50),
+            FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 1), endBar: bars,
+                    fromValue: tempo!.rateB, toValue: 1, curve: .sCurve)
+        ]
+
+        let rawIn = BeatGridSynchronization.incomingCue(profile: b, duration: blendSec)
+        let incoming = b.downbeatsSec.min(by: { abs($0 - rawIn) < abs($1 - rawIn) }) ?? rawIn
+
+        return TransitionPlan(
+            type: .beatmatchedShort,
+            archetype: archetype,
+            aOutStartSec: outCue,
+            bInStartSec: incoming,
+            bars: bars,
+            tempoTargetBPM: bpm,
+            rateA: tempo!.rateA,
+            rateB: tempo!.rateB,
+            pitchShiftCentsB: cents,
+            gainOffsetBdB: normalizationGain(profile: b, settings: settings),
+            loopBarsA: 0,
+            fx: events,
+            reason: "DUET · \(Int(round(bars))) bars · vocal A + vocal B · instr B · LAND · \(harmonic.description)"
+        )
     }
 
     // 1. Архетип Seamless Loop: длинное перетекание (16-32 такта) без среза середины
@@ -526,7 +652,8 @@ public enum CamelotCompatibility {
         return false
     }
 
-    public static func match(_ keyA: String?, _ keyB: String?) -> HarmonicMatch {
+    /// - Parameter maxSemitones: pitch compensation ceiling (AutoMix ±2, Duet ±3).
+    public static func match(_ keyA: String?, _ keyB: String?, maxSemitones: Int = 2) -> HarmonicMatch {
         guard let rawA = keyA, let rawB = keyB,
               let a = parse(rawA), let b = parse(rawB) else {
             return HarmonicMatch(isNaturallyCompatible: false, pitchShiftCents: 0,
@@ -550,8 +677,8 @@ public enum CamelotCompatibility {
         if semitones > 6 { semitones -= 12 }
         if semitones < -6 { semitones += 12 }
 
-        // Если разница в пределах ±2 полутонов — компенсируем питч-шифтом (до ±200 центов)
-        if abs(semitones) <= 2 {
+        let cap = max(0, min(6, maxSemitones))
+        if abs(semitones) <= cap {
             let cents = Float(semitones * 100)
             let sign = cents > 0 ? "+\(Int(cents))" : "\(Int(cents))"
             return HarmonicMatch(
@@ -562,7 +689,6 @@ public enum CamelotCompatibility {
             )
         }
 
-        // Несовместимый ключ (> 2 полутонов) — гармоническое наложение запрещено
         return HarmonicMatch(
             isNaturallyCompatible: false,
             pitchShiftCents: 0,

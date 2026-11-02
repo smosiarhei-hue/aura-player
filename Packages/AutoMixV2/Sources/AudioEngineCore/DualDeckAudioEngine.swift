@@ -229,11 +229,11 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
         }
     }
 
-    /// Harmonic key correction in cents (±200 ≈ ±2 semitones, Camelot neighbor).
+    /// Harmonic key correction in cents (±300 ≈ ±3 semitones; Duet Camelot ceiling).
     public func setPitchCents(_ cents: Float, for deck: Deck) async {
         await inspect { owner in
             let slot = owner.slot(for: deck)
-            let clamped = min(200, max(-200, cents.isFinite ? cents : 0))
+            let clamped = min(300, max(-300, cents.isFinite ? cents : 0))
             slot.timePitch.pitch = clamped
         }
     }

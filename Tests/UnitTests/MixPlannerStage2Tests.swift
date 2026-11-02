@@ -49,21 +49,58 @@ struct MixPlannerStage2Tests {
         #expect(short.type == .none)
     }
 
+    @Test("Duet plans vocal stack when tempo and Camelot lock")
+    func duetQualityGatePass() {
+        let a = profile("a", bpm: 124, key: "8A")
+        let b = profile("b", bpm: 126, key: "8A")
+        let plan = MixPlanner.plan(
+            from: a, to: b,
+            aMeta: meta("a"), bMeta: meta("b"),
+            settings: MixSettings(mode: .duet, skipTransitionsWithinAlbum: false)
+        )
+        #expect(plan.type != .none)
+        #expect(plan.reason.hasPrefix("DUET ·"))
+        #expect(plan.tempoTargetBPM > 30)
+        #expect(plan.bars >= 2)
+        #expect(plan.fx.contains { $0.kind == .echoOut })
+        #expect(plan.fx.contains { $0.kind == .highPass })
+        #expect(!plan.fx.contains { $0.kind == .instrumentalize })
+    }
+
+    @Test("Duet falls back to Automix when BPM cannot lock")
+    func duetQualityGateFallback() {
+        let a = profile("a", bpm: 90, key: "8A")
+        let b = profile("b", bpm: 140, key: "8A")
+        let plan = MixPlanner.plan(
+            from: a, to: b,
+            aMeta: meta("a"), bMeta: meta("b"),
+            settings: MixSettings(mode: .duet, skipTransitionsWithinAlbum: false)
+        )
+        #expect(plan.reason.hasPrefix("DUET SAFE · Automix"))
+    }
+
     private func meta(_ id: String, album: String? = nil, duration: Double = 180) -> TrackMeta {
         TrackMeta(id: TrackID(raw: id), title: id, artist: "Test", albumID: album,
                   durationSec: duration, artworkURL: nil)
     }
 
-    private func profile(_ id: String, duration: Double = 180, lufs: Float = -14) -> TrackProfile {
+    private func profile(
+        _ id: String,
+        duration: Double = 180,
+        lufs: Float = -14,
+        bpm: Float = 120,
+        key: String? = nil
+    ) -> TrackProfile {
         TrackProfile(trackID: TrackID(raw: id), durationSec: duration,
                      sourceSampleRate: 44_100, sourceBitrateKbps: 320,
-                     bpm: 120, beatsSec: Array(stride(from: 0.0, to: duration, by: 0.5)),
+                     bpm: bpm, beatsSec: Array(stride(from: 0.0, to: duration, by: 0.5)),
                      downbeatsSec: Array(stride(from: 0.0, to: duration, by: 2)),
                      phraseStartsSec: Array(stride(from: 0.0, to: duration, by: 16)),
-                     tempoStability: 1, camelotKey: nil, integratedLUFS: lufs,
+                     tempoStability: 1, camelotKey: key, integratedLUFS: lufs,
                      loudnessCurveLUFS: [], energyCurve: Array(repeating: 0.5, count: Int(duration)),
-                     hasFadeOut: false, endsInSilence: false, vocalPresence: [],
+                     hasFadeOut: false, endsInSilence: false,
+                     vocalPresence: Array(repeating: 0.55, count: Int(duration * 4)),
                      segments: [], mixInSec: 8, mixOutSec: 160, mixable: true,
-                     confidence: Confidence(bpm: 1, downbeats: 1, key: 0))
+                     confidence: Confidence(bpm: 1, downbeats: 1, key: key == nil ? 0 : 1))
     }
 }

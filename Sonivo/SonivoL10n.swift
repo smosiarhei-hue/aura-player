@@ -66,10 +66,20 @@ final class SonivoL10n {
     var languageSwitchLabel: String { isRussian ? "Язык: Русский" : "Language: English" }
     /// Shining player badge when AutoMix Mashup fires.
     var automix: String { isRussian ? "Автомикс" : "Automix" }
+    var duet: String { isRussian ? "Дуэт" : "Duet" }
 
     /// Localize live mashup phase codes from `MashupLiveStyle.phaseLabel`.
     func automixPhase(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("DUET LOCK") {
+            let bpm = raw.split(separator: " ").dropFirst(2).joined(separator: " ")
+            if isRussian {
+                return bpm.isEmpty ? "Дуэт · лок" : "Дуэт · лок \(bpm)"
+            }
+            return raw
+        }
+        if raw == "DUET STACK" { return isRussian ? "Дуэт · стек" : raw }
+        if raw == "DUET LAND" { return isRussian ? "Дуэт · посадка" : raw }
         if raw.hasPrefix("LOCK") {
             let bpm = raw.split(separator: " ").dropFirst().joined(separator: " ")
             if isRussian {
