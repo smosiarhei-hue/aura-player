@@ -208,6 +208,7 @@ export class WaveRadio {
       elapsed: this.lastEngine?.displayElapsed ?? 0,
       duration: this.lastEngine?.displayDuration ?? 0,
       planMode: this.plan?.params.dsp.mashupMode ?? null,
+      blendSec: this.plan?.params.blendDurationSec ?? null,
       planStory: this.plan?.story ?? null,
       planBlurb: premiumLandBlurb(this.plan),
       criticOk: this.plan?.critic?.ok ?? null,

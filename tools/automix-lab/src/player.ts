@@ -161,7 +161,7 @@ const sheetBodies = {
           <span class="platters mini" aria-hidden="true"><i></i><i></i></span>
           <span>AutoMix</span>
         </button>
-        <button type="button" class="tmode" role="radio" data-mode="duet" aria-checked="false" title="Adaptive Duet — listens to phrases, picks dual-vocal length, then LAND B">
+        <button type="button" class="tmode" role="radio" data-mode="duet" aria-checked="false" title="Adaptive Duet — listens to phrases, B-led dual (A ducked), early LAND B">
           <span class="platters mini" aria-hidden="true"><i></i><i></i></span>
           <span>Duet</span>
         </button>
@@ -469,7 +469,7 @@ function render(s: WaveRadioSnapshot) {
           : s.transitionMode === "off"
             ? "Play to the end, then the next song"
             : s.transitionMode === "duet"
-              ? "Adaptive Duet · listens · dual vocals · LAND B"
+              ? "Adaptive Duet · listens · B-led dual · LAND B"
               : "Beatmatched blend · Crossfade if the plan is late";
     }
     const row = document.querySelector<HTMLElement>("#xfadeRow");
@@ -556,10 +556,9 @@ function render(s: WaveRadioSnapshot) {
     mixingWord.hidden = true;
     cueLine.classList.remove("is-mixing");
     if (s.transitionMode === "duet" && s.automixAtSec != null && dur > 0) {
-      cueRest.textContent =
-        s.planMode === "oneBarDuet" && s.automixAtSec != null
-          ? `Duet @ ${fmt(s.automixAtSec)} · adaptive`
-          : `Duet @ ${fmt(s.automixAtSec)}`;
+      const blend =
+        s.blendSec != null && s.blendSec > 0 ? ` · ${Math.round(s.blendSec)}s` : "";
+      cueRest.textContent = `Duet @ ${fmt(s.automixAtSec)}${blend}`;
     } else if (s.transitionMode === "automix" && s.automixAtSec != null && dur > 0) {
       cueRest.textContent = `Automix @ ${fmt(s.automixAtSec)}`;
     } else if (s.transitionMode === "crossfade" && dur > 0 && s.duration > 0) {

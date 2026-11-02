@@ -245,29 +245,37 @@ export function volumesAt(
   p: number,
   params: MashupParams
 ): { outgoing: number; incoming: number } {
-  // Phrase Duet: intentional dual lead for ~4 bars, then LAND to B.
+  // Phrase Duet: B-led dual (A ducked), LAND A out by ~0.92.
   if (params.dsp.mashupMode === "oneBarDuet") {
-    // Lazy import avoided — keep curves local so envelopes stay dependency-light.
-    const handoff = Math.min(0.82, Math.max(0.55, params.handoffAt));
-    const invite = Math.min(0.18, Math.max(0.05, params.incomingVolumeLag || 0.08));
-    const landSpan = Math.max(0.12, 1 - handoff);
-    let outgoing =
-      p <= handoff ? 1 : Math.max(0, 1 - (p - handoff) / landSpan);
-    let incoming =
-      p <= invite
-        ? p / invite
-        : p >= handoff
-          ? 1
-          : 0.92 + 0.08 * ((p - invite) / Math.max(0.001, handoff - invite));
-    const pow = Math.hypot(outgoing, incoming);
-    if (p < handoff && pow > 0.05) {
-      const s = Math.min(1.15, 0.95 / pow);
-      outgoing *= s;
-      incoming *= s;
+    const handoff = Math.min(0.72, Math.max(0.52, params.handoffAt));
+    const invite = Math.min(0.16, Math.max(0.05, params.incomingVolumeLag || 0.08));
+    const aDual = Math.min(0.82, Math.max(0.5, params.outgoingVolumeHold || 0.65));
+    const landEnd = 0.92;
+    let outgoing: number;
+    if (p <= invite) outgoing = 1;
+    else if (p <= handoff) {
+      const t = (p - invite) / Math.max(0.001, handoff - invite);
+      outgoing = 1 - t * (1 - aDual);
+    } else if (p <= landEnd) {
+      outgoing = aDual * (1 - (p - handoff) / Math.max(0.08, landEnd - handoff));
+    } else outgoing = 0;
+    let incoming: number;
+    if (p <= invite) incoming = (p / invite) * 0.85;
+    else if (p < handoff) {
+      const t = (p - invite) / Math.max(0.001, handoff - invite);
+      incoming = 0.85 + 0.15 * t;
+    } else incoming = 1;
+    if (p < handoff) {
+      const pow = Math.hypot(outgoing, incoming);
+      if (pow > 0.05 && pow < 0.85) {
+        const s = Math.min(1.08, 0.92 / pow);
+        incoming = Math.min(1, incoming * s);
+        outgoing = Math.min(aDual + 0.05, outgoing * s);
+      }
     }
     return {
-      outgoing: Math.min(1, Math.max(0, outgoing)),
-      incoming: Math.min(1, Math.max(0, incoming)),
+      outgoing: clamp(outgoing, 0, 1),
+      incoming: clamp(incoming, 0, 1),
     };
   }
 
@@ -431,13 +439,13 @@ export function pitchCentsAt(p: number, params: MashupParams): number {
 export function phaseLabel(p: number, params: MashupParams): string {
   if (params.dsp.mashupMode === "oneBarDuet") {
     const handoff = params.handoffAt;
-    if (p < 0.12) {
+    if (p < 0.1) {
       return params.targetBPM > 30
         ? `DUET LOCK ${Math.round(params.targetBPM)}`
         : "DUET LOCK";
     }
-    if (p < handoff - 0.08) return "DUET · A+B";
-    if (p < handoff + 0.1) return "DUET LAND";
+    if (p < handoff - 0.05) return "DUET · B-led";
+    if (p < handoff + 0.08) return "DUET LAND";
     return "LAND";
   }
   const lockEnd = Math.min(0.18, params.bassSwapAt * 0.65);

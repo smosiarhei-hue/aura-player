@@ -119,6 +119,7 @@ export function scoreTransition(
   const mode = opts.mode || "unknown";
   const safe = mode === "safeExit";
   const relay = mode === "acapellaDrop";
+  const duet = mode === "oneBarDuet";
 
   if (!trail.length) {
     return {
@@ -127,6 +128,69 @@ export function scoreTransition(
       gates: [{ id: "samples", ok: false, detail: "no meter samples" }],
       mode,
       story: "no data",
+      tweaks: [],
+    };
+  }
+
+  // Duet grammar ≠ AutoMix: dual lead is intentional; B must lead; LAND early.
+  if (duet) {
+    const handoff = Math.max(0.45, opts.handoffAt || 0.65);
+    const bassAt = Math.max(0.1, opts.bassSwapAt || 0.28);
+    const mid = trail.filter((s) => s.p > 0.12 && s.p < handoff - 0.02);
+    const dualOk =
+      mid.length >= 4 &&
+      mid.some((s) => s.volA > 0.2 && s.volB > 0.45);
+    gates.push({
+      id: "duetDual",
+      ok: dualOk,
+      detail: dualOk ? "dual window present" : "no audible dual",
+    });
+    const bLed =
+      mid.length < 4 ||
+      mid.filter((s) => s.volB + 0.02 >= s.volA).length >= mid.length * 0.55;
+    gates.push({
+      id: "duetBLed",
+      ok: bLed,
+      detail: bLed ? "B leads dual" : "A still louder than B in dual",
+    });
+    const afterBass = trail.filter(
+      (s) => s.p >= bassAt + 0.04 && s.p <= Math.max(handoff, bassAt + 0.18)
+    );
+    const bassOk =
+      afterBass.length >= 3 &&
+      afterBass.every((s) => s.bassA <= -8 || s.volA < 0.15);
+    gates.push({
+      id: "oneBass",
+      ok: bassOk,
+      detail: bassOk ? "ONE BASS ok" : "A bass hot after swap",
+    });
+    const land = trail.filter((s) => s.p >= 0.9);
+    const landVol =
+      land.length >= 2 && land.every((s) => s.volA <= 0.12 && s.volB >= 0.85);
+    gates.push({
+      id: "landVol",
+      ok: landVol,
+      detail: landVol ? "LAND volumes ok" : `LAND vol fail n=${land.length}`,
+    });
+    const settled = trail.filter(
+      (s) => s.p >= 0.88 && s.volA <= 0.12 && s.volB >= 0.85
+    );
+    const landOnTime = handoff <= 0.74 && settled.length >= 2;
+    gates.push({
+      id: "landTiming",
+      ok: landOnTime,
+      detail: landOnTime
+        ? "LAND on time"
+        : `late LAND handoff=${handoff.toFixed(2)} settled=${settled.length}`,
+    });
+    const passed = gates.filter((g) => g.ok).length;
+    const score = Math.round((passed / gates.length) * 100);
+    return {
+      ok: gates.every((g) => g.ok),
+      score,
+      gates,
+      mode,
+      story: `duet · ${score}/100 · ${passed}/${gates.length} gates`,
       tweaks: [],
     };
   }
