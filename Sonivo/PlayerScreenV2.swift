@@ -713,29 +713,74 @@ struct PlayerScreenV2: View {
     }
 
     @ViewBuilder private var artwork: some View {
-        let cached = track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
-        let current = (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? cached
-        // Automix handoff: hard-cut cover like Apple Music (no crossfade/morph).
-        let mixCut = player.isTransitionActive
+        let mixing = player.isTransitionActive
+        let mixP = min(1, max(0, player.transitionProgress))
+        let isLand = mixing && (mixP >= 0.72 || (player.mashupPhaseLabel?.hasPrefix("LAND") == true))
+
+        // Lab-style Automix cover choreography: B peeks under A, then LAND resolves to B.
+        if mixing,
+           let outgoing = player.currentTrack,
+           let incoming = player.incomingTrack ?? player.displayTrack,
+           outgoing.id != incoming.id {
+            ZStack {
+                coverLayer(for: incoming, preferredImage: artworkImage(for: incoming))
+                    .scaleEffect(isLand ? 1 : (1.06 - mixP * 0.05))
+                    .opacity(isLand ? 1 : (0.22 + mixP * 0.55))
+                    .blur(radius: reduceMotion ? 0 : (isLand ? 0 : max(0, 5 - mixP * 5)))
+                    .saturation(isLand ? 1 : (0.75 + mixP * 0.25))
+
+                coverLayer(for: outgoing, preferredImage: artworkImage(for: outgoing))
+                    .scaleEffect(isLand ? 0.94 : (1 - mixP * 0.04))
+                    .opacity(isLand ? 0 : (1 - mixP * 0.35))
+                    .blur(radius: reduceMotion ? 0 : (isLand ? 8 : 0))
+                    .saturation(isLand ? 0.4 : (1 - mixP * 0.25))
+
+                if !reduceMotion {
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.10 + mixP * 0.12),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 10,
+                        endRadius: 220
+                    )
+                    .blendMode(.plusLighter)
+                    .opacity(isLand ? 0 : (0.35 + mixP * 0.45))
+                    .allowsHitTesting(false)
+                }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: isLand)
+            .animation(reduceMotion ? nil : .linear(duration: 0.05), value: mixP)
+        } else {
+            coverLayer(for: track, preferredImage: {
+                let cached = track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
+                return (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? cached
+            }())
+        }
+    }
+
+    private func artworkImage(for track: Track) -> UIImage? {
+        if artworkTrackId == track.id, let currentArtworkImage { return currentArtworkImage }
+        return LibraryStore.cachedArtworkImage(for: track)
+    }
+
+    @ViewBuilder
+    private func coverLayer(for track: Track?, preferredImage: UIImage?) -> some View {
         Group {
-            if let current {
-                Image(uiImage: current)
+            if let preferredImage {
+                Image(uiImage: preferredImage)
                     .resizable()
                     .scaledToFit()
-                    .id(track?.id)
             } else if let raw = track?.coverURL, let url = URL(string: raw) {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image { image.resizable().scaledToFit() } else { fallbackArtwork }
                 }
-                .id(track?.id)
             } else {
                 fallbackArtwork
-                    .id(track?.id)
             }
         }
-        .transaction { tx in
-            if mixCut { tx.animation = nil }
-        }
+        .id(track?.id)
     }
     private var fallbackArtwork: some View {
         ZStack { LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing); Image(systemName: "music.note").font(.system(size: 70, weight: .semibold)).foregroundStyle(.white.opacity(0.85)) }
@@ -1711,20 +1756,39 @@ struct PlayerTimelineSection<Center: View>: View {
         self.center = center()
     }
     private var mixing: Bool { player.isTransitionActive }
+    /// While scrubbing/seeking during Automix, stay on the live outgoing deck
+    /// so B's handoff snap cannot remap the scrub target.
+    private var timelineDuration: Double {
+        if isScrubbing || pendingSeekProgress != nil {
+            return max(player.scrubDuration, 0.01)
+        }
+        return max(player.duration, 0.01)
+    }
     private var effectiveProgress: Double {
         if isScrubbing { return scrubProgress }
         if let pending = pendingSeekProgress { return pending }
         return player.progress
     }
+    /// Lab-style: while Mixing (and not scrubbing), the fill rides mashup 0→1
+    /// so the bar stays alive instead of freezing on A's outro / B snap.
+    private var barFraction: Double {
+        if isScrubbing || pendingSeekProgress != nil {
+            return min(1, max(0, effectiveProgress / timelineDuration))
+        }
+        if mixing {
+            return min(1, max(0, player.transitionProgress))
+        }
+        return min(1, max(0, effectiveProgress / timelineDuration))
+    }
 
     var body: some View {
         VStack(spacing: 6) {
             GeometryReader { geo in
-                let duration = max(player.duration, 0.01)
-                let fraction = min(1, max(0, effectiveProgress / duration))
+                let duration = timelineDuration
+                let fraction = barFraction
                 let width = geo.size.width * fraction
-                // Apple Automix: no scrubber thumb while Mixing is active.
-                let trackHeight: CGFloat = (isScrubbing && !mixing) ? 7 : (mixing ? 3.0 : 2.5)
+                // Scrub stays live during Automix; seek cancels the mashup.
+                let trackHeight: CGFloat = isScrubbing ? 7 : (mixing ? 3.0 : 2.5)
                 let thumbSize: CGFloat = 15
 
                 ZStack(alignment: .leading) {
@@ -1747,10 +1811,10 @@ struct PlayerTimelineSection<Center: View>: View {
                         .frame(width: max(0, width), height: trackHeight)
                         // Hard snap on Automix handoff (display track / duration change) — no morph.
                         .transaction { tx in
-                            if mixing { tx.animation = nil }
+                            if mixing && !isScrubbing { tx.animation = nil }
                         }
 
-                    if isScrubbing && !mixing {
+                    if isScrubbing {
                         Circle()
                             .fill(SN.ink)
                             .frame(width: thumbSize, height: thumbSize)
@@ -1758,29 +1822,30 @@ struct PlayerTimelineSection<Center: View>: View {
                             .shadow(color: .black.opacity(0.26), radius: 3, y: 1)
                     }
                 }
-                .animation(mixing ? nil : .smooth(duration: 0.18), value: isScrubbing)
+                .animation(.smooth(duration: 0.18), value: isScrubbing)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 10)
                         .updating($scrubContact) { _, state, _ in state = true }
                         .onChanged { value in
-                            // Scrubber disabled while Automix Mixing is active (Apple behavior).
-                            guard !mixing, !scrubRejected, player.duration > 0 else { return }
+                            guard !scrubRejected, timelineDuration > 0 else { return }
                             if !isScrubbing {
                                 guard PlayerInteractionPolicy.horizontalIntent(x: Double(value.translation.width), y: Double(value.translation.height)) else {
                                     scrubRejected = true; return
                                 }
-                                scrubStartFraction = min(1, max(0, effectiveProgress / duration))
-                                scrubTrackID = player.displayTrack?.id ?? player.currentTrack?.id
+                                let liveDuration = max(player.scrubDuration, 0.01)
+                                scrubStartFraction = min(1, max(0, player.scrubProgress / liveDuration))
+                                // Anchor to the playing (outgoing) track while mashup runs —
+                                // seek cancels Automix and stays on that deck.
+                                scrubTrackID = player.currentTrack?.id ?? player.displayTrack?.id
                                 lastFeedbackProgress = scrubStartFraction
                                 isScrubbing = true
                                 feedback.prepare()
                             }
-                            guard scrubTrackID == (player.displayTrack?.id ?? player.currentTrack?.id) else { return }
                             let f = PlayerInteractionPolicy.draggedFraction(start: scrubStartFraction,
                                 translation: Double(value.translation.width), width: Double(geo.size.width))
-                            scrubProgress = f * duration
+                            scrubProgress = f * timelineDuration
                             if abs(f - lastFeedbackProgress) > 0.04 {
                                 Haptics.scrubTick(feedback)
                                 lastFeedbackProgress = f
@@ -1788,13 +1853,12 @@ struct PlayerTimelineSection<Center: View>: View {
                         }
                         .onEnded { value in
                             defer { isScrubbing = false; scrubRejected = false }
-                            guard !mixing, isScrubbing, !scrubRejected,
-                                  scrubTrackID == (player.displayTrack?.id ?? player.currentTrack?.id),
-                                  player.duration > 0 else { return }
+                            guard isScrubbing, !scrubRejected, timelineDuration > 0 else { return }
                             let f = PlayerInteractionPolicy.draggedFraction(start: scrubStartFraction,
                                 translation: Double(value.translation.width), width: Double(geo.size.width))
-                            let target = f * duration
+                            let target = f * timelineDuration
                             pendingSeekProgress = target
+                            // seek(to:) cancels an in-flight Automix mashup.
                             player.seek(to: target)
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                                 if pendingSeekProgress == target { pendingSeekProgress = nil }
@@ -1806,46 +1870,49 @@ struct PlayerTimelineSection<Center: View>: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Позиция воспроизведения")
             .accessibilityValue(
-                "\(player.formatted(effectiveProgress)) из \(player.formatted(player.duration))"
+                "\(player.formatted(effectiveProgress)) из \(player.formatted(timelineDuration))"
             )
             .accessibilityAdjustableAction { direction in
-                guard !mixing else { return }
-                let step = max(5, player.duration * 0.02)
+                let duration = player.scrubDuration
+                let position = player.scrubProgress
+                let step = max(5, duration * 0.02)
                 switch direction {
                 case .increment:
-                    player.seek(to: min(effectiveProgress + step, player.duration))
+                    player.seek(to: min(position + step, duration))
                 case .decrement:
-                    player.seek(to: max(effectiveProgress - step, 0))
+                    player.seek(to: max(position - step, 0))
                 @unknown default:
                     break
                 }
             }
 
-            // Apple layout: elapsed | Mixing | remaining on one row under the bar.
+            // Apple layout: elapsed | Automix | remaining on one row under the bar.
             HStack {
                 Text(player.formatted(effectiveProgress))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
                     .foregroundStyle(SN.inkMuted)
-                    .contentTransition(mixing ? .identity : .numericText())
+                    .contentTransition(mixing && !isScrubbing ? .identity : .numericText())
                 Spacer()
                 center
                 Spacer()
-                Text("-" + player.formatted(max(0, player.duration - effectiveProgress)))
+                Text("-" + player.formatted(max(0, timelineDuration - effectiveProgress)))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
                     .foregroundStyle(SN.inkMuted)
-                    .contentTransition(mixing ? .identity : .numericText())
+                    .contentTransition(mixing && !isScrubbing ? .identity : .numericText())
             }
             .transaction { tx in
-                if mixing { tx.animation = nil }
+                if mixing && !isScrubbing { tx.animation = nil }
             }
         }
         .onChange(of: scrubContact) { _, active in
             if !active { isScrubbing = false; scrubRejected = false }
         }
         .onChange(of: player.displayTrack?.id) { _, newID in
-            isScrubbing = false
-            scrubRejected = scrubContact
-            pendingSeekProgress = nil
+            // Don't abort an in-progress scrub when Automix snaps metadata to B.
+            if !isScrubbing {
+                scrubRejected = scrubContact
+                pendingSeekProgress = nil
+            }
             timelineIdentity = newID
         }
         .onChange(of: player.progress) { _, newProgress in
@@ -1854,8 +1921,8 @@ struct PlayerTimelineSection<Center: View>: View {
             }
         }
         .onChange(of: player.isTransitionActive) { _, active in
-            if active {
-                isScrubbing = false
+            // Mashup start shouldn't kill a scrub mid-gesture; seek end cancels mix.
+            if active && !isScrubbing {
                 pendingSeekProgress = nil
             }
         }

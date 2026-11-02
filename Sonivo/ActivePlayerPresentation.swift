@@ -78,6 +78,21 @@ final class ActivePlayerPresentation {
     var duration: Double {
         legacy.displayDuration
     }
+    /// Live deck position for scrubbing during Automix (never the B handoff snap).
+    /// Seek cancels mashup and applies against this timeline.
+    var scrubProgress: Double {
+        if isTransitionActive {
+            return legacy.playbackProgress
+        }
+        return progress
+    }
+    /// Live deck duration paired with `scrubProgress`.
+    var scrubDuration: Double {
+        if isTransitionActive {
+            return max(legacy.playbackDuration, 0.01)
+        }
+        return duration
+    }
     /// Buffered range is NOT a saved/offline download and is not a loading state.
     var bufferedProgress: Double? {
         guard legacy.usesStreamingBackend else { return nil }

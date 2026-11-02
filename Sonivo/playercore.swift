@@ -575,13 +575,24 @@ final class PlayerCore {
         return max(trackDur > 0 ? trackDur : streamDuration, 0.001)
     }
 
+    /// Live outgoing-deck position (never the Automix B handoff snap).
+    /// Used for scrub/seek while a mashup is running — seek cancels the mix on this timeline.
+    var playbackProgress: Double {
+        isUsingStreamPlayer ? max(0, progress) : liveProgress()
+    }
+
+    /// Duration of the live outgoing deck (paired with `playbackProgress`).
+    var playbackDuration: Double {
+        duration
+    }
+
     /// Timeline seconds shown in the player chrome. After the Automix handoff snap,
     /// this follows the incoming cue (e.g. 0:25) instead of staying on A's outro.
     var displayProgress: Double {
         if metadataSwapped, isTransitioning {
             return incomingDisplayPosition()
         }
-        return isUsingStreamPlayer ? max(0, progress) : liveProgress()
+        return playbackProgress
     }
 
     /// Duration paired with `displayProgress` / `displayTrack` during Automix snap.
@@ -591,7 +602,7 @@ final class PlayerCore {
            incoming.duration > 0 {
             return incoming.duration
         }
-        return duration
+        return playbackDuration
     }
 
     private func incomingDisplayPosition() -> Double {
