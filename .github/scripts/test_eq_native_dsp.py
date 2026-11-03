@@ -96,7 +96,7 @@ import AudioToolbox
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
         let db=20*log10(rms/(0.01/sqrt(2)))
         precondition(abs(db - 6) < 0.6, "Native center gain incorrect: \(db)")
-        for (band,hz) in [(1,120.0),(2,250.0),(5,2000.0)] {
+        for (band,hz) in [(1,64.0),(2,125.0),(5,2000.0)] {
             var curve=flat;curve[band]=6
             let rendered=try render(gains:curve,hz:hz,amplitude:0.01)
             let rms=sqrt(rendered.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
@@ -105,7 +105,7 @@ import AudioToolbox
         for rate in [8000.0,32000,44100,48000,96000] {
             precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)==0)
         }
-        let hot=try render(gains:[Float](repeating:12,count:10),hz:60,amplitude:0.95)
+        let hot=try render(gains:[Float](repeating:12,count:10),hz:32,amplitude:0.95)
         precondition(hot.allSatisfy { $0.isFinite },"Native output must stay finite")
         precondition(hot.contains { abs($0) > 1.0 },"Hot bass EQ must not be peak-limited")
         print("native EQ response, stereo and unprotected EQ checks passed")
