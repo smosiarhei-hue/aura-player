@@ -1649,18 +1649,16 @@ final class PlayerCore {
     func previous() {
         AutoMixSessionLog.shared.action("previous", details: String(format: "pos=%.1f", playbackProgress))
         cancelTransition()
-        let currentPos = isUsingStreamPlayer ? progress : liveProgress()
-        if currentPos > 3.0 {
-            seek(to: 0)
-            return
-        }
         let q = effectiveQueue()
         guard let cur = currentTrack,
               let idx = q.firstIndex(where: { $0.id == cur.id }),
               idx > 0 else {
+            // Already first in queue — restart current song.
             seek(to: 0)
             return
         }
+        // One swipe/tap always returns to the previous track (no Apple-style
+        // "restart current if >3s" that forced a second press after Automix LAND).
         reportWaveSkipIfNeeded()
         currentTrack = q[idx - 1]
         streamDuration = q[idx - 1].duration
@@ -2321,6 +2319,51 @@ final class PlayerCore {
 
     private func discardTemporaryDownload(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Keep enough runway after LAND so B cannot instantly finish and freeze.
+    private func safeAutomixHandoffPosition(for track: Track, proposed: Double) -> Double {
+        let dur = track.duration
+        let cue = mashupIncomingCueSec > 0 ? mashupIncomingCueSec : incomingStartPosition
+        let raw = proposed.isFinite ? max(0, proposed) : max(0, cue)
+        guard dur.isFinite, dur > 2 else { return raw }
+        let runway = min(12, max(6, dur * 0.08))
+        let maxPos = max(0, dur - runway)
+        if raw <= maxPos { return raw }
+        // Proposed overshoots (short track / late bake lag) — fall back to musical cue, then head.
+        let cueClamped = min(max(0, cue), maxPos)
+        return cueClamped
+    }
+
+    /// If LAND left a silent deck, restart B once after a short settle.
+    private func verifyAutomixHandoffPlayback(expected: Track, at seconds: Double) {
+        let token = generation
+        let trackID = expected.id
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard self.generation == token, self.currentTrack?.id == trackID else { return }
+            let streamDead = self.isUsingStreamPlayer && (
+                self.activeStreamingPlayer.currentItem == nil
+                    || self.activeStreamingPlayer.rate == 0
+                    || self.activeStreamingPlayer.error != nil
+            )
+            let nativeDead = !self.isUsingStreamPlayer && (
+                self.activeAudioFile == nil || !self.activePlayer.isPlaying
+            )
+            let markedStopped = !self.isPlaying
+            guard streamDead || nativeDead || markedStopped else { return }
+            AutoMixSessionLog.shared.event(
+                "land.recover streamDead=\(streamDead) nativeDead=\(nativeDead) stopped=\(markedStopped)"
+            )
+            SonivoDiagnostics.log(
+                "[AutoMix] LAND recovery restart for \(expected.title)",
+                tag: "AUTOMIX"
+            )
+            self.suppressTrackFinishUntil = Date().addingTimeInterval(2.0)
+            self.isPlaying = true
+            self.start(at: seconds)
+        }
     }
 
     /// Synchronous local handoff used at Automix LAND — sets anchors immediately so
@@ -3014,7 +3057,7 @@ final class PlayerCore {
                 object: nil,
                 userInfo: ["trackID": nextTrack.id.uuidString]
             )
-            suppressTrackFinishUntil = Date().addingTimeInterval(1.5)
+            suppressTrackFinishUntil = Date().addingTimeInterval(2.0)
             localSegmentTokens.removeAll()
             lyricsLocalSegments.removeAll()
             activePlayer.stop()
@@ -3031,6 +3074,7 @@ final class PlayerCore {
             streamingPlayerB.pause()
             let realURL = mashupBakeRealIncomingURL
                 ?? findLocalOrCachedAudioFile(for: nextTrack, respectingQuality: false)
+            let safePos = safeAutomixHandoffPosition(for: nextTrack, proposed: handoffPos)
             clearMashupBakeTemps()
             incomingTrack = nil
             incomingLaneReady = false
@@ -3059,7 +3103,7 @@ final class PlayerCore {
             var handedOff = false
             if let realURL {
                 do {
-                    try handoffLocalPlayback(track: nextTrack, fileURL: realURL, at: handoffPos)
+                    try handoffLocalPlayback(track: nextTrack, fileURL: realURL, at: safePos)
                     handedOff = true
                 } catch {
                     SonivoDiagnostics.log("[AutoMix] sync LAND handoff failed: \(error)", tag: "AUTOMIX")
@@ -3067,17 +3111,18 @@ final class PlayerCore {
             }
             if !handedOff {
                 // Stream / missing cache — full start path (still suppress stem finishes).
-                start(at: handoffPos)
+                start(at: safePos)
             }
             AutoMixDJEngine.shared.isPostMixActive = true
             SonivoDiagnostics.log(
-                "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", handoffPos))s",
+                "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", safePos))s",
                 tag: "AUTOMIX"
             )
             AutoMixSessionLog.shared.event(
                 String(
-                    format: "land.hardcut B=%@ pos=%.1f syncLocal=%d",
+                    format: "land.hardcut B=%@ pos=%.1f proposed=%.1f syncLocal=%d",
                     nextTrack.title,
+                    safePos,
                     handoffPos,
                     handedOff ? 1 : 0
                 )
@@ -3085,6 +3130,7 @@ final class PlayerCore {
             lastNowPlayingSync = nil
             updateNowPlayingInfo()
             savePlaybackState()
+            verifyAutomixHandoffPlayback(expected: nextTrack, at: safePos)
             return
         } else if incomingIsStream {
             if !wasStream {
@@ -3097,9 +3143,11 @@ final class PlayerCore {
             activeStreamingPlayer = incomingPlayer
             idleStreamingPlayer = outgoingPlayer
 
+            let hasIncomingItem = activeStreamingPlayer.currentItem != nil
             activeStreamingPlayer.volume = volume
-            if activeStreamingPlayer.rate != 1.0 && isPlaying {
+            if isPlaying {
                 activeStreamingPlayer.rate = 1.0
+                activeStreamingPlayer.play()
             }
 
             // Cleanly pause and unbind the outgoing player in the background
@@ -3113,6 +3161,32 @@ final class PlayerCore {
             timePitchB.rate = 1.0
             playerA.stop()
             playerB.stop()
+
+            if !hasIncomingItem {
+                // B never armed on the idle stream deck — hard start so LAND cannot hang.
+                let safePos = safeAutomixHandoffPosition(for: nextTrack, proposed: handoffPos)
+                currentTrack = nextTrack
+                streamDuration = nextTrack.duration
+                incomingTrack = nil
+                incomingLaneReady = false
+                isTransitioning = false
+                transitionScheduled = false
+                metadataTrack = nil
+                metadataSwapped = false
+                AutoMixDJEngine.shared.isTransitionActive = false
+                AutoMixDJEngine.shared.transitionProgress = 0
+                AutoMixDJEngine.shared.statusBadge = nil
+                AutoMixDJEngine.shared.resetDrop()
+                AutoMixDJEngine.shared.isPostMixActive = true
+                suppressTrackFinishUntil = Date().addingTimeInterval(2.0)
+                start(at: safePos)
+                AutoMixSessionLog.shared.event("land.stream-fallback start @\(String(format: "%.1f", safePos))")
+                lastNowPlayingSync = nil
+                updateNowPlayingInfo()
+                savePlaybackState()
+                verifyAutomixHandoffPlayback(expected: nextTrack, at: safePos)
+                return
+            }
         } else {
             if wasStream {
                 isUsingStreamPlayer = false
@@ -3128,11 +3202,37 @@ final class PlayerCore {
             outgoingNode.bypass = true
 
             localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+            // If idle never got a file (failed arm), hard-start B instead of promoting silence.
+            if incomingAudioFile == nil {
+                let safePos = safeAutomixHandoffPosition(for: nextTrack, proposed: handoffPos)
+                currentTrack = nextTrack
+                streamDuration = nextTrack.duration
+                incomingTrack = nil
+                incomingLaneReady = false
+                isTransitioning = false
+                transitionScheduled = false
+                metadataTrack = nil
+                metadataSwapped = false
+                AutoMixDJEngine.shared.isTransitionActive = false
+                AutoMixDJEngine.shared.transitionProgress = 0
+                AutoMixDJEngine.shared.statusBadge = nil
+                AutoMixDJEngine.shared.resetDrop()
+                AutoMixDJEngine.shared.isPostMixActive = true
+                suppressTrackFinishUntil = Date().addingTimeInterval(2.0)
+                start(at: safePos)
+                AutoMixSessionLog.shared.event("land.native-fallback start @\(String(format: "%.1f", safePos))")
+                lastNowPlayingSync = nil
+                updateNowPlayingInfo()
+                savePlaybackState()
+                verifyAutomixHandoffPlayback(expected: nextTrack, at: safePos)
+                return
+            }
             activePlayer = idlePlayer
             activeAudioFile = incomingAudioFile
             activeLocalURL = activeAudioFile?.url
             incomingAudioFile = nil
             activePlayer.volume = 1
+            if isPlaying { activePlayer.play() }
             applyEQ()
         }
 
@@ -3198,6 +3298,10 @@ final class PlayerCore {
         lastNowPlayingSync = nil
         updateNowPlayingInfo()
         savePlaybackState()
+        verifyAutomixHandoffPlayback(
+            expected: nextTrack,
+            at: safeAutomixHandoffPosition(for: nextTrack, proposed: resolvedPos)
+        )
         scheduleTransitionIfNeeded()
     }
 
