@@ -562,6 +562,10 @@ final class PlayerCore {
     /// After LAND, drained stem completions must not call `handleTrackFinish`
     /// (that skipped/killed the freshly started next track).
     private var suppressTrackFinishUntil: Date?
+    /// After Automix LAND, ignore `next()` for a short window. Field logs showed
+    /// ACTION next ~30ms after land.hardcut (syncLocal=0 → start() reload) which
+    /// skipped the landed B track entirely.
+    private var suppressAutomixSkipUntil: Date?
     private var transitionScheduled = false
     private var transitionStartTime: Date?
     private var transitionDuration: Double = 3.0
@@ -1627,6 +1631,12 @@ final class PlayerCore {
     }
 
     func next() {
+        if let until = suppressAutomixSkipUntil, Date() < until {
+            AutoMixSessionLog.shared.event(
+                "next.suppressed post-LAND until=\(String(format: "%.2f", until.timeIntervalSinceNow))s"
+            )
+            return
+        }
         AutoMixSessionLog.shared.action(
             "next",
             details: "from=\(currentTrack?.title ?? "-") to=\(peekNext(auto: false)?.title ?? "-")"
@@ -3140,7 +3150,14 @@ final class PlayerCore {
                 object: nil,
                 userInfo: ["trackID": nextTrack.id.uuidString]
             )
-            suppressTrackFinishUntil = Date().addingTimeInterval(2.0)
+            let landGuardUntil = Date().addingTimeInterval(2.0)
+            suppressTrackFinishUntil = landGuardUntil
+            suppressAutomixSkipUntil = landGuardUntil
+            // Capture before clearing flags — bake-fail MIXING already has B on the
+            // idle stream; promoting it avoids start()→cancelTransition()→reload races
+            // that field-logged as ACTION next ~30ms after land.hardcut.
+            let canPromoteIncomingStream = incomingIsStream
+                && idleStreamingPlayer.currentItem != nil
             localSegmentTokens.removeAll()
             lyricsLocalSegments.removeAll()
             activePlayer.stop()
@@ -3153,8 +3170,6 @@ final class PlayerCore {
             idleTimePitch.rate = 1
             idleTimePitch.pitch = 0
             idleTimePitch.bypass = true
-            streamingPlayerA.pause()
-            streamingPlayerB.pause()
             let realURL = mashupBakeRealIncomingURL
                 ?? findLocalOrCachedAudioFile(for: nextTrack, respectingQuality: false)
             let safePos = safeAutomixHandoffPosition(for: nextTrack, proposed: handoffPos)
@@ -3162,6 +3177,7 @@ final class PlayerCore {
             incomingTrack = nil
             incomingLaneReady = false
             incomingAudioFile = nil
+            let promoteStream = canPromoteIncomingStream && realURL == nil
             incomingIsStream = false
             prebufferedTrackId = nil
             plannedNextTrack = nil
@@ -3184,21 +3200,65 @@ final class PlayerCore {
             currentBitrate = nil
 
             var handedOff = false
+            var syncLocal = 0
             if let realURL {
+                streamingPlayerA.pause()
+                streamingPlayerB.pause()
                 do {
                     try handoffLocalPlayback(track: nextTrack, fileURL: realURL, at: safePos)
                     handedOff = true
+                    syncLocal = 1
                 } catch {
                     SonivoDiagnostics.log("[AutoMix] sync LAND handoff failed: \(error)", tag: "AUTOMIX")
                 }
             }
+            if !handedOff, promoteStream {
+                // Keep the already-playing incoming stream — do not call start(),
+                // which cancelTransition()-clears land guards and re-fetches B.
+                isUsingStreamPlayer = true
+                let outgoingPlayer = activeStreamingPlayer
+                let incomingPlayer = idleStreamingPlayer
+                activeStreamingPlayer = incomingPlayer
+                idleStreamingPlayer = outgoingPlayer
+                outgoingPlayer.pause()
+                outgoingPlayer.replaceCurrentItem(with: nil)
+                outgoingPlayer.volume = 0
+                outgoingPlayer.rate = 0
+                activeStreamingPlayer.volume = volume
+                let seekTime = CMTime(seconds: safePos, preferredTimescale: 600)
+                activeStreamingPlayer.seek(
+                    to: seekTime,
+                    toleranceBefore: .zero,
+                    toleranceAfter: .zero
+                ) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.currentTrack?.id == nextTrack.id else { return }
+                        if self.isPlaying {
+                            self.activeStreamingPlayer.playImmediately(atRate: 1.0)
+                        }
+                    }
+                }
+                if isPlaying {
+                    activeStreamingPlayer.playImmediately(atRate: 1.0)
+                }
+                progress = safePos
+                pausedProgress = safePos
+                handedOff = true
+                syncLocal = 2
+            }
             if !handedOff {
-                // Stream / missing cache — full start path (still suppress stem finishes).
+                // Last resort: full start path. Preserve land guards across
+                // start()→cancelTransition() so A-end / skipFailedWave cannot
+                // jump past B.
+                streamingPlayerA.pause()
+                streamingPlayerB.pause()
                 start(at: safePos)
+                suppressTrackFinishUntil = landGuardUntil
+                suppressAutomixSkipUntil = landGuardUntil
             }
             AutoMixDJEngine.shared.isPostMixActive = true
             SonivoDiagnostics.log(
-                "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", safePos))s",
+                "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", safePos))s sync=\(syncLocal)",
                 tag: "AUTOMIX"
             )
             AutoMixSessionLog.shared.event(
@@ -3207,7 +3267,7 @@ final class PlayerCore {
                     nextTrack.title,
                     safePos,
                     handoffPos,
-                    handedOff ? 1 : 0
+                    syncLocal
                 )
             )
             lastNowPlayingSync = nil
@@ -3465,7 +3525,13 @@ final class PlayerCore {
         transitionScheduled = false
         isTransitioning = false
         isCompletingTransition = false
-        suppressTrackFinishUntil = nil
+        // Keep live LAND guards: start(at:) calls cancelTransition and used to
+        // wipe suppressTrackFinishUntil, letting end-of-A notifications skip B.
+        let finishGuard = suppressTrackFinishUntil
+        let skipGuard = suppressAutomixSkipUntil
+        let now = Date()
+        suppressTrackFinishUntil = (finishGuard.map { $0 > now } == true) ? finishGuard : nil
+        suppressAutomixSkipUntil = (skipGuard.map { $0 > now } == true) ? skipGuard : nil
         transitionTimer?.invalidate()
         transitionTimer = nil
         transitionStartTime = nil

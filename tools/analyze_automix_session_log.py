@@ -95,6 +95,22 @@ def analyze(text: str) -> dict:
     if mixing_pos_zero:
         problems.append("mixing_timeline_stuck_at_zero")
         verdict = "broken" if verdict != "ok" else "degraded"
+    # Field: land.hardcut then ACTION next ~30ms later skipped landed B.
+    land_then_next = False
+    for i, line in enumerate(lines):
+        if "[EVENT] land.hardcut" not in line:
+            continue
+        for follow in lines[i + 1 : i + 6]:
+            if "[ACTION] next |" in follow:
+                land_then_next = True
+                break
+            if "[EVENT] next.suppressed" in follow:
+                break
+        if land_then_next:
+            break
+    if land_then_next:
+        problems.append("skipped_landed_track")
+        verdict = "broken"
 
     return {
         "verdict": verdict,

@@ -65,6 +65,11 @@ class AutoMixMashupTests(unittest.TestCase):
             player,
         )
         self.assertIn("idleStreamingPlayer.playImmediately(atRate: startRate)", player)
+        # LAND must not skip B: promote live incoming stream; suppress next() briefly.
+        self.assertIn("suppressAutomixSkipUntil", player)
+        self.assertIn("next.suppressed post-LAND", player)
+        self.assertIn("canPromoteIncomingStream", player)
+        self.assertIn("syncLocal = 2", player)
 
     def test_blend_scheduler_exists(self):
         scheduler = (

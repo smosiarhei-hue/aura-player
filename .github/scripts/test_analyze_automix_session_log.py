@@ -43,6 +43,16 @@ class AnalyzeAutoMixSessionLogTests(unittest.TestCase):
     def test_script_exists(self):
         self.assertTrue((ROOT / "tools" / "analyze_automix_session_log.py").is_file())
 
+    def test_detects_skip_after_land(self):
+        sample = """
+[04:31:34.616][EVENT] land.hardcut B=TrackB pos=36.5 proposed=36.5 syncLocal=0
+[04:31:34.647][ACTION] next | from=TrackB to=TrackC
+[04:31:34.895][TICK] mode=automix play=1 stream=1 tx=0 pos=0.0 A=TrackC#1 B=-
+"""
+        result = MOD.analyze(sample)
+        self.assertIn("skipped_landed_track", result["problems"])
+        self.assertEqual(result["verdict"], "broken")
+
 
 if __name__ == "__main__":
     unittest.main()
