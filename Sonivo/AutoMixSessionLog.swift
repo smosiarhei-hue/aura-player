@@ -12,6 +12,9 @@ final class AutoMixSessionLog {
     private var lines: [String] = []
     private var heartbeat: Timer?
     private var lastActionFingerprint = ""
+    private var lastTickPos: Double?
+    private var stuckTickCount = 0
+    private var lastFrozenFaultAt: Date?
     private let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"
@@ -64,8 +67,22 @@ final class AutoMixSessionLog {
         append(tag: "EVENT", message)
     }
 
+    /// High-signal AutoMix fault — forces an immediate STATE snapshot for field triage.
+    /// Use for bake/LAND/playback freezes so pasted reports always include context.
+    func fault(_ message: String) {
+        guard isEnabled else { return }
+        append(tag: "FAULT", message)
+        if PlayerCore.isSharedReady {
+            snapshot(tag: "STATE")
+        }
+        SonivoDiagnostics.log("[AUTOMIX] FAULT \(message)", tag: "AUTOMIX")
+    }
+
     func clear() {
         lines.removeAll(keepingCapacity: true)
+        lastTickPos = nil
+        stuckTickCount = 0
+        lastFrozenFaultAt = nil
         appendRaw("CLEARED session log")
     }
 
@@ -132,7 +149,41 @@ final class AutoMixSessionLog {
         // Keep a continuous trail while playing, transitioning, or shortly after actions.
         if core.isPlaying || core.isTransitioningPublic || AutoMixDJEngine.shared.isTransitionActive {
             snapshot(tag: "TICK")
+            detectFrozenPlayback(core)
+        } else {
+            lastTickPos = nil
+            stuckTickCount = 0
         }
+    }
+
+    /// Catch the classic "play=1 but timecode stuck" Automix LAND hang without waiting
+    /// for the user to notice — one FAULT every 20s max.
+    private func detectFrozenPlayback(_ core: PlayerCore) {
+        guard core.isPlaying else { return }
+        // Buffering at stream start is expected; don't spam FAULT.
+        if core.usesStreamingBackend, core.isStreamBuffering { return }
+        let pos = core.playbackProgress
+        defer { lastTickPos = pos }
+        guard let last = lastTickPos, abs(pos - last) < 0.08 else {
+            stuckTickCount = 0
+            return
+        }
+        stuckTickCount += 1
+        guard stuckTickCount >= 5 else { return }
+        if let lastFault = lastFrozenFaultAt, Date().timeIntervalSince(lastFault) < 20 { return }
+        lastFrozenFaultAt = Date()
+        stuckTickCount = 0
+        fault(
+            String(
+                format: "playback.frozen pos=%.1f dur=%.1f tx=%d bake=%d stream=%d track=%@",
+                pos,
+                core.playbackDuration,
+                core.isTransitioningPublic ? 1 : 0,
+                core.mashupBakeActivePublic ? 1 : 0,
+                core.usesStreamingBackend ? 1 : 0,
+                core.currentTrack?.title ?? "-"
+            )
+        )
     }
 
     private func snapshot(tag: String) {

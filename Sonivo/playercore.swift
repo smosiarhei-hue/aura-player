@@ -2380,7 +2380,7 @@ final class PlayerCore {
             )
             let markedStopped = !self.isPlaying
             guard streamDead || streamFrozen || nativeDead || markedStopped else { return }
-            AutoMixSessionLog.shared.event(
+            AutoMixSessionLog.shared.fault(
                 String(
                     format: "land.recover streamDead=%d frozen=%d nativeDead=%d stopped=%d pos=%.1f",
                     streamDead ? 1 : 0,
@@ -2697,7 +2697,7 @@ final class PlayerCore {
                         return
                     }
                     if case .failure(let bakeError) = bakeResult {
-                        AutoMixSessionLog.shared.event(
+                        AutoMixSessionLog.shared.fault(
                             "bake.fail \(bakeError.localizedDescription)"
                         )
                         SonivoDiagnostics.log(

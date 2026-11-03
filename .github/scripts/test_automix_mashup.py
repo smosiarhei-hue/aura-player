@@ -283,6 +283,12 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("PlayerCore.isSharedReady", log)
         # Snapshot path must go through the gate, not bare PlayerCore.shared.
         self.assertNotIn("let core = PlayerCore.shared", log)
+        self.assertIn("func fault(", log)
+        self.assertIn("playback.frozen", log)
+        self.assertIn("detectFrozenPlayback", log)
+        analyzer = ROOT / "tools" / "analyze_automix_session_log.py"
+        self.assertTrue(analyzer.is_file())
+        self.assertIn("playback_frozen", analyzer.read_text())
 
     def test_mashup_bake_keeps_outgoing_track_timeline_until_land(self):
         """Field log: during MIXING pos/dispPos stayed at 0 after stem bake because
