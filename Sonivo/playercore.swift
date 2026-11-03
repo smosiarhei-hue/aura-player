@@ -2695,11 +2695,14 @@ final class PlayerCore {
                         self.incomingLaneReady = true
                         self.transitionStartTime = Date()
                         // Remount the chrome/playhead clock onto track A (not bake file t=0).
+                        // Stream observers stop after isUsingStreamPlayer flips false — start the
+                        // native progress timer so NP/checkpoint keep advancing during MIXING.
                         self.anchorDate = self.transitionStartTime
                         self.anchorOffset = self.mashupBakeOutgoingBaseCue
                         self.pausedProgress = self.mashupBakeOutgoingBaseCue
                         self.progress = self.mashupBakeOutgoingBaseCue
                         self.streamDuration = current.duration
+                        self.startTimer()
                         // Stems already carved; volumes + rates stay live on the dual decks.
                         let rates = self.activeMashupStyle.playbackRates(progress: min(1, bakeLag / max(0.001, blend)))
                         self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
