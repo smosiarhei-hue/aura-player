@@ -40,8 +40,8 @@ class EQQualityRevisionTests(unittest.TestCase):
 
     def test_double_tap_resets_only_hit_node_and_does_not_conflict_with_drag(self):
         ui=(R/'Sonivo/PlayerEQSheetView.swift').read_text().split('struct CompactEQCurve:',1)[1]
-        for expected in ['SpatialTapGesture(count: 2)', '.exclusively(before: DragGesture(minimumDistance: 3)',
-                         'guard let index = hitBand(location, size: size)', 'onReset(index)', 'onEnd()']:
+        for expected in ['SpatialTapGesture(count: 2)', '.highPriorityGesture(DragGesture(minimumDistance: 1)',
+                         'guard let index = hitBand(location, size: size)', 'onReset(index)', 'onEnd()', 'value.startLocation, size: plotSize']:
             self.assertIn(expected,ui)
         reset=ui.split('private func resetPoint(',1)[1].split('var body:',1)[0]
         self.assertNotIn('EQPresets.flat',reset)

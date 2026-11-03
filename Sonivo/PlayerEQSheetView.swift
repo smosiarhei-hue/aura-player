@@ -219,7 +219,7 @@ struct PlayerEQSheetView: View {
             .accessibilityLabel("Кривая эквалайзера")
             .accessibilityHint("Перетащи полосу вверх или вниз. Двойной тап — 0 дБ.")
 
-            Text("Тяни полосу вверх или вниз · двойное касание — 0 дБ")
+            Text("Тяни точку или частоту вверх/вниз · двойное касание — 0 дБ")
                 .font(.caption)
                 .foregroundStyle(SN.inkMuted)
 
@@ -545,6 +545,7 @@ private struct CompactEQCurve: View {
     var onStep: (Int, Float) -> Void = { _, _ in }
     @State private var draggingBand: Int?
     @State private var dragOriginY: CGFloat = 0
+    @GestureState private var dragIsActive = false
 
     private static let axisHeight: CGFloat = 22
 
@@ -558,7 +559,7 @@ private struct CompactEQCurve: View {
     private func hitBand(_ location: CGPoint, size: CGSize) -> Int? {
         guard location.x.isFinite, location.y.isFinite, size.width > 28, size.height > 28,
               location.x >= 0, location.x <= size.width,
-              location.y >= 0, location.y <= size.height else { return nil }
+              location.y >= 0, location.y <= size.height + Self.axisHeight + 6 else { return nil }
         let spacing = (Double(size.width) - 28) / Double(max(1, EQGainLimits.frequencies.count - 1))
         let lane = Int(((Double(location.x) - 14) / spacing).rounded())
         return min(EQGainLimits.frequencies.count - 1, max(0, lane))
@@ -570,12 +571,20 @@ private struct CompactEQCurve: View {
         onEnd()
         Haptics.tap(.light)
     }
+    private func finishDrag() {
+        guard draggingBand != nil else { return }
+        draggingBand = nil
+        onEnd()
+    }
     private func gainText(_ index: Int) -> String {
         String(format: "%+.1f", gains.indices.contains(index) ? gains[index] : 0)
     }
 
     var body: some View {
-        VStack(spacing: 6) {
+        GeometryReader { whole in
+            let plotSize = CGSize(width: whole.size.width,
+                                  height: max(0, whole.size.height - Self.axisHeight - 6))
+            VStack(spacing: 6) {
             GeometryReader { geometry in
                 let size = geometry.size
                 let topY = CGFloat(EQGainLimits.graphY(gain: EQGainLimits.maximum, height: Double(size.height)))
@@ -660,33 +669,7 @@ private struct CompactEQCurve: View {
                         }
                     }
                 }
-                .contentShape(Rectangle())
-                // Double tap wins over dragging. A small drag threshold prevents
-                // either tap from moving the gain before the reset is recognized.
-                .highPriorityGesture(SpatialTapGesture(count: 2)
-                    .onEnded { value in resetPoint(at: value.location, size: size) }
-                    .exclusively(before: DragGesture(minimumDistance: 3)
-                    .onChanged { value in
-                        if draggingBand == nil {
-                            guard let closest = hitBand(value.startLocation, size: size) else { return }
-                            draggingBand = closest
-                            dragOriginY = point(closest, size: size).y
-                            selectedBand = closest
-                        }
-                        guard let index = draggingBand else { return }
-                        let rawGain = EQGainLimits.graphGain(y: Double(dragOriginY + value.translation.height), height: Double(size.height), at: index)
-                        onChange(index, rawGain)
-                    }
-                    .onEnded { _ in
-                        if draggingBand != nil { onEnd() }
-                        draggingBand = nil
-                    }))
-                .simultaneousGesture(SpatialTapGesture(count: 1).onEnded { value in
-                    if let index = hitBand(value.location, size: size), index != selectedBand {
-                        selectedBand = index
-                        Haptics.tap(.soft)
-                    }
-                })
+
             }
 
             // Axis labels positioned on the exact lane x — not equal-width frames.
@@ -702,6 +685,38 @@ private struct CompactEQCurve: View {
             }
             .frame(height: Self.axisHeight)
             .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+            // Give the plot priority over the enclosing vertical ScrollView. Dragging
+            // starts immediately in any lane or on its frequency label; taps never
+            // wait for a double-tap recognizer to fail before a drag can begin.
+            .highPriorityGesture(DragGesture(minimumDistance: 1)
+                .updating($dragIsActive) { _, active, _ in active = true }
+                .onChanged { value in
+                    if draggingBand == nil {
+                        guard let closest = hitBand(value.startLocation, size: plotSize) else { return }
+                        draggingBand = closest
+                        dragOriginY = point(closest, size: plotSize).y
+                        selectedBand = closest
+                    }
+                    guard let index = draggingBand else { return }
+                    let rawGain = EQGainLimits.graphGain(y: Double(dragOriginY + value.translation.height), height: Double(plotSize.height), at: index)
+                    onChange(index, rawGain)
+                }
+                .onEnded { _ in finishDrag() })
+            .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
+                resetPoint(at: value.location, size: plotSize)
+            })
+            .simultaneousGesture(SpatialTapGesture(count: 1).onEnded { value in
+                if let index = hitBand(value.location, size: plotSize), index != selectedBand {
+                    selectedBand = index
+                    Haptics.tap(.soft)
+                }
+            })
+            .onChange(of: dragIsActive) { _, active in
+                if !active { finishDrag() }
+            }
+            .onDisappear { finishDrag() }
         }
     }
 }
