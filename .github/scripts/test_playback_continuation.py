@@ -13,7 +13,7 @@ class PlaybackContinuationTests(unittest.TestCase):
         self.assertIn('remainingAhead <= (isYandexWavePlayback ? 5 : 0)',refill)
         self.assertIn('if duration > 0, progress >= duration - 0.1 { next(); return }',s)
     def test_compact_graph_and_consistent_limits(self):
-        ui=(ROOT/'Sonivo/playerchrome.swift').read_text()
+        ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
         self.assertIn('CompactEQCurve(gains:',ui)
         self.assertIn('bandRow(selectedBand)',ui)
         self.assertIn('EQGainLimits.range(at:index)',ui)

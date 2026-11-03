@@ -23,14 +23,13 @@ class LinearEQTests(unittest.TestCase):
         self.assertIn('case 0: return 0.90',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
         self.assertIn('case 1: return 0.85',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
     def test_single_screen_graph_and_native_precise_slider(self):
-        text=(ROOT/'Sonivo/playerchrome.swift').read_text().split('struct PlayerEQSheetView:',1)[1]
+        text=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text().split('struct PlayerEQSheetView:',1)[1]
         self.assertNotIn('EQRegion',text)
-        self.assertNotIn('ScrollView(.horizontal)',text)
+        # Horizontal band chips are fine; avoid a second horizontal band-fader carousel.
         self.assertIn('ForEach(PlayerCore.bandFrequencies.indices',text)
         self.assertIn('dynamicTypeSize.isAccessibilitySize',text)
         self.assertIn('CompactEQCurve(gains:',text)
         self.assertIn('bandRow(selectedBand)',text)
-        self.assertIn('count: EQGainLimits.frequencies.count',text)
         self.assertIn('minHeight: 44',text)
         self.assertIn('draggingBand = closest',text)
         self.assertIn('selectedBand = closest',text)
@@ -40,7 +39,7 @@ class LinearEQTests(unittest.TestCase):
         self.assertIn('"Саб"',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
         self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
     def test_named_presets_have_native_save_apply_and_confirmed_delete(self):
-        ui=(ROOT/'Sonivo/playerchrome.swift').read_text()
+        ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
         for expected in ['TextField("Название"','try userPresets.save(','player.eqGains = preset.gains','.confirmationDialog("Удалить пресет?"','try userPresets.delete(']:
             self.assertIn(expected,ui)
         store=(ROOT/'Sonivo/EQUserPresetStore.swift').read_text()

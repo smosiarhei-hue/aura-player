@@ -26,7 +26,7 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('EQGainLimits.bandwidth(at:0) == 0.90',(R/'.github/scripts/check_eq_user_presets.py').read_text())
     def test_geometry_animates_without_animating_the_audio_controls(self):
         shapes=(R/'Sonivo/EQResponseShapes.swift').read_text()
-        ui=(R/'Sonivo/playerchrome.swift').read_text()
+        ui=(R/'Sonivo/PlayerEQSheetView.swift').read_text()
         self.assertIn('VectorArithmetic',shapes)
         self.assertIn('var animatableData: EQCurveVector',shapes)
         self.assertIn('SonivoStreamEQResponse(',shapes)
@@ -38,7 +38,7 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('не измерение наушников',ui)
 
     def test_double_tap_resets_only_hit_node_and_does_not_conflict_with_drag(self):
-        ui=(R/'Sonivo/playerchrome.swift').read_text().split('private struct CompactEQCurve:',1)[1]
+        ui=(R/'Sonivo/PlayerEQSheetView.swift').read_text().split('struct CompactEQCurve:',1)[1]
         for expected in ['SpatialTapGesture(count: 2)', '.exclusively(before: DragGesture(minimumDistance: 3)',
                          'guard let index = hitBand(location, size: size)', 'onReset(index)', 'onEnd()']:
             self.assertIn(expected,ui)
@@ -63,7 +63,7 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('eq.userPresets.bassShake10.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
         self.assertIn('eq.userPresets.standard10.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
     def test_manual_haptics_are_shared_by_graph_and_slider_and_obey_settings(self):
-        ui=(R/'Sonivo/playerchrome.swift').read_text()
+        ui=(R/'Sonivo/PlayerEQSheetView.swift').read_text()
         self.assertIn('setBandGain(index, Float(value))',ui)
         self.assertIn('adjustmentFeedback.intensity(from: oldGain',ui)
         theme=(R/'Sonivo/theme.swift').read_text().split('static func eqAdjustment(',1)[1].split('static func success()',1)[0]

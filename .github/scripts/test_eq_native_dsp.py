@@ -11,7 +11,7 @@ ROOT=Path(__file__).resolve().parents[2]
 
 class NativeEQTests(unittest.TestCase):
     def test_categories_preserve_ten_real_bands_and_route_policy(self):
-        ui=(ROOT/'Sonivo/playerchrome.swift').read_text()
+        ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
         self.assertIn('EQFrequencyRegion.allCases',ui)
         self.assertIn('EQFrequencyRegion.bandTitles',ui)
         self.assertNotIn('Защита EQ от перегрузки отключена',ui)

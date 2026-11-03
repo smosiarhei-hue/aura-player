@@ -33,8 +33,8 @@ class EQRedesignAndBufferingTests(unittest.TestCase):
         self.assertIn('streamStatusObservers.removeAll()',core)
 
     def test_eq_uses_native_controls_with_large_targets_and_adaptive_text(self):
-        source=(ROOT/'Sonivo/playerchrome.swift').read_text()
-        eq=source.split('struct PlayerEQSheetView:',1)[1].split('struct TactileButtonStyle:',1)[0]
+        source=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
+        eq=source.split('struct PlayerEQSheetView:',1)[1].split('struct CompactEQCurve:',1)[0]
         self.assertIn('Slider(value: Binding(',eq)
         self.assertIn('step: 0.5',eq)
         self.assertIn('.frame(minHeight: 44)',eq)
@@ -45,12 +45,30 @@ class EQRedesignAndBufferingTests(unittest.TestCase):
         self.assertNotIn('EQVerticalFader',source)
         self.assertNotIn('АЧХ ФИЛЬТРА',source)
         self.assertNotIn('.minimumScaleFactor',eq)
+        # Modern sheet: no marketing/dashboard card copy, no AirPods framing.
+        self.assertNotIn('Твой звук',eq)
+        self.assertNotIn('Выбери характер',eq)
+        self.assertNotIn('AirPods',eq)
+        self.assertIn('Пресеты',eq)
+        self.assertIn('Только полосные фильтры',eq)
 
-    def test_profiles_are_explicit_not_a_fake_device_calibration(self):
-        source=(ROOT/'Sonivo/playerchrome.swift').read_text()
-        self.assertIn('полосные фильтры',source)
-        self.assertIn('Только полосы частот',source)
-        self.assertIn('нет peak guard',source)
+    def test_profiles_are_listening_tastes_not_device_calibration(self):
+        source=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
+        models=(ROOT/'Sonivo/models.swift').read_text()
+        # Clear primary chip order; headphones taste is secondary / renamed.
+        self.assertIn('EQPresets.flat, EQPresets.bassBoost, EQPresets.subBassPower, EQPresets.bassTrebleBoost',source)
+        self.assertIn('EQPresets.classical, EQPresets.club, EQPresets.dance',source)
+        self.assertIn('secondaryPresets',source)
+        self.assertIn('EQPresets.airPodsPro2Bass',source)
+        self.assertIn('name: "Наушники"',models)
+        self.assertNotIn('AirPods Pro 2',models)
+        self.assertNotIn('не калибровка Apple',source)
+        self.assertNotIn('Точная нижняя граница не заявлена Apple',source)
+        self.assertNotIn('Бас начинается с посадки',source)
         core=(ROOT/'Sonivo/playercore.swift').read_text()
         self.assertIn('never overwrite a custom curve',core)
         self.assertIn('eq.bassProfiles.v3',core)
+
+
+if __name__ == '__main__':
+    unittest.main()

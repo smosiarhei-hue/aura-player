@@ -51,12 +51,12 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("let on = shouldApplyUserEQ", content)
 
     def test_smart_headphone_eq_ui(self):
-        chrome_content = (self.repo_root / "Sonivo" / "playerchrome.swift").read_text(encoding="utf-8")
-        self.assertIn("Только в наушниках", chrome_content)
-        self.assertIn("$player.eqHeadphonesOnly", chrome_content)
-        self.assertIn("Наушники • EQ в реальном времени", chrome_content)
-        self.assertIn("EQ • обработка воспроизводимого звука", chrome_content)
-        self.assertIn("isEQPreparingNativeStream", chrome_content)
+        eq_content = (self.repo_root / "Sonivo" / "PlayerEQSheetView.swift").read_text(encoding="utf-8")
+        self.assertIn("Только в наушниках", eq_content)
+        self.assertIn("$player.eqHeadphonesOnly", eq_content)
+        self.assertIn("Наушники • EQ в реальном времени", eq_content)
+        self.assertIn("EQ • обработка воспроизводимого звука", eq_content)
+        self.assertIn("isEQPreparingNativeStream", eq_content)
 
         settings_content = (self.repo_root / "Sonivo" / "settingsview.swift").read_text(encoding="utf-8")
         self.assertIn("Только для наушников", settings_content)
