@@ -580,6 +580,9 @@ final class PlayerCore {
     private var mashupBakeOutgoingBaseCue: Double = 0
     /// True while playing the offline A+B master (volumes already baked in).
     private var mashupPlayingMasterBake = false
+    /// Stem bake failed — run an honest equal-power crossfade instead of dual
+    /// full-volume "mashup" (which just muddies two dry streams).
+    private var mashupBakeFailedUseCrossfade = false
     /// Musical cue B (mix-in). Kept separate from bake schedule offset so the
     /// Automix timeline snap stays on the real track position, not bakeLag.
     private var mashupIncomingCueSec: Double = 0
@@ -2570,6 +2573,7 @@ final class PlayerCore {
     ) {
         transitionScheduled = true
         isTransitioning = true
+        mashupBakeFailedUseCrossfade = false
         incomingIsStream = nextTrack.isStream
         transitionDuration = blendDuration
         incomingTrack = nextTrack
@@ -2697,11 +2701,14 @@ final class PlayerCore {
                         return
                     }
                     if case .failure(let bakeError) = bakeResult {
+                        self.mashupBakeFailedUseCrossfade = true
+                        let extA = outURL.pathExtension
+                        let extB = inURL.pathExtension
                         AutoMixSessionLog.shared.fault(
-                            "bake.fail \(bakeError.localizedDescription)"
+                            "bake.fail \(bakeError.localizedDescription) extA=\(extA) extB=\(extB) → crossfade fallback"
                         )
                         SonivoDiagnostics.log(
-                            "[Mashup] stem bake failed — falling back to live decks: \(bakeError.localizedDescription)",
+                            "[Mashup] stem bake failed (\(extA)/\(extB)) — equal-power crossfade fallback: \(bakeError.localizedDescription)",
                             tag: "AUDIO"
                         )
                     }
@@ -2909,13 +2916,15 @@ final class PlayerCore {
             idlePlayer.volume = 0
             idleStreamingPlayer.volume = 0
         } else {
-            let gains = mashup
+            // Without stem bake, mashup volumes (both ~1.0) just stack two dry streams.
+            let useMashupVolumes = mashup && !mashupBakeFailedUseCrossfade
+            let gains = useMashupVolumes
                 ? activeMashupStyle.volumes(progress: p)
                 : CrossfadeCurve.gains(progress: p)
             let sourceLevel = gains.outgoing
             let targetLevel = gains.incoming
 
-            let beatRates: (outgoing: Float, incoming: Float) = mashup
+            let beatRates: (outgoing: Float, incoming: Float) = mashup && !mashupBakeFailedUseCrossfade
                 ? activeMashupStyle.playbackRates(progress: p)
                 : (outgoing: 1, incoming: 1)
 
@@ -2953,8 +2962,12 @@ final class PlayerCore {
         if mashup {
             AutoMixDJEngine.shared.markMashupProgress(p)
             AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
-            AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
-            applyMashupTransitionEQ(progress: p)
+            if mashupBakeFailedUseCrossfade {
+                AutoMixDJEngine.shared.statusBadge = "MIXING"
+            } else {
+                AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
+                applyMashupTransitionEQ(progress: p)
+            }
         }
 
         // Apple Automix / Duet / Mashup: one hard cut at LAND — artwork, timeline,
@@ -3001,6 +3014,7 @@ final class PlayerCore {
         mashupBakeIncomingBaseCue = 0
         mashupBakeOutgoingBaseCue = 0
         mashupPlayingMasterBake = false
+        mashupBakeFailedUseCrossfade = false
         mashupIncomingCueSec = 0
     }
 

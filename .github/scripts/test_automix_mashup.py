@@ -226,6 +226,17 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("incomingMode: .dry", baker)
         self.assertIn("incomingMode: .instrumental", baker)
         self.assertIn("A vocal isolate over B instrumental", baker)
+        # Streamed mp3/aac must not use processingFormat.settings for CAF writes.
+        self.assertIn("linearPCMCAFSettings", baker)
+        self.assertIn("kAudioFormatLinearPCM", baker)
+        self.assertNotIn(
+            "AVAudioFile(forWriting: outURL, settings: format.settings)",
+            baker,
+        )
+
+        player = (ROOT / "Sonivo/playercore.swift").read_text()
+        self.assertIn("mashupBakeFailedUseCrossfade", player)
+        self.assertIn("equal-power crossfade fallback", player)
 
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
         self.assertIn("LOCK", l10n)

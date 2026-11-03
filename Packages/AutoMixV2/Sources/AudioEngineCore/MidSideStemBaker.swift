@@ -143,7 +143,9 @@ public enum MidSideStemBaker {
 
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonivo-mashup-master-\(UUID().uuidString).caf")
-        let output = try AVAudioFile(forWriting: outURL, settings: outFormat.settings)
+        // Never pass compressed-source `.settings` into forWriting — streamed mp3/aac
+        // caches throw Foundation._GenericObjCError 0 and kill the mashup bake.
+        let output = try AVAudioFile(forWriting: outURL, settings: linearPCMCAFSettings(for: outFormat))
 
         // Peak RAM: 3 PCM chunks — never both full windows.
         guard let bufA = AVAudioPCMBuffer(pcmFormat: formatA, frameCapacity: chunkFrames),
@@ -412,7 +414,9 @@ public enum MidSideStemBaker {
 
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonivo-mashup-\(UUID().uuidString).caf")
-        let output = try AVAudioFile(forWriting: outURL, settings: format.settings)
+        // Streamed mp3/aac `.processingFormat.settings` cannot open forWriting
+        // (field: Foundation._GenericObjCError 0) — build explicit PCM CAF settings.
+        let output = try AVAudioFile(forWriting: outURL, settings: linearPCMCAFSettings(for: format))
 
         guard let inBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames),
               let outBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else {
@@ -479,6 +483,29 @@ public enum MidSideStemBaker {
         for url in urls {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    /// CAF Linear PCM settings that `AVAudioFile(forWriting:)` accepts for stream caches.
+    /// Do not use `AVAudioFormat.settings` from a compressed source — it throws on device.
+    public static func linearPCMCAFSettings(for format: AVAudioFormat) -> [String: Any] {
+        let isFloat = format.commonFormat == .pcmFormatFloat32
+            || format.commonFormat == .pcmFormatFloat64
+        let bitDepth: Int
+        switch format.commonFormat {
+        case .pcmFormatInt16: bitDepth = 16
+        case .pcmFormatInt32: bitDepth = 32
+        case .pcmFormatFloat64: bitDepth = 64
+        default: bitDepth = 32
+        }
+        return [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: format.channelCount,
+            AVLinearPCMBitDepthKey: bitDepth,
+            AVLinearPCMIsFloatKey: isFloat || format.commonFormat == .pcmFormatFloat32,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: format.isNonInterleaved
+        ]
     }
 
     // MARK: - DSP
