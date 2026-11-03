@@ -128,11 +128,12 @@ void destroy(void *p) { free(p); }
         self.assertGreater(self.response([6]+[0]*(N-1),20),4.0)
         self.assertGreater(self.response([12]*N,16000),6)
 
-    def test_high_level_signal_has_linked_peak_protection(self):
+    def test_high_level_bass_boost_is_unprotected_and_finite(self):
+        # No peak guard: overs from hot EQ are allowed (may exceed ±1).
         samples=[2*math.sin(n*.13)+.4*math.sin(n*.023) for n in range(12000)]
         output=self.run_audio(samples,[12]*N)
         self.assertTrue(all(math.isfinite(x) for x in output))
-        self.assertLessEqual(max(map(abs,output)),.980001)
+        self.assertGreater(max(map(abs,output)),1.0)
         self.assertGreater(max(map(abs,output)),.5)
 
     def test_bass_profiles_emphasize_subbass_without_low_mid_mud(self):
@@ -156,7 +157,6 @@ void destroy(void *p) { free(p); }
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
             output=self.run_audio(signal,gains)
             self.assertTrue(all(math.isfinite(x) for x in output))
-            self.assertLessEqual(max(map(abs,output)),.980001)
             self.assertGreater(max(map(abs,output)),.55)
 
     def test_channels_do_not_crossmix_in_planar_or_interleaved_audio(self):
@@ -169,12 +169,13 @@ void destroy(void *p) { free(p); }
                 if ch==3:self.assertGreater(max(map(abs,data)),.01)
                 else:self.assertEqual(max(map(abs,data)),0)
 
-    def test_peak_protection_preserves_stereo_ratio(self):
+    def test_stereo_ratio_preserved_without_peak_duck(self):
         samples=[]
         for n in range(5000):
             x=2*math.sin(n*.13); samples.extend([x,x*.25])
         output=self.run_audio(samples,[3]*N,channels=2)
-        self.assertLessEqual(max(map(abs,output)),.980001)
+        self.assertTrue(all(math.isfinite(x) for x in output))
+        self.assertGreater(max(map(abs,output)),1.0)  # overs allowed
         self.assertLess(max(abs(output[i+1]-output[i]*.25) for i in range(0,len(output),2)),1e-6)
 
     def test_sample_rates_and_invalid_gains_remain_finite(self):
@@ -200,13 +201,13 @@ void destroy(void *p) { free(p); }
             self.assertLess(largest,.05)
         finally:self.lib.destroy(ptr)
 
-    def test_hot_sweep_impulses_and_parameter_changes_stay_bounded(self):
+    def test_hot_sweep_impulses_and_parameter_changes_stay_finite(self):
         for rate in [8000,32000,44100,48000,96000]:
             frames=8192
             signal=[.95*math.sin(2*math.pi*(20*n/rate + (rate*.42-20)*n*n/(2*rate*frames))) for n in range(frames)]
             signal[0]=1;signal[4000]=-1
             result=self.run_audio(signal,[15]*N,rate)
-            self.assertLessEqual(max(map(abs,result)),.980001)
+            self.assertTrue(all(math.isfinite(x) for x in result))
         ptr=self.lib.create(48000,array([0]*N),0)
         try:
             for block in range(120):
@@ -214,7 +215,7 @@ void destroy(void *p) { free(p); }
                 self.lib.update(ptr,array(gains),1,48000)
                 raw=[.85*math.sin((block*128+i)*.079) for i in range(128)]
                 audio=(C.c_float*128)(*raw);self.lib.process(ptr,audio,1,128,1)
-                self.assertTrue(all(math.isfinite(x) and abs(x)<=.980001 for x in audio))
+                self.assertTrue(all(math.isfinite(x) for x in audio))
         finally:self.lib.destroy(ptr)
 
     def test_disabling_strong_bass_does_not_restore_a_fixed_master_cut(self):
@@ -259,18 +260,19 @@ void destroy(void *p) { free(p); }
         self.assertEqual(self.lib.SonivoEQPreamp(None,0,48000),0)
         self.assertEqual(self.preamp([float('nan')]*N),0)
 
-    def test_held_peak_envelope_reduces_sustained_bass_harmonics(self):
+    def test_unprotected_shelf_does_not_modulate_sustained_bass(self):
+        # Without a peak envelope there is no GR pump — shelf is LTI → low THD.
         rate=48000;hz=40
-        output=self.run_audio([.8*math.sin(2*math.pi*hz*n/rate) for n in range(rate*2)],[12]+[0]*(N-1))
+        output=self.run_audio([.05*math.sin(2*math.pi*hz*n/rate) for n in range(rate*2)],[12]+[0]*(N-1))
         tail=output[-24000:]
         def amplitude(harmonic):
             w=2*math.pi*hz*harmonic/rate
             a=sum(x*math.cos(w*n) for n,x in enumerate(tail))
             b=sum(x*math.sin(w*n) for n,x in enumerate(tail))
             return 2*math.hypot(a,b)/len(tail)
-        thd=math.sqrt(sum(amplitude(h)**2 for h in range(2,11)))/amplitude(1)
-        self.assertLess(thd,.0015, "Limiter modulates sustained 40 Hz bass")
-        self.assertLessEqual(max(map(abs,output)),.980001)
+        thd=math.sqrt(sum(amplitude(h)**2 for h in range(2,11)))/max(amplitude(1),1e-12)
+        self.assertLess(thd,.0015, "Shelf must stay linear (no limiter modulation)")
+        self.assertTrue(all(math.isfinite(x) for x in output))
 
     def test_response_preview_uses_actual_cascade_coefficients(self):
         response=self.lib.SonivoEQResponse
@@ -310,8 +312,9 @@ void destroy(void *p) { free(p); }
         self.assertIn('self?.outputLimiter.bypass = true',core)
         self.assertNotIn('outputLimiter.bypass = false',core)
         render=(DSP/'RealtimeEQ.c').read_text().split('void SonivoEQProcess',1)[1]
-        self.assertIn('result[ch]*eq->limiter',render)
-        self.assertIn('peak>.98',render)
+        self.assertIn('eq->limiter=1',render)
+        self.assertNotIn('peak>.98',render)
+        self.assertNotIn('protectedWet',render)
         self.assertNotIn('SonivoEQPreamp(',render)
         self.assertIn('mode: .default',session);self.assertNotIn('.moviePlayback',session)
         self.assertIn('kAudioFormatEnhancedAC3',tap)

@@ -506,9 +506,7 @@ struct PlayerEQSheetView: View {
             .font(.subheadline)
             .foregroundStyle(SN.inkMuted)
             .tint(SN.ink)
-            Text(activePreset?.name == EQPresets.airPodsPro2Bass.name
-                 ? "AirPods Pro 2: лёгкий низ поверх Adaptive EQ. Профиль приложения, не калибровка Apple."
-                 : "Как в музыкальном плеере: только полосы частот, без сжатия всего трека. Начни с +2…+4 дБ.")
+            Text("Как в музыкальном плеере: только полосные фильтры, без сжатия и приглушения всего трека от баса. Начни с +2…+4 дБ.")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -613,7 +611,7 @@ struct PlayerEQSheetView: View {
                                 .accessibilityHidden(true)
                             HStack { Text("20 Гц"); Spacer(); Text("±36 дБ"); Spacer(); Text("20 кГц") }
                                 .font(.caption2.monospacedDigit()).foregroundStyle(SN.inkMuted)
-                            Text("Сумма фильтров до защиты пиков, не измерение наушников.")
+                            Text("Сумма фильтров, не измерение наушников. Overs баса не глушат микс.")
                                 .font(.caption2).foregroundStyle(SN.inkMuted)
                         }
                         .padding(.horizontal, 16).padding(.bottom, 12)
@@ -770,11 +768,11 @@ struct PlayerEQSheetView: View {
 
     private var listeningNote: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Бас начинается с посадки", systemImage: "earbuds")
+            Label("Только полосы частот", systemImage: "slider.vertical.3")
                 .font(.subheadline.weight(.semibold))
-            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone — Adaptive EQ уже усиливает низ при хорошем seal. Полка 60 Гц и удар 120 Гц; 250 Гц режет гул. Не копируй «мощный саб» поверх Adaptive EQ.")
-            Text("Точная нижняя граница не заявлена Apple — это вкус приложения, не измерение наушников. 16 кГц — верхняя полоса (60 / 120 / 250 / 500 / 1k…16k). Как в системном плеере: полосы без сжатия всего трека.")
-            Text("Flat и выключенный EQ — исходный сигнал. EQ не исправляет искажения записи или наушников.")
+            Text("EQ поднимает и режет выбранные частоты. Басовый удар не сжимает и не приглушает весь трек — нет peak guard и нет PeakLimiter на миксе.")
+            Text("Полка 60 Гц и удар 120 Гц; 250 Гц режет гул. Пресеты мягкие по вкусу, не из‑за лимитирования. 16 кГц — верхняя полоса (60 / 120 / 250 / 500 / 1k…16k).")
+            Text("Flat и выключенный EQ — исходный сигнал. Сильный подъём может клиппировать запись; начни с умеренной громкости.")
         }
         .font(.subheadline)
         .foregroundStyle(SN.inkMuted)

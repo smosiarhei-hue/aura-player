@@ -56,7 +56,8 @@ import AudioToolbox
         precondition(abs(decay - 0.080) < 0.0001)
         eq.globalGain=EQHeadroom.preamp(gains:gains,sampleRate:48000)
         eq.bypass = !enabled
-        limiter.bypass = !enabled || !gains.contains { $0 != 0 }
+        // Match the app: PeakLimiter after user EQ stays bypassed (no mix duck).
+        limiter.bypass = true
         try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 1024)
         let input=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:48000)!
         input.frameLength=48000
@@ -105,8 +106,9 @@ import AudioToolbox
             precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)==0)
         }
         let hot=try render(gains:[Float](repeating:12,count:10),hz:60,amplitude:0.95)
-        precondition(hot.allSatisfy { abs($0) <= 1.01 },"Native output overflow")
-        print("native EQ response, stereo and sample-peak checks passed")
+        precondition(hot.allSatisfy { $0.isFinite },"Native output must stay finite")
+        precondition(hot.contains { abs($0) > 1.0 },"Hot bass EQ must not be peak-limited")
+        print("native EQ response, stereo and unprotected EQ checks passed")
     }
 }
 '''

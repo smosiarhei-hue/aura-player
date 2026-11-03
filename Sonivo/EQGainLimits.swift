@@ -4,7 +4,7 @@ import Foundation
 /// Low shelf sits at 60 Hz (the band that moves drivers); kick peaking is tight
 /// at 120 Hz; 250 Hz stays available to carve mud. Ends are shelves; interior
 /// bands are parametrics with widths chosen so bass boosts don't smear into
-/// the vocal body and then get crushed by the peak guard.
+/// the vocal body. Filters only — no app peak guard or mix ducking.
 nonisolated enum EQGainLimits {
     /// Working centers (native AU + streamed PCM + DualDeck).
     static let frequencies: [Float] = [60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]
@@ -29,7 +29,7 @@ nonisolated enum EQGainLimits {
 
     /// Shelf slope / peaking width in octaves (AVAudioUnitEQ + matching C DSP).
     /// Low shelf ~0.90: 40–80 Hz shake without blanketing 250 Hz.
-    /// Kick 0.85: was 0.65 — tight Q + hot shelf smeared thud into the limiter.
+    /// Kick 0.85: was 0.65 — tight Q + hot shelf smeared thud into mid-bass.
     static func bandwidth(at band: Int) -> Float {
         let last = frequencies.count - 1
         switch band {

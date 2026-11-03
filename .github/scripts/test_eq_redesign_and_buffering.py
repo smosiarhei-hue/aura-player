@@ -48,9 +48,9 @@ class EQRedesignAndBufferingTests(unittest.TestCase):
 
     def test_profiles_are_explicit_not_a_fake_device_calibration(self):
         source=(ROOT/'Sonivo/playerchrome.swift').read_text()
-        self.assertIn('не калибровка Apple',source)
-        self.assertIn('Точная нижняя граница не заявлена Apple',source)
-        self.assertIn('Бас начинается с посадки',source)
+        self.assertIn('полосные фильтры',source)
+        self.assertIn('Только полосы частот',source)
+        self.assertIn('нет peak guard',source)
         core=(ROOT/'Sonivo/playercore.swift').read_text()
         self.assertIn('never overwrite a custom curve',core)
         self.assertIn('eq.bassProfiles.v3',core)

@@ -24,10 +24,9 @@ centers are capped at 0.44 × processing sample rate. Categories select real ban
 
 All ten controls have **−15…+15 dB**, half-dB steps, and a symmetric 0 dB graph.
 Native AU and C gain limits match. **Unity preamp** (`SonivoEQPreamp` /
-`EQHeadroom` always 0 dB): like Apple Music EQ — band filters only. A broadband
-soft-LF cut used to duck mids/vocals whenever bass was boosted. PeakLimiter after
-EQ stays **bypassed**. Stream path uses an **instantaneous** linked sample ceiling
-(this sample only) — no hold/release that parks GR and muffles the bar after a kick.
+`EQHeadroom` always 0 dB) and **no peak guard**: like a system music-player EQ —
+band filters only. Wet PCM may exceed ±1 on hot bass; the app does not duck the
+mix. PeakLimiter after EQ stays **bypassed**.
 
 Double-tapping a node resets **only that band** to 0 dB and saves immediately.
 Exclusive double-tap/drag, 24 pt hit test. Empty graph space never resets another band.
@@ -49,8 +48,7 @@ Unchanged: half-dB steps, intensity 0.16…0.90, 60 ms throttle, `hapticsEnabled
 ## Stream DSP and peak protection
 - Double-precision RBJ filters, independent channel histories, gains smoothed in dB
   over 30 ms. Intermediate coefficients redesigned every 16 samples while moving.
-- Unity preamp always; wet-path linked sample ceiling at **0.98** with **~25 ms
-  hold / ~40 ms release** (was ~160 ms — GR parked and muffled the mix after bass).
+- Unity preamp always; **no** sample-peak envelope on the wet path (overs allowed).
 - Native `AVAudioUnitEQ` + PeakLimiter **bypassed** (limiter ducks whole mix on kick).
 - Protect wet before the eased mix toward dry. Flat/off remains exact C bypass.
 - Not true-peak limiting, headphone calibration or loudness normalization.

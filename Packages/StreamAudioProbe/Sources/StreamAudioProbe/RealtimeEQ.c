@@ -23,7 +23,7 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     double b0, b1, b2, a0, a1, a2;
     if (band == 0 || band == SONIVO_EQ_BANDS - 1) {
         // RBJ shelves with slope S from bandwidth — 60 Hz @ 0.90 moves drivers
-        // without the wide S≪1 blanket that pushed mid-bass into the limiter.
+        // without a wide S≪1 blanket that smears mid-bass into the vocal body.
         double S = bandWidthOctaves(band);
         double alpha = sn / 2.0 * sqrt((A + 1.0 / A) * (1.0 / fmax(S, 0.2) - 1.0) + 2.0);
         double beta = 2 * sqrt(A) * alpha;
@@ -43,7 +43,7 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     return (SonivoEQCoefficients){b0/a0,b1/a0,b2/a0,a1/a0,a2/a0};
 }
 
-// Theoretical small-signal cascade response, before dynamic peak protection.
+// Theoretical small-signal cascade response (filters only; no peak guard).
 // UI/control-thread only. Same coefficients as the audio renderer, no copied math.
 void SonivoEQResponse(const float *gains,size_t count,double sampleRate,float *output,size_t points) {
     if(!output || !points) return;
@@ -96,8 +96,8 @@ static void consume(SonivoRealtimeEQ *eq,int initial) {
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) nonflat |= values[b]!=0;
     int wantsWet=enabled && nonflat;
     int changed=wantsWet!=eq->wantsWet;
-    // Fade the complete protected EQ signal, not identity filters + a quickly
-    // released preamp: that combination used to restore 18+ dB in milliseconds.
+    // Fade the complete EQ signal, not identity filters + a quickly released
+    // preamp: that combination used to restore 18+ dB in milliseconds.
     if(wantsWet || initial) {
         for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) {
             eq->targetDB[b]=(double)values[b]/1000;
@@ -127,10 +127,8 @@ void SonivoEQPrepare(SonivoRealtimeEQ *eq,double rate) {
     eq->sampleRate=isfinite(rate) && rate>=8000?rate:48000;
     eq->coefficientAlpha=1-exp(-16/(eq->sampleRate*.030));
     eq->sampleAlpha=1-exp(-1/(eq->sampleRate*.025));
+    // Unused legacy fields kept for ABI; peak-guard ducking was removed.
     eq->headroomAttackAlpha=1-exp(-1/(eq->sampleRate*.001));
-    // ~25 ms hold covers one 40 Hz cycle (low THD on sustained bass); ~40 ms
-    // release clears a kick duck before it muffles the following music.
-    // (Was ~22 ms hold + ~160 ms release — GR stayed parked across bars.)
     eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.040));
     eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.025);eq->peakHold=0;
     memset(eq->z1,0,sizeof(eq->z1)); memset(eq->z2,0,sizeof(eq->z2));
@@ -183,32 +181,16 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
         // callers that still pass a non-zero mailbox preamp.
         double headroomAlpha=targetGain<eq->preGain?eq->headroomAttackAlpha:eq->sampleAlpha;
         eq->preGain+=(targetGain-eq->preGain)*headroomAlpha;
-        double result[SONIVO_EQ_CHANNELS], original[SONIVO_EQ_CHANNELS];
+        // Filters only: no envelope peak limiting. Wet may exceed ±1 on hot bass.
+        // Keep eq->limiter at unity so legacy fields cannot duck the mix.
+        eq->limiter=1;
         for(unsigned ch=0;ch<count;ch++) {
             double dry=channels[ch][f*strides[ch]]; if(!isfinite(dry)) dry=0;
             double wet=dry;
             for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) wet=filter(eq,ch,b,wet);
-            original[ch]=dry;
-            result[ch]=wet*eq->preGain;
-        }
-        // Linked sample-peak safety (not a music compressor). Hold only bridges one
-        // bass cycle for low THD; release is short so a kick does not muffling mids.
-        double peak=0;
-        for(unsigned ch=0;ch<count;ch++) peak=fmax(peak,fabs(result[ch]));
-        double required=peak>.98?.98/peak:1;
-        if(required<=eq->limiter) {
-            eq->limiter=required;eq->peakHold=eq->peakHoldFrames;
-        } else if(required < 1 && required <= eq->limiter * 1.002 && peak >= 0.97) {
-            // Steady near-ceiling tone: keep GR flat (no THD pump).
-            eq->peakHold=eq->peakHoldFrames;
-        } else if(eq->peakHold) {
-            eq->peakHold--;
-        } else {
-            eq->limiter+=(required-eq->limiter)*eq->releaseAlpha;
-        }
-        for(unsigned ch=0;ch<count;ch++) {
-            double protectedWet=result[ch]*eq->limiter;
-            channels[ch][f*strides[ch]]=(float)(original[ch]*(1-eq->wet)+protectedWet*eq->wet);
+            wet*=eq->preGain;
+            if(!isfinite(wet)) wet=0;
+            channels[ch][f*strides[ch]]=(float)(dry*(1-eq->wet)+wet*eq->wet);
         }
     }
 }
