@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[2]
 class NativeEQTests(unittest.TestCase):
     def test_categories_preserve_ten_real_bands_and_route_policy(self):
         ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
-        self.assertIn('EQFrequencyRegion.allCases',ui)
+        self.assertIn('EQFrequencyRegion.bandTitles',ui)
         self.assertIn('EQFrequencyRegion.bandTitles',ui)
         self.assertNotIn('Защита EQ от перегрузки отключена',ui)
         core=(ROOT/'Sonivo/playercore.swift').read_text()
@@ -42,7 +42,7 @@ import AudioToolbox
         engine.connect(player, to: eq, format: format)
         engine.connect(eq, to: limiter, format: format)
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
-        let frequencies: [Float] = [60,120,250,500,1000,2000,4000,8000,12000,16000]
+        let frequencies: [Float] = [32,64,125,250,500,1000,2000,4000,8000,16000]
         let widths: [Float] = [0.90,0.85,0.75,1,1,1,1,1,1,0.70]
         for (i, band) in eq.bands.enumerated() {
             band.frequency=frequencies[i]; band.bandwidth = widths[i]; band.gain=gains[i]; band.bypass=false

@@ -8,8 +8,8 @@ class LinearEQTests(unittest.TestCase):
         c=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.c').read_text()
         a=[float(x) for x in re.search(r'frequencies: \[Float\] = \[([^]]+)\]',swift)[1].split(',')]
         b=[float(x) for x in re.search(r'frequencies\[SONIVO_EQ_BANDS\] = \{([^}]+)\}',c)[1].split(',')]
-        self.assertEqual(a,b);self.assertEqual(a,[60,120,250,500,1000,2000,4000,8000,12000,16000])
-        self.assertEqual((a[0],a[-1]),(60,16000))
+        self.assertEqual(a,b);self.assertEqual(a,[32,64,125,250,500,1000,2000,4000,8000,16000])
+        self.assertEqual((a[0],a[-1]),(32,16000))
         self.assertIn('validRate * 0.44',(ROOT/'Sonivo/playercore.swift').read_text())
         self.assertIn('rate * 0.44',c)
         dual=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
@@ -28,8 +28,8 @@ class LinearEQTests(unittest.TestCase):
         # Horizontal band chips are fine; avoid a second horizontal band-fader carousel.
         self.assertIn('ForEach(PlayerCore.bandFrequencies.indices',text)
         self.assertIn('dynamicTypeSize.isAccessibilitySize',text)
-        self.assertIn('CompactEQCurve(gains:',text)
-        self.assertIn('bandRow(selectedBand)',text)
+        self.assertIn('CompactEQCurve(',text)
+        self.assertIn('bandRow(index)',text)
         self.assertIn('minHeight: 44',text)
         self.assertIn('draggingBand = closest',text)
         self.assertIn('selectedBand = closest',text)
@@ -37,7 +37,7 @@ class LinearEQTests(unittest.TestCase):
         # Band title is "Саб 60 Гц" / "Удар 120 Гц" … via name + frequency labels.
         self.assertIn('bandNames[index]) \\(frequencyLabels[index]',text)
         self.assertIn('"Саб"',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
-        self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
+        self.assertIn('[32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
     def test_named_presets_have_native_save_apply_and_confirmed_delete(self):
         ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
         for expected in ['TextField("Название"','try userPresets.save(','player.eqGains = preset.gains','.confirmationDialog("Удалить пресет?"','try userPresets.delete(']:

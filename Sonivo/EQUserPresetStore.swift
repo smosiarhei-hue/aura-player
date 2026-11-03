@@ -61,9 +61,16 @@ final class EQUserPresetStore {
                defaults.data(forKey: "eq.userPresets.standard10.backup") == nil {
                 defaults.set(data, forKey: "eq.userPresets.standard10.backup")
             }
-            if decoded.contains(where: { $0.frequencies != EQGainLimits.frequencies }),
+            if decoded.contains(where: {
+                $0.frequencies == EQGainLimits.previousBassShake10Frequencies
+                    || $0.frequencies != EQGainLimits.frequencies
+            }),
                defaults.data(forKey: "eq.userPresets.bassShake10.backup") == nil {
                 defaults.set(data, forKey: "eq.userPresets.bassShake10.backup")
+            }
+            if decoded.contains(where: { $0.frequencies != EQGainLimits.frequencies }),
+               defaults.data(forKey: "eq.userPresets.standardOctave10.backup") == nil {
+                defaults.set(data, forKey: "eq.userPresets.standardOctave10.backup")
             }
             presets = decoded.map { preset in
                 let source = preset.frequencies ?? (preset.gains.count == 29 ? EQGainLimits.denseFrequencies : EQGainLimits.legacyFrequencies)

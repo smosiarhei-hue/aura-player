@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DSP = ROOT / 'Packages/StreamAudioProbe/Sources/StreamAudioProbe'
-FREQUENCIES=[60,120,250,500,1000,2000,4000,8000,12000,16000]
+FREQUENCIES=[32,64,125,250,500,1000,2000,4000,8000,16000]
 N=len(FREQUENCIES)
 LEGACY=[30,62.5,125,250,500,1000,2000,4000,8000,20000]
 def expanded(gains):
@@ -86,9 +86,9 @@ void destroy(void *p) { free(p); }
         for hz in FREQUENCIES[1:-1]:
             gains=[0]*N;gains[FREQUENCIES.index(hz)]=6
             self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),6,delta=.08)
-        # Kick peaking (120 Hz) should not lift deep sub or upper mid like a wide shelf.
-        gains=[0]*N;gains[FREQUENCIES.index(120)]=6
-        self.assertLess(self.response(gains,30),1.5)
+        # Low peaking (64 Hz) should not lift deep sub or upper mid like a wide shelf.
+        gains=[0]*N;gains[FREQUENCIES.index(64)]=6
+        self.assertLess(self.response(gains,20),1.5)
         self.assertLess(self.response(gains,600),1)
     def test_flat_and_disabled_are_exact_bypass(self):
         samples=[.95*math.sin(n*.031) for n in range(5000)]
@@ -148,8 +148,9 @@ void destroy(void *p) { free(p); }
             self.assertLessEqual(gains[1],3.5)
             self.assertLessEqual(gains[2],-2.0)
             mid=self.response(gains,500)
-            self.assertGreater(self.response(gains,40)-mid,2.2)
-            self.assertGreater(self.response(gains,60)-mid,1.8)
+            # Octave shelf at 32 Hz: deep sub still rises vs 500 Hz body.
+            self.assertGreater(self.response(gains,40)-mid,1.2)
+            self.assertGreater(self.response(gains,64)-mid,1.0)
             self.assertLess(self.response(gains,250)-mid,0.5)
             # Unity preamp: upper mids stay at filter response (not master-ducked).
             self.assertAlmostEqual(self.response(gains,1000),0,delta=.35)
@@ -277,7 +278,7 @@ void destroy(void *p) { free(p); }
     def test_response_preview_uses_actual_cascade_coefficients(self):
         response=self.lib.SonivoEQResponse
         response.argtypes=[C.POINTER(C.c_float),C.c_size_t,C.c_double,C.POINTER(C.c_float),C.c_size_t]
-        values=(C.c_float*121)();gains=[0]*N;gains[FREQUENCIES.index(1000)]=6;gains[FREQUENCIES.index(120)]=4
+        values=(C.c_float*121)();gains=[0]*N;gains[FREQUENCIES.index(1000)]=6;gains[FREQUENCIES.index(64)]=4
         response(array(gains),N,48000,values,len(values))
         for index in [10,35,68,95,110]:
             hz=20*1000**(index/120)

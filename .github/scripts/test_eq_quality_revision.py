@@ -19,7 +19,7 @@ class EQQualityRevisionTests(unittest.TestCase):
             for value in ['kLimiterParam_AttackTime','kLimiterParam_DecayTime','kLimiterParam_PreGain','0.040','0.080']:
                 self.assertIn(value,text)
         limits=(R/'Sonivo/EQGainLimits.swift').read_text()
-        self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',limits)
+        self.assertIn('[32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]',limits)
         self.assertIn('case 0: return 0.90',limits)
         self.assertIn('case 1: return 0.85',limits)
         self.assertIn('0.90, 0.85, 0.75',dual)
@@ -52,10 +52,11 @@ class EQQualityRevisionTests(unittest.TestCase):
     def test_bass_shake_ten_band_and_symmetric_gain_range_have_real_filters(self):
         limits=(R/'Sonivo/EQGainLimits.swift').read_text()
         header=(R/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.h').read_text()
-        self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',limits)
+        self.assertIn('[32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]',limits)
         self.assertIn('static let maximum: Float = 15',limits)
         self.assertIn('-maximum...maximum',limits)
         self.assertIn('#define SONIVO_EQ_BANDS 10',header)
+        self.assertIn('eq.layout.standardOctave10',limits)
         self.assertIn('eq.layout.bassShake10',limits)
         self.assertIn('EQGainLimits.layoutMarkerKey',(R/'Sonivo/playercore.swift').read_text())
         self.assertIn('eq.gains.bassShake10.backup',(R/'Sonivo/playercore.swift').read_text())

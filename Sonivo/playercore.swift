@@ -142,7 +142,7 @@ final class PlayerCore {
         }
         // One-time upgrade onto the bass-shake 10-band ladder (60 Hz shelf +
         // tight 120 Hz kick). Prior ISO/compact/6-band eras keep backups.
-        if !defaults.bool(forKey: EQGainLimits.layoutMarkerKey) {
+        if !defaults.bool(forKey: EQGainLimits.previousBassShakeLayoutKey) {
             let sourceGrid: [Float]?
             if gains.count == EQGainLimits.previousBassTightFrequencies.count {
                 if defaults.bool(forKey: "eq.layout.bassTight6") {
@@ -152,7 +152,7 @@ final class PlayerCore {
                 } else {
                     sourceGrid = EQGainLimits.previousBassTightFrequencies
                 }
-            } else if gains.count == EQGainLimits.frequencies.count {
+            } else if gains.count == 10 {
                 if defaults.bool(forKey: "eq.layout.standard10") {
                     sourceGrid = EQGainLimits.previousStandard10Frequencies
                 } else if defaults.bool(forKey: "eq.layout.compact10") {
@@ -190,15 +190,37 @@ final class PlayerCore {
                    let originalArchive {
                     defaults.set(originalArchive, forKey: "eq.gains.reference6.backup")
                 }
-                gains = EQGainLimits.resample(gains, from: sourceGrid, to: EQGainLimits.frequencies)
+                gains = EQGainLimits.resample(gains, from: sourceGrid, to: EQGainLimits.previousBassShake10Frequencies)
+            }
+            if gains.count == EQGainLimits.previousBassShake10Frequencies.count {
+                gains = EQGainLimits.previousBassShake10Frequencies.indices.map {
+                    EQGainLimits.clean(gains.indices.contains($0) ? gains[$0] : 0, at: $0)
+                }
+            }
+            if let data = try? JSONEncoder().encode(gains) {
+                defaults.set(data, forKey: eqGainsKey)
+                defaults.set(true, forKey: EQGainLimits.previousBassShakeLayoutKey)
+                defaults.set(true, forKey: "eq.layout.standard10")
+                defaults.set(true, forKey: "eq.layout.reference6")
+                defaults.set(true, forKey: "eq.layout.bassTight6")
+            }
+        }
+        // Bass-shake → classic octave centers (32 Hz–16 kHz) for the graphic fader UI.
+        if !defaults.bool(forKey: EQGainLimits.layoutMarkerKey) {
+            if defaults.data(forKey: "eq.gains.bassShake10.archive") == nil,
+               let data = try? JSONEncoder().encode(gains) {
+                defaults.set(data, forKey: "eq.gains.bassShake10.archive")
+            }
+            if gains.count == EQGainLimits.previousBassShake10Frequencies.count {
+                gains = EQGainLimits.resample(gains, from: EQGainLimits.previousBassShake10Frequencies, to: EQGainLimits.frequencies)
+            } else if gains.count == EQGainLimits.previousStandard10Frequencies.count {
+                gains = EQGainLimits.resample(gains, from: EQGainLimits.previousStandard10Frequencies, to: EQGainLimits.frequencies)
             }
             gains = EQGainLimits.normalized(gains)
             if let data = try? JSONEncoder().encode(gains) {
                 defaults.set(data, forKey: eqGainsKey)
                 defaults.set(true, forKey: EQGainLimits.layoutMarkerKey)
-                defaults.set(true, forKey: "eq.layout.standard10")
-                defaults.set(true, forKey: "eq.layout.reference6")
-                defaults.set(true, forKey: "eq.layout.bassTight6")
+                defaults.set(true, forKey: EQGainLimits.previousBassShakeLayoutKey)
             }
         }
         return (normalized(gains), enabled)

@@ -18,7 +18,7 @@ __PERSISTED_EQ_BODY__
         func rejects(_ action: () throws -> Void) {
             do { try action(); fatalError("Invalid input accepted") } catch { }
         }
-        precondition(EQGainLimits.frequencies == [60,120,250,500,1000,2000,4000,8000,12000,16000])
+        precondition(EQGainLimits.frequencies == [32,64,125,250,500,1000,2000,4000,8000,16000])
         precondition(EQGainLimits.bandwidth(at:0) == 0.90)
         precondition(EQGainLimits.bandwidth(at:1) == 0.85)
         precondition(EQGainLimits.bandwidth(at:2) == 0.75)
@@ -84,27 +84,31 @@ __PERSISTED_EQ_BODY__
         let unknownData=try JSONEncoder().encode([unknown]);defaults.set(unknownData,forKey:"eq.userPresets.v1")
         rejects { _ = try EQUserPresetStore(defaults:defaults).save(name:"not overwrite unknown",gains:gains) }
         precondition(defaults.data(forKey:"eq.userPresets.v1")==unknownData)
-        // ISO standard10 → bassShake10 once.
+        // ISO standard10 → bassShake10 → octave (32–16k) once.
         defaults.set(true,forKey:"eq.layout.compact10")
         defaults.set(true,forKey:"eq.layout.standard10")
+        defaults.removeObject(forKey:EQGainLimits.previousBassShakeLayoutKey)
         defaults.removeObject(forKey:EQGainLimits.layoutMarkerKey)
         let iso=EQGainLimits.previousStandard10Frequencies.map { $0 <= 125 ? Float(6) : 0 }
         let isoData=try JSONEncoder().encode(iso)
         defaults.set(isoData,forKey:"eq.gains")
         let runtime=persisted(defaults:defaults)
-        precondition(runtime.gains==EQGainLimits.normalized(EQGainLimits.resample(iso,from:EQGainLimits.previousStandard10Frequencies,to:EQGainLimits.frequencies)))
+        let isoViaShake=EQGainLimits.resample(iso,from:EQGainLimits.previousStandard10Frequencies,to:EQGainLimits.previousBassShake10Frequencies)
+        precondition(runtime.gains==EQGainLimits.normalized(EQGainLimits.resample(isoViaShake,from:EQGainLimits.previousBassShake10Frequencies,to:EQGainLimits.frequencies)))
         precondition(defaults.data(forKey:"eq.gains.bassShake10.backup")==isoData)
         precondition(persisted(defaults:defaults).gains==runtime.gains)
-        // Six-band bassTight → bassShake10 once.
+        // Six-band bassTight → bassShake10 → octave once.
         defaults.set(true,forKey:"eq.layout.compact10")
         defaults.set(true,forKey:"eq.layout.reference6")
         defaults.set(true,forKey:"eq.layout.bassTight6")
         defaults.removeObject(forKey:"eq.layout.standard10")
+        defaults.removeObject(forKey:EQGainLimits.previousBassShakeLayoutKey)
         defaults.removeObject(forKey:EQGainLimits.layoutMarkerKey)
         let six:[Float]=[8,5,1,0,2,-4]
         defaults.set(try JSONEncoder().encode(six),forKey:"eq.gains")
         let fromSix=persisted(defaults:defaults)
-        precondition(fromSix.gains==EQGainLimits.normalized(EQGainLimits.resample(six,from:EQGainLimits.previousBassTightFrequencies,to:EQGainLimits.frequencies)))
+        let sixViaShake=EQGainLimits.resample(six,from:EQGainLimits.previousBassTightFrequencies,to:EQGainLimits.previousBassShake10Frequencies)
+        precondition(fromSix.gains==EQGainLimits.normalized(EQGainLimits.resample(sixViaShake,from:EQGainLimits.previousBassShake10Frequencies,to:EQGainLimits.frequencies)))
         precondition(defaults.data(forKey:"eq.gains.bassTight6.backup") != nil)
         precondition(persisted(defaults:defaults).gains==fromSix.gains,"Ten-value curve was migrated twice")
         defaults.set(try JSONEncoder().encode(gains),forKey:"eq.gains")

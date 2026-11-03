@@ -18,7 +18,11 @@ struct PlayerEQSheetView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceEQMotion
 
     private let bandNames = EQFrequencyRegion.bandTitles
-    private let frequencyLabels = EQGainLimits.frequencies.map { "\(Int($0)) Гц" }
+    private let frequencyLabels = EQGainLimits.frequencies.indices.map { index in
+        let hz = EQGainLimits.frequencies[index]
+        let short = EQGainLimits.frequencyLabels[index]
+        return hz < 1000 ? "\(Int(hz)) Гц" : "\(short)Гц"
+    }
     /// Flat → Bass → Deep bass → Bass+Treble → Classical → Club → Dance
     private var primaryPresets: [EQPreset] {
         [EQPresets.flat, EQPresets.bassBoost, EQPresets.subBassPower, EQPresets.bassTrebleBoost,
@@ -34,13 +38,18 @@ struct PlayerEQSheetView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: 28) {
                     masterHeader
                         .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0)
-                    heroCurve
+                    curveEditor
                         .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.04)
-                    bandEditor
-                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.08)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        accessibilityBandList
+                            .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.08)
+                    } else {
+                        selectedBandPrecision
+                            .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.08)
+                    }
                     profilesSection
                         .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.12)
                     savedPresetsSection
@@ -60,14 +69,8 @@ struct PlayerEQSheetView: View {
                 ZStack {
                     SN.bg
                     RadialGradient(
-                        colors: [SN.amber.opacity(player.eqEnabled ? 0.16 : 0.05), .clear],
-                        center: .top, startRadius: 12, endRadius: 460
-                    )
-                    .ignoresSafeArea()
-                    .animation(reduceEQMotion ? nil : SN.slowSpring, value: player.eqEnabled)
-                    LinearGradient(
-                        colors: [SN.amber.opacity(player.eqEnabled ? 0.06 : 0), .clear],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
+                        colors: [SN.amber.opacity(player.eqEnabled ? 0.14 : 0.05), .clear],
+                        center: .top, startRadius: 12, endRadius: 440
                     )
                     .ignoresSafeArea()
                     .animation(reduceEQMotion ? nil : SN.slowSpring, value: player.eqEnabled)
@@ -137,15 +140,12 @@ struct PlayerEQSheetView: View {
                         .font(.subheadline)
                         .foregroundStyle(SN.inkMuted)
                         .contentTransition(.numericText())
-                        .animation(reduceEQMotion ? nil : SN.fastSpring, value: player.eqEnabled)
-                        .animation(reduceEQMotion ? nil : SN.fastSpring, value: activePreset?.name)
                 }
             }
             .tint(SN.amber)
             .accessibilityLabel("Эквалайзер")
             Label {
                 Text(eqStatusText)
-                    .contentTransition(.opacity)
             } icon: {
                 Image(systemName: player.isEQEffectivelyActive ? "waveform" : "minus.circle")
                     .symbolEffect(.variableColor.iterative, isActive: player.isEQEffectivelyActive && !reduceEQMotion)
@@ -153,14 +153,14 @@ struct PlayerEQSheetView: View {
             .font(.subheadline)
             .foregroundStyle(SN.inkMuted)
             .fixedSize(horizontal: false, vertical: true)
-            .animation(reduceEQMotion ? nil : SN.fastSpring, value: player.isEQEffectivelyActive)
         }
     }
 
-    private var heroCurve: some View {
+    /// Curve nodes ARE the bands: drag a point to set gain, double-tap → 0 дБ.
+    private var curveEditor: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Кривая").font(.headline)
+                Text("Полосы").font(.headline)
                 Spacer()
                 Text(selectedBandCaption)
                     .font(.subheadline.monospacedDigit().weight(.semibold))
@@ -171,91 +171,132 @@ struct PlayerEQSheetView: View {
             }
             ZStack {
                 RoundedRectangle(cornerRadius: SN.radiusLarge, style: .continuous)
-                    .fill(SN.card.opacity(0.72))
+                    .fill(SN.card.opacity(0.78))
                 EQGridGuide()
                     .stroke(SN.ink.opacity(0.07), style: StrokeStyle(lineWidth: 1, dash: [3, 5]))
-                    .padding(10)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 12)
+                    .padding(.bottom, 28)
                 EQFrequencyResponseFillShape(vector: EQCurveVector(player.eqGains))
-                    .fill(LinearGradient(colors: [SN.amber.opacity(0.26), SN.amber.opacity(0.02)],
+                    .fill(LinearGradient(colors: [SN.amber.opacity(0.22), SN.amber.opacity(0.02)],
                                          startPoint: .top, endPoint: .bottom))
-                    .padding(10)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 12)
+                    .padding(.bottom, 28)
+                    .allowsHitTesting(false)
                     .animation(reduceEQMotion || isAdjustingEQ ? nil : .smooth(duration: 0.28), value: player.eqGains)
                 EQFrequencyResponseShape(vector: EQCurveVector(player.eqGains))
-                    .stroke(SN.amber.opacity(0.38), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                    .padding(10)
+                    .stroke(SN.amber.opacity(0.28), style: StrokeStyle(lineWidth: 1.25, lineCap: .round))
+                    .padding(.horizontal, 8)
+                    .padding(.top, 12)
+                    .padding(.bottom, 28)
+                    .allowsHitTesting(false)
                     .animation(reduceEQMotion || isAdjustingEQ ? nil : .smooth(duration: 0.28), value: player.eqGains)
-                CompactEQCurve(gains: player.eqGains, selectedBand: $selectedBand, isInteracting: isAdjustingEQ,
-                               onChange: { setBandGain($0, $1) }, onReset: { setBandGain($0, 0, feedback: false) }, onEnd: { player.saveEQ() })
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 8)
+                CompactEQCurve(
+                    gains: player.eqGains,
+                    selectedBand: $selectedBand,
+                    isInteracting: isAdjustingEQ,
+                    onChange: { index, gain in
+                        isAdjustingEQ = true
+                        setBandGain(index, gain)
+                    },
+                    onReset: { index in
+                        setBandGain(index, 0, feedback: false)
+                    },
+                    onEnd: {
+                        isAdjustingEQ = false
+                        player.saveEQ()
+                    }
+                )
+                .padding(.horizontal, 4)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
-            .frame(height: dynamicTypeSize.isAccessibilitySize ? 200 : 268)
+            .frame(height: dynamicTypeSize.isAccessibilitySize ? 220 : 300)
             .overlay(
                 RoundedRectangle(cornerRadius: SN.radiusLarge, style: .continuous)
                     .strokeBorder(SN.ink.opacity(0.08), lineWidth: 1)
             )
             .opacity(player.eqEnabled ? 1 : 0.42)
-            .scaleEffect(player.eqEnabled || reduceEQMotion ? 1 : 0.985)
-            .animation(reduceEQMotion ? nil : SN.spring, value: player.eqEnabled)
             .disabled(!player.eqEnabled)
-            .accessibilityHidden(true)
-            HStack(spacing: 16) {
-                Text("Суммарная АЧХ · модель PCM 48 кГц · не измерение наушников")
-                Spacer(minLength: 8)
-                Text("±15 дБ").font(.caption.monospacedDigit())
-            }
-            .font(.caption).foregroundStyle(SN.inkMuted)
-            Text("Перетащи точку · двойной тап — 0 дБ")
-                .font(.caption).foregroundStyle(SN.inkMuted)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Кривая эквалайзера")
+            .accessibilityHint("Перетащи точку полосы. Двойной тап — 0 дБ.")
+
+            bandAxisLabels
+                .opacity(player.eqEnabled ? 1 : 0.45)
+
+            Text("Точка на кривой = полоса · тяни вверх/вниз · двойной тап — 0 дБ")
+                .font(.caption)
+                .foregroundStyle(SN.inkMuted)
+            Text("Суммарная АЧХ · модель PCM 48 кГц · не измерение наушников")
+                .font(.caption)
+                .foregroundStyle(SN.inkMuted)
         }
     }
 
-    private var selectedBandCaption: String {
-        "\(bandNames[selectedBand]) \(compactFrequency(selectedBand)) · \(db(selectedGain))"
+    private var bandAxisLabels: some View {
+        HStack(spacing: 0) {
+            ForEach(EQGainLimits.frequencies.indices, id: \.self) { index in
+                Text(EQGainLimits.frequencyLabels[index])
+                    .font(.caption2.monospacedDigit().weight(selectedBand == index ? .bold : .regular))
+                    .foregroundStyle(selectedBand == index ? SN.amber : SN.inkMuted)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 4)
     }
 
-    private var bandEditor: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Полоса").font(.headline)
-            Picker("Диапазон частот", selection: Binding(
-                get: { EQFrequencyRegion.containing(selectedBand) },
-                set: { region in
-                    withAnimation(reduceEQMotion ? nil : SN.fastSpring) {
-                        selectedBand = region.indices.lowerBound
-                    }
+    private var selectedBandCaption: String {
+        "\(EQGainLimits.frequencyLabels[selectedBand]) · \(db(selectedGain))"
+    }
+
+    /// Fine trim for the selected node — not a second graphic EQ strip.
+    private var selectedBandPrecision: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(bandNames[selectedBand]) \(frequencyLabels[selectedBand])")
+                        .font(.headline)
+                        .foregroundStyle(SN.ink)
+                    Spacer(minLength: 12)
+                    Text(db(selectedGain))
+                        .font(.title3.weight(.semibold).monospacedDigit())
+                        .contentTransition(.numericText())
                 }
-            )) {
-                ForEach(EQFrequencyRegion.allCases) { region in
-                    Text(region.title).tag(region)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(bandNames[selectedBand]) \(frequencyLabels[selectedBand])")
+                        .font(.headline)
+                    Text(db(selectedGain)).font(.title3.weight(.semibold).monospacedDigit())
                 }
             }
-            .pickerStyle(.segmented)
-            Text(EQFrequencyRegion.containing(selectedBand).detail)
-                .font(.subheadline).foregroundStyle(SN.inkMuted)
-                .contentTransition(.opacity)
-                .animation(reduceEQMotion ? nil : SN.fastSpring, value: selectedBand)
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: 0) {
-                    ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
-                        bandRow(index)
-                        if index < PlayerCore.bandFrequencies.count - 1 { Divider() }
-                    }
+            Slider(value: Binding(
+                get: { Double(selectedGain) },
+                set: { value in setBandGain(selectedBand, Float(value)) }
+            ), in: Double(EQGainLimits.range(at: selectedBand).lowerBound)...Double(EQGainLimits.range(at: selectedBand).upperBound),
+               step: 0.5, onEditingChanged: { editing in
+                isAdjustingEQ = editing
+                if !editing { player.saveEQ() }
+            })
+            .tint(SN.amber)
+            .frame(minHeight: 44)
+            .accessibilityLabel("\(bandNames[selectedBand]), \(frequencyLabels[selectedBand])")
+            .accessibilityValue(db(selectedGain))
+            HStack {
+                Text("−15")
+                Spacer()
+                Button("0 дБ") {
+                    setBandGain(selectedBand, 0, feedback: false)
+                    player.saveEQ()
                 }
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
-                            bandChip(index)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                bandRow(selectedBand)
-                    .id(selectedBand)
-                    .transition(reduceEQMotion ? .identity : .opacity.combined(with: .move(edge: .bottom)))
-                    .animation(reduceEQMotion ? nil : SN.fastSpring, value: selectedBand)
-                    .padding(.top, 4)
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityLabel("Сбросить \(frequencyLabels[selectedBand])")
+                Spacer()
+                Text("+15")
             }
+            .font(.subheadline.monospacedDigit())
+            .foregroundStyle(SN.inkMuted)
             if !player.eqEnabled {
                 Text("Включи EQ, чтобы изменить полосы. Сохранённая настройка не сбрасывается.")
                     .font(.subheadline).foregroundStyle(SN.inkMuted)
@@ -263,43 +304,17 @@ struct PlayerEQSheetView: View {
         }
         .disabled(!player.eqEnabled)
         .opacity(player.eqEnabled ? 1 : 0.55)
-        .foregroundStyle(SN.ink)
     }
 
-    private func bandChip(_ index: Int) -> some View {
-        let gain = player.eqGains.indices.contains(index) ? player.eqGains[index] : 0
-        let selected = selectedBand == index
-        return Button {
-            withAnimation(reduceEQMotion ? nil : SN.fastSpring) { selectedBand = index }
-        } label: {
-            VStack(spacing: 5) {
-                Capsule(style: .continuous)
-                    .fill(SN.amber.opacity(gain == 0 ? 0.18 : 0.85))
-                    .frame(width: 18, height: 3)
-                    .scaleEffect(x: 0.35 + 0.65 * CGFloat(min(1, abs(gain) / EQGainLimits.maximum)), anchor: .center)
-                    .animation(reduceEQMotion || isAdjustingEQ ? nil : SN.fastSpring, value: gain)
-                Text(compactFrequency(index))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                Text(bandNames[index])
-                    .font(.caption2)
-                    .lineLimit(1)
+    private var accessibilityBandList: some View {
+        VStack(spacing: 0) {
+            ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
+                bandRow(index)
+                if index < PlayerCore.bandFrequencies.count - 1 { Divider() }
             }
-            .foregroundStyle(selected ? SN.onAccent : SN.ink)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(selected ? SN.amber : SN.card)
-                    .shadow(color: selected && !reduceEQMotion ? SN.amber.opacity(0.28) : .clear, radius: 10, y: 4)
-            )
-            .overlay(Capsule(style: .continuous).strokeBorder(SN.ink.opacity(selected ? 0 : 0.1), lineWidth: 1))
-            .scaleEffect(selected && !reduceEQMotion ? 1.04 : 1)
-            .animation(reduceEQMotion ? nil : SN.fastSpring, value: selected)
         }
-        .buttonStyle(EQProfilePressStyle())
-        .accessibilityLabel("Выбрать \(frequencyLabels[index])")
-        .accessibilityValue(db(gain))
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .disabled(!player.eqEnabled)
+        .opacity(player.eqEnabled ? 1 : 0.55)
     }
 
     private var profilesSection: some View {
@@ -335,11 +350,7 @@ struct PlayerEQSheetView: View {
             .foregroundStyle(selected ? SN.onAccent : SN.ink)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(selected ? SN.amber : SN.card)
-                    .shadow(color: selected && !reduceEQMotion ? SN.amber.opacity(0.25) : .clear, radius: 8, y: 3)
-            )
+            .background(Capsule(style: .continuous).fill(selected ? SN.amber : SN.card))
             .overlay(Capsule(style: .continuous).strokeBorder(SN.ink.opacity(selected ? 0 : 0.12), lineWidth: 1))
             .scaleEffect(selected && !reduceEQMotion ? 1.03 : 1)
             .animation(reduceEQMotion ? nil : SN.fastSpring, value: selected)
@@ -347,13 +358,6 @@ struct PlayerEQSheetView: View {
         .buttonStyle(EQProfilePressStyle())
         .accessibilityLabel(preset.name)
         .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    private func compactFrequency(_ index: Int) -> String {
-        let frequency = PlayerCore.bandFrequencies[index]
-        if frequency < 1000 { return "\(Int(frequency))" }
-        return frequency.truncatingRemainder(dividingBy: 1000) == 0
-            ? "\(Int(frequency / 1000))к" : String(format: "%.1fк", frequency / 1000).replacingOccurrences(of: ".", with: ",")
     }
 
     private func setBandGain(_ index: Int, _ gain: Float, feedback: Bool = true) {
@@ -414,21 +418,19 @@ struct PlayerEQSheetView: View {
                 HStack(alignment: .firstTextBaseline) {
                     bandTitle(index)
                     Spacer(minLength: 16)
-                    Text(db(gain))
-                        .font(.title3.weight(.semibold).monospacedDigit())
-                        .contentTransition(.numericText())
-                        .animation(reduceEQMotion || isAdjustingEQ ? nil : SN.fastSpring, value: gain)
+                    Text(db(gain)).font(.title3.weight(.semibold).monospacedDigit())
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     bandTitle(index)
-                    Text(db(gain))
-                        .font(.title3.weight(.semibold).monospacedDigit())
-                        .contentTransition(.numericText())
+                    Text(db(gain)).font(.title3.weight(.semibold).monospacedDigit())
                 }
             }
             Slider(value: Binding(
                 get: { Double(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0) },
-                set: { value in setBandGain(index, Float(value)) }
+                set: { value in
+                    selectedBand = index
+                    setBandGain(index, Float(value))
+                }
             ), in: Double(EQGainLimits.range(at:index).lowerBound)...Double(EQGainLimits.range(at:index).upperBound), step: 0.5, onEditingChanged: { editing in
                 isAdjustingEQ = editing
                 if !editing { player.saveEQ() }
@@ -441,9 +443,8 @@ struct PlayerEQSheetView: View {
                 Text("−15")
                 Spacer()
                 Button("0 дБ") {
-                    var curve = PlayerCore.normalized(player.eqGains)
-                    curve[index] = 0
-                    withAnimation(reduceEQMotion ? nil : SN.fastSpring) { player.eqGains = curve }
+                    selectedBand = index
+                    setBandGain(index, 0, feedback: false)
                     player.saveEQ()
                 }
                 .frame(minWidth: 44, minHeight: 44)
@@ -470,7 +471,6 @@ struct PlayerEQSheetView: View {
                 .tint(SN.amber)
             Text(outputStatusText)
                 .font(.subheadline).foregroundStyle(SN.inkMuted)
-                .contentTransition(.opacity)
             Text("В этом режиме динамик телефона остаётся без усиления баса.")
                 .font(.subheadline).foregroundStyle(SN.inkMuted)
         }
@@ -489,8 +489,8 @@ struct PlayerEQSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Только полосы частот", systemImage: "slider.vertical.3")
                 .font(.subheadline.weight(.semibold))
-            Text("EQ поднимает и режет выбранные частоты. Басовый удар не сжимает и не приглушает весь трек — нет peak guard и нет PeakLimiter на миксе.")
-            Text("Полка 60 Гц и удар 120 Гц; 250 Гц режет гул. 16 кГц — верхняя полоса.")
+            Text("Каждая точка на кривой — одна полоса (32 Гц–16 кГц). Двойной тап по точке сбрасывает её в 0 дБ.")
+            Text("EQ поднимает и режет выбранные частоты. Бас не сжимает и не приглушает весь трек — нет peak guard и нет PeakLimiter на миксе.")
             Text("Flat и выключенный EQ — исходный сигнал. Сильный подъём может клиппировать запись; начни с умеренной громкости.")
         }
         .font(.subheadline)
@@ -503,7 +503,7 @@ struct PlayerEQSheetView: View {
         if player.eqHeadphonesOnly && !player.isHeadphonesConnected { return "Приостановлен для динамика телефона" }
         if let reason = player.eqUnavailableReason { return reason }
         if player.isEQPreparingNativeStream { return "Ожидание воспроизводимого аудио" }
-        return "\(PlayerCore.bandFrequencies.count) полос • обработка в реальном времени"
+        return "\(PlayerCore.bandFrequencies.count) полос · 32 Гц–16 кГц"
     }
     private func applyPreset(_ preset: EQPreset) {
         withAnimation(reduceEQMotion ? nil : SN.spring) {
@@ -528,6 +528,7 @@ struct PlayerEQSheetView: View {
     }
 }
 
+/// Interactive graphic EQ: each node is one band. Drag sets gain; double-tap → 0 дБ.
 private struct CompactEQCurve: View {
     let gains: [Float]
     @Binding var selectedBand: Int
@@ -563,11 +564,11 @@ private struct CompactEQCurve: View {
                     path.move(to: CGPoint(x: 14, y: zeroY))
                     path.addLine(to: CGPoint(x: size.width - 14, y: zeroY))
                 }
-                .stroke(SN.ink.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                .stroke(SN.ink.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 EQControlCurveShape(vector: EQCurveVector(gains))
-                    .stroke(LinearGradient(colors: [SN.amber, SN.amber.opacity(0.72), SN.amber],
+                    .stroke(LinearGradient(colors: [SN.amber, SN.amber.opacity(0.75), SN.amber],
                                            startPoint: .leading, endPoint: .trailing),
-                            style: StrokeStyle(lineWidth: 3.2, lineCap: .round))
+                            style: StrokeStyle(lineWidth: 3.4, lineCap: .round))
                     .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                 ForEach(EQGainLimits.frequencies.indices, id: \.self) { index in
                     let selected = index == selectedBand
@@ -575,16 +576,20 @@ private struct CompactEQCurve: View {
                         if selected {
                             Circle()
                                 .fill(SN.amber.opacity(0.22))
-                                .frame(width: 28, height: 28)
-                                .scaleEffect(reduceMotion ? 1 : (isInteracting || draggingBand == index ? 1.08 : 1))
+                                .frame(width: 34, height: 34)
                         }
-                        Circle().fill(SN.card)
-                            .overlay(Circle().stroke(SN.amber, lineWidth: selected ? 3 : 2))
-                            .frame(width: selected ? 18 : 12, height: selected ? 18 : 12)
+                        Circle()
+                            .fill(SN.card)
+                            .overlay(Circle().stroke(SN.amber, lineWidth: selected ? 3.5 : 2.25))
+                            .frame(width: selected ? 22 : 16, height: selected ? 22 : 16)
                     }
                     .position(point(index, size: size))
                     .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                     .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: selectedBand)
+                    .accessibilityLabel("\(EQGainLimits.frequencyLabels[index])")
+                    .accessibilityValue(String(format: "%+.1f дБ", gains.indices.contains(index) ? gains[index] : 0))
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityHint("Двойной тап — 0 дБ")
                 }
             }
             .contentShape(Rectangle())
@@ -614,7 +619,6 @@ private struct CompactEQCurve: View {
     }
 }
 
-/// Soft ± guides behind the hero curve (visual only — not a spectrum meter).
 private struct EQGridGuide: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()

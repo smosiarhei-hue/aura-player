@@ -14,8 +14,8 @@ class PlaybackContinuationTests(unittest.TestCase):
         self.assertIn('if duration > 0, progress >= duration - 0.1 { next(); return }',s)
     def test_compact_graph_and_consistent_limits(self):
         ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
-        self.assertIn('CompactEQCurve(gains:',ui)
-        self.assertIn('bandRow(selectedBand)',ui)
+        self.assertIn('CompactEQCurve(',ui)
+        self.assertIn('bandRow(index)',ui)
         self.assertIn('EQGainLimits.range(at:index)',ui)
         self.assertIn('EQPresets.subBassPower',ui)
         limits=(ROOT/'Sonivo/EQGainLimits.swift').read_text()

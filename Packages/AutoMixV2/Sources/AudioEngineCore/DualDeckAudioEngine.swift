@@ -54,7 +54,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 slot.resetFX()
             }
             engine.attach(userEQ)
-            let frequencies: [Float] = [60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]
+            let frequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
             let widths: [Float] = [0.90, 0.85, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.70]
             for (index, band) in userEQ.bands.enumerated() {
                 band.frequency = min(frequencies[index], Float(format.sampleRate * 0.44))

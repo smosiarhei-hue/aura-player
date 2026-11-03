@@ -2,14 +2,14 @@
 #include <math.h>
 #include <string.h>
 
-static const double frequencies[SONIVO_EQ_BANDS] = {60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000};
-/* Match EQGainLimits.bandwidth(at:) — shake shelf, tight kick, clean mids. */
+static const double frequencies[SONIVO_EQ_BANDS] = {32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+/* Match EQGainLimits.bandwidth(at:) — octave graphic EQ shelves + peaking. */
 static double bandWidthOctaves(unsigned band) {
     switch (band) {
-        case 0: return 0.90;                 /* low shelf — 40–80 Hz shake */
-        case 1: return 0.85;                 /* kick punch — was 0.65 (thud smear) */
-        case 2: return 0.75;                 /* mud control */
-        case SONIVO_EQ_BANDS - 1: return 0.70; /* high shelf */
+        case 0: return 0.90;                 /* low shelf — 32 Hz */
+        case 1: return 0.85;                 /* 64 Hz body */
+        case 2: return 0.75;                 /* 125 Hz mud control */
+        case SONIVO_EQ_BANDS - 1: return 0.70; /* high shelf — 16 kHz */
         default: return 1.0;
     }
 }
@@ -22,7 +22,7 @@ static SonivoEQCoefficients coefficients(unsigned band, double gain, double rate
     double c = cos(w), sn = sin(w), A = pow(10, gain / 40);
     double b0, b1, b2, a0, a1, a2;
     if (band == 0 || band == SONIVO_EQ_BANDS - 1) {
-        // RBJ shelves with slope S from bandwidth — 60 Hz @ 0.90 moves drivers
+        // RBJ shelves with slope S from bandwidth — 32 Hz @ 0.90 moves drivers
         // without a wide S≪1 blanket that smears mid-bass into the vocal body.
         double S = bandWidthOctaves(band);
         double alpha = sn / 2.0 * sqrt((A + 1.0 / A) * (1.0 / fmax(S, 0.2) - 1.0) + 2.0);
