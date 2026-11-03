@@ -33,10 +33,12 @@ Device listening remains necessary: compare EQ off/flat/preset, toggle during pl
 
 The screen now uses native, half-decibel horizontal sliders in three regions (low/mid/high), with per-band reset, large touch targets, VoiceOver values, adaptive text layouts and semantic light/dark surfaces. Factory profiles are chosen explicitly. The old factory bass curves are upgraded once; arbitrary custom curves are kept. Selecting a profile turns EQ on; switching EQ off does not discard it or change iPhone volume.
 
-- AirPods Pro 2 taste profile: `[6, 4.5, 1.5, -1, -0.5, 0, 0, 0, 0, 0]` dB.
-- Deep bass: `[8, 6, 2, -2, -1, 0, 0, 0, 0, 0]` dB.
+- AirPods Pro 2 taste profile: `[4.5, 3, -3.5, -1, 0, 0, 0, 0.5, 0, 0]` dB
+  (mild shelf + mud cut — Adaptive EQ already lifts seal bass; hot +8/+5 parked the peak guard).
+- Deep bass: `[6, 4, -3.5, -1, 0, 0, 0, 0, 0, 0]` dB.
+- Powerful sub: `[7, 4, -4, -1.5, 0, 0, 0, 0.5, 0, 0]` dB.
 
-The lower shelf affects frequencies below 30 Hz, including the sub-bass region; 62.5 Hz adds kick weight, and 125 Hz controls density. Reducing 250–500 Hz avoids confusing low-mid boom with deeper bass. Automatic attenuation and app peak limiting are disabled by request. Boosts may clip/distort later in the system/device output path. No fabricated subharmonics, automatic phone-volume increase or Bluetooth/HFP route changes are introduced.
+Working centers are **60 / 120 / 250 / … / 16k**. The 60 Hz shelf moves the 40–80 Hz driver band; 120 Hz adds kick punch; 250 Hz cuts mud. Soft LF headroom spares mild boosts and gently cuts only hot cascades so the sample-peak guard does not park and muddy AirPods bass. No fabricated subharmonics, automatic phone-volume increase or Bluetooth/HFP route changes.
 
 Apple's [AirPods Pro 2 specifications](https://support.apple.com/en-us/111851) describe the high-excursion driver, amplifier, Adaptive EQ and spatial audio, but do not publish a numerical lowest frequency or fixed EQ bands. This app profile is not an Apple-certified calibration. Apple's [ear-tip guidance](https://support.apple.com/en-md/119849) explicitly links a good acoustic seal with rich bass. The physical result depends on the recording, seal, firmware/system processing and listening level.
 

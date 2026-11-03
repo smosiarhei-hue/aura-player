@@ -7,8 +7,8 @@ static const double frequencies[SONIVO_EQ_BANDS] = {60, 120, 250, 500, 1000, 200
 static double bandWidthOctaves(unsigned band) {
     switch (band) {
         case 0: return 0.90;                 /* low shelf — 40–80 Hz shake */
-        case 1: return 0.65;                 /* kick punch */
-        case 2: return 0.80;                 /* mud control */
+        case 1: return 0.85;                 /* kick punch — was 0.65 (thud smear) */
+        case 2: return 0.75;                 /* mud control */
         case SONIVO_EQ_BANDS - 1: return 0.70; /* high shelf */
         default: return 1.0;
     }
@@ -63,11 +63,22 @@ void SonivoEQResponse(const float *gains,size_t count,double sampleRate,float *o
     }
 }
 
-// Unity preamp by product policy: do not turn down the whole song whenever a
-// slider is boosted. The linked sample-peak guard handles actual overshoots.
+// Soft LF headroom. Mild boosts stay loud; hot 60/120 cascades used to park the
+// 0.98 peak guard (~−6 dB GR on APP2 +8/+5) → dirty compressed bass on AirPods.
 float SonivoEQPreamp(const float *gains, size_t count, double rate) {
-    (void)gains; (void)count; (void)rate;
-    return 0;
+    (void)rate;
+    if (!gains || count == 0) return 0;
+    float g0 = gains[0];
+    float g1 = count > 1 ? gains[1] : 0;
+    float g2 = count > 2 ? gains[2] : 0;
+    if (!isfinite(g0)) g0 = 0;
+    if (!isfinite(g1)) g1 = 0;
+    if (!isfinite(g2)) g2 = 0;
+    float lf = fmaxf(0, g0) + 0.55f * fmaxf(0, g1) + 0.20f * fmaxf(0, g2);
+    // Keep single-band ≤+6 dB and the mild APP2 taste at unity loudness.
+    if (lf <= 6.5f) return 0;
+    float cut = fminf(4.5f, (lf - 6.5f) * 0.60f);
+    return -cut;
 }
 
 void SonivoEQInit(SonivoRealtimeEQ *eq) {

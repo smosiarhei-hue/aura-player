@@ -9,8 +9,8 @@ Goal: headphones that **shake** on sub/kick without muffling the rest of the mix
 - **60 Hz low shelf** (slope **0.90**) — energy in the 40–80 Hz driver-shake band.
   The prior ISO **31 Hz** shelf left that band only half-boosted, so users piled on
   several low sliders and then heard the peak guard duck the song.
-- **120 Hz peaking** (width **0.65**) — kick punch, kept above the shelf knee.
-- **250 Hz peaking** (width **0.80**) — mud control; bass presets cut here.
+- **120 Hz peaking** (width **0.85**) — kick punch (was 0.65; tight Q + hot shelf smeared into the limiter).
+- **250 Hz peaking** (width **0.75**) — mud control; bass presets cut here.
 - Higher bands **1.0** oct; high shelf **0.70**.
 
 Native PeakLimiter: attack **40 ms** (let kick transients through), decay **80 ms**
@@ -23,8 +23,10 @@ centers are capped at 0.44 × processing sample rate. Categories select real ban
 (low 60–250, middle 500–4k, high 8k–16k) without averaging or overwriting the curve.
 
 All ten controls have **−15…+15 dB**, half-dB steps, and a symmetric 0 dB graph.
-Native AU and C gain limits match. Unity preamp remains: no fixed whole-song cut
-from the largest slider; the peak guard only acts on actual overs.
+Native AU and C gain limits match. Soft LF headroom (`SonivoEQPreamp` /
+`EQHeadroom`): mild boosts stay at 0 dB; hot 60/120 cascades get a gentle cut so
+the peak guard does not park (~−6 dB GR) and muddy AirPods bass. The peak guard
+still catches actual overs.
 
 Double-tapping a node resets **only that band** to 0 dB and saves immediately.
 Exclusive double-tap/drag, 24 pt hit test. Empty graph space never resets another band.
@@ -34,7 +36,8 @@ Exclusive double-tap/drag, 24 pt hit test. Empty graph space never resets anothe
   `eq.layout.bassTight6` / `eq.layout.reference6`).
 - Prior ISO 31–16k, compact10, and six-band curves are log-resampled once; backup
   `eq.gains.bassShake10.backup` (plus era backups). Historical upgrades still run first.
-- Factory bass recipes are authored on this grid: strong 60+120, cut 250 mud, flat mids.
+- Factory bass recipes stay mild on this grid (APP2 ≈ +4.5/+3/−3.5): Adaptive EQ
+  headphones already boost seal bass; hot +8/+5 ruined dynamics via the peak guard.
 - Saved preset IDs/names survive; archives in `eq.userPresets.bassShake10.backup` /
   `eq.userPresets.standard10.backup` / six-band backups. Never migrate twice.
 - Unknown/corrupt archives remain untouched; writes are refused.
@@ -45,8 +48,10 @@ Unchanged: half-dB steps, intensity 0.16…0.90, 60 ms throttle, `hapticsEnabled
 ## Stream DSP and peak protection
 - Double-precision RBJ filters, independent channel histories, gains smoothed in dB
   over 30 ms. Intermediate coefficients redesigned every 16 samples while moving.
-- Unity preamp; wet-path linked sample-peak guard at ceiling **0.98**.
-- Short hold + fast release; no recurring-crest hold refresh (that muffled bass).
+- Soft LF headroom only for hot 60/120 cascades; mild APP2 taste stays at unity.
+  Wet-path linked sample-peak guard at ceiling **0.98**.
+- Short hold (~22 ms) + moderate release (~160 ms); no recurring-crest hold refresh
+  (that muffled bass on AirPods).
 - Protect wet before the eased mix toward dry. Flat/off remains exact C bypass.
 - Not true-peak limiting, headphone calibration or loudness normalization.
   Strong boosts can still reduce dynamics if the source is already brickwalled.

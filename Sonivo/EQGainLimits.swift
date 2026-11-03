@@ -28,14 +28,14 @@ nonisolated enum EQGainLimits {
     }
 
     /// Shelf slope / peaking width in octaves (AVAudioUnitEQ + matching C DSP).
-    /// Low shelf ~0.90: strong 40–80 Hz shake without blanketing 250 Hz.
-    /// Kick 0.65: punch stays above the shelf knee. Mud band slightly tighter.
+    /// Low shelf ~0.90: 40–80 Hz shake without blanketing 250 Hz.
+    /// Kick 0.85: was 0.65 — tight Q + hot shelf smeared thud into the limiter.
     static func bandwidth(at band: Int) -> Float {
         let last = frequencies.count - 1
         switch band {
         case 0: return 0.90
-        case 1: return 0.65
-        case 2: return 0.80
+        case 1: return 0.85
+        case 2: return 0.75
         case last: return 0.70
         default: return 1.0
         }

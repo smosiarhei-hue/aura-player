@@ -7,7 +7,7 @@ Historical ten-band stage. The current dense bass layout and compact controls su
 ## EQ and native UI
 - Ten original frequency centers remain 30, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 20000 Hz.
 - First three low-frequency controls allow -12…+18 dB; other bands remain -12…+12. Shared Swift gain limits cover normalization, native AU writes, preset validation and UI. Portable PCM DSP applies the same per-band bounds.
-- New explicit factory preset “Мощный саббас”: [14, 10, 5, -2, -1, 0, 0, 0, 0, 0]. Existing factory/personal curves are not automatically overwritten. Saving/reloading high-bass custom presets is supported.
+- Explicit factory preset “Мощный саббас”: [7, 4, -4, -1.5, 0, 0, 0, 0.5, 0, 0] on the bass-shake 10-band grid (milder than the old +14/+10 brickwall that parked the peak guard). Existing factory/personal curves are not automatically overwritten. Saving/reloading high-bass custom presets is supported.
 - Vertical slider travel increased 180→260 points. Native controls and VoiceOver/large-text row fallback remain. Positive endpoint labels reflect each band's actual range.
 - Unity preamp, output limiter policy, headphone routing, iOS system volume/security limits and EQ-off/flat bypass are unchanged. More gain may cause clipping/distortion or excessive loudness. UI warns to increase gradually at moderate volume. This does not guarantee a physical vibration sensation, hardware capability, HDR audio or iPhone listening quality.
 

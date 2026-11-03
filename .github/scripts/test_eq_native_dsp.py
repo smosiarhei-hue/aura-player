@@ -43,7 +43,7 @@ import AudioToolbox
         engine.connect(eq, to: limiter, format: format)
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
         let frequencies: [Float] = [60,120,250,500,1000,2000,4000,8000,12000,16000]
-        let widths: [Float] = [0.90,0.65,0.80,1,1,1,1,1,1,0.70]
+        let widths: [Float] = [0.90,0.85,0.75,1,1,1,1,1,1,0.70]
         for (i, band) in eq.bands.enumerated() {
             band.frequency=frequencies[i]; band.bandwidth = widths[i]; band.gain=gains[i]; band.bypass=false
             band.filterType = i == 0 ? .lowShelf : (i == frequencies.count - 1 ? .highShelf : .parametric)
@@ -87,6 +87,9 @@ import AudioToolbox
         let flat=[Float](repeating:0,count:10)
         precondition(EQHeadroom.preamp(gains:flat,sampleRate:48000)==0)
         precondition(EQHeadroom.preamp(gains:[Float](repeating:-12,count:10),sampleRate:48000)==0)
+        precondition(EQHeadroom.preamp(gains:[6]+[Float](repeating:0,count:9),sampleRate:48000)==0)
+        let hotPre=EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:48000)
+        precondition(hotPre.isFinite && hotPre < 0 && hotPre >= -4.5)
         var curve=flat;curve[4]=6
         let output=try render(gains:curve,hz:1000,amplitude:0.01)
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
@@ -100,7 +103,7 @@ import AudioToolbox
         }
         for rate in [8000.0,32000,44100,48000,96000] {
             let pre=EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)
-            precondition(pre.isFinite && pre == 0)
+            precondition(pre.isFinite && pre < 0 && pre >= -4.5)
         }
         let hot=try render(gains:[Float](repeating:12,count:10),hz:60,amplitude:0.95)
         precondition(hot.allSatisfy { abs($0) <= 1.01 },"Native output overflow")

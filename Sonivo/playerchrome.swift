@@ -443,7 +443,7 @@ struct PlayerEQSheetView: View {
                 } catch { presetError = error.localizedDescription }
             }
         } message: {
-            Text("Сохраняются значения всех шести полос. Системная громкость не меняется.")
+            Text("Сохраняются значения всех десяти полос. Системная громкость не меняется.")
         }
         .alert("Не удалось сохранить", isPresented: Binding(
             get: { presetError != nil }, set: { if !$0 { presetError = nil } }
@@ -507,8 +507,8 @@ struct PlayerEQSheetView: View {
             .foregroundStyle(SN.inkMuted)
             .tint(SN.ink)
             Text(activePreset?.name == EQPresets.airPodsPro2Bass.name
-                 ? "AirPods Pro 2: мягкий глубокий низ без лишнего гула. Это профиль приложения, не калибровка Apple."
-                 : "Профили меняют баланс частот, не системную громкость. Начни с небольшого усиления: так сохраняется больше динамики.")
+                 ? "AirPods Pro 2: лёгкий низ поверх Adaptive EQ, без грязного сжатия. Профиль приложения, не калибровка Apple."
+                 : "Профили меняют баланс частот, не системную громкость. Начни с +3…+6 дБ: так бас остаётся чистым.")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -549,13 +549,13 @@ struct PlayerEQSheetView: View {
                 Spacer()
                 Text("±15 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
             }
-            Text("6 полос · низкие, средние и высокие частоты")
+            Text("10 полос · 60 Гц…16 кГц · низкие, средние и высокие")
                 .font(.subheadline)
                 .foregroundStyle(SN.inkMuted)
-            Text("Без постоянного снижения громкости. Плавные фильтры и защита пиков; сильное усиление может уменьшать динамику.")
+            Text("Сильный низ получает мягкий запас по громкости, чтобы пик-гард не сжимал бас. Плавные фильтры; +8 дБ и выше на AirPods часто звучат грязно.")
                 .font(.caption).foregroundStyle(SN.inkMuted)
-            if player.eqGains.contains(where: { $0 >= 8 }) {
-                Label("Большое усиление может сжимать динамику. Для более чистого звука попробуй +3…+6 дБ.", systemImage: "waveform.path.badge.minus")
+            if player.eqGains.contains(where: { $0 >= 6 }) {
+                Label("Большое усиление сжимает динамику. Для чистого баса на AirPods держи 60/120 Гц около +3…+5 дБ и режь 250 Гц.", systemImage: "waveform.path.badge.minus")
                     .font(.caption).foregroundStyle(SN.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -740,10 +740,9 @@ struct PlayerEQSheetView: View {
     }
 
     private func bandTitle(_ index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(bandNames[index]).font(.headline)
-            Text(frequencyLabels[index]).font(.subheadline).foregroundStyle(SN.inkMuted)
-        }
+        Text("\(bandNames[index]) \(frequencyLabels[index])")
+            .font(.headline)
+            .foregroundStyle(SN.ink)
     }
 
     private var outputCard: some View {
@@ -773,9 +772,9 @@ struct PlayerEQSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Бас начинается с посадки", systemImage: "earbuds")
                 .font(.subheadline.weight(.semibold))
-            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone. Нижняя полка 60 Гц воздействует и на частоты ниже неё. Полосы 150 и 400 Гц помогают настроить удар и плотность. Точная нижняя граница не заявлена Apple.")
-            Text("16 кГц — номинальная верхняя полоса. Саб 60 Гц качает драйверы; удар 120 Гц — отдельно. Рабочая частота ограничена частотой дискретизации аудиовыхода.")
-            Text("Постоянного ослабления общей громкости нет. Защита пиков работает при ненулевой кривой EQ и может кратковременно снижать уровень при перегрузке. Flat и выключенный EQ сохраняют исходный сигнал. EQ не исправляет искажения записи или наушников.")
+            Text("Для AirPods Pro 2 проверь прилегание амбушюр в настройках iPhone — Adaptive EQ уже усиливает низ при хорошем seal. Полка 60 Гц и удар 120 Гц; 250 Гц режет гул. Не копируй «мощный саб» профили поверх Adaptive EQ.")
+            Text("16 кГц — верхняя полоса. Рабочие частоты: 60 / 120 / 250 / 500 / 1k…16k. Горячий низ (>~+6 дБ) получает мягкий запас по громкости, чтобы пик-гард не давил бас.")
+            Text("Flat и выключенный EQ — исходный сигнал. EQ не исправляет искажения записи или наушников.")
         }
         .font(.subheadline)
         .foregroundStyle(SN.inkMuted)

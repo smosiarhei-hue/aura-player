@@ -206,14 +206,15 @@ struct EQPreset: Identifiable, Equatable, Sendable {
 
 enum EQPresets {
     static let flat = EQPreset(name: "По умолчанию", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    static let classical = EQPreset(name: "Классическая музыка", gains: [2, 1.5, 0.5, 0, 0, 0, 1, 2, 2, 1])
-    static let club = EQPreset(name: "Клубная музыка", gains: [6, 4, -1.5, -0.5, 0, 1, 2, 3, 2, 1])
-    static let dance = EQPreset(name: "Танцевальная музыка", gains: [7, 5, -2, -0.5, 0, 1.5, 2.5, 3, 2, 1])
-    // Strong 60 Hz shake + 120 Hz punch; cut 250 Hz mud so the limiter keeps quality.
-    static let airPodsPro2Bass = EQPreset(name: "AirPods Pro 2", gains: [8, 5, -2, -0.5, 0, 0, 0, 0.5, 0, 0])
-    static let subBassPower = EQPreset(name: "Мощный саббас", gains: [12, 6, -2.5, -1, 0, 0, 0, 0.5, 0, 0])
-    static let bassBoost = EQPreset(name: "Глубокий бас", gains: [10, 7, -2.5, -1, 0, 0, 0, 0, 0, 0])
-    static let bassTrebleBoost = EQPreset(name: "Усиление НЧ и ВЧ", gains: [8, 5, -2, -1, 0, 0.5, 1.5, 2.5, 3, 2])
+    static let classical = EQPreset(name: "Классическая музыка", gains: [1.5, 1, 0, 0, 0, 0, 0.5, 1.5, 1.5, 1])
+    static let club = EQPreset(name: "Клубная музыка", gains: [4.5, 3, -3, -1, 0, 0.5, 1.5, 2, 1.5, 0.5])
+    static let dance = EQPreset(name: "Танцевальная музыка", gains: [5, 3.5, -3.5, -1, 0, 1, 2, 2.5, 1.5, 0.5])
+    // APP2 already runs Adaptive EQ + seal bass. Hot +8/+5 parked the peak guard
+    // (~−6 dB GR) → muddy compressed lows. Mild shelf + deeper mud cut stays clean.
+    static let airPodsPro2Bass = EQPreset(name: "AirPods Pro 2", gains: [4.5, 3, -3.5, -1, 0, 0, 0, 0.5, 0, 0])
+    static let subBassPower = EQPreset(name: "Мощный саббас", gains: [7, 4, -4, -1.5, 0, 0, 0, 0.5, 0, 0])
+    static let bassBoost = EQPreset(name: "Глубокий бас", gains: [6, 4, -3.5, -1, 0, 0, 0, 0, 0, 0])
+    static let bassTrebleBoost = EQPreset(name: "Усиление НЧ и ВЧ", gains: [5, 3, -3, -1, 0, 0.5, 1, 2, 2.5, 1.5])
 
     static let all: [EQPreset] = [
         flat,

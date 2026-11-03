@@ -20,8 +20,8 @@ __PERSISTED_EQ_BODY__
         }
         precondition(EQGainLimits.frequencies == [60,120,250,500,1000,2000,4000,8000,12000,16000])
         precondition(EQGainLimits.bandwidth(at:0) == 0.90)
-        precondition(EQGainLimits.bandwidth(at:1) == 0.65)
-        precondition(EQGainLimits.bandwidth(at:2) == 0.80)
+        precondition(EQGainLimits.bandwidth(at:1) == 0.85)
+        precondition(EQGainLimits.bandwidth(at:2) == 0.75)
         precondition(EQGainLimits.bandwidth(at:5) == 1.0)
         precondition(EQGainLimits.bandwidth(at:9) == 0.70)
         for band in EQGainLimits.frequencies.indices {

@@ -24,8 +24,8 @@ class EQQualityRevisionTests(unittest.TestCase):
         limits=(R/'Sonivo/EQGainLimits.swift').read_text()
         self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',limits)
         self.assertIn('case 0: return 0.90',limits)
-        self.assertIn('case 1: return 0.65',limits)
-        self.assertIn('0.90, 0.65, 0.80',dual)
+        self.assertIn('case 1: return 0.85',limits)
+        self.assertIn('0.90, 0.85, 0.75',dual)
         self.assertIn('EQGainLimits.bandwidth(at:0) == 0.90',(R/'.github/scripts/check_eq_user_presets.py').read_text())
     def test_geometry_animates_without_animating_the_audio_controls(self):
         shapes=(R/'Sonivo/EQResponseShapes.swift').read_text()

@@ -21,7 +21,7 @@ class LinearEQTests(unittest.TestCase):
         self.assertIn('bandWidthOctaves',c)
         self.assertIn('EQGainLimits.bandwidth(at:i)',(ROOT/'Sonivo/playercore.swift').read_text())
         self.assertIn('case 0: return 0.90',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
-        self.assertIn('case 1: return 0.65',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
+        self.assertIn('case 1: return 0.85',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
     def test_single_screen_graph_and_native_precise_slider(self):
         text=(ROOT/'Sonivo/playerchrome.swift').read_text().split('struct PlayerEQSheetView:',1)[1]
         self.assertNotIn('EQRegion',text)
@@ -35,7 +35,10 @@ class LinearEQTests(unittest.TestCase):
         self.assertIn('draggingBand = closest',text)
         self.assertIn('selectedBand = closest',text)
         self.assertIn('bandRow(index)',text)
-        self.assertIn('Саб 60 Гц',text)
+        # Band title is "Саб 60 Гц" / "Удар 120 Гц" … via name + frequency labels.
+        self.assertIn('bandNames[index]) \\(frequencyLabels[index]',text)
+        self.assertIn('"Саб"',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
+        self.assertIn('[60, 120, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000]',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
     def test_named_presets_have_native_save_apply_and_confirmed_delete(self):
         ui=(ROOT/'Sonivo/playerchrome.swift').read_text()
         for expected in ['TextField("Название"','try userPresets.save(','player.eqGains = preset.gains','.confirmationDialog("Удалить пресет?"','try userPresets.delete(']:

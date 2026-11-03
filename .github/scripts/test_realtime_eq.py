@@ -106,24 +106,32 @@ void destroy(void *p) { free(p); }
         for band in (1, 2, 3, 4):
             hz = FREQUENCIES[band]
             gains=[0]*N;gains[band]=15
-            self.assertAlmostEqual(self.response(gains,hz),15,delta=.15)
+            # Soft LF headroom only attenuates hot 60/120 cascades — subtract it.
+            self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),15,delta=.15)
             gains[band]=24
-            self.assertAlmostEqual(self.response(gains,hz),15,delta=.15)
+            self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),15,delta=.15)
             gains[band]=-24
-            self.assertAlmostEqual(self.response(gains,hz),-15,delta=.15)
+            self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),-15,delta=.15)
         strong=[15]+[0]*(N-1);mild=[9]+[0]*(N-1)
-        # 31 Hz shelf @ 0.70 slope still separates +15 vs +9 deep sub; less blanket than old 60 Hz.
-        self.assertGreater(self.response(strong,12)-self.response(mild,12),4.5)
+        # 60 Hz shelf separates +15 vs +9 deep sub after soft-headroom compensation.
+        self.assertGreater(
+            (self.response(strong,12)-self.preamp(strong))-(self.response(mild,12)-self.preamp(mild)),
+            4.5)
         self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[15]*N)))
     def test_shelves_control_bass_and_treble_without_edge_resonance(self):
         bass=[6]+[0]*(N-1);treble=[0]*(N-1)+[6]
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)
         self.assertGreater(self.response(treble,22000)-self.response(treble,1000),5.5)
 
-    def test_overlapping_boosts_do_not_apply_fixed_master_attenuation(self):
-        for gains in [[12]*N,[12,0,0,0,0,0,0,0,0,3],[6]+[0]*(N-1)]:
-            self.assertEqual(self.preamp(gains),0)
-        # Low-level audio remains linear, without a static whole-song volume cut.
+    def test_soft_lf_headroom_spares_mild_boosts(self):
+        # Mild / single-band stays loud; hot 60+120 cascades get a gentle cut so
+        # the peak guard does not park and muddy AirPods bass.
+        self.assertEqual(self.preamp([6]+[0]*(N-1)),0)
+        self.assertEqual(self.preamp([4.5,3,-3.5,-1,0,0,0,0.5,0,0]),0)  # APP2 taste
+        hot=[12]*N
+        self.assertLess(self.preamp(hot),0)
+        self.assertGreaterEqual(self.preamp(hot),-4.5)
+        self.assertLess(self.preamp([10,7,-2.5]+[0]*7),0)
         self.assertAlmostEqual(self.response([6]+[0]*(N-1),1000),0,delta=.1)
         self.assertGreater(self.response([6]+[0]*(N-1),20),4.0)
         self.assertGreater(self.response([12]*N,16000),6)
@@ -144,16 +152,20 @@ void destroy(void *p) { free(p); }
             values=re.search(r'static let '+name+r' = EQPreset\(name: "[^"]+", gains: \[([^\]]+)\]',models).group(1)
             gains=[float(x.strip()) for x in values.split(',')]
             self.assertEqual(len(gains),10)
-            # Factory curves are authored on the working shake grid already.
+            # Clean APP2 taste: lift sub/kick, cut mud — not a brickwalled +8/+5 shelf.
+            self.assertLessEqual(gains[0],6.5)
+            self.assertLessEqual(gains[1],4.5)
+            self.assertLessEqual(gains[2],-2.5)
             mid=self.response(gains,500)
-            self.assertGreater(self.response(gains,40)-mid,5)
-            self.assertGreater(self.response(gains,60)-mid,4)
-            self.assertLess(self.response(gains,250)-mid,1)
-            # High-level multitone stays finite and below the sample-peak ceiling.
+            self.assertGreater(self.response(gains,40)-mid,3.2)
+            self.assertGreater(self.response(gains,60)-mid,2.8)
+            self.assertLess(self.response(gains,250)-mid,0.5)
+            # High-level multitone stays finite; limiter should not park deeply.
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
             output=self.run_audio(signal,gains)
             self.assertTrue(all(math.isfinite(x) for x in output))
             self.assertLessEqual(max(map(abs,output)),.980001)
+            self.assertGreater(max(map(abs,output)),.55)
 
     def test_channels_do_not_crossmix_in_planar_or_interleaved_audio(self):
         for interleaved in [False,True]:
@@ -215,23 +227,46 @@ void destroy(void *p) { free(p); }
 
     def test_disabling_strong_bass_does_not_restore_a_fixed_master_cut(self):
         gains=[12,0,0,0,0,0,0,0,0,3]
+        pre=self.preamp(gains)
+        self.assertLess(pre,0)  # soft LF headroom active on hot shelf
         ptr=self.lib.create(48000,array(gains),1)
         try:
-            # Warm the actual filters at an unaffected midrange frequency.
+            # Warm at midrange: soft headroom ducks wet loudness; filters leave 1 kHz alone.
             warm=(C.c_float*48000)(*[.3*math.sin(2*math.pi*1000*n/48000) for n in range(48000)])
             self.lib.process(ptr,warm,1,48000,1)
             rms=lambda x: math.sqrt(sum(y*y for y in x)/len(x))
             before=rms(list(warm)[-480:])
+            dry_tone=[.3*math.sin(2*math.pi*1000*n/48000) for n in range(480)]
+            dry=rms(dry_tone)
+            self.assertAlmostEqual(20*math.log10(before/dry),pre,delta=.4)
             self.lib.update(ptr,array(gains),0,48000)
             levels=[];last=[]
             for block in range(240):
                 raw=[.3*math.sin(2*math.pi*1000*(block*480+n)/48000) for n in range(480)]
                 audio=(C.c_float*480)(*raw);self.lib.process(ptr,audio,1,480,1)
                 levels.append(rms(audio));last=list(audio)
+            # Soft headroom releases into dry — no sudden step, ends at exact dry.
             self.assertLess(20*math.log10(levels[1]/before),.1)
             self.assertLess(max(abs(20*math.log10(b/a)) for a,b in zip([before]+levels,levels)),.8)
-            self.assertLess(abs(20*math.log10(levels[-1]/before)),.3)
+            self.assertLess(abs(20*math.log10(levels[-1]/dry)),.3)
             self.assertEqual(last,list((C.c_float*480)(*raw)))
+        finally:self.lib.destroy(ptr)
+        # Mild shelf (no soft headroom): midrange stays put when EQ turns off.
+        mild=[6]+[0]*(N-1)
+        self.assertEqual(self.preamp(mild),0)
+        ptr=self.lib.create(48000,array(mild),1)
+        try:
+            warm=(C.c_float*48000)(*[.3*math.sin(2*math.pi*1000*n/48000) for n in range(48000)])
+            self.lib.process(ptr,warm,1,48000,1)
+            rms=lambda x: math.sqrt(sum(y*y for y in x)/len(x))
+            before=rms(list(warm)[-480:])
+            self.lib.update(ptr,array(mild),0,48000)
+            levels=[]
+            for block in range(240):
+                raw=[.3*math.sin(2*math.pi*1000*(block*480+n)/48000) for n in range(480)]
+                audio=(C.c_float*480)(*raw);self.lib.process(ptr,audio,1,480,1)
+                levels.append(rms(audio))
+            self.assertLess(abs(20*math.log10(levels[-1]/before)),.3)
         finally:self.lib.destroy(ptr)
 
     def test_headroom_attack_does_not_step_when_changing_an_active_curve(self):
