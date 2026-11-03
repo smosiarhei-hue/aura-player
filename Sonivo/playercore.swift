@@ -2594,15 +2594,17 @@ final class PlayerCore {
         incomingIsStream = nextTrack.isStream
         transitionDuration = blendDuration
         incomingTrack = nextTrack
+        let styleForLog = mashupStyle ?? activeMashupStyle
         AutoMixSessionLog.shared.event(
             String(
-                format: "transition.schedule mode=%@ blend=%.1fs inCue=%.1f A=%@ → B=%@ badge=%@",
+                format: "transition.schedule mode=%@ blend=%.1fs inCue=%.1f A=%@ → B=%@ badge=%@ fp=%@",
                 transitionMode.rawValue,
                 blendDuration,
                 incomingStart,
                 current.title,
                 nextTrack.title,
-                mashupBadge ?? "-"
+                mashupBadge ?? "-",
+                mashupStyle?.transitionFingerprint ?? styleForLog.transitionFingerprint
             )
         )
         incomingQuality = nil

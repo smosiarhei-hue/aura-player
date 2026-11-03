@@ -305,23 +305,45 @@ public struct MashupLiveStyle: Sendable, Equatable {
     }
 
     /// Apple Automix live character: A vocal over B beat, hard LAND near the end.
+    /// Preserves per-pair handoff / bassSwap / lag from the archetype + profiles —
+    /// only clamps into Automix-safe bands (field: every transition looked identical).
     public mutating func applyAutomixPlaybackCharacter() {
         isDuet = false
         oneVocalConflict = true
         if archetypeName == "duet" { archetypeName = "dropSwap" }
-        // Reference window ~5s: B owns bass immediately; UI/vocal swap at LAND.
-        handoffAt = min(0.96, max(0.88, handoffAt > 0.8 ? handoffAt : 0.92))
-        bassSwapAt = 0.02
+        handoffAt = min(0.96, max(0.78, handoffAt > 0.5 ? handoffAt : 0.90))
+        // Keep pair-specific bass handoff; only force "early B bass" when unset/extreme.
+        if bassSwapAt < 0.015 || bassSwapAt > handoffAt - 0.12 {
+            bassSwapAt = min(0.22, max(0.02, handoffAt * 0.12))
+        } else {
+            bassSwapAt = min(bassSwapAt, max(0.02, handoffAt - 0.45))
+        }
         vocalHoldUntil = handoffAt
         vocalPocketUntil = handoffAt
         outgoingVolumeHold = 1.0
-        incomingVolumeLag = 0.02
+        incomingVolumeLag = min(0.10, max(0.02, incomingVolumeLag > 0 ? incomingVolumeLag : 0.03))
         hpfDepth = max(1.0, hpfDepth)
         bassDepth = max(1.05, bassDepth)
         bodyLift = max(1.0, bodyLift)
         if !reason.uppercased().contains("APPLE AUTOMIX") {
             reason = "APPLE AUTOMIX · A vocal × B beat · \(reason)"
         }
+    }
+
+    /// Fingerprint of the live Automix envelope — consecutive pairs must differ.
+    public var transitionFingerprint: String {
+        String(
+            format: "%@|h%.2f|b%.2f|lag%.2f|rA%.3f|rB%.3f|p%.0f|bpm%.0f|bed%.2f",
+            archetypeName,
+            handoffAt,
+            bassSwapAt,
+            incomingVolumeLag,
+            rateA,
+            rateB,
+            pitchCentsB,
+            targetBPM,
+            automixIncomingBedGain
+        )
     }
 
     public func phaseLabel(progress: Double) -> String {
@@ -390,21 +412,77 @@ public struct MashupLiveStyle: Sendable, Equatable {
             }
             return style
         }
-        // Apple Automix: short mashup, B bass from the first beat, LAND near the end.
-        style.handoffAt = 0.92
-        style.bassSwapAt = 0.02
-        style.vocalHoldUntil = style.handoffAt
-        style.vocalPocketUntil = style.handoffAt
-        style.outgoingVolumeHold = 1.0
-        style.incomingVolumeLag = 0.02
-        style.oneVocalConflict = true
+        // Per-pair Automix envelope from archetype + plan length (not one 0.92/0.02 clone).
+        applyPairAutomixEnvelope(&style, plan: plan, outgoing: outgoing, incoming: incoming)
         refineWithProfiles(&style, a: outgoing, b: incoming)
-        // Keep Apple timings even after profile refine.
         style.applyAutomixPlaybackCharacter()
         if style.isBeatmatched {
-            style.reason = "Beatmatch \(Int(round(style.targetBPM))) BPM · bass from B · \(plan.reason)"
+            style.reason = "Beatmatch \(Int(round(style.targetBPM))) BPM · \(style.archetypeName) · \(plan.reason)"
         }
         return style
+    }
+
+    /// Derive distinct handoff / bass / lag from this pair's plan + profiles.
+    private static func applyPairAutomixEnvelope(
+        _ style: inout MashupLiveStyle,
+        plan: TransitionPlan,
+        outgoing: TrackProfile?,
+        incoming: TrackProfile?
+    ) {
+        let barFactor = min(1.0, max(0.0, (plan.bars - 4.0) / 20.0))
+        let conflict: Bool = {
+            guard let a = outgoing, let b = incoming else { return true }
+            let vocalOut = meanTail(a.vocalPresence) ?? meanTail(a.energyCurve) ?? 0.5
+            let vocalIn = meanHead(b.vocalPresence) ?? meanHead(b.energyCurve) ?? 0.45
+            return vocalOut >= 0.42 && vocalIn >= 0.4
+        }()
+        style.oneVocalConflict = conflict
+        style.outgoingVolumeHold = 1.0
+        switch plan.archetype {
+        case .echoFreeze, .spaceReverb:
+            style.handoffAt = 0.80 + 0.10 * barFactor
+            style.bassSwapAt = 0.10 + 0.14 * (1 - barFactor)
+            style.incomingVolumeLag = conflict ? 0.05 : 0.08
+        case .seamlessLoop:
+            style.handoffAt = 0.86 + 0.08 * barFactor
+            style.bassSwapAt = 0.12 + 0.16 * barFactor
+            style.incomingVolumeLag = 0.06 + 0.04 * barFactor
+        case .tapeStop:
+            style.handoffAt = 0.93
+            style.bassSwapAt = 0.55
+            style.incomingVolumeLag = 0.04
+        case .beatStutter:
+            style.handoffAt = 0.88 + 0.04 * barFactor
+            style.bassSwapAt = 0.04
+            style.incomingVolumeLag = 0.03
+        case .energyWash:
+            style.handoffAt = 0.84 + 0.06 * barFactor
+            style.bassSwapAt = 0.18 + 0.08 * (1 - barFactor)
+            style.incomingVolumeLag = 0.07
+        case .dropSwap:
+            style.handoffAt = 0.88 + 0.06 * barFactor
+            style.bassSwapAt = 0.03 + 0.10 * (1 - barFactor)
+            style.incomingVolumeLag = conflict ? 0.03 : 0.05
+        }
+        style.vocalHoldUntil = style.handoffAt
+        style.vocalPocketUntil = style.handoffAt
+        // Light salt from track ids so near-identical analysis still diverges slightly.
+        if let a = outgoing, let b = incoming {
+            let salt = pairSalt(a.trackID.raw, b.trackID.raw)
+            style.handoffAt = min(0.96, max(0.78, style.handoffAt + salt * 0.03))
+            style.bassSwapAt = min(style.handoffAt - 0.15, max(0.02, style.bassSwapAt + salt * 0.04))
+            style.incomingVolumeLag = min(0.10, max(0.02, style.incomingVolumeLag + abs(salt) * 0.02))
+        }
+    }
+
+    /// Stable −1…+1 spice from pair ids (not random — same pair → same mix).
+    private static func pairSalt(_ aID: String, _ bID: String) -> Double {
+        var hash: UInt64 = 5381
+        for byte in (aID + "→" + bID).utf8 {
+            hash = ((hash << 5) &+ hash) &+ UInt64(byte)
+        }
+        let unit = Double(hash % 1001) / 1000.0 // 0…1
+        return unit * 2 - 1
     }
 
     private static func fromProfiles(a: TrackProfile, b: TrackProfile) -> MashupLiveStyle {
@@ -415,7 +493,12 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let bpmFar = bpmDiff > 0.08
         let bpmVeryFar = bpmDiff > 0.12
 
-        // TZ §2.4 — same ladder as Automix Lab transitionPlanner.
+        let energyOut = meanTail(a.energyCurve) ?? 0.5
+        let energyIn = meanHead(b.energyCurve) ?? 0.45
+        let energyJump = energyIn - energyOut
+        let hasIncomingDrop = b.dropsSec.contains { $0 >= 6 && $0 <= 48 }
+
+        // TZ §2.4 — same ladder as Automix Lab / MixPlanner (per-pair spice).
         let archetype: MixTransitionArchetype
         if tempo == nil && bpmVeryFar {
             archetype = .echoFreeze
@@ -423,10 +506,14 @@ public struct MashupLiveStyle: Sendable, Equatable {
             archetype = .echoFreeze
         } else if a.tempoStability >= 0.85, b.tempoStability >= 0.85, harmonic.isNaturallyCompatible, bpmClose {
             archetype = .seamlessLoop
+        } else if harmonic.isNaturallyCompatible && bpmClose && energyJump >= 0.22 && hasIncomingDrop {
+            archetype = .beatStutter
+        } else if harmonic.isNaturallyCompatible && bpmClose && energyOut >= 0.65 && energyJump <= -0.18 {
+            archetype = .tapeStop
         } else if harmonic.isNaturallyCompatible && bpmClose {
             archetype = .dropSwap
         } else if harmonic.isHarmonicallyViable && bpmDiff <= 0.1 {
-            archetype = .dropSwap
+            archetype = energyJump >= 0.18 && hasIncomingDrop ? .beatStutter : .dropSwap
         } else if bpmClose && !harmonic.isNaturallyCompatible {
             // Key clash but tempos lock → Echo Out, keep beatmatch below.
             archetype = .echoFreeze
@@ -455,6 +542,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
             style.reason = "No safe tempo match · \(archetype.rawValue)"
         }
         refineWithProfiles(&style, a: a, b: b)
+        style.applyAutomixPlaybackCharacter()
         return style
     }
 

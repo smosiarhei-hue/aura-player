@@ -81,6 +81,33 @@ struct MixPlannerStage2Tests {
         #expect(plan.fx.contains { $0.kind == .echoOut })
     }
 
+    @Test("Automix plans differ across harmonic / energy / key-clash pairs")
+    func automixPlansVaryPerPair() {
+        let settings = MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
+        let match = MixPlanner.plan(
+            from: profile("m1", bpm: 124, key: "8A", energy: 0.5),
+            to: profile("m2", bpm: 126, key: "8A", energy: 0.55),
+            aMeta: meta("m1"), bMeta: meta("m2"),
+            settings: settings
+        )
+        let clash = MixPlanner.plan(
+            from: profile("c1", bpm: 128, key: "11A", energy: 0.55),
+            to: profile("c2", bpm: 129, key: "5A", energy: 0.55),
+            aMeta: meta("c1"), bMeta: meta("c2"),
+            settings: settings
+        )
+        let cliff = MixPlanner.plan(
+            from: profile("t1", bpm: 122, key: "8A", energy: 0.8),
+            to: profile("t2", bpm: 124, key: "8A", energy: 0.35),
+            aMeta: meta("t1"), bMeta: meta("t2"),
+            settings: settings
+        )
+        #expect(match.archetype != clash.archetype || abs(match.bars - clash.bars) > 0.5)
+        #expect(match.reason != clash.reason)
+        #expect(cliff.archetype == .tapeStop || cliff.reason != match.reason)
+        #expect(Set([match.archetype, clash.archetype, cliff.archetype]).count >= 2)
+    }
+
     private func meta(_ id: String, album: String? = nil, duration: Double = 180) -> TrackMeta {
         TrackMeta(id: TrackID(raw: id), title: id, artist: "Test", albumID: album,
                   durationSec: duration, artworkURL: nil)

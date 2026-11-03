@@ -56,8 +56,12 @@ public enum MixPlanner {
         let bpmClose = bpmDiffPct <= 0.08
         let bpmFar = bpmDiffPct > 0.08
         let bpmVeryFar = bpmDiffPct > 0.12
+        let energyOut = meanTail(a.energyCurve) ?? 0.5
+        let energyIn = meanHead(b.energyCurve) ?? 0.5
+        let energyJump = energyIn - energyOut
+        let hasIncomingDrop = b.dropsSec.contains { $0 >= 6 && $0 <= 48 }
 
-        // TZ §2.4: BPM·Key·outro → archetype (не «любой конфликт = короткий freeze»).
+        // TZ §2.4: BPM·Key·outro·energy → distinct per-pair archetype (never one cookie-cutter).
         let archetype: MixTransitionArchetype
         if (bpmFar && !harmonic.isHarmonicallyViable) || (bpmVeryFar && !harmonic.isNaturallyCompatible) {
             archetype = .echoFreeze
@@ -65,10 +69,19 @@ public enum MixPlanner {
             archetype = .echoFreeze
         } else if ladderBars >= 16.0 && availableOutro >= 36 && bpmClose && harmonic.isNaturallyCompatible && a.confidence.bpm >= 0.80 {
             archetype = .seamlessLoop
+        } else if harmonic.isNaturallyCompatible && bpmClose && energyJump >= 0.22 && hasIncomingDrop {
+            // Hot drop ahead → stutter into the hit (unique vs plain dropSwap).
+            archetype = .beatStutter
+            ladderBars = min(ladderBars, 8.0)
+        } else if harmonic.isNaturallyCompatible && bpmClose && energyOut >= 0.65 && energyJump <= -0.18 {
+            // Energy cliff → vinyl brake before soft B.
+            archetype = .tapeStop
+            ladderBars = min(ladderBars, 4.0)
         } else if harmonic.isNaturallyCompatible && bpmClose {
             archetype = .dropSwap
         } else if harmonic.isHarmonicallyViable && bpmDiffPct <= 0.1 {
-            archetype = .dropSwap
+            archetype = energyJump >= 0.18 && hasIncomingDrop ? .beatStutter : .dropSwap
+            if archetype == .beatStutter { ladderBars = min(ladderBars, 8.0) }
         } else if bpmClose && !harmonic.isNaturallyCompatible {
             // Ключи конфликтуют, но темп лочится → Echo Out с beatmatch (не 6-bar snap).
             archetype = .echoFreeze
@@ -79,8 +92,12 @@ public enum MixPlanner {
         switch archetype {
         case .seamlessLoop:
             return planSeamlessLoop(from: a, to: b, tempo: tempo, settings: settings, harmonic: harmonic)
-        case .dropSwap, .tapeStop, .beatStutter:
+        case .dropSwap:
             return planDropSwap(from: a, to: b, bars: ladderBars, tempo: tempo, settings: settings, harmonic: harmonic)
+        case .beatStutter:
+            return planBeatStutter(from: a, to: b, bars: min(8.0, max(4.0, ladderBars)), tempo: tempo, settings: settings, harmonic: harmonic)
+        case .tapeStop:
+            return planTapeStop(from: a, to: b, bars: min(4.0, max(2.0, ladderBars)), settings: settings, harmonic: harmonic)
         case .echoFreeze:
             return planEchoFreeze(from: a, to: b, tempo: tempo, settings: settings, harmonic: harmonic)
         case .spaceReverb:
@@ -379,7 +396,19 @@ public enum MixPlanner {
                                        settings: MixSettings,
                                        harmonic: HarmonicMatch) -> TransitionPlan {
         let beatmatched = tempo != nil
-        let bars = beatmatched ? 8.0 : 6.0
+        let conflict = oneVocalConflict(a: a, b: b)
+        let bpmGap: Float = (a.bpm > 30 && b.bpm > 30) ? abs(a.bpm - b.bpm) / max(a.bpm, 1) : 0.2
+        // Per-pair bar count — field 1047 stacked identical ~8-bar echo freezes.
+        let bars: Double
+        if !beatmatched {
+            bars = bpmGap > 0.2 ? 4.0 : 6.0
+        } else if !harmonic.isHarmonicallyViable {
+            bars = bpmGap > 0.1 ? 6.0 : (conflict ? 8.0 : 10.0)
+        } else if conflict {
+            bars = 10.0
+        } else {
+            bars = 8.0
+        }
         let targetBPM: Float = tempo?.targetBPM
             ?? (a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120.0))
         let rateA: Float = tempo.map { max(0.84, min(1.16, $0.rateA)) } ?? 1.0
@@ -389,8 +418,6 @@ public enum MixPlanner {
         let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
         let rawIncoming = BeatGridSynchronization.incomingCue(profile: b, duration: seconds)
         let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
-
-        let conflict = oneVocalConflict(a: a, b: b)
         var events: [FxEvent] = [
             // Dual-layer: A holds into echo while B locks under, then LAND.
             FxEvent(target: .a, kind: .volume, startBar: bars * 0.35, endBar: bars,
@@ -429,8 +456,8 @@ public enum MixPlanner {
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
             loopBarsA: 0, fx: events,
             reason: beatmatched
-                ? "Echo Out + beatmatch (\(Int(round(targetBPM))) BPM, \(harmonic.description))"
-                : "Echo Freeze (\(Int(round(a.bpm))) -> \(Int(round(b.bpm))) BPM, \(harmonic.description))"
+                ? "Echo Out + beatmatch (\(Int(bars)) тактов @ \(Int(round(targetBPM))) BPM, \(harmonic.description))"
+                : "Echo Freeze (\(Int(bars)) тактов, \(Int(round(a.bpm))) → \(Int(round(b.bpm))) BPM, \(harmonic.description))"
         )
     }
 
