@@ -53,6 +53,20 @@ class AnalyzeAutoMixSessionLogTests(unittest.TestCase):
         self.assertIn("skipped_landed_track", result["problems"])
         self.assertEqual(result["verdict"], "broken")
 
+    def test_detects_dual_full_stem_mixing(self):
+        sample = """
+[05:30:41.848][EVENT] bake.ready automix lag=0.11s cueA=167.8 cueB=16.1 rateA=1.000 rateB=1.000 pitchB=0 bed=0.70
+[05:30:42.928][TICK] mode=automix play=1 tx=1 badge=MIXING bake=1 volA=1.00 volB=1.00 pos=168.9
+[05:30:43.928][TICK] mode=automix play=1 tx=1 badge=MIXING bake=1 volA=1.00 volB=1.00 pos=169.9
+[05:30:44.928][TICK] mode=automix play=1 tx=1 badge=MIXING bake=1 volA=1.00 volB=1.00 pos=170.9
+[05:31:09.902][EVENT] land.hardcut B=B pos=44.2 proposed=44.2 syncLocal=1
+"""
+        result = MOD.analyze(sample)
+        self.assertIn("mixing_dual_full_volumes", result["problems"])
+        self.assertEqual(result["verdict"], "degraded")
+        self.assertGreaterEqual(result["mixing_dual_full_ticks"], 3)
+        self.assertEqual(result["bake_ready_meta"][0].get("bed"), "0.70")
+
 
 if __name__ == "__main__":
     unittest.main()

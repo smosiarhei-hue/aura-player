@@ -118,7 +118,8 @@ struct MixPlannerStage2Tests {
         duration: Double = 180,
         lufs: Float = -14,
         bpm: Float = 120,
-        key: String? = nil
+        key: String? = nil,
+        energy: Float = 0.5
     ) -> TrackProfile {
         TrackProfile(trackID: TrackID(raw: id), durationSec: duration,
                      sourceSampleRate: 44_100, sourceBitrateKbps: 320,
@@ -126,7 +127,7 @@ struct MixPlannerStage2Tests {
                      downbeatsSec: Array(stride(from: 0.0, to: duration, by: 2)),
                      phraseStartsSec: Array(stride(from: 0.0, to: duration, by: 16)),
                      tempoStability: 1, camelotKey: key, integratedLUFS: lufs,
-                     loudnessCurveLUFS: [], energyCurve: Array(repeating: 0.5, count: Int(duration)),
+                     loudnessCurveLUFS: [], energyCurve: Array(repeating: energy, count: Int(duration)),
                      hasFadeOut: false, endsInSilence: false,
                      vocalPresence: Array(repeating: 0.55, count: Int(duration * 4)),
                      segments: [], mixInSec: 8, mixOutSec: 160, mixable: true,

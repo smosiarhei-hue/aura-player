@@ -1085,14 +1085,19 @@ final class PlayerCore {
     /// Publish mashup envelopes to stream taps and/or native EQ decks for any mix of backends.
     /// Writes immediately (no multi-hundred-ms ramp) so 30 Hz transition ticks stay click-free.
     private func applyMashupTransitionEQ(progress: Double) {
-        // Dual-stem / master bake already carved Mid/Side — flat EQ only.
-        // Re-running dropSwap/Duet gates on top is what made device mixes muddy.
-        if mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake {
-            resetTransitionEQOffsets()
-            return
-        }
         let style = activeMashupStyle
-        let shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: style)
+        // Stem bake: mid-side CAF already carved — apply reduced bass-swap + B lead
+        // duck only (audit: flat EQ left ONE VOCAL incomplete on device).
+        let shaped: (outgoing: [Float], incoming: [Float])
+        if mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake {
+            if style.isDuet {
+                resetTransitionEQOffsets()
+                return
+            }
+            shaped = MashupLiveEQEnvelope.stemBakeOffsets(progress: progress, style: style)
+        } else {
+            shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: style)
+        }
         let activeOff = Self.normalized(shaped.outgoing)
         let idleOff = Self.normalized(shaped.incoming)
         if activePlayer === playerA {
@@ -2546,7 +2551,12 @@ final class PlayerCore {
            let plan = analysis.transitionPlan,
            plan.type != .none,
            MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
-            let blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
+            var blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
+            // Apple Automix mashup window is short; 16-bar seamless plans (~30s)
+            // keep dual-leak mud on the stem path (audit post-1047).
+            if transitionMode == .automix {
+                blend = min(blend, Self.automixStemMaxBlendSec)
+            }
             let cue = min(max(plan.aOutStartSec, totalDur * MashupBlendScheduler.minimumPlayedFraction),
                           max(0, totalDur - MashupBlendScheduler.minimumBlendSec))
             let inStart = max(0, plan.bInStartSec)
@@ -2558,14 +2568,29 @@ final class PlayerCore {
             )
         }
         let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
-        return MashupBlendScheduler.schedule(
+        var scheduled = MashupBlendScheduler.schedule(
             outgoingDuration: totalDur,
             incomingDuration: incomingDur,
             preferredBlendSec: preferred,
             outgoing: outProfile,
             incoming: inProfile
         )
+        if transitionMode == .automix, scheduled.blendDurationSec > Self.automixStemMaxBlendSec {
+            let blend = Self.automixStemMaxBlendSec
+            let cue = min(max(scheduled.outgoingCueSec, totalDur * MashupBlendScheduler.minimumPlayedFraction),
+                          max(0, totalDur - blend))
+            scheduled = LiveMashupBlend(
+                outgoingCueSec: cue,
+                blendDurationSec: blend,
+                incomingStartSec: scheduled.incomingStartSec,
+                reason: scheduled.reason + " · automix≤\(Int(blend))s"
+            )
+        }
+        return scheduled
     }
+
+    /// Live Automix stem window ceiling (~Apple Automix mashup length).
+    private static let automixStemMaxBlendSec: Double = 8
 
     private func mashupProfileMatches(_ profile: TrackProfile, track: Track) -> Bool {
         if track.isStream {

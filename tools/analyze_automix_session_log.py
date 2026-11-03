@@ -112,6 +112,37 @@ def analyze(text: str) -> dict:
         problems.append("skipped_landed_track")
         verdict = "broken"
 
+    # Stem MIXING with dual-full volumes = pre-bed mud (field 1047).
+    dual_full = 0
+    for t in mixing:
+        if t.get("bake") != "1":
+            continue
+        try:
+            va = float(t.get("volA", "0"))
+            vb = float(t.get("volB", "0"))
+        except ValueError:
+            continue
+        if va >= 0.95 and vb >= 0.90:
+            dual_full += 1
+    if dual_full >= 3:
+        problems.append("mixing_dual_full_volumes")
+        if verdict == "ok":
+            verdict = "degraded"
+
+    bake_ready_meta: list[dict[str, str]] = []
+    for e in events:
+        if not e.startswith("bake.ready"):
+            continue
+        bake_ready_meta.append(parse_fields(e))
+    fingerprints = sorted(
+        {
+            parse_fields(e).get("fp", "")
+            for e in events
+            if e.startswith("transition.schedule") and "fp=" in e
+        }
+        - {""}
+    )
+
     return {
         "verdict": verdict,
         "problems": problems,
@@ -126,6 +157,10 @@ def analyze(text: str) -> dict:
         "had_land_hardcut": has_event("land.hardcut"),
         "mixing_ticks": len(mixing),
         "mixing_timeline_stuck_at_zero": mixing_pos_zero,
+        "mixing_dual_full_ticks": dual_full,
+        "bake_ready_meta": bake_ready_meta,
+        "transition_fingerprints": fingerprints,
+        "unique_transition_fingerprints": len(fingerprints),
     }
 
 

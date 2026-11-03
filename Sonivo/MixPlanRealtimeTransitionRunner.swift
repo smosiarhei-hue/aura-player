@@ -154,6 +154,38 @@ enum MashupLiveEQEnvelope {
         return (out, inn)
     }
 
+    /// Stem-bake path: mid-side CAF already carved — only restore bass swap + B
+    /// lead duck (scaled). Full archetype EQ + A presence boost re-muddied field mixes.
+    static func stemBakeOffsets(
+        progress: Double,
+        style: MashupLiveStyle
+    ) -> (outgoing: [Float], incoming: [Float]) {
+        let p = min(1, max(0, progress))
+        let bassAt = min(0.28, max(0.04, style.bassSwapAt))
+        let handoff = min(0.96, max(0.72, style.handoffAt))
+        let pocketD = max(0.7, style.vocalPocketDepth)
+        let hpfD = max(0.7, style.hpfDepth)
+        let scale: Float = 0.65
+        var out = Array(repeating: Float(0), count: bandCount)
+        var inn = Array(repeating: Float(0), count: bandCount)
+        let outLive = 1 - ramp(p, from: handoff, to: min(1, handoff + 0.06))
+        // A: hand lows to B; no mid presence boost (vocal stem already has it).
+        out[0] = clampDB(-12 * scale * ramp(p, from: 0, to: max(0.06, bassAt)))
+        out[1] = clampDB(-10 * scale * ramp(p, from: 0, to: max(0.06, bassAt)))
+        out[2] = clampDB(-6 * scale * ramp(p, from: 0.02, to: max(0.10, bassAt)))
+        out[8] = clampDB(-4 * hpfD * scale * (1 - outLive))
+        out[9] = clampDB(-3 * hpfD * scale * (1 - outLive))
+        // B: keep kick; duck residual lead until LAND.
+        let inInstr = 1 - ramp(p, from: handoff - 0.01, to: min(0.99, handoff + 0.05))
+        let leadFloor = clampDB(-9 * max(1.0, pocketD) * scale * inInstr)
+        inn[0] = clampDB(1.6 * scale * inInstr)
+        inn[1] = clampDB(1.1 * scale * inInstr)
+        inn[5] = clampDB(leadFloor * 0.9)
+        inn[6] = clampDB(leadFloor)
+        inn[7] = clampDB(leadFloor * 0.75)
+        return (out, inn)
+    }
+
     /// Apple Automix live EQ (no stem bake): A vocal isolate over B beat bed,
     /// then B lead releases at LAND. Matches IMG_7144 stem grammar.
     private static func applyOneVocalGate(
