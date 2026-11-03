@@ -280,6 +280,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("mashupBakeOutgoingBaseCue = cueA + bakeLag", player)
         self.assertIn("mashupBakeOutgoingBaseCue + elapsed", player)
         self.assertIn("Remount the chrome/playhead clock onto track A", player)
+        self.assertIn("self.startTimer()", player)
         # playbackProgress must prefer bake outgoing clock over liveProgress/stem t=0.
         prog = player.index("var playbackProgress: Double")
         bake_clock = player.index("mashupBakeOutgoingBaseCue + elapsed", prog)
