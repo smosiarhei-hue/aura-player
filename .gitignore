@@ -46,3 +46,6 @@ tools/videoshot-studio/*.mp4
 
 # Licensed karaoke font materialized from the checked payload by the app pre-build phase.
 /Sonivo/KaraokeFonts/Onest-Bold.ttf
+
+# Large screen-recording sources (rebuild from Drive / local)
+marketing/threads-promo/raw/
