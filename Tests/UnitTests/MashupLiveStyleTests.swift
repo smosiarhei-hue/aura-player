@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Mashup Live Style")
 struct MashupLiveStyleTests {
-    @Test("Beatmatched plan accel into rateB, holds, then settles")
+    @Test("Beatmatched Automix snaps to rateB, holds, then settles")
     func beatmatchRatesAccelHoldSettle() {
         let plan = TransitionPlan(
             type: .beatmatchedShort,
@@ -30,42 +30,50 @@ struct MashupLiveStyleTests {
             incomingDuration: 200
         )
         #expect(style.isBeatmatched)
+        #expect(!style.isDuet)
         #expect(abs(style.rateB - 1.06) < 0.001)
 
-        // Accel from natural tempo — not a hard jump to rateB.
+        // Apple Automix: locked grid from the first frame (no slow accel from 1.0).
         let start = style.playbackRates(progress: 0)
-        #expect(abs(start.incoming - 1.0) < 0.02)
-        #expect(abs(start.outgoing - 1.0) < 0.02)
+        #expect(abs(start.incoming - 1.06) < 0.01)
+        #expect(abs(start.outgoing - 1.0) < 0.01)
 
         let midLock = style.playbackRates(progress: 0.35)
         #expect(abs(midLock.incoming - 1.06) < 0.01)
 
-        let late = style.playbackRates(progress: 0.98)
-        #expect(abs(late.incoming - 1.0) < 0.05)
+        // Apple Automix LAND remounts dry B at 1.0 — stay locked through the mashup window.
+        let late = style.playbackRates(progress: 0.90)
+        #expect(abs(late.incoming - 1.06) < 0.01)
         // Apple Automix surfaces a single Mixing badge (no LOCK/KEY sub-phases).
         #expect(style.phaseLabel(progress: 0.05) == "MIXING")
     }
 
-    @Test("Pitch cents ramp in, hold through handoff, ease out")
+    @Test("Automix pitch snaps in; Duet still ramps")
     func pitchCentsRamp() {
         var style = MashupLiveStyle.fallback
         style.pitchCentsB = 100
         style.handoffAt = 0.50
         style.bassSwapAt = 0.28
         style.isBeatmatched = true
+        style.isDuet = false
         style.targetBPM = 124
         style.rateB = 1.04
 
         let early = style.pitchCents(progress: 0.02)
-        #expect(abs(early) < 40)
+        #expect(abs(early - 100) < 1)
         let locked = style.pitchCents(progress: 0.30)
         #expect(abs(locked - 100) < 1)
         let late = style.pitchCents(progress: 0.95)
         #expect(abs(late) < abs(locked))
         #expect(style.phaseLabel(progress: 0.22) == "MIXING")
+
+        var duet = style
+        duet.isDuet = true
+        let duetEarly = duet.pitchCents(progress: 0.02)
+        #expect(abs(duetEarly) < 40)
     }
 
-    @Test("Apple Automix volumes: A vocal + B beat full, hard mute A at LAND")
+    @Test("Apple Automix volumes: A vocal over quieter B bed, hard mute A at LAND")
     func appleAutomixVolumesHardLand() {
         var style = MashupLiveStyle.resolve(
             plan: nil,
@@ -76,6 +84,7 @@ struct MashupLiveStyleTests {
         )
         style.applyAutomixPlaybackCharacter()
         #expect(style.handoffAt >= 0.88)
+        #expect(style.oneVocalConflict)
         #expect(style.phaseLabel(progress: 0.35) == "MIXING")
         #expect(style.phaseLabel(progress: 0.95) == "MIXING")
 
@@ -83,11 +92,25 @@ struct MashupLiveStyleTests {
         let mid = style.volumes(progress: 0.50)
         let land = style.volumes(progress: min(0.99, style.handoffAt + 0.01))
         #expect(early.outgoing > 0.95)
-        #expect(early.incoming > 0.90) // B beat bed already in
+        #expect(early.incoming > 0.55 && early.incoming < 0.85) // ONE VOCAL bed under A
         #expect(mid.outgoing > 0.95)
-        #expect(mid.incoming > 0.95)
+        #expect(mid.incoming > 0.55 && mid.incoming < 0.90)
         #expect(land.outgoing == 0)
         #expect(land.incoming > 0.95)
+        #expect(abs(style.automixIncomingBedGain - 0.70) < 0.01)
+    }
+
+    @Test("Key-clash Automix keeps an even quieter B bed")
+    func keyClashBedQuieter() {
+        var style = MashupLiveStyle.fallback
+        style.applyAutomixPlaybackCharacter()
+        style.archetypeName = "echoFreeze"
+        style.pitchCentsB = 0
+        #expect(style.automixIncomingBedGain < 0.65)
+        style.pitchCentsB = -200
+        #expect(style.automixIncomingBedGain <= 0.55)
+        let mid = style.volumes(progress: 0.4)
+        #expect(mid.incoming <= 0.60)
     }
 
     @Test("Duet plan keeps dual vocal volumes and DUET phase labels")
@@ -140,6 +163,38 @@ struct MashupLiveStyleTests {
         #expect(style.isBeatmatched)
         #expect(style.targetBPM > 30)
         #expect(abs(style.rateA - 1) > 0.001 || abs(style.rateB - 1) > 0.001)
+    }
+
+    @Test("Flat plan rates recover beatmatch from profile BPM gap")
+    func flatPlanRatesRecoverFromProfiles() {
+        let a = profile("a", bpm: 118, key: "11A", mixIn: 8, mixOut: 168)
+        let b = profile("b", bpm: 128, key: "11A", mixIn: 16, mixOut: 160)
+        let plan = TransitionPlan(
+            type: .beatmatchedShort,
+            archetype: .dropSwap,
+            aOutStartSec: 160,
+            bInStartSec: 16,
+            bars: 8,
+            tempoTargetBPM: 123,
+            rateA: 1.0,
+            rateB: 1.0,
+            pitchShiftCentsB: 0,
+            gainOffsetBdB: 0,
+            loopBarsA: 0,
+            fx: [],
+            reason: "Beatmatch + Camelot (8 тактов, Точное совпадение ключа (11A))"
+        )
+        let style = MashupLiveStyle.resolve(
+            plan: plan,
+            outgoing: a,
+            incoming: b,
+            outgoingDuration: 210,
+            incomingDuration: 200
+        )
+        #expect(style.isBeatmatched)
+        #expect(abs(style.rateA - 1) > 0.001 || abs(style.rateB - 1) > 0.001)
+        let locked = style.playbackRates(progress: 0)
+        #expect(abs(locked.outgoing - 1) > 0.001 || abs(locked.incoming - 1) > 0.001)
     }
 
     private func profile(

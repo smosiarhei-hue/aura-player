@@ -367,7 +367,7 @@ public enum MidSideStemBaker {
                 cueSec: cueA,
                 durationSec: duration,
                 mode: .vocal,
-                amount: 0.94
+                amount: 1.0
             )
         )
         do {
@@ -377,7 +377,7 @@ public enum MidSideStemBaker {
                     cueSec: cueB,
                     durationSec: duration,
                     mode: .instrumental,
-                    amount: 0.94,
+                    amount: 1.0,
                     instrumentalUntilSec: landAtSec
                 )
             )
@@ -715,21 +715,22 @@ public enum MidSideStemBaker {
                 processedL = l
                 processedR = r
             case .instrumental:
+                // Harder lead notch than Lab karaoke — dual-full Automix was muddy
+                // when midPres leakage stacked with A vocal on device (field 1047).
                 let midKeep =
-                    midLp * (1 + 0.08 * a)
-                    + midBody * (1 - 0.22 * a)
-                    + midPres * (1 - 0.92 * a)
-                let sideBoost = side * (1 + 0.22 * a)
+                    midLp * (1 + 0.12 * a)
+                    + midBody * (1 - 0.50 * a)
+                    + midPres * (1 - 0.98 * a)
+                let sideBoost = side * (1 + 0.38 * a)
                 processedL = midKeep + sideBoost
                 processedR = midKeep - sideBoost
             case .vocal:
-                // Duet A = center vocal isolate (Lab karaoke invert): drop sides + sub,
-                // keep lead presence. This is the stem recipe — not a loudness boost.
+                // A = center vocal isolate: drop sides + sub, keep lead presence.
                 let midKeep =
-                    midLp * (1 - 0.90 * a)
-                    + midBody * (1 - 0.30 * a)
-                    + midPres * (1 + 0.75 * a)
-                let sideKeep = side * (1 - 0.95 * a)
+                    midLp * (1 - 0.96 * a)
+                    + midBody * (1 - 0.45 * a)
+                    + midPres * (1 + 0.95 * a)
+                let sideKeep = side * (1 - 0.98 * a)
                 processedL = midKeep + sideKeep
                 processedR = midKeep - sideKeep
             }

@@ -138,32 +138,51 @@ public struct MashupLiveStyle: Sendable, Equatable {
 
     /// Accel from natural tempo into `rateA`/`rateB`, hold the grid, then
     /// decelerate back to 1.0 after the musical handoff (MixPlanner `rateRamp`).
+    /// Apple Automix (non-duet) snaps to the locked grid immediately — a slow
+    /// accel left early MIXING / `bake.ready` at 1.000 even when the plan ≠ 1.
     public func playbackRates(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
-        let lockAt = tempoLockUntil
         let settleAt = settleStart
 
         let out: Float
         let inn: Float
-        if p < lockAt {
-            // Accel / decelerate into the shared grid from natural 1.0.
-            let t = Self.smoothstep(p / max(0.001, lockAt))
-            out = 1 + (rateA - 1) * t
-            inn = 1 + (rateB - 1) * t
-        } else if p < settleAt {
-            inn = rateB
-            // Archetype spice: slight outgoing slowdown into handoff (tape feel).
-            if (archetypeName == "tapeStop" || archetypeName == "echoFreeze"),
-               p > handoffAt - 0.12 {
-                let brake = Self.smoothstep((p - (handoffAt - 0.12)) / 0.12)
-                out = rateA + (max(0.88, rateA - 0.06) - rateA) * brake
+        if !isDuet, isBeatmatched {
+            // Snap lock → optional tape/echo brake → settle to natural.
+            if p < settleAt {
+                inn = rateB
+                if (archetypeName == "tapeStop" || archetypeName == "echoFreeze"),
+                   p > handoffAt - 0.12 {
+                    let brake = Self.smoothstep((p - (handoffAt - 0.12)) / 0.12)
+                    out = rateA + (max(0.88, rateA - 0.06) - rateA) * brake
+                } else {
+                    out = rateA
+                }
             } else {
-                out = rateA
+                let t = Self.smoothstep((p - settleAt) / max(0.001, 1 - settleAt))
+                out = rateA + (1 - rateA) * t
+                inn = rateB + (1 - rateB) * t
             }
         } else {
-            let t = Self.smoothstep((p - settleAt) / max(0.001, 1 - settleAt))
-            out = rateA + (1 - rateA) * t
-            inn = rateB + (1 - rateB) * t
+            let lockAt = tempoLockUntil
+            if p < lockAt {
+                // Duet / unmatched: accel into the shared grid from natural 1.0.
+                let t = Self.smoothstep(p / max(0.001, lockAt))
+                out = 1 + (rateA - 1) * t
+                inn = 1 + (rateB - 1) * t
+            } else if p < settleAt {
+                inn = rateB
+                if (archetypeName == "tapeStop" || archetypeName == "echoFreeze"),
+                   p > handoffAt - 0.12 {
+                    let brake = Self.smoothstep((p - (handoffAt - 0.12)) / 0.12)
+                    out = rateA + (max(0.88, rateA - 0.06) - rateA) * brake
+                } else {
+                    out = rateA
+                }
+            } else {
+                let t = Self.smoothstep((p - settleAt) / max(0.001, 1 - settleAt))
+                out = rateA + (1 - rateA) * t
+                inn = rateB + (1 - rateB) * t
+            }
         }
         return (
             max(0.84, min(1.16, out)),
@@ -171,19 +190,26 @@ public struct MashupLiveStyle: Sendable, Equatable {
         )
     }
 
-    /// Ramp Camelot pitch in, hold through vocal×instrumental, ease out after handoff.
+    /// Camelot pitch on B. Automix snaps the compensation immediately (short
+    /// mashup windows cannot afford a slow key ramp); Duet still ramps in.
     public func pitchCents(progress: Double) -> Float {
         guard abs(pitchCentsB) >= 0.5 else { return 0 }
         let p = min(1, max(0, progress))
+        let holdEnd = max(0.15, handoffAt)
+        if !isDuet {
+            if p <= holdEnd { return pitchCentsB }
+            let t = Self.smoothstep((p - holdEnd) / max(0.001, 1 - holdEnd))
+            return pitchCentsB * (1 - t)
+        }
         let rampInEnd = min(0.22, max(0.08, tempoLockUntil))
-        let holdEnd = max(rampInEnd + 0.05, handoffAt)
+        let duetHold = max(rampInEnd + 0.05, handoffAt)
         if p < rampInEnd {
             return pitchCentsB * Self.smoothstep(p / max(0.001, rampInEnd))
         }
-        if p <= holdEnd {
+        if p <= duetHold {
             return pitchCentsB
         }
-        let t = Self.smoothstep((p - holdEnd) / max(0.001, 1 - holdEnd))
+        let t = Self.smoothstep((p - duetHold) / max(0.001, 1 - duetHold))
         return pitchCentsB * (1 - t)
     }
 
@@ -196,19 +222,36 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return appleAutomixVolumes(progress: progress)
     }
 
-    /// Reference mashup: ~5s window, A vocal + B instr both loud, A mute at handoff.
+    /// Reference mashup: A vocal over B beat bed, A mute at handoff.
+    /// Compatible pairs can run B near unity; key-clash / echoFreeze / large
+    /// pitch keep a quieter bed so mid-side leakage does not stack two leads.
     private func appleAutomixVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
         let handoff = min(0.98, max(0.82, handoffAt))
         let lag = min(0.06, max(0.0, incomingVolumeLag))
         let outgoing: Float = p < handoff ? 1 : 0
+        let bed = automixIncomingBedGain
+        let bloomStart = max(lag + 0.02, handoff - 0.10)
         let incoming: Float
         if p <= lag, lag > 0.001 {
-            incoming = Float(p / lag)
+            incoming = Float(p / lag) * bed
+        } else if p < bloomStart {
+            incoming = bed
+        } else if p < handoff {
+            let t = Self.smoothstep((p - bloomStart) / max(0.001, handoff - bloomStart))
+            incoming = bed + (1 - bed) * t
         } else {
             incoming = 1
         }
         return (outgoing, min(1, max(0, incoming)))
+    }
+
+    /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).
+    public var automixIncomingBedGain: Float {
+        if abs(pitchCentsB) >= 80 { return 0.55 }
+        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.58 }
+        if oneVocalConflict { return 0.70 }
+        return 1.0
     }
 
     /// Lab `oneBarDuetVolumes`: invite → vocal stack (A stays strong) → LAND A out.
@@ -319,6 +362,18 @@ public struct MashupLiveStyle: Sendable, Equatable {
             ? max(-300, min(300, plan.pitchShiftCentsB))
             : max(-200, min(200, plan.pitchShiftCentsB))
         style.targetBPM = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : 0
+        // Field 1047: some beatmatch plans arrived with rateA=rateB=1.000 while
+        // profiles still disagree on BPM — rebuild the grid from profiles.
+        if abs(style.rateA - 1) < 0.002, abs(style.rateB - 1) < 0.002,
+           let a = outgoing, let b = incoming,
+           a.bpm > 30, b.bpm > 30,
+           abs(a.bpm - b.bpm) / max(a.bpm, 1) > 0.015,
+           let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) {
+            style.rateA = clampRate(tempo.rateA)
+            style.rateB = clampRate(tempo.rateB)
+            style.targetBPM = tempo.targetBPM
+            style.isBeatmatched = true
+        }
         if isDuetPlan {
             style.handoffAt = 0.68
             style.bassSwapAt = max(0.14, style.handoffAt - 0.22)

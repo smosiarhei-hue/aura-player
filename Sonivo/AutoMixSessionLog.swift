@@ -209,6 +209,9 @@ final class AutoMixSessionLog {
             "bake=\(core.mashupBakeActivePublic ? 1 : 0)",
             "volA=\(String(format: "%.2f", core.activeDeckVolumePublic))",
             "volB=\(String(format: "%.2f", core.idleDeckVolumePublic))",
+            "rateA=\(String(format: "%.3f", core.mashupLockedRateAPublic))",
+            "rateB=\(String(format: "%.3f", core.mashupLockedRateBPublic))",
+            "pitchB=\(String(format: "%.0f", core.mashupPitchCentsBPublic))",
             "err=\(core.playError ?? "-")"
         ].joined(separator: " ")
         // Dedupe identical ACTION-adjacent STATE spam within the same second fingerprint.

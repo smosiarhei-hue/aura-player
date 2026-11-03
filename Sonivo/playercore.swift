@@ -466,6 +466,10 @@ final class PlayerCore {
         if isUsingStreamPlayer { return 0 }
         return idlePlayer.volume
     }
+    /// Locked Automix style rates/pitch for session-log honesty (not live accel).
+    var mashupLockedRateAPublic: Float { activeMashupStyle.rateA }
+    var mashupLockedRateBPublic: Float { activeMashupStyle.rateB }
+    var mashupPitchCentsBPublic: Float { activeMashupStyle.pitchCentsB }
     var playbackRequestID: Int { generation }
     @ObservationIgnored private var lyricsSeekTarget: (id: UUID, track: UUID?, generation: Int, seconds: Double)?
 
@@ -2751,26 +2755,34 @@ final class PlayerCore {
                         self.streamDuration = current.duration
                         self.startTimer()
                         // Stems already carved; volumes + rates stay live on the dual decks.
-                        let rates = self.activeMashupStyle.playbackRates(progress: min(1, bakeLag / max(0.001, blend)))
-                        self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
-                        self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
-                        self.applyMashupTransitionEQ(progress: 0)
-                        AutoMixDJEngine.shared.markMashupProgress(0)
+                        // Enter at bake-lag progress so Automix snaps locked rates/pitch
+                        // (not the old accel-from-1.000 that field logs mistook for no beatmatch).
+                        let enterP = min(1, bakeLag / max(0.001, blend))
+                        let rates = self.activeMashupStyle.playbackRates(progress: enterP)
+                        self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
+                        self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
+                        self.applyMashupTransitionEQ(progress: enterP)
+                        AutoMixDJEngine.shared.markMashupProgress(enterP)
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
-                        AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
+                        AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: enterP)
+                        let lockedA = self.activeMashupStyle.rateA
+                        let lockedB = self.activeMashupStyle.rateB
+                        let pitchB = self.activeMashupStyle.pitchCentsB
                         SonivoDiagnostics.log(
-                            "[Mashup] \(duetBake ? "DUET" : "ONE VOCAL") dual-stem bake · A×\(String(format: "%.3f", rates.outgoing)) B×\(String(format: "%.3f", rates.incoming)) · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
+                            "[Mashup] \(duetBake ? "DUET" : "ONE VOCAL") dual-stem bake · A×\(String(format: "%.3f", lockedA)) B×\(String(format: "%.3f", lockedB)) pitchB=\(Int(pitchB))¢ · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
                             tag: "AUDIO"
                         )
                         AutoMixSessionLog.shared.event(
                             String(
-                                format: "bake.ready %@ lag=%.2fs cueA=%.1f cueB=%.1f rateA=%.3f rateB=%.3f",
+                                format: "bake.ready %@ lag=%.2fs cueA=%.1f cueB=%.1f rateA=%.3f rateB=%.3f pitchB=%.0f bed=%.2f",
                                 duetBake ? "duet" : "automix",
                                 bakeLag,
                                 cueA,
                                 cueB,
-                                rates.outgoing,
-                                rates.incoming
+                                lockedA,
+                                lockedB,
+                                pitchB,
+                                self.activeMashupStyle.automixIncomingBedGain
                             )
                         )
                         self.startTransitionTimer()
