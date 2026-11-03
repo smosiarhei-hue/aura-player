@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sonivo · Threads Promo Kit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #f4f1ec;
+      --muted: #9a958c;
+      --bg: #0b0c0e;
+      --panel: #141618;
+      --line: #2a2c30;
+      --accent: #d4a574;
+      --good: #7eb8a2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #070809;
+      color: var(--ink);
+      font-family: Manrope, system-ui, sans-serif;
+    }
+    header {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 40px 24px 12px;
+    }
+    header h1 {
+      font-family: Syne, sans-serif;
+      font-weight: 800;
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      letter-spacing: -0.04em;
+      margin: 0 0 8px;
+    }
+    header p { color: var(--muted); margin: 0; max-width: 54ch; line-height: 1.5; }
+    .meta {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px;
+    }
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .chip strong { color: var(--accent); font-weight: 700; }
+    .deck {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 24px 80px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 22px;
+    }
+    .card-wrap { display: flex; flex-direction: column; gap: 10px; }
+    .label {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    /* Threads portrait frame 1080×1350 → preview at 0.3x */
+    .frame {
+      width: 100%;
+      aspect-ratio: 1080 / 1350;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: none;
+    }
+    .poster {
+      width: 1080px;
+      height: 1350px;
+      transform-origin: top left;
+      position: absolute;
+      inset: 0;
+      /* scale to fit preview; JS sets exact scale */
+    }
+    .poster.cover {
+      background: var(--bg);
+      padding: 88px 72px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .poster.feature {
+      background: var(--bg);
+      padding: 72px 64px 64px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 36px;
+    }
+    .eyebrow {
+      font-size: 28px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .display {
+      font-family: Syne, sans-serif;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+      line-height: 0.92;
+      font-size: 128px;
+      margin: 18px 0 0;
+    }
+    .display.sm { font-size: 92px; }
+    .lede {
+      font-size: 36px;
+      line-height: 1.35;
+      color: var(--muted);
+      max-width: 16ch;
+      margin-top: 28px;
+    }
+    .rule {
+      height: 1px;
+      background: var(--line);
+      margin: 40px 0;
+      border: 0;
+    }
+    .stack {
+      display: grid;
+      gap: 22px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 22px;
+      align-items: start;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .idx {
+      font-family: Syne, sans-serif;
+      font-weight: 700;
+      font-size: 34px;
+      color: var(--accent);
+    }
+    .row h3 {
+      margin: 0 0 8px;
+      font-family: Syne, sans-serif;
+      font-size: 40px;
+      letter-spacing: -0.03em;
+    }
+    .row p {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      font-size: 24px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .footer b { color: var(--ink); font-weight: 700; }
+    .shot-slot {
+      border: 1px dashed #3a3d42;
+      border-radius: 28px;
+      background: linear-gradient(160deg, #15171a, #0f1012);
+      min-height: 620px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 40px;
+      color: var(--muted);
+      font-size: 28px;
+      line-height: 1.45;
+    }
+    .shot-slot strong { color: var(--ink); display: block; margin-bottom: 10px; font-size: 32px; }
+    .hero-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .cta-bar {
+      max-width: 1120px;
+      margin: 0 auto 48px;
+      padding: 0 24px;
+      display: grid;
+      gap: 16px;
+    }
+    textarea, pre.copy {
+      width: 100%;
+      min-height: 220px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      color: var(--ink);
+      padding: 18px;
+      font: 14px/1.55 Manrope, system-ui, sans-serif;
+      resize: vertical;
+    }
+    .refs a { color: var(--accent); }
+    .refs li { margin: 6px 0; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Sonivo · Threads kit</h1>
+    <p>
+      Карусель 1080×1350 в духе Swiss / editorial typography + слоты под реальные скрины.
+      Открой в Chrome → каждая карточка → скрин / экспорт. Стиль ближе к Threads (воздух, чёрно-белый) с брендом Sonivo.
+    </p>
+    <div class="meta">
+      <span class="chip">формат <strong>3:4 · 1080×1350</strong></span>
+      <span class="chip">шрифты <strong>Syne + Manrope</strong></span>
+      <span class="chip">реф <strong>Swiss editorial</strong></span>
+    </div>
+  </header>
+
+  <section class="cta-bar">
+    <div class="label">Готовый текст треда (скопируй в Threads)</div>
+    <textarea id="threadCopy" readonly>SONIVO
+
+Музыкальный плеер для iOS, который сводит треки как диджей — а не просто ставит следующий.
+
+Что внутри:
+• AutoMix Mashup — вокал A × бит B, beatmatch, Camelot, stems
+• Моя волна — живая лента Яндекс Музыки
+• 10-полосный EQ + живой спектр
+• Караоке / тексты, библиотека, Liquid Glass UI
+
+Слушаешь иначе. Сводишь как в клубе.
+
+#Sonivo #AutoMix #iOS #MusicApp</textarea>
+  </section>
+
+  <section class="deck" id="deck">
+    <!-- 1 TYPE COVER -->
+    <div class="card-wrap">
+      <div class="label">01 · Type cover</div>
+      <div class="frame"><div class="poster cover" data-poster>
+        <div>
+          <div class="eyebrow">iOS music player</div>
+          <h2 class="display">SONIVO</h2>
+          <p class="lede">Сведение треков. Не просто «далее».</p>
+        </div>
+        <div>
+          <hr class="rule" />
+          <div class="stack">
+            <div style="font-size:34px;color:var(--muted)">AutoMix Mashup · Моя волна · EQ</div>
+          </div>
+          <div class="footer" style="margin-top:48px">
+            <span>threads carousel · 01 / 07</span>
+            <b>Out now</b>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- 2 HERO PHOTO -->
+    <div class="card-wrap">
+      <div class="label">02 · Hero device</div>
+      <div class="frame"><div class="poster" data-poster style="padding:0">
+        <img class="hero-img" src="cards/01-hero.jpg" alt="Sonivo on iPhone" />
+      </div></div>
+    </div>
+
+    <!-- 3 AUTOMIX -->
+    <div class="card-wrap">
+      <div class="label">03 · AutoMix</div>
+      <div class="frame"><div class="poster feature" data-poster>
+        <div>
+          <div class="eyebrow">01 — Automix</div>
+          <h2 class="display sm">ONE VOCAL<br/>× BEAT</h2>
+        </div>
+        <div class="shot-slot">
+          <div>
+            <strong>Вставь скрин MIXING</strong>
+            бейдж MIXING · два трека · обложка A→B<br/>
+            файл: screens/automix.png
+          </div>
+        </div>
+        <div class="footer"><span>stem bake · beatmatch · Camelot</span><b>Mashup</b></div>
+      </div></div>
+    </div>
+
+    <!-- 4 WAVE -->
+    <div class="card-wrap">
+      <div class="label">04 · Моя волна</div>
+      <div class="frame"><div class="poster feature" data-poster>
+        <div>
+          <div class="eyebrow">02 — Wave</div>
+          <h2 class="display sm">МОЯ<br/>ВОЛНА</h2>
+        </div>
+        <div class="shot-slot">
+          <div>
+            <strong>Вставь скрин ленты</strong>
+            карточки настроения / очередь волны<br/>
+            файл: screens/wave.png
+          </div>
+        </div>
+        <div class="footer"><span>Yandex Music session</span><b>Live</b></div>
+      </div></div>
+    </div>
+
+    <!-- 5 EQ -->
+    <div class="card-wrap">
+      <div class="label">05 · EQ + Spectrum</div>
+      <div class="frame"><div class="poster feature" data-poster>
+        <div>
+          <div class="eyebrow">03 — Sound</div>
+          <h2 class="display sm">10 BAND<br/>EQ</h2>
+        </div>
+        <div class="shot-slot">
+          <div>
+            <strong>Вставь скрин эквалайзера</strong>
+            10 слайдеров + спектр<br/>
+            файл: screens/eq.png
+          </div>
+        </div>
+        <div class="footer"><span>31 Hz → 16 kHz</span><b>Studio</b></div>
+      </div></div>
+    </div>
+
+    <!-- 6 PLAYER -->
+    <div class="card-wrap">
+      <div class="label">06 · Player</div>
+      <div class="frame"><div class="poster feature" data-poster>
+        <div>
+          <div class="eyebrow">04 — Player</div>
+          <h2 class="display sm">LIQUID<br/>GLASS</h2>
+        </div>
+        <div class="shot-slot">
+          <div>
+            <strong>Вставь Now Playing</strong>
+            обложка, lyrics, таймлайн<br/>
+            файл: screens/player.png
+          </div>
+        </div>
+        <div class="footer"><span>native SwiftUI</span><b>Sonivo</b></div>
+      </div></div>
+    </div>
+
+    <!-- 7 FEATURE LIST -->
+    <div class="card-wrap">
+      <div class="label">07 · All features</div>
+      <div class="frame"><div class="poster cover" data-poster>
+        <div>
+          <div class="eyebrow">Full stack</div>
+          <h2 class="display sm" style="font-size:84px;margin-top:20px">Всё,<br/>что играет.</h2>
+        </div>
+        <div class="stack" style="margin-top:8px">
+          <div class="row"><div class="idx">01</div><div><h3>AutoMix Mashup</h3><p>Стемы, beatmatch, ключ, LAND</p></div></div>
+          <div class="row"><div class="idx">02</div><div><h3>Моя волна</h3><p>Живая сессия Яндекс Музыки</p></div></div>
+          <div class="row"><div class="idx">03</div><div><h3>EQ + спектр</h3><p>10 полос и 32-band FFT</p></div></div>
+          <div class="row"><div class="idx">04</div><div><h3>Караоке / тексты</h3><p>Синхронные lyrics на треке</p></div></div>
+          <div class="row"><div class="idx">05</div><div><h3>Библиотека</h3><p>Импорт, избранное, локальные файлы</p></div></div>
+        </div>
+        <div class="footer"><span>07 / 07</span><b>sonivo</b></div>
+      </div></div>
+    </div>
+  </section>
+
+  <section class="cta-bar refs">
+    <div class="label">Референсы типографики (репо / тулы)</div>
+    <ul>
+      <li><a href="https://github.com/Mendiak/plaintext" target="_blank" rel="noreferrer">Mendiak/plaintext</a> — Swiss editorial постеры, экспорт IG/X</li>
+      <li><a href="https://github.com/op7418/guizang-social-card-skill" target="_blank" rel="noreferrer">op7418/guizang-social-card-skill</a> — 28 editorial/Swiss раскладок → PNG</li>
+      <li><a href="https://github.com/joeseesun/qiaomu-info-card-designer" target="_blank" rel="noreferrer">joeseesun/qiaomu-info-card-designer</a> — magazine info cards для X</li>
+      <li><a href="https://github.com/capsrock/bauhaus-design-skill" target="_blank" rel="noreferrer">capsrock/bauhaus-design-skill</a> — Bauhaus / Swiss grid</li>
+      <li>Threads visual language: чёрный текст, белый воздух, system sans — <a href="https://designbycurio.com/threads-meta-2023" target="_blank" rel="noreferrer">Curio Threads design system</a></li>
+    </ul>
+    <div class="label" style="margin-top:18px">Что нужно от тебя</div>
+    <pre class="copy">1. 4–5 скринов с iPhone (без статус-бара ideally, или чистые):
+   - Now Playing
+   - AutoMix MIXING (бейдж + два трека)
+   - Моя волна / home
+   - EQ
+   - (опц.) Lyrics / Library
+
+2. Куда вести: TestFlight / сайт / «напишите в DM» / GitHub Releases
+
+3. Ник в Threads (@…) и язык поста (RU уже в textarea)
+
+4. Положи PNG в marketing/threads-promo/screens/ с именами:
+   automix.png · wave.png · eq.png · player.png
+   — и скажи «вставь скрины», я обновлю карточки.</pre>
+  </section>
+
+  <script>
+    function fitPosters() {
+      document.querySelectorAll('.frame').forEach((frame) => {
+        const poster = frame.querySelector('[data-poster]');
+        if (!poster) return;
+        const scale = frame.clientWidth / 1080;
+        poster.style.transform = `scale(${scale})`;
+      });
+    }
+    fitPosters();
+    addEventListener('resize', fitPosters);
+  </script>
+</body>
+</html>
