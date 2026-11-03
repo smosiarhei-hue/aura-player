@@ -3159,7 +3159,10 @@ final class PlayerCore {
         // Apple Automix / Duet / Mashup: one hard cut at LAND — artwork, timeline,
         // and dry B switch together. No mid-mix timeline snap to a second clock.
         if mashup {
-            let landAt = activeMashupStyle.handoffAt
+            // Use automixLandProgress (not raw handoffAt) so LAND waits for B bloom.
+            let landAt = activeMashupStyle.isDuet
+                ? activeMashupStyle.handoffAt
+                : activeMashupStyle.automixLandProgress
             if p >= landAt, let incomingTrack {
                 completeTransition(to: incomingTrack)
             }

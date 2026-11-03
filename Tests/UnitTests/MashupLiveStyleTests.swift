@@ -88,18 +88,22 @@ struct MashupLiveStyleTests {
         #expect(style.phaseLabel(progress: 0.35) == "MIXING")
         #expect(style.phaseLabel(progress: 0.95) == "MIXING")
 
+        #expect(style.handoffAt >= 0.90)
+        #expect(style.automixLandProgress >= 0.90)
         let early = style.volumes(progress: 0.12)
         let mid = style.volumes(progress: 0.50)
-        let preLand = style.volumes(progress: max(0, style.handoffAt - 0.02))
-        let land = style.volumes(progress: min(0.99, style.handoffAt + 0.01))
+        let bloom = style.volumes(progress: style.automixLandProgress - 0.10)
+        let preLand = style.volumes(progress: max(0, style.automixLandProgress - 0.02))
+        let land = style.volumes(progress: min(0.99, style.automixLandProgress + 0.01))
         #expect(early.outgoing > 0.95)
-        #expect(early.incoming > 0.70 && early.incoming < 0.95) // ONE VOCAL bed under A
+        #expect(early.incoming > 0.75 && early.incoming < 0.98)
         #expect(mid.outgoing > 0.95)
-        #expect(mid.incoming > 0.70 && mid.incoming < 0.95)
-        #expect(preLand.outgoing < 0.85) // soft A fade before LAND
+        #expect(mid.incoming > 0.75 && mid.incoming < 0.98)
+        #expect(bloom.incoming > mid.incoming) // B rises before LAND
+        #expect(preLand.outgoing < 0.85)
         #expect(land.outgoing == 0)
         #expect(land.incoming > 0.95)
-        #expect(abs(style.automixIncomingBedGain - 0.86) < 0.01)
+        #expect(abs(style.automixIncomingBedGain - 0.90) < 0.01)
     }
 
     @Test("Key-clash Automix keeps a quieter B bed without a loudness cliff")
@@ -108,11 +112,11 @@ struct MashupLiveStyleTests {
         style.applyAutomixPlaybackCharacter()
         style.archetypeName = "echoFreeze"
         style.pitchCentsB = 0
-        #expect(style.automixIncomingBedGain < 0.82)
+        #expect(style.automixIncomingBedGain < 0.90)
         style.pitchCentsB = -200
-        #expect(style.automixIncomingBedGain <= 0.72)
+        #expect(style.automixIncomingBedGain <= 0.78)
         let mid = style.volumes(progress: 0.4)
-        #expect(mid.incoming <= 0.75)
+        #expect(mid.incoming <= 0.85)
     }
 
     @Test("Duet plan keeps dual vocal volumes and DUET phase labels")

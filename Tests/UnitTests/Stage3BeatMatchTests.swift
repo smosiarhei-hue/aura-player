@@ -28,6 +28,15 @@ struct Stage3BeatMatchTests {
         #expect(!CamelotCompatibility.areCompatible("8A", "2B"))
     }
 
+    @Test("Hard Camelot clash still returns capped partial pitch")
+    func camelotPartialPitchOnClash() {
+        // 4A vs 10A is a 6-semitone conflict (field 1053 Fantasm→Другая).
+        let match = CamelotCompatibility.match("4A", "10A", maxSemitones: 2)
+        #expect(!match.isHarmonicallyViable)
+        #expect(abs(match.pitchShiftCents) == 200)
+        #expect(match.description.contains("partial"))
+    }
+
     @Test("Reliable pair selects beatmatched transition")
     func beatmatchedPlan() {
         let plan = MixPlanner.plan(from: profile("a", bpm: 120, key: "8A"),

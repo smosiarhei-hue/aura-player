@@ -267,7 +267,7 @@ public enum MixPlanner {
             tempoTargetBPM: tempo == nil ? 0 : bpm,
             rateA: rateA,
             rateB: rateB,
-            pitchShiftCentsB: harmonic.isHarmonicallyViable ? harmonic.pitchShiftCents : 0,
+            pitchShiftCentsB: max(-200, min(200, harmonic.pitchShiftCents)),
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
             loopBarsA: 0,
             fx: events,
@@ -452,7 +452,7 @@ public enum MixPlanner {
             archetype: .echoFreeze,
             aOutStartSec: out, bInStartSec: incoming, bars: bars,
             tempoTargetBPM: targetBPM, rateA: rateA, rateB: rateB,
-            pitchShiftCentsB: harmonic.isHarmonicallyViable ? harmonic.pitchShiftCents : 0,
+            pitchShiftCentsB: max(-200, min(200, harmonic.pitchShiftCents)),
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
             loopBarsA: 0, fx: events,
             reason: beatmatched
@@ -760,8 +760,11 @@ public enum CamelotCompatibility {
         if semitones < -6 { semitones += 12 }
 
         let cap = max(0, min(6, maxSemitones))
+        // Always bias B toward A within the cap — field 1053 left pitchB=0 on
+        // 6-semitone clashes so Automix never keyed the incoming stem.
+        let applied = max(-cap, min(cap, semitones))
+        let cents = Float(applied * 100)
         if abs(semitones) <= cap {
-            let cents = Float(semitones * 100)
             let sign = cents > 0 ? "+\(Int(cents))" : "\(Int(cents))"
             return HarmonicMatch(
                 isNaturallyCompatible: false,
@@ -771,11 +774,12 @@ public enum CamelotCompatibility {
             )
         }
 
+        let partial = cents == 0 ? "" : " · partial \(cents > 0 ? "+" : "")\(Int(cents))¢"
         return HarmonicMatch(
             isNaturallyCompatible: false,
-            pitchShiftCents: 0,
+            pitchShiftCents: cents,
             isHarmonicallyViable: false,
-            description: "Тональный конфликт (\(rawA) vs \(rawB), разрыв \(abs(semitones)) полутонов)"
+            description: "Тональный конфликт (\(rawA) vs \(rawB), разрыв \(abs(semitones)) полутонов)\(partial)"
         )
     }
 

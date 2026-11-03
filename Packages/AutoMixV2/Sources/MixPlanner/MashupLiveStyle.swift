@@ -225,12 +225,18 @@ public struct MashupLiveStyle: Sendable, Equatable {
     /// Reference mashup: A vocal over B beat bed, soft A fade into LAND.
     /// Compatible pairs can run B near unity; key-clash / echoFreeze / large
     /// pitch keep a quieter bed so mid-side leakage does not stack two leads.
+    /// Progress where Automix hard-cuts to dry B. Must match `appleAutomixVolumes`
+    /// handoff — field 1053 LANDed at raw handoffAt 0.78 while volumes still bloomed to 0.82.
+    public var automixLandProgress: Double {
+        min(0.96, max(0.90, handoffAt))
+    }
+
     private func appleAutomixVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
-        let handoff = min(0.98, max(0.82, handoffAt))
+        let handoff = automixLandProgress
         let lag = min(0.08, max(0.02, incomingVolumeLag > 0 ? incomingVolumeLag : 0.04))
-        // Soft A out (~4% of blend ≈ 0.25–0.35s) — hard 1→0 at LAND felt like a cut.
-        let aFade = max(0.035, min(0.06, 1 - handoff + 0.04))
+        // Soft A out over ~8% of blend so LAND is a handoff, not a mute.
+        let aFade = max(0.06, min(0.10, 1 - handoff + 0.06))
         let aFadeStart = max(0, handoff - aFade)
         let outgoing: Float
         if p < aFadeStart {
@@ -241,10 +247,11 @@ public struct MashupLiveStyle: Sendable, Equatable {
             outgoing = 0
         }
         let bed = automixIncomingBedGain
-        let bloomStart = max(lag + 0.02, handoff - 0.12)
+        // Start blooming B ~28% before LAND so the mashup is audible mid-window
+        // (1053 kept bed 0.76 until ~txP 0.72 then hard-cut).
+        let bloomStart = max(lag + 0.04, handoff - 0.28)
         let incoming: Float
         if p <= lag {
-            // Ease B in — avoid a sudden bed dump under full-volume A.
             incoming = Self.smoothstep(p / lag) * bed
         } else if p < bloomStart {
             incoming = bed
@@ -258,11 +265,10 @@ public struct MashupLiveStyle: Sendable, Equatable {
     }
 
     /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).
-    /// Kept high enough that Automix entry does not feel like a volume drop.
     public var automixIncomingBedGain: Float {
-        if abs(pitchCentsB) >= 80 { return 0.72 }
-        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.76 }
-        if oneVocalConflict { return 0.86 }
+        if abs(pitchCentsB) >= 80 { return 0.78 }
+        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.84 }
+        if oneVocalConflict { return 0.90 }
         return 1.0
     }
 
@@ -317,18 +323,18 @@ public struct MashupLiveStyle: Sendable, Equatable {
     }
 
     /// Apple Automix live character: A vocal over B beat, hard LAND near the end.
-    /// Preserves per-pair handoff / bassSwap / lag from the archetype + profiles —
-    /// only clamps into Automix-safe bands (field: every transition looked identical).
+    /// Preserves per-pair bassSwap / lag — LAND stays in the final ~8–10% so the
+    /// full stem window is audible (field 1053 cut at 0.78 before B bloomed).
     public mutating func applyAutomixPlaybackCharacter() {
         isDuet = false
         oneVocalConflict = true
         if archetypeName == "duet" { archetypeName = "dropSwap" }
-        handoffAt = min(0.96, max(0.78, handoffAt > 0.5 ? handoffAt : 0.90))
+        handoffAt = min(0.94, max(0.90, handoffAt > 0.85 ? handoffAt : 0.92))
         // Keep pair-specific bass handoff; only force "early B bass" when unset/extreme.
         if bassSwapAt < 0.015 || bassSwapAt > handoffAt - 0.12 {
-            bassSwapAt = min(0.22, max(0.02, handoffAt * 0.12))
+            bassSwapAt = min(0.28, max(0.04, handoffAt * 0.18))
         } else {
-            bassSwapAt = min(bassSwapAt, max(0.02, handoffAt - 0.45))
+            bassSwapAt = min(bassSwapAt, max(0.04, handoffAt - 0.40))
         }
         vocalHoldUntil = handoffAt
         vocalPocketUntil = handoffAt
@@ -481,7 +487,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
         // Light salt from track ids so near-identical analysis still diverges slightly.
         if let a = outgoing, let b = incoming {
             let salt = pairSalt(a.trackID.raw, b.trackID.raw)
-            style.handoffAt = min(0.96, max(0.78, style.handoffAt + salt * 0.03))
+            // Keep salt inside late-LAND band — never pull below 0.88 (1053 h0.78 cut).
+            style.handoffAt = min(0.95, max(0.88, style.handoffAt + salt * 0.02))
             style.bassSwapAt = min(style.handoffAt - 0.15, max(0.02, style.bassSwapAt + salt * 0.04))
             style.incomingVolumeLag = min(0.10, max(0.02, style.incomingVolumeLag + abs(salt) * 0.02))
         }
