@@ -574,6 +574,10 @@ final class PlayerCore {
     /// Real incoming file + cue when mashup plays a baked master from t=0.
     private var mashupBakeRealIncomingURL: URL?
     private var mashupBakeIncomingBaseCue: Double = 0
+    /// Musical position on outgoing track A when the bake window starts playing
+    /// (`cueA + bakeLag`). Stem CAF files begin at 0 — without this the chrome
+    /// timeline resets to 0:00 for the whole MIXING phase.
+    private var mashupBakeOutgoingBaseCue: Double = 0
     /// True while playing the offline A+B master (volumes already baked in).
     private var mashupPlayingMasterBake = false
     /// Musical cue B (mix-in). Kept separate from bake schedule offset so the
@@ -609,7 +613,14 @@ final class PlayerCore {
     /// Live outgoing-deck position (never the Automix B handoff snap).
     /// Used for scrub/seek while a mashup is running — seek cancels the mix on this timeline.
     var playbackProgress: Double {
-        isUsingStreamPlayer ? max(0, progress) : liveProgress()
+        // Stem/master bake CAF starts at t=0; map wall-clock back onto track A's cue.
+        if isTransitioning,
+           mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake,
+           let start = transitionStartTime {
+            let elapsed = max(0, (transitionPausedAt ?? Date()).timeIntervalSince(start))
+            return min(max(0, mashupBakeOutgoingBaseCue + elapsed), duration)
+        }
+        return isUsingStreamPlayer ? max(0, progress) : liveProgress()
     }
 
     /// Duration of the live outgoing deck (paired with `playbackProgress`).
@@ -1522,7 +1533,12 @@ final class PlayerCore {
         streamMigrationTask?.cancel()
         if isTransitioning && transitionStartTime == nil { cancelTransition() }
         let streamPosition = CMTimeGetSeconds(activeStreamingPlayer.currentTime())
-        pausedProgress = isUsingStreamPlayer && streamPosition.isFinite ? streamPosition : liveProgress()
+        // Prefer playbackProgress so mashup-bake MIXING keeps track A's clock on pause.
+        if isUsingStreamPlayer, streamPosition.isFinite {
+            pausedProgress = streamPosition
+        } else {
+            pausedProgress = playbackProgress
+        }
 
         // 1. Unconditionally pause ALL streaming AVPlayer instances
         activeStreamingPlayer.pause()
@@ -2667,6 +2683,7 @@ final class PlayerCore {
                         self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
                         self.mashupBakeRealIncomingURL = inURL
                         self.mashupBakeIncomingBaseCue = cueB + bakeLag
+                        self.mashupBakeOutgoingBaseCue = cueA + bakeLag
                         self.mashupIncomingCueSec = cueB
                         // Keep musical cue B for timeline math; schedule offset is bakeLag only.
                         self.incomingStartPosition = cueB
@@ -2677,6 +2694,12 @@ final class PlayerCore {
                         )
                         self.incomingLaneReady = true
                         self.transitionStartTime = Date()
+                        // Remount the chrome/playhead clock onto track A (not bake file t=0).
+                        self.anchorDate = self.transitionStartTime
+                        self.anchorOffset = self.mashupBakeOutgoingBaseCue
+                        self.pausedProgress = self.mashupBakeOutgoingBaseCue
+                        self.progress = self.mashupBakeOutgoingBaseCue
+                        self.streamDuration = current.duration
                         // Stems already carved; volumes + rates stay live on the dual decks.
                         let rates = self.activeMashupStyle.playbackRates(progress: min(1, bakeLag / max(0.001, blend)))
                         self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
@@ -2937,6 +2960,7 @@ final class PlayerCore {
         mashupBakeTempURLs = []
         mashupBakeRealIncomingURL = nil
         mashupBakeIncomingBaseCue = 0
+        mashupBakeOutgoingBaseCue = 0
         mashupPlayingMasterBake = false
         mashupIncomingCueSec = 0
     }

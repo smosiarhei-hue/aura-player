@@ -272,6 +272,20 @@ class AutoMixMashupTests(unittest.TestCase):
         # Snapshot path must go through the gate, not bare PlayerCore.shared.
         self.assertNotIn("let core = PlayerCore.shared", log)
 
+    def test_mashup_bake_keeps_outgoing_track_timeline_until_land(self):
+        """Field log: during MIXING pos/dispPos stayed at 0 after stem bake because
+        CAF playhead starts at t=0. Chrome must keep track A clock until LAND."""
+        player = (ROOT / "Sonivo/playercore.swift").read_text()
+        self.assertIn("mashupBakeOutgoingBaseCue", player)
+        self.assertIn("mashupBakeOutgoingBaseCue = cueA + bakeLag", player)
+        self.assertIn("mashupBakeOutgoingBaseCue + elapsed", player)
+        self.assertIn("Remount the chrome/playhead clock onto track A", player)
+        # playbackProgress must prefer bake outgoing clock over liveProgress/stem t=0.
+        prog = player.index("var playbackProgress: Double")
+        bake_clock = player.index("mashupBakeOutgoingBaseCue + elapsed", prog)
+        live = player.index("liveProgress()", prog)
+        self.assertLess(bake_clock, live)
+
     def test_drop_swap_plan_still_encodes_mashup_fx(self):
         planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
         self.assertIn("case .seamlessLoop", planner)
