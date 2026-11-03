@@ -22,7 +22,8 @@ public enum MixPlanner {
             return crossfade(a, b, settings, "Fallback: трек не предназначен для сведения")
         }
 
-        let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey)
+        // ±1 semitone max for Automix — ±200¢ TimePitch sounded cheap/dirty in field 1055.
+        let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey, maxSemitones: 1)
         let bpmDiffPct: Float = (a.bpm > 30 && b.bpm > 30) ? abs(a.bpm - b.bpm) / a.bpm : 1.0
 
         // 1. Оценка уверенности сетки и выбор длины перехода по DJ Confidence Ladder (8-16 тактов)
@@ -362,15 +363,15 @@ public enum MixPlanner {
                     fromValue: conflict ? 1 : 0.15, toValue: conflict ? 0.15 : 0, curve: .sCurve),
             FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: handoffBar,
                     fromValue: conflict ? -14 : -8, toValue: 0, curve: .sCurve),
-            // High-Pass Resonant Riser (20 -> 4500 Гц с подъемом Q)
-            FxEvent(target: .a, kind: .highPass, startBar: 0, endBar: bars,
-                    fromValue: 20, toValue: 4500, curve: .exp),
-            // Low-Pass Reveal (1200 -> 20000 Гц)
+            // Soft HPF exit (was 4500 Hz riser — whistly/cheap under stems).
+            FxEvent(target: .a, kind: .highPass, startBar: max(0, bars - 3), endBar: bars,
+                    fromValue: 20, toValue: 1800, curve: .exp),
+            // Low-Pass Reveal
             FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: min(2, bars / 2),
-                    fromValue: 1200, toValue: 20000, curve: .exp),
-            // Echo Out wash на хвосте (хвост продлится в Delay Spillover на 2.8с)
-            FxEvent(target: .a, kind: .echoOut, startBar: max(0, bars - 4), endBar: bars,
-                    fromValue: 0, toValue: 65, curve: .sCurve, param: 50),
+                    fromValue: 1600, toValue: 20_000, curve: .exp),
+            // Light echo tail (was wet 65 / fb 50 — delay wash).
+            FxEvent(target: .a, kind: .echoOut, startBar: max(0, bars - 2.5), endBar: bars,
+                    fromValue: 0, toValue: 32, curve: .sCurve, param: 24),
             FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 1), endBar: bars,
                     fromValue: tempo.rateB, toValue: 1, curve: .sCurve)
         ]
@@ -435,10 +436,10 @@ public enum MixPlanner {
                     fromValue: conflict ? 1 : 0.35, toValue: conflict ? 0.1 : 0, curve: .sCurve),
             FxEvent(target: .b, kind: .vocalDucking, startBar: 0, endBar: bars * 0.6,
                     fromValue: conflict ? -14 : -10, toValue: 0, curve: .sCurve),
-            FxEvent(target: .a, kind: .echoOut, startBar: bars * 0.2, endBar: bars,
-                    fromValue: 0, toValue: 70, curve: .sCurve, param: 60),
+            FxEvent(target: .a, kind: .echoOut, startBar: bars * 0.55, endBar: bars,
+                    fromValue: 0, toValue: 34, curve: .sCurve, param: 26),
             FxEvent(target: .a, kind: .highPass, startBar: bars * 0.55, endBar: bars,
-                    fromValue: 20, toValue: 2800, curve: .exp)
+                    fromValue: 20, toValue: 1600, curve: .exp)
         ]
         if beatmatched {
             events.append(
@@ -518,7 +519,7 @@ public enum MixPlanner {
             FxEvent(target: .a, kind: .volume, startBar: bars - 0.1, endBar: bars,
                     fromValue: 0, toValue: -60, curve: .linear),
             FxEvent(target: .a, kind: .echoOut, startBar: bars - 0.5, endBar: bars,
-                    fromValue: 0, toValue: 65, curve: .sCurve, param: 55),
+                    fromValue: 0, toValue: 30, curve: .sCurve, param: 22),
             FxEvent(target: .b, kind: .volume, startBar: bars - 0.05, endBar: bars,
                     fromValue: -40, toValue: 0, curve: .linear)
         ]

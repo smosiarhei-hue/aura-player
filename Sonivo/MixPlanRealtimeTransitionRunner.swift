@@ -58,7 +58,8 @@ enum MashupLiveEQEnvelope {
         let bassAt = min(0.7, max(0.12, style.bassSwapAt))
         let holdUntil = min(0.75, max(bassAt + 0.05, style.vocalHoldUntil))
         let pocketUntil = min(0.95, max(holdUntil + 0.08, style.vocalPocketUntil))
-        let handoff = min(0.85, max(holdUntil, style.handoffAt))
+        // Keep EQ handoff aligned with volume LAND (was clamped to 0.85 → dual-vocal gap).
+        let handoff = min(0.94, max(holdUntil, style.isDuet ? style.handoffAt : style.automixLandProgress))
         let bassD = max(0.5, style.bassDepth)
         let pocketD = max(0.5, style.vocalPocketDepth)
         let hpfD = max(0.5, style.hpfDepth)
@@ -166,27 +167,31 @@ enum MashupLiveEQEnvelope {
         let handoff = min(0.96, max(0.72, style.handoffAt))
         let pocketD = max(0.7, style.vocalPocketDepth)
         let hpfD = max(0.7, style.hpfDepth)
-        let scale: Float = 0.45
+        // Stronger B-lead duck — AU instrumental still leaks mid-lead (field 1055 mud).
+        let scale: Float = 0.82
         // First ~10% of the blend keeps near-flat EQ so stem mount matches dry A.
         let entry = ramp(p, from: 0.02, to: 0.12)
         var out = Array(repeating: Float(0), count: bandCount)
         var inn = Array(repeating: Float(0), count: bandCount)
-        let outLive = 1 - ramp(p, from: handoff - 0.04, to: min(1, handoff + 0.02))
-        // A: hand lows to B after entry grace; no mid presence boost.
+        let landAt = style.automixLandProgress
+        let outLive = 1 - ramp(p, from: landAt - 0.06, to: min(1, landAt + 0.02))
+        // A: hand lows to B after entry grace; light HPF as A exits (no mid boost).
         let bassStart = max(0.08, bassAt * 0.55)
-        out[0] = clampDB(-10 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
-        out[1] = clampDB(-8 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
-        out[2] = clampDB(-5 * scale * entry * ramp(p, from: bassStart + 0.02, to: max(0.12, bassAt)))
-        out[8] = clampDB(-3 * hpfD * scale * (1 - outLive))
-        out[9] = clampDB(-2.5 * hpfD * scale * (1 - outLive))
-        // B: keep kick; soft residual-lead duck until LAND (less scoop than before).
-        let inInstr = 1 - ramp(p, from: handoff - 0.04, to: min(0.99, handoff + 0.02))
-        let leadFloor = clampDB(-6 * max(1.0, pocketD) * scale * entry * inInstr)
-        inn[0] = clampDB(1.2 * scale * entry * inInstr)
-        inn[1] = clampDB(0.9 * scale * entry * inInstr)
-        inn[5] = clampDB(leadFloor * 0.85)
+        out[0] = clampDB(-12 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
+        out[1] = clampDB(-10 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
+        out[2] = clampDB(-6 * scale * entry * ramp(p, from: bassStart + 0.02, to: max(0.12, bassAt)))
+        out[3] = clampDB(-3 * hpfD * scale * (1 - outLive))
+        out[4] = clampDB(-4 * hpfD * scale * (1 - outLive))
+        out[8] = clampDB(-3.5 * hpfD * scale * (1 - outLive))
+        out[9] = clampDB(-3 * hpfD * scale * (1 - outLive))
+        // B: keep kick; deeper residual-lead duck until LAND.
+        let inInstr = 1 - ramp(p, from: landAt - 0.06, to: min(0.99, landAt + 0.02))
+        let leadFloor = clampDB(-11 * max(1.0, pocketD) * scale * entry * inInstr)
+        inn[0] = clampDB(1.0 * scale * entry * inInstr)
+        inn[1] = clampDB(0.7 * scale * entry * inInstr)
+        inn[5] = clampDB(leadFloor * 0.9)
         inn[6] = clampDB(leadFloor)
-        inn[7] = clampDB(leadFloor * 0.7)
+        inn[7] = clampDB(leadFloor * 0.75)
         return (out, inn)
     }
 
@@ -202,29 +207,29 @@ enum MashupLiveEQEnvelope {
     ) -> (outgoing: [Float], incoming: [Float]) {
         var out = shaped.outgoing
         var inn = shaped.incoming
-        // A: kill bass/sides feel, keep lead presence until hard LAND mute via volumes.
-        let outVocal = 1 - ramp(p, from: handoff, to: min(1, handoff + 0.06))
+        // A: kill bass; light presence only (heavy +3 dB mids made dry-path mashups harsh).
+        let outVocal = 1 - ramp(p, from: handoff, to: min(1, handoff + 0.08))
         if out.count >= 10 {
             out[0] = clampDB(min(out[0], -12 * ramp(p, from: 0, to: max(0.08, bassAt))))
             out[1] = clampDB(min(out[1], -10 * ramp(p, from: 0, to: max(0.08, bassAt))))
             out[2] = clampDB(min(out[2], -6 * ramp(p, from: 0.02, to: max(0.12, bassAt))))
-            out[5] = clampDB(max(out[5], 2.2 * outVocal))
-            out[6] = clampDB(max(out[6], 3.0 * outVocal))
-            out[7] = clampDB(max(out[7], 1.8 * outVocal))
+            out[5] = clampDB(max(out[5], 1.1 * outVocal))
+            out[6] = clampDB(max(out[6], 1.5 * outVocal))
+            out[7] = clampDB(max(out[7], 0.9 * outVocal))
             out[8] = clampDB(min(out[8], -4 * hpfD * (1 - outVocal)))
             out[9] = clampDB(min(out[9], -3 * hpfD * (1 - outVocal)))
         }
-        // B: instrumental bed until LAND, then release dry vocal.
-        let inInstr = 1 - ramp(p, from: handoff - 0.01, to: min(0.99, handoff + 0.05))
-        let inLeadFloor = clampDB(-8 * max(1.0, pocketD) * inInstr)
+        // B: deeper instrumental carve until LAND, then release dry vocal.
+        let inInstr = 1 - ramp(p, from: handoff - 0.02, to: min(0.99, handoff + 0.05))
+        let inLeadFloor = clampDB(-13 * max(1.0, pocketD) * inInstr)
         if inn.count >= 10 {
-            inn[0] = clampDB(max(inn[0], 2.0 * inInstr))
-            inn[1] = clampDB(max(inn[1], 1.4 * inInstr))
+            inn[0] = clampDB(max(inn[0], 1.6 * inInstr))
+            inn[1] = clampDB(max(inn[1], 1.1 * inInstr))
             inn[5] = clampDB(min(inn[5], inLeadFloor * 0.9))
             inn[6] = clampDB(min(inn[6], inLeadFloor))
-            inn[7] = clampDB(min(inn[7], inLeadFloor * 0.75))
-            inn[8] = clampDB(min(inn[8], inLeadFloor * 0.4))
-            inn[9] = clampDB(min(inn[9], inLeadFloor * 0.35))
+            inn[7] = clampDB(min(inn[7], inLeadFloor * 0.8))
+            inn[8] = clampDB(min(inn[8], inLeadFloor * 0.45))
+            inn[9] = clampDB(min(inn[9], inLeadFloor * 0.4))
         }
         return (out, inn)
     }

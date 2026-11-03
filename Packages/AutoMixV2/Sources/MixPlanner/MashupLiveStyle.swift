@@ -222,34 +222,39 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return appleAutomixVolumes(progress: progress)
     }
 
-    /// Reference mashup: A vocal over B beat bed, soft A fade into LAND.
-    /// Compatible pairs can run B near unity; key-clash / echoFreeze / large
-    /// pitch keep a quieter bed so mid-side leakage does not stack two leads.
-    /// Progress where Automix hard-cuts to dry B. Must match `appleAutomixVolumes`
-    /// handoff — field 1053 LANDed at raw handoffAt 0.78 while volumes still bloomed to 0.82.
+    /// Reference mashup: A vocal over quieter B beat bed → soft A taper → LAND.
+    /// Field 1055 held A@1 + B@0.78 for ~12s (muddy stack); LAND waits for B bloom
+    /// but dual-loud window must stay short and quiet.
     public var automixLandProgress: Double {
-        min(0.96, max(0.90, handoffAt))
+        min(0.92, max(0.84, handoffAt))
     }
 
     private func appleAutomixVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
         let handoff = automixLandProgress
         let lag = min(0.08, max(0.02, incomingVolumeLag > 0 ? incomingVolumeLag : 0.04))
-        // Soft A out over ~8% of blend so LAND is a handoff, not a mute.
-        let aFade = max(0.06, min(0.10, 1 - handoff + 0.06))
-        let aFadeStart = max(0, handoff - aFade)
+        // Gentle A body taper mid-window, then soft LAND fade (~14% of blend).
+        let bodyTaperStart = 0.38
+        let bodyTaperEnd = max(0.58, handoff - 0.18)
+        let aHold: Float = 0.82
+        let aFadeStart = max(bodyTaperEnd, handoff - 0.14)
         let outgoing: Float
-        if p < aFadeStart {
+        if p < bodyTaperStart {
             outgoing = 1
+        } else if p < bodyTaperEnd {
+            let t = Self.smoothstep((p - bodyTaperStart) / max(0.001, bodyTaperEnd - bodyTaperStart))
+            outgoing = 1 - (1 - aHold) * t
+        } else if p < aFadeStart {
+            outgoing = aHold
         } else if p < handoff {
-            outgoing = 1 - Self.smoothstep((p - aFadeStart) / max(0.001, aFade))
+            let t = Self.smoothstep((p - aFadeStart) / max(0.001, handoff - aFadeStart))
+            outgoing = aHold * (1 - t)
         } else {
             outgoing = 0
         }
         let bed = automixIncomingBedGain
-        // Start blooming B ~28% before LAND so the mashup is audible mid-window
-        // (1053 kept bed 0.76 until ~txP 0.72 then hard-cut).
-        let bloomStart = max(lag + 0.04, handoff - 0.28)
+        // Bloom only in the last ~18% so mid-window stays A-lead × quiet bed.
+        let bloomStart = max(lag + 0.06, handoff - 0.18)
         let incoming: Float
         if p <= lag {
             incoming = Self.smoothstep(p / lag) * bed
@@ -265,11 +270,12 @@ public struct MashupLiveStyle: Sendable, Equatable {
     }
 
     /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).
+    /// Stems already leak; keep bed clearly under A (field 1055 bed 0.78 was too hot).
     public var automixIncomingBedGain: Float {
-        if abs(pitchCentsB) >= 80 { return 0.78 }
-        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.84 }
-        if oneVocalConflict { return 0.90 }
-        return 1.0
+        if abs(pitchCentsB) >= 50 { return 0.48 }
+        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.52 }
+        if oneVocalConflict { return 0.58 }
+        return 0.68
     }
 
     /// Lab `oneBarDuetVolumes`: invite → vocal stack (A stays strong) → LAND A out.
@@ -322,27 +328,26 @@ public struct MashupLiveStyle: Sendable, Equatable {
         }
     }
 
-    /// Apple Automix live character: A vocal over B beat, hard LAND near the end.
-    /// Preserves per-pair bassSwap / lag — LAND stays in the final ~8–10% so the
-    /// full stem window is audible (field 1053 cut at 0.78 before B bloomed).
+    /// Apple Automix live character: A vocal over quieter B beat, LAND ~final 12–16%.
+    /// Preserves per-pair bassSwap / lag. Field 1055 late LAND + hot bed = muddy stack.
     public mutating func applyAutomixPlaybackCharacter() {
         isDuet = false
         oneVocalConflict = true
         if archetypeName == "duet" { archetypeName = "dropSwap" }
-        handoffAt = min(0.94, max(0.90, handoffAt > 0.85 ? handoffAt : 0.92))
+        handoffAt = min(0.90, max(0.84, handoffAt > 0.80 ? handoffAt : 0.88))
         // Keep pair-specific bass handoff; only force "early B bass" when unset/extreme.
         if bassSwapAt < 0.015 || bassSwapAt > handoffAt - 0.12 {
-            bassSwapAt = min(0.28, max(0.04, handoffAt * 0.18))
+            bassSwapAt = min(0.24, max(0.04, handoffAt * 0.20))
         } else {
             bassSwapAt = min(bassSwapAt, max(0.04, handoffAt - 0.40))
         }
         vocalHoldUntil = handoffAt
         vocalPocketUntil = handoffAt
-        outgoingVolumeHold = 1.0
+        outgoingVolumeHold = 0.82
         incomingVolumeLag = min(0.10, max(0.02, incomingVolumeLag > 0 ? incomingVolumeLag : 0.03))
         hpfDepth = max(1.0, hpfDepth)
         bassDepth = max(1.05, bassDepth)
-        bodyLift = max(1.0, bodyLift)
+        bodyLift = max(0.85, min(1.05, bodyLift))
         if !reason.uppercased().contains("APPLE AUTOMIX") {
             reason = "APPLE AUTOMIX · A vocal × B beat · \(reason)"
         }
@@ -397,10 +402,10 @@ public struct MashupLiveStyle: Sendable, Equatable {
         style.isBeatmatched = matched && plan.type != .crossfade && plan.type != .none
         style.rateA = clampRate(plan.rateA)
         style.rateB = clampRate(plan.rateB)
-        // Duet may push ±300¢ when Camelot needs it.
+        // Duet may push ±300¢; Automix caps ±100¢ — TimePitch at ±200 sounded cheap (1055).
         style.pitchCentsB = isDuetPlan
             ? max(-300, min(300, plan.pitchShiftCentsB))
-            : max(-200, min(200, plan.pitchShiftCentsB))
+            : max(-100, min(100, plan.pitchShiftCentsB))
         style.targetBPM = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : 0
         // Field 1047: some beatmatch plans arrived with rateA=rateB=1.000 while
         // profiles still disagree on BPM — rebuild the grid from profiles.
@@ -455,30 +460,30 @@ public struct MashupLiveStyle: Sendable, Equatable {
             return vocalOut >= 0.42 && vocalIn >= 0.4
         }()
         style.oneVocalConflict = conflict
-        style.outgoingVolumeHold = 1.0
+        style.outgoingVolumeHold = 0.82
         switch plan.archetype {
         case .echoFreeze, .spaceReverb:
-            style.handoffAt = 0.80 + 0.10 * barFactor
+            style.handoffAt = 0.84 + 0.04 * barFactor
             style.bassSwapAt = 0.10 + 0.14 * (1 - barFactor)
             style.incomingVolumeLag = conflict ? 0.05 : 0.08
         case .seamlessLoop:
-            style.handoffAt = 0.86 + 0.08 * barFactor
+            style.handoffAt = 0.86 + 0.04 * barFactor
             style.bassSwapAt = 0.12 + 0.16 * barFactor
             style.incomingVolumeLag = 0.06 + 0.04 * barFactor
         case .tapeStop:
-            style.handoffAt = 0.93
-            style.bassSwapAt = 0.55
+            style.handoffAt = 0.90
+            style.bassSwapAt = 0.45
             style.incomingVolumeLag = 0.04
         case .beatStutter:
-            style.handoffAt = 0.88 + 0.04 * barFactor
+            style.handoffAt = 0.86 + 0.04 * barFactor
             style.bassSwapAt = 0.04
             style.incomingVolumeLag = 0.03
         case .energyWash:
-            style.handoffAt = 0.84 + 0.06 * barFactor
+            style.handoffAt = 0.84 + 0.04 * barFactor
             style.bassSwapAt = 0.18 + 0.08 * (1 - barFactor)
             style.incomingVolumeLag = 0.07
         case .dropSwap:
-            style.handoffAt = 0.88 + 0.06 * barFactor
+            style.handoffAt = 0.86 + 0.04 * barFactor
             style.bassSwapAt = 0.03 + 0.10 * (1 - barFactor)
             style.incomingVolumeLag = conflict ? 0.03 : 0.05
         }
@@ -487,8 +492,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
         // Light salt from track ids so near-identical analysis still diverges slightly.
         if let a = outgoing, let b = incoming {
             let salt = pairSalt(a.trackID.raw, b.trackID.raw)
-            // Keep salt inside late-LAND band — never pull below 0.88 (1053 h0.78 cut).
-            style.handoffAt = min(0.95, max(0.88, style.handoffAt + salt * 0.02))
+            // Keep salt inside clean LAND band (0.84…0.90) — not the old 0.92+ mud window.
+            style.handoffAt = min(0.90, max(0.84, style.handoffAt + salt * 0.02))
             style.bassSwapAt = min(style.handoffAt - 0.15, max(0.02, style.bassSwapAt + salt * 0.04))
             style.incomingVolumeLag = min(0.10, max(0.02, style.incomingVolumeLag + abs(salt) * 0.02))
         }
@@ -550,7 +555,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
             style.rateB = clampRate(tempo.rateB)
             style.targetBPM = tempo.targetBPM
             style.pitchCentsB = harmonic.isHarmonicallyViable
-                ? max(-200, min(200, harmonic.pitchShiftCents))
+                ? max(-100, min(100, harmonic.pitchShiftCents))
                 : 0
             style.reason = String(
                 format: "Beatmatch %.0f BPM · %@ · %d→%d · %@",

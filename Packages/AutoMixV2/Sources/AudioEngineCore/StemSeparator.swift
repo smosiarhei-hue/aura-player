@@ -76,18 +76,42 @@ public enum StemSeparator {
                 )
                 lastBackend = .hybridSpectral
             }
-            // Makeup so A vocal isolate matches dry-track loudness at Automix entry
-            // (field: bake.ready felt like a sudden volume drop).
-            let makeup: Float = 1.35 + 0.25 * a
+            // Residual = dry − instrumental. Keep near-unity gain (field 1055
+            // ~2× makeup + softClip made A vocal fizzy/cheap under B bed).
+            let gain: Float = 0.92 + 0.18 * a // ≈1.0–1.10 at Automix amount
+            // Mild stereo collapse only — heavy mid-sum turned bleed into mud.
+            let sideKeep: Float = 1 - 0.40 * a
+            // One-pole HPF ~150 Hz to strip kick/mud from residual lead.
+            let alpha = Float(exp(-2.0 * Double.pi * 150.0 / max(1.0, sampleRate)))
+            var prevXL: Float = 0
+            var prevXR: Float = 0
+            var prevYL: Float = 0
+            var prevYR: Float = 0
+            var peak: Float = 1e-6
             for i in 0..<frames {
-                var vL = (dryL[i] - left[i]) * (0.90 + 0.40 * a) * makeup
-                var vR = (dryR[i] - right[i]) * (0.90 + 0.40 * a) * makeup
-                let mid = (vL + vR) * 0.5
-                let side = (vL - vR) * 0.5 * (1 - 0.85 * a)
-                vL = mid + side
-                vR = mid - side
-                left[i] = softClip(vL)
-                right[i] = softClip(vR)
+                let xL = (dryL[i] - left[i]) * gain
+                let xR = (dryR[i] - right[i]) * gain
+                let yL = alpha * (prevYL + xL - prevXL)
+                let yR = alpha * (prevYR + xR - prevXR)
+                prevXL = xL
+                prevXR = xR
+                prevYL = yL
+                prevYR = yR
+                let mid = (yL + yR) * 0.5
+                let side = (yL - yR) * 0.5 * sideKeep
+                let oL = mid + side
+                let oR = mid - side
+                peak = max(peak, max(abs(oL), abs(oR)))
+                left[i] = oL
+                right[i] = oR
+            }
+            // Peak-normalize only when residual would clip; skip softClip distortion.
+            if peak > 0.95 {
+                let scale = 0.95 / peak
+                for i in 0..<frames {
+                    left[i] *= scale
+                    right[i] *= scale
+                }
             }
         }
     }
@@ -145,10 +169,11 @@ public enum StemSeparator {
             state.bass2 += alphaBass * (state.bass1 - state.bass2)
             let sub = state.bass2
             let processedMid = mid * (1 - state.smoothed) + sub * state.smoothed
-            var outL = processedMid + side * (1 + 0.12 * state.smoothed)
-            var outR = processedMid - side * (1 + 0.12 * state.smoothed)
+            // No side boost / heavy makeup — both pumped instrumental dirt under A.
+            var outL = processedMid + side
+            var outR = processedMid - side
             if state.smoothed > 0.05 {
-                let makeup = 1 + 0.12 * state.smoothed
+                let makeup = 1 + 0.04 * state.smoothed
                 outL *= makeup
                 outR *= makeup
             }

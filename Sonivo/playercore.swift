@@ -3262,11 +3262,10 @@ final class PlayerCore {
         let fromStream = isUsingStreamPlayer
         mashupStemEntryFromStream = fromStream
         mashupStemEntryStartedAt = Date()
-        mashupStemEntryDuration = 0.26
+        // Short bridge — long dry+stem overlap stacked a third bed (field dirt).
+        mashupStemEntryDuration = fromStream ? 0.10 : 0.06
         incomingIsStream = false
         mashupPlayingMasterBake = false
-        // Keep dry A audible during the entry bridge when we were on AVPlayer.
-        // Hard mute+swap made Automix start feel like a sudden volume drop.
         if !fromStream {
             activeStreamingPlayer.pause()
             idleStreamingPlayer.pause()
@@ -3276,7 +3275,7 @@ final class PlayerCore {
         } else {
             idleStreamingPlayer.pause()
             idleStreamingPlayer.volume = 0
-            // Leave activeStreamingPlayer playing at `volume` until entry fade ends.
+            // Brief equal-power handoff from dry stream → stems (≤100 ms).
         }
 
         // Invalidate completions before stop so drained stems can't re-enter finish.

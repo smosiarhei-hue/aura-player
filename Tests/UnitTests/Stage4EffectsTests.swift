@@ -93,9 +93,13 @@ struct Stage4EffectsTests {
 
         let aEchoOut = plan.fx.first(where: { $0.target == .a && $0.kind == .echoOut })
         #expect(aEchoOut != nil)
-        #expect(aEchoOut?.startBar == plan.bars - 4 && aEchoOut?.endBar == plan.bars)
-        #expect(aEchoOut?.toValue == 65)
-        #expect(aEchoOut?.param == 50)
+        #expect(aEchoOut?.endBar == plan.bars)
+        #expect((aEchoOut?.startBar ?? 0) >= plan.bars - 3)
+        #expect((aEchoOut?.toValue ?? 99) <= 40)
+        #expect((aEchoOut?.param ?? 99) <= 30)
+        let aHPF = plan.fx.first(where: { $0.target == .a && $0.kind == .highPass })
+        #expect(aHPF != nil)
+        #expect((aHPF?.toValue ?? 9999) <= 2200)
     }
 
     @Test("Equal-power crossfade preserves mid-point energy")

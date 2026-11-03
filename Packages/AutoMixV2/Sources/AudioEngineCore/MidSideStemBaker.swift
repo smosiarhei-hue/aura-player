@@ -361,13 +361,14 @@ public enum MidSideStemBaker {
         // LAND near the end of the musical mashup window (~5s in the reference).
         let handoff = min(0.98, max(0.82, handoffProgress))
         let landAtSec = musical * handoff
+        // Soft carve (not amount=1): full AU residual + makeup was fizzy under B bed.
         let aURL = try bakeToTempFile(
             MidSideBakeRequest(
                 fileURL: outgoingURL,
                 cueSec: cueA,
                 durationSec: duration,
                 mode: .vocal,
-                amount: 1.0
+                amount: 0.88
             )
         )
         do {
@@ -377,7 +378,7 @@ public enum MidSideStemBaker {
                     cueSec: cueB,
                     durationSec: duration,
                     mode: .instrumental,
-                    amount: 1.0,
+                    amount: 0.92,
                     instrumentalUntilSec: landAtSec
                 )
             )

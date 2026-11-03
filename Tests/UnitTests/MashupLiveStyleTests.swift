@@ -73,7 +73,7 @@ struct MashupLiveStyleTests {
         #expect(abs(duetEarly) < 40)
     }
 
-    @Test("Apple Automix volumes: A vocal over B bed, soft mute A into LAND")
+    @Test("Apple Automix volumes: quiet B bed, mid A taper, soft LAND")
     func appleAutomixVolumesHardLand() {
         var style = MashupLiveStyle.resolve(
             plan: nil,
@@ -83,27 +83,28 @@ struct MashupLiveStyleTests {
             incomingDuration: 200
         )
         style.applyAutomixPlaybackCharacter()
-        #expect(style.handoffAt >= 0.78)
+        #expect(style.handoffAt >= 0.84)
         #expect(style.oneVocalConflict)
         #expect(style.phaseLabel(progress: 0.35) == "MIXING")
         #expect(style.phaseLabel(progress: 0.95) == "MIXING")
 
-        #expect(style.handoffAt >= 0.90)
-        #expect(style.automixLandProgress >= 0.90)
+        #expect(style.handoffAt <= 0.90)
+        #expect(style.automixLandProgress >= 0.84 && style.automixLandProgress <= 0.92)
         let early = style.volumes(progress: 0.12)
         let mid = style.volumes(progress: 0.50)
-        let bloom = style.volumes(progress: style.automixLandProgress - 0.10)
+        let bloom = style.volumes(progress: style.automixLandProgress - 0.08)
         let preLand = style.volumes(progress: max(0, style.automixLandProgress - 0.02))
         let land = style.volumes(progress: min(0.99, style.automixLandProgress + 0.01))
         #expect(early.outgoing > 0.95)
-        #expect(early.incoming > 0.75 && early.incoming < 0.98)
-        #expect(mid.outgoing > 0.95)
-        #expect(mid.incoming > 0.75 && mid.incoming < 0.98)
+        #expect(early.incoming > 0.45 && early.incoming < 0.72)
+        // Mid-window: A may soft-taper; B stays on quiet bed (no dual-loud stack).
+        #expect(mid.outgoing > 0.78)
+        #expect(mid.incoming <= style.automixIncomingBedGain + 0.03)
         #expect(bloom.incoming > mid.incoming) // B rises before LAND
-        #expect(preLand.outgoing < 0.85)
+        #expect(preLand.outgoing < 0.55)
         #expect(land.outgoing == 0)
         #expect(land.incoming > 0.95)
-        #expect(abs(style.automixIncomingBedGain - 0.90) < 0.01)
+        #expect(style.automixIncomingBedGain <= 0.62)
     }
 
     @Test("Key-clash Automix keeps a quieter B bed without a loudness cliff")
@@ -112,11 +113,12 @@ struct MashupLiveStyleTests {
         style.applyAutomixPlaybackCharacter()
         style.archetypeName = "echoFreeze"
         style.pitchCentsB = 0
-        #expect(style.automixIncomingBedGain < 0.90)
-        style.pitchCentsB = -200
-        #expect(style.automixIncomingBedGain <= 0.78)
+        #expect(style.automixIncomingBedGain <= 0.55)
+        style.pitchCentsB = -100
+        #expect(style.automixIncomingBedGain <= 0.50)
         let mid = style.volumes(progress: 0.4)
-        #expect(mid.incoming <= 0.85)
+        #expect(mid.incoming <= 0.55)
+        #expect(mid.outgoing > 0.75)
     }
 
     @Test("Duet plan keeps dual vocal volumes and DUET phase labels")

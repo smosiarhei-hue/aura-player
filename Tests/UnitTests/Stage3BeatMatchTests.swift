@@ -35,6 +35,9 @@ struct Stage3BeatMatchTests {
         #expect(!match.isHarmonicallyViable)
         #expect(abs(match.pitchShiftCents) == 200)
         #expect(match.description.contains("partial"))
+        // Automix live path uses ±1 semitone to avoid cheap TimePitch dirt.
+        let automix = CamelotCompatibility.match("4A", "10A", maxSemitones: 1)
+        #expect(abs(automix.pitchShiftCents) == 100)
     }
 
     @Test("Reliable pair selects beatmatched transition")
