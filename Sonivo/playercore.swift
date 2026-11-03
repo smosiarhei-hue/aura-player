@@ -2801,7 +2801,7 @@ final class PlayerCore {
                         )
                         AutoMixSessionLog.shared.event(
                             String(
-                                format: "bake.ready %@ lag=%.2fs cueA=%.1f cueB=%.1f rateA=%.3f rateB=%.3f pitchB=%.0f bed=%.2f",
+                                format: "bake.ready %@ lag=%.2fs cueA=%.1f cueB=%.1f rateA=%.3f rateB=%.3f pitchB=%.0f bed=%.2f sep=%@",
                                 duetBake ? "duet" : "automix",
                                 bakeLag,
                                 cueA,
@@ -2809,7 +2809,8 @@ final class PlayerCore {
                                 lockedA,
                                 lockedB,
                                 pitchB,
-                                self.activeMashupStyle.automixIncomingBedGain
+                                self.activeMashupStyle.automixIncomingBedGain,
+                                MidSideStemBaker.lastSeparationBackend.rawValue
                             )
                         )
                         self.startTransitionTimer()

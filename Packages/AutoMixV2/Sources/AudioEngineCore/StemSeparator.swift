@@ -1,0 +1,285 @@
+// Path: Packages/AutoMixV2/Sources/AudioEngineCore/StemSeparator.swift
+//
+// Offline Automix stem separation for mashup bake windows.
+// Primary: Apple AUSoundIsolation (Music Sing family) when the system Audio Unit
+// is present — whole-window offline render. Fallback: hybrid mid/side + residual
+// vocal (no model download, always available).
+
+@preconcurrency import AVFAudio
+import AudioToolbox
+import Foundation
+
+public enum StemSeparationBackend: String, Sendable, Equatable {
+    /// System AUSoundIsolation neural path (device / Apple Silicon).
+    case soundIsolation = "soundIsolation"
+    /// Mid/side cancel + residual vocal (no ML weights).
+    case hybridSpectral = "hybridSpectral"
+}
+
+/// Offline stem DSP used by `MidSideStemBaker` (whole mashup window).
+public enum StemSeparator {
+    /// Last backend that successfully carved a stem in this process.
+    nonisolated(unsafe) public static var lastBackend: StemSeparationBackend = .hybridSpectral
+
+    public struct State: Sendable {
+        public var bass1: Float = 0
+        public var bass2: Float = 0
+        public var smoothed: Float = 0
+        public init() {}
+    }
+
+    /// Separate one stereo window in place (`left`/`right` length == `frames`).
+    public static func separateWindow(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frames: Int,
+        mode: MidSideStemMode,
+        amount: Float,
+        sampleRate: Double
+    ) {
+        guard frames > 0 else { return }
+        let a = min(1, max(0, amount))
+        switch mode {
+        case .dry:
+            lastBackend = .hybridSpectral
+            return
+        case .instrumental:
+            if renderInstrumentalPreferringAU(
+                left: left, right: right, frames: frames,
+                amount: a, sampleRate: sampleRate
+            ) {
+                return
+            }
+            var state = State()
+            renderHybridInstrumental(
+                left: left, right: right, frames: frames,
+                amount: a, state: &state
+            )
+            lastBackend = .hybridSpectral
+        case .vocal:
+            var dryL = [Float](repeating: 0, count: frames)
+            var dryR = [Float](repeating: 0, count: frames)
+            dryL.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: left, count: frames) }
+            dryR.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: right, count: frames) }
+
+            let usedAU = renderInstrumentalPreferringAU(
+                left: left, right: right, frames: frames,
+                amount: a, sampleRate: sampleRate
+            )
+            if !usedAU {
+                left.update(from: dryL, count: frames)
+                right.update(from: dryR, count: frames)
+                var state = State()
+                renderHybridInstrumental(
+                    left: left, right: right, frames: frames,
+                    amount: a, state: &state
+                )
+                lastBackend = .hybridSpectral
+            }
+            for i in 0..<frames {
+                var vL = (dryL[i] - left[i]) * (0.85 + 0.45 * a)
+                var vR = (dryR[i] - right[i]) * (0.85 + 0.45 * a)
+                let mid = (vL + vR) * 0.5
+                let side = (vL - vR) * 0.5 * (1 - 0.85 * a)
+                vL = mid + side
+                vR = mid - side
+                left[i] = softClip(vL)
+                right[i] = softClip(vR)
+            }
+        }
+    }
+
+    /// Try AU on a scratch buffer so a partial render never corrupts the dry window.
+    @discardableResult
+    private static func renderInstrumentalPreferringAU(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frames: Int,
+        amount: Float,
+        sampleRate: Double
+    ) -> Bool {
+        var tryL = [Float](repeating: 0, count: frames)
+        var tryR = [Float](repeating: 0, count: frames)
+        tryL.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: left, count: frames) }
+        tryR.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: right, count: frames) }
+        let ok = tryL.withUnsafeMutableBufferPointer { lBuf in
+            tryR.withUnsafeMutableBufferPointer { rBuf in
+                SoundIsolationOffline.renderInstrumentalInPlace(
+                    left: lBuf.baseAddress!,
+                    right: rBuf.baseAddress!,
+                    frames: frames,
+                    sampleRate: sampleRate,
+                    wetPercent: Double(amount) * 100
+                )
+            }
+        }
+        guard ok else { return false }
+        left.update(from: tryL, count: frames)
+        right.update(from: tryR, count: frames)
+        lastBackend = .soundIsolation
+        return true
+    }
+
+    /// Cancel center lead, keep sub-bass + sides. `amount` 0…1.
+    public static func renderHybridInstrumental(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frames: Int,
+        amount: Float,
+        state: inout State
+    ) {
+        guard frames > 0 else { return }
+        let target = min(1, max(0, amount))
+        let ramp: Float = 0.015
+        let alphaBass: Float = 0.017
+        for i in 0..<frames {
+            state.smoothed += (target - state.smoothed) * ramp
+            let l = left[i]
+            let r = right[i]
+            let mid = (l + r) * 0.5
+            let side = (l - r) * 0.5
+            state.bass1 += alphaBass * (mid - state.bass1)
+            state.bass2 += alphaBass * (state.bass1 - state.bass2)
+            let sub = state.bass2
+            let processedMid = mid * (1 - state.smoothed) + sub * state.smoothed
+            var outL = processedMid + side * (1 + 0.12 * state.smoothed)
+            var outR = processedMid - side * (1 + 0.12 * state.smoothed)
+            if state.smoothed > 0.05 {
+                let makeup = 1 + 0.12 * state.smoothed
+                outL *= makeup
+                outR *= makeup
+            }
+            left[i] = softClip(outL)
+            right[i] = softClip(outR)
+        }
+    }
+
+    public static func softClip(_ x: Float) -> Float {
+        let lim: Float = 0.98
+        if x > lim { return lim + (x - lim) / (1 + (x - lim) * 4) }
+        if x < -lim { return -lim + (x + lim) / (1 + (-x - lim) * 4) }
+        return x
+    }
+}
+
+// MARK: - Apple AUSoundIsolation (optional system AU)
+
+enum SoundIsolationOffline {
+    private static let wetDryParam: AUParameterAddress = 0
+
+    static func isAvailable() -> Bool {
+        findDescription() != nil
+    }
+
+    static func findDescription() -> AudioComponentDescription? {
+        var search = AudioComponentDescription(
+            componentType: kAudioUnitType_Effect,
+            componentSubType: 0,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        var current: AudioComponent?
+        while true {
+            current = AudioComponentFindNext(current, &search)
+            guard let current else { return nil }
+            var name: Unmanaged<CFString>?
+            guard AudioComponentCopyName(current, &name) == noErr,
+                  let cf = name?.takeRetainedValue() as String? else { continue }
+            let lower = cf.lowercased()
+            if lower.contains("sound isolation") || lower.contains("ausoundisolation") {
+                var desc = AudioComponentDescription()
+                guard AudioComponentGetDescription(current, &desc) == noErr else { continue }
+                return desc
+            }
+        }
+    }
+
+    /// Attenuate center vocals for the whole window. False → caller uses hybrid.
+    static func renderInstrumentalInPlace(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frames: Int,
+        sampleRate: Double,
+        wetPercent: Double
+    ) -> Bool {
+        guard frames > 0, frames <= 2_000_000, sampleRate > 0,
+              let desc = findDescription() else { return false }
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: 2,
+            interleaved: false
+        ) else { return false }
+
+        do {
+            let engine = AVAudioEngine()
+            let player = AVAudioPlayerNode()
+            let effect = AVAudioUnitEffect(audioComponentDescription: desc)
+            engine.attach(player)
+            engine.attach(effect)
+            engine.connect(player, to: effect, format: format)
+            engine.connect(effect, to: engine.mainMixerNode, format: format)
+            engine.mainMixerNode.outputVolume = 1
+
+            let wet = AUValue(max(0, min(100, wetPercent)))
+            if let tree = effect.auAudioUnit.parameterTree {
+                tree.parameter(withAddress: wetDryParam)?.value = wet
+                // Undocumented Music Sing tuning flags (safe no-ops if absent).
+                tree.parameter(withAddress: 95782)?.value = 1
+                tree.parameter(withAddress: 95783)?.value = 1
+            }
+
+            let maxFrames: AVAudioFrameCount = 4_096
+            try engine.enableManualRenderingMode(
+                .offline,
+                format: format,
+                maximumFrameCount: maxFrames
+            )
+            try engine.start()
+
+            guard let srcBuf = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(frames)
+            ),
+                let srcL = srcBuf.floatChannelData?[0],
+                let srcR = srcBuf.floatChannelData?[1],
+                let outBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: maxFrames),
+                let outL = outBuf.floatChannelData?[0],
+                let outR = outBuf.floatChannelData?[1]
+            else {
+                engine.stop()
+                return false
+            }
+
+            srcBuf.frameLength = AVAudioFrameCount(frames)
+            srcL.update(from: left, count: frames)
+            srcR.update(from: right, count: frames)
+            player.scheduleBuffer(srcBuf, at: nil, options: [])
+            player.play()
+
+            var written = 0
+            while written < frames {
+                let want = min(frames - written, Int(maxFrames))
+                outBuf.frameLength = AVAudioFrameCount(want)
+                let status = try engine.renderOffline(AVAudioFrameCount(want), to: outBuf)
+                guard status == .success else {
+                    engine.stop()
+                    return false
+                }
+                let got = Int(outBuf.frameLength)
+                guard got > 0 else { break }
+                left.advanced(by: written).update(from: outL, count: got)
+                right.advanced(by: written).update(from: outR, count: got)
+                written += got
+            }
+
+            player.stop()
+            engine.stop()
+            // Require a complete window — partial AU output must not ship.
+            return written == frames
+        } catch {
+            return false
+        }
+    }
+}

@@ -130,10 +130,14 @@ def analyze(text: str) -> dict:
             verdict = "degraded"
 
     bake_ready_meta: list[dict[str, str]] = []
+    separation_backends: list[str] = []
     for e in events:
         if not e.startswith("bake.ready"):
             continue
-        bake_ready_meta.append(parse_fields(e))
+        fields = parse_fields(e)
+        bake_ready_meta.append(fields)
+        if sep := fields.get("sep"):
+            separation_backends.append(sep)
     fingerprints = sorted(
         {
             parse_fields(e).get("fp", "")
@@ -159,6 +163,7 @@ def analyze(text: str) -> dict:
         "mixing_timeline_stuck_at_zero": mixing_pos_zero,
         "mixing_dual_full_ticks": dual_full,
         "bake_ready_meta": bake_ready_meta,
+        "separation_backends": separation_backends,
         "transition_fingerprints": fingerprints,
         "unique_transition_fingerprints": len(fingerprints),
     }

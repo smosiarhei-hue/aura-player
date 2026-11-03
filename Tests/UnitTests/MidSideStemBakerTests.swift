@@ -104,6 +104,64 @@ struct MidSideStemBakerTests {
         #expect(FileManager.default.fileExists(atPath: master.path))
     }
 
+    @Test("Hybrid separator cancels center lead more than sides")
+    func hybridInstrumentalAttenuatesCenter() {
+        let frames = 2_048
+        var left = [Float](repeating: 0, count: frames)
+        var right = [Float](repeating: 0, count: frames)
+        for i in 0..<frames {
+            let t = Float(i) / 44_100
+            // Center lead (~1 kHz) + stereo side pad (~330 Hz).
+            let mid = 0.45 * sin(2 * Float.pi * 1_000 * t)
+            let side = 0.20 * sin(2 * Float.pi * 330 * t)
+            left[i] = mid + side
+            right[i] = mid - side
+        }
+        let dryMidEnergy = (0..<frames).reduce(Float(0)) { partial, i in
+            let mid = (left[i] + right[i]) * 0.5
+            return partial + mid * mid
+        }
+        var state = StemSeparator.State()
+        left.withUnsafeMutableBufferPointer { lBuf in
+            right.withUnsafeMutableBufferPointer { rBuf in
+                StemSeparator.renderHybridInstrumental(
+                    left: lBuf.baseAddress!,
+                    right: rBuf.baseAddress!,
+                    frames: frames,
+                    amount: 1,
+                    state: &state
+                )
+            }
+        }
+        let outMidEnergy = (0..<frames).reduce(Float(0)) { partial, i in
+            let mid = (left[i] + right[i]) * 0.5
+            return partial + mid * mid
+        }
+        #expect(outMidEnergy < dryMidEnergy * 0.35)
+    }
+
+    @Test("Automix stem pair reports a separation backend")
+    func automixPairSetsBackend() throws {
+        let dir = try temporaryBakeDirectory()
+        defer { removeBakeItem(at: dir) }
+        let a = try makeStereoTone(in: dir, name: "sep-a.caf", rate: 44_100, duration: 20)
+        let b = try makeStereoTone(in: dir, name: "sep-b.caf", rate: 44_100, duration: 20)
+        let pair = try MidSideStemBaker.bakeAutomixStemPair(
+            outgoingURL: a,
+            incomingURL: b,
+            cueA: 2,
+            cueB: 1,
+            blendSec: 6,
+            handoffProgress: 0.9,
+            padSec: 1
+        )
+        defer { MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming]) }
+        let backend = MidSideStemBaker.lastSeparationBackend
+        #expect(backend == .hybridSpectral || backend == .soundIsolation)
+        #expect(FileManager.default.fileExists(atPath: pair.outgoing.path))
+        #expect(FileManager.default.fileExists(atPath: pair.incoming.path))
+    }
+
     @Test("removeTempFiles deletes baked CAF slices")
     func removesTemps() throws {
         let dir = try temporaryBakeDirectory()

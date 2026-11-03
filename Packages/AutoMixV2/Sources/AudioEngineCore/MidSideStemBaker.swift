@@ -390,7 +390,13 @@ public enum MidSideStemBaker {
 
     // MARK: - Single-stem bake (tests / DualDeck helpers)
 
+    /// Backend used by the most recent `bakeToTempFile` / Automix stem pair.
+    public static var lastSeparationBackend: StemSeparationBackend {
+        StemSeparator.lastBackend
+    }
+
     /// Bake one mashup slice to a temp CAF. Caller must delete the URL when done.
+    /// Whole-window separation so AUSoundIsolation / hybrid keep consistent state.
     public static func bakeToTempFile(_ request: MidSideBakeRequest) throws -> URL {
         let duration = min(maximumDurationSec, max(1, request.durationSec))
         let cue = max(0, request.cueSec)
@@ -419,11 +425,11 @@ public enum MidSideStemBaker {
         let wantFrames = AVAudioFramePosition(wantSec * rate)
         let totalFrames = AVAudioFrameCount(min(maxFrames, max(1, wantFrames)))
         let untilFrame = AVAudioFrameCount(min(Double(totalFrames), until * rate))
+        let channels = Int(format.channelCount)
+        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
 
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonivo-mashup-\(UUID().uuidString).caf")
-        // Field (1045): settings-only forWriting → GenericObjCError 0 on m4a/mp3.
-        // 4-arg initializer with matching processing format is required on device.
         let output: AVAudioFile
         do {
             output = try openLinearPCMCAFWriter(at: outURL, format: format)
@@ -432,62 +438,115 @@ public enum MidSideStemBaker {
             throw error
         }
 
-        guard let inBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames),
-              let outBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else {
+        // Read the whole mashup window once (≤ ~40s ≈ 14 MB stereo float).
+        guard let window = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames) else {
             try? FileManager.default.removeItem(at: outURL)
             throw AudioEngineCoreError.cannotCreatePCMBuffer
         }
-
         source.framePosition = startFrame
-        var written: AVAudioFrameCount = 0
-        var midLp: Float = 0
-        var midBody: Float = 0
-        var midPres: Float = 0
-        let lpAlpha = Float(1 - exp(-2 * Double.pi * 150 / rate))
-        let bodyAlpha = Float(1 - exp(-2 * Double.pi * 800 / rate))
-        let presAlpha = Float(1 - exp(-2 * Double.pi * 2800 / rate))
-        let channels = Int(format.channelCount)
-        // Apple Automix LAND is a hard stem cut — keep bloom short to avoid a soft crossfade.
-        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
+        do {
+            try source.read(into: window, frameCount: totalFrames)
+        } catch {
+            try? FileManager.default.removeItem(at: outURL)
+            throw error
+        }
+        let got = window.frameLength
+        guard got > 0, let srcL = window.floatChannelData?[0] else {
+            try? FileManager.default.removeItem(at: outURL)
+            throw AudioEngineCoreError.cannotCreatePCMBuffer
+        }
+        let srcR = channels > 1 ? (window.floatChannelData?[1] ?? srcL) : srcL
+        let n = Int(got)
 
-        while written < totalFrames {
-            let got: AVAudioFrameCount = try autoreleasepool {
-                let n = min(chunkFrames, totalFrames - written)
-                inBuf.frameLength = 0
-                try source.read(into: inBuf, frameCount: n)
-                let got = inBuf.frameLength
-                guard got > 0 else { return 0 }
-                outBuf.frameLength = got
+        var left = [Float](repeating: 0, count: n)
+        var right = [Float](repeating: 0, count: n)
+        left.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: srcL, count: n) }
+        right.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: srcR, count: n) }
 
-                let mode = request.mode
-                if mode == .dry || amount < 0.05 {
-                    copy(from: inBuf, to: outBuf, frames: got, channels: channels)
-                } else {
-                    processChunk(
-                        input: inBuf,
-                        output: outBuf,
-                        frames: got,
-                        channels: channels,
-                        mode: mode,
+        if request.mode != .dry, amount >= 0.05, channels >= 2 {
+            left.withUnsafeMutableBufferPointer { lBuf in
+                right.withUnsafeMutableBufferPointer { rBuf in
+                    StemSeparator.separateWindow(
+                        left: lBuf.baseAddress!,
+                        right: rBuf.baseAddress!,
+                        frames: n,
+                        mode: request.mode,
                         amount: amount,
-                        absoluteFrame: written,
-                        untilFrame: untilFrame,
-                        fadeFrames: fadeFrames,
-                        midLp: &midLp,
-                        midBody: &midBody,
-                        midPres: &midPres,
-                        lpAlpha: lpAlpha,
-                        bodyAlpha: bodyAlpha,
-                        presAlpha: presAlpha
+                        sampleRate: rate
                     )
                 }
-
-                try output.write(from: outBuf)
-                return got
             }
-            guard got > 0 else { break }
-            written += got
-            if source.framePosition >= source.length { break }
+        } else if request.mode != .dry, amount >= 0.05 {
+            // Mono: hybrid-only (AU needs stereo).
+            left.withUnsafeMutableBufferPointer { lBuf in
+                right.withUnsafeMutableBufferPointer { rBuf in
+                    var state = StemSeparator.State()
+                    if request.mode == .instrumental {
+                        StemSeparator.renderHybridInstrumental(
+                            left: lBuf.baseAddress!, right: rBuf.baseAddress!,
+                            frames: n, amount: amount, state: &state
+                        )
+                    } else {
+                        StemSeparator.separateWindow(
+                            left: lBuf.baseAddress!, right: rBuf.baseAddress!,
+                            frames: n, mode: request.mode, amount: amount, sampleRate: rate
+                        )
+                    }
+                }
+            }
+            StemSeparator.lastBackend = .hybridSpectral
+        } else {
+            StemSeparator.lastBackend = .hybridSpectral
+        }
+
+        // Instr→dry bloom near LAND (B lead returns).
+        if request.mode == .instrumental, untilFrame > 0, untilFrame < got {
+            let dryL = srcL
+            let dryR = srcR
+            let fadeStart = untilFrame > fadeFrames ? untilFrame - fadeFrames : 0
+            for i in 0..<n {
+                let frame = AVAudioFrameCount(i)
+                if frame >= untilFrame {
+                    left[i] = dryL[i]
+                    right[i] = dryR[i]
+                } else if frame >= fadeStart {
+                    let t = Float(frame - fadeStart) / Float(max(1, fadeFrames))
+                    let ease = min(1, max(0, t))
+                    let s = ease * ease * (3 - 2 * ease)
+                    let wa = cos(s * Float.pi * 0.5)
+                    let wb = sin(s * Float.pi * 0.5)
+                    left[i] = left[i] * wa + dryL[i] * wb
+                    right[i] = right[i] * wa + dryR[i] * wb
+                }
+            }
+        }
+
+        guard let outBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames),
+              let oL = outBuf.floatChannelData?[0] else {
+            try? FileManager.default.removeItem(at: outURL)
+            throw AudioEngineCoreError.cannotCreatePCMBuffer
+        }
+        let oR = channels > 1 ? outBuf.floatChannelData?[1] : nil
+
+        var offset = 0
+        do {
+            while offset < n {
+                let count = min(Int(chunkFrames), n - offset)
+                outBuf.frameLength = AVAudioFrameCount(count)
+                left.withUnsafeBufferPointer { lPtr in
+                    right.withUnsafeBufferPointer { rPtr in
+                        oL.update(from: lPtr.baseAddress!.advanced(by: offset), count: count)
+                        if let oR {
+                            oR.update(from: rPtr.baseAddress!.advanced(by: offset), count: count)
+                        }
+                    }
+                }
+                try output.write(from: outBuf)
+                offset += count
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: outURL)
+            throw error
         }
 
         return outURL

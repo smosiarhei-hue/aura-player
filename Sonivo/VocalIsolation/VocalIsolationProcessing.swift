@@ -176,11 +176,8 @@ nonisolated public final class MidSideVocalIsolator: VocalIsolationProcessing, @
 
 nonisolated public final class MLVocalIsolator: VocalIsolationProcessing, @unchecked Sendable {
     private let fallback = MidSideVocalIsolator()
-    private var isModelLoaded: Bool = false
 
-    public nonisolated init() {
-        // TODO: Load compiled Core ML model (.mlmodelc) for Apple Neural Engine execution
-    }
+    public nonisolated init() {}
 
     public nonisolated func process(
         leftChannel: UnsafeMutablePointer<Float>,
@@ -188,16 +185,14 @@ nonisolated public final class MLVocalIsolator: VocalIsolationProcessing, @unche
         frameCount: Int,
         isolationLevel: Float
     ) {
-        if isModelLoaded {
-            // TODO: Run real-time chunk inference on Apple Neural Engine
-        } else {
-            fallback.process(
-                leftChannel: leftChannel,
-                rightChannel: rightChannel,
-                frameCount: frameCount,
-                isolationLevel: isolationLevel
-            )
-        }
+        // Live UI path stays mid/side realtime. Offline Automix mashup bake uses
+        // AudioEngineCore.StemSeparator (AUSoundIsolation → hybrid residual).
+        fallback.process(
+            leftChannel: leftChannel,
+            rightChannel: rightChannel,
+            frameCount: frameCount,
+            isolationLevel: isolationLevel
+        )
     }
 
     public nonisolated func processInterleaved(
