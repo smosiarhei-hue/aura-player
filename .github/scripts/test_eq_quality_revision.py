@@ -32,9 +32,10 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('SonivoStreamEQResponse(',shapes)
         for forbidden in ['PlayerCore','Task.sleep','Timer','CADisplayLink']:
             self.assertNotIn(forbidden,shapes)
-        self.assertIn('isAdjustingEQ = editing',ui)
+        self.assertIn('isAdjustingEQ = true',ui)
+        self.assertIn('isAdjustingEQ = false',ui)
         self.assertIn('reduceMotion || isInteracting || draggingBand != nil ? nil',ui)
-        self.assertIn('Суммарная АЧХ · модель PCM 48 кГц',ui)
+        self.assertIn('суммарная АЧХ · модель PCM 48 кГц',ui)
         self.assertIn('не измерение наушников',ui)
 
     def test_double_tap_resets_only_hit_node_and_does_not_conflict_with_drag(self):
@@ -63,9 +64,9 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('eq.gains.standard10.backup',(R/'Sonivo/playercore.swift').read_text())
         self.assertIn('eq.userPresets.bassShake10.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
         self.assertIn('eq.userPresets.standard10.backup',(R/'Sonivo/EQUserPresetStore.swift').read_text())
-    def test_manual_haptics_are_shared_by_graph_and_slider_and_obey_settings(self):
+    def test_manual_graph_haptics_obey_settings(self):
         ui=(R/'Sonivo/PlayerEQSheetView.swift').read_text()
-        self.assertIn('setBandGain(index, Float(value))',ui)
+        self.assertIn('setBandGain(index, gain)',ui)
         self.assertIn('adjustmentFeedback.intensity(from: oldGain',ui)
         theme=(R/'Sonivo/theme.swift').read_text().split('static func eqAdjustment(',1)[1].split('static func success()',1)[0]
         self.assertIn('SettingsStore.shared.hapticsEnabled',theme)

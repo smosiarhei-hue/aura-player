@@ -22,21 +22,21 @@ class LinearEQTests(unittest.TestCase):
         self.assertIn('EQGainLimits.bandwidth(at:i)',(ROOT/'Sonivo/playercore.swift').read_text())
         self.assertIn('case 0: return 0.90',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
         self.assertIn('case 1: return 0.85',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
-    def test_single_screen_graph_and_native_precise_slider(self):
-        text=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text().split('struct PlayerEQSheetView:',1)[1]
-        self.assertNotIn('EQRegion',text)
-        # Horizontal band chips are fine; avoid a second horizontal band-fader carousel.
-        self.assertIn('ForEach(PlayerCore.bandFrequencies.indices',text)
-        self.assertIn('dynamicTypeSize.isAccessibilitySize',text)
+    def test_single_screen_direct_graph_controls(self):
+        text=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
         self.assertIn('CompactEQCurve(',text)
-        self.assertIn('bandRow(index)',text)
-        self.assertIn('minHeight: 44',text)
+        self.assertIn('dynamicTypeSize.isAccessibilitySize',text)
+        self.assertNotIn('Slider(value:',text)
+        self.assertNotIn('selectedBandPrecision',text)
         self.assertIn('draggingBand = closest',text)
         self.assertIn('selectedBand = closest',text)
-        self.assertIn('bandRow(index)',text)
-        # Band title is "Саб 60 Гц" / "Удар 120 Гц" … via name + frequency labels.
-        self.assertIn('bandNames[index]) \\(frequencyLabels[index]',text)
-        self.assertIn('"Саб"',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
+        self.assertIn('dragOriginY = point(closest, size: size).y',text)
+        self.assertIn('dragOriginY + value.translation.height',text)
+        self.assertIn('onChange(index, rawGain)',text)
+        self.assertIn('if draggingBand != nil { onEnd() }',text)
+        self.assertIn('.accessibilityAdjustableAction',text)
+        self.assertIn('onStep(index, 0.5)',text)
+        self.assertIn('onStep(index, -0.5)',text)
         self.assertIn('[32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]',(ROOT/'Sonivo/EQGainLimits.swift').read_text())
     def test_named_presets_have_native_save_apply_and_confirmed_delete(self):
         ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()

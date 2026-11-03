@@ -15,8 +15,8 @@ class PlaybackContinuationTests(unittest.TestCase):
     def test_compact_graph_and_consistent_limits(self):
         ui=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
         self.assertIn('CompactEQCurve(',ui)
-        self.assertIn('bandRow(index)',ui)
-        self.assertIn('EQGainLimits.range(at:index)',ui)
+        self.assertIn('EQGainLimits.graphGain(',ui)
+        self.assertIn('EQGainLimits.clean(',ui)
         self.assertIn('EQPresets.subBassPower',ui)
         limits=(ROOT/'Sonivo/EQGainLimits.swift').read_text()
         self.assertIn('-maximum...maximum',limits)

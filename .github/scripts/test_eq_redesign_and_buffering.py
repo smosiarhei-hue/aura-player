@@ -32,15 +32,16 @@ class EQRedesignAndBufferingTests(unittest.TestCase):
         self.assertIn('source.timeControlStatus == .waitingToPlayAtSpecifiedRate',core)
         self.assertIn('streamStatusObservers.removeAll()',core)
 
-    def test_eq_uses_native_controls_with_large_targets_and_adaptive_text(self):
+    def test_eq_uses_direct_graph_controls_and_adaptive_text(self):
         source=(ROOT/'Sonivo/PlayerEQSheetView.swift').read_text()
         eq=source.split('struct PlayerEQSheetView:',1)[1].split('struct CompactEQCurve:',1)[0]
-        self.assertIn('Slider(value: Binding(',eq)
-        self.assertIn('step: 0.5',eq)
+        self.assertNotIn('Slider(value:',eq)
+        self.assertIn('CompactEQCurve(',eq)
         self.assertIn('.frame(minHeight: 44)',eq)
         self.assertIn('ViewThatFits',eq)
         self.assertIn('dynamicTypeSize.isAccessibilitySize',eq)
-        self.assertIn('.accessibilityValue(db(gain))',eq)
+        self.assertIn('.accessibilityAdjustableAction',source)
+        self.assertIn('onStep(index, 0.5)',source)
         self.assertIn('accessibilityReduceMotion',eq)
         self.assertNotIn('EQVerticalFader',source)
         self.assertNotIn('АЧХ ФИЛЬТРА',source)

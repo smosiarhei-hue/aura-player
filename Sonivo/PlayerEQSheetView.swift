@@ -3,8 +3,7 @@ import Observation
 import SwiftUI
 
 /// Sonivo EQ — "studio console" layout.
-/// Power → console (lanes + curve + nodes in ONE coordinate space) → fine trim →
-/// preset cards with real curve thumbnails → my presets → output.
+/// Power → direct-manipulation curve → compact presets → output.
 struct PlayerEQSheetView: View {
     @Bindable private var player = PlayerCore.shared
     @Environment(\.dismiss) private var dismiss
@@ -23,8 +22,7 @@ struct PlayerEQSheetView: View {
     private let bandNames = EQFrequencyRegion.bandTitles
     private let frequencyLabels = EQGainLimits.frequencies.indices.map { index in
         let hz = EQGainLimits.frequencies[index]
-        let short = EQGainLimits.frequencyLabels[index]
-        return hz < 1000 ? "\(Int(hz)) Гц" : "\(short)Гц"
+        return hz < 1000 ? "\(Int(hz)) Гц" : "\(Int(hz / 1000)) кГц"
     }
     /// Flat → Bass → Deep bass → Bass+Treble → Classical → Club → Dance
     private var primaryPresets: [EQPreset] {
@@ -40,24 +38,16 @@ struct PlayerEQSheetView: View {
     private var selectedGain: Float {
         player.eqGains.indices.contains(selectedBand) ? player.eqGains[selectedBand] : 0
     }
-    private var selectedRange: ClosedRange<Float> { EQGainLimits.range(at: selectedBand) }
     private var trimmedPresetName: String { presetName.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
+                VStack(alignment: .leading, spacing: 20) {
                     masterHeader
                         .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0)
                     console
                         .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.04)
-                    if dynamicTypeSize.isAccessibilitySize {
-                        accessibilityBandList
-                            .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.08)
-                    } else {
-                        selectedBandPrecision
-                            .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.08)
-                    }
                     profilesSection
                         .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.12)
                     savedPresetsSection
@@ -141,19 +131,19 @@ struct PlayerEQSheetView: View {
     // MARK: Power header
 
     private var masterHeader: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: 12) {
             Button { toggleEQ() } label: {
                 ZStack {
                     Circle()
                         .fill(player.eqEnabled ? SN.amber : SN.card)
                     Image(systemName: "power")
-                        .font(.title2.weight(.bold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(player.eqEnabled ? SN.onAccent : SN.inkMuted)
                         .symbolEffect(.bounce, value: player.eqEnabled)
                 }
-                .frame(width: 60, height: 60)
+                .frame(width: 44, height: 44)
                 .overlay(Circle().strokeBorder(SN.ink.opacity(player.eqEnabled ? 0 : 0.12), lineWidth: 1))
-                .shadow(color: SN.amber.opacity(player.eqEnabled ? 0.45 : 0), radius: 18, y: 4)
+                .shadow(color: SN.amber.opacity(player.eqEnabled ? 0.20 : 0), radius: 8, y: 2)
                 .contentShape(Circle())
             }
             .buttonStyle(EQProfilePressStyle())
@@ -163,7 +153,7 @@ struct PlayerEQSheetView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(player.eqEnabled ? activeCurveName : "Выключен")
-                    .font(.title2.weight(.bold))
+                    .font(.headline)
                     .foregroundStyle(SN.ink)
                     .contentTransition(.numericText())
                     .lineLimit(2)
@@ -186,7 +176,7 @@ struct PlayerEQSheetView: View {
     /// Lanes, response, curve and nodes share one GeometryReader, so the fill
     /// always sits exactly under the points and labels line up with the lanes.
     private var console: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             consoleHUD
             CompactEQCurve(
                 gains: player.eqGains,
@@ -208,7 +198,7 @@ struct PlayerEQSheetView: View {
                     nudge(index, by: delta)
                 }
             )
-            .frame(height: dynamicTypeSize.isAccessibilitySize ? 220 : 250)
+            .frame(height: dynamicTypeSize.isAccessibilitySize ? 230 : 220)
             .opacity(player.eqEnabled ? 1 : 0.38)
             .disabled(!player.eqEnabled)
             .overlay {
@@ -227,13 +217,17 @@ struct PlayerEQSheetView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Кривая эквалайзера")
-            .accessibilityHint("Перетащи точку полосы. Двойной тап — 0 дБ.")
+            .accessibilityHint("Перетащи полосу вверх или вниз. Двойной тап — 0 дБ.")
 
-            Text("Пунктир — Суммарная АЧХ · модель PCM 48 кГц · не измерение наушников")
+            Text("Тяни полосу вверх или вниз · двойное касание — 0 дБ")
+                .font(.caption)
+                .foregroundStyle(SN.inkMuted)
+
+            Text("Пунктир — суммарная АЧХ · модель PCM 48 кГц · не измерение наушников")
                 .font(.caption)
                 .foregroundStyle(SN.inkFaint)
         }
-        .padding(18)
+        .padding(14)
         .background(
             RoundedRectangle(cornerRadius: SN.radiusLarge, style: .continuous)
                 .fill(SN.card.opacity(0.92))
@@ -270,7 +264,7 @@ struct PlayerEQSheetView: View {
     private var gainReadout: some View {
         HStack(alignment: .lastTextBaseline, spacing: 4) {
             Text(String(format: "%+.1f", selectedGain))
-                .font(.system(.largeTitle, design: .rounded).weight(.bold).monospacedDigit())
+                .font(.system(.title2, design: .rounded).weight(.semibold).monospacedDigit())
                 .foregroundStyle(selectedGain == 0 ? SN.ink : SN.amber)
                 .contentTransition(.numericText(value: Double(selectedGain)))
                 .animation(reduceEQMotion || isAdjustingEQ ? nil : SN.fastSpring, value: selectedGain)
@@ -279,102 +273,6 @@ struct PlayerEQSheetView: View {
                 .foregroundStyle(SN.inkMuted)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    // MARK: Fine trim
-
-    /// Fine trim for the selected node: ±0.5 дБ steps, slider, 0 дБ, band arrows.
-    private var selectedBandPrecision: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                trimIconButton("chevron.left", label: "Предыдущая полоса", disabled: selectedBand == 0) {
-                    selectBand(selectedBand - 1)
-                }
-                ViewThatFits(in: .horizontal) {
-                    Text("\(bandNames[selectedBand]) \(frequencyLabels[selectedBand])")
-                        .font(.headline)
-                    Text(frequencyLabels[selectedBand])
-                        .font(.headline)
-                }
-                .foregroundStyle(SN.ink)
-                .frame(maxWidth: .infinity)
-                trimIconButton("chevron.right", label: "Следующая полоса",
-                               disabled: selectedBand == PlayerCore.bandFrequencies.count - 1) {
-                    selectBand(selectedBand + 1)
-                }
-            }
-            HStack(spacing: 10) {
-                trimIconButton("minus", label: "Минус 0,5 дБ", disabled: selectedGain <= selectedRange.lowerBound) {
-                    nudge(selectedBand, by: -0.5)
-                }
-                Slider(value: Binding(
-                    get: { Double(selectedGain) },
-                    set: { value in setBandGain(selectedBand, Float(value)) }
-                ), in: Double(selectedRange.lowerBound)...Double(selectedRange.upperBound),
-                   step: 0.5, onEditingChanged: { editing in
-                    isAdjustingEQ = editing
-                    if !editing { player.saveEQ() }
-                })
-                .tint(SN.amber)
-                .frame(minHeight: 44)
-                .accessibilityLabel("\(bandNames[selectedBand]), \(frequencyLabels[selectedBand])")
-                .accessibilityValue(db(selectedGain))
-                trimIconButton("plus", label: "Плюс 0,5 дБ", disabled: selectedGain >= selectedRange.upperBound) {
-                    nudge(selectedBand, by: 0.5)
-                }
-            }
-            HStack {
-                Text(rangeLabel(selectedRange.lowerBound))
-                Spacer()
-                Button {
-                    setBandGain(selectedBand, 0, feedback: false)
-                    player.saveEQ()
-                    Haptics.tap(.light)
-                } label: {
-                    Text("0 дБ")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 16)
-                        .frame(minWidth: 44, minHeight: 44)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(selectedGain == 0 ? SN.inkMuted : SN.ink)
-                .glassCapsule(interactive: true)
-                .disabled(selectedGain == 0)
-                .accessibilityLabel("Сбросить \(frequencyLabels[selectedBand])")
-                Spacer()
-                Text(rangeLabel(selectedRange.upperBound))
-            }
-            .font(.subheadline.monospacedDigit())
-            .foregroundStyle(SN.inkMuted)
-        }
-        .disabled(!player.eqEnabled)
-        .opacity(player.eqEnabled ? 1 : 0.5)
-    }
-
-    private func trimIconButton(_ systemImage: String, label: String, disabled: Bool,
-                                action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.body.weight(.semibold))
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(disabled ? SN.inkFaint : SN.ink)
-        .glassCircle()
-        .disabled(disabled)
-        .accessibilityLabel(label)
-    }
-
-    private var accessibilityBandList: some View {
-        VStack(spacing: 0) {
-            ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
-                bandRow(index)
-                if index < PlayerCore.bandFrequencies.count - 1 { Divider() }
-            }
-        }
-        .disabled(!player.eqEnabled)
-        .opacity(player.eqEnabled ? 1 : 0.55)
     }
 
     // MARK: Presets
@@ -400,11 +298,11 @@ struct PlayerEQSheetView: View {
     private func presetChip(_ preset: EQPreset) -> some View {
         let selected = player.eqEnabled && matches(preset.gains)
         return Button { applyPreset(preset) } label: {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 EQMiniCurve(gains: preset.gains)
                     .stroke(selected ? SN.onAccent : SN.amber,
-                            style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
-                    .frame(height: 30)
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .frame(height: 22)
                     .accessibilityHidden(true)
                 HStack(spacing: 6) {
                     Image(systemName: presetIcon(preset))
@@ -416,8 +314,9 @@ struct PlayerEQSheetView: View {
                 }
             }
             .foregroundStyle(selected ? SN.onAccent : SN.ink)
-            .padding(14)
-            .frame(width: 128, alignment: .leading)
+            .padding(10)
+            .frame(width: 112)
+            .frame(minHeight: 70, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: SN.radius, style: .continuous)
                     .fill(selected ? SN.amber : SN.card)
@@ -426,7 +325,7 @@ struct PlayerEQSheetView: View {
                 RoundedRectangle(cornerRadius: SN.radius, style: .continuous)
                     .strokeBorder(SN.ink.opacity(selected ? 0 : 0.10), lineWidth: 1)
             )
-            .shadow(color: SN.amber.opacity(selected ? 0.35 : 0), radius: 12, y: 4)
+            .shadow(color: SN.amber.opacity(selected ? 0.16 : 0), radius: 6, y: 2)
             .scaleEffect(selected && !reduceEQMotion ? 1.02 : 1)
             .animation(reduceEQMotion ? nil : SN.fastSpring, value: selected)
         }
@@ -514,61 +413,6 @@ struct PlayerEQSheetView: View {
         }
     }
 
-    // MARK: Band rows (accessibility sizes)
-
-    private func bandRow(_ index: Int) -> some View {
-        let gain = player.eqGains.indices.contains(index) ? player.eqGains[index] : 0
-        return VStack(alignment: .leading, spacing: 8) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline) {
-                    bandTitle(index)
-                    Spacer(minLength: 16)
-                    Text(db(gain)).font(.title3.weight(.semibold).monospacedDigit())
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    bandTitle(index)
-                    Text(db(gain)).font(.title3.weight(.semibold).monospacedDigit())
-                }
-            }
-            Slider(value: Binding(
-                get: { Double(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0) },
-                set: { value in
-                    selectedBand = index
-                    setBandGain(index, Float(value))
-                }
-            ), in: Double(EQGainLimits.range(at:index).lowerBound)...Double(EQGainLimits.range(at:index).upperBound), step: 0.5, onEditingChanged: { editing in
-                isAdjustingEQ = editing
-                if !editing { player.saveEQ() }
-            })
-            .tint(SN.amber)
-            .frame(minHeight: 44)
-            .accessibilityLabel("\(bandNames[index]), \(frequencyLabels[index])")
-            .accessibilityValue(db(gain))
-            HStack {
-                Text(rangeLabel(EQGainLimits.range(at:index).lowerBound))
-                Spacer()
-                Button("0 дБ") {
-                    selectedBand = index
-                    setBandGain(index, 0, feedback: false)
-                    player.saveEQ()
-                }
-                .frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("Сбросить \(frequencyLabels[index])")
-                Spacer()
-                Text(rangeLabel(EQGainLimits.range(at:index).upperBound))
-            }
-            .font(.subheadline.monospacedDigit())
-            .foregroundStyle(SN.inkMuted)
-        }
-        .padding(.top, 8)
-    }
-
-    private func bandTitle(_ index: Int) -> some View {
-        Text("\(bandNames[index]) \(frequencyLabels[index])")
-            .font(.headline)
-            .foregroundStyle(SN.ink)
-    }
-
     // MARK: Output
 
     private var outputCard: some View {
@@ -610,7 +454,7 @@ struct PlayerEQSheetView: View {
 
     private var listeningNote: some View {
         Label {
-            Text("Точка на кривой = полоса 32 Гц–16 кГц. Тяни вверх/вниз, двойной тап — 0 дБ. Сильный подъём может клиппировать запись — начни с умеренной громкости.")
+            Text("Сильный подъём частот может вызвать искажения — начни с умеренной громкости.")
         } icon: {
             Image(systemName: "slider.vertical.3")
         }
@@ -650,12 +494,6 @@ struct PlayerEQSheetView: View {
         Haptics.tap(.light)
     }
 
-    private func selectBand(_ index: Int) {
-        guard PlayerCore.bandFrequencies.indices.contains(index), index != selectedBand else { return }
-        withAnimation(reduceEQMotion ? nil : SN.fastSpring) { selectedBand = index }
-        Haptics.tap(.soft)
-    }
-
     private func toggleEQ() {
         withAnimation(reduceEQMotion ? nil : SN.fastSpring) { player.eqEnabled.toggle() }
         player.saveEQ()
@@ -683,10 +521,6 @@ struct PlayerEQSheetView: View {
         guard gains.count == PlayerCore.bandFrequencies.count else { return false }
         return zip(PlayerCore.normalized(player.eqGains), gains).allSatisfy { abs($0 - $1) < 0.2 }
     }
-    private func db(_ gain: Float) -> String { String(format: "%+.1f дБ", gain) }
-    private func rangeLabel(_ value: Float) -> String {
-        value > 0 ? "+\(Int(value))" : value < 0 ? "−\(Int(-value))" : "0"
-    }
     private func presetIcon(_ preset: EQPreset) -> String {
         if preset == EQPresets.airPodsPro2Bass { return "earbuds" }
         if preset == EQPresets.flat { return "slider.horizontal.3" }
@@ -698,7 +532,7 @@ struct PlayerEQSheetView: View {
 }
 
 /// Interactive console: vertical lane per band, aligned response fill, curve and
-/// fader-cap nodes. Drag sets gain (anywhere in a lane); double-tap → 0 дБ.
+/// compact nodes. Drag a lane directly, without a separate slider; double-tap → 0 дБ.
 private struct CompactEQCurve: View {
     let gains: [Float]
     @Binding var selectedBand: Int
@@ -710,6 +544,7 @@ private struct CompactEQCurve: View {
     let onEnd: () -> Void
     var onStep: (Int, Float) -> Void = { _, _ in }
     @State private var draggingBand: Int?
+    @State private var dragOriginY: CGFloat = 0
 
     private static let axisHeight: CGFloat = 22
 
@@ -718,19 +553,15 @@ private struct CompactEQCurve: View {
         return CGPoint(x: EQGainLimits.graphX(at: index, width: Double(size.width)),
                        y: EQGainLimits.graphY(gain: gain, height: Double(size.height)))
     }
-    /// Node hit first (precise), then the whole lane column (fader feel).
+    /// A lane is selected by its horizontal position, even if its node is elsewhere.
+    /// This avoids selecting a neighbouring band when a finger covers small nodes.
     private func hitBand(_ location: CGPoint, size: CGSize) -> Int? {
-        if let node = EQGainLimits.graphHitBand(x: Double(location.x), y: Double(location.y),
-                                                width: Double(size.width), height: Double(size.height), gains: gains) {
-            return node
-        }
-        guard location.x.isFinite, location.y.isFinite, size.width > 28,
+        guard location.x.isFinite, location.y.isFinite, size.width > 28, size.height > 28,
+              location.x >= 0, location.x <= size.width,
               location.y >= 0, location.y <= size.height else { return nil }
-        let spacing = max(1, Double(size.width) - 28) / Double(max(1, EQGainLimits.frequencies.count - 1))
+        let spacing = (Double(size.width) - 28) / Double(max(1, EQGainLimits.frequencies.count - 1))
         let lane = Int(((Double(location.x) - 14) / spacing).rounded())
-        guard EQGainLimits.frequencies.indices.contains(lane),
-              abs(EQGainLimits.graphX(at: lane, width: Double(size.width)) - Double(location.x)) <= spacing / 2 else { return nil }
-        return lane
+        return min(EQGainLimits.frequencies.count - 1, max(0, lane))
     }
     private func resetPoint(at location: CGPoint, size: CGSize) {
         guard let index = hitBand(location, size: size) else { return }
@@ -771,54 +602,46 @@ private struct CompactEQCurve: View {
                         let x = CGFloat(EQGainLimits.graphX(at: index, width: Double(size.width)))
                         let selected = index == selectedBand
                         Capsule(style: .continuous)
-                            .fill(selected ? SN.amber.opacity(0.10) : SN.ink.opacity(0.05))
-                            .frame(width: selected ? 26 : 4, height: max(0, bottomY - topY))
+                            .fill(selected ? SN.amber.opacity(0.14) : SN.ink.opacity(0.07))
+                            .frame(width: selected ? 2 : 1, height: max(0, bottomY - topY))
                             .position(x: x, y: (topY + bottomY) / 2)
                             .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: selectedBand)
                     }
 
                     // Glow between the node curve and 0 дБ.
                     EQControlCurveZeroFillShape(vector: EQCurveVector(gains))
-                        .fill(SN.amber.opacity(isEnabled ? 0.16 : 0.06))
+                        .fill(SN.amber.opacity(isEnabled ? 0.10 : 0.04))
                         .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                     // Real summed response, mapped into the node coordinate space.
                     EQAlignedResponseShape(vector: EQCurveVector(gains))
                         .stroke(SN.ink.opacity(0.35), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [3, 4]))
                         .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                     EQControlCurveShape(vector: EQCurveVector(gains))
-                        .stroke(SN.amber, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                        .shadow(color: SN.amber.opacity(isEnabled ? 0.55 : 0), radius: 8)
+                        .stroke(SN.amber, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                        .shadow(color: SN.amber.opacity(isEnabled ? 0.22 : 0), radius: 4)
                         .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
 
-                    // Fader-cap nodes
+                    // Small visual handles; each full lane remains draggable
                     ForEach(EQGainLimits.frequencies.indices, id: \.self) { index in
                         let selected = index == selectedBand
                         let dragging = draggingBand == index
                         ZStack {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            Circle()
                                 .fill(selected ? SN.amber : SN.card)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .strokeBorder(SN.amber, lineWidth: selected ? 0 : 2)
-                                )
-                                .overlay(
-                                    Capsule().fill(selected ? SN.onAccent.opacity(0.8) : SN.amber.opacity(0.7))
-                                        .frame(width: selected ? 12 : 8, height: 2)
-                                )
-                                .frame(width: selected ? 30 : 22, height: selected ? 18 : 14)
-                                .shadow(color: SN.amber.opacity(selected ? 0.5 : 0), radius: 10)
+                                .overlay(Circle().strokeBorder(SN.amber, lineWidth: 1.5))
+                                .frame(width: selected ? 14 : 11, height: selected ? 14 : 11)
                             if dragging {
                                 Text(gainText(index))
-                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .font(.caption2.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(SN.onAccent)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
                                     .background(Capsule().fill(SN.amber))
-                                    .offset(y: -30)
+                                    .offset(y: -24)
                                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                             }
                         }
-                        .scaleEffect(dragging && !reduceMotion ? 1.12 : 1)
+                        .scaleEffect(dragging && !reduceMotion ? 1.08 : 1)
                         .position(point(index, size: size))
                         .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                         .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: selectedBand)
@@ -840,17 +663,18 @@ private struct CompactEQCurve: View {
                 .contentShape(Rectangle())
                 // Double tap wins over dragging. A small drag threshold prevents
                 // either tap from moving the gain before the reset is recognized.
-                .gesture(SpatialTapGesture(count: 2)
+                .highPriorityGesture(SpatialTapGesture(count: 2)
                     .onEnded { value in resetPoint(at: value.location, size: size) }
                     .exclusively(before: DragGesture(minimumDistance: 3)
                     .onChanged { value in
                         if draggingBand == nil {
                             guard let closest = hitBand(value.startLocation, size: size) else { return }
                             draggingBand = closest
+                            dragOriginY = point(closest, size: size).y
                             selectedBand = closest
                         }
                         guard let index = draggingBand else { return }
-                        let rawGain = EQGainLimits.graphGain(y: Double(value.location.y), height: Double(size.height), at: index)
+                        let rawGain = EQGainLimits.graphGain(y: Double(dragOriginY + value.translation.height), height: Double(size.height), at: index)
                         onChange(index, rawGain)
                     }
                     .onEnded { _ in
