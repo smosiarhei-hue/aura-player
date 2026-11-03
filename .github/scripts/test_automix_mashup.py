@@ -241,6 +241,9 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("openLinearPCMCAFWriter", baker)
         self.assertIn("commonFormat: format.commonFormat", baker)
         self.assertIn("interleaved: format.isInterleaved", baker)
+        # Read m4a/mp3 as float32 non-interleaved (no AVAudioConverter capture issues).
+        self.assertIn("commonFormat: .pcmFormatFloat32", baker)
+        self.assertIn("interleaved: false", baker)
         self.assertNotIn(
             "AVAudioFile(forWriting: outURL, settings: format.settings)",
             baker,

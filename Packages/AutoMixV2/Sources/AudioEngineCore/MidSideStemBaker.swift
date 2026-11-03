@@ -397,10 +397,18 @@ public enum MidSideStemBaker {
         let amount = min(1, max(0, request.amount))
         let until = min(duration, max(0, request.instrumentalUntilSec))
 
-        let source = try AVAudioFile(forReading: request.fileURL)
+        // Force float32 non-interleaved on read so m4a/mp3 match the stem DSP
+        // and the 4-arg CAF writer (no AVAudioConverter / Swift 6 capture issues).
+        let source = try AVAudioFile(
+            forReading: request.fileURL,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        )
         let format = source.processingFormat
         let rate = format.sampleRate
-        guard rate.isFinite, rate > 0, source.length > 0 else {
+        guard rate.isFinite, rate > 0, source.length > 0,
+              format.commonFormat == .pcmFormatFloat32,
+              !format.isInterleaved else {
             throw AudioEngineCoreError.unsupportedOutputFormat
         }
 
@@ -414,40 +422,20 @@ public enum MidSideStemBaker {
 
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonivo-mashup-\(UUID().uuidString).caf")
-        // Always write float32 non-interleaved CAF via the 4-arg initializer.
-        // Field (1045): settings-only forWriting still threw GenericObjCError 0 on m4a/mp3.
-        let channels = max(1, min(2, format.channelCount))
-        guard let outFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: rate,
-            channels: channels,
-            interleaved: false
-        ) else {
-            throw AudioEngineCoreError.unsupportedOutputFormat
-        }
+        // Field (1045): settings-only forWriting → GenericObjCError 0 on m4a/mp3.
+        // 4-arg initializer with matching processing format is required on device.
         let output: AVAudioFile
         do {
-            output = try openLinearPCMCAFWriter(at: outURL, format: outFormat)
+            output = try openLinearPCMCAFWriter(at: outURL, format: format)
         } catch {
             try? FileManager.default.removeItem(at: outURL)
             throw error
         }
 
-        guard let srcBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames),
-              let outBuf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: chunkFrames) else {
+        guard let inBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames),
+              let outBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else {
             try? FileManager.default.removeItem(at: outURL)
             throw AudioEngineCoreError.cannotCreatePCMBuffer
-        }
-        let needsConvert = format.commonFormat != outFormat.commonFormat
-            || format.isInterleaved != outFormat.isInterleaved
-            || format.channelCount != outFormat.channelCount
-            || abs(format.sampleRate - outFormat.sampleRate) > 0.5
-        let converter: AVAudioConverter? = needsConvert
-            ? AVAudioConverter(from: format, to: outFormat)
-            : nil
-        if needsConvert, converter == nil {
-            try? FileManager.default.removeItem(at: outURL)
-            throw AudioEngineCoreError.unsupportedOutputFormat
         }
 
         source.framePosition = startFrame
@@ -458,92 +446,44 @@ public enum MidSideStemBaker {
         let lpAlpha = Float(1 - exp(-2 * Double.pi * 150 / rate))
         let bodyAlpha = Float(1 - exp(-2 * Double.pi * 800 / rate))
         let presAlpha = Float(1 - exp(-2 * Double.pi * 2800 / rate))
-        let outChannels = Int(outFormat.channelCount)
+        let channels = Int(format.channelCount)
         // Apple Automix LAND is a hard stem cut — keep bloom short to avoid a soft crossfade.
         let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
 
         while written < totalFrames {
             let got: AVAudioFrameCount = try autoreleasepool {
                 let n = min(chunkFrames, totalFrames - written)
-                srcBuf.frameLength = 0
-                try source.read(into: srcBuf, frameCount: n)
-                let got = srcBuf.frameLength
+                inBuf.frameLength = 0
+                try source.read(into: inBuf, frameCount: n)
+                let got = inBuf.frameLength
                 guard got > 0 else { return 0 }
+                outBuf.frameLength = got
 
                 let mode = request.mode
-                let frames: AVAudioFrameCount
-                if let converter {
-                    // Convert into a scratch buffer, then carve into outBuf (never in-place).
-                    guard let converted = AVAudioPCMBuffer(
-                        pcmFormat: outFormat,
-                        frameCapacity: chunkFrames
-                    ) else { return 0 }
-                    converted.frameLength = 0
-                    var error: NSError?
-                    var provided = false
-                    let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-                        if provided {
-                            outStatus.pointee = .noDataNow
-                            return nil
-                        }
-                        provided = true
-                        outStatus.pointee = .haveData
-                        return srcBuf
-                    }
-                    converter.convert(to: converted, error: &error, withInputFrom: inputBlock)
-                    if let error { throw error }
-                    frames = converted.frameLength
-                    guard frames > 0 else { return 0 }
-                    outBuf.frameLength = frames
-                    if mode == .dry || amount < 0.05 {
-                        copy(from: converted, to: outBuf, frames: frames, channels: outChannels)
-                    } else {
-                        processChunk(
-                            input: converted,
-                            output: outBuf,
-                            frames: frames,
-                            channels: outChannels,
-                            mode: mode,
-                            amount: amount,
-                            absoluteFrame: written,
-                            untilFrame: untilFrame,
-                            fadeFrames: fadeFrames,
-                            midLp: &midLp,
-                            midBody: &midBody,
-                            midPres: &midPres,
-                            lpAlpha: lpAlpha,
-                            bodyAlpha: bodyAlpha,
-                            presAlpha: presAlpha
-                        )
-                    }
+                if mode == .dry || amount < 0.05 {
+                    copy(from: inBuf, to: outBuf, frames: got, channels: channels)
                 } else {
-                    frames = got
-                    outBuf.frameLength = frames
-                    if mode == .dry || amount < 0.05 {
-                        copy(from: srcBuf, to: outBuf, frames: frames, channels: outChannels)
-                    } else {
-                        processChunk(
-                            input: srcBuf,
-                            output: outBuf,
-                            frames: frames,
-                            channels: outChannels,
-                            mode: mode,
-                            amount: amount,
-                            absoluteFrame: written,
-                            untilFrame: untilFrame,
-                            fadeFrames: fadeFrames,
-                            midLp: &midLp,
-                            midBody: &midBody,
-                            midPres: &midPres,
-                            lpAlpha: lpAlpha,
-                            bodyAlpha: bodyAlpha,
-                            presAlpha: presAlpha
-                        )
-                    }
+                    processChunk(
+                        input: inBuf,
+                        output: outBuf,
+                        frames: got,
+                        channels: channels,
+                        mode: mode,
+                        amount: amount,
+                        absoluteFrame: written,
+                        untilFrame: untilFrame,
+                        fadeFrames: fadeFrames,
+                        midLp: &midLp,
+                        midBody: &midBody,
+                        midPres: &midPres,
+                        lpAlpha: lpAlpha,
+                        bodyAlpha: bodyAlpha,
+                        presAlpha: presAlpha
+                    )
                 }
 
                 try output.write(from: outBuf)
-                return frames
+                return got
             }
             guard got > 0 else { break }
             written += got
