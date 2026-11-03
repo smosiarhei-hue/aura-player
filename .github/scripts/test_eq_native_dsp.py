@@ -91,12 +91,13 @@ import AudioToolbox
         precondition(EQHeadroom.preamp(gains:[6]+[Float](repeating:0,count:9),sampleRate:48000)==0)
         // Unity always — hot bass must not duck the master like a soft-LF cut.
         precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:48000)==0)
-        var curve=flat;curve[4]=6
+        // Octave grid: 32 64 125 250 500 1k 2k 4k 8k 16k — probe each band at its center.
+        var curve=flat;curve[5]=6
         let output=try render(gains:curve,hz:1000,amplitude:0.01)
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
         let db=20*log10(rms/(0.01/sqrt(2)))
         precondition(abs(db - 6) < 0.6, "Native center gain incorrect: \(db)")
-        for (band,hz) in [(1,64.0),(2,125.0),(5,2000.0)] {
+        for (band,hz) in [(1,64.0),(2,125.0),(6,2000.0)] {
             var curve=flat;curve[band]=6
             let rendered=try render(gains:curve,hz:hz,amplitude:0.01)
             let rms=sqrt(rendered.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
