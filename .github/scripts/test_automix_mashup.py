@@ -229,6 +229,9 @@ class AutoMixMashupTests(unittest.TestCase):
         # Streamed mp3/aac must not use processingFormat.settings for CAF writes.
         self.assertIn("linearPCMCAFSettings", baker)
         self.assertIn("kAudioFormatLinearPCM", baker)
+        # AVAudioFormat has isInterleaved, not isNonInterleaved (CI build break).
+        self.assertIn("AVLinearPCMIsNonInterleaved: !format.isInterleaved", baker)
+        self.assertNotIn("format.isNonInterleaved", baker)
         self.assertNotIn(
             "AVAudioFile(forWriting: outURL, settings: format.settings)",
             baker,

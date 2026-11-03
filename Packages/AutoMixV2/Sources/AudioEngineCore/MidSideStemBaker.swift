@@ -504,7 +504,7 @@ public enum MidSideStemBaker {
             AVLinearPCMBitDepthKey: bitDepth,
             AVLinearPCMIsFloatKey: isFloat || format.commonFormat == .pcmFormatFloat32,
             AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: format.isNonInterleaved
+            AVLinearPCMIsNonInterleaved: !format.isInterleaved
         ]
     }
 
