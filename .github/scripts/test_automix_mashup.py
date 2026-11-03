@@ -58,11 +58,13 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("defaultPreferredBlendSec", player)
         self.assertNotIn("crossfadeDuration * 1.35", player)
         self.assertIn("incomingStartPosition + elapsed", player)
-        # Stream intro seek must use completion-handler overload (Swift 6 async seek needs await).
+        # Stream intro seek must use completion-handler overload (Swift 6 async seek needs await),
+        # then playImmediately so B is not left stalled at inCue.
         self.assertIn(
-            "targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in }",
+            "targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)",
             player,
         )
+        self.assertIn("idleStreamingPlayer.playImmediately(atRate: startRate)", player)
 
     def test_blend_scheduler_exists(self):
         scheduler = (
@@ -196,11 +198,21 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("isCompletingTransition", player)
         self.assertIn("stemPadSec", player)
         self.assertIn("mashupHardCut", player)
+        # Automix/Duet always hard-cut at LAND — never seamless-swap a stalled idle stream.
+        self.assertIn("let mashupHardCut = isMashupTransitionMode", player)
+        self.assertNotIn(
+            "isMashupTransitionMode && (usedBake || !incomingIsStream)",
+            player,
+        )
         self.assertIn("LAND hard-cut", player)
         self.assertIn("materializeLocalAudio", player)
         self.assertIn("handoffLocalPlayback", player)
         self.assertIn("suppressTrackFinishUntil", player)
         self.assertIn("Ignoring track-finish during LAND handoff window", player)
+        self.assertIn("bake.fail", player)
+        self.assertIn("land.recover", player)
+        self.assertIn("streamFrozen", player)
+        self.assertIn("Seek first, then play", player)
 
         baker = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift"

@@ -2355,26 +2355,40 @@ final class PlayerCore {
         return cueClamped
     }
 
-    /// If LAND left a silent deck, restart B once after a short settle.
+    /// If LAND left a silent/frozen deck, restart B once after a short settle.
     private func verifyAutomixHandoffPlayback(expected: Track, at seconds: Double) {
         let token = generation
         let trackID = expected.id
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let before = self.playbackProgress
             try? await Task.sleep(for: .milliseconds(450))
             guard self.generation == token, self.currentTrack?.id == trackID else { return }
+            let after = self.playbackProgress
             let streamDead = self.isUsingStreamPlayer && (
                 self.activeStreamingPlayer.currentItem == nil
                     || self.activeStreamingPlayer.rate == 0
                     || self.activeStreamingPlayer.error != nil
+                    || self.activeStreamingPlayer.timeControlStatus == .paused
             )
+            // Rate can look live while currentTime never leaves the handoff cue.
+            let streamFrozen = self.isUsingStreamPlayer
+                && abs(after - before) < 0.08
+                && abs(after - seconds) < 1.5
             let nativeDead = !self.isUsingStreamPlayer && (
                 self.activeAudioFile == nil || !self.activePlayer.isPlaying
             )
             let markedStopped = !self.isPlaying
-            guard streamDead || nativeDead || markedStopped else { return }
+            guard streamDead || streamFrozen || nativeDead || markedStopped else { return }
             AutoMixSessionLog.shared.event(
-                "land.recover streamDead=\(streamDead) nativeDead=\(nativeDead) stopped=\(markedStopped)"
+                String(
+                    format: "land.recover streamDead=%d frozen=%d nativeDead=%d stopped=%d pos=%.1f",
+                    streamDead ? 1 : 0,
+                    streamFrozen ? 1 : 0,
+                    nativeDead ? 1 : 0,
+                    markedStopped ? 1 : 0,
+                    after
+                )
             )
             SonivoDiagnostics.log(
                 "[AutoMix] LAND recovery restart for \(expected.title)",
@@ -2647,38 +2661,51 @@ final class PlayerCore {
                     // ending mid-window previously froze B after a stop/reload race).
                     let stemPadSec = 4.0
                     let bakeStartedAt = Date()
-                    let stemPair: (outgoing: URL, incoming: URL)? = await Task.detached(priority: .userInitiated) {
-                        if duetBake {
-                            return try? MidSideStemBaker.bakeDuetStemPair(
+                    let bakeResult: Result<(outgoing: URL, incoming: URL), Error> = await Task.detached(priority: .userInitiated) {
+                        do {
+                            if duetBake {
+                                return .success(try MidSideStemBaker.bakeDuetStemPair(
+                                    outgoingURL: outURL,
+                                    incomingURL: inURL,
+                                    cueA: cueA,
+                                    cueB: cueB,
+                                    blendSec: blend,
+                                    padSec: stemPadSec
+                                ))
+                            }
+                            return .success(try MidSideStemBaker.bakeAutomixStemPair(
                                 outgoingURL: outURL,
                                 incomingURL: inURL,
                                 cueA: cueA,
                                 cueB: cueB,
                                 blendSec: blend,
+                                handoffProgress: handoff,
                                 padSec: stemPadSec
-                            )
+                            ))
+                        } catch {
+                            return .failure(error)
                         }
-                        return try? MidSideStemBaker.bakeAutomixStemPair(
-                            outgoingURL: outURL,
-                            incomingURL: inURL,
-                            cueA: cueA,
-                            cueB: cueB,
-                            blendSec: blend,
-                            handoffProgress: handoff,
-                            padSec: stemPadSec
-                        )
                     }.value
                     // Bake ran while live A kept playing — enter the CAF mid-window so the
                     // playhead doesn't jump backward by the bake latency.
                     let bakeLag = min(max(0, Date().timeIntervalSince(bakeStartedAt)), max(0, blend - 1.5))
                     guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
-                        if let stemPair {
+                        if case .success(let stemPair) = bakeResult {
                             MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
                         }
                         return
                     }
-                    if let stemPair {
+                    if case .failure(let bakeError) = bakeResult {
+                        AutoMixSessionLog.shared.event(
+                            "bake.fail \(bakeError.localizedDescription)"
+                        )
+                        SonivoDiagnostics.log(
+                            "[Mashup] stem bake failed — falling back to live decks: \(bakeError.localizedDescription)",
+                            tag: "AUDIO"
+                        )
+                    }
+                    if case .success(let stemPair) = bakeResult {
                         self.clearMashupBakeTemps()
                         self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
                         self.mashupBakeRealIncomingURL = inURL
@@ -2767,14 +2794,23 @@ final class PlayerCore {
                         StreamBeatTap.shared.attach(to: item)
                         targetStream.replaceCurrentItem(with: item)
                         targetStream.volume = 0
-                        // Start near natural tempo; tickTransition accel-ramps into rateB.
-                        let startRate = activeMashupStyle.playbackRates(progress: 0).incoming
-                        targetStream.playImmediately(atRate: startRate)
+                        // Seek first, then play — playImmediately-then-seek often leaves B
+                        // stalled at inCue (field log: frozen pos=16 after LAND).
+                        let startRate = self.activeMashupStyle.playbackRates(progress: 0).incoming
+                        let armID = transitionID
                         if startAt > 0.25 {
                             let seekTime = CMTime(seconds: startAt, preferredTimescale: 600)
-                            // Completion-handler seek (same as other PlayerCore paths) — avoids the
-                            // Swift 6 async AVPlayer.seek overload that requires await.
-                            targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
+                            targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { finished in
+                                Task { @MainActor [weak self] in
+                                    guard let self, finished,
+                                          self.transitionRequestID == armID,
+                                          self.isTransitioning,
+                                          self.idleStreamingPlayer.currentItem === item else { return }
+                                    self.idleStreamingPlayer.playImmediately(atRate: startRate)
+                                }
+                            }
+                        } else {
+                            targetStream.playImmediately(atRate: startRate)
                         }
                     }
                 } else {
@@ -3064,7 +3100,9 @@ final class PlayerCore {
         let nativeIncomingPosition = usedBake
             ? max(0, mashupBakeIncomingBaseCue + elapsed)
             : max(0, incomingStartPosition + elapsed)
-        let mashupHardCut = isMashupTransitionMode && (usedBake || !incomingIsStream)
+        // Always hard-cut Automix/Duet at LAND (Apple Automix). Seamless stream swap
+        // left B frozen at inCue when bake failed and the idle seek stalled.
+        let mashupHardCut = isMashupTransitionMode
         let handoffPos = max(
             0,
             usedBake
