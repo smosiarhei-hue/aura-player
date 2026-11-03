@@ -27,33 +27,47 @@ struct PlayerEQSheetView: View {
     /// Generic earphone taste — not a device calibration.
     private var secondaryPresets: [EQPreset] { [EQPresets.airPodsPro2Bass] }
     private var activePreset: EQPreset? { EQPresets.all.first { matches($0.gains) } }
+    private var selectedGain: Float {
+        player.eqGains.indices.contains(selectedBand) ? player.eqGains[selectedBand] : 0
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 32) {
                     masterHeader
+                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0)
                     heroCurve
+                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.04)
                     bandEditor
+                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.08)
                     profilesSection
+                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.12)
                     savedPresetsSection
+                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.16)
                     outputCard
+                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.20)
                     listeningNote
+                        .eqReveal(appeared: appeared, reduceMotion: reduceEQMotion, delay: 0.24)
                 }
                 .frame(maxWidth: 620)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .padding(.bottom, 36)
-                .opacity(appeared || reduceEQMotion ? 1 : 0)
-                .offset(y: appeared || reduceEQMotion ? 0 : 14)
             }
             .background {
                 ZStack {
                     SN.bg
                     RadialGradient(
-                        colors: [SN.amber.opacity(player.eqEnabled ? 0.14 : 0.05), .clear],
-                        center: .top, startRadius: 20, endRadius: 420
+                        colors: [SN.amber.opacity(player.eqEnabled ? 0.16 : 0.05), .clear],
+                        center: .top, startRadius: 12, endRadius: 460
+                    )
+                    .ignoresSafeArea()
+                    .animation(reduceEQMotion ? nil : SN.slowSpring, value: player.eqEnabled)
+                    LinearGradient(
+                        colors: [SN.amber.opacity(player.eqEnabled ? 0.06 : 0), .clear],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                     .ignoresSafeArea()
                     .animation(reduceEQMotion ? nil : SN.slowSpring, value: player.eqEnabled)
@@ -122,14 +136,24 @@ struct PlayerEQSheetView: View {
                          : "Выключен · исходный звук")
                         .font(.subheadline)
                         .foregroundStyle(SN.inkMuted)
+                        .contentTransition(.numericText())
+                        .animation(reduceEQMotion ? nil : SN.fastSpring, value: player.eqEnabled)
+                        .animation(reduceEQMotion ? nil : SN.fastSpring, value: activePreset?.name)
                 }
             }
             .tint(SN.amber)
             .accessibilityLabel("Эквалайзер")
-            Label(eqStatusText, systemImage: player.isEQEffectivelyActive ? "waveform" : "minus.circle")
-                .font(.subheadline)
-                .foregroundStyle(SN.inkMuted)
-                .fixedSize(horizontal: false, vertical: true)
+            Label {
+                Text(eqStatusText)
+                    .contentTransition(.opacity)
+            } icon: {
+                Image(systemName: player.isEQEffectivelyActive ? "waveform" : "minus.circle")
+                    .symbolEffect(.variableColor.iterative, isActive: player.isEQEffectivelyActive && !reduceEQMotion)
+            }
+            .font(.subheadline)
+            .foregroundStyle(SN.inkMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .animation(reduceEQMotion ? nil : SN.fastSpring, value: player.isEQEffectivelyActive)
         }
     }
 
@@ -138,18 +162,26 @@ struct PlayerEQSheetView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Кривая").font(.headline)
                 Spacer()
-                Text("±15 дБ").font(.subheadline.monospacedDigit()).foregroundStyle(SN.inkMuted)
+                Text(selectedBandCaption)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(SN.amber)
+                    .contentTransition(.numericText())
+                    .animation(reduceEQMotion || isAdjustingEQ ? nil : SN.fastSpring, value: selectedBand)
+                    .animation(reduceEQMotion || isAdjustingEQ ? nil : SN.fastSpring, value: selectedGain)
             }
             ZStack {
                 RoundedRectangle(cornerRadius: SN.radiusLarge, style: .continuous)
                     .fill(SN.card.opacity(0.72))
+                EQGridGuide()
+                    .stroke(SN.ink.opacity(0.07), style: StrokeStyle(lineWidth: 1, dash: [3, 5]))
+                    .padding(10)
                 EQFrequencyResponseFillShape(vector: EQCurveVector(player.eqGains))
-                    .fill(LinearGradient(colors: [SN.amber.opacity(0.22), SN.amber.opacity(0.02)],
+                    .fill(LinearGradient(colors: [SN.amber.opacity(0.26), SN.amber.opacity(0.02)],
                                          startPoint: .top, endPoint: .bottom))
                     .padding(10)
                     .animation(reduceEQMotion || isAdjustingEQ ? nil : .smooth(duration: 0.28), value: player.eqGains)
                 EQFrequencyResponseShape(vector: EQCurveVector(player.eqGains))
-                    .stroke(SN.amber.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .stroke(SN.amber.opacity(0.38), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                     .padding(10)
                     .animation(reduceEQMotion || isAdjustingEQ ? nil : .smooth(duration: 0.28), value: player.eqGains)
                 CompactEQCurve(gains: player.eqGains, selectedBand: $selectedBand, isInteracting: isAdjustingEQ,
@@ -157,19 +189,29 @@ struct PlayerEQSheetView: View {
                     .padding(.horizontal, 4)
                     .padding(.vertical, 8)
             }
-            .frame(height: dynamicTypeSize.isAccessibilitySize ? 200 : 260)
+            .frame(height: dynamicTypeSize.isAccessibilitySize ? 200 : 268)
             .overlay(
                 RoundedRectangle(cornerRadius: SN.radiusLarge, style: .continuous)
                     .strokeBorder(SN.ink.opacity(0.08), lineWidth: 1)
             )
-            .opacity(player.eqEnabled ? 1 : 0.45)
+            .opacity(player.eqEnabled ? 1 : 0.42)
+            .scaleEffect(player.eqEnabled || reduceEQMotion ? 1 : 0.985)
+            .animation(reduceEQMotion ? nil : SN.spring, value: player.eqEnabled)
             .disabled(!player.eqEnabled)
             .accessibilityHidden(true)
-            Text("Суммарная АЧХ · модель PCM 48 кГц · не измерение наушников")
-                .font(.caption).foregroundStyle(SN.inkMuted)
-            Text("Двойной тап по точке — 0 дБ")
+            HStack(spacing: 16) {
+                Text("Суммарная АЧХ · модель PCM 48 кГц · не измерение наушников")
+                Spacer(minLength: 8)
+                Text("±15 дБ").font(.caption.monospacedDigit())
+            }
+            .font(.caption).foregroundStyle(SN.inkMuted)
+            Text("Перетащи точку · двойной тап — 0 дБ")
                 .font(.caption).foregroundStyle(SN.inkMuted)
         }
+    }
+
+    private var selectedBandCaption: String {
+        "\(bandNames[selectedBand]) \(compactFrequency(selectedBand)) · \(db(selectedGain))"
     }
 
     private var bandEditor: some View {
@@ -177,7 +219,11 @@ struct PlayerEQSheetView: View {
             Text("Полоса").font(.headline)
             Picker("Диапазон частот", selection: Binding(
                 get: { EQFrequencyRegion.containing(selectedBand) },
-                set: { selectedBand = $0.indices.lowerBound }
+                set: { region in
+                    withAnimation(reduceEQMotion ? nil : SN.fastSpring) {
+                        selectedBand = region.indices.lowerBound
+                    }
+                }
             )) {
                 ForEach(EQFrequencyRegion.allCases) { region in
                     Text(region.title).tag(region)
@@ -186,6 +232,8 @@ struct PlayerEQSheetView: View {
             .pickerStyle(.segmented)
             Text(EQFrequencyRegion.containing(selectedBand).detail)
                 .font(.subheadline).foregroundStyle(SN.inkMuted)
+                .contentTransition(.opacity)
+                .animation(reduceEQMotion ? nil : SN.fastSpring, value: selectedBand)
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(spacing: 0) {
                     ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
@@ -197,30 +245,15 @@ struct PlayerEQSheetView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(PlayerCore.bandFrequencies.indices, id: \.self) { index in
-                            Button {
-                                withAnimation(reduceEQMotion ? nil : SN.fastSpring) { selectedBand = index }
-                            } label: {
-                                VStack(spacing: 4) {
-                                    Text(compactFrequency(index))
-                                        .font(.caption.weight(.semibold).monospacedDigit())
-                                    Text(bandNames[index])
-                                        .font(.caption2)
-                                        .lineLimit(1)
-                                }
-                                .foregroundStyle(selectedBand == index ? SN.onAccent : SN.ink)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .background(Capsule(style: .continuous).fill(selectedBand == index ? SN.amber : SN.card))
-                                .overlay(Capsule(style: .continuous).strokeBorder(SN.ink.opacity(selectedBand == index ? 0 : 0.1), lineWidth: 1))
-                            }
-                            .buttonStyle(EQProfilePressStyle())
-                            .accessibilityLabel("Выбрать \(frequencyLabels[index])")
-                            .accessibilityValue(db(player.eqGains.indices.contains(index) ? player.eqGains[index] : 0))
-                            .accessibilityAddTraits(selectedBand == index ? .isSelected : [])
+                            bandChip(index)
                         }
                     }
+                    .padding(.vertical, 2)
                 }
                 bandRow(selectedBand)
+                    .id(selectedBand)
+                    .transition(reduceEQMotion ? .identity : .opacity.combined(with: .move(edge: .bottom)))
+                    .animation(reduceEQMotion ? nil : SN.fastSpring, value: selectedBand)
                     .padding(.top, 4)
             }
             if !player.eqEnabled {
@@ -233,6 +266,42 @@ struct PlayerEQSheetView: View {
         .foregroundStyle(SN.ink)
     }
 
+    private func bandChip(_ index: Int) -> some View {
+        let gain = player.eqGains.indices.contains(index) ? player.eqGains[index] : 0
+        let selected = selectedBand == index
+        return Button {
+            withAnimation(reduceEQMotion ? nil : SN.fastSpring) { selectedBand = index }
+        } label: {
+            VStack(spacing: 5) {
+                Capsule(style: .continuous)
+                    .fill(SN.amber.opacity(gain == 0 ? 0.18 : 0.85))
+                    .frame(width: 18, height: 3)
+                    .scaleEffect(x: 0.35 + 0.65 * CGFloat(min(1, abs(gain) / EQGainLimits.maximum)), anchor: .center)
+                    .animation(reduceEQMotion || isAdjustingEQ ? nil : SN.fastSpring, value: gain)
+                Text(compactFrequency(index))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                Text(bandNames[index])
+                    .font(.caption2)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(selected ? SN.onAccent : SN.ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(selected ? SN.amber : SN.card)
+                    .shadow(color: selected && !reduceEQMotion ? SN.amber.opacity(0.28) : .clear, radius: 10, y: 4)
+            )
+            .overlay(Capsule(style: .continuous).strokeBorder(SN.ink.opacity(selected ? 0 : 0.1), lineWidth: 1))
+            .scaleEffect(selected && !reduceEQMotion ? 1.04 : 1)
+            .animation(reduceEQMotion ? nil : SN.fastSpring, value: selected)
+        }
+        .buttonStyle(EQProfilePressStyle())
+        .accessibilityLabel("Выбрать \(frequencyLabels[index])")
+        .accessibilityValue(db(gain))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
     private var profilesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Пресеты").font(.headline).foregroundStyle(SN.ink)
@@ -240,11 +309,12 @@ struct PlayerEQSheetView: View {
                 HStack(spacing: 10) {
                     ForEach(primaryPresets) { preset in presetChip(preset) }
                 }
+                .padding(.vertical, 2)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(secondaryPresets) { preset in
-                        presetChip(preset).opacity(0.78)
+                        presetChip(preset).opacity(0.82)
                     }
                 }
             }
@@ -265,8 +335,14 @@ struct PlayerEQSheetView: View {
             .foregroundStyle(selected ? SN.onAccent : SN.ink)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(Capsule(style: .continuous).fill(selected ? SN.amber : SN.card))
+            .background(
+                Capsule(style: .continuous)
+                    .fill(selected ? SN.amber : SN.card)
+                    .shadow(color: selected && !reduceEQMotion ? SN.amber.opacity(0.25) : .clear, radius: 8, y: 3)
+            )
             .overlay(Capsule(style: .continuous).strokeBorder(SN.ink.opacity(selected ? 0 : 0.12), lineWidth: 1))
+            .scaleEffect(selected && !reduceEQMotion ? 1.03 : 1)
+            .animation(reduceEQMotion ? nil : SN.fastSpring, value: selected)
         }
         .buttonStyle(EQProfilePressStyle())
         .accessibilityLabel(preset.name)
@@ -338,11 +414,16 @@ struct PlayerEQSheetView: View {
                 HStack(alignment: .firstTextBaseline) {
                     bandTitle(index)
                     Spacer(minLength: 16)
-                    Text(db(gain)).font(.title3.weight(.semibold).monospacedDigit())
+                    Text(db(gain))
+                        .font(.title3.weight(.semibold).monospacedDigit())
+                        .contentTransition(.numericText())
+                        .animation(reduceEQMotion || isAdjustingEQ ? nil : SN.fastSpring, value: gain)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     bandTitle(index)
-                    Text(db(gain)).font(.title3.weight(.semibold).monospacedDigit())
+                    Text(db(gain))
+                        .font(.title3.weight(.semibold).monospacedDigit())
+                        .contentTransition(.numericText())
                 }
             }
             Slider(value: Binding(
@@ -362,7 +443,7 @@ struct PlayerEQSheetView: View {
                 Button("0 дБ") {
                     var curve = PlayerCore.normalized(player.eqGains)
                     curve[index] = 0
-                    player.eqGains = curve
+                    withAnimation(reduceEQMotion ? nil : SN.fastSpring) { player.eqGains = curve }
                     player.saveEQ()
                 }
                 .frame(minWidth: 44, minHeight: 44)
@@ -384,11 +465,12 @@ struct PlayerEQSheetView: View {
 
     private var outputCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("Только в наушниках", isOn: $player.eqHeadphonesOnly)
+            Toggle("Только в наушниках", isOn: $player.eqHeadphonesOnly.animation(reduceEQMotion ? nil : SN.fastSpring))
                 .font(.body.weight(.medium))
                 .tint(SN.amber)
             Text(outputStatusText)
                 .font(.subheadline).foregroundStyle(SN.inkMuted)
+                .contentTransition(.opacity)
             Text("В этом режиме динамик телефона остаётся без усиления баса.")
                 .font(.subheadline).foregroundStyle(SN.inkMuted)
         }
@@ -407,9 +489,9 @@ struct PlayerEQSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Только полосы частот", systemImage: "slider.vertical.3")
                 .font(.subheadline.weight(.semibold))
-            Text("EQ поднимает и режет выбранные частоты. Басовый удар не сжимает и не приглушает весь трек — filters-only, нет peak guard и нет PeakLimiter на миксе.")
+            Text("EQ поднимает и режет выбранные частоты. Басовый удар не сжимает и не приглушает весь трек — нет peak guard и нет PeakLimiter на миксе.")
             Text("Полка 60 Гц и удар 120 Гц; 250 Гц режет гул. 16 кГц — верхняя полоса.")
-            Text("Плоский и выключенный EQ — исходный сигнал. Сильный подъём может клиппировать запись; начни с умеренной громкости.")
+            Text("Flat и выключенный EQ — исходный сигнал. Сильный подъём может клиппировать запись; начни с умеренной громкости.")
         }
         .font(.subheadline)
         .foregroundStyle(SN.inkMuted)
@@ -440,6 +522,8 @@ struct PlayerEQSheetView: View {
         if preset == EQPresets.airPodsPro2Bass { return "earbuds" }
         if preset == EQPresets.flat { return "slider.horizontal.3" }
         if preset == EQPresets.bassBoost || preset == EQPresets.subBassPower { return "speaker.wave.3" }
+        if preset == EQPresets.classical { return "music.note" }
+        if preset == EQPresets.club || preset == EQPresets.dance { return "music.quarternote.3" }
         return "waveform"
     }
 }
@@ -479,24 +563,28 @@ private struct CompactEQCurve: View {
                     path.move(to: CGPoint(x: 14, y: zeroY))
                     path.addLine(to: CGPoint(x: size.width - 14, y: zeroY))
                 }
-                .stroke(SN.ink.opacity(0.15), lineWidth: 1)
-                EQControlCurveFillShape(vector: EQCurveVector(gains))
-                    .fill(LinearGradient(colors: [SN.amber.opacity(0.16), SN.amber.opacity(0.02)],
-                                         startPoint: .top, endPoint: .bottom))
-                    .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
+                .stroke(SN.ink.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 EQControlCurveShape(vector: EQCurveVector(gains))
-                    .stroke(LinearGradient(colors: [SN.amber, SN.amber.opacity(0.7), SN.amber],
+                    .stroke(LinearGradient(colors: [SN.amber, SN.amber.opacity(0.72), SN.amber],
                                            startPoint: .leading, endPoint: .trailing),
-                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            style: StrokeStyle(lineWidth: 3.2, lineCap: .round))
                     .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                 ForEach(EQGainLimits.frequencies.indices, id: \.self) { index in
-                    Circle().fill(SN.card)
-                        .overlay(Circle().stroke(SN.amber, lineWidth: index == selectedBand ? 3 : 2))
-                        .frame(width: index == selectedBand ? 20 : 12, height: index == selectedBand ? 20 : 12)
-                        .scaleEffect(index == selectedBand && !reduceMotion ? 1.05 : 1)
-                        .position(point(index, size: size))
-                        .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
-                        .animation(reduceMotion ? nil : SN.fastSpring, value: selectedBand)
+                    let selected = index == selectedBand
+                    ZStack {
+                        if selected {
+                            Circle()
+                                .fill(SN.amber.opacity(0.22))
+                                .frame(width: 28, height: 28)
+                                .scaleEffect(reduceMotion ? 1 : (isInteracting || draggingBand == index ? 1.08 : 1))
+                        }
+                        Circle().fill(SN.card)
+                            .overlay(Circle().stroke(SN.amber, lineWidth: selected ? 3 : 2))
+                            .frame(width: selected ? 18 : 12, height: selected ? 18 : 12)
+                    }
+                    .position(point(index, size: size))
+                    .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: selectedBand)
                 }
             }
             .contentShape(Rectangle())
@@ -520,11 +608,22 @@ private struct CompactEQCurve: View {
                     draggingBand = nil
                 }))
             .simultaneousGesture(SpatialTapGesture(count: 1).onEnded { value in
-                if let index = hitBand(value.location, size: size) {
-                    withAnimation(reduceMotion ? nil : SN.fastSpring) { selectedBand = index }
-                }
+                if let index = hitBand(value.location, size: size) { selectedBand = index }
             })
         }
+    }
+}
+
+/// Soft ± guides behind the hero curve (visual only — not a spectrum meter).
+private struct EQGridGuide: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for fraction in [0.25, 0.5, 0.75] {
+            let y = rect.minY + rect.height * fraction
+            path.move(to: CGPoint(x: rect.minX, y: y))
+            path.addLine(to: CGPoint(x: rect.maxX, y: y))
+        }
+        return path
     }
 }
 
@@ -532,8 +631,17 @@ private struct EQProfilePressStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(configuration.isPressed ? 0.65 : 1)
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
+private extension View {
+    func eqReveal(appeared: Bool, reduceMotion: Bool, delay: Double) -> some View {
+        self
+            .opacity(appeared || reduceMotion ? 1 : 0)
+            .offset(y: appeared || reduceMotion ? 0 : 16)
+            .animation(reduceMotion ? nil : SN.spring.delay(delay), value: appeared)
+    }
+}
