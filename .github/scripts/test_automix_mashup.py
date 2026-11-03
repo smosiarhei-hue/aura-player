@@ -292,7 +292,12 @@ class AutoMixMashupTests(unittest.TestCase):
         scheduler_pref = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupBlendScheduler.swift"
         ).read_text()
-        self.assertIn("defaultPreferredBlendSec: Double = 5", scheduler_pref)
+        self.assertIn("defaultPreferredBlendSec: Double = 8", scheduler_pref)
+        self.assertIn("reanchorOutgoingCue", scheduler_pref)
+        self.assertIn("clampAutomixIncomingCue", scheduler_pref)
+        player_blend = (ROOT / "Sonivo/playercore.swift").read_text()
+        self.assertIn("automixStemMaxBlendSec: Double = 16", player_blend)
+        self.assertIn("MashupBlendScheduler.reanchorOutgoingCue", player_blend)
 
     def test_session_log_does_not_reenter_playercore_during_shared_init(self):
         """Launch SIGTRAP: mode didSet → AutoMixSessionLog.snapshot → PlayerCore.shared

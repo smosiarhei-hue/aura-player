@@ -678,13 +678,18 @@ public enum BeatGridSynchronization {
         return profile.phraseStartsSec.last(where: { $0 <= latest && $0 >= minCue }) ?? latest
     }
     public static func incomingCue(profile: TrackProfile, duration: Double = 0) -> Double {
-        // If Track B has an early drop, align it so the drop hits exactly on the transition handoff (midpoint)
+        // Prefer musical intro (mixIn / first phrase). Drop-alignment only when the
+        // resulting cue stays in the intro — otherwise LAND jumps mid-body of B.
         if duration > 0, let drop = profile.dropsSec.first(where: { $0 >= 8.0 && $0 <= 45.0 }) {
             let halfDuration = duration / 2.0
             if drop >= halfDuration {
-                let targetIn = drop - halfDuration
-                if let matched = profile.downbeatsSec.min(by: { abs($0 - targetIn) < abs($1 - targetIn) }) {
-                    return matched
+                let targetIn = max(0, drop - halfDuration)
+                let introCap = max(profile.mixInSec + 8, min(18, profile.durationSec * 0.18))
+                if targetIn <= introCap {
+                    if let matched = profile.downbeatsSec.min(by: { abs($0 - targetIn) < abs($1 - targetIn) }) {
+                        return matched
+                    }
+                    return targetIn
                 }
             }
         }

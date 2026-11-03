@@ -2610,27 +2610,35 @@ final class PlayerCore {
         let analysis = AutoMixV2AnalysisRuntime.shared
         let outProfile = analysis.currentProfile.flatMap { mashupProfileMatches($0, track: outgoing) ? $0 : nil }
         let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
+        let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
         if outProfile != nil, inProfile != nil,
            let plan = analysis.transitionPlan,
            plan.type != .none,
            MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
             var blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
-            // Apple Automix mashup window is short; 16-bar seamless plans (~30s)
-            // keep dual-leak mud on the stem path (audit post-1047).
+            // Live Automix needs an audible stem window (≈8 bars @ 120). Old 8s clamp
+            // kept plan.aOutStartSec for a 16-bar outro → mashup felt like a skip.
             if transitionMode == .automix {
                 blend = min(blend, Self.automixStemMaxBlendSec)
             }
-            let cue = min(max(plan.aOutStartSec, totalDur * MashupBlendScheduler.minimumPlayedFraction),
-                          max(0, totalDur - MashupBlendScheduler.minimumBlendSec))
-            let inStart = max(0, plan.bInStartSec)
+            let cue = MashupBlendScheduler.reanchorOutgoingCue(
+                preferredCue: plan.aOutStartSec,
+                totalDur: totalDur,
+                blend: blend
+            )
+            let inStart = transitionMode == .automix
+                ? MashupBlendScheduler.clampAutomixIncomingCue(
+                    preferred: plan.bInStartSec,
+                    incomingDur: incomingDur
+                )
+                : max(0, plan.bInStartSec)
             return LiveMashupBlend(
                 outgoingCueSec: cue,
                 blendDurationSec: blend,
                 incomingStartSec: inStart,
-                reason: plan.reason
+                reason: plan.reason + (transitionMode == .automix ? " · live≤\(Int(blend))s" : "")
             )
         }
-        let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
         var scheduled = MashupBlendScheduler.schedule(
             outgoingDuration: totalDur,
             incomingDuration: incomingDur,
@@ -2638,22 +2646,29 @@ final class PlayerCore {
             outgoing: outProfile,
             incoming: inProfile
         )
-        if transitionMode == .automix, scheduled.blendDurationSec > Self.automixStemMaxBlendSec {
-            let blend = Self.automixStemMaxBlendSec
-            let cue = min(max(scheduled.outgoingCueSec, totalDur * MashupBlendScheduler.minimumPlayedFraction),
-                          max(0, totalDur - blend))
+        if transitionMode == .automix {
+            let blend = min(scheduled.blendDurationSec, Self.automixStemMaxBlendSec)
+            let cue = MashupBlendScheduler.reanchorOutgoingCue(
+                preferredCue: scheduled.outgoingCueSec,
+                totalDur: totalDur,
+                blend: blend
+            )
+            let inStart = MashupBlendScheduler.clampAutomixIncomingCue(
+                preferred: scheduled.incomingStartSec,
+                incomingDur: incomingDur
+            )
             scheduled = LiveMashupBlend(
                 outgoingCueSec: cue,
                 blendDurationSec: blend,
-                incomingStartSec: scheduled.incomingStartSec,
+                incomingStartSec: inStart,
                 reason: scheduled.reason + " · automix≤\(Int(blend))s"
             )
         }
         return scheduled
     }
 
-    /// Live Automix stem window ceiling (~Apple Automix mashup length).
-    private static let automixStemMaxBlendSec: Double = 8
+    /// Live Automix stem window: ~8 bars @ 120 BPM so ONE VOCAL overlay is audible.
+    private static let automixStemMaxBlendSec: Double = 16
 
     private func mashupProfileMatches(_ profile: TrackProfile, track: Track) -> Bool {
         if track.isStream {

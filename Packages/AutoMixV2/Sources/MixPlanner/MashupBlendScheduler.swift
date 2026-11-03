@@ -31,9 +31,9 @@ public enum MashupBlendScheduler {
     /// Absolute floors / ceilings for live PlayerCore mashup windows.
     public static let minimumBlendSec: Double = 4
     public static let maximumBlendSec: Double = 32
-    /// Apple Automix reference mashup window is ~5s of A-vocal × B-beat.
-    /// Not driven by the crossfade duration slider.
-    public static let defaultPreferredBlendSec: Double = 5
+    /// Live Automix stem window floor (~4 bars @ 120). Full length follows
+    /// outro/bar ladder up to PlayerCore's Automix ceiling. Not a UI slider.
+    public static let defaultPreferredBlendSec: Double = 8
     /// Never cut the outgoing body before this fraction of the track (Apple-style: play the song).
     public static let minimumPlayedFraction: Double = 0.75
     /// Leave at least this much tail after the cue so the outro can finish under the blend.
@@ -94,6 +94,30 @@ public enum MashupBlendScheduler {
     public enum CueRole: Sendable {
         case mixIn
         case mixOut
+    }
+
+    /// Re-anchor A when the live Automix blend is shorter than the planned outro window.
+    public static func reanchorOutgoingCue(
+        preferredCue: Double,
+        totalDur: Double,
+        blend: Double
+    ) -> Double {
+        let floor = totalDur * minimumPlayedFraction
+        let ceiling = max(floor, totalDur - minimumBlendSec)
+        let tailAligned = max(0, totalDur - max(minimumBlendSec, blend))
+        let cue = abs(preferredCue - tailAligned) <= 2.5 ? preferredCue : tailAligned
+        return min(max(cue, floor), ceiling)
+    }
+
+    /// Cap B entry to the intro so LAND does not jump mid-body.
+    public static func clampAutomixIncomingCue(
+        preferred: Double,
+        incomingDur: Double
+    ) -> Double {
+        let raw = max(0, preferred)
+        guard incomingDur > 30 else { return raw }
+        let introCap = min(18.0, max(8.0, incomingDur * 0.18))
+        return min(raw, introCap)
     }
 
     // MARK: - Profile-backed

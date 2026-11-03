@@ -72,6 +72,38 @@ struct MashupBlendSchedulerTests {
         #expect(cue <= 240 - MashupBlendScheduler.minimumTailSec + 0.01)
     }
 
+    @Test("Shortened Automix blend re-anchors cue A to the tail")
+    func reanchorOutgoingCueToTail() {
+        let total = 210.52
+        let planCue = total - 26.13 // long 13-bar plan
+        let blend = 16.0
+        let cue = MashupBlendScheduler.reanchorOutgoingCue(
+            preferredCue: planCue,
+            totalDur: total,
+            blend: blend
+        )
+        #expect(abs(cue - (total - blend)) < 0.05)
+        #expect(cue >= total * 0.75 - 0.01)
+        // Old bug: keep planCue + blend=8 → LAND ~18s before song end.
+        let oldLandAbandoned = total - (planCue + 8)
+        #expect(oldLandAbandoned > 10)
+        #expect(abs(total - (cue + blend)) < 0.05)
+    }
+
+    @Test("Automix incoming cue stays in the intro")
+    func clampIncomingCueToIntro() {
+        let midBody = MashupBlendScheduler.clampAutomixIncomingCue(
+            preferred: 38,
+            incomingDur: 228
+        )
+        #expect(midBody <= 18)
+        let intro = MashupBlendScheduler.clampAutomixIncomingCue(
+            preferred: 13.2,
+            incomingDur: 228
+        )
+        #expect(abs(intro - 13.2) < 0.01)
+    }
+
     private func profile(
         _ id: String,
         duration: Double,
