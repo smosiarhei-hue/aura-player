@@ -9,8 +9,9 @@ class EQQualityRevisionTests(unittest.TestCase):
             self.assertIn(expected,render)
         for forbidden in ['malloc(', 'calloc(', 'realloc(', 'dispatch_', 'mutex', 'sleep(', 'peak>.98', 'protectedWet']:
             self.assertNotIn(forbidden,render)
-        # Filters only: unity preamp, no envelope peak guard.
-        self.assertIn('return 0;',c.split('float SonivoEQPreamp(',1)[1].split('}',1)[0])
+        # Static curve-based headroom is computed off the render thread.
+        self.assertIn('SonivoEQResponse(gains,count,rate,response,384)',c)
+        self.assertIn('peak+0.5',c)
         self.assertNotIn('eq->limiter * 1.002',c)
     def test_native_envelopes_and_band_widths_are_consistent(self):
         core=(R/'Sonivo/playercore.swift').read_text()
@@ -35,7 +36,8 @@ class EQQualityRevisionTests(unittest.TestCase):
         self.assertIn('isAdjustingEQ = true',ui)
         self.assertIn('isAdjustingEQ = false',ui)
         self.assertIn('reduceMotion || isInteracting || draggingBand != nil ? nil',ui)
-        self.assertIn('суммарная АЧХ · модель PCM 48 кГц',ui)
+        self.assertIn('АЧХ фильтров до компенсации · ±36 дБ · модель PCM 48 кГц',ui)
+        self.assertIn('EQFrequencyResponseShape(vector:',ui)
         self.assertIn('не измерение наушников',ui)
 
     def test_double_tap_resets_only_hit_node_and_does_not_conflict_with_drag(self):

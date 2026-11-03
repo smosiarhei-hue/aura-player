@@ -223,9 +223,16 @@ struct PlayerEQSheetView: View {
                 .font(.caption)
                 .foregroundStyle(SN.inkMuted)
 
-            Text("Пунктир — суммарная АЧХ · модель PCM 48 кГц · не измерение наушников")
+            Text("АЧХ фильтров до компенсации · ±36 дБ · модель PCM 48 кГц, не измерение наушников")
                 .font(.caption)
                 .foregroundStyle(SN.inkFaint)
+            ZStack {
+                Rectangle().fill(SN.ink.opacity(0.12)).frame(height: 1)
+                EQFrequencyResponseShape(vector: EQCurveVector(player.eqGains))
+                    .stroke(SN.ink.opacity(0.55), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+            }
+            .frame(height: 52)
+            .accessibilityHidden(true)
         }
         .padding(14)
         .background(
@@ -454,7 +461,7 @@ struct PlayerEQSheetView: View {
 
     private var listeningNote: some View {
         Label {
-            Text("Сильный подъём частот может вызвать искажения — начни с умеренной громкости.")
+            Text("При усилении частот запас по уровню создаётся автоматически без компрессии. Громкость может уменьшиться; сильные пики всё ещё могут исказиться.")
         } icon: {
             Image(systemName: "slider.vertical.3")
         }
@@ -620,10 +627,6 @@ private struct CompactEQCurve: View {
                     // Glow between the node curve and 0 дБ.
                     EQControlCurveZeroFillShape(vector: EQCurveVector(gains))
                         .fill(SN.amber.opacity(isEnabled ? 0.10 : 0.04))
-                        .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
-                    // Real summed response, mapped into the node coordinate space.
-                    EQAlignedResponseShape(vector: EQCurveVector(gains))
-                        .stroke(SN.ink.opacity(0.35), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [3, 4]))
                         .animation(reduceMotion || isInteracting || draggingBand != nil ? nil : .smooth(duration: 0.24), value: gains)
                     EQControlCurveShape(vector: EQCurveVector(gains))
                         .stroke(SN.amber, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))

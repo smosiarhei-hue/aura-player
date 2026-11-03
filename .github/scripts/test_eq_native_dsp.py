@@ -88,28 +88,34 @@ import AudioToolbox
         let flat=[Float](repeating:0,count:10)
         precondition(EQHeadroom.preamp(gains:flat,sampleRate:48000)==0)
         precondition(EQHeadroom.preamp(gains:[Float](repeating:-12,count:10),sampleRate:48000)==0)
-        precondition(EQHeadroom.preamp(gains:[6]+[Float](repeating:0,count:9),sampleRate:48000)==0)
-        // Unity always — hot bass must not duck the master like a soft-LF cut.
-        precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:48000)==0)
+        precondition(abs(EQHeadroom.preamp(gains:[6]+[Float](repeating:0,count:9),sampleRate:48000)+6.5)<0.1)
+        // Reference values are produced by the same streamed PCM filter model.
+        let bass: [Float] = [4,2.5,-2.5,-0.5,0,0,0,0,0,0]
+        let peak64: [Float] = [0,6,0,0,0,0,0,0,0,0]
+        precondition(abs(EQHeadroom.preamp(gains:bass,sampleRate:48000)+4.5)<0.05)
+        precondition(abs(EQHeadroom.preamp(gains:peak64,sampleRate:48000)+6.494)<0.05)
+        precondition(abs(EQHeadroom.preamp(gains:[Float](repeating:15,count:10),sampleRate:48000)+24.211)<0.08)
+        precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:48000) < -12)
         // Octave grid: 32 64 125 250 500 1k 2k 4k 8k 16k — probe each band at its center.
         var curve=flat;curve[5]=6
         let output=try render(gains:curve,hz:1000,amplitude:0.01)
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
         let db=20*log10(rms/(0.01/sqrt(2)))
-        precondition(abs(db - 6) < 0.6, "Native center gain incorrect: \(db)")
+        precondition(abs(db - (6 + Double(EQHeadroom.preamp(gains:curve,sampleRate:48000)))) < 0.6, "Native center gain incorrect: \(db)")
         for (band,hz) in [(1,64.0),(2,125.0),(6,2000.0)] {
             var curve=flat;curve[band]=6
             let rendered=try render(gains:curve,hz:hz,amplitude:0.01)
             let rms=sqrt(rendered.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
-            precondition(abs(20*log10(rms/(0.01/sqrt(2)))-6)<0.6, "Native band response mismatch")
+            precondition(abs(20*log10(rms/(0.01/sqrt(2)))-(6 + Double(EQHeadroom.preamp(gains:curve,sampleRate:48000))))<0.6, "Native band response mismatch")
         }
         for rate in [8000.0,32000,44100,48000,96000] {
-            precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)==0)
+            precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)<0)
         }
-        let hot=try render(gains:[Float](repeating:12,count:10),hz:32,amplitude:0.95)
+        var hotCurve=flat; hotCurve[1]=6
+        let hot=try render(gains:hotCurve,hz:64,amplitude:0.8)
         precondition(hot.allSatisfy { $0.isFinite },"Native output must stay finite")
-        precondition(hot.contains { abs($0) > 1.0 },"Hot bass EQ must not be peak-limited")
-        print("native EQ response, stereo and unprotected EQ checks passed")
+        precondition(hot.suffix(24000).allSatisfy { abs($0) < 1.0 },"Headroom should protect a hot bass sine")
+        print("native EQ response, stereo and fixed headroom checks passed")
     }
 }
 '''

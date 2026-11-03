@@ -106,30 +106,49 @@ void destroy(void *p) { free(p); }
         for band in (1, 2, 3, 4):
             hz = FREQUENCIES[band]
             gains=[0]*N;gains[band]=15
-            self.assertAlmostEqual(self.response(gains,hz),15,delta=.15)
+            self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),15,delta=.15)
             gains[band]=24
-            self.assertAlmostEqual(self.response(gains,hz),15,delta=.15)
+            self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),15,delta=.15)
             gains[band]=-24
-            self.assertAlmostEqual(self.response(gains,hz),-15,delta=.15)
+            self.assertAlmostEqual(self.response(gains,hz)-self.preamp(gains),-15,delta=.15)
         strong=[15]+[0]*(N-1);mild=[9]+[0]*(N-1)
-        self.assertGreater(self.response(strong,12)-self.response(mild,12),4.5)
+        self.assertGreater((self.response(strong,12)-self.preamp(strong))-(self.response(mild,12)-self.preamp(mild)),4.5)
         self.assertTrue(all(math.isfinite(x) for x in self.run_audio([.01*math.sin(n*.01) for n in range(10000)],[15]*N)))
     def test_shelves_control_bass_and_treble_without_edge_resonance(self):
         bass=[6]+[0]*(N-1);treble=[0]*(N-1)+[6]
         self.assertGreater(self.response(bass,12)-self.response(bass,1000),5.5)
         self.assertGreater(self.response(treble,22000)-self.response(treble,1000),5.5)
 
-    def test_unity_preamp_never_ducks_mids_for_bass(self):
-        # Native music-player EQ: always unity. Broadband soft-LF cuts used to
-        # muffling vocals whenever bass was boosted.
-        for curve in ([6]+[0]*(N-1), [3,2,-2.5,-0.5,0,0,0,0.5,0,0], [12]*N, [10,7,-2.5]+[0]*7, [-12]*N, [0]*N):
-            self.assertEqual(self.preamp(curve),0)
-        self.assertAlmostEqual(self.response([6]+[0]*(N-1),1000),0,delta=.1)
-        self.assertGreater(self.response([6]+[0]*(N-1),20),4.0)
-        self.assertGreater(self.response([12]*N,16000),6)
+    def test_static_headroom_tracks_curve_without_compression(self):
+        self.assertEqual(self.preamp([0]*N),0)
+        self.assertEqual(self.preamp([-12]*N),0)
+        bass=[6]+[0]*(N-1)
+        self.assertAlmostEqual(self.preamp(bass),-6.5,delta=.03)
+        self.assertAlmostEqual(self.response(bass,1000)-self.preamp(bass),0,delta=.1)
+        self.assertGreater(self.response(bass,20)-self.response(bass,1000),4.0)
+        self.assertLess(self.preamp([12]*N),-12)
 
-    def test_high_level_bass_boost_is_unprotected_and_finite(self):
-        # No peak guard: overs from hot EQ are allowed (may exceed ±1).
+    def test_loud_bass_sine_has_curve_based_headroom(self):
+        gains=[0,6]+[0]*(N-2); rate=48000
+        samples=[.8*math.sin(2*math.pi*64*n/rate) for n in range(rate)]
+        output=self.run_audio(samples,gains,rate)
+        self.assertLess(max(map(abs,output[rate//2:])),.8)
+        self.assertAlmostEqual(self.response(gains,64),-.5,delta=.08)
+
+    def test_static_headroom_covers_sampled_combined_filter_response(self):
+        import random
+        rand=random.Random(51)
+        f=self.lib.SonivoEQResponse
+        f.argtypes=[C.POINTER(C.c_float),C.c_size_t,C.c_double,C.POINTER(C.c_float),C.c_size_t]
+        for rate in (32000,44100,48000,96000):
+            for _ in range(12):
+                gains=[rand.uniform(-15,15) for _ in range(N)]
+                values=(C.c_float*1600)()
+                f(array(gains),N,rate,values,len(values))
+                self.assertLessEqual(max(values)+self.preamp(gains,rate),-.40)
+
+    def test_overloaded_input_stays_finite_but_is_not_a_limiter(self):
+        # Static headroom is not a limiter: already-overloaded input can still exceed ±1.
         samples=[2*math.sin(n*.13)+.4*math.sin(n*.023) for n in range(12000)]
         output=self.run_audio(samples,[12]*N)
         self.assertTrue(all(math.isfinite(x) for x in output))
@@ -152,13 +171,13 @@ void destroy(void *p) { free(p); }
             self.assertGreater(self.response(gains,40)-mid,1.2)
             self.assertGreater(self.response(gains,64)-mid,1.0)
             self.assertLess(self.response(gains,250)-mid,0.5)
-            # Unity preamp: upper mids stay at filter response (not master-ducked).
-            self.assertAlmostEqual(self.response(gains,1000),0,delta=.35)
-            self.assertEqual(self.preamp(gains),0)
+            # Compensation is static: relative frequency balance remains unchanged.
+            self.assertAlmostEqual(self.response(gains,1000)-self.preamp(gains),0,delta=.35)
+            self.assertLess(self.preamp(gains),0)
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
             output=self.run_audio(signal,gains)
             self.assertTrue(all(math.isfinite(x) for x in output))
-            self.assertGreater(max(map(abs,output)),.55)
+            self.assertGreater(max(map(abs,output)),.2)
 
     def test_channels_do_not_crossmix_in_planar_or_interleaved_audio(self):
         for interleaved in [False,True]:
@@ -170,13 +189,13 @@ void destroy(void *p) { free(p); }
                 if ch==3:self.assertGreater(max(map(abs,data)),.01)
                 else:self.assertEqual(max(map(abs,data)),0)
 
-    def test_stereo_ratio_preserved_without_peak_duck(self):
+    def test_stereo_ratio_preserved_with_static_headroom(self):
         samples=[]
         for n in range(5000):
             x=2*math.sin(n*.13); samples.extend([x,x*.25])
         output=self.run_audio(samples,[3]*N,channels=2)
         self.assertTrue(all(math.isfinite(x) for x in output))
-        self.assertGreater(max(map(abs,output)),1.0)  # overs allowed
+        self.assertGreater(max(map(abs,output)),1.0)  # overloaded input is not hard-limited
         self.assertLess(max(abs(output[i+1]-output[i]*.25) for i in range(0,len(output),2)),1e-6)
 
     def test_sample_rates_and_invalid_gains_remain_finite(self):
@@ -219,30 +238,22 @@ void destroy(void *p) { free(p); }
                 self.assertTrue(all(math.isfinite(x) for x in audio))
         finally:self.lib.destroy(ptr)
 
-    def test_disabling_strong_bass_does_not_restore_a_fixed_master_cut(self):
-        # With unity preamp, midrange loudness with hot bass EQ matches dry — no
-        # master cut to “release” when disabling (that used to jump the mix up).
-        for gains in ([12,0,0,0,0,0,0,0,0,3], [6]+[0]*(N-1)):
-            self.assertEqual(self.preamp(gains),0)
-            ptr=self.lib.create(48000,array(gains),1)
-            try:
-                warm=(C.c_float*48000)(*[.3*math.sin(2*math.pi*1000*n/48000) for n in range(48000)])
-                self.lib.process(ptr,warm,1,48000,1)
-                rms=lambda x: math.sqrt(sum(y*y for y in x)/len(x))
-                before=rms(list(warm)[-480:])
-                dry=rms([.3*math.sin(2*math.pi*1000*n/48000) for n in range(480)])
-                self.assertLess(abs(20*math.log10(before/dry)),.35)
-                self.lib.update(ptr,array(gains),0,48000)
-                levels=[];last=[]
-                for block in range(240):
-                    raw=[.3*math.sin(2*math.pi*1000*(block*480+n)/48000) for n in range(480)]
-                    audio=(C.c_float*480)(*raw);self.lib.process(ptr,audio,1,480,1)
-                    levels.append(rms(audio));last=list(audio)
-                self.assertLess(20*math.log10(levels[1]/before),.1)
-                self.assertLess(max(abs(20*math.log10(b/a)) for a,b in zip([before]+levels,levels)),.8)
-                self.assertLess(abs(20*math.log10(levels[-1]/before)),.3)
-                self.assertEqual(last,list((C.c_float*480)(*raw)))
-            finally:self.lib.destroy(ptr)
+    def test_disabling_strong_bass_smoothly_restores_dry(self):
+        gains=[12]+[0]*(N-1);rate=48000
+        ptr=self.lib.create(rate,array(gains),1)
+        try:
+            warm=(C.c_float*48000)(*[.3*math.sin(2*math.pi*1000*n/rate) for n in range(48000)])
+            self.lib.process(ptr,warm,1,48000,1)
+            self.lib.update(ptr,array(gains),0,rate)
+            levels=[]; rms=lambda a: math.sqrt(sum(x*x for x in a)/len(a))
+            levels.append(rms(list(warm)[-480:]))
+            for block in range(240):
+                raw=[.3*math.sin(2*math.pi*1000*(block*480+n)/rate) for n in range(480)]
+                audio=(C.c_float*480)(*raw);self.lib.process(ptr,audio,1,480,1)
+                levels.append(rms(audio))
+            self.assertLess(max(abs(20*math.log10(b/a)) for a,b in zip(levels,levels[1:])),1)
+            self.assertEqual(list(audio),list((C.c_float*480)(*raw)))
+        finally:self.lib.destroy(ptr)
 
     def test_headroom_attack_does_not_step_when_changing_an_active_curve(self):
         ptr=self.lib.create(48000,array([0]*(N-1)+[-6]),1)
@@ -257,11 +268,11 @@ void destroy(void *p) { free(p); }
 
     def test_preamp_invalid_input_and_rate_fallback_are_deterministic(self):
         for rate in [float('nan'),float('inf'),0,-1]:
-            self.assertEqual(self.preamp([12]*N,rate),self.preamp([12]*N,48000))
+            self.assertAlmostEqual(self.preamp([12]*N,rate),self.preamp([12]*N,48000),delta=.001)
         self.assertEqual(self.lib.SonivoEQPreamp(None,0,48000),0)
         self.assertEqual(self.preamp([float('nan')]*N),0)
 
-    def test_unprotected_shelf_does_not_modulate_sustained_bass(self):
+    def test_static_headroom_does_not_modulate_sustained_bass(self):
         # Without a peak envelope there is no GR pump — shelf is LTI → low THD.
         rate=48000;hz=40
         output=self.run_audio([.05*math.sin(2*math.pi*hz*n/rate) for n in range(rate*2)],[12]+[0]*(N-1))
@@ -282,11 +293,11 @@ void destroy(void *p) { free(p); }
         response(array(gains),N,48000,values,len(values))
         for index in [10,35,68,95,110]:
             hz=20*1000**(index/120)
-            self.assertAlmostEqual(values[index],self.response(gains,hz),delta=.08)
+            self.assertAlmostEqual(values[index],self.response(gains,hz)-self.preamp(gains),delta=.08)
         response(array([0]*N),N,48000,values,len(values))
         self.assertTrue(all(abs(x)<1e-6 for x in values))
 
-    def test_disabling_an_actually_limited_signal_reaches_dry_without_boundary_jump(self):
+    def test_disabling_bass_eq_reaches_dry_without_boundary_jump(self):
         gains=[12]+[0]*(N-1);rate=48000
         ptr=self.lib.create(rate,array(gains),1)
         try:

@@ -165,7 +165,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             owner.eqGeneration &+= 1
             let generation = owner.eqGeneration
             let starting = owner.userEQ.bands.map(\.gain)
-            // Unity globalGain — native player EQ never ducks the master for bass.
+            // Fixed curve-based headroom; not an envelope compressor.
             let preamp = EQHeadroom.preamp(gains: target, sampleRate: owner.outputFormat.sampleRate)
             let stateChanged = owner.userEQEnabled != enabled
             owner.userEQEnabled = enabled
@@ -174,7 +174,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let steps = max(8, duration / 10)
             let active = target.contains { abs($0) > 0.001 }
             owner.userEQ.bypass = false
-            owner.userEQ.globalGain = preamp
+            let startingPreamp = owner.userEQ.globalGain
             // PeakLimiter after EQ ducks the whole mix on kick — stay bypassed.
             owner.eqLimiter.bypass = true
             // Control-queue ramps; stale slider/preset updates cannot overwrite a new one.
@@ -183,7 +183,7 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                     guard let owner, owner.eqGeneration == generation else { return }
                     let t = Float(step) / Float(steps)
                     let fraction = t * t * (3 - 2 * t)
-                    owner.userEQ.globalGain = preamp
+                    owner.userEQ.globalGain = startingPreamp + (preamp - startingPreamp) * fraction
                     for (index, band) in owner.userEQ.bands.enumerated() {
                         band.gain = starting[index] + (target[index]-starting[index])*fraction
                     }

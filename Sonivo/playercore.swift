@@ -1138,14 +1138,17 @@ final class PlayerCore {
         let incoming = mashupComposedGains(offset: idleOff)
 
         // Native decks: only touch audible engine lanes (stream-only mashup skips these).
-        // Unity globalGain + PeakLimiter bypassed — bass must not duck the mix.
+        // Fixed curve-based headroom; no envelope limiter or kick-driven pumping.
         if !isUsingStreamPlayer {
-            writeBands(activePlayer === playerA ? eqNodeA : eqNodeB, out.gains, globalGain: 0)
+            let node = activePlayer === playerA ? eqNodeA : eqNodeB
+            let preamp = EQHeadroom.preamp(gains: out.gains, sampleRate: node.inputFormat(forBus: 0).sampleRate)
+            writeBands(node, out.gains, globalGain: preamp)
             outputLimiter.bypass = true
         }
         if !incomingIsStream {
             let node = idlePlayer === playerA ? eqNodeA : eqNodeB
-            writeBands(node, incoming.gains, globalGain: 0)
+            let preamp = EQHeadroom.preamp(gains: incoming.gains, sampleRate: node.inputFormat(forBus: 0).sampleRate)
+            writeBands(node, incoming.gains, globalGain: preamp)
             outputLimiter.bypass = true
         }
 
@@ -1177,8 +1180,11 @@ final class PlayerCore {
         let nodes = [eqNodeA, eqNodeB, looperEQ]
         nativeEQRamp?.cancel()
         let starting = nodes.map { $0.bands.map(\.gain) }
-        // Native music-player EQ: band filters only. No soft-LF master cut and no
-        // PeakLimiter after EQ — both ducked mids/vocals whenever bass peaked.
+        let startingPreamp = nodes.map(\.globalGain)
+        let targetPreamp = nodes.indices.map { index in
+            EQHeadroom.preamp(gains: targets[index], sampleRate: nodes[index].inputFormat(forBus: 0).sampleRate)
+        }
+        // Fixed headroom per curve; never modulate gain from the music envelope.
         outputLimiter.bypass = true
         let bandChange = zip(starting, targets).map { zip($0, $1).map { abs($0 - $1) }.max() ?? 0 }.max() ?? 0
         let duration = stateChanged ? 350 : max(90, min(400, Int(bandChange / 24 * 1000)))
@@ -1191,7 +1197,8 @@ final class PlayerCore {
                 let fraction = t * t * (3 - 2 * t)
                 for deck in nodes.indices {
                     let curve = zip(starting[deck], targets[deck]).map { $0 + ($1 - $0) * fraction }
-                    self.writeBands(nodes[deck], curve, globalGain: 0)
+                    let preamp = startingPreamp[deck] + (targetPreamp[deck] - startingPreamp[deck]) * fraction
+                    self.writeBands(nodes[deck], curve, globalGain: preamp)
                 }
                 do { try await Task.sleep(for: .milliseconds(duration / steps)) } catch { return }
             }

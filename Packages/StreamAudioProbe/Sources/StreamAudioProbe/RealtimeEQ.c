@@ -63,11 +63,23 @@ void SonivoEQResponse(const float *gains,size_t count,double sampleRate,float *o
     }
 }
 
-// Native music-player EQ: filters only. Never return a broadband cut — that
-// ducks mids/vocals whenever bass is boosted (heard as “bass muffles the song”).
+// Static headroom based on the filter curve, never on the music envelope.
+// A small margin reduces overload risk without a compressor or pumping.
+// This is not a true-peak limiter and cannot guarantee transient protection.
 float SonivoEQPreamp(const float *gains, size_t count, double rate) {
-    (void)gains; (void)count; (void)rate;
-    return 0;
+    int positive=0;
+    for(unsigned b=0;b<SONIVO_EQ_BANDS;b++)
+        if(cleanGain(gains && b<count?gains[b]:0,b)>0.0001) positive=1;
+    if(!positive) return 0;
+    float response[384];
+    SonivoEQResponse(gains,count,rate,response,384);
+    double peak=0;
+    for(unsigned i=0;i<384;i++) if(isfinite(response[i])) peak=fmax(peak,response[i]);
+    // The low shelf extends below the 20 Hz preview, the high shelf above it.
+    double low=cleanGain(gains && count>0?gains[0]:0,0);
+    double high=cleanGain(gains && count>SONIVO_EQ_BANDS-1?gains[SONIVO_EQ_BANDS-1]:0,SONIVO_EQ_BANDS-1);
+    peak=fmax(peak,fmax(low,high));
+    return peak>0.01 ? (float)-fmin(48,peak+0.5) : 0;
 }
 
 void SonivoEQInit(SonivoRealtimeEQ *eq) {
@@ -177,8 +189,7 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
             double eased=t*t*(3-2*t);
             eq->wet=eq->wetStart+(eq->wetTarget-eq->wetStart)*eased;
         } else eq->wet=eq->wetTarget;
-        // Unity preamp path (SonivoEQPreamp is always 0). Keep smoothing for API
-        // callers that still pass a non-zero mailbox preamp.
+        // Smooth the fixed, curve-based preamp; do not follow the music envelope.
         double headroomAlpha=targetGain<eq->preGain?eq->headroomAttackAlpha:eq->sampleAlpha;
         eq->preGain+=(targetGain-eq->preGain)*headroomAlpha;
         // Filters only: no envelope peak limiting. Wet may exceed ±1 on hot bass.
