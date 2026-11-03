@@ -361,14 +361,15 @@ public enum MidSideStemBaker {
         // LAND near the end of the musical mashup window (~5s in the reference).
         let handoff = min(0.98, max(0.82, handoffProgress))
         let landAtSec = musical * handoff
-        // Soft carve (not amount=1): full AU residual + makeup was fizzy under B bed.
+        // Lab-first soft bed amounts (see tools/automix-lab vocalInstrumental bed).
+        // Hard AU/nuclear carve ruined instrumental body in field — keep gentle.
         let aURL = try bakeToTempFile(
             MidSideBakeRequest(
                 fileURL: outgoingURL,
                 cueSec: cueA,
                 durationSec: duration,
                 mode: .vocal,
-                amount: 0.88
+                amount: 0.72
             )
         )
         do {
@@ -378,7 +379,7 @@ public enum MidSideStemBaker {
                     cueSec: cueB,
                     durationSec: duration,
                     mode: .instrumental,
-                    amount: 0.92,
+                    amount: 0.62,
                     instrumentalUntilSec: landAtSec
                 )
             )
@@ -485,7 +486,7 @@ public enum MidSideStemBaker {
                     if request.mode == .instrumental {
                         StemSeparator.renderHybridInstrumental(
                             left: lBuf.baseAddress!, right: rBuf.baseAddress!,
-                            frames: n, amount: amount, state: &state
+                            frames: n, amount: amount, sampleRate: rate, state: &state
                         )
                     } else {
                         StemSeparator.separateWindow(

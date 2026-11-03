@@ -144,6 +144,20 @@ npm run render:ideal -- --limit 28
 # → artifacts/sonivo-ideal-automix.{wav,mp3,json}
 ```
 
+## Lab-first stems (важно)
+
+**Не крути AU / жёсткий vocal-cut в iOS, пока lab не ок.**  
+AUSoundIsolation в поле портил инструментал. Источник истины — Mid/Side **bed** в
+`src/dsp/vocalInstrumental.ts`. Спека: `docs/LAB-FIRST-STEMS.md`.
+
+```bash
+npm run smoke:stems          # mid tuck / side keep
+npm run render:ideal -- --limit 12
+# слушай artifacts/sonivo-ideal-automix.mp3
+```
+
+В приложении `StemSeparator.useSoundIsolation = false` до явного A/B после порта.
+
 ## Smokes
 
 ```bash
@@ -154,4 +168,5 @@ npm run smoke:tz
 npm run smoke:land
 npm run smoke:coach
 npm run smoke:transcript
+npm run smoke:stems
 ```

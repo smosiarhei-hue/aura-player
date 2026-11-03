@@ -21,9 +21,16 @@ public enum StemSeparator {
     /// Last backend that successfully carved a stem in this process.
     nonisolated(unsafe) public static var lastBackend: StemSeparationBackend = .hybridSpectral
 
+    /// AUSoundIsolation ruins instrumental body in field mixes (1055+).
+    /// Keep OFF until Automix Lab proves a better neural bake — then flip on.
+    nonisolated(unsafe) public static var useSoundIsolation: Bool = false
+
     public struct State: Sendable {
         public var bass1: Float = 0
         public var bass2: Float = 0
+        public var body: Float = 0
+        public var lead: Float = 0
+        public var pres: Float = 0
         public var smoothed: Float = 0
         public init() {}
     }
@@ -44,16 +51,18 @@ public enum StemSeparator {
             lastBackend = .hybridSpectral
             return
         case .instrumental:
-            if renderInstrumentalPreferringAU(
+            // Lab-first: Mid/Side bed carve (not AU) until neural quality is proven.
+            if useSoundIsolation,
+               renderInstrumentalPreferringAU(
                 left: left, right: right, frames: frames,
                 amount: a, sampleRate: sampleRate
-            ) {
+               ) {
                 return
             }
             var state = State()
             renderHybridInstrumental(
                 left: left, right: right, frames: frames,
-                amount: a, state: &state
+                amount: a, sampleRate: sampleRate, state: &state
             )
             lastBackend = .hybridSpectral
         case .vocal:
@@ -62,7 +71,7 @@ public enum StemSeparator {
             dryL.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: left, count: frames) }
             dryR.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: right, count: frames) }
 
-            let usedAU = renderInstrumentalPreferringAU(
+            let usedAU = useSoundIsolation && renderInstrumentalPreferringAU(
                 left: left, right: right, frames: frames,
                 amount: a, sampleRate: sampleRate
             )
@@ -72,7 +81,7 @@ public enum StemSeparator {
                 var state = State()
                 renderHybridInstrumental(
                     left: left, right: right, frames: frames,
-                    amount: a, state: &state
+                    amount: a, sampleRate: sampleRate, state: &state
                 )
                 lastBackend = .hybridSpectral
             }
@@ -147,38 +156,53 @@ public enum StemSeparator {
         return true
     }
 
-    /// Cancel center lead, keep sub-bass + sides. `amount` 0…1.
+    /// Lab-style Mid/Side **bed** carve (`vocalInstrumental.ts` instrumental/bed):
+    /// keep sub + body + sides; soft-tuck formant/presence. Never nuclear mid-mute.
     public static func renderHybridInstrumental(
         left: UnsafeMutablePointer<Float>,
         right: UnsafeMutablePointer<Float>,
         frames: Int,
         amount: Float,
+        sampleRate: Double = 44_100,
         state: inout State
     ) {
         guard frames > 0 else { return }
         let target = min(1, max(0, amount))
         let ramp: Float = 0.015
-        let alphaBass: Float = 0.017
+        let sr = max(1.0, sampleRate)
+        let lpA = Float(1 - exp(-2.0 * Double.pi * 150.0 / sr))
+        let bodyA = Float(1 - exp(-2.0 * Double.pi * 800.0 / sr))
+        let leadA = Float(1 - exp(-2.0 * Double.pi * 1600.0 / sr))
+        let presA = Float(1 - exp(-2.0 * Double.pi * 2800.0 / sr))
+        // Soft karaoke tuck — matches lab bed cuts (not leadKill).
+        let bodyCut: Float = 0.22
+        let formantCut: Float = 0.55
+        let presCut: Float = 0.85
+        let sideBoostAmt: Float = 0.12
         for i in 0..<frames {
             state.smoothed += (target - state.smoothed) * ramp
+            let a = state.smoothed
             let l = left[i]
             let r = right[i]
             let mid = (l + r) * 0.5
             let side = (l - r) * 0.5
-            state.bass1 += alphaBass * (mid - state.bass1)
-            state.bass2 += alphaBass * (state.bass1 - state.bass2)
-            let sub = state.bass2
-            let processedMid = mid * (1 - state.smoothed) + sub * state.smoothed
-            // No side boost / heavy makeup — both pumped instrumental dirt under A.
-            var outL = processedMid + side
-            var outR = processedMid - side
-            if state.smoothed > 0.05 {
-                let makeup = 1 + 0.04 * state.smoothed
-                outL *= makeup
-                outR *= makeup
-            }
-            left[i] = softClip(outL)
-            right[i] = softClip(outR)
+            state.bass1 += lpA * (mid - state.bass1)
+            let midHi = mid - state.bass1
+            state.body += bodyA * (midHi - state.body)
+            let midRest = midHi - state.body
+            state.lead += leadA * (midRest - state.lead)
+            state.pres += presA * (midRest - state.lead - state.pres)
+            let midKeep =
+                state.bass1 * (1 + 0.06 * a) +
+                state.body * (1 - bodyCut * a) +
+                state.lead * (1 - formantCut * a) +
+                state.pres * (1 - presCut * a)
+            let sideKeep = side * (1 + sideBoostAmt * a)
+            // Wet/dry so soft amounts don't thin the groove.
+            let wetL = midKeep + sideKeep
+            let wetR = midKeep - sideKeep
+            left[i] = softClip(l + (wetL - l) * a)
+            right[i] = softClip(r + (wetR - r) * a)
         }
     }
 

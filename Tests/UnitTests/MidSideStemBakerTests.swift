@@ -129,6 +129,7 @@ struct MidSideStemBakerTests {
                     right: rBuf.baseAddress!,
                     frames: frames,
                     amount: 1,
+                    sampleRate: 48_000,
                     state: &state
                 )
             }
@@ -137,7 +138,9 @@ struct MidSideStemBakerTests {
             let mid = (left[i] + right[i]) * 0.5
             return partial + mid * mid
         }
-        #expect(outMidEnergy < dryMidEnergy * 0.35)
+        // Lab-style bed: soft formant tuck, not nuclear mid-mute (keeps groove body).
+        #expect(outMidEnergy < dryMidEnergy * 0.92)
+        #expect(outMidEnergy > dryMidEnergy * 0.25)
     }
 
     @Test("Automix stem pair reports a separation backend")

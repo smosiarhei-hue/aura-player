@@ -18,6 +18,7 @@
     "smoke:transcript": "node scripts/smoke-transcript-cues.mjs",
     "smoke:neural": "node scripts/smoke-neural-cue.mjs",
     "smoke:stretch": "node scripts/smoke-timestretch.mjs",
+    "smoke:stems": "node scripts/smoke-stem-quality.mjs",
     "train:coach": "node scripts/train-wave-coach.mjs",
     "analyze:pair": "node scripts/analyze-pair.mjs",
     "render:ideal": "node scripts/render-ideal-mashup.mjs"
