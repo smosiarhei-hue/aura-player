@@ -73,7 +73,7 @@ struct MashupLiveStyleTests {
         #expect(abs(duetEarly) < 40)
     }
 
-    @Test("Apple Automix volumes: A vocal over quieter B bed, hard mute A at LAND")
+    @Test("Apple Automix volumes: A vocal over B bed, soft mute A into LAND")
     func appleAutomixVolumesHardLand() {
         var style = MashupLiveStyle.resolve(
             plan: nil,
@@ -90,27 +90,29 @@ struct MashupLiveStyleTests {
 
         let early = style.volumes(progress: 0.12)
         let mid = style.volumes(progress: 0.50)
+        let preLand = style.volumes(progress: max(0, style.handoffAt - 0.02))
         let land = style.volumes(progress: min(0.99, style.handoffAt + 0.01))
         #expect(early.outgoing > 0.95)
-        #expect(early.incoming > 0.55 && early.incoming < 0.85) // ONE VOCAL bed under A
+        #expect(early.incoming > 0.70 && early.incoming < 0.95) // ONE VOCAL bed under A
         #expect(mid.outgoing > 0.95)
-        #expect(mid.incoming > 0.55 && mid.incoming < 0.90)
+        #expect(mid.incoming > 0.70 && mid.incoming < 0.95)
+        #expect(preLand.outgoing < 0.85) // soft A fade before LAND
         #expect(land.outgoing == 0)
         #expect(land.incoming > 0.95)
-        #expect(abs(style.automixIncomingBedGain - 0.70) < 0.01)
+        #expect(abs(style.automixIncomingBedGain - 0.86) < 0.01)
     }
 
-    @Test("Key-clash Automix keeps an even quieter B bed")
+    @Test("Key-clash Automix keeps a quieter B bed without a loudness cliff")
     func keyClashBedQuieter() {
         var style = MashupLiveStyle.fallback
         style.applyAutomixPlaybackCharacter()
         style.archetypeName = "echoFreeze"
         style.pitchCentsB = 0
-        #expect(style.automixIncomingBedGain < 0.65)
+        #expect(style.automixIncomingBedGain < 0.82)
         style.pitchCentsB = -200
-        #expect(style.automixIncomingBedGain <= 0.55)
+        #expect(style.automixIncomingBedGain <= 0.72)
         let mid = style.volumes(progress: 0.4)
-        #expect(mid.incoming <= 0.60)
+        #expect(mid.incoming <= 0.75)
     }
 
     @Test("Duet plan keeps dual vocal volumes and DUET phase labels")

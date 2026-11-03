@@ -597,6 +597,10 @@ final class PlayerCore {
     /// Musical cue B (mix-in). Kept separate from bake schedule offset so the
     /// Automix timeline snap stays on the real track position, not bakeLag.
     private var mashupIncomingCueSec: Double = 0
+    /// Soft stream→stem mount after bake.ready (field: sudden loudness drop).
+    private var mashupStemEntryStartedAt: Date?
+    private var mashupStemEntryDuration: Double = 0.24
+    private var mashupStemEntryFromStream = false
 
     var streamBufferFraction: Double = 0.0
     private(set) var isStreamBuffering = false
@@ -2476,6 +2480,65 @@ final class PlayerCore {
         applyEQ()
     }
 
+    /// Automix LAND: mount dry B on the outgoing node while B stem keeps playing,
+    /// then cut the stem — avoids the silence gap of stop-both-then-open-file.
+    private func landAutomixOntoDryB(track: Track, fileURL: URL, at seconds: Double) throws {
+        let audioFile = try AVAudioFile(forReading: fileURL)
+        guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        isUsingStreamPlayer = false
+        mashupBakeRealIncomingURL = nil
+        mashupPlayingMasterBake = false
+
+        let pos = PlaybackResumePolicy.position(seconds, duration: track.duration)
+        let dryNode = activePlayer
+        let stemNode = idlePlayer
+
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(dryNode))
+        // Keep stemNode token until after dry is audible.
+        dryNode.stop()
+        dryNode.volume = 0
+        if !engine.isRunning { try engine.start() }
+
+        activeLocalURL = fileURL
+        activeAudioFile = audioFile
+        incomingAudioFile = nil
+        let facts = LocalAudioQualityReader.read(audioFile)
+        currentCodec = facts.codec
+        currentBitrate = facts.bitrate
+        scheduleLocalSegment(audioFile, on: dryNode, at: pos)
+        dryNode.play()
+        dryNode.volume = 1
+        // Cut stem only after dry B is scheduled+playing.
+        stemNode.volume = 0
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(stemNode))
+        stemNode.stop()
+
+        activePlayer = dryNode == playerA ? playerA : playerB
+        // Ensure the other deck is silent.
+        if activePlayer === playerA {
+            playerB.volume = 0
+        } else {
+            playerA.volume = 0
+        }
+        timePitchA.rate = 1
+        timePitchA.pitch = 0
+        timePitchA.bypass = true
+        timePitchB.rate = 1
+        timePitchB.pitch = 0
+        timePitchB.bypass = true
+
+        isPlaying = true
+        anchorDate = Date()
+        anchorOffset = pos
+        pausedProgress = pos
+        progress = pos
+        streamDuration = track.duration
+        startTimer()
+        applyEQ()
+    }
+
     /// Beatmatched mashup modes (AutoMix ONE VOCAL + Modern Duet).
     private var isMashupTransitionMode: Bool {
         transitionMode == .automix || transitionMode == .duet
@@ -2993,6 +3056,45 @@ final class PlayerCore {
             let sourceLevel = gains.outgoing
             let targetLevel = gains.incoming
 
+            // Equal-power bridge: dry stream A → stem decks (avoids bake.ready thump).
+            if mashup, let entryAt = mashupStemEntryStartedAt, mashupStemEntryFromStream {
+                let entryT = min(1, max(0, -entryAt.timeIntervalSinceNow / max(0.05, mashupStemEntryDuration)))
+                let ease = entryT * entryT * (3 - 2 * entryT)
+                let streamOut = Float(cos(ease * Double.pi * 0.5))
+                let stemIn = Float(sin(ease * Double.pi * 0.5))
+                activeStreamingPlayer.volume = volume * streamOut
+                if isPlaying {
+                    let rates = activeMashupStyle.playbackRates(progress: p)
+                    activeStreamingPlayer.rate = rates.outgoing
+                }
+                activePlayer.volume = sourceLevel * stemIn
+                idlePlayer.volume = targetLevel * stemIn
+                if mashup {
+                    let beatRates = activeMashupStyle.playbackRates(progress: p)
+                    applyMashupTimePitch(progress: p, outgoing: true, rate: beatRates.outgoing)
+                    applyMashupTimePitch(progress: p, outgoing: false, rate: beatRates.incoming)
+                }
+                if entryT >= 1 {
+                    mashupStemEntryStartedAt = nil
+                    mashupStemEntryFromStream = false
+                    isUsingStreamPlayer = false
+                    activeStreamingPlayer.pause()
+                    activeStreamingPlayer.volume = 0
+                    idleStreamingPlayer.pause()
+                    idleStreamingPlayer.volume = 0
+                }
+                if mashup {
+                    AutoMixDJEngine.shared.markMashupProgress(p)
+                    AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
+                    AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
+                    applyMashupTransitionEQ(progress: p)
+                }
+                if mashup, p >= activeMashupStyle.handoffAt, let incomingTrack {
+                    completeTransition(to: incomingTrack)
+                }
+                return
+            }
+
             let beatRates: (outgoing: Float, incoming: Float) = mashup && !mashupBakeFailedUseCrossfade
                 ? activeMashupStyle.playbackRates(progress: p)
                 : (outgoing: 1, incoming: 1)
@@ -3139,13 +3241,25 @@ final class PlayerCore {
             throw CocoaError(.fileReadCorruptFile)
         }
 
-        isUsingStreamPlayer = false
+        let fromStream = isUsingStreamPlayer
+        mashupStemEntryFromStream = fromStream
+        mashupStemEntryStartedAt = Date()
+        mashupStemEntryDuration = 0.26
         incomingIsStream = false
         mashupPlayingMasterBake = false
-        activeStreamingPlayer.pause()
-        idleStreamingPlayer.pause()
-        activeStreamingPlayer.volume = 0
-        idleStreamingPlayer.volume = 0
+        // Keep dry A audible during the entry bridge when we were on AVPlayer.
+        // Hard mute+swap made Automix start feel like a sudden volume drop.
+        if !fromStream {
+            activeStreamingPlayer.pause()
+            idleStreamingPlayer.pause()
+            activeStreamingPlayer.volume = 0
+            idleStreamingPlayer.volume = 0
+            isUsingStreamPlayer = false
+        } else {
+            idleStreamingPlayer.pause()
+            idleStreamingPlayer.volume = 0
+            // Leave activeStreamingPlayer playing at `volume` until entry fade ends.
+        }
 
         // Invalidate completions before stop so drained stems can't re-enter finish.
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
@@ -3161,12 +3275,21 @@ final class PlayerCore {
 
         scheduleLocalSegment(outFile, on: activePlayer, at: offset)
         scheduleLocalSegment(inFile, on: idlePlayer, at: offset)
-        let vols = activeMashupStyle.volumes(progress: min(1, offset / max(0.001, transitionDuration)))
-        activePlayer.volume = vols.outgoing
-        idlePlayer.volume = vols.incoming
+        // Start stems silent; tickTransition ramps them over mashupStemEntryDuration.
+        activePlayer.volume = 0
+        idlePlayer.volume = 0
         if !engine.isRunning { try engine.start() }
         activePlayer.play()
         idlePlayer.play()
+        if !fromStream {
+            let vols = activeMashupStyle.volumes(
+                progress: min(1, offset / max(0.001, transitionDuration))
+            )
+            activePlayer.volume = vols.outgoing
+            idlePlayer.volume = vols.incoming
+            mashupStemEntryStartedAt = nil
+            isUsingStreamPlayer = false
+        }
     }
 
     private func completeTransition(to nextTrack: Track) {
@@ -3202,8 +3325,8 @@ final class PlayerCore {
         let wasStream = isUsingStreamPlayer
 
         if mashupHardCut {
-            // Reliable LAND: kill stem decks, then sync-play dry B so the clock
-            // cannot freeze waiting on async startLocal / stem-finish races.
+            // Reliable LAND: keep B stem audible while dry B mounts — stopping both
+            // decks first left a silence gap that field users heard as an abrupt cut.
             NotificationCenter.default.post(
                 name: .didTriggerAutoMixDrop,
                 object: nil,
@@ -3212,27 +3335,30 @@ final class PlayerCore {
             let landGuardUntil = Date().addingTimeInterval(2.0)
             suppressTrackFinishUntil = landGuardUntil
             suppressAutomixSkipUntil = landGuardUntil
+            mashupStemEntryStartedAt = nil
+            mashupStemEntryFromStream = false
             // Capture before clearing flags — bake-fail MIXING already has B on the
             // idle stream; promoting it avoids start()→cancelTransition()→reload races
             // that field-logged as ACTION next ~30ms after land.hardcut.
             let canPromoteIncomingStream = incomingIsStream
                 && idleStreamingPlayer.currentItem != nil
-            localSegmentTokens.removeAll()
-            lyricsLocalSegments.removeAll()
-            activePlayer.stop()
-            idlePlayer.stop()
-            activePlayer.volume = 0
-            idlePlayer.volume = 0
+            let realURL = mashupBakeRealIncomingURL
+                ?? findLocalOrCachedAudioFile(for: nextTrack, respectingQuality: false)
+            let safePos = safeAutomixHandoffPosition(for: nextTrack, proposed: handoffPos)
+            // Hold B stem (idle) at unity while we prepare dry B on active.
+            // Do NOT delete bake temps until after dry B is playing — deleting under
+            // a live AVAudioFile read can glitch/cut the LAND.
+            idlePlayer.volume = 1
+            activeStreamingPlayer.pause()
+            idleStreamingPlayer.pause()
+            activeStreamingPlayer.volume = 0
+            idleStreamingPlayer.volume = 0
             activeTimePitch.rate = 1
             activeTimePitch.pitch = 0
             activeTimePitch.bypass = true
             idleTimePitch.rate = 1
             idleTimePitch.pitch = 0
             idleTimePitch.bypass = true
-            let realURL = mashupBakeRealIncomingURL
-                ?? findLocalOrCachedAudioFile(for: nextTrack, respectingQuality: false)
-            let safePos = safeAutomixHandoffPosition(for: nextTrack, proposed: handoffPos)
-            clearMashupBakeTemps()
             incomingTrack = nil
             incomingLaneReady = false
             incomingAudioFile = nil
@@ -3263,13 +3389,27 @@ final class PlayerCore {
                 streamingPlayerA.pause()
                 streamingPlayerB.pause()
                 do {
-                    try handoffLocalPlayback(track: nextTrack, fileURL: realURL, at: safePos)
+                    try landAutomixOntoDryB(track: nextTrack, fileURL: realURL, at: safePos)
                     handedOff = true
                     syncLocal = 1
                 } catch {
                     SonivoDiagnostics.log("[AutoMix] sync LAND handoff failed: \(error)", tag: "AUTOMIX")
+                    localSegmentTokens.removeAll()
+                    lyricsLocalSegments.removeAll()
+                    activePlayer.stop()
+                    idlePlayer.stop()
+                    activePlayer.volume = 0
+                    idlePlayer.volume = 0
+                    do {
+                        try handoffLocalPlayback(track: nextTrack, fileURL: realURL, at: safePos)
+                        handedOff = true
+                        syncLocal = 1
+                    } catch {
+                        SonivoDiagnostics.log("[AutoMix] LAND fallback handoff failed: \(error)", tag: "AUTOMIX")
+                    }
                 }
             }
+            clearMashupBakeTemps()
             // Promote live incoming stream when local handoff is unavailable OR failed
             // (1045: syncLocal=0 + land.recover frozen after start() reload).
             if !handedOff, canPromoteIncomingStream {

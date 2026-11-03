@@ -222,19 +222,30 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return appleAutomixVolumes(progress: progress)
     }
 
-    /// Reference mashup: A vocal over B beat bed, A mute at handoff.
+    /// Reference mashup: A vocal over B beat bed, soft A fade into LAND.
     /// Compatible pairs can run B near unity; key-clash / echoFreeze / large
     /// pitch keep a quieter bed so mid-side leakage does not stack two leads.
     private func appleAutomixVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
         let handoff = min(0.98, max(0.82, handoffAt))
-        let lag = min(0.06, max(0.0, incomingVolumeLag))
-        let outgoing: Float = p < handoff ? 1 : 0
+        let lag = min(0.08, max(0.02, incomingVolumeLag > 0 ? incomingVolumeLag : 0.04))
+        // Soft A out (~4% of blend ≈ 0.25–0.35s) — hard 1→0 at LAND felt like a cut.
+        let aFade = max(0.035, min(0.06, 1 - handoff + 0.04))
+        let aFadeStart = max(0, handoff - aFade)
+        let outgoing: Float
+        if p < aFadeStart {
+            outgoing = 1
+        } else if p < handoff {
+            outgoing = 1 - Self.smoothstep((p - aFadeStart) / max(0.001, aFade))
+        } else {
+            outgoing = 0
+        }
         let bed = automixIncomingBedGain
-        let bloomStart = max(lag + 0.02, handoff - 0.10)
+        let bloomStart = max(lag + 0.02, handoff - 0.12)
         let incoming: Float
-        if p <= lag, lag > 0.001 {
-            incoming = Float(p / lag) * bed
+        if p <= lag {
+            // Ease B in — avoid a sudden bed dump under full-volume A.
+            incoming = Self.smoothstep(p / lag) * bed
         } else if p < bloomStart {
             incoming = bed
         } else if p < handoff {
@@ -243,14 +254,15 @@ public struct MashupLiveStyle: Sendable, Equatable {
         } else {
             incoming = 1
         }
-        return (outgoing, min(1, max(0, incoming)))
+        return (min(1, max(0, outgoing)), min(1, max(0, incoming)))
     }
 
     /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).
+    /// Kept high enough that Automix entry does not feel like a volume drop.
     public var automixIncomingBedGain: Float {
-        if abs(pitchCentsB) >= 80 { return 0.55 }
-        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.58 }
-        if oneVocalConflict { return 0.70 }
+        if abs(pitchCentsB) >= 80 { return 0.72 }
+        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.76 }
+        if oneVocalConflict { return 0.86 }
         return 1.0
     }
 

@@ -156,6 +156,7 @@ enum MashupLiveEQEnvelope {
 
     /// Stem-bake path: mid-side CAF already carved — only restore bass swap + B
     /// lead duck (scaled). Full archetype EQ + A presence boost re-muddied field mixes.
+    /// Entry protection: delay bass kill so bake.ready does not drop loudness vs dry A.
     static func stemBakeOffsets(
         progress: Double,
         style: MashupLiveStyle
@@ -165,24 +166,27 @@ enum MashupLiveEQEnvelope {
         let handoff = min(0.96, max(0.72, style.handoffAt))
         let pocketD = max(0.7, style.vocalPocketDepth)
         let hpfD = max(0.7, style.hpfDepth)
-        let scale: Float = 0.65
+        let scale: Float = 0.45
+        // First ~10% of the blend keeps near-flat EQ so stem mount matches dry A.
+        let entry = ramp(p, from: 0.02, to: 0.12)
         var out = Array(repeating: Float(0), count: bandCount)
         var inn = Array(repeating: Float(0), count: bandCount)
-        let outLive = 1 - ramp(p, from: handoff, to: min(1, handoff + 0.06))
-        // A: hand lows to B; no mid presence boost (vocal stem already has it).
-        out[0] = clampDB(-12 * scale * ramp(p, from: 0, to: max(0.06, bassAt)))
-        out[1] = clampDB(-10 * scale * ramp(p, from: 0, to: max(0.06, bassAt)))
-        out[2] = clampDB(-6 * scale * ramp(p, from: 0.02, to: max(0.10, bassAt)))
-        out[8] = clampDB(-4 * hpfD * scale * (1 - outLive))
-        out[9] = clampDB(-3 * hpfD * scale * (1 - outLive))
-        // B: keep kick; duck residual lead until LAND.
-        let inInstr = 1 - ramp(p, from: handoff - 0.01, to: min(0.99, handoff + 0.05))
-        let leadFloor = clampDB(-9 * max(1.0, pocketD) * scale * inInstr)
-        inn[0] = clampDB(1.6 * scale * inInstr)
-        inn[1] = clampDB(1.1 * scale * inInstr)
-        inn[5] = clampDB(leadFloor * 0.9)
+        let outLive = 1 - ramp(p, from: handoff - 0.04, to: min(1, handoff + 0.02))
+        // A: hand lows to B after entry grace; no mid presence boost.
+        let bassStart = max(0.08, bassAt * 0.55)
+        out[0] = clampDB(-10 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
+        out[1] = clampDB(-8 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
+        out[2] = clampDB(-5 * scale * entry * ramp(p, from: bassStart + 0.02, to: max(0.12, bassAt)))
+        out[8] = clampDB(-3 * hpfD * scale * (1 - outLive))
+        out[9] = clampDB(-2.5 * hpfD * scale * (1 - outLive))
+        // B: keep kick; soft residual-lead duck until LAND (less scoop than before).
+        let inInstr = 1 - ramp(p, from: handoff - 0.04, to: min(0.99, handoff + 0.02))
+        let leadFloor = clampDB(-6 * max(1.0, pocketD) * scale * entry * inInstr)
+        inn[0] = clampDB(1.2 * scale * entry * inInstr)
+        inn[1] = clampDB(0.9 * scale * entry * inInstr)
+        inn[5] = clampDB(leadFloor * 0.85)
         inn[6] = clampDB(leadFloor)
-        inn[7] = clampDB(leadFloor * 0.75)
+        inn[7] = clampDB(leadFloor * 0.7)
         return (out, inn)
     }
 

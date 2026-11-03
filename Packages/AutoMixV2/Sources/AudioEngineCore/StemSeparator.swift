@@ -76,9 +76,12 @@ public enum StemSeparator {
                 )
                 lastBackend = .hybridSpectral
             }
+            // Makeup so A vocal isolate matches dry-track loudness at Automix entry
+            // (field: bake.ready felt like a sudden volume drop).
+            let makeup: Float = 1.35 + 0.25 * a
             for i in 0..<frames {
-                var vL = (dryL[i] - left[i]) * (0.85 + 0.45 * a)
-                var vR = (dryR[i] - right[i]) * (0.85 + 0.45 * a)
+                var vL = (dryL[i] - left[i]) * (0.90 + 0.40 * a) * makeup
+                var vR = (dryR[i] - right[i]) * (0.90 + 0.40 * a) * makeup
                 let mid = (vL + vR) * 0.5
                 let side = (vL - vR) * 0.5 * (1 - 0.85 * a)
                 vL = mid + side
