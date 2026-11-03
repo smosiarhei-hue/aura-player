@@ -95,6 +95,9 @@ nonisolated private final class RemoteFavoriteSnapshot: @unchecked Sendable {
 @MainActor
 final class PlayerCore {
     static let shared = PlayerCore()
+    /// False while `shared` is still inside `init`. Logging / observers must not
+    /// touch `PlayerCore.shared` until this flips — re-entering `dispatch_once` traps.
+    private(set) static var isSharedReady = false
     nonisolated static let bandFrequencies: [Float] = EQGainLimits.frequencies
     nonisolated static let maximumEQGain: Float = EQGainLimits.maximum
     nonisolated static let eqEnabledKey = "eq.enabled"
@@ -662,6 +665,7 @@ final class PlayerCore {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshFavoriteCommandState() }
         }
+        Self.isSharedReady = true
     }
 
     private func removeLegacyUnboundedStreamCacheIfNeeded() {

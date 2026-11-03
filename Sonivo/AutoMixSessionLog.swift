@@ -51,7 +51,10 @@ final class AutoMixSessionLog {
         let payload = details.isEmpty ? name : "\(name) | \(details)"
         append(tag: "ACTION", payload)
         // Force an immediate state snapshot after meaningful user actions.
-        if ["seek", "play", "pause", "next", "previous", "toggle", "mode", "scrub"].contains(where: { name.hasPrefix($0) }) {
+        // Skip while PlayerCore.shared is still initializing — snapshot would
+        // re-enter its dispatch_once and SIGTRAP ("trying to lock recursively").
+        if PlayerCore.isSharedReady,
+           ["seek", "play", "pause", "next", "previous", "toggle", "mode", "scrub"].contains(where: { name.hasPrefix($0) }) {
             snapshot(tag: "STATE")
         }
     }
@@ -67,7 +70,15 @@ final class AutoMixSessionLog {
     }
 
     func buildReport() -> String {
-        let core = PlayerCore.shared
+        guard let core = playerCoreIfReady() else {
+            return """
+            Sonivo AutoMix Session Log
+            Generated: \(ISO8601DateFormatter().string(from: Date()))
+            PlayerCore: not ready
+            Lines: \(lines.count)
+
+            """ + lines.joined(separator: "\n")
+        }
         let track = core.displayTrack ?? core.currentTrack
         let header = """
         Sonivo AutoMix Session Log
@@ -84,7 +95,9 @@ final class AutoMixSessionLog {
     }
 
     func copyReportToClipboard() {
-        snapshot(tag: "STATE")
+        if PlayerCore.isSharedReady {
+            snapshot(tag: "STATE")
+        }
         UIPasteboard.general.string = buildReport()
         append(tag: "ACTION", "clipboard.copy lines=\(lines.count)")
         SonivoDiagnostics.log("AutoMix session log copied (\(lines.count) lines)", tag: "DIAG")
@@ -115,7 +128,7 @@ final class AutoMixSessionLog {
 
     private func heartbeatTick() {
         guard isEnabled else { return }
-        let core = PlayerCore.shared
+        guard let core = playerCoreIfReady() else { return }
         // Keep a continuous trail while playing, transitioning, or shortly after actions.
         if core.isPlaying || core.isTransitioningPublic || AutoMixDJEngine.shared.isTransitionActive {
             snapshot(tag: "TICK")
@@ -123,7 +136,7 @@ final class AutoMixSessionLog {
     }
 
     private func snapshot(tag: String) {
-        let core = PlayerCore.shared
+        guard let core = playerCoreIfReady() else { return }
         let dj = AutoMixDJEngine.shared
         let current = core.currentTrack
         let incoming = core.incomingTrackPublic
@@ -152,6 +165,11 @@ final class AutoMixSessionLog {
         if tag == "STATE", fingerprint == lastActionFingerprint { return }
         lastActionFingerprint = fingerprint
         append(tag: tag, line)
+    }
+
+    /// Never touch `PlayerCore.shared` until its `dispatch_once` has finished.
+    private func playerCoreIfReady() -> PlayerCore? {
+        PlayerCore.isSharedReady ? PlayerCore.shared : nil
     }
 
     // MARK: - Helpers

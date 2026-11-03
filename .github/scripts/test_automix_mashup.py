@@ -253,6 +253,25 @@ class AutoMixMashupTests(unittest.TestCase):
         ).read_text()
         self.assertIn("defaultPreferredBlendSec: Double = 5", scheduler_pref)
 
+    def test_session_log_does_not_reenter_playercore_during_shared_init(self):
+        """Launch SIGTRAP: mode didSet → AutoMixSessionLog.snapshot → PlayerCore.shared
+        while dispatch_once for PlayerCore.shared is still held."""
+        player = (ROOT / "Sonivo/playercore.swift").read_text()
+        self.assertIn("private(set) static var isSharedReady = false", player)
+        self.assertIn("Self.isSharedReady = true", player)
+        # Ready flag must flip after loadSettings (which assigns transitionMode).
+        init_idx = player.index("private init()")
+        ready_idx = player.index("Self.isSharedReady = true", init_idx)
+        load_idx = player.index("loadSettings()", init_idx)
+        self.assertLess(load_idx, ready_idx)
+
+        log = (ROOT / "Sonivo/AutoMixSessionLog.swift").read_text()
+        self.assertIn("playerCoreIfReady()", log)
+        self.assertIn("PlayerCore.isSharedReady ? PlayerCore.shared : nil", log)
+        self.assertIn("PlayerCore.isSharedReady", log)
+        # Snapshot path must go through the gate, not bare PlayerCore.shared.
+        self.assertNotIn("let core = PlayerCore.shared", log)
+
     def test_drop_swap_plan_still_encodes_mashup_fx(self):
         planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
         self.assertIn("case .seamlessLoop", planner)
