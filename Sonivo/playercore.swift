@@ -460,7 +460,10 @@ final class PlayerCore {
     var mashupBakeActivePublic: Bool { mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake }
     var activeDeckVolumePublic: Float { isUsingStreamPlayer ? activeStreamingPlayer.volume : activePlayer.volume }
     var idleDeckVolumePublic: Float {
-        if isUsingStreamPlayer { return incomingIsStream ? idleStreamingPlayer.volume : 0 }
+        // Hybrid Automix (native A + stream B) must report the stream deck volume —
+        // field log 1045 showed volB=0 while B lived on idleStreamingPlayer.
+        if incomingIsStream { return idleStreamingPlayer.volume }
+        if isUsingStreamPlayer { return 0 }
         return idlePlayer.volume
     }
     var playbackRequestID: Int { generation }
@@ -2776,7 +2779,23 @@ final class PlayerCore {
                     }
                 }
 
-                if self.incomingIsStream {
+                // Prefer the local file already materialized for stem bake. Field 1045:
+                // bake.fail left incomingIsStream=true while A was native → hybrid
+                // crossfade with silent/stuck B (volB logged 0) then LAND freeze.
+                let localIncomingURL = inURLForBake ?? nextURL
+                if let localIncomingURL {
+                    let file = try AVAudioFile(forReading: localIncomingURL)
+                    guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                          self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
+                    self.incomingIsStream = false
+                    self.incomingAudioFile = file
+                    self.incomingQuality = LocalAudioQualityReader.read(file)
+                    self.scheduleLocalSegment(file, on: targetNode, at: startAt)
+                    targetNode.volume = 0
+                    if !self.engine.isRunning { try self.engine.start() }
+                    targetNode.play()
+                } else if self.incomingIsStream {
                     let resolved: URL
                     var resolvedQuality: PlaybackQualityFacts?
                     let isCatalogTrack = YandexMusicService.ymId(fromFileName: nextTrack.fileName) != nil
@@ -2831,7 +2850,7 @@ final class PlayerCore {
                         }
                     }
                 } else {
-                    let file = try AVAudioFile(forReading: nextURL ?? nextTrack.url)
+                    let file = try AVAudioFile(forReading: nextTrack.url)
                     guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
                     guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
@@ -3177,7 +3196,6 @@ final class PlayerCore {
             incomingTrack = nil
             incomingLaneReady = false
             incomingAudioFile = nil
-            let promoteStream = canPromoteIncomingStream && realURL == nil
             incomingIsStream = false
             prebufferedTrackId = nil
             plannedNextTrack = nil
@@ -3212,9 +3230,9 @@ final class PlayerCore {
                     SonivoDiagnostics.log("[AutoMix] sync LAND handoff failed: \(error)", tag: "AUTOMIX")
                 }
             }
-            if !handedOff, promoteStream {
-                // Keep the already-playing incoming stream — do not call start(),
-                // which cancelTransition()-clears land guards and re-fetches B.
+            // Promote live incoming stream when local handoff is unavailable OR failed
+            // (1045: syncLocal=0 + land.recover frozen after start() reload).
+            if !handedOff, canPromoteIncomingStream {
                 isUsingStreamPlayer = true
                 let outgoingPlayer = activeStreamingPlayer
                 let incomingPlayer = idleStreamingPlayer

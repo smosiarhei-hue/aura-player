@@ -237,6 +237,10 @@ class AutoMixMashupTests(unittest.TestCase):
         # AVAudioFormat has isInterleaved, not isNonInterleaved (CI build break).
         self.assertIn("AVLinearPCMIsNonInterleaved: !format.isInterleaved", baker)
         self.assertNotIn("format.isNonInterleaved", baker)
+        # 4-arg forWriting is required on device (settings-only → GenericObjCError 0).
+        self.assertIn("openLinearPCMCAFWriter", baker)
+        self.assertIn("commonFormat: format.commonFormat", baker)
+        self.assertIn("interleaved: format.isInterleaved", baker)
         self.assertNotIn(
             "AVAudioFile(forWriting: outURL, settings: format.settings)",
             baker,
@@ -245,6 +249,9 @@ class AutoMixMashupTests(unittest.TestCase):
         player = (ROOT / "Sonivo/playercore.swift").read_text()
         self.assertIn("mashupBakeFailedUseCrossfade", player)
         self.assertIn("equal-power crossfade fallback", player)
+        # After bake.fail, arm local materialized B (not hybrid stream).
+        self.assertIn("localIncomingURL = inURLForBake ?? nextURL", player)
+        self.assertIn("idleStreamingPlayer.volume", player)
 
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
         self.assertIn("LOCK", l10n)
