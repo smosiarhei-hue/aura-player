@@ -1116,18 +1116,15 @@ final class PlayerCore {
         let incoming = mashupComposedGains(offset: idleOff)
 
         // Native decks: only touch audible engine lanes (stream-only mashup skips these).
+        // Unity globalGain + PeakLimiter bypassed — bass must not duck the mix.
         if !isUsingStreamPlayer {
-            let rate = activePlayer === playerA ? eqNodeA.inputFormat(forBus: 0).sampleRate : eqNodeB.inputFormat(forBus: 0).sampleRate
-            let preamp = out.gains.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
-            writeBands(activePlayer === playerA ? eqNodeA : eqNodeB, out.gains, globalGain: preamp)
-            outputLimiter.bypass = false
+            writeBands(activePlayer === playerA ? eqNodeA : eqNodeB, out.gains, globalGain: 0)
+            outputLimiter.bypass = true
         }
         if !incomingIsStream {
             let node = idlePlayer === playerA ? eqNodeA : eqNodeB
-            let rate = node.inputFormat(forBus: 0).sampleRate
-            let preamp = incoming.gains.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
-            writeBands(node, incoming.gains, globalGain: preamp)
-            outputLimiter.bypass = false
+            writeBands(node, incoming.gains, globalGain: 0)
+            outputLimiter.bypass = true
         }
 
         // Streaming decks: per-item MTAudioProcessingTap EQ (Yandex / online).
@@ -1156,20 +1153,13 @@ final class PlayerCore {
         }
         let targets = [compose(eqOffsetA), compose(eqOffsetB), compose(eqOffsetLooper)]
         let nodes = [eqNodeA, eqNodeB, looperEQ]
-        let headrooms = zip(nodes, targets).map { node, curve in
-            let rate = node.inputFormat(forBus: 0).sampleRate
-            return curve.withUnsafeBufferPointer { SonivoStreamEQPreamp($0.baseAddress!, $0.count, rate) }
-        }
         nativeEQRamp?.cancel()
         let starting = nodes.map { $0.bands.map(\.gain) }
-        let startingPreamp = nodes.map(\.globalGain)
-        let needsProtection = targets.joined().contains { abs($0) > 0.001 }
-        // Keep the limiter active through the return-to-flat ramp as well.
-        outputLimiter.bypass = !(needsProtection || starting.joined().contains { abs($0) > 0.001 })
-        // Large headroom recovery must not restore 18+ dB in the old 40 ms ramp.
-        let levelChange = zip(startingPreamp, headrooms).map { abs($1 - $0) }.max() ?? 0
-        let duration = stateChanged ? max(350, min(2000, Int(350 + levelChange / 24 * 1000)))
-            : max(90, min(2000, Int(levelChange / 24 * 1000)))
+        // Native music-player EQ: band filters only. No soft-LF master cut and no
+        // PeakLimiter after EQ — both ducked mids/vocals whenever bass peaked.
+        outputLimiter.bypass = true
+        let bandChange = zip(starting, targets).map { zip($0, $1).map { abs($0 - $1) }.max() ?? 0 }.max() ?? 0
+        let duration = stateChanged ? 350 : max(90, min(400, Int(bandChange / 24 * 1000)))
         let steps = max(8, duration / 10)
         // New slider/toggle commands cancel the old ramp and resume at current values.
         nativeEQRamp = Task { @MainActor [weak self] in
@@ -1179,12 +1169,11 @@ final class PlayerCore {
                 let fraction = t * t * (3 - 2 * t)
                 for deck in nodes.indices {
                     let curve = zip(starting[deck], targets[deck]).map { $0 + ($1 - $0) * fraction }
-                    let gain = startingPreamp[deck] + (headrooms[deck] - startingPreamp[deck]) * fraction
-                    self.writeBands(nodes[deck], curve, globalGain: gain)
+                    self.writeBands(nodes[deck], curve, globalGain: 0)
                 }
                 do { try await Task.sleep(for: .milliseconds(duration / steps)) } catch { return }
             }
-            self?.outputLimiter.bypass = !needsProtection
+            self?.outputLimiter.bypass = true
         }
     }
 

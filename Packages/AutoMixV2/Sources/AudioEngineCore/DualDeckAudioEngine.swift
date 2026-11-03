@@ -165,30 +165,31 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             owner.eqGeneration &+= 1
             let generation = owner.eqGeneration
             let starting = owner.userEQ.bands.map(\.gain)
+            // Unity globalGain — native player EQ never ducks the master for bass.
             let preamp = EQHeadroom.preamp(gains: target, sampleRate: owner.outputFormat.sampleRate)
-            let startPreamp = owner.userEQ.globalGain
             let stateChanged = owner.userEQEnabled != enabled
             owner.userEQEnabled = enabled
-            let change = abs(preamp - startPreamp)
-            let duration = stateChanged ? max(350, min(2000, Int(350 + change / 24 * 1000)))
-                : max(90, min(2000, Int(change / 24 * 1000)))
+            let bandChange = zip(starting, target).map { abs($0 - $1) }.max() ?? 0
+            let duration = stateChanged ? 350 : max(90, min(400, Int(bandChange / 24 * 1000)))
             let steps = max(8, duration / 10)
             let active = target.contains { abs($0) > 0.001 }
             owner.userEQ.bypass = false
-            owner.eqLimiter.bypass = !(active || starting.contains { abs($0) > 0.001 })
+            owner.userEQ.globalGain = preamp
+            // PeakLimiter after EQ ducks the whole mix on kick — stay bypassed.
+            owner.eqLimiter.bypass = true
             // Control-queue ramps; stale slider/preset updates cannot overwrite a new one.
             for step in 1...steps {
                 owner.controlQueue.asyncAfter(deadline: .now() + .milliseconds(step * duration / steps)) { [weak owner] in
                     guard let owner, owner.eqGeneration == generation else { return }
                     let t = Float(step) / Float(steps)
                     let fraction = t * t * (3 - 2 * t)
-                    owner.userEQ.globalGain = startPreamp + (preamp-startPreamp)*fraction
+                    owner.userEQ.globalGain = preamp
                     for (index, band) in owner.userEQ.bands.enumerated() {
                         band.gain = starting[index] + (target[index]-starting[index])*fraction
                     }
                     if step == steps {
                         owner.userEQ.bypass = !active
-                        owner.eqLimiter.bypass = !active
+                        owner.eqLimiter.bypass = true
                     }
                 }
             }

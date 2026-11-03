@@ -63,22 +63,11 @@ void SonivoEQResponse(const float *gains,size_t count,double sampleRate,float *o
     }
 }
 
-// Soft LF headroom. Mild boosts stay loud; hot 60/120 cascades used to park the
-// 0.98 peak guard (~−6 dB GR on APP2 +8/+5) → dirty compressed bass on AirPods.
+// Native music-player EQ: filters only. Never return a broadband cut — that
+// ducks mids/vocals whenever bass is boosted (heard as “bass muffles the song”).
 float SonivoEQPreamp(const float *gains, size_t count, double rate) {
-    (void)rate;
-    if (!gains || count == 0) return 0;
-    float g0 = gains[0];
-    float g1 = count > 1 ? gains[1] : 0;
-    float g2 = count > 2 ? gains[2] : 0;
-    if (!isfinite(g0)) g0 = 0;
-    if (!isfinite(g1)) g1 = 0;
-    if (!isfinite(g2)) g2 = 0;
-    float lf = fmaxf(0, g0) + 0.55f * fmaxf(0, g1) + 0.20f * fmaxf(0, g2);
-    // Keep single-band ≤+6 dB and the mild APP2 taste at unity loudness.
-    if (lf <= 6.5f) return 0;
-    float cut = fminf(4.5f, (lf - 6.5f) * 0.60f);
-    return -cut;
+    (void)gains; (void)count; (void)rate;
+    return 0;
 }
 
 void SonivoEQInit(SonivoRealtimeEQ *eq) {
@@ -139,10 +128,11 @@ void SonivoEQPrepare(SonivoRealtimeEQ *eq,double rate) {
     eq->coefficientAlpha=1-exp(-16/(eq->sampleRate*.030));
     eq->sampleAlpha=1-exp(-1/(eq->sampleRate*.025));
     eq->headroomAttackAlpha=1-exp(-1/(eq->sampleRate*.001));
-    // Short hold + moderate release: steady tones stay clean (low THD), but a
-    // single kick duck is not parked across the following bars.
-    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.160));
-    eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.022);eq->peakHold=0;
+    // ~25 ms hold covers one 40 Hz cycle (low THD on sustained bass); ~40 ms
+    // release clears a kick duck before it muffles the following music.
+    // (Was ~22 ms hold + ~160 ms release — GR stayed parked across bars.)
+    eq->releaseAlpha=1-exp(-1/(eq->sampleRate*.040));
+    eq->peakHoldFrames=(size_t)ceil(eq->sampleRate*.025);eq->peakHold=0;
     memset(eq->z1,0,sizeof(eq->z1)); memset(eq->z2,0,sizeof(eq->z2));
     for(unsigned b=0;b<SONIVO_EQ_BANDS;b++) eq->current[b]=eq->target[b]=identity();
     eq->wet=0;eq->preGain=1;eq->limiter=1;eq->rampCounter=0;
@@ -189,8 +179,8 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
             double eased=t*t*(3-2*t);
             eq->wet=eq->wetStart+(eq->wetTarget-eq->wetStart)*eased;
         } else eq->wet=eq->wetTarget;
-        // Fast but continuous 1 ms headroom attack; 25 ms level recovery.
-        // The linked peak guard catches any overshoot during this transition.
+        // Unity preamp path (SonivoEQPreamp is always 0). Keep smoothing for API
+        // callers that still pass a non-zero mailbox preamp.
         double headroomAlpha=targetGain<eq->preGain?eq->headroomAttackAlpha:eq->sampleAlpha;
         eq->preGain+=(targetGain-eq->preGain)*headroomAlpha;
         double result[SONIVO_EQ_CHANNELS], original[SONIVO_EQ_CHANNELS];
@@ -201,26 +191,21 @@ void SonivoEQProcess(SonivoRealtimeEQ *eq,float **channels,const size_t *strides
             original[ch]=dry;
             result[ch]=wet*eq->preGain;
         }
-        // Zero-lookahead sample-peak safety, NOT a true-peak/loudness processor.
-        // One envelope for all channels preserves stereo/multichannel balance.
+        // Linked sample-peak safety (not a music compressor). Hold only bridges one
+        // bass cycle for low THD; release is short so a kick does not muffling mids.
         double peak=0;
         for(unsigned ch=0;ch<count;ch++) peak=fmax(peak,fabs(result[ch]));
         double required=peak>.98?.98/peak:1;
         if(required<=eq->limiter) {
             eq->limiter=required;eq->peakHold=eq->peakHoldFrames;
         } else if(required < 1 && required <= eq->limiter * 1.002 && peak >= 0.97) {
-            // Steady near-ceiling tone: keep attenuation flat (no THD pump).
-            // Do NOT refresh after a deep kick duck — quieter follow-up crests
-            // fail the 0.97 gate so the mix can release bass body again.
+            // Steady near-ceiling tone: keep GR flat (no THD pump).
             eq->peakHold=eq->peakHoldFrames;
         } else if(eq->peakHold) {
             eq->peakHold--;
         } else {
             eq->limiter+=(required-eq->limiter)*eq->releaseAlpha;
         }
-        // Protect the wet path BEFORE mixing. Disabling EQ releases into the
-        // unchanged dry signal, not a dry signal held down by the old limiter.
-        // No delay line, no new audio/lyrics synchronization offset.
         for(unsigned ch=0;ch<count;ch++) {
             double protectedWet=result[ch]*eq->limiter;
             channels[ch][f*strides[ch]]=(float)(original[ch]*(1-eq->wet)+protectedWet*eq->wet);

@@ -5,16 +5,16 @@ class EQQualityRevisionTests(unittest.TestCase):
     def test_gain_domain_smoothing_and_linked_peak_hold_are_realtime_safe(self):
         c=(R/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/RealtimeEQ.c').read_text()
         render=c.split('void SonivoEQProcess(',1)[1]
-        for expected in ['eq->targetDB[b]-eq->gainDB[b]','coefficients(b,eq->gainDB[b]','eq->peakHoldFrames','protectedWet*eq->wet']:
+        for expected in ['eq->targetDB[b]-eq->gainDB[b]','coefficients(b,eq->gainDB[b]','eq->peakHoldFrames','protectedWet*eq->wet','peak>.98']:
             self.assertIn(expected,render)
         for forbidden in ['malloc(', 'calloc(', 'realloc(', 'dispatch_', 'mutex', 'sleep(']:
             self.assertNotIn(forbidden,render)
-        self.assertIn('eq->sampleRate*.022',c)
-        self.assertIn('eq->sampleRate*.160',c)
-        # Deep kick ducks must not refresh forever; only near-ceiling steady tones.
+        # Short hold + faster release; unity preamp (no broadband bass duck).
+        self.assertIn('eq->sampleRate*.025',c)
+        self.assertIn('eq->sampleRate*.040',c)
         self.assertIn('eq->limiter * 1.002',c)
         self.assertIn('peak >= 0.97',c)
-        self.assertNotIn('eq->limiter * 1.005',c)
+        self.assertIn('return 0;',c.split('float SonivoEQPreamp(',1)[1].split('}',1)[0])
     def test_native_envelopes_and_band_widths_are_consistent(self):
         core=(R/'Sonivo/playercore.swift').read_text()
         dual=(R/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()

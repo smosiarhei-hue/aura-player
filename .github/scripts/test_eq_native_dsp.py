@@ -22,7 +22,7 @@ class NativeEQTests(unittest.TestCase):
         bridge=(ROOT/'Sonivo/AutoMixV2AppBridge.swift').read_text()
         self.assertGreaterEqual(bridge.count('enabled: PlayerCore.shared.shouldApplyUserEQ'),2)
         dual=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
-        for value in ['eqGeneration == generation','kAudioUnitSubType_PeakLimiter','EQHeadroom.preamp','eqLimiter.bypass = !active']:
+        for value in ['eqGeneration == generation','kAudioUnitSubType_PeakLimiter','EQHeadroom.preamp','eqLimiter.bypass = true']:
             self.assertIn(value,dual)
 
     @unittest.skipUnless(platform.system()=='Darwin' and shutil.which('swiftc'), 'Native AVFAudio requires macOS')
@@ -88,13 +88,13 @@ import AudioToolbox
         precondition(EQHeadroom.preamp(gains:flat,sampleRate:48000)==0)
         precondition(EQHeadroom.preamp(gains:[Float](repeating:-12,count:10),sampleRate:48000)==0)
         precondition(EQHeadroom.preamp(gains:[6]+[Float](repeating:0,count:9),sampleRate:48000)==0)
-        let hotPre=EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:48000)
-        precondition(hotPre.isFinite && hotPre < 0 && hotPre >= -4.5)
+        // Unity always — hot bass must not duck the master like a soft-LF cut.
+        precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:48000)==0)
         var curve=flat;curve[4]=6
         let output=try render(gains:curve,hz:1000,amplitude:0.01)
         let rms=sqrt(output.suffix(24000).reduce(0.0) { $0+Double($1)*Double($1) }/24000)
         let db=20*log10(rms/(0.01/sqrt(2)))
-        precondition(abs(db - Double(6+EQHeadroom.preamp(gains:curve,sampleRate:48000))) < 0.6, "Native center gain incorrect: \(db)")
+        precondition(abs(db - 6) < 0.6, "Native center gain incorrect: \(db)")
         for (band,hz) in [(1,120.0),(2,250.0),(5,2000.0)] {
             var curve=flat;curve[band]=6
             let rendered=try render(gains:curve,hz:hz,amplitude:0.01)
@@ -102,8 +102,7 @@ import AudioToolbox
             precondition(abs(20*log10(rms/(0.01/sqrt(2)))-6)<0.6, "Native band response mismatch")
         }
         for rate in [8000.0,32000,44100,48000,96000] {
-            let pre=EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)
-            precondition(pre.isFinite && pre < 0 && pre >= -4.5)
+            precondition(EQHeadroom.preamp(gains:[Float](repeating:12,count:10),sampleRate:rate)==0)
         }
         let hot=try render(gains:[Float](repeating:12,count:10),hz:60,amplitude:0.95)
         precondition(hot.allSatisfy { abs($0) <= 1.01 },"Native output overflow")

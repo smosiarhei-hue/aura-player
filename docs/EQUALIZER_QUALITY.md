@@ -23,10 +23,11 @@ centers are capped at 0.44 × processing sample rate. Categories select real ban
 (low 60–250, middle 500–4k, high 8k–16k) without averaging or overwriting the curve.
 
 All ten controls have **−15…+15 dB**, half-dB steps, and a symmetric 0 dB graph.
-Native AU and C gain limits match. Soft LF headroom (`SonivoEQPreamp` /
-`EQHeadroom`): mild boosts stay at 0 dB; hot 60/120 cascades get a gentle cut so
-the peak guard does not park (~−6 dB GR) and muddy AirPods bass. The peak guard
-still catches actual overs.
+Native AU and C gain limits match. **Unity preamp** (`SonivoEQPreamp` /
+`EQHeadroom` always 0 dB): like Apple Music EQ — band filters only. A broadband
+soft-LF cut used to duck mids/vocals whenever bass was boosted. PeakLimiter after
+EQ stays **bypassed**. Stream path uses an **instantaneous** linked sample ceiling
+(this sample only) — no hold/release that parks GR and muffles the bar after a kick.
 
 Double-tapping a node resets **only that band** to 0 dB and saves immediately.
 Exclusive double-tap/drag, 24 pt hit test. Empty graph space never resets another band.
@@ -36,8 +37,8 @@ Exclusive double-tap/drag, 24 pt hit test. Empty graph space never resets anothe
   `eq.layout.bassTight6` / `eq.layout.reference6`).
 - Prior ISO 31–16k, compact10, and six-band curves are log-resampled once; backup
   `eq.gains.bassShake10.backup` (plus era backups). Historical upgrades still run first.
-- Factory bass recipes stay mild on this grid (APP2 ≈ +4.5/+3/−3.5): Adaptive EQ
-  headphones already boost seal bass; hot +8/+5 ruined dynamics via the peak guard.
+- Factory bass recipes stay mild (APP2 ≈ +3/+2/−2.5): Adaptive EQ headphones
+  already boost seal bass; brickwall shelves only made overs and dirt.
 - Saved preset IDs/names survive; archives in `eq.userPresets.bassShake10.backup` /
   `eq.userPresets.standard10.backup` / six-band backups. Never migrate twice.
 - Unknown/corrupt archives remain untouched; writes are refused.
@@ -48,10 +49,9 @@ Unchanged: half-dB steps, intensity 0.16…0.90, 60 ms throttle, `hapticsEnabled
 ## Stream DSP and peak protection
 - Double-precision RBJ filters, independent channel histories, gains smoothed in dB
   over 30 ms. Intermediate coefficients redesigned every 16 samples while moving.
-- Soft LF headroom only for hot 60/120 cascades; mild APP2 taste stays at unity.
-  Wet-path linked sample-peak guard at ceiling **0.98**.
-- Short hold (~22 ms) + moderate release (~160 ms); no recurring-crest hold refresh
-  (that muffled bass on AirPods).
+- Unity preamp always; wet-path linked sample ceiling at **0.98** with **~25 ms
+  hold / ~40 ms release** (was ~160 ms — GR parked and muffled the mix after bass).
+- Native `AVAudioUnitEQ` + PeakLimiter **bypassed** (limiter ducks whole mix on kick).
 - Protect wet before the eased mix toward dry. Flat/off remains exact C bypass.
 - Not true-peak limiting, headphone calibration or loudness normalization.
   Strong boosts can still reduce dynamics if the source is already brickwalled.
