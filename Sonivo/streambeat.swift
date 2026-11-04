@@ -18,6 +18,8 @@ final class StreamBeatTap {
     private var desiredEnabled = false
     /// Per-item mashup/transition EQ. Overrides the shared user curve for that AVPlayerItem only.
     private var itemEQOverrides: [ObjectIdentifier: (gains: [Float], enabled: Bool)] = [:]
+    /// Per-item musical Automix echo/reverb (stream tap MixFX — not Spatial Audio).
+    private var itemMixFX: [ObjectIdentifier: (echoWet: Float, echoFeedback: Float, delaySec: Float, reverbWet: Float)] = [:]
     private var waitingSince: TimeInterval = 0
     private final class ProbeContext {
         weak var item: AVPlayerItem?
@@ -67,6 +69,33 @@ final class StreamBeatTap {
         }
     }
 
+    /// Automix delay/reverb for one stream deck. Pass nil to clear that item.
+    func setItemMixFX(
+        for item: AVPlayerItem,
+        echoWet: Float?,
+        echoFeedback: Float?,
+        delaySec: Float?,
+        reverbWet: Float?
+    ) {
+        let key = ObjectIdentifier(item)
+        if let echoWet, let echoFeedback, let delaySec, let reverbWet {
+            itemMixFX[key] = (echoWet, echoFeedback, delaySec, reverbWet)
+        } else {
+            itemMixFX.removeValue(forKey: key)
+        }
+        if let probe = probes[key] {
+            publishMixFX(to: probe.tap, itemKey: key)
+        }
+    }
+
+    func clearItemMixFX() {
+        guard !itemMixFX.isEmpty else { return }
+        itemMixFX.removeAll()
+        for (_, probe) in probes {
+            SonivoStreamProbeClearMixFX(probe.tap)
+        }
+    }
+
     private func publishEQ(to tap: MTAudioProcessingTap, itemKey: ObjectIdentifier? = nil) {
         let override = itemKey.flatMap { itemEQOverrides[$0] }
         let gains = override?.gains ?? desiredGains
@@ -74,6 +103,15 @@ final class StreamBeatTap {
         gains.withUnsafeBufferPointer {
             SonivoStreamProbeSetEQ(tap, $0.baseAddress!, $0.count, enabled ? 1 : 0)
         }
+        publishMixFX(to: tap, itemKey: itemKey)
+    }
+
+    private func publishMixFX(to tap: MTAudioProcessingTap, itemKey: ObjectIdentifier? = nil) {
+        guard let key = itemKey, let fx = itemMixFX[key] else {
+            SonivoStreamProbeClearMixFX(tap)
+            return
+        }
+        SonivoStreamProbeSetMixFX(tap, fx.echoWet, fx.echoFeedback, fx.delaySec, fx.reverbWet)
     }
 
     func attach(to item: AVPlayerItem) {
@@ -101,6 +139,7 @@ final class StreamBeatTap {
                 }
                 guard let tap = SonivoStreamProbeCreate() else { self.outcomes[key] = .unavailable; return }
                 self.publishEQ(to: tap, itemKey: key)
+                self.publishMixFX(to: tap, itemKey: key)
                 let input = AVMutableAudioMixInputParameters(track: track)
                 input.audioTapProcessor = tap
                 let mix = AVMutableAudioMix()
@@ -125,6 +164,7 @@ final class StreamBeatTap {
                 let currentID = PlayerCore.shared.streamingPlayer.currentItem.map { ObjectIdentifier($0) }
                 self.outcomes = self.outcomes.filter { retained.contains($0.key) || $0.key == currentID }
                 self.itemEQOverrides = self.itemEQOverrides.filter { retained.contains($0.key) || $0.key == currentID }
+                self.itemMixFX = self.itemMixFX.filter { retained.contains($0.key) || $0.key == currentID }
                 if self.outcomes.isEmpty && self.probes.isEmpty && self.attachments.isEmpty {
                     self.activeEQState = .idle
                     self.pollingTask = nil

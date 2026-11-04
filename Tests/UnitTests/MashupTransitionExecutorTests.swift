@@ -8,6 +8,7 @@ private final class RecordingMashupAudio: MashupTransitionAudio, @unchecked Send
     private var _effects: [(FxKind, Float, Deck)] = []
     private var _rates: [(Deck, Float)] = []
     private var _pitches: [(Deck, Float)] = []
+    private var _seeks: [(Deck, Double)] = []
     private var _resets = 0
 
     var effects: [(FxKind, Float, Deck)] {
@@ -18,6 +19,11 @@ private final class RecordingMashupAudio: MashupTransitionAudio, @unchecked Send
     var pitches: [(Deck, Float)] {
         lock.lock(); defer { lock.unlock() }
         return _pitches
+    }
+
+    var seeks: [(Deck, Double)] {
+        lock.lock(); defer { lock.unlock() }
+        return _seeks
     }
 
     var resets: Int {
@@ -39,6 +45,10 @@ private final class RecordingMashupAudio: MashupTransitionAudio, @unchecked Send
 
     func resetEffects(_ deck: Deck, preservingRate: Bool) async {
         lock.lock(); _resets += 1; lock.unlock()
+    }
+
+    func seek(_ deck: Deck, to timeSeconds: Double) async throws {
+        lock.lock(); _seeks.append((deck, timeSeconds)); lock.unlock()
     }
 }
 
@@ -88,6 +98,32 @@ struct MashupTransitionExecutorTests {
         #expect(audio.effects.contains(where: { $0.0 == .vocalDucking }))
         #expect(audio.pitches.contains(where: { $0.0 == .b && abs($0.1 - 100) < 0.1 }))
         #expect(audio.resets >= 2)
+    }
+
+    @Test("Executor phrase-loops outgoing deck when loopBarsA is set")
+    func executorPhraseLoop() async throws {
+        let audio = RecordingMashupAudio()
+        let plan = TransitionPlan(
+            type: .beatmatchedLong,
+            archetype: .seamlessLoop,
+            aOutStartSec: 88,
+            bInStartSec: 16,
+            bars: 8,
+            tempoTargetBPM: 120,
+            rateA: 1,
+            rateB: 1,
+            pitchShiftCentsB: 0,
+            gainOffsetBdB: 0,
+            loopBarsA: 2,
+            fx: [
+                FxEvent(target: .a, kind: .volume, startBar: 0, endBar: 8, fromValue: 0, toValue: -60, curve: .sCurve),
+                FxEvent(target: .b, kind: .volume, startBar: 0, endBar: 8, fromValue: -40, toValue: 0, curve: .sCurve)
+            ],
+            reason: "loop test"
+        )
+        try await MashupTransitionExecutor(audio: audio, tickSeconds: 0.25).execute(plan)
+        #expect(audio.seeks.contains(where: { $0.0 == .a && abs($0.1 - 88) < 0.01 }))
+        #expect(audio.seeks.count >= 1)
     }
 
     private func meta(_ id: String, album: String? = nil, duration: Double = 210) -> TrackMeta {

@@ -602,6 +602,11 @@ final class PlayerCore {
     private var rateReleaseTimer: Timer?
     /// Per-pair algorithmic mashup style (archetype + profile cues).
     private var activeMashupStyle = MashupLiveStyle.fallback
+    /// Live Automix plan (FX timeline). DualDeck ownership is off — PlayerCore executes FX.
+    private var activeTransitionPlan: TransitionPlan?
+    /// Phrase-loop cue for `loopBarsA` seeks on the outgoing deck.
+    private var mashupPhraseLoopCueSec: Double = 0
+    private var liveLoopNextBar: Double = .infinity
     /// Temp CAF from MidSideStemBaker (mashup window master). Deleted on complete/cancel.
     private var mashupBakeTempURLs: [URL] = []
     /// Real incoming file + cue when mashup plays a baked master from t=0.
@@ -1092,8 +1097,120 @@ final class PlayerCore {
         let zero = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
         eqOffsetA = zero
         eqOffsetB = zero
+        activeTransitionPlan = nil
+        liveLoopNextBar = .infinity
         StreamBeatTap.shared.clearItemEQOverrides()
+        StreamBeatTap.shared.clearItemMixFX()
         applyEQ()
+    }
+
+    /// Sample MixPlanner `plan.fx` on the live stream path (echo / reverb / stutter / loop).
+    /// DualDeck owns the same FX graph when V2 ownership is on; today the ear is PlayerCore.
+    @discardableResult
+    private func applyLivePlanFX(progress: Double, elapsed: Double, outgoingVolume: Float) -> Float {
+        guard let plan = activeTransitionPlan, plan.type != .none, !plan.fx.isEmpty else {
+            clearLiveMixFX()
+            return outgoingVolume
+        }
+        let bpm = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : activeMashupStyle.targetBPM
+        let safeBPM = bpm > 30 ? bpm : 120
+        let bar: Double
+        if plan.tempoTargetBPM > 30 {
+            bar = EffectAutomation.bar(atSeconds: elapsed, bpm: safeBPM)
+        } else {
+            bar = elapsed
+        }
+
+        // Phrase loop on outgoing deck while B blooms (stop in final third for clean LAND).
+        let loopBars = max(0, plan.loopBarsA)
+        if loopBars > 0, bar + 0.001 >= liveLoopNextBar, progress < 0.72 {
+            seekOutgoingPhraseLoop()
+            liveLoopNextBar += Double(loopBars)
+        }
+
+        var echoWet: Float = 0
+        var echoFb: Float = 30
+        var reverbWet: Float = 0
+        var stutterIntensity: Float = 0
+        for event in plan.fx {
+            guard event.target == .a, let value = EffectAutomation.value(for: event, atBar: bar) else { continue }
+            switch event.kind {
+            case .echoOut:
+                echoWet = max(echoWet, min(75, max(0, value)))
+                echoFb = event.param ?? echoFb
+            case .reverbWash:
+                reverbWet = max(reverbWet, min(55, max(0, value)))
+            case .stutter:
+                stutterIntensity = max(stutterIntensity, min(1, max(0, value)))
+            default:
+                break
+            }
+        }
+
+        let delaySec: Float = safeBPM > 0
+            ? Float(min(2, max(0.05, 60 / Double(safeBPM) * 0.75)))
+            : 0.375
+        publishLiveMixFX(
+            echoWet: echoWet / 75,
+            echoFeedback: min(1, max(0, echoFb / 100)),
+            delaySec: delaySec,
+            reverbWet: reverbWet / 55
+        )
+
+        guard stutterIntensity >= 0.04 else { return outgoingVolume }
+        let sixteenth = max(0.03, 60.0 / Double(safeBPM) / 4.0)
+        let phase = CACurrentMediaTime().truncatingRemainder(dividingBy: sixteenth) / sixteenth
+        let duty = max(0.12, 0.88 - Double(stutterIntensity) * 0.72)
+        return phase < duty ? outgoingVolume : 0
+    }
+
+    private func publishLiveMixFX(echoWet: Float, echoFeedback: Float, delaySec: Float, reverbWet: Float) {
+        let silent = echoWet < 0.001 && reverbWet < 0.001
+        if isUsingStreamPlayer, let item = activeStreamingPlayer.currentItem {
+            if silent {
+                StreamBeatTap.shared.setItemMixFX(
+                    for: item, echoWet: nil, echoFeedback: nil, delaySec: nil, reverbWet: nil
+                )
+            } else {
+                StreamBeatTap.shared.setItemMixFX(
+                    for: item,
+                    echoWet: echoWet,
+                    echoFeedback: echoFeedback,
+                    delaySec: delaySec,
+                    reverbWet: reverbWet
+                )
+            }
+        }
+        if incomingIsStream, let item = idleStreamingPlayer.currentItem {
+            // Incoming stays dry — wash/echo live on outgoing A only.
+            StreamBeatTap.shared.setItemMixFX(
+                for: item, echoWet: nil, echoFeedback: nil, delaySec: nil, reverbWet: nil
+            )
+        }
+    }
+
+    private func clearLiveMixFX() {
+        StreamBeatTap.shared.clearItemMixFX()
+    }
+
+    private func seekOutgoingPhraseLoop() {
+        let cue = mashupPhraseLoopCueSec
+        guard cue.isFinite, cue >= 0 else { return }
+        // Never call public `seek(to:)` — it cancels the active Automix transition.
+        if isUsingStreamPlayer {
+            let t = CMTime(seconds: cue, preferredTimescale: 600)
+            activeStreamingPlayer.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
+            return
+        }
+        guard let file = activeAudioFile else { return }
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+        activePlayer.stop()
+        scheduleLocalSegment(file, on: activePlayer, at: cue)
+        if isPlaying { activePlayer.play() }
+        pausedProgress = cue
+        anchorOffset = cue
+        anchorDate = Date()
+        progress = cue
     }
 
     /// Compose user EQ + mashup offsets. Enables the stream probe when offsets are audible
@@ -2734,6 +2851,14 @@ final class PlayerCore {
         incomingStartPosition = max(0, incomingStart)
         mashupIncomingCueSec = max(0, incomingStart)
         activeMashupStyle = mashupStyle ?? .fallback
+        let analysisPlan = AutoMixV2AnalysisRuntime.shared.transitionPlan
+        activeTransitionPlan = (mashupStyle != nil) ? analysisPlan : nil
+        mashupPhraseLoopCueSec = isUsingStreamPlayer ? progress : liveProgress()
+        if let plan = activeTransitionPlan, plan.loopBarsA > 0 {
+            liveLoopNextBar = Double(plan.loopBarsA)
+        } else {
+            liveLoopNextBar = .infinity
+        }
         let mashup = isMashupTransitionMode
         let strategyName = activeMashupStyle.isDuet ? "DUET" : "MASHUP"
         AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || mashup
@@ -3073,6 +3198,7 @@ final class PlayerCore {
         let mashup = isMashupTransitionMode
         // Offline A+B master already has volumes + stems summed — keep unity gain.
         if mashupPlayingMasterBake {
+            clearLiveMixFX()
             if isUsingStreamPlayer {
                 activeStreamingPlayer.volume = volume
             } else {
@@ -3086,7 +3212,10 @@ final class PlayerCore {
             let gains = useMashupVolumes
                 ? activeMashupStyle.volumes(progress: p)
                 : CrossfadeCurve.gains(progress: p)
-            let sourceLevel = gains.outgoing
+            let gatedOutgoing: Float = mashup && !mashupBakeFailedUseCrossfade
+                ? applyLivePlanFX(progress: p, elapsed: elapsed, outgoingVolume: gains.outgoing)
+                : gains.outgoing
+            let sourceLevel = gatedOutgoing
             let targetLevel = gains.incoming
 
             // Equal-power bridge: dry stream A → stem decks (avoids bake.ready thump).
@@ -3095,7 +3224,7 @@ final class PlayerCore {
                 let ease = entryT * entryT * (3 - 2 * entryT)
                 let streamOut = Float(cos(ease * Double.pi * 0.5))
                 let stemIn = Float(sin(ease * Double.pi * 0.5))
-                activeStreamingPlayer.volume = volume * streamOut
+                activeStreamingPlayer.volume = volume * streamOut * (sourceLevel > 0.001 ? 1 : 0)
                 if isPlaying {
                     let rates = activeMashupStyle.playbackRates(progress: p)
                     activeStreamingPlayer.rate = rates.outgoing
@@ -3168,6 +3297,7 @@ final class PlayerCore {
             AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
             if mashupBakeFailedUseCrossfade {
                 AutoMixDJEngine.shared.statusBadge = "MIXING"
+                clearLiveMixFX()
             } else {
                 AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
                 applyMashupTransitionEQ(progress: p)

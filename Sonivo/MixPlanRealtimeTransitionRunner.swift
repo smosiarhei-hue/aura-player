@@ -33,6 +33,10 @@ final class DualDeckMashupAudioAdapter: MashupTransitionAudio {
     func resetEffects(_ deck: Deck, preservingRate: Bool) async {
         await engine.resetEffects(deck, preservingRate: preservingRate)
     }
+
+    func seek(_ deck: Deck, to timeSeconds: Double) async throws {
+        try await engine.seek(deck, to: timeSeconds)
+    }
 }
 
 /// Live PlayerCore mashup EQ offsets (10 bands: 31…16k ISO ladder).

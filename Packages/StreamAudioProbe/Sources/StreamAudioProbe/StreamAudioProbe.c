@@ -1,5 +1,6 @@
 #include "StreamAudioProbe.h"
 #include "RealtimeEQ.h"
+#include "MixFX.h"
 #include "PCMWindowQueue.h"
 #include "ProbeDiagnostics.h"
 #include <stdatomic.h>
@@ -9,6 +10,7 @@
 
 typedef struct {
     SonivoRealtimeEQ eq;
+    SonivoMixFX mixFX;
     atomic_int eqReady;
     atomic_uint eqRate;
     unsigned channels;
@@ -27,10 +29,15 @@ static void probeInit(MTAudioProcessingTapRef tap, void *info, void **storage) {
         p->mediaEnd=NAN;
         atomic_init(&p->eqReady,0); atomic_init(&p->eqRate,48000);
         SonivoEQInit(&p->eq);
+        SonivoMixFXInit(&p->mixFX);
     }
     *storage = p;
 }
-static void probeFinalize(MTAudioProcessingTapRef tap) { free(MTAudioProcessingTapGetStorage(tap)); }
+static void probeFinalize(MTAudioProcessingTapRef tap) {
+    Probe *p = MTAudioProcessingTapGetStorage(tap);
+    if (p) SonivoMixFXDestroy(&p->mixFX);
+    free(p);
+}
 static void probePrepare(MTAudioProcessingTapRef tap, CMItemCount maxFrames, const AudioStreamBasicDescription *format) {
     (void)maxFrames;
     Probe *p = MTAudioProcessingTapGetStorage(tap);
@@ -46,6 +53,8 @@ static void probePrepare(MTAudioProcessingTapRef tap, CMItemCount maxFrames, con
         !(format->mFormatFlags & kAudioFormatFlagIsBigEndian) && p->channels>0 && p->channels<=SONIVO_EQ_CHANNELS &&
         format->mBytesPerFrame==sizeof(float)*((format->mFormatFlags & kAudioFormatFlagIsNonInterleaved)?1:p->channels);
     SonivoEQPrepare(&p->eq,format->mSampleRate);
+    SonivoMixFXPrepare(&p->mixFX,format->mSampleRate);
+    SonivoMixFXReset(&p->mixFX);
     atomic_store_explicit(&p->eqRate,(unsigned)format->mSampleRate,memory_order_release);
     atomic_store_explicit(&p->eqReady,p->supportsFloat?1:-1,memory_order_release);
     SonivoPCMReset(&p->capture); p->mediaEnd=NAN;
@@ -65,8 +74,10 @@ static void processEQ(Probe *p,AudioBufferList *buffers,CMItemCount frames) {
                                   SONIVO_EQ_CHANNELS,buffer->mDataByteSize,(size_t)frames)) return;
         for(unsigned ch=0;ch<n;ch++) { channels[count]=(float *)buffer->mData+ch;strides[count]=n;count++; }
     }
-    if(count==p->channels) SonivoEQProcess(&p->eq,channels,strides,count,(size_t)frames);
-    else SonivoProbeRecordSkipped(&p->diagnostics);
+    if(count==p->channels) {
+        SonivoEQProcess(&p->eq,channels,strides,count,(size_t)frames);
+        SonivoMixFXProcess(&p->mixFX,channels,strides,count,(size_t)frames);
+    } else SonivoProbeRecordSkipped(&p->diagnostics);
 }
 static void probeProcess(MTAudioProcessingTapRef tap, CMItemCount frames, MTAudioProcessingTapFlags flags,
                          AudioBufferList *buffers, CMItemCount *framesOut, MTAudioProcessingTapFlags *flagsOut) {
@@ -176,4 +187,16 @@ void SonivoStreamEQResponse(const float *gains,size_t count,double sampleRate,fl
 }
 float SonivoStreamEQPreamp(const float *gains,size_t count,double sampleRate) {
     return SonivoEQPreamp(gains,count,sampleRate);
+}
+void SonivoStreamProbeSetMixFX(MTAudioProcessingTapRef tap, float echoWet, float echoFeedback,
+                               float delaySec, float reverbWet) {
+    Probe *p = MTAudioProcessingTapGetStorage(tap);
+    if (!p) return;
+    SonivoMixFXSet(&p->mixFX, echoWet, echoFeedback, delaySec, reverbWet);
+}
+void SonivoStreamProbeClearMixFX(MTAudioProcessingTapRef tap) {
+    Probe *p = MTAudioProcessingTapGetStorage(tap);
+    if (!p) return;
+    SonivoMixFXSet(&p->mixFX, 0, 0, 0.375f, 0);
+    SonivoMixFXReset(&p->mixFX);
 }

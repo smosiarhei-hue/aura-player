@@ -29,4 +29,10 @@ int SonivoStreamProbeEQReady(MTAudioProcessingTapRef _Nonnull tap);
 void SonivoStreamEQResponse(const float * _Nonnull gains, size_t count, double sampleRate,
                             float * _Nonnull output, size_t points);
 float SonivoStreamEQPreamp(const float * _Nonnull gains, size_t count, double sampleRate);
+/// Musical Automix echo/reverb on the stream tap (not system Spatial Audio).
+/// echoWet/reverbWet 0…1, echoFeedback 0…1, delaySec 0.05…2.
+void SonivoStreamProbeSetMixFX(MTAudioProcessingTapRef _Nonnull tap,
+                               float echoWet, float echoFeedback,
+                               float delaySec, float reverbWet);
+void SonivoStreamProbeClearMixFX(MTAudioProcessingTapRef _Nonnull tap);
 #endif

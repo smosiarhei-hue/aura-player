@@ -63,6 +63,8 @@ public enum MixPlanner {
         let hasIncomingDrop = b.dropsSec.contains { $0 >= 6 && $0 <= 48 }
 
         // TZ §2.4: BPM·Key·outro·energy → distinct per-pair archetype (never one cookie-cutter).
+        // FX palette: seamlessLoop (phrase loop + soft delay), spaceReverb (plate wash),
+        // echoFreeze (tempo delay), beatStutter (1/16 gate) — musical DualDeck FX only.
         let archetype: MixTransitionArchetype
         if (bpmFar && !harmonic.isHarmonicallyViable) || (bpmVeryFar && !harmonic.isNaturallyCompatible) {
             archetype = .echoFreeze
@@ -78,6 +80,13 @@ public enum MixPlanner {
             // Energy cliff → vinyl brake before soft B.
             archetype = .tapeStop
             ladderBars = min(ladderBars, 4.0)
+        } else if harmonic.isNaturallyCompatible && bpmClose
+                    && energyOut >= 0.38 && energyOut <= 0.62
+                    && abs(energyJump) <= 0.14 && !hasIncomingDrop
+                    && availableOutro >= 18 {
+            // Even mid-energy pair → plate wash (smooth space, not a drop hit).
+            archetype = .spaceReverb
+            ladderBars = min(12.0, max(8.0, ladderBars))
         } else if harmonic.isNaturallyCompatible && bpmClose {
             archetype = .dropSwap
         } else if harmonic.isHarmonicallyViable && bpmDiffPct <= 0.1 {
@@ -102,7 +111,7 @@ public enum MixPlanner {
         case .echoFreeze:
             return planEchoFreeze(from: a, to: b, tempo: tempo, settings: settings, harmonic: harmonic)
         case .spaceReverb:
-            return crossfade(a, b, settings, "System spatial audio: no synthetic room effect")
+            return planSpaceReverb(from: a, to: b, bars: ladderBars, tempo: tempo, settings: settings, harmonic: harmonic)
         case .energyWash:
             return planEnergyWash(from: a, to: b, settings: settings, harmonic: harmonic)
         }
@@ -300,6 +309,8 @@ public enum MixPlanner {
         let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
 
         let half = bars / 2.0
+        // Phrase loop on A outro (2 or 4 bars) while B blooms — DualDeck seek-loop via executor.
+        let loopBars = availableOutro >= durationAt16 * 1.2 ? 4 : 2
         let events = [
             // Мягкий фейд громкостей равной мощности без провала середины
             FxEvent(target: .a, kind: .volume, startBar: half * 0.5, endBar: bars,
@@ -314,6 +325,11 @@ public enum MixPlanner {
                     fromValue: 0, toValue: 0.25, curve: .sCurve),
             FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: half,
                     fromValue: 0.25, toValue: 0, curve: .sCurve),
+            // Soft tempo-synced delay into LAND — smooth glue, not an echo freeze.
+            FxEvent(target: .a, kind: .echoOut, startBar: max(0, bars - 4), endBar: bars,
+                    fromValue: 0, toValue: 28, curve: .sCurve, param: 22),
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: min(4, half),
+                    fromValue: 2400, toValue: 20_000, curve: .exp),
             FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 2), endBar: bars,
                     fromValue: tempo.rateB, toValue: 1, curve: .sCurve)
         ]
@@ -325,8 +341,63 @@ public enum MixPlanner {
             tempoTargetBPM: tempo.targetBPM, rateA: tempo.rateA, rateB: tempo.rateB,
             pitchShiftCentsB: harmonic.pitchShiftCents,
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
-            loopBarsA: 0, fx: events,
-            reason: "Seamless Loop (\(Int(bars)) тактов @ \(Int(round(tempo.targetBPM))) BPM, \(harmonic.description))"
+            loopBarsA: loopBars, fx: events,
+            reason: "Seamless Loop (\(Int(bars)) тактов · loop \(loopBars) @ \(Int(round(tempo.targetBPM))) BPM, \(harmonic.description))"
+        )
+    }
+
+    // Space Reverb: musical plate wash on DualDeck (not system Spatial Audio).
+    private static func planSpaceReverb(from a: TrackProfile, to b: TrackProfile,
+                                        bars: Double,
+                                        tempo: BeatGridSynchronization.TempoMatch,
+                                        settings: MixSettings,
+                                        harmonic: HarmonicMatch) -> TransitionPlan {
+        let blendBars = min(12.0, max(8.0, bars))
+        let seconds = BeatGridSynchronization.duration(bars: blendBars, bpm: tempo.targetBPM)
+        let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
+        let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
+        let rawIncoming = BeatGridSynchronization.incomingCue(profile: b, duration: seconds)
+        let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
+        let conflict = oneVocalConflict(a: a, b: b)
+        let handoff = blendBars * 0.62
+        // AVAudioUnitReverbPreset.mediumHall.rawValue == 3 — DualDeck loads it when wet > 0.
+        let hallPreset: Float = 3
+        let events: [FxEvent] = [
+            FxEvent(target: .a, kind: .volume, startBar: blendBars * 0.25, endBar: blendBars,
+                    fromValue: 0, toValue: -60, curve: .sCurve),
+            FxEvent(target: .b, kind: .volume, startBar: 0, endBar: handoff,
+                    fromValue: -28, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .bassKill, startBar: 0, endBar: blendBars * 0.4,
+                    fromValue: 0, toValue: 0.85, curve: .sCurve),
+            FxEvent(target: .b, kind: .bassKill, startBar: 0, endBar: blendBars * 0.35,
+                    fromValue: 0.7, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .instrumentalize, startBar: 0, endBar: blendBars * 0.3,
+                    fromValue: conflict ? 0.55 : 0.2, toValue: conflict ? 1 : 0.65, curve: .sCurve),
+            FxEvent(target: .b, kind: .instrumentalize, startBar: 0, endBar: handoff,
+                    fromValue: conflict ? 0.85 : 0.2, toValue: 0, curve: .sCurve),
+            FxEvent(target: .a, kind: .highPass, startBar: handoff - 1, endBar: blendBars,
+                    fromValue: 20, toValue: 1400, curve: .exp),
+            FxEvent(target: .b, kind: .lowPass, startBar: 0, endBar: min(3, blendBars * 0.4),
+                    fromValue: 1400, toValue: 20_000, curve: .exp),
+            // Plate wash blooms then clears into dry B LAND.
+            FxEvent(target: .a, kind: .reverbWash, startBar: blendBars * 0.2, endBar: blendBars * 0.75,
+                    fromValue: 0, toValue: 42, curve: .sCurve, param: hallPreset),
+            FxEvent(target: .a, kind: .reverbWash, startBar: blendBars * 0.75, endBar: blendBars,
+                    fromValue: 42, toValue: 0, curve: .sCurve, param: hallPreset),
+            FxEvent(target: .a, kind: .echoOut, startBar: handoff, endBar: blendBars,
+                    fromValue: 0, toValue: 30, curve: .sCurve, param: 24),
+            FxEvent(target: .b, kind: .rateRamp, startBar: max(0, blendBars - 1.5), endBar: blendBars,
+                    fromValue: tempo.rateB, toValue: 1, curve: .sCurve)
+        ]
+        return TransitionPlan(
+            type: .beatmatchedShort,
+            archetype: .spaceReverb,
+            aOutStartSec: out, bInStartSec: incoming, bars: blendBars,
+            tempoTargetBPM: tempo.targetBPM, rateA: tempo.rateA, rateB: tempo.rateB,
+            pitchShiftCentsB: harmonic.pitchShiftCents,
+            gainOffsetBdB: normalizationGain(profile: b, settings: settings),
+            loopBarsA: 2, fx: events,
+            reason: "Space Reverb (\(Int(blendBars)) тактов · plate wash, \(harmonic.description))"
         )
     }
 
@@ -572,8 +643,8 @@ public enum MixPlanner {
             tempoTargetBPM: tempo.targetBPM, rateA: tempo.rateA, rateB: tempo.rateB,
             pitchShiftCentsB: harmonic.pitchShiftCents,
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
-            loopBarsA: 0, fx: events,
-            reason: "Beat Stutter (\(Int(bars)) тактов, \(harmonic.description))"
+            loopBarsA: 1, fx: events,
+            reason: "Beat Stutter (\(Int(bars)) тактов · 1/16 gate, \(harmonic.description))"
         )
     }
 

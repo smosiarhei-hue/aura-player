@@ -22,15 +22,31 @@ class SystemSpatialUnityTests(unittest.TestCase):
             self.assertNotIn(name,core)
         for eq in ['eqNodeA','eqNodeB','looperEQ']:
             self.assertIn(f'engine.connect({eq}, to: engine.mainMixerNode, format: nil)',core)
-    def test_old_room_plans_cannot_add_synthetic_spatial_reverb(self):
+    def test_dj_reverb_wash_is_dualdeck_only_not_system_spatial(self):
+        """Musical DualDeck + stream MixFX wash is allowed; PlayerCore room nodes and Spatial claims are not."""
         planner=(ROOT/'Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift').read_text()
         engine=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
-        self.assertNotIn('planSpaceReverb',planner)
-        self.assertNotIn('kind: .reverbWash',planner)
+        core=(ROOT/'Sonivo/playercore.swift').read_text()
+        probe=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/StreamAudioProbe.c').read_text()
+        mixfx=(ROOT/'Packages/StreamAudioProbe/Sources/StreamAudioProbe/MixFX.c').read_text()
+        docs=(ROOT/'docs/system-spatial-unity.md').read_text()
+        self.assertIn('planSpaceReverb',planner)
+        self.assertIn('kind: .reverbWash',planner)
+        self.assertIn('fxReverb',engine)
+        self.assertIn('AVAudioUnitReverb',engine)
         handler=engine.split('case .reverbWash:',1)[1].split('case .volume:',1)[0]
-        self.assertIn('slot.fxDelay.wetDryMix = 0',handler)
-        self.assertNotIn('feedback =',handler)
-        self.assertNotIn('delayTime =',handler)
+        self.assertIn('slot.fxReverb.wetDryMix',handler)
+        self.assertNotIn('isSpatialPlaybackActive',handler)
+        self.assertIn('Not system Spatial',handler)
+        for name in ['reverbA','reverbB','looperReverb','configureReverb','applyReverbPreset']:
+            self.assertNotIn(name,core)
+        self.assertIn('applyLivePlanFX',core)
+        self.assertIn('SonivoMixFXProcess',probe)
+        self.assertIn('not HRTF',mixfx)
+        self.assertIn('DualDeck',docs)
+        self.assertIn('musical',docs.lower())
+        self.assertIn('MixFX',docs)
+        self.assertNotIn('AVAudioEnvironmentNode',engine)
     def test_unity_output_and_no_double_vocal_processing(self):
         core=(ROOT/'Sonivo/playercore.swift').read_text()
         bridge=(ROOT/'Sonivo/AutoMixV2AppBridge.swift').read_text()

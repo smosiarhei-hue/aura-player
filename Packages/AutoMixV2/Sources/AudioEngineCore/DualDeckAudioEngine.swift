@@ -41,13 +41,17 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 engine.attach(slot.timePitch)
                 engine.attach(slot.fxEQ)
                 engine.attach(slot.fxDelay)
+                engine.attach(slot.fxReverb)
                 engine.attach(slot.dryMixer)
                 engine.attach(slot.fxMixer)
                 engine.attach(slot.gainMixer)
+                // DJ FX chain: player → timePitch → EQ → delay → reverb → dry → fx → gain → main
+                // Musical wash/echo/loop FX only — never claimed as system Spatial Audio.
                 engine.connect(slot.player, to: slot.timePitch, format: format)
                 engine.connect(slot.timePitch, to: slot.fxEQ, format: format)
                 engine.connect(slot.fxEQ, to: slot.fxDelay, format: format)
-                engine.connect(slot.fxDelay, to: slot.dryMixer, format: format)
+                engine.connect(slot.fxDelay, to: slot.fxReverb, format: format)
+                engine.connect(slot.fxReverb, to: slot.dryMixer, format: format)
                 engine.connect(slot.dryMixer, to: slot.fxMixer, format: format)
                 engine.connect(slot.fxMixer, to: slot.gainMixer, format: format)
                 engine.connect(slot.gainMixer, to: engine.mainMixerNode, format: format)
@@ -271,14 +275,39 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
                 slot.rate = max(0.015, min(1.0, value))
                 slot.timePitch.rate = slot.rate
             case .stutter:
-                slot.dryMixer.outputVolume = max(0, min(1, value))
+                // 1/16 rhythmic gate on the dry bus (BPM-locked). Intensity 0 = open,
+                // 1 = short chops — not a volume fade and not a phrase seek loop.
+                // Volume automation wins when both fire in the same tick window.
+                let intensity = min(1, max(0, value))
+                slot.stutterIntensity = intensity
+                guard !slot.volumeOverriddenByFX else { break }
+                if intensity < 0.04 {
+                    slot.dryMixer.outputVolume = 1
+                } else {
+                    let sixteenth = bpm > 0 ? max(0.03, 60.0 / Double(bpm) / 4.0) : 0.125
+                    let phase = CACurrentMediaTime().truncatingRemainder(dividingBy: sixteenth) / sixteenth
+                    let duty = max(0.12, 0.88 - Double(intensity) * 0.72)
+                    slot.dryMixer.outputVolume = phase < duty ? 1 : 0
+                }
             case .reverbWash:
-                // Compatibility with older serialized plans only. No app-generated spatial room.
-                slot.fxDelay.wetDryMix = 0
+                // Per-deck musical plate wash for spaceReverb transitions.
+                // Not system Spatial Audio / HRTF — wet bus only on this deck's FX chain.
+                let wet = min(55, max(0, value))
+                if wet > 0.5 {
+                    let presetRaw = Int(param ?? Float(AVAudioUnitReverbPreset.mediumHall.rawValue))
+                    if slot.reverbPresetRaw != presetRaw {
+                        let preset = AVAudioUnitReverbPreset(rawValue: presetRaw) ?? .mediumHall
+                        slot.fxReverb.loadFactoryPreset(preset)
+                        slot.reverbPresetRaw = presetRaw
+                    }
+                }
+                slot.fxReverb.wetDryMix = wet
             case .volume:
                 // value is a gain in dB, 0 dB down to -60 dB.
                 let gain: Float = value <= -55 ? 0.0 : pow(10.0, value / 20.0)
                 slot.dryMixer.outputVolume = min(1, max(0, gain))
+                slot.volumeOverriddenByFX = true
+                slot.stutterIntensity = 0
             case .vocalDucking:
                 let band = slot.fxEQ.bands[3]
                 band.bypass = abs(value) < 0.1
@@ -551,17 +580,24 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
 private final class DeckSlot {
     let deck: Deck
     let player = AVAudioPlayerNode()
-    // Per-deck DJ FX chain (docs/automix-stage4-acceptance.md):
-    // player -> timePitch -> fxEQ -> fxDelay -> dryMixer -> fxMixer -> gainMixer -> mainMixerNode
+    // Per-deck DJ FX chain:
+    // player → timePitch → fxEQ → fxDelay → fxReverb → dryMixer → fxMixer → gainMixer → main
     // fxEQ bands: 0 bass · 1 HPF · 2 LPF · 3 vocal duck · 4 mid notch · 5 presence notch (instrumentalize)
     let timePitch = AVAudioUnitTimePitch()
     let fxEQ = AVAudioUnitEQ(numberOfBands: 6)
     let fxDelay = AVAudioUnitDelay()
+    let fxReverb = AVAudioUnitReverb()
     let dryMixer = AVAudioMixerNode()
     let fxMixer = AVAudioMixerNode()
     let gainMixer = AVAudioMixerNode()
     /// Last commanded playback rate, kept so `resetFX(preservingRate:)` can restore it.
     var rate: Float = 1
+    /// Active stutter intensity (0…1); volume events clear it.
+    var stutterIntensity: Float = 0
+    /// True after a volume automation wrote dryMixer so stutter won't fight it until reset.
+    var volumeOverriddenByFX = false
+    /// Last loaded reverb factory preset rawValue (−1 = unset).
+    var reverbPresetRaw: Int = -1
     var ledger: PCMBufferLedger
     var worker: PCMDecodeWorker?
     var fileURL: URL?
@@ -574,13 +610,14 @@ private final class DeckSlot {
     var startTimeSeconds: Double = 0
     init(deck: Deck, capacity: Int) { self.deck = deck; ledger = PCMBufferLedger(capacity: capacity) }
 
-    /// Neutral DJ FX state. `docs/automix-stage4-acceptance.md` requires that previous,
-    /// stop and interruption "возвращают нейтральные EQ, delay и rate", and that no filter
-    /// or echo can stay stuck.
+    /// Neutral DJ FX state. Previous / stop / interruption must clear EQ, delay,
+    /// reverb, stutter and rate so nothing sticks into the next track.
     func resetFX(preservingRate: Bool = false) {
         let keptRate = rate
         let keptPitch = timePitch.pitch
         dryMixer.outputVolume = 1
+        stutterIntensity = 0
+        volumeOverriddenByFX = false
         let bass = fxEQ.bands[0]
         bass.filterType = .lowShelf
         bass.frequency = 180
@@ -617,6 +654,9 @@ private final class DeckSlot {
         fxDelay.wetDryMix = 0
         fxDelay.feedback = 0
         fxDelay.delayTime = 0.375
+        fxReverb.wetDryMix = 0
+        fxReverb.loadFactoryPreset(.mediumHall)
+        reverbPresetRaw = AVAudioUnitReverbPreset.mediumHall.rawValue
         rate = 1
         timePitch.rate = 1
         timePitch.pitch = 0

@@ -1,7 +1,8 @@
 // Path: Packages/AutoMixV2/Sources/MixPlanner/MashupTransitionExecutor.swift
 //
 // Executes a MixPlanner TransitionPlan as a DJ mashup on dual decks:
-// bass swap, vocal ducking, HP/LP sweeps, echo-out, rate ramp and volumes.
+// bass swap, vocal ducking, HP/LP sweeps, echo-out, reverb wash, phrase loops,
+// stutter gate, rate ramp and volumes.
 // The live PlayerCore path can mirror a lighter subset via EQ offsets;
 // this executor is the full DualDeck timeline used by AutoMix V2 / Neuro handoff.
 
@@ -19,6 +20,12 @@ public protocol MashupTransitionAudio: Sendable {
     func setRate(_ rate: Float, for deck: Deck) async
     func setPitchCents(_ cents: Float, for deck: Deck) async
     func resetEffects(_ deck: Deck, preservingRate: Bool) async
+    /// Seek a deck for phrase-looping outgoing bars (`loopBarsA`). Default: no-op.
+    func seek(_ deck: Deck, to timeSeconds: Double) async throws
+}
+
+public extension MashupTransitionAudio {
+    func seek(_ deck: Deck, to timeSeconds: Double) async throws {}
 }
 
 public struct MashupTransitionExecutor: Sendable {
@@ -59,6 +66,8 @@ public struct MashupTransitionExecutor: Sendable {
         // Seed initial FX values at bar 0 so bass-kill / volume floors are audible immediately.
         try await applyActiveEvents(plan: plan, bar: 0, bpm: bpm)
 
+        let loopBars = max(0, plan.loopBarsA)
+        var nextLoopBar = loopBars > 0 ? Double(loopBars) : Double.infinity
         var elapsed = 0.0
         while elapsed < duration {
             try Task.checkCancellation()
@@ -67,6 +76,12 @@ public struct MashupTransitionExecutor: Sendable {
                 bar = EffectAutomation.bar(atSeconds: elapsed, bpm: bpm)
             } else {
                 bar = elapsed
+            }
+            // Phrase loop on outgoing deck: jump back to aOutStartSec every loopBarsA bars
+            // while B is still blooming (stop looping in the final third so LAND stays clean).
+            if loopBars > 0, bar + 0.001 >= nextLoopBar, bar < plan.bars * 0.72 {
+                try await audio.seek(.a, to: plan.aOutStartSec)
+                nextLoopBar += Double(loopBars)
             }
             try await applyActiveEvents(plan: plan, bar: bar, bpm: bpm)
             let step = min(tickSeconds, duration - elapsed)

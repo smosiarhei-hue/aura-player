@@ -108,6 +108,36 @@ struct MixPlannerStage2Tests {
         #expect(Set([match.archetype, clash.archetype, cliff.archetype]).count >= 2)
     }
 
+    @Test("Mid-energy compatible pair plans Space Reverb wash with loop bars")
+    func spaceReverbWash() {
+        // Even mid energy, matched key/BPM, no drop, outro 18…35s (not long enough for seamlessLoop).
+        let plan = MixPlanner.plan(
+            from: profile("s1", bpm: 122, key: "8A", energy: 0.5, mixOut: 186, duration: 210),
+            to: profile("s2", bpm: 124, key: "8A", energy: 0.52, mixOut: 186, duration: 210),
+            aMeta: meta("s1", duration: 210), bMeta: meta("s2", duration: 210),
+            settings: MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
+        )
+        #expect(plan.archetype == .spaceReverb)
+        #expect(plan.fx.contains { $0.kind == .reverbWash })
+        #expect(plan.fx.contains { $0.kind == .echoOut })
+        #expect(plan.loopBarsA >= 2)
+        #expect(plan.reason.contains("Space Reverb"))
+    }
+
+    @Test("Long compatible outro plans Seamless Loop with phrase loopBarsA and delay")
+    func seamlessLoopBarsAndDelay() {
+        let plan = MixPlanner.plan(
+            from: profile("l1", bpm: 124, key: "8A", energy: 0.55, mixOut: 120, duration: 240),
+            to: profile("l2", bpm: 126, key: "8A", energy: 0.58, mixOut: 120, duration: 240),
+            aMeta: meta("l1", duration: 240), bMeta: meta("l2", duration: 240),
+            settings: MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
+        )
+        #expect(plan.archetype == .seamlessLoop)
+        #expect(plan.loopBarsA == 2 || plan.loopBarsA == 4)
+        #expect(plan.fx.contains { $0.kind == .echoOut })
+        #expect(plan.bars >= 16)
+    }
+
     private func meta(_ id: String, album: String? = nil, duration: Double = 180) -> TrackMeta {
         TrackMeta(id: TrackID(raw: id), title: id, artist: "Test", albumID: album,
                   durationSec: duration, artworkURL: nil)
@@ -119,8 +149,10 @@ struct MixPlannerStage2Tests {
         lufs: Float = -14,
         bpm: Float = 120,
         key: String? = nil,
-        energy: Float = 0.5
+        energy: Float = 0.5,
+        mixOut: Double? = nil
     ) -> TrackProfile {
+        let out = mixOut ?? max(8, duration - 20)
         TrackProfile(trackID: TrackID(raw: id), durationSec: duration,
                      sourceSampleRate: 44_100, sourceBitrateKbps: 320,
                      bpm: bpm, beatsSec: Array(stride(from: 0.0, to: duration, by: 0.5)),
@@ -130,7 +162,7 @@ struct MixPlannerStage2Tests {
                      loudnessCurveLUFS: [], energyCurve: Array(repeating: energy, count: Int(duration)),
                      hasFadeOut: false, endsInSilence: false,
                      vocalPresence: Array(repeating: 0.55, count: Int(duration * 4)),
-                     segments: [], mixInSec: 8, mixOutSec: 160, mixable: true,
+                     segments: [], mixInSec: 8, mixOutSec: out, mixable: true,
                      confidence: Confidence(bpm: 1, downbeats: 1, key: key == nil ? 0 : 1))
     }
 }
