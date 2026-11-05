@@ -177,6 +177,34 @@ struct MidSideStemBakerTests {
         MidSideStemBaker.removeTempFiles([out])
         #expect(!FileManager.default.fileExists(atPath: out.path))
     }
+
+    @Test("Playback open returns a readable float32 file for a local CAF")
+    func openPlaybackSourceReadsCAF() throws {
+        let dir = try temporaryBakeDirectory()
+        defer { removeBakeItem(at: dir) }
+        let source = try makeStereoTone(in: dir, name: "play.caf", rate: 44_100, duration: 2)
+        let opened = try MidSideStemBaker.openPlaybackSource(source)
+        defer {
+            if let scratch = opened.scratch {
+                MidSideStemBaker.removeTempFiles([scratch])
+            }
+        }
+        #expect(opened.file.length > 0)
+        #expect(opened.scratch == nil)
+    }
+
+    @Test("Float32 CAF decode round-trips a local tone")
+    func decodeCompressedRoundTrip() throws {
+        let dir = try temporaryBakeDirectory()
+        defer { removeBakeItem(at: dir) }
+        let source = try makeStereoTone(in: dir, name: "decode.caf", rate: 44_100, duration: 1.5)
+        let caf = try MidSideStemBaker.decodeCompressedToFloat32CAF(source)
+        defer { MidSideStemBaker.removeTempFiles([caf]) }
+        let file = try AVAudioFile(forReading: caf)
+        #expect(file.length > 0)
+        #expect(file.processingFormat.commonFormat == .pcmFormatFloat32)
+        #expect(!file.processingFormat.isInterleaved)
+    }
 }
 
 private func temporaryBakeDirectory() throws -> URL {

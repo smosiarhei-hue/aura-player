@@ -7,6 +7,7 @@
 // Primary path: bakeTransitionMaster — one stereo master of A+B (instr + volumes).
 
 @preconcurrency import AVFAudio
+import AVFoundation
 import Foundation
 
 public enum MidSideStemMode: Sendable, Equatable {
@@ -628,7 +629,8 @@ public enum MidSideStemBaker {
     /// Float32 non-interleaved reader. A converting open of a cache AVPlayer or
     /// AVAudioEngine already holds throws `'dta?'` / `'dtsg'` (1685348671).
     /// Order: converting open → private copy → plain open of the copy → decode
-    /// that copy into a float32 CAF. Never reopen the live URL as a last resort.
+    /// that copy into a float32 CAF (AVAudioFile, then AVAssetReader).
+    /// Never reopen the live URL as a last resort.
     public static func openFloat32Source(_ url: URL) throws -> (file: AVAudioFile, scratch: URL?) {
         if let file = try? AVAudioFile(
             forReading: url,
@@ -644,7 +646,7 @@ public enum MidSideStemBaker {
         do {
             try FileManager.default.copyItem(at: url, to: copy)
         } catch {
-            // Copy can race a still-writing download; fall through to a decode of the original.
+            // Copy can race a still-writing download; decode the original without AVAudioFile.
             if let caf = try? decodeCompressedToFloat32CAF(url) {
                 return (try AVAudioFile(forReading: caf), caf)
             }
@@ -666,7 +668,7 @@ public enum MidSideStemBaker {
         }
 
         // Converting open of the copy still failed (common for some m4a/mp3).
-        // Decode through AVAudioConverter into a private CAF the stem bake can read.
+        // Decode through AVAudioConverter / AVAssetReader into a private CAF.
         do {
             let caf = try decodeCompressedToFloat32CAF(copy)
             try? FileManager.default.removeItem(at: copy)
@@ -679,18 +681,29 @@ public enum MidSideStemBaker {
 
     /// Private copy of a compressed cache for native deck scheduling. Prefer this
     /// over opening the live URL when AutoMix falls back from a failed stem bake.
+    /// Always copy m4a/mp3/aac first — a successful live open still leaves the file
+    /// locked for the next bake/LAND (`'dta?'` on the same path).
     public static func openPlaybackSource(_ url: URL) throws -> (file: AVAudioFile, scratch: URL?) {
-        if let file = try? AVAudioFile(forReading: url), file.length > 0 {
+        let ext = url.pathExtension.lowercased()
+        let needsPrivateCopy = ["m4a", "mp3", "aac", "m4b", "mp4"].contains(ext)
+        // CAF / WAV from our own bake can open live; compressed caches always copy.
+        if !needsPrivateCopy, let file = try? AVAudioFile(forReading: url), file.length > 0 {
             return (file, nil)
         }
-        let ext = url.pathExtension.isEmpty ? "audio" : url.pathExtension
+
+        let copyExt = url.pathExtension.isEmpty ? "audio" : url.pathExtension
         let copy = FileManager.default.temporaryDirectory
-            .appendingPathComponent("sonivo-play-\(UUID().uuidString).\(ext)")
-        try FileManager.default.copyItem(at: url, to: copy)
+            .appendingPathComponent("sonivo-play-\(UUID().uuidString).\(copyExt)")
+        do {
+            try FileManager.default.copyItem(at: url, to: copy)
+        } catch {
+            let caf = try decodeCompressedToFloat32CAF(url)
+            return (try AVAudioFile(forReading: caf), caf)
+        }
         if let file = try? AVAudioFile(forReading: copy), file.length > 0 {
             return (file, copy)
         }
-        // Last path: same float32 CAF the bake uses.
+        // Last path: float32 CAF via AVAudioFile converter, then AVAssetReader.
         let caf = try decodeCompressedToFloat32CAF(copy)
         try? FileManager.default.removeItem(at: copy)
         return (try AVAudioFile(forReading: caf), caf)
@@ -698,7 +711,18 @@ public enum MidSideStemBaker {
 
     /// Turn a compressed source into a float32 non-interleaved CAF. Used when
     /// `AVAudioFile(..., commonFormat:)` refuses the container with `'dta?'`.
+    /// Field 1107: AVAudioFile also fails on a private m4a/mp3 copy — AVAssetReader
+    /// does not share that open path and can still materialize PCM for bake/LAND.
     public static func decodeCompressedToFloat32CAF(_ url: URL) throws -> URL {
+        if let caf = try? decodeCompressedViaAVAudioFile(url) {
+            return caf
+        }
+        return try decodeCompressedViaAVAssetReader(url)
+    }
+
+    /// First decode path: AVAudioFile + AVAudioConverter (works for unlocked CAF/WAV
+    /// and some mp3 copies). Throws `'dta?'` on many live Yandex m4a/mp3 caches.
+    private static func decodeCompressedViaAVAudioFile(_ url: URL) throws -> URL {
         let source = try AVAudioFile(forReading: url)
         guard source.length > 0 else { throw AudioEngineCoreError.unsupportedOutputFormat }
         let rate = source.processingFormat.sampleRate
@@ -739,6 +763,131 @@ public enum MidSideStemBaker {
                 try output.write(from: outBuf)
             }
             if status == .endOfStream { break }
+        }
+        return outURL
+    }
+
+    /// Second decode path: AVAssetReader → float32 CAF. Bypasses AVAudioFile's
+    /// ExtAudioFile open that returns `com.apple.coreaudio.avfaudio` / `'dta?'`.
+    private static func decodeCompressedViaAVAssetReader(_ url: URL) throws -> URL {
+        let asset = AVURLAsset(url: url)
+        let tracks = asset.tracks(withMediaType: .audio)
+        guard let track = tracks.first else {
+            throw AudioEngineCoreError.conversionFailed("AVAsset has no audio track")
+        }
+
+        let outRate = 44_100.0
+        let channels: AVAudioChannelCount = 2
+        guard let outFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: outRate,
+            channels: channels,
+            interleaved: false
+        ) else {
+            throw AudioEngineCoreError.unsupportedOutputFormat
+        }
+
+        let reader: AVAssetReader
+        do {
+            reader = try AVAssetReader(asset: asset)
+        } catch {
+            throw AudioEngineCoreError.conversionFailed("AVAssetReader: \(error.localizedDescription)")
+        }
+
+        let outputSettings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+            AVNumberOfChannelsKey: Int(channels),
+            AVSampleRateKey: outRate
+        ]
+        let trackOutput = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
+        trackOutput.alwaysCopiesSampleData = true
+        guard reader.canAdd(trackOutput) else {
+            throw AudioEngineCoreError.conversionFailed("AVAssetReader cannot add audio output")
+        }
+        reader.add(trackOutput)
+        guard reader.startReading() else {
+            let detail = reader.error?.localizedDescription ?? "startReading failed"
+            throw AudioEngineCoreError.conversionFailed("AVAssetReader: \(detail)")
+        }
+
+        let outURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonivo-asset-\(UUID().uuidString).caf")
+        let output: AVAudioFile
+        do {
+            output = try openLinearPCMCAFWriter(at: outURL, format: outFormat)
+        } catch {
+            reader.cancelReading()
+            throw error
+        }
+
+        // Interleaved float32 from the reader → non-interleaved float32 CAF.
+        let capacity: AVAudioFrameCount = 8_192
+        let bytesPerFrame = Int(channels) * MemoryLayout<Float>.size
+        guard let planarBuf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity),
+              let left = planarBuf.floatChannelData?[0],
+              let right = planarBuf.floatChannelData?[1]
+        else {
+            reader.cancelReading()
+            try? FileManager.default.removeItem(at: outURL)
+            throw AudioEngineCoreError.cannotCreatePCMBuffer
+        }
+
+        var wroteFrames: AVAudioFramePosition = 0
+        while reader.status == .reading {
+            guard let sampleBuffer = trackOutput.copyNextSampleBuffer() else { break }
+            let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+            guard frameCount > 0 else { continue }
+            guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
+
+            var length = 0
+            var dataPointer: UnsafeMutablePointer<Int8>?
+            let status = CMBlockBufferGetDataPointer(
+                blockBuffer,
+                atOffset: 0,
+                lengthAtOffsetOut: nil,
+                totalLengthOut: &length,
+                dataPointerOut: &dataPointer
+            )
+            guard status == kCMBlockBufferNoErr, let dataPointer, length >= bytesPerFrame else { continue }
+
+            let availableFrames = length / bytesPerFrame
+            let frames = min(frameCount, availableFrames)
+            guard frames > 0 else { continue }
+            let floats = UnsafeRawPointer(dataPointer).bindMemory(to: Float.self, capacity: frames * Int(channels))
+
+            var offset = 0
+            while offset < frames {
+                let chunk = min(Int(capacity), frames - offset)
+                planarBuf.frameLength = AVAudioFrameCount(chunk)
+                for i in 0..<chunk {
+                    let base = (offset + i) * Int(channels)
+                    left[i] = floats[base]
+                    right[i] = floats[base + 1]
+                }
+                do {
+                    try output.write(from: planarBuf)
+                } catch {
+                    reader.cancelReading()
+                    try? FileManager.default.removeItem(at: outURL)
+                    throw error
+                }
+                wroteFrames += AVAudioFramePosition(chunk)
+                offset += chunk
+            }
+        }
+
+        if reader.status == .failed {
+            let detail = reader.error?.localizedDescription ?? "AVAssetReader failed"
+            try? FileManager.default.removeItem(at: outURL)
+            throw AudioEngineCoreError.conversionFailed(detail)
+        }
+        guard wroteFrames > 0 else {
+            try? FileManager.default.removeItem(at: outURL)
+            throw AudioEngineCoreError.conversionFailed("AVAssetReader produced no PCM frames")
         }
         return outURL
     }

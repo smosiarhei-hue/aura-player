@@ -249,6 +249,23 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("decodeCompressedToFloat32CAF", baker)
         self.assertIn("openPlaybackSource", baker)
         self.assertIn("Never reopen the live URL as a last resort", baker)
+        # Field 1107: AVAudioFile still throws 'dta?' on private m4a/mp3 copies —
+        # AVAssetReader must be the second decode path so bake/LAND stay native.
+        self.assertIn("decodeCompressedViaAVAudioFile", baker)
+        self.assertIn("decodeCompressedViaAVAssetReader", baker)
+        self.assertIn("AVAssetReader(asset:", baker)
+        self.assertIn("needsPrivateCopy", baker)
+        self.assertLess(
+            baker.index("decodeCompressedViaAVAudioFile"),
+            baker.index("decodeCompressedViaAVAssetReader"),
+            "AVAudioFile decode must run before AVAssetReader fallback",
+        )
+        # decodeCompressedToFloat32CAF must try AVAudioFile then fall to AVAssetReader.
+        decode_fn = baker.split("func decodeCompressedToFloat32CAF", 1)[1].split(
+            "private static func decodeCompressedViaAVAudioFile", 1
+        )[0]
+        self.assertIn("decodeCompressedViaAVAudioFile", decode_fn)
+        self.assertIn("decodeCompressedViaAVAssetReader", decode_fn)
         htdemucs = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/StemSplit/HTDemucsMashupBake.swift"
         ).read_text()
