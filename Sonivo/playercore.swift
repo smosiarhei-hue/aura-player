@@ -2871,8 +2871,8 @@ final class PlayerCore {
                 outgoingCueSec: placed.outgoingCueSec,
                 blendDurationSec: placed.blendSec,
                 incomingStartSec: placed.incomingStartSec,
-                landProgress: placed.landProgress,
-                reason: placed.reason
+                reason: placed.reason,
+                landProgress: placed.landProgress
             )
         }
         if outProfile != nil, inProfile != nil,
