@@ -110,6 +110,10 @@ app.innerHTML = `
     </header>
 
     <main class="now">
+      <div class="cover-wash" id="coverWash" aria-hidden="true">
+        <img class="outgoing" id="washA" alt="" />
+        <img class="incoming" id="washB" alt="" />
+      </div>
       <div class="art-wrap" id="artWrap">
         <div class="art-orbit" aria-hidden="true"></div>
         <div class="art-pulse" id="artPulse" aria-hidden="true"></div>
@@ -403,6 +407,16 @@ function setCover(img: HTMLImageElement, url: string | null | undefined, fallbac
   }
 }
 
+function setWash(img: HTMLImageElement, url: string | null | undefined) {
+  if (!url) {
+    img.hidden = true;
+    img.removeAttribute("src");
+    return;
+  }
+  img.hidden = false;
+  if (img.getAttribute("src") !== url) img.src = url;
+}
+
 type Rgb = { r: number; g: number; b: number };
 
 function rgbCss(c: Rgb, a = 1) {
@@ -614,6 +628,8 @@ function render(s: WaveRadioSnapshot) {
   const playBtn = document.querySelector("#btnPlay")!;
   const coverA = document.querySelector<HTMLImageElement>("#coverA")!;
   const coverB = document.querySelector<HTMLImageElement>("#coverB")!;
+  const washA = document.querySelector<HTMLImageElement>("#washA")!;
+  const washB = document.querySelector<HTMLImageElement>("#washB")!;
   const fallback = document.querySelector<HTMLElement>("#artFallback")!;
 
   status.textContent = s.status || "Premium AutoMix · LOCK → MASHUP → LAND";
@@ -738,18 +754,22 @@ function render(s: WaveRadioSnapshot) {
     swapMetaText(title, artist, cur.title, cur.artists);
     paintStar(cur.id);
     setCover(coverA, cur.coverUrl, fallback);
+    setWash(washA, cur.coverUrl);
     fallback.textContent = (cur.title[0] || "S").toUpperCase();
     sampleArtColor(cur.coverUrl);
   } else {
     swapMetaText(title, artist, "Моя волна", "Яндекс Музыка");
     paintStar(null);
+    setWash(washA, null);
     sampleArtColor(null);
   }
 
   if (s.next) {
     nextLine.innerHTML = `Далее · <strong>${s.next.artists} — ${s.next.title}</strong>`;
     setCover(coverB, s.next.coverUrl, fallback);
+    setWash(washB, s.next.coverUrl);
   } else {
+    setWash(washB, null);
     nextLine.textContent =
       s.state === "needAuth" ? "Сначала Яндекс" : "Ждём следующий из волны…";
   }

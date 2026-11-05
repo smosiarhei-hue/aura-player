@@ -747,6 +747,10 @@ a {
   }
 }
 
+.art-fallback[hidden] {
+  display: none;
+}
+
 .art-fallback {
   display: grid;
   place-items: center;
@@ -1742,10 +1746,17 @@ a {
   }
 
   .stage.am .art-card.mixing .incoming,
-  .stage.am .art-card.land .incoming {
+  .stage.am .art-card.land .incoming,
+  .stage.am.is-mixing .cover-wash .incoming,
+  .stage.am.is-land .cover-wash .incoming {
     opacity: 1;
     filter: none;
     transform: none;
+  }
+
+  .stage.am.is-mixing .cover-wash .outgoing,
+  .stage.am.is-land .cover-wash .outgoing {
+    opacity: 0;
   }
 
   .stage.is-duet .art-orbit {
@@ -1864,10 +1875,12 @@ html.embed-phone .pill {
 /* ── Now Playing, Apple Music layout ───────────────────────────── */
 
 .stage.am {
+  --am-pad: 22px;
   width: min(430px, 100vw);
   min-height: 100dvh;
   padding: 0;
   background: #000;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
@@ -1921,79 +1934,143 @@ html.embed-phone .pill {
 }
 
 .stage.am .now {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 0;
   min-height: 100dvh;
-  padding: calc(28px + var(--safe-top)) 22px calc(12px + var(--safe-bottom));
+  padding: calc(28px + var(--safe-top)) var(--am-pad) calc(12px + var(--safe-bottom));
+}
+
+/* The whole player sits on a heavy blur of the cover, so the lower
+   half keeps the cover's own color instead of falling to black. */
+.stage.am .cover-wash {
+  position: absolute;
+  z-index: 0;
+  inset: -18%;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.stage.am .cover-wash img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 42%;
+  filter: blur(64px) saturate(1.7) brightness(0.82);
+  transform: scale(1.12);
+  transition: none;
+}
+
+.stage.am .cover-wash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.22) 0%,
+    rgba(0, 0, 0, 0.04) 30%,
+    rgba(0, 0, 0, 0.08) 48%,
+    rgba(0, 0, 0, 0.2) 78%,
+    rgba(0, 0, 0, 0.32) 100%
+  );
+}
+
+.stage.am .cover-wash .incoming {
+  opacity: 0;
+}
+
+.stage.am.is-mixing .cover-wash .outgoing,
+.stage.am.is-land .cover-wash .outgoing {
+  opacity: calc(1 - var(--mix-p));
+}
+
+.stage.am.is-mixing .cover-wash .incoming,
+.stage.am.is-land .cover-wash .incoming {
+  opacity: var(--mix-p);
 }
 
 .stage.am .art-wrap {
-  position: relative;
+  position: static;
   width: auto;
-  margin: 0 -22px 14px;
+  margin: 0 calc(var(--am-pad) * -1) 0;
   flex: 1 1 auto;
   min-height: 240px;
-  max-height: 58dvh;
+  max-height: 54dvh;
   aspect-ratio: auto;
   perspective: none;
 }
 
 .stage.am .art-card {
-  position: absolute;
-  inset: 0;
+  position: static;
+  overflow: visible;
   width: 100%;
   height: 100%;
   border-radius: 0;
   box-shadow: none;
-  background: #111;
+  background: transparent;
+  will-change: auto;
+  transform: none;
 }
 
 .stage.am .art-card::after {
-  background: linear-gradient(180deg, transparent 68%, rgba(0, 0, 0, 0.55) 88%, #000 100%);
-  mix-blend-mode: normal;
-  opacity: 1;
-  z-index: 3;
+  display: none;
 }
 
-/* Full-bleed dissolve: the cover you're leaving zooms into blur,
-   the next cover arrives blurred and sharpens. Tracks --mix-p. */
 .stage.am .art-card .outgoing,
-.stage.am .art-card .incoming {
+.stage.am .art-card .incoming,
+.stage.am .art-fallback {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100dvh;
+  object-fit: cover;
+  object-position: center 18%;
+  filter: none;
+  transform: none;
   transition: none;
-  transform-origin: center center;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 62%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 62%);
 }
 
 .stage.am .art-card .incoming {
   opacity: 0;
-  transform: scale(1.08);
-  filter: blur(28px) saturate(0.8);
-}
-
-.stage.am .art-card.mixing img,
-.stage.am .art-card.land img {
-  will-change: filter, opacity, transform;
 }
 
 .stage.am .art-card.mixing .outgoing,
 .stage.am .art-card.land .outgoing {
-  opacity: 1;
-  transform: scale(calc(1 + var(--mix-p) * 0.06));
-  filter: blur(calc(var(--mix-p) * 22px)) saturate(calc(1 - var(--mix-p) * 0.28));
+  opacity: calc(1 - var(--mix-p));
+  filter: none;
+  transform: none;
 }
 
 .stage.am .art-card.mixing .incoming,
 .stage.am .art-card.land .incoming {
-  z-index: 2;
+  z-index: 1;
   opacity: var(--mix-p);
-  transform: scale(calc(1.1 - var(--mix-p) * 0.1));
-  filter: blur(calc((1 - var(--mix-p)) * 32px)) saturate(calc(0.7 + var(--mix-p) * 0.3));
+  filter: none;
+  transform: none;
 }
 
 .stage.am .art-card.mixing .art-fallback,
 .stage.am .art-card.land .art-fallback {
   opacity: 0;
+}
+
+.stage.am .meta,
+.stage.am .kill-strip,
+.stage.am .timeline,
+.stage.am .transport,
+.stage.am .volume,
+.stage.am .status-line,
+.stage.am .dock {
+  position: relative;
+  z-index: 2;
 }
 
 .stage.am .mix-veil,
@@ -2315,6 +2392,7 @@ html.embed-phone .pill {
 }
 
 html.embed-phone .stage.am {
+  --am-pad: 18px;
   padding: 0;
   width: 100%;
   height: 100%;
@@ -2324,11 +2402,4 @@ html.embed-phone .stage.am {
 html.embed-phone .stage.am .now {
   min-height: 100%;
   height: 100%;
-  padding-left: 18px;
-  padding-right: 18px;
-}
-
-html.embed-phone .stage.am .art-wrap {
-  margin-left: -18px;
-  margin-right: -18px;
 }
