@@ -301,7 +301,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("reanchorOutgoingCue", scheduler_pref)
         self.assertIn("clampAutomixIncomingCue", scheduler_pref)
         player_blend = (ROOT / "Sonivo/playercore.swift").read_text()
-        self.assertIn("automixStemMaxBlendSec: Double = 16", player_blend)
+        self.assertIn("MoodAutomix.placed", player_blend)
+        self.assertIn("mood.pick", player_blend)
+        self.assertIn("startLandGlide", player_blend)
+        self.assertNotIn("automixStemMaxBlendSec: Double = 16", player_blend)
         self.assertIn("MashupBlendScheduler.reanchorOutgoingCue", player_blend)
 
     def test_session_log_does_not_reenter_playercore_during_shared_init(self):

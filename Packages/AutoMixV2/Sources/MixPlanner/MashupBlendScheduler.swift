@@ -18,13 +18,18 @@ public struct LiveMashupBlend: Sendable, Equatable {
         outgoingCueSec: Double,
         blendDurationSec: Double,
         incomingStartSec: Double,
-        reason: String
+        reason: String,
+        landProgress: Double = 0.86
     ) {
         self.outgoingCueSec = outgoingCueSec
         self.blendDurationSec = blendDurationSec
         self.incomingStartSec = incomingStartSec
         self.reason = reason
+        self.landProgress = min(0.93, max(0.58, landProgress))
     }
+
+    /// Where the dry incoming track takes over (0…1 of the blend).
+    public let landProgress: Double
 }
 
 public enum MashupBlendScheduler {

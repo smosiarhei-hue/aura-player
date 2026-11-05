@@ -631,6 +631,9 @@ final class PlayerCore {
     private var mashupStemEntryStartedAt: Date?
     private var mashupStemEntryDuration: Double = 0.24
     private var mashupStemEntryFromStream = false
+    /// Equal-power tail from the baked vocal into the dry file. Invalidated on skip.
+    private var landOverlapTimer: Timer?
+    private var landOverlapToken = UUID()
 
     var streamBufferFraction: Double = 0.0
     private(set) var isStreamBuffering = false
@@ -2640,7 +2643,7 @@ final class PlayerCore {
 
     /// Automix LAND: mount dry B on the outgoing node while B stem keeps playing,
     /// then cut the stem — avoids the silence gap of stop-both-then-open-file.
-    private func landAutomixOntoDryB(track: Track, fileURL: URL, at seconds: Double) throws {
+    private func landAutomixOntoDryB(track: Track, fileURL: URL, at seconds: Double, glide: Double) throws {
         let audioFile = try AVAudioFile(forReading: fileURL)
         guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
 
@@ -2667,11 +2670,11 @@ final class PlayerCore {
         currentBitrate = facts.bitrate
         scheduleLocalSegment(audioFile, on: dryNode, at: pos)
         dryNode.play()
-        dryNode.volume = 1
-        // Cut stem only after dry B is scheduled+playing.
-        stemNode.volume = 0
-        localSegmentTokens.removeValue(forKey: ObjectIdentifier(stemNode))
-        stemNode.stop()
+        dryNode.volume = 0
+        // Keep the stem the listener is already hearing and ease the dry file in.
+        // An instant cut was the jump at the end of AutoMix.
+        stemNode.volume = 1
+        startLandGlide(stem: stemNode, dry: dryNode, overlap: glide)
 
         activePlayer = dryNode == playerA ? playerA : playerB
         // Ensure the other deck is silent.
@@ -2695,6 +2698,46 @@ final class PlayerCore {
         streamDuration = track.duration
         startTimer()
         applyEQ()
+    }
+
+    /// File position of a scheduled segment, including the frame it started from.
+    private func renderedFileSeconds(node: AVAudioPlayerNode, file: AVAudioFile?) -> Double? {
+        guard let file else { return nil }
+        let rate = file.processingFormat.sampleRate
+        guard rate > 0,
+              let nodeTime = node.lastRenderTime,
+              let playerTime = node.playerTime(forNodeTime: nodeTime),
+              playerTime.sampleTime >= 0 else { return nil }
+        let scheduled = lyricsLocalSegments[ObjectIdentifier(node)]?.start ?? 0
+        return scheduled + Double(playerTime.sampleTime) / rate
+    }
+
+    /// Short equal-power overlap so the dry song replaces the baked vocal in place.
+    private func startLandGlide(stem: AVAudioPlayerNode, dry: AVAudioPlayerNode, overlap requested: Double) {
+        landOverlapTimer?.invalidate()
+        let token = UUID()
+        landOverlapToken = token
+        let overlap = min(0.9, max(0.35, requested))
+        let started = Date()
+        let timer = Timer(timeInterval: overlap / 16.0, repeats: true) { [weak self, weak stem, weak dry] timer in
+            let elapsed = -started.timeIntervalSinceNow
+            let u = min(1, max(0, elapsed / overlap))
+            let ease = u * u * (3 - 2 * u)
+            stem?.volume = Float(cos(ease * Double.pi * 0.5))
+            dry?.volume = Float(sin(ease * Double.pi * 0.5))
+            guard u >= 1 else { return }
+            timer.invalidate()
+            Task { @MainActor [weak self] in
+                guard let self, self.landOverlapToken == token else { return }
+                self.landOverlapTimer = nil
+                stem?.volume = 0
+                stem?.stop()
+                dry?.volume = 1
+                self.clearMashupBakeTemps()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        landOverlapTimer = timer
     }
 
     /// Beatmatched mashup modes (AutoMix ONE VOCAL + Modern Duet).
@@ -2755,7 +2798,11 @@ final class PlayerCore {
             let blend = resolveMashupBlend(outgoing: current, incoming: nextTrack, duration: totalDur)
             let leadIn = max(0, blend.outgoingCueSec - Self.automixBakeLeadSec)
             guard currentPos >= leadIn else { return }
-            let style = resolveMashupStyle(outgoing: current, incoming: nextTrack, duration: totalDur)
+            var style = resolveMashupStyle(outgoing: current, incoming: nextTrack, duration: totalDur)
+            if transitionMode == .automix {
+                style.moodLand = blend.landProgress
+                style.handoffAt = blend.landProgress
+            }
             scheduleSimpleTransition(
                 current: current,
                 nextTrack: nextTrack,
@@ -2813,68 +2860,95 @@ final class PlayerCore {
         let outProfile = analysis.currentProfile.flatMap { mashupProfileMatches($0, track: outgoing) ? $0 : nil }
         let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
         let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
+        if transitionMode == .automix {
+            let placed = MoodAutomix.placed(
+                outgoingDuration: totalDur,
+                incomingDuration: incomingDur,
+                outgoing: outProfile,
+                incoming: inProfile
+            )
+            return LiveMashupBlend(
+                outgoingCueSec: placed.outgoingCueSec,
+                blendDurationSec: placed.blendSec,
+                incomingStartSec: placed.incomingStartSec,
+                landProgress: placed.landProgress,
+                reason: placed.reason
+            )
+        }
         if outProfile != nil, inProfile != nil,
            let plan = analysis.transitionPlan,
            plan.type != .none,
            MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
-            var blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
-            // Live Automix needs an audible stem window (≈8 bars @ 120). Old 8s clamp
-            // kept plan.aOutStartSec for a 16-bar outro → mashup felt like a skip.
-            if transitionMode == .automix {
-                blend = min(blend, Self.automixStemMaxBlendSec)
-            }
+            let blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
             let cue = MashupBlendScheduler.reanchorOutgoingCue(
                 preferredCue: plan.aOutStartSec,
                 totalDur: totalDur,
                 blend: blend
             )
-            let inStart = transitionMode == .automix
-                ? MashupBlendScheduler.clampAutomixIncomingCue(
-                    preferred: plan.bInStartSec,
-                    incomingDur: incomingDur
-                )
-                : max(0, plan.bInStartSec)
             return LiveMashupBlend(
                 outgoingCueSec: cue,
                 blendDurationSec: blend,
-                incomingStartSec: inStart,
-                reason: plan.reason + (transitionMode == .automix ? " · live≤\(Int(blend))s" : "")
+                incomingStartSec: max(0, plan.bInStartSec),
+                reason: plan.reason
             )
         }
-        var scheduled = MashupBlendScheduler.schedule(
+        let scheduled = MashupBlendScheduler.schedule(
             outgoingDuration: totalDur,
             incomingDuration: incomingDur,
             preferredBlendSec: preferred,
             outgoing: outProfile,
             incoming: inProfile
         )
-        if transitionMode == .automix {
-            let blend = min(scheduled.blendDurationSec, Self.automixStemMaxBlendSec)
-            let cue = MashupBlendScheduler.reanchorOutgoingCue(
-                preferredCue: scheduled.outgoingCueSec,
-                totalDur: totalDur,
-                blend: blend
-            )
-            let inStart = MashupBlendScheduler.clampAutomixIncomingCue(
-                preferred: scheduled.incomingStartSec,
-                incomingDur: incomingDur
-            )
-            scheduled = LiveMashupBlend(
-                outgoingCueSec: cue,
-                blendDurationSec: blend,
-                incomingStartSec: inStart,
-                reason: scheduled.reason + " · automix≤\(Int(blend))s"
-            )
-        }
         return scheduled
     }
 
-    /// Live Automix stem window: ~8 bars @ 120 BPM so ONE VOCAL overlay is audible.
-    private static let automixStemMaxBlendSec: Double = 16
     /// Materialize + separate this long before the musical cue. Baking at the
     /// cue spent the whole outro on HTDemucs, then the slice ended and the
     /// next song hard-cut a few seconds in.
     private static let automixBakeLeadSec: Double = 22
+
+    /// Read the outro and the intro, then replace the preparation window with
+    /// the mood the files actually have. A failed read keeps the runway.
+    private func retargetAutomixFromEnergy(
+        outgoingURL: URL,
+        incomingURL: URL,
+        playerDuration: Double
+    ) async -> (cueA: Double, cueB: Double, blend: Double)? {
+        let bins = await Task.detached(priority: .userInitiated) {
+            MoodEnergyProbe.bins(outgoingURL: outgoingURL, incomingURL: incomingURL)
+        }.value
+        guard let bins else {
+            AutoMixSessionLog.shared.event("mood.scan miss")
+            return nil
+        }
+        let live = isUsingStreamPlayer ? progress : liveProgress()
+        let incomingDur = bins.incomingDuration > 1
+            ? bins.incomingDuration
+            : (incomingTrack?.duration ?? bins.incomingDuration)
+        let placed = MoodAutomix.placed(
+            outgoingDuration: playerDuration > 1 ? playerDuration : bins.outgoingDuration,
+            incomingDuration: incomingDur,
+            outgoingTail: bins.outgoingTail,
+            incomingHead: bins.incomingHead,
+            notBefore: max(0, live - 0.2)
+        )
+        transitionDuration = placed.blendSec
+        incomingStartPosition = placed.incomingStartSec
+        mashupIncomingCueSec = placed.incomingStartSec
+        activeMashupStyle.moodLand = placed.landProgress
+        activeMashupStyle.handoffAt = placed.landProgress
+        AutoMixSessionLog.shared.event(
+            String(
+                format: "mood.pick %@ blend=%.1f inCue=%.1f land=%.2f cueA=%.1f",
+                placed.mood,
+                placed.blendSec,
+                placed.incomingStartSec,
+                placed.landProgress,
+                placed.outgoingCueSec
+            )
+        )
+        return (placed.outgoingCueSec, placed.incomingStartSec, placed.blendSec)
+    }
 
     private func mashupProfileMatches(_ profile: TrackProfile, track: Track) -> Bool {
         if track.isStream {
@@ -2999,13 +3073,26 @@ final class PlayerCore {
                 if shouldBakeStems,
                    let outURL = outURLForBake,
                    let inURL = inURLForBake {
-                    let blend = self.transitionDuration
+                    var blend = self.transitionDuration
                     let style = self.activeMashupStyle
                     let duetBake = self.transitionMode == .duet || style.isDuet
-                    let handoff = duetBake ? style.handoffAt : style.automixLandProgress
                     // Window is the musical outro, not the playhead while we prepare.
-                    let cueA = max(0, musicalOutgoingCue ?? cueAForBake)
-                    let cueB = max(0, startAt)
+                    var cueA = max(0, musicalOutgoingCue ?? cueAForBake)
+                    var cueB = max(0, startAt)
+                    if !duetBake {
+                        let heard = await self.retargetAutomixFromEnergy(
+                            outgoingURL: outURL,
+                            incomingURL: inURL,
+                            playerDuration: self.duration > 1 ? self.duration : cueA + blend
+                        )
+                        if let heard {
+                            cueA = heard.cueA
+                            cueB = heard.cueB
+                            blend = heard.blend
+                        }
+                    }
+                    let handoffStyle = self.activeMashupStyle
+                    let handoff = duetBake ? style.handoffAt : handoffStyle.automixLandProgress
                     // Extra tail so stems outlive bake lag + LAND handoff (short stems
                     // ending mid-window previously froze B after a stop/reload race).
                     // Tail must outlive bake lag. A short slice used to end, fire
@@ -3101,7 +3188,7 @@ final class PlayerCore {
                         )
                     }
                     if case .success(let stemPair) = bakeResult {
-                        let landAtSec = blend * (duetBake ? style.handoffAt : style.automixLandProgress)
+                        let landAtSec = blend * handoff
                         let remain = max(0, (self.duration > 1 ? self.duration : liveAfter + blend) - liveAfter)
                         let need = max(2.4, landAtSec - bakeLag)
                         // Separation finished after the downbeat, or the file itself
@@ -3656,11 +3743,16 @@ final class PlayerCore {
 
         let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
         let usedBake = mashupBakeRealIncomingURL != nil
+        // The stem file starts at cue B. Its playhead is the sample the listener
+        // already heard — wall-clock elapsed used to land a few seconds further on.
+        let stemFilePos = renderedFileSeconds(node: idlePlayer, file: incomingAudioFile)
+        let fromStem = stemFilePos.map { max(0, mashupBakeIncomingBaseCue + $0) }
         // Local incoming was scheduled at incomingStartPosition; wall-clock elapsed alone would jump back to 0.
         // Baked slices start at 0 → map back onto the real track cue + elapsed.
-        let nativeIncomingPosition = usedBake
-            ? max(0, mashupBakeIncomingBaseCue + elapsed)
-            : max(0, incomingStartPosition + elapsed)
+        let nativeIncomingPosition = fromStem
+            ?? (usedBake
+                ? max(0, mashupBakeIncomingBaseCue + elapsed)
+                : max(0, incomingStartPosition + elapsed))
         // Always hard-cut Automix/Duet at LAND (Apple Automix). Seamless stream swap
         // left B frozen at inCue when bake failed and the idle seek stalled.
         let mashupHardCut = isMashupTransitionMode
@@ -3726,6 +3818,7 @@ final class PlayerCore {
             isTransitioning = false
             transitionScheduled = false
             resetTransitionEQOffsets()
+            let glideSec = activeMashupStyle.moodLand >= 0.85 ? 0.72 : 0.48
             activeMashupStyle = .fallback
             rateReleaseTimer?.invalidate()
             rateReleaseTimer = nil
@@ -3744,7 +3837,7 @@ final class PlayerCore {
                 streamingPlayerA.pause()
                 streamingPlayerB.pause()
                 do {
-                    try landAutomixOntoDryB(track: nextTrack, fileURL: realURL, at: safePos)
+                    try landAutomixOntoDryB(track: nextTrack, fileURL: realURL, at: safePos, glide: glideSec)
                     handedOff = true
                     syncLocal = 1
                 } catch {
@@ -3764,7 +3857,9 @@ final class PlayerCore {
                     }
                 }
             }
-            clearMashupBakeTemps()
+            if landOverlapTimer == nil {
+                clearMashupBakeTemps()
+            }
             // Promote live incoming stream when local handoff is unavailable OR failed
             // (1045: syncLocal=0 + land.recover frozen after start() reload).
             if !handedOff, canPromoteIncomingStream {
@@ -3816,11 +3911,12 @@ final class PlayerCore {
             )
             AutoMixSessionLog.shared.event(
                 String(
-                    format: "land.hardcut B=%@ pos=%.1f proposed=%.1f syncLocal=%d",
+                    format: "land.hardcut B=%@ pos=%.1f proposed=%.1f syncLocal=%d glide=%.2f",
                     nextTrack.title,
                     safePos,
                     handoffPos,
-                    syncLocal
+                    syncLocal,
+                    landOverlapTimer == nil ? 0 : glideSec
                 )
             )
             lastNowPlayingSync = nil
@@ -4087,6 +4183,9 @@ final class PlayerCore {
         suppressAutomixSkipUntil = (skipGuard.map { $0 > now } == true) ? skipGuard : nil
         transitionTimer?.invalidate()
         transitionTimer = nil
+        landOverlapToken = UUID()
+        landOverlapTimer?.invalidate()
+        landOverlapTimer = nil
         transitionStartTime = nil
         transitionPausedAt = nil
         transitionScheduledAt = nil

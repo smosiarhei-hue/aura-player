@@ -36,6 +36,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
     public var isDuet: Bool
     public var reason: String
     public var archetypeName: String
+    /// Mood window land (0.58…0.93). Zero keeps the legacy 0.84…0.92 band.
+    public var moodLand: Double
 
     public static let fallback = MashupLiveStyle(
         bassSwapAt: 0.32,
@@ -56,7 +58,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
         oneVocalConflict: false,
         isDuet: false,
         reason: "Default mashup style",
-        archetypeName: "dropSwap"
+        archetypeName: "dropSwap",
+        moodLand: 0
     )
 
     public init(
@@ -78,7 +81,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
         oneVocalConflict: Bool = false,
         isDuet: Bool = false,
         reason: String,
-        archetypeName: String
+        archetypeName: String,
+        moodLand: Double = 0
     ) {
         self.bassSwapAt = bassSwapAt
         self.vocalHoldUntil = vocalHoldUntil
@@ -99,6 +103,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
         self.isDuet = isDuet
         self.reason = reason
         self.archetypeName = archetypeName
+        self.moodLand = moodLand
     }
 
     /// Build a style unique to this track pair (BPM + cues when profiles exist).
@@ -226,7 +231,10 @@ public struct MashupLiveStyle: Sendable, Equatable {
     /// Field 1055 held A@1 + B@0.78 for ~12s (muddy stack); LAND waits for B bloom
     /// but dual-loud window must stay short and quiet.
     public var automixLandProgress: Double {
-        min(0.92, max(0.84, handoffAt))
+        if moodLand >= 0.55 {
+            return min(0.93, max(0.58, moodLand))
+        }
+        return min(0.92, max(0.84, handoffAt))
     }
 
     private func appleAutomixVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
