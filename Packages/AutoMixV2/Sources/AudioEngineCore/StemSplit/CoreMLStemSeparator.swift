@@ -3,7 +3,9 @@ import Foundation
 
 public actor CoreMLStemSeparator: StemSeparating {
     public nonisolated let segmentFrames = 343_980
-    private let model: MLModel
+    // prediction(from:) is a nonisolated async method. An actor-isolated
+    // MLModel cannot be sent into it under Swift 6, which failed the IPA build.
+    private nonisolated(unsafe) let model: MLModel
 
     public init(modelURL: URL) throws {
         let config = MLModelConfiguration()
