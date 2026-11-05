@@ -656,13 +656,29 @@ export class WaveRadio {
     quiet = false
   ): Promise<void> {
     if (!quiet) {
-      this.setStatus("loading", `Загрузка · ${meta.artists} — ${meta.title}`);
+      this.setStatus("loading", `Открываю файл · ${meta.artists} — ${meta.title}`);
     }
     const r = await fetch(meta.url);
     if (!r.ok) throw new Error(`Не скачался ${meta.title}`);
     const buf = await r.arrayBuffer();
+    if (!quiet) this.setStatus("loading", `Декодирую · ${meta.title}`);
     await this.engine.loadArrayBuffer(id, buf, meta.fileName);
     if (!this.engine.getDeck(id).buffer) throw new Error("decode failed");
+  }
+
+  /** Mirror server load phase so Play isn't a silent spinner. */
+  private watchLoadPhase(): () => void {
+    const timer = window.setInterval(() => {
+      void fetch("/api/ym/load")
+        .then((r) => r.json())
+        .then((body: { label?: string; elapsedSec?: number; phase?: string }) => {
+          if (!body.label || body.phase === "idle" || body.phase === "ready") return;
+          const sec = Math.round(body.elapsedSec || 0);
+          this.setStatus("loading", sec > 0 ? `${body.label} · ${sec} с` : body.label);
+        })
+        .catch(() => undefined);
+    }, 450);
+    return () => window.clearInterval(timer);
   }
 
   private async analyzeDeck(
@@ -936,10 +952,16 @@ export class WaveRadio {
     this.resetPairState();
 
     try {
+      this.setStatus("loading", "Ищу трек в Моей волне…");
       await fetchJson("/api/ym/wave/reset", { method: "POST" });
       // Fast path: only track A download+decode, then PLAY.
       // Automix brain (analyze / B / lyrics / plan) runs in parallel.
-      this.current = await this.fetchNextTrack();
+      const stopWatch = this.watchLoadPhase();
+      try {
+        this.current = await this.fetchNextTrack();
+      } finally {
+        stopWatch();
+      }
       await this.decodeDeck("a", this.current);
       const durA = this.engine.getDeck("a").duration || this.current.durationMs / 1000;
       this.profileA = provisionalProfile(

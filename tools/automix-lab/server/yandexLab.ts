@@ -10,7 +10,7 @@
  * proxy in RU/BY) or run the lab from a CIS IP to unlock FLAC.
  */
 import type { Plugin, Connect } from "vite";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, Request } from "@dvxch/yandex-music";
@@ -20,6 +20,20 @@ const root = dirname(fileURLToPath(import.meta.url));
 const labRoot = join(root, "..");
 const tokenPath = join(labRoot, ".ym-token.json");
 const cacheDir = join(labRoot, ".ym-cache");
+
+/** What the Play button is waiting on — polled by the player. */
+const loadPhase = {
+  phase: "idle" as "idle" | "wave" | "file" | "decode" | "ready",
+  label: "",
+  startedAt: 0,
+};
+
+function setLoad(phase: typeof loadPhase.phase, label: string) {
+  loadPhase.phase = phase;
+  loadPhase.label = label;
+  if (phase !== "idle" && loadPhase.startedAt === 0) loadPhase.startedAt = Date.now();
+  if (phase === "idle" || phase === "ready") loadPhase.startedAt = 0;
+}
 
 type StoredToken = {
   accessToken: string;
@@ -196,120 +210,88 @@ async function downloadTrackBytes(client: Client, trackId: string): Promise<{
 
   let qualityNote: string | undefined;
 
-  // Premium (Plus): try lossless FLAC first — server may soft-downgrade to nq.
-  try {
-    const lossless = await track.getLosslessInfo("lossless");
-    if (!lossless) {
-      lastLosslessProbe = {
-        trackId,
-        requested: "lossless",
-        grantedQuality: null,
-        codec: null,
-        bitrateKbps: null,
-        isLossless: false,
-        used: "null",
-        detail: "get-file-info вернул пустой downloadInfo",
-        at: Date.now(),
-      };
-      qualityNote = lastLosslessProbe.detail;
-    } else {
-      const codec = String(lossless.codec || "");
-      const bitrateKbps = Number(lossless.bitrate || 0);
-      const grantedQuality = String(lossless.quality || "");
-      const isFlac = lossless.isLossless;
-      if (isFlac) {
-        const bytes = await lossless.downloadBytes();
-        if (bytes.byteLength > 1024) {
-          lastLosslessProbe = {
-            trackId,
-            requested: "lossless",
-            grantedQuality,
-            codec,
-            bitrateKbps,
-            isLossless: true,
-            used: "flac",
-            detail: "FLAC ok",
-            at: Date.now(),
-          };
-          return {
-            bytes,
-            meta: {
-              ...baseMeta,
-              codec,
-              bitrateKbps,
-              quality: "lossless",
-            },
-          };
-        }
-        lastLosslessProbe = {
-          trackId,
-          requested: "lossless",
-          grantedQuality,
-          codec,
-          bitrateKbps,
-          isLossless: true,
-          used: "error",
-          detail: "FLAC URL отдал слишком мало байт",
-          at: Date.now(),
-        };
-        qualityNote = lastLosslessProbe.detail;
-      } else {
-        // Soft downgrade: Plus + quality=lossless, but API grants nq/aac@192.
-        // Typical when egress IP is outside RU/BY (cloud US/EU) or web-class token.
-        const detail = `API отклонил lossless → ${codec || "?"}@${bitrateKbps || "?"} (${grantedQuality || "nq"}). Нужен выход в RU/BY (YM_PROXY) или локальный запуск.`;
-        lastLosslessProbe = {
-          trackId,
-          requested: "lossless",
-          grantedQuality: grantedQuality || null,
-          codec: codec || null,
-          bitrateKbps: bitrateKbps || null,
-          isLossless: false,
-          used: "lossy-fallback",
-          detail,
-          at: Date.now(),
-        };
-        qualityNote = detail;
-      }
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    lastLosslessProbe = {
-      trackId,
-      requested: "lossless",
-      grantedQuality: null,
-      codec: null,
-      bitrateKbps: null,
-      isLossless: false,
-      used: "error",
-      detail: `getLosslessInfo: ${msg}`,
-      at: Date.now(),
-    };
-    qualityNote = lastLosslessProbe.detail;
+  const cached = readCachedTrack(trackId);
+  if (cached) {
+    setLoad("ready", `Из кэша · ${baseMeta.artists} — ${baseMeta.title}`);
+    return cached;
   }
 
-  const variants = await track.getDownloadInfo();
+  setLoad("file", `Качаю · ${baseMeta.artists} — ${baseMeta.title}`);
+
+  // Don't block Play on a slow lossless probe (often a geo downgrade).
+  // If FLAC metadata returns quickly, use it; otherwise start the best lossy file.
+  const LOSSLESS_BUDGET_MS = 800;
+  const variantsP = track.getDownloadInfo();
+  const flacMetaP = Promise.race([
+    track
+      .getLosslessInfo("lossless")
+      .then((info) => info)
+      .catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), LOSSLESS_BUDGET_MS)),
+  ]);
+
+  try {
+    const lossless = await flacMetaP;
+    if (lossless?.isLossless) {
+      setLoad("file", `Качаю FLAC · ${baseMeta.title}`);
+      const bytes = await lossless.downloadBytes();
+      if (bytes.byteLength > 1024) {
+        lastLosslessProbe = {
+          trackId,
+          requested: "lossless",
+          grantedQuality: String(lossless.quality || ""),
+          codec: String(lossless.codec || ""),
+          bitrateKbps: Number(lossless.bitrate || 0),
+          isLossless: true,
+          used: "flac",
+          detail: "FLAC ok",
+          at: Date.now(),
+        };
+        setLoad("ready", `Готово · ${baseMeta.title}`);
+        return {
+          bytes,
+          meta: {
+            ...baseMeta,
+            codec: String(lossless.codec || "flac"),
+            bitrateKbps: Number(lossless.bitrate || 0),
+            quality: "lossless" as const,
+          },
+        };
+      }
+    }
+  } catch {
+    /* fall through to lossy */
+  }
+
+  qualityNote =
+    "Старт без ожидания FLAC: лучший доступный поток. Lossless подхватится, если API ответит за 0.8 с.";
+  lastLosslessProbe = {
+    trackId,
+    requested: "lossless",
+    grantedQuality: null,
+    codec: null,
+    bitrateKbps: null,
+    isLossless: false,
+    used: "lossy-fallback",
+    detail: qualityNote,
+    at: Date.now(),
+  };
+
+  const variants = await variantsP;
   const best = [...variants].sort(
     (a, b) => (b.bitrateInKbps || 0) - (a.bitrateInKbps || 0)
   )[0];
   if (!best) throw new Error(`Нет downloadInfo для ${trackId}`);
+  setLoad(
+    "file",
+    `Качаю ${best.bitrateInKbps || "?"} kbps · ${baseMeta.artists} — ${baseMeta.title}`
+  );
   const bytes = await best.downloadBytes();
   const bitrateKbps = best.bitrateInKbps || 0;
   const codec = String(best.codec || "mp3");
-  // 320+ = true HQ; 192 after a lossless soft-downgrade is "оптимальное" (nq).
-  const softDowngraded = lastLosslessProbe?.used === "lossy-fallback";
-  const quality: "lossless" | "hq" | "nq" = softDowngraded
-    ? "nq"
-    : bitrateKbps >= 256
-      ? "hq"
-      : bitrateKbps >= 160
-        ? "hq"
-        : "nq";
-  if (!qualityNote && bitrateKbps <= 192) {
-    qualityNote =
-      "Max download-info = " +
-      bitrateKbps +
-      " kbps (часто geo-cap вне РФ/СНГ; Plus в приложении даёт FLAC/320).";
-  }
+  const quality: "lossless" | "hq" | "nq" =
+    bitrateKbps >= 256 ? "hq" : bitrateKbps >= 160 ? "hq" : "nq";
+  setLoad("ready", `Готово · ${baseMeta.title}`);
   return {
     bytes,
     meta: {
@@ -320,6 +302,44 @@ async function downloadTrackBytes(client: Client, trackId: string): Promise<{
       qualityNote,
     },
   };
+}
+
+function readCachedTrack(trackId: string): {
+  bytes: Uint8Array;
+  meta: {
+    id: string;
+    title: string;
+    artists: string;
+    durationMs: number;
+    coverUrl: string | null;
+    codec: string;
+    bitrateKbps: number;
+    quality: "lossless" | "hq" | "nq";
+    qualityNote?: string;
+  };
+} | null {
+  if (!existsSync(cacheDir)) return null;
+  const side = readdirSync(cacheDir).find((name) => name.endsWith(`-${trackId}.json`));
+  if (!side) return null;
+  try {
+    const meta = JSON.parse(readFileSync(join(cacheDir, side), "utf8")) as {
+      id: string;
+      title: string;
+      artists: string;
+      durationMs: number;
+      coverUrl: string | null;
+      codec: string;
+      bitrateKbps: number;
+      quality: "lossless" | "hq" | "nq";
+      qualityNote?: string;
+      file: string;
+    };
+    const audioPath = join(cacheDir, meta.file);
+    if (!existsSync(audioPath)) return null;
+    return { bytes: readFileSync(audioPath), meta };
+  } catch {
+    return null;
+  }
 }
 
 function extForMeta(meta: { codec: string; quality: string }): string {
@@ -346,6 +366,11 @@ function cacheTrack(
   const ext = extForMeta(meta);
   const name = `wave-${slot}-${meta.id}.${ext}`;
   writeFileSync(join(cacheDir, name), bytes);
+  writeFileSync(
+    join(cacheDir, `wave-${slot}-${meta.id}.json`),
+    JSON.stringify({ ...meta, file: name }),
+    "utf8"
+  );
   return {
     ...meta,
     url: `/api/ym/cache/${name}`,
@@ -355,6 +380,7 @@ function cacheTrack(
 
 async function nextWaveTrack(client: Client) {
   if (waveCursor >= waveQueue.length) {
+    setLoad("wave", "Ищу трек в Моей волне…");
     await ensureWaveBatch(client);
   }
   const item = waveQueue[waveCursor++]!;
@@ -483,6 +509,13 @@ export function yandexLabPlugin(): Plugin {
           }
 
           // Continuous radio: one next track from Моя волна.
+          if (url === "/api/ym/load" && req.method === "GET") {
+            const elapsedSec = loadPhase.startedAt
+              ? Math.max(0, (Date.now() - loadPhase.startedAt) / 1000)
+              : 0;
+            return json(res, 200, { ...loadPhase, elapsedSec });
+          }
+
           if (url === "/api/ym/wave/next" && req.method === "POST") {
             const client = await clientFromToken();
             if (!client) return json(res, 401, { error: "not connected" });

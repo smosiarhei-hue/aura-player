@@ -599,7 +599,7 @@ function render(s: WaveRadioSnapshot) {
         ? s.phase
         : "";
   } else if (s.state === "loading") {
-    islandLabel.textContent = s.brainStatus || "Loading";
+    islandLabel.textContent = s.status || s.brainStatus || "Загрузка";
     islandPhase.textContent = "";
   } else if (s.state === "playing") {
     islandLabel.textContent = s.brainStatus
