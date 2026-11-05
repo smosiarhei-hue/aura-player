@@ -164,15 +164,27 @@ struct PlayerScreenV2: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .background(alignment: .top) {
-                                    // Lab wash: the cover's lower edge, mirrored, continuing
-                                    // under the controls. It starts mid-art and does not climb back up.
+                                    // Mirrored wash sits under the square cover, never over it.
                                     DownwardCoverWash(
                                         primary: coverWashPrimary,
                                         secondary: coverWashSecondary,
                                         secondaryAmount: coverWashAmount,
                                         beat: beatPulse
                                     )
-                                    .padding(.top, 12 + standardArtworkStageHeight * 0.52)
+                                    .frame(height: min(220, standardArtworkStageHeight * 0.72))
+                                    .mask(
+                                        LinearGradient(
+                                            stops: [
+                                                .init(color: .black.opacity(0.55), location: 0),
+                                                .init(color: .black, location: 0.18),
+                                                .init(color: .black, location: 0.55),
+                                                .init(color: .clear, location: 1)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .padding(.top, 12 + standardArtworkStageHeight - 8)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                                     .opacity(isFullScreenVideoShot ? 0 : 1)
                                     .allowsHitTesting(false)
@@ -524,6 +536,7 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
+        let cardSide = min(width - 40, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 4.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.06, abs(coverDragX / width) * 0.06))
 
@@ -533,10 +546,11 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else {
-                // Full-bleed lab cover. The bottom dissolves into the mirrored wash.
+                // Intact square cover. The lab wash is a separate reflection under the card.
                 artwork
-                    .frame(width: width, height: height)
-                    .mask(coverDissolveMask)
+                    .frame(width: cardSide, height: cardSide)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
             }
         }
         .frame(width: width, height: height)
@@ -733,21 +747,6 @@ struct PlayerScreenV2: View {
         var lineIndex = 0
         for (i, line) in lines.enumerated() { if line.startTime <= targetTime { lineIndex = i } else { break } }
         return (lines[lineIndex].text, lineIndex + 1 < lines.count ? lines[lineIndex + 1].text : nil)
-    }
-
-    /// Automix lab dissolve: sharp at the top, gone at the bottom so the wash continues it.
-    private var coverDissolveMask: some View {
-        LinearGradient(
-            stops: [
-                .init(color: .black, location: 0),
-                .init(color: .black, location: 0.54),
-                .init(color: .black.opacity(0.72), location: 0.70),
-                .init(color: .black.opacity(0.28), location: 0.86),
-                .init(color: .clear, location: 1)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
     }
 
     private var coverMixAmount: Double {
@@ -2530,8 +2529,8 @@ private final class DownwardCoverWashView: UIView {
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
             imageView.isUserInteractionEnabled = false
-            // Keep the lower part of the cover, the part that meets the wash.
-            imageView.layer.contentsRect = CGRect(x: 0, y: 0.28, width: 1, height: 0.72)
+            // Reflect the bottom edge of the intact square cover.
+            imageView.layer.contentsRect = CGRect(x: 0, y: 0.55, width: 1, height: 0.45)
             addSubview(imageView)
         }
         blurView.isUserInteractionEnabled = false
@@ -2551,7 +2550,7 @@ private final class DownwardCoverWashView: UIView {
             imageView.transform = .identity
             imageView.bounds = CGRect(x: 0, y: 0, width: width, height: height)
             imageView.center = CGPoint(x: bounds.midX, y: height / 2)
-            imageView.layer.contentsRect = CGRect(x: 0, y: 0.28, width: 1, height: 0.72)
+            imageView.layer.contentsRect = CGRect(x: 0, y: 0.55, width: 1, height: 0.45)
             // Flip around the view center so the reflection continues downward.
             imageView.transform = CGAffineTransform(scaleX: scale, y: -scale)
         }
