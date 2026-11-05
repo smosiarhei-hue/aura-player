@@ -113,6 +113,28 @@ def main() -> int:
             instrumental *= 0.98 / peak
         sf.write(out / "vocals.wav", vocal_use, sr)
         sf.write(out / "instrumental.wav", instrumental, sr)
+        beat_name = None
+        try:
+            drums = separate_stem(
+                window,
+                "drums",
+                precision="fp16weights",
+                providers="cpu",
+            )
+            beat = as_time_major(drums, n)
+            beat = beat[:n]
+            if beat.ndim == 1:
+                beat = beat[:, None]
+            if beat.shape[1] == 1 and dry.shape[1] == 2:
+                beat = np.repeat(beat, 2, axis=1)
+            beat = beat[:, : dry.shape[1]]
+            peak_b = float(np.max(np.abs(beat))) if beat.size else 1.0
+            if peak_b > 0.98:
+                beat *= 0.98 / peak_b
+            sf.write(out / "beat.wav", beat, sr)
+            beat_name = "beat.wav"
+        except Exception as exc:  # noqa: BLE001 — vocals job must still succeed
+            print(json.dumps({"ok": False, "beat": str(exc)}), file=sys.stderr)
 
     meta = {
         "ok": True,
@@ -123,6 +145,7 @@ def main() -> int:
         "repo": "https://github.com/StemSplit/demucs-onnx",
         "vocals": "vocals.wav",
         "instrumental": "instrumental.wav",
+        "beat": beat_name,
     }
     (out / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     print(json.dumps(meta))

@@ -132,6 +132,7 @@ type StemJobState = {
   durationSec: number;
   vocalsUrl?: string;
   instrumentalUrl?: string;
+  beatUrl?: string;
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -731,11 +732,12 @@ export class WaveRadio {
           this.refreshStemStatus();
           return;
         }
-        const posted = (await r.json()) as StemJobState & { vocalsUrl?: string; instrumentalUrl?: string };
+        const posted = (await r.json()) as StemJobState;
         if (posted.phase === "ready" && posted.vocalsUrl && posted.instrumentalUrl) {
           job.phase = "ready";
           job.vocalsUrl = posted.vocalsUrl;
           job.instrumentalUrl = posted.instrumentalUrl;
+          job.beatUrl = posted.beatUrl;
           job.startSec = posted.startSec ?? startSec;
           job.durationSec = posted.durationSec ?? durationSec;
           this.refreshStemStatus();
@@ -755,6 +757,7 @@ export class WaveRadio {
                 job.phase = "ready";
                 job.vocalsUrl = body.vocalsUrl;
                 job.instrumentalUrl = body.instrumentalUrl;
+                job.beatUrl = body.beatUrl;
                 job.startSec = body.startSec ?? job.startSec;
                 job.durationSec = body.durationSec ?? job.durationSec;
                 this.refreshStemStatus();
@@ -778,7 +781,12 @@ export class WaveRadio {
   }
 
   private refreshStemStatus() {
-    if (this.stemsReady()) this.stemStatus = "HTDemucs · готово";
+    if (this.stemsReady()) {
+      const beat = this.next && this.plan
+        ? this.coveringJob("intro", this.next.id, this.plan.params.cueBSec, 4)
+        : null;
+      this.stemStatus = beat?.beatUrl ? "HTDemucs · вокал + бит" : "HTDemucs · готово";
+    }
     else if (this.jobBusy("intro")) this.stemStatus = "HTDemucs · интро";
     else if (this.jobBusy("outro")) this.stemStatus = "HTDemucs · аутро";
     else if (this.jobReady("outro") && !this.next) this.stemStatus = "HTDemucs · аутро готово";
@@ -858,7 +866,8 @@ export class WaveRadio {
       const vocalA = await this.engine.decodeAudio(await vocalRes.arrayBuffer());
       let instrumentalB: AudioBuffer | null = null;
       if (!duet) {
-        const instrRes = await fetch(b.instrumentalUrl);
+        const bedUrl = b.beatUrl || b.instrumentalUrl;
+        const instrRes = await fetch(bedUrl);
         if (!instrRes.ok) return false;
         instrumentalB = await this.engine.decodeAudio(await instrRes.arrayBuffer());
       }

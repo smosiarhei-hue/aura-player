@@ -245,8 +245,9 @@ export class AutomixEngine {
 
   /**
    * Arm the next AutoMix with HTDemucs windows.
-   * A plays vocals. B plays instrumental until LAND, then the dry file.
-   * Duet keeps B as the full mix. Returns false when the cue sits outside the window.
+   * Lab test: A plays vocals, B plays the drum stem until LAND, then the dry file.
+   * Without a beat file, B stays the instrumental. Duet keeps B as the full mix.
+   * The older full-mix AutoMix path is unchanged when this returns false.
    */
   armNeuralMashup(input: {
     duet: boolean;

@@ -26,6 +26,7 @@ type StemJob = {
   durationSec: number;
   vocalsUrl?: string;
   instrumentalUrl?: string;
+  beatUrl?: string;
 };
 
 const jobs = new Map<string, StemJob>();
@@ -115,6 +116,9 @@ function pump() {
       const stamp = Math.round(job.startSec);
       job.vocalsUrl = `/api/stems/file/${job.role}/${job.trackId}/${stamp}/vocals.wav`;
       job.instrumentalUrl = `/api/stems/file/${job.role}/${job.trackId}/${stamp}/instrumental.wav`;
+      if (existsSync(join(out, "beat.wav"))) {
+        job.beatUrl = `/api/stems/file/${job.role}/${job.trackId}/${stamp}/beat.wav`;
+      }
     } else {
       job.phase = "error";
       job.error = parsed.error || `exit ${code}`;
@@ -152,7 +156,10 @@ export function stemsLabPlugin(): Plugin {
             const [role, trackId, start, name] = parts;
             if (
               (role !== "outro" && role !== "intro") ||
-              (name !== "vocals.wav" && name !== "instrumental.wav" && name !== "meta.json") ||
+              (name !== "vocals.wav" &&
+                name !== "instrumental.wav" &&
+                name !== "beat.wav" &&
+                name !== "meta.json") ||
               !/^[\w.:-]+$/.test(trackId) ||
               !/^\d+$/.test(start || "")
             ) {
