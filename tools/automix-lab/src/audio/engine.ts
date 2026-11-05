@@ -5,6 +5,7 @@ import {
   playbackRatesAt,
   volumesAt,
 } from "./envelopes";
+import { bloomInstrumental, sliceToBuffer } from "./neuralStems";
 import type { MashupParams } from "./envelopes";
 import { runMixCritic } from "./mixCritic";
 import {
@@ -228,7 +229,73 @@ export class AutomixEngine {
     this.chainB = null;
     this.handoffSnapped = false;
     this.soloEndedAt = null;
+    this.neuralActive = false;
     this.emit(0);
+  }
+
+  clearNeuralMashup() {
+    this.neuralTake = null;
+    this.neuralActive = false;
+  }
+
+  async decodeAudio(data: ArrayBuffer): Promise<AudioBuffer> {
+    const ctx = await this.ensureContext();
+    return ctx.decodeAudioData(data.slice(0));
+  }
+
+  /**
+   * Arm the next AutoMix with HTDemucs windows.
+   * A plays vocals. B plays instrumental until LAND, then the dry file.
+   * Duet keeps B as the full mix. Returns false when the cue sits outside the window.
+   */
+  armNeuralMashup(input: {
+    duet: boolean;
+    cueA: number;
+    cueB: number;
+    blendSec: number;
+    handoffAt: number;
+    vocalA: AudioBuffer;
+    vocalStartSec: number;
+    instrumentalB: AudioBuffer | null;
+    instrumentalStartSec: number;
+  }): boolean {
+    const deckB = this.decks.b.buffer;
+    const ctx = this.ctx;
+    if (!deckB || !ctx) {
+      this.neuralTake = null;
+      return false;
+    }
+    const offsetA = input.cueA - input.vocalStartSec;
+    if (offsetA < -0.05 || offsetA > input.vocalA.duration - 0.8) {
+      this.neuralTake = null;
+      return false;
+    }
+    if (input.duet || !input.instrumentalB) {
+      this.neuralTake = {
+        bufferA: input.vocalA,
+        bufferB: deckB,
+        offsetA: Math.max(0, offsetA),
+        offsetB: Math.min(Math.max(0, input.cueB), Math.max(0, deckB.duration - 0.2)),
+      };
+      return true;
+    }
+    const instr = input.instrumentalB;
+    const offsetB = input.cueB - input.instrumentalStartSec;
+    if (offsetB < -0.05 || offsetB > instr.duration - 0.8) {
+      this.neuralTake = null;
+      return false;
+    }
+    const blend = Math.max(1, input.blendSec);
+    const landAt = Math.max(0, offsetB) + blend * Math.min(0.98, Math.max(0.35, input.handoffAt));
+    const dry = sliceToBuffer(ctx, deckB, input.instrumentalStartSec, instr.length, instr.sampleRate);
+    const bloomed = bloomInstrumental(ctx, instr, dry, landAt);
+    this.neuralTake = {
+      bufferA: input.vocalA,
+      bufferB: bloomed,
+      offsetA: Math.max(0, offsetA),
+      offsetB: Math.max(0, offsetB),
+    };
+    return true;
   }
 
   private soloUntilResolve: ((ok: boolean) => void) | null = null;
@@ -400,9 +467,24 @@ export class AutomixEngine {
     let liveInstrScale = 1;
     this.pitchLockedA = false;
     this.pitchLockedB = false;
+    const take = this.neuralTake;
+    this.neuralTake = null;
+    this.neuralActive = false;
+    if (
+      take &&
+      take.offsetA < take.bufferA.duration - 0.4 &&
+      take.offsetB < take.bufferB.duration - 0.4
+    ) {
+      bufA = take.bufferA;
+      bufB = take.bufferB;
+      offsetA = take.offsetA;
+      offsetB = take.offsetB;
+      this.neuralActive = true;
+      liveInstrScale = 0;
+    }
 
-    onStatus?.("Сведение…");
-    this.processingNote = dsp.decisions[0] ?? modeLabel;
+    onStatus?.(this.neuralActive ? "Сведение · HTDemucs" : "Сведение…");
+    this.processingNote = this.neuralActive ? "HTDemucs" : (dsp.decisions[0] ?? modeLabel);
 
     const musical = (rate: number) => Math.min(1.03, Math.max(0.97, rate || 1));
     const previousA = this.chainA;
@@ -620,6 +702,15 @@ export class AutomixEngine {
   }
 
   private liveInstrScale = 1;
+  /** HTDemucs buffers for the next mashup. Consumed by playAutoMashup. */
+  private neuralTake: {
+    bufferA: AudioBuffer;
+    bufferB: AudioBuffer;
+    offsetA: number;
+    offsetB: number;
+  } | null = null;
+  /** Live Mid/Side stays off while these buffers are already vocal / instrumental. */
+  private neuralActive = false;
   /** Blend was offline time-stretched; playbackRate stays 1, Camelot is detune-only. */
   private pitchLockedA = false;
   private pitchLockedB = false;
@@ -784,6 +875,14 @@ export class AutomixEngine {
     // Modern Duet: keep A vocal clear; soft mid duck on B for air.
     // AutoMix: duck gated B only.
     const duet = this.params.dsp.mashupMode === "oneBarDuet";
+    if (this.neuralActive) {
+      this.chainA.stem.setDry(audioTime, immediate);
+      this.chainB.stem.setDry(audioTime, immediate);
+      this.chainA.eq.setVocalDuckDb(0, audioTime, immediate);
+      this.chainB.eq.setVocalDuckDb(0, audioTime, immediate);
+      this.chainA.eq.setAirDb(0, audioTime, immediate);
+      this.chainB.eq.setAirDb(0, audioTime, immediate);
+    } else {
     this.chainA.eq.setVocalDuckDb(0, audioTime, immediate);
     this.chainB.eq.setVocalDuckDb(
       duet
@@ -813,6 +912,7 @@ export class AutomixEngine {
         immediate,
         false
       );
+    }
     }
 
     // HPF belongs to LAND (stem envelope), not the whole mashup.

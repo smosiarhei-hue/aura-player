@@ -52,8 +52,8 @@ function safeFile(name: string): string | null {
   return path;
 }
 
-function jobKey(trackId: string, role: string) {
-  return `${role}:${trackId}`;
+function jobKey(trackId: string, role: string, startSec = 0) {
+  return `${role}:${trackId}:${Math.round(startSec)}`;
 }
 
 function pump() {
@@ -67,7 +67,7 @@ function pump() {
   }
   active = true;
   job.phase = "running";
-  const out = join(stemRoot, job.role, job.trackId);
+  const out = join(stemRoot, job.role, job.trackId, String(Math.round(job.startSec)));
   mkdirSync(out, { recursive: true });
   const input = jobInput.get(key);
   if (!input) {
@@ -112,8 +112,9 @@ function pump() {
     }
     if (code === 0 && parsed.ok) {
       job.phase = "ready";
-      job.vocalsUrl = `/api/stems/file/${job.role}/${job.trackId}/vocals.wav`;
-      job.instrumentalUrl = `/api/stems/file/${job.role}/${job.trackId}/instrumental.wav`;
+      const stamp = Math.round(job.startSec);
+      job.vocalsUrl = `/api/stems/file/${job.role}/${job.trackId}/${stamp}/vocals.wav`;
+      job.instrumentalUrl = `/api/stems/file/${job.role}/${job.trackId}/${stamp}/instrumental.wav`;
     } else {
       job.phase = "error";
       job.error = parsed.error || `exit ${code}`;
@@ -135,9 +136,11 @@ export function stemsLabPlugin(): Plugin {
         if (!url.startsWith("/api/stems/")) return next();
         try {
           if (url.startsWith("/api/stems/status") && req.method === "GET") {
-            const id = new URL(url, "http://lab").searchParams.get("trackId") || "";
-            const role = new URL(url, "http://lab").searchParams.get("role") || "outro";
-            const job = jobs.get(jobKey(id, role));
+            const query = new URL(url, "http://lab").searchParams;
+            const id = query.get("trackId") || "";
+            const role = query.get("role") || "outro";
+            const start = Number(query.get("start") || "0");
+            const job = jobs.get(jobKey(id, role, start));
             if (!job) return json(res, 404, { phase: "idle" });
             return json(res, 200, job);
           }
@@ -145,16 +148,17 @@ export function stemsLabPlugin(): Plugin {
           if (url.startsWith("/api/stems/file/") && req.method === "GET") {
             const rel = decodeURIComponent(url.slice("/api/stems/file/".length).split("?")[0]!);
             const parts = rel.split("/").filter(Boolean);
-            if (parts.length !== 3) return json(res, 400, { error: "bad path" });
-            const [role, trackId, name] = parts;
+            if (parts.length !== 4) return json(res, 400, { error: "bad path" });
+            const [role, trackId, start, name] = parts;
             if (
               (role !== "outro" && role !== "intro") ||
               (name !== "vocals.wav" && name !== "instrumental.wav" && name !== "meta.json") ||
-              !/^[\w.:-]+$/.test(trackId)
+              !/^[\w.:-]+$/.test(trackId) ||
+              !/^\d+$/.test(start || "")
             ) {
               return json(res, 400, { error: "bad path" });
             }
-            const path = join(stemRoot, role, trackId, name);
+            const path = join(stemRoot, role, trackId, start, name);
             if (!existsSync(path)) return json(res, 404, { error: "not ready" });
             res.statusCode = 200;
             res.setHeader(
@@ -179,7 +183,8 @@ export function stemsLabPlugin(): Plugin {
             const input = safeFile(body.file);
             if (!input) return json(res, 404, { error: "cache file missing" });
             const role = body.role === "intro" ? "intro" : "outro";
-            const key = jobKey(body.trackId, role);
+            const startSec = Math.max(0, Number(body.startSec) || 0);
+            const key = jobKey(body.trackId, role, startSec);
             const existing = jobs.get(key);
             if (existing && (existing.phase === "ready" || existing.phase === "running" || existing.phase === "queued")) {
               return json(res, 200, existing);
@@ -188,8 +193,8 @@ export function stemsLabPlugin(): Plugin {
               trackId: body.trackId,
               role,
               phase: "queued",
-              startSec: Math.max(0, Number(body.startSec) || 0),
-              durationSec: Math.min(32, Math.max(8, Number(body.durationSec) || 24)),
+              startSec,
+              durationSec: Math.min(40, Math.max(8, Number(body.durationSec) || 36)),
             };
             jobs.set(key, job);
             jobInput.set(key, input);

@@ -14,7 +14,7 @@ Field Automix (`AUSoundIsolation` → residual vocal) **портил инстр�
 
 ## Нейро-окно перехода
 
-Яндекс отдаёт только микс. Живое разделение на стемы — [StemSplit/demucs-onnx](https://github.com/StemSplit/demucs-onnx) (HTDemucs, куски по 7,8 с, на CPU быстрее реального времени). Пока трек играет, `POST /api/stems/window` режет аутро A или интро B на `vocals.wav` и `instrumental.wav`. Play этот расчёт не ждёт. Mid/Side в `vocalInstrumental.ts` остаётся запасным путём, если окно ещё не готово.
+Яндекс отдаёт только микс. Пока трек играет, `POST /api/stems/window` режет последние ~36 с (аутро) и первые ~36 с (интро) через [StemSplit/demucs-onnx](https://github.com/StemSplit/demucs-onnx). Если оба окна готовы к сведению, плеер ставит вокал A и инструментал B и на посадке возвращает сухой микс B. Mid/Side в `vocalInstrumental.ts` остаётся запасным путём, если окно ещё не готово. На бейдже в этот момент написано HTDemucs.
 
 ```bash
 pip install demucs-onnx

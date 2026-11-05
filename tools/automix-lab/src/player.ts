@@ -713,13 +713,17 @@ function render(s: WaveRadioSnapshot) {
 
   const q = document.querySelector<HTMLElement>("#qualityBadge")!;
   const qText = document.querySelector("#qualityText")!;
-  const label = s.mixing
-    ? duet
-      ? "Duet"
-      : "AutoMix"
-    : s.quality
-      ? s.quality.replace(/^HQ\s+/i, "")
-      : "Моя волна";
+  const label = s.stemStatus && !s.mixing
+    ? s.stemStatus
+    : s.mixing
+      ? s.status.includes("HTDemucs")
+        ? "HTDemucs"
+        : duet
+          ? "Duet"
+          : "AutoMix"
+      : s.quality
+        ? s.quality.replace(/^HQ\s+/i, "")
+        : "Моя волна";
   q.hidden = false;
   qText.textContent = label;
   q.dataset.q = s.quality?.startsWith("HQ") ? "hq" : "nq";

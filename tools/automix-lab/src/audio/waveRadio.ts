@@ -110,6 +110,8 @@ export type WaveRadioSnapshot = {
   transcriptStatus: string | null;
   /** Background Automix brain phase (runs while song plays). */
   brainStatus: string | null;
+  /** HTDemucs window: download/separate while the song plays, then the mix uses it. */
+  stemStatus: string | null;
   cueWords: TranscriptWord[];
   engine: EngineSnapshot | null;
   /** Apple-style Song Transitions mode. */
@@ -123,6 +125,14 @@ export type WaveRadioSnapshot = {
 };
 
 type Listener = (s: WaveRadioSnapshot) => void;
+
+type StemJobState = {
+  phase: "queued" | "running" | "ready" | "error";
+  startSec: number;
+  durationSec: number;
+  vocalsUrl?: string;
+  instrumentalUrl?: string;
+};
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
@@ -152,6 +162,8 @@ export class WaveRadio {
   private transcriptB: TrackTranscript | null = null;
   private transcriptStatus: string | null = null;
   private brainStatus: string | null = null;
+  private stemStatus: string | null = null;
+  private stemJobs = new Map<string, StemJobState>();
   private brainGen = 0;
   private pendingSeek: number | null = null;
   private scrubbing = false;
@@ -341,6 +353,7 @@ export class WaveRadio {
           ? "LAND · текст следующего после сведения"
           : this.transcriptStatus,
       brainStatus: this.brainStatus,
+      stemStatus: this.stemStatus,
       cueWords: wordsAroundTime(
         this.state === "mixing" && this.lastEngine?.displayDeck === "b"
           ? null
@@ -656,17 +669,49 @@ export class WaveRadio {
   /**
    * HTDemucs on the transition window only, in parallel with playback.
    * Repo: https://github.com/StemSplit/demucs-onnx — Yandex has no stem API.
+   * Outro is the last 36s, intro the first 36s. The mashup plays them when both are ready.
    */
   private queueStemWindow(id: "a" | "b", meta: WaveTrackMeta) {
     const file = decodeURIComponent(meta.url.split("/").pop() || "");
     if (!file) return;
     const dur = Math.max(1, meta.durationMs / 1000 || this.engine.getDeck(id).duration || 1);
     const role = id === "a" ? "outro" : "intro";
-    const durationSec = Math.min(24, dur);
+    const durationSec = Math.min(36, dur);
     const startSec = role === "outro" ? Math.max(0, dur - durationSec) : 0;
-    if (!this.brainStatus || this.brainStatus.startsWith("Стемы")) {
-      this.brainStatus = "Стемы · окно перехода считается";
+    this.enqueueStem(meta, role, file, startSec, durationSec);
+  }
+
+  /** Separate [start, start+duration] when the default outro/intro misses the plan cue. */
+  private alignStemToPlan() {
+    if (!this.plan) return;
+    const need = Math.min(36, Math.max(12, this.plan.params.blendDurationSec + 8));
+    if (this.current) {
+      const file = decodeURIComponent(this.current.url.split("/").pop() || "");
+      const dur = Math.max(1, this.current.durationMs / 1000 || this.engine.getDeck("a").duration || 1);
+      const start = Math.max(0, Math.min(this.plan.params.cueASec, Math.max(0, dur - need)));
+      if (file) this.enqueueStem(this.current, "outro", file, start, Math.min(need, dur));
     }
+    if (this.next) {
+      const file = decodeURIComponent(this.next.url.split("/").pop() || "");
+      const dur = Math.max(1, this.next.durationMs / 1000 || this.engine.getDeck("b").duration || 1);
+      const start = Math.max(0, Math.min(this.plan.params.cueBSec, Math.max(0, dur - need)));
+      if (file) this.enqueueStem(this.next, "intro", file, start, Math.min(need, dur));
+    }
+  }
+
+  private enqueueStem(
+    meta: WaveTrackMeta,
+    role: "outro" | "intro",
+    file: string,
+    startSec: number,
+    durationSec: number
+  ) {
+    const key = `${role}:${meta.id}:${Math.round(startSec)}`;
+    const existing = this.stemJobs.get(key);
+    if (existing && existing.phase !== "error") return;
+    const job: StemJobState = { phase: "queued", startSec, durationSec };
+    this.stemJobs.set(key, job);
+    this.refreshStemStatus();
     void fetch("/api/stems/window", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -679,31 +724,156 @@ export class WaveRadio {
       }),
     })
       .then(async (r) => {
-        if (!r.ok) return;
+        if (!r.ok) {
+          job.phase = "error";
+          this.refreshStemStatus();
+          return;
+        }
+        const posted = (await r.json()) as StemJobState & { vocalsUrl?: string; instrumentalUrl?: string };
+        if (posted.phase === "ready" && posted.vocalsUrl && posted.instrumentalUrl) {
+          job.phase = "ready";
+          job.vocalsUrl = posted.vocalsUrl;
+          job.instrumentalUrl = posted.instrumentalUrl;
+          job.startSec = posted.startSec ?? startSec;
+          job.durationSec = posted.durationSec ?? durationSec;
+          this.refreshStemStatus();
+          return;
+        }
+        job.phase = "running";
+        this.refreshStemStatus();
         const watch = window.setInterval(() => {
-          void fetch(`/api/stems/status?trackId=${encodeURIComponent(meta.id)}&role=${role}`)
-            .then((res) => res.json())
-            .then((body: { phase?: string; error?: string }) => {
-              if (body.phase === "ready") {
+          void fetch(
+            `/api/stems/status?trackId=${encodeURIComponent(meta.id)}&role=${role}&start=${Math.round(startSec)}`
+          )
+            .then((res) => (res.ok ? res.json() : null))
+            .then((body: StemJobState | null) => {
+              if (!body) return;
+              if (body.phase === "ready" && body.vocalsUrl && body.instrumentalUrl) {
                 window.clearInterval(watch);
-                if (!this.brainStatus || this.brainStatus.startsWith("Стемы")) {
-                  this.brainStatus =
-                    role === "outro" ? "Стемы · аутро готово" : "Стемы · интро готово";
-                  this.emit();
-                }
+                job.phase = "ready";
+                job.vocalsUrl = body.vocalsUrl;
+                job.instrumentalUrl = body.instrumentalUrl;
+                job.startSec = body.startSec ?? job.startSec;
+                job.durationSec = body.durationSec ?? job.durationSec;
+                this.refreshStemStatus();
               } else if (body.phase === "error") {
                 window.clearInterval(watch);
-                if (!this.brainStatus || this.brainStatus.startsWith("Стемы")) {
-                  this.brainStatus = "Стемы · не посчитались";
-                  this.emit();
-                }
+                job.phase = "error";
+                this.refreshStemStatus();
+              } else if (body.phase === "running" && job.phase !== "running") {
+                job.phase = "running";
+                this.refreshStemStatus();
               }
             })
             .catch(() => undefined);
         }, 2000);
         window.setTimeout(() => window.clearInterval(watch), 180_000);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        job.phase = "error";
+        this.refreshStemStatus();
+      });
+  }
+
+  private refreshStemStatus() {
+    if (this.stemsReady()) this.stemStatus = "HTDemucs · готово";
+    else if (this.jobBusy("intro")) this.stemStatus = "HTDemucs · интро";
+    else if (this.jobBusy("outro")) this.stemStatus = "HTDemucs · аутро";
+    else if (this.jobReady("outro") && !this.next) this.stemStatus = "HTDemucs · аутро готово";
+    else if (this.stemsFailed()) this.stemStatus = "HTDemucs · не вышло";
+    this.emit();
+  }
+
+  private jobsFor(role: "outro" | "intro", trackId: string): StemJobState[] {
+    const prefix = `${role}:${trackId}:`;
+    const found: StemJobState[] = [];
+    for (const [key, job] of this.stemJobs) {
+      if (key.startsWith(prefix)) found.push(job);
+    }
+    return found;
+  }
+
+  private coveringJob(
+    role: "outro" | "intro",
+    trackId: string,
+    cue: number,
+    needSec: number
+  ): StemJobState | null {
+    const jobs = this.jobsFor(role, trackId);
+    const ready = jobs.find(
+      (job) =>
+        job.phase === "ready" &&
+        job.startSec <= cue + 0.35 &&
+        job.startSec + job.durationSec >= cue + Math.min(needSec, 8) - 0.35
+    );
+    return ready ?? null;
+  }
+
+  private jobBusy(role: "outro" | "intro"): boolean {
+    for (const [key, job] of this.stemJobs) {
+      if (key.startsWith(`${role}:`) && (job.phase === "queued" || job.phase === "running")) return true;
+    }
+    return false;
+  }
+
+  private jobReady(role: "outro" | "intro"): boolean {
+    for (const [key, job] of this.stemJobs) {
+      if (key.startsWith(`${role}:`) && job.phase === "ready") return true;
+    }
+    return false;
+  }
+
+  private stemsReady(): boolean {
+    if (!this.current || !this.next || !this.plan) return false;
+    const need = Math.max(4, this.plan.params.blendDurationSec);
+    return (
+      this.coveringJob("outro", this.current.id, this.plan.params.cueASec, need) != null &&
+      this.coveringJob("intro", this.next.id, this.plan.params.cueBSec, need) != null
+    );
+  }
+
+  private stemsFailed(): boolean {
+    if (!this.current || this.jobBusy("outro") || this.jobBusy("intro")) return false;
+    const a = this.jobsFor("outro", this.current.id);
+    if (a.length > 0 && a.every((job) => job.phase === "error")) return true;
+    if (!this.next) return false;
+    const b = this.jobsFor("intro", this.next.id);
+    return b.length > 0 && b.every((job) => job.phase === "error");
+  }
+
+  /** Fetch the ready wavs and arm the engine. Null effect when a window misses the cue. */
+  private async armNeural(plan: AIMixPlan): Promise<boolean> {
+    this.engine.clearNeuralMashup();
+    if (!this.current || !this.next) return false;
+    const need = Math.max(4, plan.params.blendDurationSec);
+    const a = this.coveringJob("outro", this.current.id, plan.params.cueASec, need);
+    const b = this.coveringJob("intro", this.next.id, plan.params.cueBSec, need);
+    if (!a || !b || !a.vocalsUrl || !b.instrumentalUrl) return false;
+    const duet = this.transitionMode === "duet" || plan.params.dsp.mashupMode === "oneBarDuet";
+    try {
+      const vocalRes = await fetch(a.vocalsUrl);
+      if (!vocalRes.ok) return false;
+      const vocalA = await this.engine.decodeAudio(await vocalRes.arrayBuffer());
+      let instrumentalB: AudioBuffer | null = null;
+      if (!duet) {
+        const instrRes = await fetch(b.instrumentalUrl);
+        if (!instrRes.ok) return false;
+        instrumentalB = await this.engine.decodeAudio(await instrRes.arrayBuffer());
+      }
+      return this.engine.armNeuralMashup({
+        duet,
+        cueA: plan.params.cueASec,
+        cueB: plan.params.cueBSec,
+        blendSec: plan.params.blendDurationSec,
+        handoffAt: plan.params.handoffAt,
+        vocalA,
+        vocalStartSec: a.startSec,
+        instrumentalB,
+        instrumentalStartSec: b.startSec,
+      });
+    } catch {
+      return false;
+    }
   }
 
   /** Mirror server load phase so Play isn't a silent spinner. */
@@ -818,6 +988,7 @@ export class WaveRadio {
       this.transitionMode === "duet"
         ? planOneBarDuet(this.profileA, this.profileB)
         : planAutomix(this.profileA, this.profileB);
+    this.alignStemToPlan();
     // Coach offsets are for long AutoMix phrases — skip on Phrase Duet.
     if (this.transitionMode !== "duet") {
       applyCoachOffsets(this.plan.params, this.coach);
@@ -1045,13 +1216,20 @@ export class WaveRadio {
         const wantPlan =
           this.transitionMode === "automix" || this.transitionMode === "duet";
         const durA = this.engine.getDeck("a").duration || this.current!.durationMs / 1000;
-        for (let hop = 0; hop < 8 && this.running && gen === this.loopGen; hop++) {
+        const hopMax = wantPlan ? 18 : 8;
+        for (let hop = 0; hop < hopMax && this.running && gen === this.loopGen; hop++) {
           const haveNext = Boolean(this.next && this.engine.getDeck("b").buffer);
           const havePlan = Boolean(this.plan);
-          if (haveNext && (!wantPlan || havePlan)) break;
+          const stemsOk = !wantPlan || this.stemsReady() || this.stemsFailed();
+          if (haveNext && (!wantPlan || havePlan) && stemsOk) break;
           const pos = this.engine.getSoloPosition();
-          if (pos >= durA - 1.3) break;
-          this.setStatus("playing", "Трек играет · готовлю переход…");
+          if (pos >= durA - 4) break;
+          this.setStatus(
+            "playing",
+            wantPlan && haveNext && havePlan
+              ? "Трек играет · HTDemucs считает окно…"
+              : "Трек играет · готовлю переход…"
+          );
           const until = Math.min(durA - 0.12, pos + 2);
           const cont = await this.engine.resumeSoloUntil(until);
           if (!cont) break;
@@ -1093,9 +1271,12 @@ export class WaveRadio {
           landedAt = join.landedAt;
           playedSec = Math.max(1, bodyEnd || join.seconds);
         } else {
+          const neural = await this.armNeural(livePlan);
           this.setStatus(
             "mixing",
-            `Mixing · ${livePlan.params.dsp.mashupMode} · → ${incoming.title}`
+            neural
+              ? `Mixing · HTDemucs · → ${incoming.title}`
+              : `Mixing · ${livePlan.params.dsp.mashupMode} · → ${incoming.title}`
           );
           this.mashupTrail = [];
           this.loggingMashup = true;
@@ -1148,6 +1329,7 @@ export class WaveRadio {
         // Handoff FIRST while mashup/crossfade B is still draining — then bookkeeping.
         this.engine.promoteBToA();
         this.current = incoming;
+        this.queueStemWindow("a", incoming);
         this.profileA = liveProfileB;
         const landedProfile = this.profileA as TrackAIProfile;
         const provisionalUntil = Math.min(
