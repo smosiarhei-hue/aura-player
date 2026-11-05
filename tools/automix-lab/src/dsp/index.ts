@@ -7,6 +7,7 @@
  *   BassEqNode          — bass kill/on + mid vocal duck + air
  *   FilterSweepNode     — HPF riser / LPF reveal
  *   EchoOutNode         — tempo-synced echo-out
+ *   ReverbWashNode      — musical plate wash (spaceReverb)
  *   stemFxAt            — envelopes that drive stems+FX through DJ acts
  *   timeStretchBuffer   — offline WSOLA-lite tempo change, original pitch
  */
@@ -24,6 +25,7 @@ export {
 export { BassEqNode } from "./bassEq";
 export { FilterSweepNode } from "./filters";
 export { EchoOutNode } from "./echo";
+export { ReverbWashNode } from "./reverb";
 export { stemFxAt, type StemFxAt } from "./stemEnvelopes";
 export { setParam, clamp } from "./param";
 export {

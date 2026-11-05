@@ -97,16 +97,16 @@ const cases = [
     expect: (t) => t === "eqBlend" || t === "longBlend",
   },
   {
-    name: "energy up → filter sweep",
+    name: "energy cliff → filter sweep",
     a: profile({
       bpm: 120,
       camelotKey: "8A",
-      energy: Array.from({ length: 40 }, (_, i) => (i < 28 ? 0.7 : 0.25)),
+      energy: Array.from({ length: 40 }, (_, i) => (i < 28 ? 0.75 : 0.7)),
     }),
     b: profile({
       bpm: 121,
       camelotKey: "8A",
-      energy: Array.from({ length: 40 }, (_, i) => (i < 10 ? 0.85 : 0.6)),
+      energy: Array.from({ length: 40 }, (_, i) => (i < 10 ? 0.35 : 0.4)),
     }),
     outro: 40,
     expect: (t) => t === "filterSweep",
@@ -119,7 +119,7 @@ const cases = [
     expect: (t) => t === "echoOut",
   },
   {
-    name: "same key adjacent BPM → eq blend path",
+    name: "mid-energy compatible → Space Reverb wash",
     a: profile({
       bpm: 124,
       camelotKey: "5A",
@@ -130,10 +130,27 @@ const cases = [
       bpm: 126,
       camelotKey: "5A",
       tempoStability: 0.5,
-      energy: Array.from({ length: 40 }, () => 0.5),
+      energy: Array.from({ length: 40 }, () => 0.52),
     }),
-    outro: 32,
-    expect: (t) => t === "eqBlend" || t === "longBlend" || t === "smartCrossfade",
+    outro: 24,
+    expect: (t) => t === "spaceReverb",
+  },
+  {
+    name: "hot energy jump → Beat Stutter",
+    a: profile({
+      bpm: 122,
+      camelotKey: "8A",
+      tempoStability: 0.8,
+      energy: Array.from({ length: 40 }, (_, i) => (i < 28 ? 0.45 : 0.4)),
+    }),
+    b: profile({
+      bpm: 124,
+      camelotKey: "8A",
+      tempoStability: 0.8,
+      energy: Array.from({ length: 40 }, (_, i) => (i < 10 ? 0.75 : 0.6)),
+    }),
+    outro: 40,
+    expect: (t) => t === "beatStutter",
   },
   {
     name: "close BPM + key clash → Echo Out (not short Smart Crossfade)",

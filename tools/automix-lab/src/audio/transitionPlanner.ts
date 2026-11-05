@@ -20,7 +20,9 @@ export type TransitionType =
   | "eqBlend"
   | "filterSweep"
   | "echoOut"
+  | "spaceReverb"
   | "longBlend"
+  | "beatStutter"
   | "cutOnOne"
   | "smartCrossfade";
 
@@ -40,7 +42,9 @@ const TYPE_TO_ARCHETYPE: Record<TransitionType, MashupArchetype> = {
   eqBlend: "dropSwap",
   filterSweep: "energyWash",
   echoOut: "echoOut",
+  spaceReverb: "spaceReverb",
   longBlend: "seamlessLoop",
+  beatStutter: "beatStutter",
   cutOnOne: "cutOnOne",
   smartCrossfade: "smartCrossfade",
 };
@@ -101,31 +105,43 @@ export function planTransitionType(
     type = "echoOut";
     reason = `Echo Out · короткий outro ${outroSec.toFixed(1)}s`;
   }
-  // 3. High energy shift → Filter Sweep
+  // 3. Hot energy jump into B → stutter into the hit
+  else if (harmonic.isNaturallyCompatible && bpmClose && energyShift >= 0.22) {
+    type = "beatStutter";
+    reason = `Beat Stutter · energy Δ +${(energyShift * 100) | 0}% · ${harmonic.description}`;
+  }
+  // 4. High energy shift → Filter Sweep
   else if (energyShift > 0.14 || energyShift < -0.18) {
     type = "filterSweep";
     reason = `Filter Sweep · energy Δ ${energyShift >= 0 ? "+" : ""}${(energyShift * 100) | 0}%`;
   }
-  // 4. Compatible keys + close BPM → EQ Blend or Long Blend
+  // 5. Compatible keys + close BPM → Long Blend / Space Reverb / EQ Blend
   else if (harmonic.isNaturallyCompatible && bpmClose) {
     const stable = a.tempoStability >= 0.7 && b.tempoStability >= 0.7;
-    type = stable && outroSec >= 28 ? "longBlend" : "eqBlend";
-    reason =
-      type === "longBlend"
-        ? `Long Blend · ${harmonic.description} · BPM Δ${(bpmDiff * 100) | 0}%`
-        : `EQ Blend / Bass Swap · ${harmonic.description}`;
+    const midEnergy =
+      energyOut >= 0.38 && energyOut <= 0.62 && Math.abs(energyShift) <= 0.14 && outroSec >= 18;
+    if (stable && outroSec >= 28) {
+      type = "longBlend";
+      reason = `Long Blend · phrase loop · ${harmonic.description} · BPM Δ${(bpmDiff * 100) | 0}%`;
+    } else if (midEnergy) {
+      type = "spaceReverb";
+      reason = `Space Reverb · plate wash · ${harmonic.description}`;
+    } else {
+      type = "eqBlend";
+      reason = `EQ Blend / Bass Swap · ${harmonic.description}`;
+    }
   }
-  // 5. Viable with small pitch shift + close-ish BPM → EQ Blend
+  // 6. Viable with small pitch shift + close-ish BPM → EQ Blend
   else if (harmonic.isHarmonicallyViable && bpmDiff <= 0.1) {
     type = "eqBlend";
     reason = `EQ Blend · ${harmonic.description}`;
   }
-  // 6. Keys clash / unknown, but tempos lock → Echo Out (DJ exit), keep phrase length later
+  // 7. Keys clash / unknown, but tempos lock → Echo Out (DJ exit), keep phrase length later
   else if (beatmatch && bpmClose && !harmonic.isNaturallyCompatible) {
     type = "echoOut";
     reason = `Echo Out · beatmatch при ключевом конфликте · ${harmonic.description}`;
   }
-  // 7. Far tempo leftover → Echo; true fallback X-fade only when no lock
+  // 8. Far tempo leftover → Echo; true fallback X-fade only when no lock
   else {
     type = bpmFar || beatmatch ? "echoOut" : "smartCrossfade";
     reason =
@@ -154,8 +170,12 @@ export function transitionTypeLabel(type: TransitionType): string {
       return "Filter Sweep";
     case "echoOut":
       return "Echo Out";
+    case "spaceReverb":
+      return "Space Reverb";
     case "longBlend":
       return "Long Blend";
+    case "beatStutter":
+      return "Beat Stutter";
     case "cutOnOne":
       return "Cut on the 1";
     case "smartCrossfade":

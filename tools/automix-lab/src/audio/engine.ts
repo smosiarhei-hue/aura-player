@@ -13,6 +13,7 @@ import {
   EchoOutNode,
   FilterSweepNode,
   MidSideStemNode,
+  ReverbWashNode,
   bakeStemSlice,
   bakeInstrThenDry,
   beatmatchTransport,
@@ -48,6 +49,8 @@ export type EngineSnapshot = {
   hpfA: number;
   lpfB: number;
   echoA: number;
+  reverbA: number;
+  stutterA: number;
   displayElapsed: number;
   displayDuration: number;
   displayDeck: DeckId;
@@ -60,6 +63,7 @@ type SourceChain = {
   eq: BassEqNode;
   filters: FilterSweepNode;
   echo: EchoOutNode;
+  reverb: ReverbWashNode;
   gain: GainNode;
   /** Baked slices start at 0; full-buffer playback uses cue offset. */
   startOffset: number;
@@ -443,6 +447,7 @@ export class AutomixEngine {
           : 120;
     this.chainA.echo.setTempo(bpm, now, true);
     this.chainB.echo.setTempo(this.decks.b.bpm || bpm, now, true);
+    this.applyPhraseLoop(this.chainA, bufA, bpm, p.rateA);
 
     this.applyEnvelope(0, now, true);
 
@@ -540,6 +545,7 @@ export class AutomixEngine {
       chain.eq.setBassGainDb(0, now, true);
       chain.filters.setOpen(now, true);
       chain.echo.bypass(now, true);
+      chain.reverb.bypass(now, true);
     }
 
     const eqPower = (p: number) => {
@@ -573,6 +579,8 @@ export class AutomixEngine {
         hpfA: 0,
         lpfB: 0,
         echoA: 0,
+        reverbA: 0,
+        stutterA: 0,
         displayElapsed: Math.min(displayDuration, Math.max(0, displayElapsed)),
         displayDuration: displayDuration || 1,
         displayDeck,
@@ -652,6 +660,7 @@ export class AutomixEngine {
     chain.stem.setDry(ctx.currentTime, true);
     chain.filters.setOpen(ctx.currentTime, true);
     chain.echo.bypass(ctx.currentTime, true);
+    chain.reverb.bypass(ctx.currentTime, true);
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
     this.soloStartSec = start;
@@ -707,6 +716,8 @@ export class AutomixEngine {
           hpfA: 0,
           lpfB: 0,
           echoA: 0,
+          reverbA: 0,
+          stutterA: 0,
           displayElapsed: Math.min(deck.duration, pos),
           displayDuration: deck.duration,
           displayDeck: id,
@@ -744,17 +755,45 @@ export class AutomixEngine {
     const eq = new BassEqNode(ctx);
     const filters = new FilterSweepNode(ctx);
     const echo = new EchoOutNode(ctx);
+    const reverb = new ReverbWashNode(ctx);
     const gain = ctx.createGain();
     gain.gain.value = 0;
 
+    // player → stem → EQ → filters → echo → reverb → gain (mirrors DualDeck FX order)
     source.connect(stem.input);
     stem.output.connect(eq.input);
     eq.output.connect(filters.input);
     filters.output.connect(echo.input);
-    echo.output.connect(gain);
+    echo.output.connect(reverb.input);
+    reverb.output.connect(gain);
     gain.connect(this.master!);
 
-    return { source, stem, eq, filters, echo, gain, startOffset };
+    return { source, stem, eq, filters, echo, reverb, gain, startOffset };
+  }
+
+  /** Phrase-loop outgoing A for `dsp.loopBarsA` bars (seamlessLoop / spaceReverb). */
+  private applyPhraseLoop(
+    chain: SourceChain,
+    buffer: AudioBuffer,
+    bpm: number,
+    rate: number
+  ) {
+    const bars = Math.max(0, this.params.dsp.loopBarsA | 0);
+    if (bars <= 0) {
+      chain.source.loop = false;
+      return;
+    }
+    const barSec = 240 / Math.max(60, bpm);
+    const loopDur = (bars * barSec) / Math.max(0.5, rate);
+    const start = Math.max(0, chain.startOffset);
+    const end = Math.min(buffer.duration - 0.02, start + loopDur);
+    if (!(end > start + 0.25)) {
+      chain.source.loop = false;
+      return;
+    }
+    chain.source.loop = true;
+    chain.source.loopStart = start;
+    chain.source.loopEnd = end;
   }
 
   private applyEnvelope(progress: number, audioTime: number, immediate: boolean) {
@@ -854,6 +893,28 @@ export class AutomixEngine {
 
     this.chainA.echo.setAmount(fx.echoA, audioTime, immediate);
     this.chainB.echo.bypass(audioTime, immediate);
+    this.chainA.reverb.setAmount(fx.reverbA, audioTime, immediate);
+    this.chainB.reverb.bypass(audioTime, immediate);
+
+    // Open phrase loop before LAND so A can exit cleanly.
+    if (this.chainA.source.loop && progress >= 0.72) {
+      this.chainA.source.loop = false;
+    }
+
+    // 1/16 stutter gate on outgoing volume (beatStutter).
+    if (fx.stutterA >= 0.04) {
+      const bpm =
+        this.params.targetBPM > 30
+          ? this.params.targetBPM
+          : this.decks.a.bpm > 30
+            ? this.decks.a.bpm
+            : 120;
+      const sixteenth = Math.max(0.03, 60 / bpm / 4);
+      const phase = (audioTime % sixteenth) / sixteenth;
+      const duty = Math.max(0.12, 0.88 - fx.stutterA * 0.72);
+      const gated = phase < duty ? vols.outgoing : 0;
+      setParam(this.chainA.gain.gain, gated, audioTime, true, 0.012);
+    }
 
     const transport = beatmatchTransport(
       rates,
@@ -909,6 +970,8 @@ export class AutomixEngine {
       hpfA: fx.hpfA,
       lpfB: fx.lpfB,
       echoA: fx.echoA,
+      reverbA: fx.reverbA,
+      stutterA: fx.stutterA,
       displayElapsed: Math.min(displayDuration, Math.max(0, displayElapsed)),
       displayDuration,
       displayDeck,
@@ -929,6 +992,7 @@ export class AutomixEngine {
       chain.eq.disconnect();
       chain.filters.disconnect();
       chain.echo.disconnect();
+      chain.reverb.disconnect();
       chain.gain.disconnect();
     } catch {
       /* ignore */

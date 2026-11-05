@@ -249,19 +249,46 @@ function buildDspRecipe(
     case "seamlessLoop":
       dsp.lpfBPeak = 0.15;
       dsp.hpfAPeak = 0.4;
-      dsp.echoAPeak = 0.2;
-      decisions.push("FX: Long Blend — почти без фильтров");
+      dsp.echoAPeak = 0.28;
+      dsp.reverbAPeak = 0.12;
+      dsp.stutterAPeak = 0;
+      dsp.loopBarsA = Math.max(0, a.durationSec - a.mixOutSec) >= 36 ? 4 : 2;
+      decisions.push(`FX: Long Blend — phrase loop ${dsp.loopBarsA} bars + soft delay`);
+      break;
+    case "spaceReverb":
+      dsp.lpfBPeak = 0.35;
+      dsp.hpfAPeak = 0.5;
+      dsp.echoAPeak = 0.38;
+      dsp.reverbAPeak = 0.72;
+      dsp.stutterAPeak = 0;
+      dsp.loopBarsA = 2;
+      decisions.push("FX: Space Reverb — plate wash + tempo echo + loop 2");
       break;
     case "echoOut":
       dsp.lpfBPeak = 0.12;
       dsp.hpfAPeak = 0.55;
       dsp.echoAPeak = 0.85;
+      dsp.reverbAPeak = 0.08;
+      dsp.stutterAPeak = 0;
+      dsp.loopBarsA = 0;
       decisions.push("FX: Echo Out — echo на A, B без LPF-одеяла");
+      break;
+    case "beatStutter":
+      dsp.lpfBPeak = 0.1;
+      dsp.hpfAPeak = 0.7;
+      dsp.echoAPeak = 0.2;
+      dsp.reverbAPeak = 0;
+      dsp.stutterAPeak = 0.9;
+      dsp.loopBarsA = 1;
+      decisions.push("FX: Beat Stutter — 1/16 gate + HPF into LAND");
       break;
     case "cutOnOne":
       dsp.lpfBPeak = 0;
       dsp.hpfAPeak = 0.25;
       dsp.echoAPeak = 0.15;
+      dsp.reverbAPeak = 0;
+      dsp.stutterAPeak = 0;
+      dsp.loopBarsA = 0;
       dsp.bakeVocalB = false;
       decisions.push("FX: Cut on the 1 — без muffling");
       break;
@@ -269,6 +296,9 @@ function buildDspRecipe(
       dsp.lpfBPeak = 0.1;
       dsp.hpfAPeak = 0.35;
       dsp.echoAPeak = 0.15;
+      dsp.reverbAPeak = 0;
+      dsp.stutterAPeak = 0;
+      dsp.loopBarsA = 0;
       if (dsp.instrBPeak < 0.5) {
         dsp.instrAPeak *= 0.85;
       }
@@ -278,6 +308,9 @@ function buildDspRecipe(
       dsp.lpfBPeak = 0.12;
       dsp.hpfAPeak = 0.55;
       dsp.echoAPeak = 0.35;
+      dsp.reverbAPeak = 0;
+      dsp.stutterAPeak = 0;
+      dsp.loopBarsA = 0;
       decisions.push("FX: EQ Blend — один бас, фильтры только на LAND");
   }
 
@@ -601,6 +634,20 @@ export function planAutomix(a: TrackAIProfile, b: TrackAIProfile): AIMixPlan {
       params.outgoingVolumeHold = 0.52;
       params.incomingVolumeLag = 0.1;
       params.bassDepth = 1.05;
+      break;
+    case "spaceReverb":
+      params.bassSwapAt = 0.3;
+      params.handoffAt = 0.62;
+      params.outgoingVolumeHold = 0.42;
+      params.incomingVolumeLag = 0.12;
+      params.bassDepth = 1.05;
+      break;
+    case "beatStutter":
+      params.bassSwapAt = 0.2;
+      params.handoffAt = 0.78;
+      params.outgoingVolumeHold = 0.55;
+      params.incomingVolumeLag = 0.06;
+      params.bassDepth = 1.15;
       break;
     case "energyWash":
       params.bassSwapAt = 0.28;

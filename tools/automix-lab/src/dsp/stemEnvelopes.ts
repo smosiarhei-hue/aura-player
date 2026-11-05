@@ -36,6 +36,8 @@ export type StemFxAt = {
   hpfA: number;
   lpfB: number;
   echoA: number;
+  reverbA: number;
+  stutterA: number;
   vocalDuckBDb: number;
 };
 
@@ -119,7 +121,7 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
   let echoA = 0;
   if (echoPeak > 0.02) {
     const echoStart =
-      params.archetype === "echoOut" || safe
+      params.archetype === "echoOut" || params.archetype === "spaceReverb" || safe
         ? Math.max(0.08, holdFrac(params) * 0.4)
         : duet
           ? Math.max(bassAt * 0.85, handoff - 0.16)
@@ -134,6 +136,25 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
       p <= echoTop
         ? echoPeak * seg(p, echoStart, echoTop, 0, 1)
         : echoPeak * (1 - seg(p, echoTop, echoDie, 0, 1));
+  }
+
+  const reverbPeak = clamp(dsp.reverbAPeak || 0, 0, 1);
+  let reverbA = 0;
+  if (reverbPeak > 0.02) {
+    const riseStart = Math.max(0.12, handoff * 0.35);
+    const peakAt = clamp(Math.max(riseStart + 0.12, handoff * 0.75), riseStart + 0.08, 0.78);
+    const dieAt = Math.min(0.95, Math.max(peakAt + 0.12, handoff + 0.08));
+    reverbA =
+      p <= peakAt
+        ? reverbPeak * seg(p, riseStart, peakAt, 0, 1)
+        : reverbPeak * (1 - seg(p, peakAt, dieAt, 0, 1));
+  }
+
+  const stutterPeak = clamp(dsp.stutterAPeak || 0, 0, 1);
+  let stutterA = 0;
+  if (stutterPeak > 0.02) {
+    const stStart = Math.max(0.55, handoff - 0.08);
+    stutterA = stutterPeak * seg(p, stStart, Math.min(0.98, handoff + 0.05), 0, 1);
   }
 
   const duckPeak = Math.min(0, dsp.vocalDuckBDb);
@@ -152,6 +173,8 @@ export function stemFxAt(p: number, params: MashupParams): StemFxAt {
     hpfA,
     lpfB,
     echoA,
+    reverbA,
+    stutterA,
     vocalDuckBDb,
   };
 }

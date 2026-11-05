@@ -3,9 +3,11 @@
 /** Maps TZ transition types onto envelope/DSP presets. */
 export type MashupArchetype =
   | "dropSwap" // EQ Blend / Bass Swap
-  | "seamlessLoop" // Long Blend
+  | "seamlessLoop" // Long Blend + phrase loop
   | "energyWash" // Filter Sweep
   | "echoOut"
+  | "spaceReverb" // Plate wash + soft delay (smooth space)
+  | "beatStutter" // 1/16 gate into a drop
   | "cutOnOne"
   | "smartCrossfade";
 
@@ -37,6 +39,15 @@ export type AutoDspRecipe = {
   lpfBPeak: number;
   /** Echo-out peak on A (0…1). */
   echoAPeak: number;
+  /** Plate reverb wash peak on A (0…1) — spaceReverb / smooth LAND glue. */
+  reverbAPeak: number;
+  /** 1/16 stutter intensity peak on A (0…1) near LAND. */
+  stutterAPeak: number;
+  /**
+   * Phrase-loop bars on outgoing A during the blend (0 = off).
+   * Engine enables BufferSource loop for that many bars, then opens for LAND.
+   */
+  loopBarsA: number;
   /** Offline-bake stems before play (stronger than live Mid/Side alone). */
   bakeStems: boolean;
   /** Bake A as instrumental slice (safe anytime A has outro vocals). */
@@ -124,6 +135,9 @@ export const defaultDsp = (): AutoDspRecipe => ({
   hpfAPeak: 0.85,
   lpfBPeak: 0.7,
   echoAPeak: 0.5,
+  reverbAPeak: 0,
+  stutterAPeak: 0,
+  loopBarsA: 0,
   bakeStems: true,
   bakeInstrA: true,
   bakeInstrB: false,
@@ -516,6 +530,17 @@ export function phaseLabel(p: number, params: MashupParams): string {
     if (p < params.handoffAt) return "ECHO→B";
     return "LAND";
   }
+  if (params.archetype === "spaceReverb") {
+    if (p < params.bassSwapAt) return "SPACE WASH";
+    if (p < params.handoffAt) return "PLATE→B";
+    return "LAND";
+  }
+  if (params.archetype === "beatStutter") {
+    if (p < params.handoffAt - 0.08) return "BUILD";
+    if (p < params.handoffAt + 0.06) return "1/16 STUTTER";
+    return "LAND";
+  }
+  if (params.archetype === "seamlessLoop" && p < params.handoffAt) return "PHRASE LOOP";
   if (params.archetype === "energyWash" && p < params.bassSwapAt) return "FILTER";
   if (p < params.bassSwapAt) {
     if (params.dsp.mashupMode === "acapellaDrop") return "ACAPELLA";

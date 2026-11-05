@@ -42,7 +42,12 @@ export const PREMIUM_FEATURES = [
   {
     id: "tzPlanner",
     label: "Transition Planner §2.4",
-    detail: "EQ / Filter / Echo / Long / Cut / Smart — по BPM+key+outro",
+    detail: "EQ / Filter / Echo / Space / Long / Stutter / Cut — по BPM+key+outro",
+  },
+  {
+    id: "fxPalette",
+    label: "Loops · Reverb · Delay",
+    detail: "Phrase loop + plate wash + tempo echo на LAND (как DualDeck / MixFX)",
   },
   {
     id: "oneBass",

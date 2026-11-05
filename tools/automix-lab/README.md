@@ -79,7 +79,8 @@ npm run dev
 | **Моя волна** | Rotor + feedback started/finished/skip |
 | **BPM + Camelot** | Beatmatch + harmonic pitch ±200¢ |
 | **Фраза 8/16** | Окно на сетке тактов |
-| **TZ §2.4** | EQ / Filter / Echo / Long / Cut / Smart |
+| **TZ §2.4** | EQ / Filter / Echo / Space / Long / Stutter / Cut |
+| **Loops · Reverb · Delay** | Phrase loop + plate wash + tempo echo на DualDeck-цепочке |
 | **ONE BASS** | Бас A → B на доле |
 | **ONE VOCAL / Safe Exit** | Dual mashup только при instrumental outro A |
 | **Mix Critic** | Vocal Safe + Bass Surgeon |
