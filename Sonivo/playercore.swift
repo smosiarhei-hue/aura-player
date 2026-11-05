@@ -2719,20 +2719,27 @@ final class PlayerCore {
         landOverlapToken = token
         let overlap = min(0.9, max(0.35, requested))
         let started = Date()
-        let timer = Timer(timeInterval: overlap / 16.0, repeats: true) { [weak self, weak stem, weak dry] timer in
+        // Player nodes are not Sendable. Remember which deck is the bake and
+        // touch both only on the main actor, or Swift 6 rejects the timer hop.
+        guard dry !== stem else { return }
+        let stemIsA = stem === playerA
+        let timer = Timer(timeInterval: overlap / 16.0, repeats: true) { [weak self] timer in
             let elapsed = -started.timeIntervalSinceNow
             let u = min(1, max(0, elapsed / overlap))
             let ease = u * u * (3 - 2 * u)
-            stem?.volume = Float(cos(ease * Double.pi * 0.5))
-            dry?.volume = Float(sin(ease * Double.pi * 0.5))
-            guard u >= 1 else { return }
-            timer.invalidate()
+            let stemGain = Float(cos(ease * Double.pi * 0.5))
+            let dryGain = Float(sin(ease * Double.pi * 0.5))
+            let done = u >= 1
+            if done { timer.invalidate() }
             Task { @MainActor [weak self] in
                 guard let self, self.landOverlapToken == token else { return }
+                let baked = stemIsA ? self.playerA : self.playerB
+                let song = stemIsA ? self.playerB : self.playerA
+                baked.volume = done ? 0 : stemGain
+                song.volume = done ? 1 : dryGain
+                guard done else { return }
                 self.landOverlapTimer = nil
-                stem?.volume = 0
-                stem?.stop()
-                dry?.volume = 1
+                baked.stop()
                 self.clearMashupBakeTemps()
             }
         }
