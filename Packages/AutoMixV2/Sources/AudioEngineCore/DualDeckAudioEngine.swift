@@ -4,6 +4,7 @@
 import Foundation
 import MixModels
 import AudioToolbox
+import QuartzCore
 
 /// Invariant: graph, nodes, slots and fade state are accessed only on controlQueue.
 /// Public async methods enqueue commands; decoder queues never touch audio nodes.
