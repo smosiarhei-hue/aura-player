@@ -664,6 +664,13 @@ final class PlayerCore {
     /// Live outgoing-deck position (never the Automix B handoff snap).
     /// Used for scrub/seek while a mashup is running — seek cancels the mix on this timeline.
     var playbackProgress: Double {
+        // Hold the scrubbed target while AVPlayer is still seeking — otherwise the
+        // periodic observer flashes t=0 after Automix LAND reloads a stream.
+        if let pending = lyricsSeekTarget,
+           pending.track == currentTrack?.id,
+           pending.generation == generation {
+            return pending.seconds
+        }
         // Stem/master bake CAF starts at t=0; map wall-clock back onto track A's cue.
         if isTransitioning,
            mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake,
@@ -801,6 +808,15 @@ final class PlayerCore {
                     self.isStreamBuffering = p.timeControlStatus == .waitingToPlayAtSpecifiedRate
                     let sec = CMTimeGetSeconds(time)
                     if sec.isFinite && sec >= 0 {
+                        // Ignore pre-seek samples (often t=0) while a scrub is in flight.
+                        if let pending = self.lyricsSeekTarget,
+                           pending.track == self.currentTrack?.id,
+                           pending.generation == self.generation {
+                            if abs(sec - pending.seconds) > 1.25 {
+                                return
+                            }
+                            self.lyricsSeekTarget = nil
+                        }
                         self.progress = sec
 
                         if let item = self.activeStreamingPlayer.currentItem {
@@ -1901,27 +1917,54 @@ final class PlayerCore {
             let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
             let seekID = UUID()
             lyricsSeekTarget = (seekID, currentTrack?.id, generation, clamped)
-            activeStreamingPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            activeStreamingPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
                 Task { @MainActor [weak self] in
                     guard let self, self.lyricsSeekTarget?.id == seekID else { return }
+                    if finished {
+                        self.progress = clamped
+                        self.pausedProgress = clamped
+                    }
                     self.lyricsSeekTarget = nil
                 }
             }
+        } else if let file = activeAudioFile {
+            // After Automix LAND we already have dry B open. Reschedule in place —
+            // start(at:) can reject the cache on quality and flash a cold stream at t=0.
+            seekLocalFile(file, to: clamped)
+        } else if let url = activeLocalURL,
+                  let reopened = try? AVAudioFile(forReading: url),
+                  reopened.length > 0 {
+            activeAudioFile = reopened
+            seekLocalFile(reopened, to: clamped)
+        } else if isPlaying {
+            start(at: clamped)
         } else {
             pausedProgress = clamped
             anchorOffset = clamped
-            if isPlaying {
-                start(at: clamped)
-            } else if let file = activeAudioFile {
-                localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
-                activePlayer.stop()
-                scheduleLocalSegment(file, on: activePlayer, at: clamped)
-            }
+            anchorDate = nil
         }
         pausedProgress = clamped
         savePlaybackState()
         lastNowPlayingSync = nil
         updateNowPlayingInfo()
+    }
+
+    /// Seek the open AVAudioFile without tearing down the LAND handoff.
+    private func seekLocalFile(_ file: AVAudioFile, to seconds: Double) {
+        let pos = PlaybackResumePolicy.position(seconds, duration: duration)
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+        activePlayer.stop()
+        scheduleLocalSegment(file, on: activePlayer, at: pos)
+        pausedProgress = pos
+        anchorOffset = pos
+        progress = pos
+        if isPlaying {
+            activePlayer.volume = max(activePlayer.volume, volume)
+            activePlayer.play()
+            anchorDate = Date()
+        } else {
+            anchorDate = nil
+        }
     }
 
     func stopAndClear() {

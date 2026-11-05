@@ -70,7 +70,14 @@ class PlaybackStabilityTests(unittest.TestCase):
         seek = block('func seek(to seconds:', 'func stopAndClear')
         self.assertIn('guard seconds.isFinite', seek)
         self.assertIn('else if let file = activeAudioFile', seek)
-        self.assertIn('scheduleLocalSegment(file, on: activePlayer, at: clamped)', seek)
+        self.assertIn('seekLocalFile(file, to: clamped)', seek)
+        self.assertIn('private func seekLocalFile', seek)
+        self.assertIn('scheduleLocalSegment(file, on: activePlayer, at: pos)', seek)
+        # After Automix LAND, never bounce local scrub through start() → cold stream.
+        self.assertIn('start(at:) can reject the cache on quality', seek)
+        local = block('private func seekLocalFile', 'func stopAndClear')
+        self.assertIn('anchorDate = Date()', local)
+        self.assertIn('activePlayer.play()', local)
 
     def test_resume_uses_actual_backend_and_migration_detaches_streams(self):
         resume = block('func resume()', 'func next()')
