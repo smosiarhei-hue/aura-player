@@ -270,7 +270,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Переходы между треками")
                 } footer: {
-                    Text("Gapless — без пауз. Кроссфейд — по слайдеру. AutoMix Mashup — beatmatch + мэшап. Duet — вокал A + полный микс B, затем LAND (иначе Automix).")
+                    Text("Gapless — без пауз. Кроссфейд — по слайдеру. AutoMix Mashup — beatmatch + мэшап. Duet — вокал A + полный микс B, затем LAND (иначе Automix). Первый AutoMix один раз качает HTDemucs (~400 МБ) и считает стемы, пока трек играет. На сведении бейдж пишет HTDemucs.")
                 }
 
                 Section {

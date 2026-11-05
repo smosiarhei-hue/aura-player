@@ -2930,31 +2930,55 @@ final class PlayerCore {
                     // ending mid-window previously froze B after a stop/reload race).
                     let stemPadSec = 4.0
                     let bakeStartedAt = Date()
-                    let bakeResult: Result<(outgoing: URL, incoming: URL), Error> = await Task.detached(priority: .userInitiated) {
-                        do {
-                            if duetBake {
-                                return .success(try MidSideStemBaker.bakeDuetStemPair(
+                    let neuralPair: (outgoing: URL, incoming: URL)?
+                    do {
+                        neuralPair = try await HTDemucsMashupBake.stemPair(
+                            duet: duetBake,
+                            outgoingURL: outURL,
+                            incomingURL: inURL,
+                            cueA: cueA,
+                            cueB: cueB,
+                            blendSec: blend,
+                            handoffProgress: handoff,
+                            padSec: stemPadSec
+                        )
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        neuralPair = nil
+                        SonivoDiagnostics.log("[Mashup] HTDemucs bake error: \(error.localizedDescription)", tag: "AUDIO")
+                    }
+                    let bakeResult: Result<(outgoing: URL, incoming: URL), Error>
+                    if let neuralPair {
+                        bakeResult = .success(neuralPair)
+                    } else {
+                        SonivoDiagnostics.log("[Mashup] HTDemucs not on disk yet — mid/side bake", tag: "AUDIO")
+                        bakeResult = await Task.detached(priority: .userInitiated) {
+                            do {
+                                if duetBake {
+                                    return .success(try MidSideStemBaker.bakeDuetStemPair(
+                                        outgoingURL: outURL,
+                                        incomingURL: inURL,
+                                        cueA: cueA,
+                                        cueB: cueB,
+                                        blendSec: blend,
+                                        padSec: stemPadSec
+                                    ))
+                                }
+                                return .success(try MidSideStemBaker.bakeAutomixStemPair(
                                     outgoingURL: outURL,
                                     incomingURL: inURL,
                                     cueA: cueA,
                                     cueB: cueB,
                                     blendSec: blend,
+                                    handoffProgress: handoff,
                                     padSec: stemPadSec
                                 ))
+                            } catch {
+                                return .failure(error)
                             }
-                            return .success(try MidSideStemBaker.bakeAutomixStemPair(
-                                outgoingURL: outURL,
-                                incomingURL: inURL,
-                                cueA: cueA,
-                                cueB: cueB,
-                                blendSec: blend,
-                                handoffProgress: handoff,
-                                padSec: stemPadSec
-                            ))
-                        } catch {
-                            return .failure(error)
-                        }
-                    }.value
+                        }.value
+                    }
                     // Bake ran while live A kept playing — enter the CAF mid-window so the
                     // playhead doesn't jump backward by the bake latency.
                     let bakeLag = min(max(0, Date().timeIntervalSince(bakeStartedAt)), max(0, blend - 1.5))
@@ -3012,7 +3036,9 @@ final class PlayerCore {
                         self.applyMashupTransitionEQ(progress: enterP)
                         AutoMixDJEngine.shared.markMashupProgress(enterP)
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
-                        AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: enterP)
+                        AutoMixDJEngine.shared.statusBadge = neuralPair == nil
+                            ? self.activeMashupStyle.phaseLabel(progress: enterP)
+                            : "HTDemucs"
                         let lockedA = self.activeMashupStyle.rateA
                         let lockedB = self.activeMashupStyle.rateB
                         let pitchB = self.activeMashupStyle.pitchCentsB
@@ -3031,7 +3057,7 @@ final class PlayerCore {
                                 lockedB,
                                 pitchB,
                                 self.activeMashupStyle.automixIncomingBedGain,
-                                MidSideStemBaker.lastSeparationBackend.rawValue
+                                neuralPair == nil ? MidSideStemBaker.lastSeparationBackend.rawValue : "htdemucs"
                             )
                         )
                         self.startTransitionTimer()

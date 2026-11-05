@@ -70,4 +70,21 @@ struct AudioEngineCoreTests {
         }
         #expect(maxErr < 1e-4)
     }
+
+    @Test("HTDemucs land bloom returns the tail to the dry mix")
+    func htdemucsLandBloom() {
+        let dry: [Float] = [1, 1, 1, 1]
+        let stem: [Float] = [0, 0, 0, 0]
+        let vocal = HTDemucsWindowMixer.render(
+            dryL: dry, dryR: dry, stemL: stem, stemR: stem,
+            amount: 1, untilFrame: nil, fadeFrames: 1
+        )
+        #expect(vocal.left == stem)
+        let bloom = HTDemucsWindowMixer.render(
+            dryL: dry, dryR: dry, stemL: stem, stemR: stem,
+            amount: 1, untilFrame: 2, fadeFrames: 1
+        )
+        #expect(bloom.left[0] == 0)
+        #expect(bloom.left[3] == 1)
+    }
 }

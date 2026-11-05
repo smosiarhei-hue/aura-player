@@ -5,6 +5,7 @@
 // AutoMix Mashup / Duet mode — so each mashup transition can be pair-specific
 // without enabling DualDeck V2 ownership.
 
+import AudioEngineCore
 import Foundation
 import MixModels
 import MixPlanner
@@ -22,12 +23,15 @@ final class AutoMixV2AnalysisRuntime {
     private let trackCache: TrackFileCache?
     private var observerTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
+    private var stemPrepTask: Task<Void, Never>?
     private var observedPair = ""
     private var plannedPair = ""
     private(set) var currentProfile: TrackProfile?
     private(set) var nextProfile: TrackProfile?
     private(set) var transitionPlan: MixModels.TransitionPlan?
     private(set) var pipelineStatus = "Ожидание воспроизведения"
+    /// Shown on the player while HTDemucs downloads or separates the next window.
+    private(set) var stemStatus: String?
     private(set) var lastError: String?
 
     private init() {
@@ -141,6 +145,8 @@ final class AutoMixV2AnalysisRuntime {
         nextProfile = nil
         lastError = nil
         analysisTask?.cancel()
+        stemPrepTask?.cancel()
+        stemStatus = nil
 
         // Mashup / Duet needs real BPM/grid for beatmatch — allow download when those modes are on.
         let allowDownload = AutoMixEngineSelectionStore.shared.isV2Enabled
@@ -150,6 +156,27 @@ final class AutoMixV2AnalysisRuntime {
         analysisTask = Task { @MainActor [weak self] in
             guard let self else { return }
             pipelineStatus = allowDownload ? "Анализ / подготовка BPM пары" : "Анализ текущего трека"
+            if allowDownload, HTDemucsModelStore.shared.installedPackageURL() == nil {
+                stemStatus = "HTDemucs · модель 0%"
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        _ = try await HTDemucsModelStore.shared.prepare { fraction in
+                            let message = "HTDemucs · модель \(Int((fraction * 100).rounded()))%"
+                            Task { @MainActor in
+                                if self.stemStatus?.hasPrefix("HTDemucs · модель") == true {
+                                    self.stemStatus = message
+                                }
+                            }
+                        }
+                    } catch {
+                        if self.stemStatus?.hasPrefix("HTDemucs · модель") == true {
+                            let text = (error as? HTDemucsModelError)?.description ?? "нет сети, повторю"
+                            self.stemStatus = "HTDemucs · \(text)"
+                        }
+                    }
+                }
+            }
             do {
                 let currentFile = try await self.resolveFile(for: current, id: currentID, allowDownload: allowDownload)
                 let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)
@@ -190,6 +217,20 @@ final class AutoMixV2AnalysisRuntime {
                 pipelineStatus = plan.type == .none
                     ? "План запретил музыкальный переход; будет кроссфейд"
                     : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
+                if plan.type != .none {
+                    let outFile = currentFile
+                    let inFile = nextFile
+                    stemPrepTask?.cancel()
+                    let pairToken = key
+                    stemPrepTask = Task { @MainActor [weak self] in
+                        await HTDemucsMashupBake.prewarm(outgoingFile: outFile, incomingFile: inFile) { message in
+                            Task { @MainActor in
+                                guard self?.observedPair == pairToken else { return }
+                                self?.stemStatus = message
+                            }
+                        }
+                    }
+                }
             } catch {
                 guard observedPair == key, !Self.isCancellation(error) else { return }
                 transitionPlan = nil

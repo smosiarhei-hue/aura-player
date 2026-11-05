@@ -7,6 +7,7 @@ import Combine
 
 struct PlayerScreenV2: View {
     @State private var player = ActivePlayerPresentation()
+    @State private var analysis = AutoMixV2AnalysisRuntime.shared
     @State private var library = LibraryStore.shared
     @Binding var isPresented: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1029,6 +1030,16 @@ struct PlayerScreenV2: View {
                 phaseLabel: player.mashupPhaseLabel
             )
             .transition(.opacity)
+        } else if let stem = analysis.stemStatus {
+            Text(stem)
+                .font(SN.text(.caption2, .semibold))
+                .foregroundStyle(Color.white.opacity(0.88))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
+                .transition(.opacity)
         } else {
             qualityBadgeButton
                 .transition(.opacity)
