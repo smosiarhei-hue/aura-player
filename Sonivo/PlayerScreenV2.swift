@@ -116,15 +116,12 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Video is a background layer, never a different layout mode.
-                // Keep the same reserved artwork space as readiness/setting changes.
-                // Apple Music Now Playing: dominant square cover, then controls on the wash.
-                let coverInset: CGFloat = 24
-                let standardArtworkStageHeight = min(totalWidth - coverInset * 2, totalHeight * 0.50)
+                // Apple Music Now Playing: edge-to-edge top art that soft-fades into
+                // frosted controls. Height is near-square but full width — not an inset card.
+                let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.56)
 
                 ZStack(alignment: .top) {
-                    // Full-bleed blurred cover atmosphere (native UIBlurEffect) — like Apple Music.
-                    // The sharp cover sits ON TOP of this; nothing dissolves the artwork itself.
+                    // Blurred/color-matched wash under the dissolve — continues the cover.
                     NowPlayingAtmosphere(
                         primary: coverWashPrimary,
                         secondary: coverWashSecondary,
@@ -137,7 +134,7 @@ struct PlayerScreenV2: View {
 
                     background
                         .frame(width: totalWidth, height: totalHeight)
-                        .opacity(showLyricsMode || isFullScreenVideoShot ? 1 : 0.18)
+                        .opacity(showLyricsMode || isFullScreenVideoShot ? 1 : 0.10)
                         .clipped()
 
                     // Attach the native rendering layer during preparation too. Readiness
@@ -160,23 +157,24 @@ struct PlayerScreenV2: View {
                         .transition(LyricsPresentationMotion.transition(reduceMotion: reduceMotion))
                         .zIndex(2)
                     } else {
-                        VStack(spacing: 0) {
-                            topHeader
-                                .padding(.top, topInset)
-                                .padding(.horizontal, 20)
-                                .zIndex(3)
-
+                        // Art bleeds under the status bar; grabber floats on top of it.
+                        ZStack(alignment: .top) {
                             ScrollView(.vertical) {
                                 VStack(spacing: 0) {
                                     artworkStage(width: totalWidth, height: standardArtworkStageHeight)
                                         .frame(width: totalWidth, height: standardArtworkStageHeight)
-                                        .padding(.top, 8)
+                                    // Title sits in the dissolve, same vertical band as Apple Music.
                                     lowerDeck(safeAreaBottom: safeBottom)
+                                        .padding(.top, -standardArtworkStageHeight * 0.24)
                                 }
                                 .frame(maxWidth: .infinity)
                             }
                             .scrollIndicators(.hidden)
                             .accessibilityLabel("Плеер и дополнительные действия")
+
+                            topHeader
+                                .padding(.top, topInset)
+                                .padding(.horizontal, 20)
                         }
                         .transition(LyricsPresentationMotion.transition(reduceMotion: reduceMotion))
                     }
@@ -319,25 +317,26 @@ struct PlayerScreenV2: View {
                 close()
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(SN.ink)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(SN.ink.opacity(0.88))
                     .frame(width: 36, height: 36)
-                    .glassCircle()
+                    .contentShape(Rectangle())
             }
             .buttonStyle(TactileButtonStyle(scale: 0.90))
+            .accessibilityLabel("Свернуть плеер")
 
             Spacer()
 
             Capsule()
-                .fill(SN.inkMuted)
-                .frame(width: 36, height: 5)
+                .fill(SN.ink.opacity(0.40))
+                .frame(width: 40, height: 5)
 
             Spacer()
 
-            moreMenuButton
+            Color.clear.frame(width: 36, height: 36)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 40)
+        .frame(height: 36)
         .contentShape(Rectangle())
         .simultaneousGesture(headerCloseGesture)
     }
@@ -521,11 +520,10 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        // Apple Music: one dominant continuous square. Never mask/dissolve the art.
-        let cardSide = min(width - 48, height)
-        let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 4.0
-        let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.06, abs(coverDragX / width) * 0.06))
-        let playScale = player.isPlaying ? 1.0 : 0.92
+        // Apple Music: edge-to-edge top art, soft dissolve into the frosted wash below.
+        let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 3.0
+        let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.04, abs(coverDragX / width) * 0.04))
+        let playScale = player.isPlaying ? 1.0 : 0.97
 
         return ZStack {
             if isFullScreenVideoShot {
@@ -534,14 +532,9 @@ struct PlayerScreenV2: View {
                     .frame(width: width, height: height)
             } else {
                 artwork
-                    .frame(width: cardSide, height: cardSide)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
-                    )
-                    .shadow(color: .black.opacity(0.55), radius: 28, y: 14)
-                    .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+                    .frame(width: width, height: height)
+                    .clipped()
+                    .mask(coverDissolveMask)
             }
         }
         .frame(width: width, height: height)
@@ -568,6 +561,22 @@ struct PlayerScreenV2: View {
         )
         .animation(.interactiveSpring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
+    }
+
+    /// Soft vertical dissolve so the sharp cover melts into the blurred atmosphere.
+    private var coverDissolveMask: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black, location: 0.00),
+                .init(color: .black, location: 0.46),
+                .init(color: .black.opacity(0.88), location: 0.60),
+                .init(color: .black.opacity(0.48), location: 0.76),
+                .init(color: .black.opacity(0.14), location: 0.90),
+                .init(color: .clear, location: 1.00)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 
     @ViewBuilder
@@ -819,14 +828,16 @@ struct PlayerScreenV2: View {
     }
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 22) {
             metadataRow
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
             FluidVolumeSlider()
                 .accessibilityElement(children: .contain)
+            primaryUtilityRow
 
             trackWaveButton
+                .padding(.top, 8)
             if let error = YandexMusicService.shared.waveError {
                 Text(error).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -843,15 +854,50 @@ struct PlayerScreenV2: View {
             Label("Действия ниже", systemImage: "chevron.down")
                 .font(SN.text(.caption, .medium))
                 .foregroundStyle(SN.inkMuted)
-                .padding(.top, 4)
+                .padding(.top, 8)
             secondaryPlayerActions
-                .padding(.top, 20)
+                .padding(.top, 12)
 
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 18)
+        .padding(.horizontal, 28)
+        .padding(.top, 8)
         .padding(.bottom, max(safeAreaBottom, 20))
         .frame(maxWidth: .infinity)
+    }
+
+    /// Apple Music first-screen footer: lyrics · AirPlay · queue.
+    private var primaryUtilityRow: some View {
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode.toggle() }
+            } label: {
+                Image(systemName: showLyricsMode ? "quote.bubble.fill" : "quote.bubble")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(SN.ink.opacity(0.88))
+                    .frame(width: tapSide, height: tapSide)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.92))
+            .frame(maxWidth: .infinity)
+            .disabled(track == nil)
+            .accessibilityLabel("Текст песни")
+
+            AirPlayButtonView()
+                .frame(width: tapSide, height: tapSide)
+                .frame(maxWidth: .infinity)
+
+            Button { openModal(.queue) } label: {
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(SN.ink.opacity(0.88))
+                    .frame(width: tapSide, height: tapSide)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(TactileButtonStyle(scale: 0.92))
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Очередь")
+        }
+        .padding(.top, 4)
     }
 
     private var trackWaveButton: some View {
@@ -901,13 +947,7 @@ struct PlayerScreenV2: View {
             Text("Дополнительно")
                 .font(SN.text(.caption, .semibold))
                 .foregroundStyle(SN.inkMuted)
-            // Existing native actions remain below the primary track-wave button.
             HStack(spacing: 0) {
-                AirPlayButtonView()
-                    .frame(width: tapSide, height: tapSide)
-                    .glassCircle()
-                    .frame(maxWidth: .infinity)
-
                 sleepTimerBottomButton
                     .frame(maxWidth: .infinity)
 
@@ -923,14 +963,8 @@ struct PlayerScreenV2: View {
                 .accessibilityValue(player.eqEnabled ? "Включён" : "Выключен")
                 .frame(maxWidth: .infinity)
 
-                GlassIconButton(
-                    systemImage: "list.bullet",
-                    tint: SN.inkMuted,
-                    accessibilityLabel: "Очередь"
-                ) {
-                    openModal(.queue)
-                }
-                .frame(maxWidth: .infinity)
+                lyricsToggleButton
+                    .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 4)
         }
@@ -978,7 +1012,7 @@ struct PlayerScreenV2: View {
         let current = track
         return HStack(alignment: .center, spacing: 14) {
             Button(action: openArtist) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     MarqueeText(
                         text: current?.title ?? "Не играет",
                         font: SN.rounded(.title2, .bold),
@@ -988,7 +1022,7 @@ struct PlayerScreenV2: View {
                     MarqueeText(
                         text: current?.artist ?? "",
                         font: SN.rounded(.body, .medium),
-                        color: SN.inkMuted,
+                        color: SN.ink.opacity(0.72),
                         height: 22
                     )
                 }
@@ -997,7 +1031,7 @@ struct PlayerScreenV2: View {
             .buttonStyle(.plain)
             .disabled(current == nil || resolvingArtist)
 
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 Button {
                     guard let current else { return }
                     Haptics.tap(.medium)
@@ -1005,18 +1039,17 @@ struct PlayerScreenV2: View {
                 } label: {
                     let favorite = current.map(library.isTrackFavorite) ?? false
                     Image(systemName: favorite ? "star.fill" : "star")
-                        .font(.system(size: 21, weight: .semibold))
-                        .foregroundStyle(favorite ? SN.amber : SN.inkMuted)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(favorite ? SN.amber : SN.ink.opacity(0.90))
                         .symbolEffect(.bounce, value: favorite)
                         .contentTransition(.symbolEffect(.replace))
                         .frame(width: tapSide, height: tapSide)
-                        .glassCircle()
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(TactileButtonStyle(scale: 0.90))
                 .disabled(current == nil)
                 .accessibilityLabel(current.map(library.isTrackFavorite) == true ? "Убрать из избранного" : "В избранное")
 
-                lyricsToggleButton
                 moreMenuButton
             }
         }
@@ -1104,54 +1137,44 @@ struct PlayerScreenV2: View {
         PlaybackQualityFacts(codec: player.currentCodec, bitrate: player.currentBitrate).badge
     }
     private var transportControls: some View {
-        GlassEffectContainer(spacing: 18) {
         HStack(spacing: 0) {
             Button {
                 Haptics.tap(.light)
                 player.shuffle.toggle()
             } label: {
                 Image(systemName: "shuffle")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(player.shuffle ? SN.amber : SN.inkMuted)
-                    .frame(width: 48, height: 48)
-                    .glassCircle()
-                    .contentShape(Circle())
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(player.shuffle ? SN.amber : SN.ink.opacity(0.55))
+                    .frame(width: 44, height: 56)
+                    .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
             .accessibilityLabel(player.shuffle ? "Перемешивание включено" : "Перемешать")
 
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 22, weight: .bold))
-                    .frame(width: 56, height: 56)
-                    .glassCircle()
+                    .font(.system(size: 28, weight: .bold))
+                    .frame(width: 64, height: 64)
+                    .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
 
             Button(action: togglePlayback) {
-                ZStack {
-                    Circle()
-                        .fill(SN.ink)
-                        .frame(width: 70, height: 70)
-                        .sonivoMetal(corner: 35, emphasis: 0.85, animated: player.isPlaying)
-                        .shadow(color: SN.ink.opacity(0.20), radius: 14, y: 4)
-                        .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
-
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 30, weight: .black))
-                        .foregroundStyle(SN.bg)
-                        .offset(x: player.isPlaying ? 0 : 2)
-                        .contentTransition(.symbolEffect(.replace.byLayer))
-                }
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 40, weight: .bold))
+                    .offset(x: player.isPlaying ? 0 : 2)
+                    .contentTransition(.symbolEffect(.replace.byLayer))
+                    .frame(width: 72, height: 72)
+                    .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
             .disabled(player.isLoading)
 
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 22, weight: .bold))
-                    .frame(width: 56, height: 56)
-                    .glassCircle()
+                    .font(.system(size: 28, weight: .bold))
+                    .frame(width: 64, height: 64)
+                    .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
 
@@ -1164,18 +1187,17 @@ struct PlayerScreenV2: View {
                 }
             } label: {
                 Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(player.repeatMode != .off ? SN.amber : SN.inkMuted)
-                    .frame(width: 48, height: 48)
-                    .glassCircle()
-                    .contentShape(Circle())
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(player.repeatMode != .off ? SN.amber : SN.ink.opacity(0.55))
+                    .frame(width: 44, height: 56)
+                    .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
             .accessibilityLabel("Повтор")
         }
         .foregroundStyle(SN.ink)
         .buttonStyle(TactileButtonStyle(scale: 0.94))
-        }
+        .padding(.vertical, 4)
     }
 
     private var moreMenuButton: some View {
@@ -1298,10 +1320,10 @@ struct PlayerScreenV2: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(SN.inkMuted)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(SN.ink.opacity(0.90))
                 .frame(width: tapSide, height: tapSide)
-                .glassCircle()
+                .contentShape(Rectangle())
         }
         .accessibilityLabel("Ещё")
     }
@@ -2475,9 +2497,8 @@ struct PlayerQualityModalView: View {
 
 // MARK: - Now Playing atmosphere (Apple Music style)
 //
-// Full-bleed cover, then native UIBlurEffect. The sharp square cover sits above
-// this layer — never dissolve/mask the artwork itself. Liquid Glass controls
-// (.glassEffect) refract this wash.
+// Full-bleed color-matched wash behind the dissolving sharp cover. Top stays
+// relatively clear so the sharp art reads; bottom darkens into frosted controls.
 // https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views
 
 private struct NowPlayingAtmosphere: UIViewRepresentable {
@@ -2499,8 +2520,9 @@ private struct NowPlayingAtmosphere: UIViewRepresentable {
 private final class NowPlayingAtmosphereView: UIView {
     private let primaryView = UIImageView()
     private let secondaryView = UIImageView()
-    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterialDark))
+    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterialDark))
     private let dimView = UIView()
+    private let topClear = CAGradientLayer()
     private let bottomFade = CAGradientLayer()
 
     var primaryImage: UIImage? {
@@ -2526,15 +2548,25 @@ private final class NowPlayingAtmosphereView: UIView {
         }
         blurView.isUserInteractionEnabled = false
         addSubview(blurView)
+        // Soft overall dim so palette colors remain visible under controls.
         dimView.isUserInteractionEnabled = false
-        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.42)
+        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.28)
         addSubview(dimView)
+        // Keep the upper third less fogged — sharp cover owns that region.
+        topClear.colors = [
+            UIColor.black.withAlphaComponent(0.35).cgColor,
+            UIColor.clear.cgColor
+        ]
+        topClear.locations = [0.0, 1.0]
+        // Soft downward darkening into the control deck.
         bottomFade.colors = [
             UIColor.clear.cgColor,
-            UIColor.black.withAlphaComponent(0.55).cgColor,
-            UIColor.black.withAlphaComponent(0.82).cgColor
+            UIColor.black.withAlphaComponent(0.35).cgColor,
+            UIColor.black.withAlphaComponent(0.72).cgColor,
+            UIColor.black.withAlphaComponent(0.88).cgColor
         ]
-        bottomFade.locations = [0.0, 0.55, 1.0]
+        bottomFade.locations = [0.0, 0.42, 0.72, 1.0]
+        layer.addSublayer(topClear)
         layer.addSublayer(bottomFade)
     }
 
@@ -2544,12 +2576,13 @@ private final class NowPlayingAtmosphereView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // Slight overscan so aspect-fill never shows edges while drifting.
-        let overscan = bounds.insetBy(dx: -bounds.width * 0.08, dy: -bounds.height * 0.08)
+        // Overscan so aspect-fill never flashes edges during Automix crossfade.
+        let overscan = bounds.insetBy(dx: -bounds.width * 0.06, dy: -bounds.height * 0.06)
         primaryView.frame = overscan
         secondaryView.frame = overscan
         blurView.frame = bounds
         dimView.frame = bounds
+        topClear.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height * 0.38)
         bottomFade.frame = bounds
         applyAlphas()
     }
