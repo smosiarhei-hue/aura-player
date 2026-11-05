@@ -483,10 +483,10 @@ export class AutomixEngine {
       liveInstrScale = 0;
     }
 
-    onStatus?.(this.neuralActive ? "Сведение · HTDemucs" : "Сведение…");
-    this.processingNote = this.neuralActive ? "HTDemucs" : (dsp.decisions[0] ?? modeLabel);
+    onStatus?.(this.neuralActive ? "Сведение · HTDemucs" : "Сведение · полный микс");
+    this.processingNote = this.neuralActive ? "HTDemucs" : "полный микс";
 
-    const musical = (rate: number) => Math.min(1.03, Math.max(0.97, rate || 1));
+    const musical = (rate: number) => Math.min(1.04, Math.max(0.96, rate || 1));
     const previousA = this.chainA;
     const previousB = this.chainB;
     this.chainA = null;
@@ -858,13 +858,37 @@ export class AutomixEngine {
     chain.source.loop = false;
   }
 
+  /**
+   * iOS 27 AutoMix keeps both songs full-band and beatmatched.
+   * The older filter, echo and plate read as the underwater wash Apple dropped.
+   */
+  private appleBlend(): boolean {
+    return this.params.dsp.mashupMode !== "oneBarDuet";
+  }
+
+  private heardVolumes(progress: number): { outgoing: number; incoming: number } {
+    if (!this.appleBlend()) return volumesAt(progress, this.params);
+    const t = progress * progress * (3 - 2 * progress);
+    return {
+      outgoing: Math.cos(t * Math.PI * 0.5),
+      incoming: Math.sin(t * Math.PI * 0.5),
+    };
+  }
+
+  private heardBass(progress: number): { outgoing: number; incoming: number } {
+    if (!this.appleBlend()) return bassGainDbAt(progress, this.params);
+    const t = progress * progress * (3 - 2 * progress);
+    return { outgoing: -3.5 * t, incoming: -3.5 * (1 - t) };
+  }
+
   private applyEnvelope(progress: number, audioTime: number, immediate: boolean) {
     if (!this.chainA || !this.chainB) return;
-    const vols = volumesAt(progress, this.params);
-    const bass = bassGainDbAt(progress, this.params);
+    const vols = this.heardVolumes(progress);
+    const bass = this.heardBass(progress);
     const rates = playbackRatesAt(progress, this.params);
     const cents = pitchCentsAt(progress, this.params);
     const fx = stemFxAt(progress, this.params);
+    const apple = this.appleBlend();
 
     setParam(this.chainA.gain.gain, vols.outgoing, audioTime, immediate, 0.18);
     setParam(this.chainB.gain.gain, vols.incoming, audioTime, immediate, 0.18);
@@ -875,7 +899,7 @@ export class AutomixEngine {
     // Modern Duet: keep A vocal clear; soft mid duck on B for air.
     // AutoMix: duck gated B only.
     const duet = this.params.dsp.mashupMode === "oneBarDuet";
-    if (this.neuralActive) {
+    if (apple || this.neuralActive) {
       this.chainA.stem.setDry(audioTime, immediate);
       this.chainB.stem.setDry(audioTime, immediate);
       this.chainA.eq.setVocalDuckDb(0, audioTime, immediate);
@@ -915,16 +939,27 @@ export class AutomixEngine {
     }
     }
 
-    // HPF belongs to LAND (stem envelope), not the whole mashup.
-    this.chainA.filters.setHighPass(fx.hpfA, audioTime, immediate);
-    this.chainA.filters.setLowPass(0, audioTime, immediate);
-    this.chainB.filters.setHighPass(0, audioTime, immediate);
-    this.chainB.filters.setLowPass(fx.lpfB, audioTime, immediate);
+    if (apple) {
+      this.chainA.filters.setHighPass(0, audioTime, immediate);
+      this.chainA.filters.setLowPass(0, audioTime, immediate);
+      this.chainB.filters.setHighPass(0, audioTime, immediate);
+      this.chainB.filters.setLowPass(0, audioTime, immediate);
+      this.chainA.echo.bypass(audioTime, immediate);
+      this.chainB.echo.bypass(audioTime, immediate);
+      this.chainA.reverb.bypass(audioTime, immediate);
+      this.chainB.reverb.bypass(audioTime, immediate);
+    } else {
+      // HPF belongs to LAND (stem envelope), not the whole mashup.
+      this.chainA.filters.setHighPass(fx.hpfA, audioTime, immediate);
+      this.chainA.filters.setLowPass(0, audioTime, immediate);
+      this.chainB.filters.setHighPass(0, audioTime, immediate);
+      this.chainB.filters.setLowPass(fx.lpfB, audioTime, immediate);
 
-    this.chainA.echo.setAmount(fx.echoA, audioTime, immediate);
-    this.chainB.echo.bypass(audioTime, immediate);
-    this.chainA.reverb.setAmount(fx.reverbA, audioTime, immediate);
-    this.chainB.reverb.bypass(audioTime, immediate);
+      this.chainA.echo.setAmount(fx.echoA, audioTime, immediate);
+      this.chainB.echo.bypass(audioTime, immediate);
+      this.chainA.reverb.setAmount(fx.reverbA, audioTime, immediate);
+      this.chainB.reverb.bypass(audioTime, immediate);
+    }
 
     const transport = beatmatchTransport(
       rates,
@@ -932,7 +967,7 @@ export class AutomixEngine {
       this.pitchLockedA,
       this.pitchLockedB
     );
-    const musical = (rate: number) => Math.min(1.03, Math.max(0.97, rate || 1));
+    const musical = (rate: number) => Math.min(1.04, Math.max(0.96, rate || 1));
     try {
       setParam(this.chainA.source.playbackRate, musical(transport.rateA), audioTime, false, 0.25);
       setParam(this.chainB.source.playbackRate, musical(transport.rateB), audioTime, false, 0.25);
@@ -944,11 +979,12 @@ export class AutomixEngine {
   }
 
   private emit(progress: number) {
-    const vols = volumesAt(progress, this.params);
-    const bass = bassGainDbAt(progress, this.params);
+    const vols = this.heardVolumes(progress);
+    const bass = this.heardBass(progress);
     const rates = playbackRatesAt(progress, this.params);
     const cents = pitchCentsAt(progress, this.params);
     const fx = stemFxAt(progress, this.params);
+    const apple = this.appleBlend();
     const elapsed = (performance.now() - this.startedAt) / 1000;
 
     if (progress >= this.params.handoffAt) this.handoffSnapped = true;
@@ -972,17 +1008,18 @@ export class AutomixEngine {
       rateB: rates.incoming,
       pitchB: cents,
       // Duet reports vocal isolate on instrA so coach/UI meters stay useful.
-      instrA:
-        this.params.dsp.mashupMode === "oneBarDuet"
+      instrA: apple
+        ? 0
+        : this.params.dsp.mashupMode === "oneBarDuet"
           ? fx.vocalA
           : fx.instrumentalA,
-      instrB: fx.instrumentalB,
-      vocalB: fx.vocalB,
-      hpfA: fx.hpfA,
-      lpfB: fx.lpfB,
-      echoA: fx.echoA,
-      reverbA: fx.reverbA,
-      stutterA: fx.stutterA,
+      instrB: apple ? 0 : fx.instrumentalB,
+      vocalB: apple ? 0 : fx.vocalB,
+      hpfA: apple ? 0 : fx.hpfA,
+      lpfB: apple ? 0 : fx.lpfB,
+      echoA: apple ? 0 : fx.echoA,
+      reverbA: apple ? 0 : fx.reverbA,
+      stutterA: apple ? 0 : fx.stutterA,
       displayElapsed: Math.min(displayDuration, Math.max(0, displayElapsed)),
       displayDuration,
       displayDeck,

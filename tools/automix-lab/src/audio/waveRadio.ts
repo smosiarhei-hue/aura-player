@@ -390,9 +390,11 @@ export class WaveRadio {
     if (/bass surgeon/i.test(dec)) kills.push("Bass Surgeon");
     if ((dsp.vocalDuckBDb || 0) <= -3) kills.push("Mid duck");
     if ((dsp.sidechainA || 0) >= 0.25 && dsp.mashupMode !== "oneBarDuet") kills.push("Sidechain");
-    if ((dsp.echoAPeak || 0) >= 0.35) kills.push("Echo out");
-    if ((dsp.hpfAPeak || 0) >= 0.4) kills.push("HPF A");
-    if ((dsp.lpfBPeak || 0) >= 0.35) kills.push("LPF B");
+    if (dsp.mashupMode === "oneBarDuet") {
+      if ((dsp.echoAPeak || 0) >= 0.35) kills.push("Echo out");
+      if ((dsp.hpfAPeak || 0) >= 0.4) kills.push("HPF A");
+      if ((dsp.lpfBPeak || 0) >= 0.35) kills.push("LPF B");
+    }
     // Cap so the strip stays one calm row.
     return kills.slice(0, 5);
   }
