@@ -73,6 +73,28 @@ class AutomixDtaFallbackTests(unittest.TestCase):
         self.assertIn("glideSec", PLAYER)
         self.assertIn("moodLand", PLAYER)
 
+    def test_track_end_during_prepare_never_deadlocks(self):
+        # Field: Automix fails/prepares late → A ends → old code returned and
+        # left a silent deck with no next song.
+        finish = PLAYER.split("private func handleTrackFinish()", 1)[1].split(
+            "private var lastRefillCheck", 1
+        )[0]
+        self.assertIn("transition.starve → next", finish)
+        self.assertIn("force next", finish)
+        self.assertIn("giveUpMashupAndKeepPlaying", finish)
+        self.assertNotIn(
+            'SonivoDiagnostics.log("[AutoMix] Track ended while the mix is still preparing", tag: "AUTOMIX")\n                return',
+            finish,
+        )
+        self.assertIn("transition.lane-missing → next", finish)
+        self.assertIn("B still playing", finish)
+        give_up = PLAYER.split("private func giveUpMashupAndKeepPlaying", 1)[1].split(
+            "private func scheduleTransitionIfNeeded", 1
+        )[0]
+        self.assertIn("nativeSilent", give_up)
+        self.assertIn("streamSilent", give_up)
+        self.assertIn("isPlaying = true", give_up)
+
     def test_provisional_scan_not_thirty_second_silent_prep(self):
         # User log had blend windows 16–26s with mood.scan miss — provisional
         # scan must stay short so the cue path can start live FX early.

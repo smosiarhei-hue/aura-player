@@ -2787,7 +2787,7 @@ final class PlayerCore {
     }
 
     /// One failure must not cancel-and-reschedule the same pair. Keep A playing,
-    /// and if the song is already over, start the next one a single time.
+    /// and if the song is already over (or silent), start the next one a single time.
     private func giveUpMashupAndKeepPlaying(_ error: Error) {
         if !isMashupTransitionMode {
             cancelTransition()
@@ -2802,12 +2802,29 @@ final class PlayerCore {
             mashupGiveUpTrackID = id
         }
         let pos = isUsingStreamPlayer ? progress : liveProgress()
-        let nearEnd = duration > 1 && pos >= duration - 1.2
-        let next = nearEnd ? peekNext(auto: true) : nil
+        let nativeSilent = !isUsingStreamPlayer && !activePlayer.isPlaying
+        let streamSilent = isUsingStreamPlayer && (
+            activeStreamingPlayer.currentItem == nil
+                || activeStreamingPlayer.rate < 0.05
+                || activeStreamingPlayer.timeControlStatus == .paused
+        )
+        let nearEnd = duration <= 1 || pos >= duration - 1.2 || nativeSilent || streamSilent
+        let next = nearEnd ? (incomingTrack ?? peekNext(auto: true)) : nil
         cancelTransition()
         if let next {
             currentTrack = next
+            isPlaying = true
             start(at: 0)
+            return
+        }
+        // Mid-song failure: cancel silenced the idle deck — keep A audible.
+        guard isPlaying else { return }
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.volume = volume
+            activeStreamingPlayer.playImmediately(atRate: 1.0)
+        } else {
+            activePlayer.volume = 1
+            if !activePlayer.isPlaying { activePlayer.play() }
         }
     }
 
@@ -4391,14 +4408,38 @@ final class PlayerCore {
                 let p = elapsed / max(0.001, transitionDuration)
                 let land = activeMashupStyle.isDuet ? activeMashupStyle.handoffAt : activeMashupStyle.automixLandProgress
                 if p < land - 0.04 {
-                    // The stem slice ran out before the downbeat. Landing here
-                    // restarts the next song while the fader is still moving.
-                    SonivoDiagnostics.log("[AutoMix] Ignoring early segment end at \(String(format: "%.2f", p))", tag: "AUTOMIX")
-                    return
+                    // Only ignore A ending early when B is already carrying audio.
+                    // Otherwise the room goes silent until LAND — field "song stops".
+                    let bAlive = incomingIsStream
+                        ? (idleStreamingPlayer.currentItem != nil && idleStreamingPlayer.rate > 0.05)
+                        : idlePlayer.isPlaying
+                    if bAlive {
+                        SonivoDiagnostics.log(
+                            "[AutoMix] Ignoring early segment end at \(String(format: "%.2f", p)) — B still playing",
+                            tag: "AUTOMIX"
+                        )
+                        return
+                    }
+                    AutoMixSessionLog.shared.fault(
+                        String(format: "transition.silent-early p=%.2f → force land/next", p)
+                    )
                 }
             }
             if transitionPreparationTask != nil, !incomingLaneReady {
-                SonivoDiagnostics.log("[AutoMix] Track ended while the mix is still preparing", tag: "AUTOMIX")
+                // A finished while bake/stream arm was still running. Returning here
+                // left play=1 with a dead deck — the next song never started.
+                SonivoDiagnostics.log(
+                    "[AutoMix] Track ended while the mix is still preparing — force next",
+                    tag: "AUTOMIX"
+                )
+                AutoMixSessionLog.shared.fault("transition.starve → next")
+                giveUpMashupAndKeepPlaying(
+                    NSError(
+                        domain: "Sonivo.AutoMix",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Track ended before incoming lane was ready"]
+                    )
+                )
                 return
             }
             if let target = incomingTrack, (incomingLaneReady || idleStreamingPlayer.currentItem != nil || incomingAudioFile != nil) {
@@ -4407,7 +4448,16 @@ final class PlayerCore {
                 return
             } else {
                 SonivoDiagnostics.log("[AutoMix] Track finished but incoming lane was not ready. Forcing advance to next track.", tag: "AUTOMIX")
+                AutoMixSessionLog.shared.fault("transition.lane-missing → next")
+                let forced = incomingTrack ?? peekNext(auto: true)
                 cancelTransition()
+                if let forced {
+                    currentTrack = forced
+                    isPlaying = true
+                    start(at: 0)
+                    refillQueueIfNeeded()
+                    return
+                }
             }
         }
         flushListeningStats()
