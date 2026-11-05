@@ -396,7 +396,11 @@ function setCover(img: HTMLImageElement, url: string | null | undefined, fallbac
     img.hidden = true;
     fallback.hidden = false;
   };
-  if (img.src !== url) img.src = url;
+  if (img.getAttribute("src") !== url) img.src = url;
+  if (img.complete && img.naturalWidth > 0) {
+    img.hidden = false;
+    if (!img.classList.contains("incoming")) fallback.hidden = true;
+  }
 }
 
 type Rgb = { r: number; g: number; b: number };

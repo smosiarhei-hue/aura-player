@@ -1733,8 +1733,19 @@ a {
     filter: none;
   }
 
-  .art-card.land .outgoing {
+  .art-card.land .outgoing,
+  .stage.am .art-card.mixing .outgoing,
+  .stage.am .art-card.land .outgoing {
     opacity: 0;
+    filter: none;
+    transform: none;
+  }
+
+  .stage.am .art-card.mixing .incoming,
+  .stage.am .art-card.land .incoming {
+    opacity: 1;
+    filter: none;
+    transform: none;
   }
 
   .stage.is-duet .art-orbit {
@@ -1943,6 +1954,51 @@ html.embed-phone .pill {
   background: linear-gradient(180deg, transparent 68%, rgba(0, 0, 0, 0.55) 88%, #000 100%);
   mix-blend-mode: normal;
   opacity: 1;
+  z-index: 3;
+}
+
+/* Full-bleed dissolve: the cover you're leaving zooms into blur,
+   the next cover arrives blurred and sharpens. Tracks --mix-p. */
+.stage.am .art-card .outgoing,
+.stage.am .art-card .incoming {
+  transition: none;
+  transform-origin: center center;
+}
+
+.stage.am .art-card .incoming {
+  opacity: 0;
+  transform: scale(1.08);
+  filter: blur(28px) saturate(0.8);
+}
+
+.stage.am .art-card.mixing img,
+.stage.am .art-card.land img {
+  will-change: filter, opacity, transform;
+}
+
+.stage.am .art-card.mixing .outgoing,
+.stage.am .art-card.land .outgoing {
+  opacity: 1;
+  transform: scale(calc(1 + var(--mix-p) * 0.06));
+  filter: blur(calc(var(--mix-p) * 22px)) saturate(calc(1 - var(--mix-p) * 0.28));
+}
+
+.stage.am .art-card.mixing .incoming,
+.stage.am .art-card.land .incoming {
+  z-index: 2;
+  opacity: var(--mix-p);
+  transform: scale(calc(1.1 - var(--mix-p) * 0.1));
+  filter: blur(calc((1 - var(--mix-p)) * 32px)) saturate(calc(0.7 + var(--mix-p) * 0.3));
+}
+
+.stage.am .art-card.mixing .art-fallback,
+.stage.am .art-card.land .art-fallback {
+  opacity: 0;
+}
+
+.stage.am .mix-veil,
+.stage.am .mix-badge-float {
+  display: none;
 }
 
 .stage.am .meta {
