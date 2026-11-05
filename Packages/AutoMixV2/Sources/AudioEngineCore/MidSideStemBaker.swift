@@ -22,9 +22,10 @@ public struct MidSideBakeRequest: Sendable, Equatable {
     public var mode: MidSideStemMode
     /// 0…1 stem strength.
     public var amount: Float
-    /// When > 0 and mode == .instrumental: crossfade into dry lead after this many seconds
-    /// (ONE VOCAL: B instrumental until LAND, then dry).
+    /// When > 0: crossfade this stem into the dry mix after this many seconds.
     public var instrumentalUntilSec: Double
+    /// Length of the stem→dry bloom. One bar for the lab AutoMix LAND.
+    public var bloomFadeSec: Double
 
     public init(
         fileURL: URL,
@@ -32,7 +33,8 @@ public struct MidSideBakeRequest: Sendable, Equatable {
         durationSec: Double,
         mode: MidSideStemMode,
         amount: Float = 1,
-        instrumentalUntilSec: Double = 0
+        instrumentalUntilSec: Double = 0,
+        bloomFadeSec: Double = 0.08
     ) {
         self.fileURL = fileURL
         self.cueSec = cueSec
@@ -40,6 +42,7 @@ public struct MidSideBakeRequest: Sendable, Equatable {
         self.mode = mode
         self.amount = amount
         self.instrumentalUntilSec = instrumentalUntilSec
+        self.bloomFadeSec = bloomFadeSec
     }
 }
 
@@ -343,10 +346,10 @@ public enum MidSideStemBaker {
         }
     }
 
-    /// Apple Automix dual-deck stems (IMG_7144 grammar):
-    /// A vocal isolate over B instrumental, then B blooms to dry at LAND.
-    /// `padSec` extends the CAF past the musical blend so bake-lag / LAND reload
-    /// never drain the stem before dry B is scheduled.
+    /// Lab stem AutoMix: ending song stays instrumental, the next song enters
+    /// as vocal and opens into the dry file across one bar at LAND.
+    /// `padSec` extends the CAF past the musical blend so bake-lag never
+    /// drains the stem before dry B is scheduled.
     public static func bakeAutomixStemPair(
         outgoingURL: URL,
         incomingURL: URL,
@@ -354,22 +357,25 @@ public enum MidSideStemBaker {
         cueB: Double,
         blendSec: Double,
         handoffProgress: Double,
-        padSec: Double = 0
+        padSec: Double = 0,
+        landFadeSec: Double = 0,
+        playbackRate: Double = 1
     ) throws -> (outgoing: URL, incoming: URL) {
         let musical = min(maximumDurationSec, max(4, blendSec))
         let duration = min(maximumDurationSec, musical + max(0, padSec))
-        // LAND near the end of the musical mashup window (~5s in the reference).
-        let handoff = min(0.98, max(0.82, handoffProgress))
-        let landAtSec = musical * handoff
-        // Lab-first soft bed amounts (see tools/automix-lab vocalInstrumental bed).
-        // Hard AU/nuclear carve ruined instrumental body in field — keep gentle.
+        let rate = min(1.04, max(0.96, playbackRate))
+        let handoff = min(0.92, max(0.35, handoffProgress))
+        let fadeWall = landFadeSec > 0.25 ? landFadeSec : max(0.9, min(2.4, musical * 0.12))
+        var landWall = musical * handoff
+        if landWall > duration - 0.3 { landWall = max(fadeWall + 0.35, duration - 0.3) }
+        let landAtSec = landWall * rate
         let aURL = try bakeToTempFile(
             MidSideBakeRequest(
                 fileURL: outgoingURL,
                 cueSec: cueA,
                 durationSec: duration,
-                mode: .vocal,
-                amount: 0.72
+                mode: .instrumental,
+                amount: 0.78
             )
         )
         do {
@@ -378,9 +384,10 @@ public enum MidSideStemBaker {
                     fileURL: incomingURL,
                     cueSec: cueB,
                     durationSec: duration,
-                    mode: .instrumental,
-                    amount: 0.62,
-                    instrumentalUntilSec: landAtSec
+                    mode: .vocal,
+                    amount: 0.8,
+                    instrumentalUntilSec: landAtSec,
+                    bloomFadeSec: fadeWall * rate
                 )
             )
             return (aURL, bURL)
@@ -428,7 +435,7 @@ public enum MidSideStemBaker {
         let totalFrames = AVAudioFrameCount(min(maxFrames, max(1, wantFrames)))
         let untilFrame = AVAudioFrameCount(min(Double(totalFrames), until * rate))
         let channels = Int(format.channelCount)
-        let fadeFrames = AVAudioFrameCount(max(1, Int(0.08 * rate)))
+        let fadeFrames = AVAudioFrameCount(max(1, Int(max(0.04, request.bloomFadeSec) * rate)))
 
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonivo-mashup-\(UUID().uuidString).caf")
@@ -501,8 +508,8 @@ public enum MidSideStemBaker {
             StemSeparator.lastBackend = .hybridSpectral
         }
 
-        // Instr→dry bloom near LAND (B lead returns).
-        if request.mode == .instrumental, untilFrame > 0, untilFrame < got {
+        // Stem→dry bloom near LAND. The incoming vocal becomes the full song.
+        if request.mode != .dry, untilFrame > 0, untilFrame < got {
             let dryL = srcL
             let dryR = srcR
             let fadeStart = untilFrame > fadeFrames ? untilFrame - fadeFrames : 0

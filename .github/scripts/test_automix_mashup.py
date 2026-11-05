@@ -230,7 +230,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("outgoingMode: .vocal", baker)
         self.assertIn("incomingMode: .dry", baker)
         self.assertIn("incomingMode: .instrumental", baker)
-        self.assertIn("A vocal isolate over B instrumental", baker)
+        self.assertIn("ending song stays instrumental", baker)
         # Streamed mp3/aac must not use processingFormat.settings for CAF writes.
         self.assertIn("linearPCMCAFSettings", baker)
         self.assertIn("kAudioFormatLinearPCM", baker)

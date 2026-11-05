@@ -63,6 +63,14 @@ export class ReverbWashNode {
     setParam(this.damp.frequency, dampHz, when, immediate, 0.18);
   }
 
+  /** Louder plate for the stem AutoMix. Dry stays full; wet tops out near 40%. */
+  setWash(amount: number, when: number, immediate = false) {
+    const a = clamp(amount, 0, 1);
+    setParam(this.wet.gain, 0.4 * a, when, immediate, 0.2);
+    setParam(this.dry.gain, 1, when, immediate, 0.2);
+    setParam(this.damp.frequency, 6800 - 1400 * a, when, immediate, 0.2);
+  }
+
   bypass(when: number, immediate = false) {
     this.setAmount(0, when, immediate);
   }

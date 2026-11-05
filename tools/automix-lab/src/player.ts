@@ -110,11 +110,11 @@ app.innerHTML = `
     </header>
 
     <main class="now">
+      <div class="cover-wash" id="coverWash" aria-hidden="true">
+        <img class="outgoing" id="washA" alt="" />
+        <img class="incoming" id="washB" alt="" />
+      </div>
       <div class="art-wrap" id="artWrap">
-        <div class="cover-wash" id="coverWash" aria-hidden="true">
-          <img class="outgoing" id="washA" alt="" />
-          <img class="incoming" id="washB" alt="" />
-        </div>
         <div class="art-orbit" aria-hidden="true"></div>
         <div class="art-pulse" id="artPulse" aria-hidden="true"></div>
         <div class="mix-veil" id="mixVeil" aria-hidden="true"></div>
@@ -564,10 +564,12 @@ function sampleArtColor(url: string | null | undefined) {
   const ambient = document.querySelector<HTMLElement>("#ambient")!;
   const specular = document.querySelector<HTMLElement>("#specular")!;
   const artPulse = document.querySelector<HTMLElement>("#artPulse")!;
+  const stage = document.querySelector<HTMLElement>("#stage")!;
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let raf = 0;
   let flashSm = 0;
   let veilSm = 0.08;
+  let beatSm = 0;
   let lastBeat = -1;
 
   const tick = () => {
@@ -592,8 +594,11 @@ function sampleArtColor(url: string | null | undefined) {
     veilSm += (targetVeil - veilSm) * 0.08;
     flashSm *= 0.78;
     if (flashSm < 0.015) flashSm = 0;
+    const beatTarget = live ? Math.min(1, meter.bass * 0.72 + meter.level * 0.38 + kickEnv * 0.45) : 0;
+    beatSm += (beatTarget - beatSm) * 0.22;
 
     const flash = flashSm.toFixed(3);
+    stage.style.setProperty("--beat", beatSm.toFixed(3));
     ambient.style.setProperty("--flash", flash);
     ambient.style.setProperty("--veil", veilSm.toFixed(3));
     ambient.classList.toggle("is-live", live);

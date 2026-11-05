@@ -5,7 +5,7 @@ import {
   playbackRatesAt,
   volumesAt,
 } from "./envelopes";
-import { bloomInstrumental, sliceToBuffer } from "./neuralStems";
+import { bloomInstrumental, crossfadedLoop, sliceToBuffer } from "./neuralStems";
 import type { MashupParams } from "./envelopes";
 import { runMixCritic } from "./mixCritic";
 import {
@@ -244,10 +244,10 @@ export class AutomixEngine {
   }
 
   /**
-   * Arm the next AutoMix with HTDemucs windows.
-   * Lab test: A plays vocals, B plays the drum stem until LAND, then the dry file.
-   * Without a beat file, B stays the instrumental. Duet keeps B as the full mix.
-   * The older full-mix AutoMix path is unchanged when this returns false.
+   * Arm the lab HTDemucs AutoMix.
+   * The song that is ending plays its instrumental. The next song plays its vocal,
+   * then opens into the dry file at LAND. Duet is both vocals trading.
+   * The older full-mix path is unchanged when this returns false.
    */
   armNeuralMashup(input: {
     duet: boolean;
@@ -255,10 +255,12 @@ export class AutomixEngine {
     cueB: number;
     blendSec: number;
     handoffAt: number;
-    vocalA: AudioBuffer;
-    vocalStartSec: number;
-    instrumentalB: AudioBuffer | null;
-    instrumentalStartSec: number;
+    bedA: AudioBuffer;
+    bedStartSec: number;
+    leadB: AudioBuffer;
+    leadStartSec: number;
+    /** One bar. The vocal becomes the full song across this, arriving on the downbeat. */
+    landFadeSec?: number;
   }): boolean {
     const deckB = this.decks.b.buffer;
     const ctx = this.ctx;
@@ -266,32 +268,29 @@ export class AutomixEngine {
       this.neuralTake = null;
       return false;
     }
-    const offsetA = input.cueA - input.vocalStartSec;
-    if (offsetA < -0.05 || offsetA > input.vocalA.duration - 0.8) {
-      this.neuralTake = null;
-      return false;
-    }
-    if (input.duet || !input.instrumentalB) {
-      this.neuralTake = {
-        bufferA: input.vocalA,
-        bufferB: deckB,
-        offsetA: Math.max(0, offsetA),
-        offsetB: Math.min(Math.max(0, input.cueB), Math.max(0, deckB.duration - 0.2)),
-      };
-      return true;
-    }
-    const instr = input.instrumentalB;
-    const offsetB = input.cueB - input.instrumentalStartSec;
-    if (offsetB < -0.05 || offsetB > instr.duration - 0.8) {
+    const offsetA = input.cueA - input.bedStartSec;
+    const offsetB = input.cueB - input.leadStartSec;
+    if (
+      offsetA < -0.05 ||
+      offsetA > input.bedA.duration - 0.8 ||
+      offsetB < -0.05 ||
+      offsetB > input.leadB.duration - 0.8
+    ) {
       this.neuralTake = null;
       return false;
     }
     const blend = Math.max(1, input.blendSec);
     const landAt = Math.max(0, offsetB) + blend * Math.min(0.98, Math.max(0.35, input.handoffAt));
-    const dry = sliceToBuffer(ctx, deckB, input.instrumentalStartSec, instr.length, instr.sampleRate);
-    const bloomed = bloomInstrumental(ctx, instr, dry, landAt);
+    const dry = sliceToBuffer(ctx, deckB, input.leadStartSec, input.leadB.length, input.leadB.sampleRate);
+    const bloomed = bloomInstrumental(
+      ctx,
+      input.leadB,
+      dry,
+      landAt,
+      input.landFadeSec ?? 1.1
+    );
     this.neuralTake = {
-      bufferA: input.vocalA,
+      bufferA: input.bedA,
       bufferB: bloomed,
       offsetA: Math.max(0, offsetA),
       offsetB: Math.max(0, offsetB),
@@ -482,10 +481,24 @@ export class AutomixEngine {
       offsetB = take.offsetB;
       this.neuralActive = true;
       liveInstrScale = 0;
+      const bpm = p.targetBPM > 30 ? p.targetBPM : this.decks.a.bpm > 30 ? this.decks.a.bpm : 120;
+      const bars = Math.max(2, dsp.loopBarsA || 0);
+      const loopSec = bars * 4 * (60 / bpm);
+      const room = bufA.duration - offsetA;
+      if (room > loopSec + 0.2 && loopSec > 0.45) {
+        const barSec = 4 * (60 / bpm);
+        const holdSec = Math.max(loopSec, p.handoffAt * blend - barSec);
+        bufA = crossfadedLoop(ctx, bufA, offsetA, loopSec, holdSec, barSec);
+        offsetA = 0;
+      }
     }
 
-    onStatus?.(this.neuralActive ? "Сведение · HTDemucs" : "Сведение · полный микс");
-    this.processingNote = this.neuralActive ? "HTDemucs" : "полный микс";
+    const neuralLabel =
+      dsp.mashupMode === "oneBarDuet"
+        ? "HTDemucs · баттл вокалов"
+        : "HTDemucs · инстр A + вокал B · луп";
+    onStatus?.(this.neuralActive ? `Сведение · ${neuralLabel}` : "Сведение · полный микс");
+    this.processingNote = this.neuralActive ? neuralLabel : "полный микс";
 
     const musical = (rate: number) => Math.min(1.04, Math.max(0.96, rate || 1));
     const previousA = this.chainA;
@@ -852,11 +865,22 @@ export class AutomixEngine {
   }
 
   /**
-   * Phrase-loop repeats a slice and clicks at the seam, which sounds like a
-   * freeze. The planner may still set loopBarsA; playback stays linear.
+  /**
+   * The neural bed already repeats its phrase with a crossfade.
+   * A raw BufferSource loop clicks, so this stays linear.
    */
   private applyPhraseLoop(chain: SourceChain) {
     chain.source.loop = false;
+  }
+
+  /** 1/8 gate. Floor stays above silence so the chop does not click. */
+  private phraseGate(amount: number): number {
+    const bpm = this.params.targetBPM > 30 ? this.params.targetBPM : 120;
+    const eighth = 60 / bpm / 2;
+    const elapsed = (performance.now() - this.startedAt) / 1000;
+    const phase = (elapsed % eighth) / eighth;
+    const duty = Math.max(0.42, 0.86 - amount * 0.4);
+    return phase < duty ? 1 : 0.28;
   }
 
   /**
@@ -868,6 +892,7 @@ export class AutomixEngine {
   }
 
   private heardVolumes(progress: number): { outgoing: number; incoming: number } {
+    if (this.neuralActive) return this.neuralVolumes(progress);
     if (!this.appleBlend()) return volumesAt(progress, this.params);
     const t = progress * progress * (3 - 2 * progress);
     return {
@@ -876,7 +901,36 @@ export class AutomixEngine {
     };
   }
 
+  /** One bar of the blend, as a fraction of progress. */
+  private landBar(): number {
+    const bpm = this.params.targetBPM > 30 ? this.params.targetBPM : 120;
+    const barSec = (4 * 60) / bpm;
+    return Math.min(0.22, Math.max(0.07, barSec / Math.max(4, this.params.blendDurationSec)));
+  }
+
+  /** Ending bed holds under the next vocal, then leaves across one bar into LAND. */
+  private neuralVolumes(progress: number): { outgoing: number; incoming: number } {
+    const land = Math.min(0.92, Math.max(0.4, this.params.handoffAt));
+    const bar = this.landBar();
+    const duet = this.params.dsp.mashupMode === "oneBarDuet";
+    const release = Math.max(0, land - bar);
+    if (duet) {
+      const swap = progress * progress * (3 - 2 * progress);
+      const alive =
+        progress <= release ? 1 : Math.max(0, 1 - (progress - release) / Math.max(0.08, bar));
+      return {
+        outgoing: (0.96 - 0.42 * swap) * alive,
+        incoming: progress >= land ? 1 : 0.58 + 0.42 * swap,
+      };
+    }
+    const bed =
+      progress <= release ? 1 : Math.max(0, 1 - (progress - release) / Math.max(0.08, bar));
+    const vocal = Math.min(1, progress / 0.16);
+    return { outgoing: bed, incoming: progress >= land ? 1 : vocal };
+  }
+
   private heardBass(progress: number): { outgoing: number; incoming: number } {
+    if (this.neuralActive) return { outgoing: 0, incoming: 0 };
     if (!this.appleBlend()) return bassGainDbAt(progress, this.params);
     const t = progress * progress * (3 - 2 * progress);
     return { outgoing: -3.5 * t, incoming: -3.5 * (1 - t) };
@@ -891,7 +945,8 @@ export class AutomixEngine {
     const fx = stemFxAt(progress, this.params);
     const apple = this.appleBlend();
 
-    setParam(this.chainA.gain.gain, vols.outgoing, audioTime, immediate, 0.18);
+    const stutter = this.neuralActive && fx.stutterA > 0.08 ? this.phraseGate(fx.stutterA) : 1;
+    setParam(this.chainA.gain.gain, vols.outgoing * stutter, audioTime, immediate, 0.04);
     setParam(this.chainB.gain.gain, vols.incoming, audioTime, immediate, 0.18);
 
     this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
@@ -940,7 +995,25 @@ export class AutomixEngine {
     }
     }
 
-    if (apple) {
+    if (this.neuralActive) {
+      // Loop, delay and plate play through the mashup. Across the bar
+      // before the downbeat they let go; the echo rings a little past LAND.
+      const land = this.params.handoffAt;
+      const bar = this.landBar();
+      const release = Math.max(0, land - bar);
+      const exit = progress <= release ? 0 : Math.min(1, (progress - release) / (bar * 1.45));
+      const entry = Math.min(1, progress / 0.18);
+      const open = entry * (1 - exit);
+      this.chainA.filters.setHighPass(0, audioTime, immediate);
+      this.chainA.filters.setLowPass(0, audioTime, immediate);
+      this.chainB.filters.setHighPass(0, audioTime, immediate);
+      this.chainB.filters.setLowPass(0, audioTime, immediate);
+      const echoWet = (18 + 28 * Math.min(1, Math.max(fx.echoA, 0.35))) * open;
+      this.chainA.echo.setEchoOut(echoWet, 34, audioTime, immediate);
+      this.chainB.echo.bypass(audioTime, immediate);
+      this.chainA.reverb.setWash((0.42 + 0.35 * Math.min(1, fx.reverbA)) * open, audioTime, immediate);
+      this.chainB.reverb.setWash(0.28 * open, audioTime, immediate);
+    } else if (apple) {
       this.chainA.filters.setHighPass(0, audioTime, immediate);
       this.chainA.filters.setLowPass(0, audioTime, immediate);
       this.chainB.filters.setHighPass(0, audioTime, immediate);
@@ -989,6 +1062,11 @@ export class AutomixEngine {
     const elapsed = (performance.now() - this.startedAt) / 1000;
 
     if (progress >= this.params.handoffAt) this.handoffSnapped = true;
+    const landBar = this.neuralActive ? this.landBar() : 0;
+    const landing =
+      this.neuralActive &&
+      progress >= this.params.handoffAt - landBar &&
+      progress < this.params.handoffAt + landBar * 0.45;
 
     const displayDeck: DeckId = this.handoffSnapped ? "b" : "a";
     const displayElapsed = this.handoffSnapped
@@ -1000,7 +1078,7 @@ export class AutomixEngine {
     this.onTick?.({
       playing: this.playing,
       progress,
-      phase: phaseLabel(progress, this.params),
+      phase: landing ? "LAND" : phaseLabel(progress, this.params),
       volA: vols.outgoing,
       volB: vols.incoming,
       bassA: bass.outgoing,

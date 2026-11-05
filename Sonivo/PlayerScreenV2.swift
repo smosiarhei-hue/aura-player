@@ -1030,7 +1030,7 @@ struct PlayerScreenV2: View {
                 phaseLabel: player.mashupPhaseLabel
             )
             .transition(.opacity)
-        } else if let stem = analysis.stemStatus {
+        } else if let stem = stemBadgeText(analysis.stemStatus) {
             Text(stem)
                 .font(SN.text(.caption2, .semibold))
                 .foregroundStyle(Color.white.opacity(0.88))
@@ -1044,6 +1044,16 @@ struct PlayerScreenV2: View {
             qualityBadgeButton
                 .transition(.opacity)
         }
+    }
+    /// Progress while stems are counted. A failed Core ML load must not replace the quality badge.
+    private func stemBadgeText(_ stem: String?) -> String? {
+        guard let stem, !stem.isEmpty else { return nil }
+        let folded = stem.lowercased()
+        if stem.hasPrefix("HTDemucs · скрыть") || stem == "HTDemucs · готово" { return nil }
+        if folded.contains("file://") || folded.contains("unable to load") || folded.contains("private/var") {
+            return nil
+        }
+        return stem
     }
     private var qualityBadgeButton: some View {
         Button {

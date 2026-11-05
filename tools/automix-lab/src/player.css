@@ -1959,40 +1959,64 @@ html.embed-phone .pill {
   padding: calc(28px + var(--safe-top)) var(--am-pad) calc(12px + var(--safe-bottom));
 }
 
-/* The blur sits in the same rectangle as the sharp cover, so the
-   dissolve has nothing to slip against. */
+/* Downward reflection only: the bottom of the cover, mirrored and fully
+   blurred, continuing under the controls. It does not climb back up. */
 .stage.am .cover-wash {
   position: absolute;
   z-index: 0;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: calc(28px + var(--safe-top) + var(--art-size) * 0.52);
+  bottom: 0;
   pointer-events: none;
   overflow: hidden;
-  background: var(--wash);
+  background: transparent;
 }
 
 .stage.am .cover-wash img {
   position: absolute;
-  left: 0;
+  left: -14%;
   top: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: center center;
-  filter: blur(18px) saturate(1.04);
-  transform: none;
+  width: 128%;
+  height: 82%;
+  object-fit: cover;
+  object-position: center 92%;
+  transform-origin: center top;
+  transform: scaleY(-1) translateY(calc(var(--beat, 0) * -10px)) scale(calc(1.05 + var(--beat, 0) * 0.045));
+  filter: blur(46px) saturate(calc(1.2 + var(--beat, 0) * 0.28)) brightness(calc(1 + var(--beat, 0) * 0.08));
+  opacity: calc(0.9 + var(--beat, 0) * 0.1);
   transition: none;
   pointer-events: none;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 7%,
+    #000 16%,
+    #000 62%,
+    rgba(0, 0, 0, 0.45) 84%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 7%,
+    #000 16%,
+    #000 62%,
+    rgba(0, 0, 0, 0.45) 84%,
+    transparent 100%
+  );
 }
 
 .stage.am .cover-wash::after {
   content: "";
   position: absolute;
   inset: 0;
+  pointer-events: none;
   background: linear-gradient(
     180deg,
     transparent 0%,
-    transparent 70%,
-    color-mix(in oklab, var(--wash) 28%, transparent) 100%
+    transparent 55%,
+    color-mix(in oklab, var(--wash) 35%, transparent) 100%
   );
 }
 
@@ -2060,20 +2084,20 @@ html.embed-phone .pill {
   pointer-events: none;
   -webkit-mask-image: linear-gradient(
     180deg,
-    #000 0%,
-    #000 64%,
-    rgba(0, 0, 0, 0.86) 76%,
-    rgba(0, 0, 0, 0.5) 88%,
-    rgba(0, 0, 0, 0.16) 96%,
+    transparent 0%,
+    #000 3.5%,
+    #000 54%,
+    rgba(0, 0, 0, 0.72) 70%,
+    rgba(0, 0, 0, 0.28) 86%,
     transparent 100%
   );
   mask-image: linear-gradient(
     180deg,
-    #000 0%,
-    #000 64%,
-    rgba(0, 0, 0, 0.86) 76%,
-    rgba(0, 0, 0, 0.5) 88%,
-    rgba(0, 0, 0, 0.16) 96%,
+    transparent 0%,
+    #000 3.5%,
+    #000 54%,
+    rgba(0, 0, 0, 0.72) 70%,
+    rgba(0, 0, 0, 0.28) 86%,
     transparent 100%
   );
 }

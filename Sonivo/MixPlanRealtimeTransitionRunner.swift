@@ -159,44 +159,16 @@ enum MashupLiveEQEnvelope {
         return (out, inn)
     }
 
-    /// Stem-bake path: mid-side CAF already carved — only restore bass swap + B
-    /// lead duck (scaled). Full archetype EQ + A presence boost re-muddied field mixes.
-    /// Entry protection: delay bass kill so bake.ready does not drop loudness vs dry A.
+    /// Stem-bake path. The decks are already an instrumental bed and a vocal,
+    /// so the old bass-kill / lead-duck would pull the kick out and bury the vocal.
     static func stemBakeOffsets(
         progress: Double,
         style: MashupLiveStyle
     ) -> (outgoing: [Float], incoming: [Float]) {
-        let p = min(1, max(0, progress))
-        let bassAt = min(0.28, max(0.04, style.bassSwapAt))
-        let handoff = min(0.96, max(0.72, style.handoffAt))
-        let pocketD = max(0.7, style.vocalPocketDepth)
-        let hpfD = max(0.7, style.hpfDepth)
-        // Stronger B-lead duck — AU instrumental still leaks mid-lead (field 1055 mud).
-        let scale: Float = 0.82
-        // First ~10% of the blend keeps near-flat EQ so stem mount matches dry A.
-        let entry = ramp(p, from: 0.02, to: 0.12)
-        var out = Array(repeating: Float(0), count: bandCount)
-        var inn = Array(repeating: Float(0), count: bandCount)
-        let landAt = style.automixLandProgress
-        let outLive = 1 - ramp(p, from: landAt - 0.06, to: min(1, landAt + 0.02))
-        // A: hand lows to B after entry grace; light HPF as A exits (no mid boost).
-        let bassStart = max(0.08, bassAt * 0.55)
-        out[0] = clampDB(-12 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
-        out[1] = clampDB(-10 * scale * entry * ramp(p, from: bassStart, to: max(bassStart + 0.06, bassAt)))
-        out[2] = clampDB(-6 * scale * entry * ramp(p, from: bassStart + 0.02, to: max(0.12, bassAt)))
-        out[3] = clampDB(-3 * hpfD * scale * (1 - outLive))
-        out[4] = clampDB(-4 * hpfD * scale * (1 - outLive))
-        out[8] = clampDB(-3.5 * hpfD * scale * (1 - outLive))
-        out[9] = clampDB(-3 * hpfD * scale * (1 - outLive))
-        // B: keep kick; deeper residual-lead duck until LAND.
-        let inInstr = 1 - ramp(p, from: landAt - 0.06, to: min(0.99, landAt + 0.02))
-        let leadFloor = clampDB(-11 * max(1.0, pocketD) * scale * entry * inInstr)
-        inn[0] = clampDB(1.0 * scale * entry * inInstr)
-        inn[1] = clampDB(0.7 * scale * entry * inInstr)
-        inn[5] = clampDB(leadFloor * 0.9)
-        inn[6] = clampDB(leadFloor)
-        inn[7] = clampDB(leadFloor * 0.75)
-        return (out, inn)
+        _ = progress
+        _ = style
+        let flat = Array(repeating: Float(0), count: bandCount)
+        return (flat, flat)
     }
 
     /// Apple Automix live EQ (no stem bake): A vocal isolate over B beat bed,

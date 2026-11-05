@@ -123,17 +123,17 @@ void destroy(void *p) { free(p); }
         self.assertEqual(self.preamp([0]*N),0)
         self.assertEqual(self.preamp([-12]*N),0)
         bass=[6]+[0]*(N-1)
-        self.assertAlmostEqual(self.preamp(bass),-6.5,delta=.03)
-        self.assertAlmostEqual(self.response(bass,1000)-self.preamp(bass),0,delta=.1)
+        self.assertEqual(self.preamp(bass),0)
+        self.assertAlmostEqual(self.response(bass,1000),0,delta=.35)
         self.assertGreater(self.response(bass,20)-self.response(bass,1000),4.0)
-        self.assertLess(self.preamp([12]*N),-12)
+        self.assertEqual(self.preamp([12]*N),0)
 
     def test_loud_bass_sine_has_curve_based_headroom(self):
         gains=[0,6]+[0]*(N-2); rate=48000
         samples=[.8*math.sin(2*math.pi*64*n/rate) for n in range(rate)]
         output=self.run_audio(samples,gains,rate)
-        self.assertLess(max(map(abs,output[rate//2:])),.8)
-        self.assertAlmostEqual(self.response(gains,64),-.5,delta=.08)
+        self.assertGreater(max(map(abs,output[rate//2:])),.9)
+        self.assertAlmostEqual(self.response(gains,64),6,delta=.45)
 
     def test_static_headroom_covers_sampled_combined_filter_response(self):
         import random
@@ -145,7 +145,8 @@ void destroy(void *p) { free(p); }
                 gains=[rand.uniform(-15,15) for _ in range(N)]
                 values=(C.c_float*1600)()
                 f(array(gains),N,rate,values,len(values))
-                self.assertLessEqual(max(values)+self.preamp(gains,rate),-.40)
+                self.assertEqual(self.preamp(gains,rate),0)
+                self.assertTrue(all(math.isfinite(x) for x in values))
 
     def test_overloaded_input_stays_finite_but_is_not_a_limiter(self):
         # Static headroom is not a limiter: already-overloaded input can still exceed ±1.
@@ -172,8 +173,8 @@ void destroy(void *p) { free(p); }
             self.assertGreater(self.response(gains,64)-mid,1.0)
             self.assertLess(self.response(gains,250)-mid,0.5)
             # Compensation is static: relative frequency balance remains unchanged.
-            self.assertAlmostEqual(self.response(gains,1000)-self.preamp(gains),0,delta=.35)
-            self.assertLess(self.preamp(gains),0)
+            self.assertAlmostEqual(self.response(gains,1000),0,delta=.55)
+            self.assertEqual(self.preamp(gains),0)
             signal=[.6*math.sin(n*.004)+.3*math.sin(n*.12) for n in range(10000)]
             output=self.run_audio(signal,gains)
             self.assertTrue(all(math.isfinite(x) for x in output))
@@ -319,7 +320,8 @@ void destroy(void *p) { free(p); }
         session=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/PlaybackAudioSessionSetup.swift').read_text()
         source=(DSP/'StreamAudioProbe.c').read_text()
         self.assertNotIn('VocalIsolationManager.processBuffer(buffer)',core)
-        self.assertIn('engine.connect(vocalUnit, to: outputLimiter',core)
+        self.assertIn('engine.connect(vocalUnit, to: engine.outputNode',core)
+        self.assertNotIn('engine.connect(vocalUnit, to: outputLimiter',core)
         self.assertIn('outputLimiter.bypass = true',core)
         self.assertIn('self?.outputLimiter.bypass = true',core)
         self.assertNotIn('outputLimiter.bypass = false',core)

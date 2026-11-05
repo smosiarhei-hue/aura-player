@@ -883,17 +883,13 @@ final class PlayerCore {
         engine.attach(vocalUnit)
         vocalUnit.bands[0].bypass = true
         engine.connect(engine.mainMixerNode, to: vocalUnit, format: nil)
-        engine.attach(outputLimiter)
-        // Explicit native envelope within Apple's documented parameter ranges.
-        // Slow attack lets boosted kicks through; quicker decay restores bass body
-        // instead of parking the mix down (heard as muffled / "cut" bass).
+        // The limiter is not attached. engine.start() was clearing bypass, so a
+        // raised band hit the limiter and the whole song got quieter.
         AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.040, 0)
         AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.080, 0)
         AudioUnitSetParameter(outputLimiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
-        // Flat playback bypasses protection; non-flat EQ enables the native peak limiter.
         outputLimiter.bypass = true
-        engine.connect(vocalUnit, to: outputLimiter, format: nil)
-        engine.connect(outputLimiter, to: engine.outputNode, format: nil)
+        engine.connect(vocalUnit, to: engine.outputNode, format: nil)
         VocalIsolationManager.shared.attach(to: vocalUnit)
 
         engine.mainMixerNode.outputVolume = volume
@@ -1108,22 +1104,34 @@ final class PlayerCore {
     /// DualDeck owns the same FX graph when V2 ownership is on; today the ear is PlayerCore.
     @discardableResult
     private func applyLivePlanFX(progress: Double, elapsed: Double, outgoingVolume: Float) -> Float {
-        guard let plan = activeTransitionPlan, plan.type != .none, !plan.fx.isEmpty else {
+        guard let plan = activeTransitionPlan, plan.type != .none else {
+            clearLiveMixFX()
+            return outgoingVolume
+        }
+        let neuralAutomix = mashupBakeRealIncomingURL != nil
+            && !mashupPlayingMasterBake
+            && !activeMashupStyle.isDuet
+        if plan.fx.isEmpty && !neuralAutomix {
             clearLiveMixFX()
             return outgoingVolume
         }
         let bpm = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : activeMashupStyle.targetBPM
         let safeBPM = bpm > 30 ? bpm : 120
         let bar: Double
-        if plan.tempoTargetBPM > 30 {
+        if neuralAutomix || plan.tempoTargetBPM > 30 {
             bar = EffectAutomation.bar(atSeconds: elapsed, bpm: safeBPM)
         } else {
             bar = elapsed
         }
 
-        // Phrase loop on outgoing deck while B blooms (stop in final third for clean LAND).
-        let loopBars = max(0, plan.loopBarsA)
-        if loopBars > 0, bar + 0.001 >= liveLoopNextBar, progress < 0.72 {
+        // Phrase loop on the outgoing bed. On a stem CAF the cue is the start of the slice.
+        // Let the loop go one bar before LAND so the downbeat is the whole next song.
+        let loopBars = neuralAutomix ? max(2, plan.loopBarsA) : max(0, plan.loopBarsA)
+        let barSec = 4 * 60 / Double(safeBPM)
+        let barFrac = barSec / max(4, transitionDuration)
+        let loopUntil = neuralAutomix ? activeMashupStyle.automixLandProgress - barFrac : 0.72
+        if loopBars > 0, bar + 0.001 >= liveLoopNextBar, progress < loopUntil {
+            if neuralAutomix { mashupPhraseLoopCueSec = 0 }
             seekOutgoingPhraseLoop()
             liveLoopNextBar += Double(loopBars)
         }
@@ -1147,6 +1155,16 @@ final class PlayerCore {
             }
         }
 
+        if neuralAutomix {
+            let land = activeMashupStyle.automixLandProgress
+            let release = max(0, land - barFrac)
+            let exit = progress <= release ? 0 : min(1, (progress - release) / max(0.08, barFrac * 1.45))
+            let entry = min(1, progress / 0.18)
+            let open = Float(entry * (1 - exit))
+            echoWet = max(echoWet, (18 + 28 * 0.35) * open)
+            reverbWet = max(reverbWet, 24 * open)
+        }
+
         let delaySec: Float = safeBPM > 0
             ? Float(min(2, max(0.05, 60 / Double(safeBPM) * 0.75)))
             : 0.375
@@ -1161,7 +1179,8 @@ final class PlayerCore {
         let sixteenth = max(0.03, 60.0 / Double(safeBPM) / 4.0)
         let phase = CACurrentMediaTime().truncatingRemainder(dividingBy: sixteenth) / sixteenth
         let duty = max(0.12, 0.88 - Double(stutterIntensity) * 0.72)
-        return phase < duty ? outgoingVolume : 0
+        let floor = neuralAutomix ? Float(0.28) : 0
+        return phase < duty ? outgoingVolume : outgoingVolume * floor
     }
 
     private func publishLiveMixFX(echoWet: Float, echoFeedback: Float, delaySec: Float, reverbWet: Float) {
@@ -1324,7 +1343,9 @@ final class PlayerCore {
     }
 
     private func writeBands(_ node: AVAudioUnitEQ, _ gains: [Float], globalGain: Float) {
-        node.globalGain = max(-48, min(0, globalGain))
+        // Graphic EQ: never trim the master to "make room" for a boost.
+        _ = globalGain
+        node.globalGain = 0
         let bands = node.bands
         let sampleRate = node.inputFormat(forBus: 0).sampleRate
         let count = min(bands.count, gains.count)
@@ -2923,12 +2944,14 @@ final class PlayerCore {
                     let blend = self.transitionDuration
                     let style = self.activeMashupStyle
                     let duetBake = self.transitionMode == .duet || style.isDuet
-                    let handoff = style.handoffAt
+                    let handoff = duetBake ? style.handoffAt : style.automixLandProgress
                     let cueA = max(0, cueAForBake)
                     let cueB = max(0, startAt)
                     // Extra tail so stems outlive bake lag + LAND handoff (short stems
                     // ending mid-window previously froze B after a stop/reload race).
                     let stemPadSec = 4.0
+                    let barSec = (4 * 60) / max(30, Double(style.targetBPM))
+                    let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
                     let bakeStartedAt = Date()
                     let neuralPair: (outgoing: URL, incoming: URL)?
                     do {
@@ -2940,7 +2963,9 @@ final class PlayerCore {
                             cueB: cueB,
                             blendSec: blend,
                             handoffProgress: handoff,
-                            padSec: stemPadSec
+                            padSec: stemPadSec,
+                            landFadeSec: barSec,
+                            playbackRate: rateB
                         )
                     } catch is CancellationError {
                         return
@@ -2952,7 +2977,7 @@ final class PlayerCore {
                     if let neuralPair {
                         bakeResult = .success(neuralPair)
                     } else {
-                        SonivoDiagnostics.log("[Mashup] HTDemucs not on disk yet — mid/side bake", tag: "AUDIO")
+                        SonivoDiagnostics.log("[Mashup] HTDemucs unavailable — mid/side stem bake", tag: "AUDIO")
                         bakeResult = await Task.detached(priority: .userInitiated) {
                             do {
                                 if duetBake {
@@ -2972,7 +2997,9 @@ final class PlayerCore {
                                     cueB: cueB,
                                     blendSec: blend,
                                     handoffProgress: handoff,
-                                    padSec: stemPadSec
+                                    padSec: stemPadSec,
+                                    landFadeSec: barSec,
+                                    playbackRate: rateB
                                 ))
                             } catch {
                                 return .failure(error)
@@ -3043,7 +3070,7 @@ final class PlayerCore {
                         let lockedB = self.activeMashupStyle.rateB
                         let pitchB = self.activeMashupStyle.pitchCentsB
                         SonivoDiagnostics.log(
-                            "[Mashup] \(duetBake ? "DUET" : "ONE VOCAL") dual-stem bake · A×\(String(format: "%.3f", lockedA)) B×\(String(format: "%.3f", lockedB)) pitchB=\(Int(pitchB))¢ · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
+                            "[Mashup] \(duetBake ? "DUET" : "instr A + vocal B") dual-stem bake · A×\(String(format: "%.3f", lockedA)) B×\(String(format: "%.3f", lockedB)) pitchB=\(Int(pitchB))¢ · window \(String(format: "%.1f", blend))s · cueA \(String(format: "%.1f", cueA)) → cueB \(String(format: "%.1f", cueB))",
                             tag: "AUDIO"
                         )
                         AutoMixSessionLog.shared.event(
@@ -3236,7 +3263,7 @@ final class PlayerCore {
             // Without stem bake, mashup volumes (both ~1.0) just stack two dry streams.
             let useMashupVolumes = mashup && !mashupBakeFailedUseCrossfade
             let gains = useMashupVolumes
-                ? activeMashupStyle.volumes(progress: p)
+                ? mashupHeardVolumes(progress: p)
                 : CrossfadeCurve.gains(progress: p)
             let gatedOutgoing: Float = mashup && !mashupBakeFailedUseCrossfade
                 ? applyLivePlanFX(progress: p, elapsed: elapsed, outgoingVolume: gains.outgoing)
@@ -3473,7 +3500,7 @@ final class PlayerCore {
         activePlayer.play()
         idlePlayer.play()
         if !fromStream {
-            let vols = activeMashupStyle.volumes(
+            let vols = mashupHeardVolumes(
                 progress: min(1, offset / max(0.001, transitionDuration))
             )
             activePlayer.volume = vols.outgoing
@@ -3481,6 +3508,19 @@ final class PlayerCore {
             mashupStemEntryStartedAt = nil
             isUsingStreamPlayer = false
         }
+        if !activeMashupStyle.isDuet {
+            mashupPhraseLoopCueSec = 0
+            if liveLoopNextBar.isInfinite { liveLoopNextBar = 2 }
+        }
+    }
+
+    /// Stem AutoMix keeps the ending instrumental under the next vocal.
+    /// The older volume curve stays for a mix that is still two full files.
+    private func mashupHeardVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
+        if mashupBakeRealIncomingURL != nil, !mashupPlayingMasterBake {
+            return activeMashupStyle.stemNeuralVolumes(progress: progress, blendSec: transitionDuration)
+        }
+        return activeMashupStyle.volumes(progress: progress)
     }
 
     private func completeTransition(to nextTrack: Track) {

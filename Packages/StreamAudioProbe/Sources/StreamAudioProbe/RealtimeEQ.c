@@ -63,23 +63,11 @@ void SonivoEQResponse(const float *gains,size_t count,double sampleRate,float *o
     }
 }
 
-// Static headroom based on the filter curve, never on the music envelope.
-// A small margin reduces overload risk without a compressor or pumping.
-// This is not a true-peak limiter and cannot guarantee transient protection.
+// Unity master gain. Band boosts stay boosts; a negative curve trim used to
+// make the whole song quieter as soon as a slider moved up.
 float SonivoEQPreamp(const float *gains, size_t count, double rate) {
-    int positive=0;
-    for(unsigned b=0;b<SONIVO_EQ_BANDS;b++)
-        if(cleanGain(gains && b<count?gains[b]:0,b)>0.0001) positive=1;
-    if(!positive) return 0;
-    float response[384];
-    SonivoEQResponse(gains,count,rate,response,384);
-    double peak=0;
-    for(unsigned i=0;i<384;i++) if(isfinite(response[i])) peak=fmax(peak,response[i]);
-    // The low shelf extends below the 20 Hz preview, the high shelf above it.
-    double low=cleanGain(gains && count>0?gains[0]:0,0);
-    double high=cleanGain(gains && count>SONIVO_EQ_BANDS-1?gains[SONIVO_EQ_BANDS-1]:0,SONIVO_EQ_BANDS-1);
-    peak=fmax(peak,fmax(low,high));
-    return peak>0.01 ? (float)-fmin(48,peak+0.5) : 0;
+    (void)gains; (void)count; (void)rate;
+    return 0;
 }
 
 void SonivoEQInit(SonivoRealtimeEQ *eq) {

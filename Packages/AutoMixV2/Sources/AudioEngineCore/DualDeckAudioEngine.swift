@@ -73,14 +73,13 @@ public final class DualDeckAudioEngine: @unchecked Sendable {
             let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
                 componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
                 componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
-            engine.attach(limiter)
-            // Slow attack lets kick transients through; quicker decay restores body.
+            // Not attached. A bypassed limiter was coming back after engine.start()
+            // and ducking the mix whenever a band was boosted.
             AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.040, 0)
             AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.080, 0)
             AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, 0, 0)
             limiter.bypass = true
-            engine.connect(userEQ, to: limiter, format: format)
-            engine.connect(limiter, to: engine.outputNode, format: format)
+            engine.connect(userEQ, to: engine.outputNode, format: format)
             a.gainMixer.outputVolume = 1
             b.gainMixer.outputVolume = 0
             return (engine, format, a, b, userEQ, limiter)

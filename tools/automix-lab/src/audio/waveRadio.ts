@@ -794,10 +794,10 @@ export class WaveRadio {
 
   private refreshStemStatus() {
     if (this.stemsReady()) {
-      const beat = this.next && this.plan
-        ? this.coveringJob("intro", this.next.id, this.plan.params.cueBSec, 4)
-        : null;
-      this.stemStatus = beat?.beatUrl ? "HTDemucs · вокал + бит" : "HTDemucs · готово";
+      this.stemStatus =
+        this.transitionMode === "duet"
+          ? "HTDemucs · баттл вокалов"
+          : "HTDemucs · инстр A + вокал B · луп";
     }
     else if (this.jobBusy("intro")) this.stemStatus = "HTDemucs · интро";
     else if (this.jobBusy("outro")) this.stemStatus = "HTDemucs · аутро";
@@ -870,29 +870,27 @@ export class WaveRadio {
     const need = Math.max(4, plan.params.blendDurationSec);
     const a = this.coveringJob("outro", this.current.id, plan.params.cueASec, need);
     const b = this.coveringJob("intro", this.next.id, plan.params.cueBSec, need);
-    if (!a || !b || !a.vocalsUrl || !b.instrumentalUrl) return false;
     const duet = this.transitionMode === "duet" || plan.params.dsp.mashupMode === "oneBarDuet";
+    const bedUrl = duet ? a.vocalsUrl : a.instrumentalUrl || a.beatUrl;
+    const leadUrl = b.vocalsUrl;
+    if (!a || !b || !bedUrl || !leadUrl) return false;
     try {
-      const vocalRes = await fetch(a.vocalsUrl);
-      if (!vocalRes.ok) return false;
-      const vocalA = await this.engine.decodeAudio(await vocalRes.arrayBuffer());
-      let instrumentalB: AudioBuffer | null = null;
-      if (!duet) {
-        const bedUrl = b.beatUrl || b.instrumentalUrl;
-        const instrRes = await fetch(bedUrl);
-        if (!instrRes.ok) return false;
-        instrumentalB = await this.engine.decodeAudio(await instrRes.arrayBuffer());
-      }
+      const bedRes = await fetch(bedUrl);
+      const leadRes = await fetch(leadUrl);
+      if (!bedRes.ok || !leadRes.ok) return false;
+      const bedA = await this.engine.decodeAudio(await bedRes.arrayBuffer());
+      const leadB = await this.engine.decodeAudio(await leadRes.arrayBuffer());
       return this.engine.armNeuralMashup({
         duet,
         cueA: plan.params.cueASec,
         cueB: plan.params.cueBSec,
         blendSec: plan.params.blendDurationSec,
         handoffAt: plan.params.handoffAt,
-        vocalA,
-        vocalStartSec: a.startSec,
-        instrumentalB,
-        instrumentalStartSec: b.startSec,
+        bedA,
+        bedStartSec: a.startSec,
+        leadB,
+        leadStartSec: b.startSec,
+        landFadeSec: (4 * 60) / (plan.params.targetBPM > 30 ? plan.params.targetBPM : 120),
       });
     } catch {
       return false;

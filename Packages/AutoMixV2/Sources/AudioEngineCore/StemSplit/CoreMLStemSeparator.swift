@@ -9,8 +9,59 @@ public actor CoreMLStemSeparator: StemSeparating {
 
     public init(modelURL: URL) throws {
         let config = MLModelConfiguration()
+        // This FP32 graph is not stable on the Neural Engine.
         config.computeUnits = .cpuOnly
-        self.model = try MLModel(contentsOf: modelURL, configuration: config)
+        // iOS does not open an unpacked .mlpackage the way macOS does.
+        // Compile once next to the download and reuse the .mlmodelc.
+        let compiled = try Self.compiledURL(for: modelURL)
+        self.model = try MLModel(contentsOf: compiled, configuration: config)
+    }
+
+    /// Compiled model beside the downloaded package. Rebuilt when the package is newer.
+    private static func compiledURL(for url: URL) throws -> URL {
+        if url.pathExtension == "mlmodelc" { return url }
+        let cached = url.deletingLastPathComponent().appendingPathComponent("htdemucs.mlmodelc", isDirectory: true)
+        if FileManager.default.fileExists(atPath: cached.path), !isNewer(url, than: cached) {
+            return cached
+        }
+        let folder = url.deletingLastPathComponent()
+        let free = (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage ?? 0
+        if free > 0, free < 700_000_000 {
+            throw HTDemucsModelError("мало места, чтобы открыть модель")
+        }
+        do {
+            return try compile(url, into: cached)
+        } catch let packageError {
+            let inner = url.appendingPathComponent("Data/com.apple.CoreML/model.mlmodel")
+            guard FileManager.default.fileExists(atPath: inner.path) else { throw packageError }
+            do {
+                return try compile(inner, into: cached)
+            } catch {
+                throw HTDemucsModelError("не открылась: \(packageError.localizedDescription)")
+            }
+        }
+    }
+
+    private static func compile(_ source: URL, into dest: URL) throws -> URL {
+        let compiled = try MLModel.compileModel(at: source)
+        if FileManager.default.fileExists(atPath: dest.path) {
+            try FileManager.default.removeItem(at: dest)
+        }
+        do {
+            try FileManager.default.moveItem(at: compiled, to: dest)
+        } catch {
+            try FileManager.default.copyItem(at: compiled, to: dest)
+            try? FileManager.default.removeItem(at: compiled)
+        }
+        return dest
+    }
+
+    private static func isNewer(_ a: URL, than b: URL) -> Bool {
+        let aDate = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        let bDate = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        guard let aDate, let bDate else { return false }
+        return aDate > bDate
     }
 
     public func separate(_ input: StereoChunk) async throws -> [StemKind: StereoChunk] {

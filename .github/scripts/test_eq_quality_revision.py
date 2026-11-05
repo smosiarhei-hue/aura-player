@@ -9,10 +9,13 @@ class EQQualityRevisionTests(unittest.TestCase):
             self.assertIn(expected,render)
         for forbidden in ['malloc(', 'calloc(', 'realloc(', 'dispatch_', 'mutex', 'sleep(', 'peak>.98', 'protectedWet']:
             self.assertNotIn(forbidden,render)
-        # Static curve-based headroom is computed off the render thread.
-        self.assertIn('SonivoEQResponse(gains,count,rate,response,384)',c)
-        self.assertIn('peak+0.5',c)
-        self.assertNotIn('eq->limiter * 1.002',c)
+        # Unity preamp. Sampling the curve and subtracting peak+0.5 ducked the
+        # whole song whenever a band was raised, and it blocked the IPA build.
+        preamp = c.split('float SonivoEQPreamp', 1)[1].split('void SonivoEQInit', 1)[0]
+        self.assertIn('return 0;', preamp)
+        self.assertNotIn('peak+0.5', preamp)
+        self.assertNotIn('SonivoEQResponse(gains,count,rate,response,384)', c)
+        self.assertNotIn('eq->limiter * 1.002', c)
     def test_native_envelopes_and_band_widths_are_consistent(self):
         core=(R/'Sonivo/playercore.swift').read_text()
         dual=(R/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()

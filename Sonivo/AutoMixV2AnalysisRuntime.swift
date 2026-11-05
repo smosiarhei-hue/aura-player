@@ -172,7 +172,8 @@ final class AutoMixV2AnalysisRuntime {
                     } catch {
                         if self.stemStatus?.hasPrefix("HTDemucs · модель") == true {
                             let text = (error as? HTDemucsModelError)?.description ?? "нет сети, повторю"
-                            self.stemStatus = "HTDemucs · \(text)"
+                            SonivoDiagnostics.log("[HTDemucs] \(text)", tag: "AUDIO")
+                            self.stemStatus = nil
                         }
                     }
                 }
@@ -226,6 +227,15 @@ final class AutoMixV2AnalysisRuntime {
                         await HTDemucsMashupBake.prewarm(outgoingFile: outFile, incomingFile: inFile) { message in
                             Task { @MainActor in
                                 guard self?.observedPair == pairToken else { return }
+                                if message.hasPrefix("HTDemucs · скрыть") {
+                                    SonivoDiagnostics.log("[HTDemucs] \(message)", tag: "AUDIO")
+                                    self?.stemStatus = nil
+                                    return
+                                }
+                                if message == "HTDemucs · готово" {
+                                    self?.stemStatus = nil
+                                    return
+                                }
                                 self?.stemStatus = message
                             }
                         }

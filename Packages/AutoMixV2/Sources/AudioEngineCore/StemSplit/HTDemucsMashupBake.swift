@@ -13,12 +13,13 @@ public enum HTDemucsMashupBake {
         incomingFile: URL,
         onStatus: @escaping @Sendable (String) -> Void
     ) async {
+        if await HTDemucsRuntime.shared.loadWasRefused() { return }
         do {
             onStatus("HTDemucs · модель 0%")
             _ = try await HTDemucsModelStore.shared.prepare { fraction in
                 onStatus("HTDemucs · модель \(Int(fraction * 100))%")
             }
-            onStatus("HTDemucs · загружаю модель")
+            onStatus("HTDemucs · компилирую")
             try await HTDemucsRuntime.shared.prewarm(
                 outgoingFile: outgoingFile,
                 incomingFile: incomingFile,
@@ -30,7 +31,8 @@ public enum HTDemucsMashupBake {
             return
         } catch {
             let text = (error as? HTDemucsModelError)?.description ?? error.localizedDescription
-            onStatus("HTDemucs · \(text)")
+            // The player badge must not keep a Core ML path. The host logs this and clears it.
+            onStatus("HTDemucs · скрыть · \(text)")
         }
     }
 
@@ -43,13 +45,20 @@ public enum HTDemucsMashupBake {
         cueB: Double,
         blendSec: Double,
         handoffProgress: Double,
-        padSec: Double
+        padSec: Double,
+        landFadeSec: Double = 0,
+        playbackRate: Double = 1
     ) async throws -> (outgoing: URL, incoming: URL)? {
         guard HTDemucsModelStore.shared.installedPackageURL() != nil else { return nil }
         let musical = min(MidSideStemBaker.maximumDurationSec, max(4, blendSec))
         let duration = min(MidSideStemBaker.maximumDurationSec, musical + max(0, padSec))
-        let handoff = duet ? min(0.72, max(0.52, handoffProgress)) : min(0.98, max(0.82, handoffProgress))
-        let landAt = musical * handoff
+        let rate = min(1.04, max(0.96, playbackRate))
+        let handoff = duet ? min(0.72, max(0.52, handoffProgress)) : min(0.92, max(0.35, handoffProgress))
+        let fadeWall = landFadeSec > 0.25 ? landFadeSec : max(0.9, min(2.4, musical * 0.12))
+        var landWall = musical * handoff
+        if landWall > duration - 0.3 { landWall = max(fadeWall + 0.35, duration - 0.3) }
+        // File position runs ahead of the clock while the deck is beatmatched.
+        let landAt = landWall * rate
         let pair = try await HTDemucsRuntime.shared.materialize(
             duet: duet,
             outgoingURL: outgoingURL,
@@ -57,7 +66,8 @@ public enum HTDemucsMashupBake {
             cueA: cueA,
             cueB: cueB,
             duration: duration,
-            landAt: duet ? 0 : landAt
+            landAt: landAt,
+            fadeSec: fadeWall * rate
         )
         if pair != nil { lastBackend = "htdemucs" }
         return pair
@@ -70,6 +80,10 @@ public actor HTDemucsRuntime {
     private var separator: CoreMLStemSeparator?
     private var windows: [CachedWindow] = []
     private var jobs = 0
+    /// Core ML refused this package. Further songs stay on the mid/side bake.
+    private var refusedLoad = false
+
+    func loadWasRefused() -> Bool { refusedLoad }
 
     /// Uses a finished window if prewarm is still separating. Otherwise separates the cue itself.
     func materialize(
@@ -79,7 +93,8 @@ public actor HTDemucsRuntime {
         cueA: Double,
         cueB: Double,
         duration: Double,
-        landAt: Double
+        landAt: Double,
+        fadeSec: Double
     ) async throws -> (outgoing: URL, incoming: URL)? {
         if jobs > 0 {
             return try cachedPair(
@@ -89,7 +104,8 @@ public actor HTDemucsRuntime {
                 cueA: cueA,
                 cueB: cueB,
                 duration: duration,
-                landAt: landAt
+                landAt: landAt,
+                fadeSec: fadeSec
             )
         }
         jobs += 1
@@ -101,7 +117,8 @@ public actor HTDemucsRuntime {
             cueA: cueA,
             cueB: cueB,
             duration: duration,
-            landAt: landAt
+            landAt: landAt,
+            fadeSec: fadeSec
         )
     }
 
@@ -128,25 +145,28 @@ public actor HTDemucsRuntime {
         cueA: Double,
         cueB: Double,
         duration: Double,
-        landAt: Double
+        landAt: Double,
+        fadeSec: Double
     ) throws -> (outgoing: URL, incoming: URL)? {
-        guard let vocal = try renderCached(
-            url: outgoingURL, cue: cueA, duration: duration, stem: .vocal, landAt: 0
+        let outgoingStem: StemTake = duet ? .vocal : .instrumental
+        guard let outgoing = try renderCached(
+            url: outgoingURL, cue: cueA, duration: duration, stem: outgoingStem, landAt: 0, fadeSec: fadeSec
         ) else { return nil }
         do {
             guard let incoming = try renderCached(
                 url: incomingURL,
                 cue: cueB,
                 duration: duration,
-                stem: duet ? .dry : .instrumental,
-                landAt: landAt
+                stem: .vocal,
+                landAt: landAt,
+                fadeSec: fadeSec
             ) else {
-                MidSideStemBaker.removeTempFiles([vocal])
+                MidSideStemBaker.removeTempFiles([outgoing])
                 return nil
             }
-            return (vocal, incoming)
+            return (outgoing, incoming)
         } catch {
-            MidSideStemBaker.removeTempFiles([vocal])
+            MidSideStemBaker.removeTempFiles([outgoing])
             throw error
         }
     }
@@ -158,26 +178,32 @@ public actor HTDemucsRuntime {
         cueA: Double,
         cueB: Double,
         duration: Double,
-        landAt: Double
+        landAt: Double,
+        fadeSec: Double
     ) async throws -> (outgoing: URL, incoming: URL)? {
-        let vocal = try await renderCAF(
+        // Ending song is the instrumental bed. The next song enters as vocal,
+        // then opens into the dry file at LAND. Duet is both vocals.
+        let outgoingStem: StemTake = duet ? .vocal : .instrumental
+        let outgoing = try await renderCAF(
             url: outgoingURL,
             cue: cueA,
             duration: duration,
-            stem: .vocal,
-            landAt: 0
+            stem: outgoingStem,
+            landAt: 0,
+            fadeSec: fadeSec
         )
         do {
             let incoming = try await renderCAF(
                 url: incomingURL,
                 cue: cueB,
                 duration: duration,
-                stem: duet ? .dry : .instrumental,
-                landAt: landAt
+                stem: .vocal,
+                landAt: landAt,
+                fadeSec: fadeSec
             )
-            return (vocal, incoming)
+            return (outgoing, incoming)
         } catch {
-            MidSideStemBaker.removeTempFiles([vocal])
+            MidSideStemBaker.removeTempFiles([outgoing])
             throw error
         }
     }
@@ -187,10 +213,11 @@ public actor HTDemucsRuntime {
         cue: Double,
         duration: Double,
         stem: StemTake,
-        landAt: Double
+        landAt: Double,
+        fadeSec: Double
     ) async throws -> URL {
         let cached = try await window(url: url, startSec: max(0, cue), seconds: duration)
-        return try mixSlice(cached, cue: cue, duration: duration, stem: stem, landAt: landAt)
+        return try mixSlice(cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec)
     }
 
     private func renderCached(
@@ -198,12 +225,13 @@ public actor HTDemucsRuntime {
         cue: Double,
         duration: Double,
         stem: StemTake,
-        landAt: Double
+        landAt: Double,
+        fadeSec: Double
     ) throws -> URL? {
         guard let cached = windows.last(where: {
             $0.filePath == url.path && $0.covers(startSec: max(0, cue), durationSec: duration)
         }) else { return nil }
-        return try mixSlice(cached, cue: cue, duration: duration, stem: stem, landAt: landAt)
+        return try mixSlice(cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec)
     }
 
     private func mixSlice(
@@ -211,28 +239,28 @@ public actor HTDemucsRuntime {
         cue: Double,
         duration: Double,
         stem: StemTake,
-        landAt: Double
+        landAt: Double,
+        fadeSec: Double
     ) throws -> URL {
         guard let slice = cached.slice(startSec: max(0, cue), durationSec: duration) else {
             throw HTDemucsModelError("окно перехода вне кэша")
         }
         let stemL: [Float]
         let stemR: [Float]
-        let until: Int?
         switch stem {
         case .vocal:
             stemL = slice.vocalsL
             stemR = slice.vocalsR
-            until = nil
         case .instrumental:
             stemL = slice.instL
             stemR = slice.instR
-            until = Int(landAt * cached.rate)
         case .dry:
             stemL = slice.dryL
             stemR = slice.dryR
-            until = nil
         }
+        // Bloom only the incoming vocal. The outgoing bed stays instrumental
+        // until the live fader lets it go; blooming it would bring its vocal back.
+        let until: Int? = stem == .dry || landAt <= 0.05 ? nil : Int(landAt * cached.rate)
         let mixed = HTDemucsWindowMixer.render(
             dryL: slice.dryL,
             dryR: slice.dryR,
@@ -240,7 +268,7 @@ public actor HTDemucsRuntime {
             stemR: stemR,
             amount: stem == .dry ? 0 : 1,
             untilFrame: until,
-            fadeFrames: max(1, Int(0.08 * cached.rate))
+            fadeFrames: max(1, Int(max(0.4, fadeSec) * cached.rate))
         )
         return try Self.writeCAF(left: mixed.left, right: mixed.right, rate: cached.rate)
     }
@@ -303,14 +331,21 @@ public actor HTDemucsRuntime {
 
     private func model() async throws -> CoreMLStemSeparator {
         if let separator { return separator }
+        if refusedLoad { throw HTDemucsModelError("модель не открылась") }
         guard let url = HTDemucsModelStore.shared.installedPackageURL() else {
             throw PipelineError.modelNotFound
         }
-        let loaded = try await Task.detached(priority: .userInitiated) {
-            try CoreMLStemSeparator(modelURL: url)
-        }.value
-        separator = loaded
-        return loaded
+        do {
+            let loaded = try await Task.detached(priority: .userInitiated) {
+                try CoreMLStemSeparator(modelURL: url)
+            }.value
+            separator = loaded
+            return loaded
+        } catch {
+            let text = (error as? HTDemucsModelError)?.description ?? ""
+            if !text.contains("мало места") { refusedLoad = true }
+            throw error
+        }
     }
 
     private func outroStart(_ url: URL, seconds: Double) -> Double {
