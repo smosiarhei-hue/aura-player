@@ -1,9 +1,9 @@
 // Path: Packages/AutoMixV2/Sources/AudioEngineCore/StemSeparator.swift
 //
 // Offline Automix stem separation for mashup bake windows.
-// Primary: Apple AUSoundIsolation (Music Sing family) when the system Audio Unit
-// is present — whole-window offline render. Fallback: hybrid mid/side + residual
-// vocal (no model download, always available).
+// Neural HTDemucs (7.8 s, 50% overlap-add) lives in StemSplit/ and stays
+// passthrough until HTDemucs.mlmodelc is in the app bundle. This baker still
+// uses the hybrid carve below. AUSoundIsolation stays off.
 
 @preconcurrency import AVFAudio
 import AudioToolbox

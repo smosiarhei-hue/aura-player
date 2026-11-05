@@ -37,4 +37,37 @@ struct AudioEngineCoreTests {
             _ = try DualDeckAudioEngine(preloadPolicy: policy)
         }
     }
+
+    @Test("Passthrough overlap-add restores the mix and leaves vocals silent")
+    func passthroughRestoresInput() async throws {
+        let n = 900_000
+        var left = [Float](repeating: 0, count: n)
+        var right = [Float](repeating: 0, count: n)
+        for i in 0..<n {
+            left[i] = sin(Float(i) * 0.01)
+            right[i] = cos(Float(i) * 0.013)
+        }
+        let pipeline = SeparationPipeline(
+            source: MemoryPCMSource(left: left, right: right),
+            separator: PassthroughSeparator()
+        )
+        var gotL: [Float] = []
+        var gotR: [Float] = []
+        while let block = try await pipeline.nextBlock() {
+            let other = try #require(block.stems[.other])
+            gotL.append(contentsOf: other.left)
+            gotR.append(contentsOf: other.right)
+            for kind in [StemKind.vocals, .drums, .bass] {
+                let chunk = try #require(block.stems[kind])
+                #expect(chunk.left.allSatisfy { $0 == 0 })
+                #expect(chunk.right.allSatisfy { $0 == 0 })
+            }
+        }
+        #expect(gotL.count == n)
+        var maxErr: Float = 0
+        for i in 0..<n {
+            maxErr = max(maxErr, abs(gotL[i] - left[i]), abs(gotR[i] - right[i]))
+        }
+        #expect(maxErr < 1e-4)
+    }
 }
