@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class LyricsPresentationMotionTests(unittest.TestCase):
     def test_all_open_close_actions_share_accessible_motion(self):
         player = (ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
-        self.assertEqual(player.count('withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode'), 3)
+        self.assertEqual(player.count('withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode'), 4)
         self.assertEqual(player.count('.transition(LyricsPresentationMotion.transition(reduceMotion: reduceMotion))'), 2)
         self.assertNotIn('.animation(SN.slowSpring, value: showLyricsMode)', player)
         self.assertIn('.animation(LyricsPresentationMotion.controlsAnimation(reduceMotion: reduceMotion), value: lyricsControlsVisible)', player)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Apple Music–style Now Playing cover contracts.
 
-The cover must stay an intact continuous square. Atmosphere is a separate
-full-bleed native-blur layer behind the player — never a dissolve mask on art.
+Edge-to-edge top art soft-dissolves into a full-bleed native-blur atmosphere.
+The sharp cover is masked — never a floating inset card with chrome.
 """
 
 from __future__ import annotations
@@ -17,29 +17,31 @@ PLAYER = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
 class NowPlayingCoverAppleMusicTests(unittest.TestCase):
     def test_atmosphere_is_full_bleed_native_blur(self):
         self.assertIn("NowPlayingAtmosphere", PLAYER)
-        self.assertIn("UIBlurEffect(style: .systemChromeMaterialDark)", PLAYER)
+        self.assertIn("UIBlurEffect(style: .systemMaterialDark)", PLAYER)
         self.assertIn("scaleAspectFill", PLAYER)
         self.assertNotIn("DownwardCoverWash", PLAYER)
-        # No dissolve mask over the square cover stage.
-        stage = PLAYER.split("private func artworkStage(", 1)[1].split(
-            "private func inlineLyricsStage", 1
-        )[0]
-        self.assertNotIn(".mask(", stage)
-        self.assertNotIn("LinearGradient", stage)
+        self.assertIn("coverDissolveMask", PLAYER)
 
-    def test_cover_is_dominant_continuous_square(self):
+    def test_cover_is_edge_to_edge_with_soft_dissolve(self):
         self.assertIn(
-            "let standardArtworkStageHeight = min(totalWidth - coverInset * 2, totalHeight * 0.50)",
+            "let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.56)",
             PLAYER,
         )
         stage = PLAYER.split("private func artworkStage(", 1)[1].split(
             "private func inlineLyricsStage", 1
         )[0]
-        self.assertIn("RoundedRectangle(cornerRadius: 18, style: .continuous)", stage)
-        self.assertIn("playScale = player.isPlaying ? 1.0 : 0.92", stage)
+        # Full-bleed art dissolves into the wash — no inset card chrome.
+        self.assertIn(".mask(coverDissolveMask)", stage)
+        self.assertNotIn("RoundedRectangle(cornerRadius: 18", stage)
+        self.assertNotIn(".shadow(", stage)
+        self.assertIn("playScale = player.isPlaying ? 1.0 : 0.97", stage)
         self.assertIn(".interactiveSpring(response: 0.38, dampingFraction: 0.75)", stage)
-        # Intact square — clipShape only, no wash overlay on the art.
-        self.assertIn(".clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))", stage)
+        self.assertIn("coverDissolveMask", PLAYER)
+        mask = PLAYER.split("private var coverDissolveMask:", 1)[1].split(
+            "@ViewBuilder", 1
+        )[0]
+        self.assertIn("LinearGradient", mask)
+        self.assertIn(".clear", mask)
 
     def test_cover_fills_square_not_letterboxed(self):
         layer = PLAYER.split("private func coverLayer(", 1)[1].split(
@@ -53,6 +55,15 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
             "(isFullScreenVideoShot || !showLyricsMode) ? .dark : preferredScheme",
             PLAYER,
         )
+
+    def test_first_screen_utility_row_matches_apple_music(self):
+        self.assertIn("primaryUtilityRow", PLAYER)
+        utility = PLAYER.split("private var primaryUtilityRow:", 1)[1].split(
+            "private var trackWaveButton", 1
+        )[0]
+        self.assertIn("quote.bubble", utility)
+        self.assertIn("AirPlayButtonView()", utility)
+        self.assertIn("list.bullet", utility)
 
 
 if __name__ == "__main__":

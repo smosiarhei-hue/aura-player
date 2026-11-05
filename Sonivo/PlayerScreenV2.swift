@@ -931,7 +931,7 @@ struct PlayerScreenV2: View {
             .padding(14)
             .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
             .glassEffect(.regular.tint(glassTint).interactive(), in: .rect(cornerRadius: SN.radius))
-            .sonivoMetal(corner: SN.radius, emphasis: 0.60)
+            .sonivoMetal(corner: SN.radius, emphasis: 0.60, animated: player.isPlaying)
             .contentShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
         }
         .buttonStyle(.plain)
