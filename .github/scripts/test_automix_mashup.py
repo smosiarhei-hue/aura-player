@@ -244,6 +244,11 @@ class AutoMixMashupTests(unittest.TestCase):
         # Read m4a/mp3 as float32 non-interleaved (no AVAudioConverter capture issues).
         self.assertIn("commonFormat: .pcmFormatFloat32", baker)
         self.assertIn("interleaved: false", baker)
+        self.assertIn("openFloat32Source", baker)
+        htdemucs = (
+            ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/StemSplit/HTDemucsMashupBake.swift"
+        ).read_text()
+        self.assertIn("MidSideStemBaker.openFloat32Source", htdemucs)
         self.assertNotIn(
             "AVAudioFile(forWriting: outURL, settings: format.settings)",
             baker,
@@ -320,6 +325,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("func fault(", log)
         self.assertIn("playback.frozen", log)
         self.assertIn("detectFrozenPlayback", log)
+        self.assertIn("kickFrozenStreamIfNeeded()", log)
         analyzer = ROOT / "tools" / "analyze_automix_session_log.py"
         self.assertTrue(analyzer.is_file())
         self.assertIn("playback_frozen", analyzer.read_text())
@@ -335,6 +341,15 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("addingTimeInterval(-bakeLag)", player)
         self.assertNotIn("mashupBakeOutgoingBaseCue = cueA + bakeLag", player)
         self.assertIn("mashupBakeOutgoingBaseCue + elapsed", player)
+        # Bake 22s before the cue. Wall-clock lag used to start the slice 13s in.
+        self.assertIn("automixBakeLeadSec: Double = 22", player)
+        self.assertIn("let heardPastCue = max(0, liveAfter - cueA)", player)
+        self.assertIn("let bakeLag = min(heardPastCue, max(0, blend - 1.5))", player)
+        self.assertIn("waitUntilMashupCue", player)
+        self.assertIn("mashupGiveUpTrackID", player)
+        self.assertIn("giveUpMashupAndKeepPlaying", player)
+        self.assertIn("fallback.file", player)
+        self.assertIn("kickFrozenStreamIfNeeded", player)
         self.assertIn("Remount the chrome/playhead clock onto track A", player)
         self.assertIn("self.startTimer()", player)
         # playbackProgress must prefer bake outgoing clock over liveProgress/stem t=0.

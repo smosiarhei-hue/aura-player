@@ -427,11 +427,11 @@ public enum MidSideStemBaker {
 
         // Force float32 non-interleaved on read so m4a/mp3 match the stem DSP
         // and the 4-arg CAF writer (no AVAudioConverter / Swift 6 capture issues).
-        let source = try AVAudioFile(
-            forReading: request.fileURL,
-            commonFormat: .pcmFormatFloat32,
-            interleaved: false
-        )
+        // Device logs: converting-open of a file AVPlayer already holds throws
+        // com.apple.coreaudio.avfaudio 1685348671 ('dtsg').
+        let opened = try openFloat32Source(request.fileURL)
+        let source = opened.file
+        defer { opened.scratch.map { try? FileManager.default.removeItem(at: $0) } }
         let format = source.processingFormat
         let rate = format.sampleRate
         guard rate.isFinite, rate > 0, source.length > 0,
@@ -623,6 +623,44 @@ public enum MidSideStemBaker {
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsNonInterleaved: !format.isInterleaved
         ]
+    }
+
+    /// Float32 non-interleaved reader. A direct converting open throws `'dtsg'`
+    /// (1685348671) for some m4a/mp3 caches the stream player already has open,
+    /// so the second attempt reads a private copy.
+    public static func openFloat32Source(_ url: URL) throws -> (file: AVAudioFile, scratch: URL?) {
+        if let file = try? AVAudioFile(
+            forReading: url,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        ) {
+            return (file, nil)
+        }
+        let ext = url.pathExtension.isEmpty ? "audio" : url.pathExtension
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonivo-src-\(UUID().uuidString).\(ext)")
+        try FileManager.default.copyItem(at: url, to: copy)
+        if let file = try? AVAudioFile(
+            forReading: copy,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        ) {
+            return (file, copy)
+        }
+        if let plain = try? AVAudioFile(forReading: copy),
+           plain.processingFormat.commonFormat == .pcmFormatFloat32,
+           !plain.processingFormat.isInterleaved {
+            return (plain, copy)
+        }
+        try? FileManager.default.removeItem(at: copy)
+        return (
+            try AVAudioFile(
+                forReading: url,
+                commonFormat: .pcmFormatFloat32,
+                interleaved: false
+            ),
+            nil
+        )
     }
 
     /// Open a CAF writer whose *processing* format matches `format` (buffers we write).

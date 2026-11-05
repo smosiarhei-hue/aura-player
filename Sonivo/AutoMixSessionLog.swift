@@ -173,6 +173,9 @@ final class AutoMixSessionLog {
         if let lastFault = lastFrozenFaultAt, Date().timeIntervalSince(lastFault) < 20 { return }
         lastFrozenFaultAt = Date()
         stuckTickCount = 0
+        if !core.isTransitioningPublic, core.usesStreamingBackend {
+            core.kickFrozenStreamIfNeeded()
+        }
         fault(
             String(
                 format: "playback.frozen pos=%.1f dur=%.1f tx=%d bake=%d stream=%d track=%@",

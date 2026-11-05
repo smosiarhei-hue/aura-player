@@ -510,7 +510,9 @@ private struct CachedWindow: Sendable {
 
 enum HTDemucsPCM {
     static func readWindow(url: URL, startSec: Double, seconds: Double) throws -> (left: [Float], right: [Float], startSec: Double, reachesFileEnd: Bool) {
-        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let opened = try MidSideStemBaker.openFloat32Source(url)
+        defer { opened.scratch.map { try? FileManager.default.removeItem(at: $0) } }
+        let file = opened.file
         let rate = file.processingFormat.sampleRate
         guard rate.isFinite, rate > 0, file.length > 0 else { throw PipelineError.converterFailed }
         let startFrame = min(file.length - 1, AVAudioFramePosition(max(0, startSec) * rate))

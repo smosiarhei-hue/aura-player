@@ -621,6 +621,9 @@ final class PlayerCore {
     /// Stem bake failed — run an honest equal-power crossfade instead of dual
     /// full-volume "mashup" (which just muddies two dry streams).
     private var mashupBakeFailedUseCrossfade = false
+    /// Outgoing track whose mix already failed. The playhead stays past the cue,
+    /// so a cancel used to schedule the same bake again (fail → cancel → bake.start).
+    private var mashupGiveUpTrackID: UUID?
     /// Musical cue B (mix-in). Kept separate from bake schedule offset so the
     /// Automix timeline snap stays on the real track position, not bakeLag.
     private var mashupIncomingCueSec: Double = 0
@@ -1960,6 +1963,7 @@ final class PlayerCore {
         metadataTrack = nil
         incomingTrack = nil
         guard let track = currentTrack else { return }
+        mashupGiveUpTrackID = nil
         waveListening.reset()
         streamDuration = track.duration
         progress = PlaybackResumePolicy.position(seconds, duration: track.duration)
@@ -2698,6 +2702,46 @@ final class PlayerCore {
         transitionMode == .automix || transitionMode == .duet
     }
 
+    /// Park until the musical cue. Pause does not cancel the mix; the playhead
+    /// just sits, and we continue when playback resumes.
+    private func waitUntilMashupCue(_ cue: Double) async -> Bool {
+        while !Task.isCancelled {
+            if !isTransitioning { return false }
+            if isPlaying {
+                let pos = isUsingStreamPlayer ? progress : liveProgress()
+                if pos + 0.2 >= cue { return true }
+                if duration > 1, pos >= duration - 0.3 { return true }
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return false
+    }
+
+    /// One failure must not cancel-and-reschedule the same pair. Keep A playing,
+    /// and if the song is already over, start the next one a single time.
+    private func giveUpMashupAndKeepPlaying(_ error: Error) {
+        if !isMashupTransitionMode {
+            cancelTransition()
+            return
+        }
+        AutoMixSessionLog.shared.fault("transition.fail \(error.localizedDescription)")
+        SonivoDiagnostics.log(
+            "[Mashup] transition failed, not retrying: \(error.localizedDescription)",
+            tag: "AUDIO"
+        )
+        if let id = currentTrack?.id {
+            mashupGiveUpTrackID = id
+        }
+        let pos = isUsingStreamPlayer ? progress : liveProgress()
+        let nearEnd = duration > 1 && pos >= duration - 1.2
+        let next = nearEnd ? peekNext(auto: true) : nil
+        cancelTransition()
+        if let next {
+            currentTrack = next
+            start(at: 0)
+        }
+    }
+
     private func scheduleTransitionIfNeeded() {
         guard transitionMode == .crossfade || isMashupTransitionMode,
               !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
@@ -2707,8 +2751,10 @@ final class PlayerCore {
         guard totalDur > 5, let nextTrack = peekNext(auto: true) else { return }
 
         if isMashupTransitionMode {
+            if mashupGiveUpTrackID == current.id { return }
             let blend = resolveMashupBlend(outgoing: current, incoming: nextTrack, duration: totalDur)
-            guard currentPos >= blend.outgoingCueSec else { return }
+            let leadIn = max(0, blend.outgoingCueSec - Self.automixBakeLeadSec)
+            guard currentPos >= leadIn else { return }
             let style = resolveMashupStyle(outgoing: current, incoming: nextTrack, duration: totalDur)
             scheduleSimpleTransition(
                 current: current,
@@ -2716,7 +2762,8 @@ final class PlayerCore {
                 blendDuration: blend.blendDurationSec,
                 incomingStart: blend.incomingStartSec,
                 mashupBadge: "\(style.archetypeName) · \(blend.reason)",
-                mashupStyle: style
+                mashupStyle: style,
+                outgoingCue: blend.outgoingCueSec
             )
         } else {
             let blendDuration = max(1, crossfadeDuration)
@@ -2728,7 +2775,8 @@ final class PlayerCore {
                 blendDuration: blendDuration,
                 incomingStart: 0,
                 mashupBadge: nil,
-                mashupStyle: nil
+                mashupStyle: nil,
+                outgoingCue: nil
             )
         }
     }
@@ -2823,6 +2871,10 @@ final class PlayerCore {
 
     /// Live Automix stem window: ~8 bars @ 120 BPM so ONE VOCAL overlay is audible.
     private static let automixStemMaxBlendSec: Double = 16
+    /// Materialize + separate this long before the musical cue. Baking at the
+    /// cue spent the whole outro on HTDemucs, then the slice ended and the
+    /// next song hard-cut a few seconds in.
+    private static let automixBakeLeadSec: Double = 22
 
     private func mashupProfileMatches(_ profile: TrackProfile, track: Track) -> Bool {
         if track.isStream {
@@ -2843,7 +2895,8 @@ final class PlayerCore {
         blendDuration: Double,
         incomingStart: Double,
         mashupBadge: String?,
-        mashupStyle: MashupLiveStyle?
+        mashupStyle: MashupLiveStyle?,
+        outgoingCue: Double?
     ) {
         transitionScheduled = true
         isTransitioning = true
@@ -2864,6 +2917,12 @@ final class PlayerCore {
                 mashupStyle?.transitionFingerprint ?? styleForLog.transitionFingerprint
             )
         )
+        let liveAtSchedule = isUsingStreamPlayer ? progress : liveProgress()
+        if let outgoingCue, isMashupTransitionMode, liveAtSchedule + 0.5 < outgoingCue {
+            AutoMixSessionLog.shared.event(
+                String(format: "bake.lead cue=%.1f pos=%.1f", outgoingCue, liveAtSchedule)
+            )
+        }
         incomingQuality = nil
         metadataSwapped = false
         metadataTrack = nil
@@ -2909,6 +2968,7 @@ final class PlayerCore {
         let startAt = incomingStartPosition
         let outgoingCacheURL = findLocalOrCachedAudioFile(for: current)
         let cueAForBake = isUsingStreamPlayer ? progress : liveProgress()
+        let musicalOutgoingCue = outgoingCue
         transitionPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -2943,7 +3003,8 @@ final class PlayerCore {
                     let style = self.activeMashupStyle
                     let duetBake = self.transitionMode == .duet || style.isDuet
                     let handoff = duetBake ? style.handoffAt : style.automixLandProgress
-                    let cueA = max(0, cueAForBake)
+                    // Window is the musical outro, not the playhead while we prepare.
+                    let cueA = max(0, musicalOutgoingCue ?? cueAForBake)
                     let cueB = max(0, startAt)
                     // Extra tail so stems outlive bake lag + LAND handoff (short stems
                     // ending mid-window previously froze B after a stop/reload race).
@@ -2954,7 +3015,6 @@ final class PlayerCore {
                     let loopSec = 0.0
                     let echoDelaySec = duetBake ? 0 : min(0.5, max(0.18, 60 / max(30, Double(style.targetBPM)) * 0.5))
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
-                    let bakeStartedAt = Date()
                     let neuralPair: (outgoing: URL, incoming: URL)?
                     do {
                         neuralPair = try await HTDemucsMashupBake.stemPair(
@@ -2976,6 +3036,7 @@ final class PlayerCore {
                     } catch {
                         neuralPair = nil
                         SonivoDiagnostics.log("[Mashup] HTDemucs bake error: \(error.localizedDescription)", tag: "AUDIO")
+                        AutoMixSessionLog.shared.fault("bake.htdemucs \(error.localizedDescription)")
                     }
                     let bakeResult: Result<(outgoing: URL, incoming: URL), Error>
                     if let neuralPair {
@@ -3012,16 +3073,21 @@ final class PlayerCore {
                             }
                         }.value
                     }
-                    // Bake ran while live A kept playing — enter the CAF mid-window so the
-                    // playhead doesn't jump backward by the bake latency.
-                    let bakeLag = min(max(0, Date().timeIntervalSince(bakeStartedAt)), max(0, blend - 1.5))
-                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                    // Separation runs during the lead. Hold the audible mix until the
+                    // musical cue so the playhead doesn't jump backward.
+                    let reachedCue = await self.waitUntilMashupCue(cueA)
+                    guard reachedCue, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
                         if case .success(let stemPair) = bakeResult {
                             MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
                         }
                         return
                     }
+                    let liveAfter = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
+                    // Only the time already past the cue belongs in the slice. Wall-clock
+                    // bake time used to start the file 13s in, with 2s of audio left.
+                    let heardPastCue = max(0, liveAfter - cueA)
+                    let bakeLag = min(heardPastCue, max(0, blend - 1.5))
                     if case .failure(let bakeError) = bakeResult {
                         self.mashupBakeFailedUseCrossfade = true
                         let extA = outURL.pathExtension
@@ -3036,9 +3102,12 @@ final class PlayerCore {
                     }
                     if case .success(let stemPair) = bakeResult {
                         let landAtSec = blend * (duetBake ? style.handoffAt : style.automixLandProgress)
-                        // Separation finished after the downbeat. Playing the slice now
-                        // runs it off the end and the next song restarts in pieces.
-                        if bakeLag >= landAtSec - 1.2 {
+                        let remain = max(0, (self.duration > 1 ? self.duration : liveAfter + blend) - liveAfter)
+                        let need = max(2.4, landAtSec - bakeLag)
+                        // Separation finished after the downbeat, or the file itself
+                        // ends before LAND. Playing the slice now runs it off the end
+                        // and the next song restarts a few seconds in.
+                        if bakeLag >= landAtSec - 1.2 || remain + 0.35 < need {
                             MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
                             self.mashupBakeFailedUseCrossfade = true
                             self.transitionDuration = min(self.transitionDuration, 4)
@@ -3121,22 +3190,48 @@ final class PlayerCore {
                     }
                 }
 
+                // Hold a skipped bake until the cue. A lead-in crossfade would
+                // start the next song while the current one is still in the verse.
+                if mashup {
+                    let cue = max(0, musicalOutgoingCue ?? cueAForBake)
+                    let reached = await self.waitUntilMashupCue(cue)
+                    guard reached, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                          self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
+                }
+
                 // Prefer the local file already materialized for stem bake. Field 1045:
                 // bake.fail left incomingIsStream=true while A was native → hybrid
                 // crossfade with silent/stuck B (volB logged 0) then LAND freeze.
                 let localIncomingURL = inURLForBake ?? nextURL
+                var armedIncoming = false
                 if let localIncomingURL {
-                    let file = try AVAudioFile(forReading: localIncomingURL)
-                    guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
-                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
-                          self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
-                    self.incomingIsStream = false
-                    self.incomingAudioFile = file
-                    self.incomingQuality = LocalAudioQualityReader.read(file)
-                    self.scheduleLocalSegment(file, on: targetNode, at: startAt)
-                    targetNode.volume = 0
-                    if !self.engine.isRunning { try self.engine.start() }
-                    targetNode.play()
+                    do {
+                        let file = try AVAudioFile(forReading: localIncomingURL)
+                        guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                        guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                              self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
+                        self.incomingIsStream = false
+                        self.incomingAudioFile = file
+                        self.incomingQuality = LocalAudioQualityReader.read(file)
+                        self.scheduleLocalSegment(file, on: targetNode, at: startAt)
+                        targetNode.volume = 0
+                        if !self.engine.isRunning { try self.engine.start() }
+                        targetNode.play()
+                        armedIncoming = true
+                    } catch {
+                        // Same 'dtsg' that killed the bake must not cancel the mix.
+                        // The stream player can still ride the next song in.
+                        targetNode.stop()
+                        targetNode.volume = 0
+                        self.incomingAudioFile = nil
+                        self.incomingIsStream = true
+                        AutoMixSessionLog.shared.fault(
+                            "fallback.file \(error.localizedDescription) → stream"
+                        )
+                    }
+                }
+                if armedIncoming {
+                    // Local deck is the incoming lane.
                 } else if self.incomingIsStream {
                     let resolved: URL
                     var resolvedQuality: PlaybackQualityFacts?
@@ -3234,7 +3329,7 @@ final class PlayerCore {
                 self.transitionPreparationTask = nil
             } catch {
                 guard self.transitionRequestID == transitionID else { return }
-                self.cancelTransition()
+                self.giveUpMashupAndKeepPlaying(error)
             }
         }
     }
@@ -4059,6 +4154,23 @@ final class PlayerCore {
             timePitchA.rate = 1.0
             timePitchB.rate = 1.0
             looperTimePitch.rate = 1.0
+        }
+    }
+
+    /// Stream clock stuck while the UI still says playing. A loose seek is enough
+    /// to unstick AVPlayer after a pause; a zero-tolerance seek is what stuttered.
+    func kickFrozenStreamIfNeeded() {
+        guard isPlaying, !isTransitioning, isUsingStreamPlayer else { return }
+        let player = activeStreamingPlayer
+        let rate: Float = player.rate > 0.05 ? player.rate : 1
+        let now = player.currentTime()
+        player.seek(to: now, toleranceBefore: .positiveInfinity, toleranceAfter: .positiveInfinity) { _ in
+            Task { @MainActor in
+                guard PlayerCore.isSharedReady else { return }
+                let core = PlayerCore.shared
+                guard core.isPlaying, !core.isTransitioning, core.isUsingStreamPlayer else { return }
+                core.activeStreamingPlayer.playImmediately(atRate: rate)
+            }
         }
     }
 
