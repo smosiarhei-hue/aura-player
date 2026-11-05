@@ -13,7 +13,23 @@ let pollTimer: number | null = null;
 let openSheet: "lyrics" | "queue" | "more" | "auth" | null = null;
 
 function icon(
-  name: "play" | "pause" | "skip" | "prev" | "stop" | "lyrics" | "queue" | "more" | "link" | "x"
+  name:
+    | "play"
+    | "pause"
+    | "skip"
+    | "prev"
+    | "stop"
+    | "lyrics"
+    | "queue"
+    | "more"
+    | "link"
+    | "x"
+    | "star"
+    | "starOn"
+    | "volLow"
+    | "volHigh"
+    | "wave"
+    | "fmt"
 ): string {
   const paths: Record<string, string> = {
     play: '<path d="M8 5.2v13.6l11.2-6.8L8 5.2z" fill="currentColor"/>',
@@ -22,12 +38,21 @@ function icon(
     prev: '<path d="M19 5.5l-9.5 6.5L19 18.5V5.5zM5.5 5.5h2.3v13H5.5v-13z" fill="currentColor"/>',
     stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/>',
     lyrics:
-      '<path d="M5 7.5h14v1.6H5V7.5zm0 4h11v1.6H5V11.5zm0 4h8v1.6H5V15.5z" fill="currentColor"/>',
+      '<path d="M5 6.2h10.2A2.8 2.8 0 0 1 18 9v4.2a2.8 2.8 0 0 1-2.8 2.8H9.2L6 19.2v-3.2H5A2.8 2.8 0 0 1 2.2 13.2V9A2.8 2.8 0 0 1 5 6.2z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 10.2h1.2v3.2H8v-3.2zm3.2-.8h1.2v4h-1.2v-4z" fill="currentColor"/>',
     queue:
-      '<path d="M5 6.5h14v1.7H5V6.5zm0 5h14v1.7H5v-1.7zm0 5h9v1.7H5V16.5z" fill="currentColor"/>',
+      '<path d="M8 6.2h12v1.6H8V6.2zm0 5h12v1.6H8v-1.6zm0 5h12v1.6H8v-1.6zM4 6.4a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm0 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm0 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" fill="currentColor"/>',
     more: '<circle cx="6.5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="17.5" cy="12" r="1.4" fill="currentColor"/>',
     link: '<path d="M10.2 13.8a3.4 3.4 0 0 1 0-4.8l1.7-1.7a3.4 3.4 0 1 1 4.8 4.8l-.8.8-.1-1.5.5-.5a1.9 1.9 0 1 0-2.7-2.7l-1.7 1.7a1.9 1.9 0 0 0 0 2.7l.4.4-1.1 1.1-.5-.5zm3.6-3.6a3.4 3.4 0 0 1 0 4.8l-1.7 1.7a3.4 3.4 0 1 1-4.8-4.8l.8-.8.1 1.5-.5.5a1.9 1.9 0 1 0 2.7 2.7l1.7-1.7a1.9 1.9 0 0 0 0-2.7l-.4-.4 1.1-1.1.5.5z" fill="currentColor"/>',
     x: '<path d="M7.2 6.4 12 11.2l4.8-4.8 1.1 1.1L13.1 12l4.8 4.8-1.1 1.1L12 13.1l-4.8 4.8-1.1-1.1L10.9 12 6.1 7.5l1.1-1.1z" fill="currentColor"/>',
+    star: '<path d="M12 3.2 14.4 8.4l5.6.7-4.2 3.8 1.1 5.4L12 15.6 7.1 18.3l1.1-5.4L4 9.1l5.6-.7L12 3.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
+    starOn:
+      '<path d="M12 3.2 14.4 8.4l5.6.7-4.2 3.8 1.1 5.4L12 15.6 7.1 18.3l1.1-5.4L4 9.1l5.6-.7L12 3.2z" fill="currentColor"/>',
+    volLow:
+      '<path d="M4.5 9.2h2.6L11 6.2v11.6L7.1 14.8H4.5V9.2z" fill="currentColor"/>',
+    volHigh:
+      '<path d="M4 9.2h2.4L10.2 6v12L6.4 14.8H4V9.2zm8.2.2a3.6 3.6 0 0 1 0 5.2l-1-1a2.1 2.1 0 0 0 0-3.2l1-1zm2.3-2a6.4 6.4 0 0 1 0 9.2l-1-1a5 5 0 0 0 0-7.2l1-1z" fill="currentColor"/>',
+    wave: '<path d="M12 9.2a3.6 3.6 0 0 1 3.6 3.6 3.6 3.6 0 0 1-1 2.5l1.1 1.1A5.1 5.1 0 0 0 17.2 12.8 5.2 5.2 0 0 0 12 7.6a5.2 5.2 0 0 0-5.2 5.2c0 1.5.6 2.8 1.6 3.7l1.1-1.1a3.6 3.6 0 0 1-1.1-2.6A3.6 3.6 0 0 1 12 9.2zm0-3.4a8.6 8.6 0 0 1 6.1 2.5l-1.1 1.1a7 7 0 0 0-10 0L5.9 8.3A8.6 8.6 0 0 1 12 5.8zM12 14.2a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8z" fill="currentColor"/>',
+    fmt: '<path d="M3 10.2h1.4v3.6H3v-3.6zm2.6-2.2h1.4v8H5.6V8zm2.6 1.4H9.6v5.2H8.2V9.4zm2.6-2.6h1.4v10.4h-1.4V6.8zm2.6 3.2h1.4v4H13.4v-4zm2.6-1.6H17.4v7.2h-1.4V8.4zM18.6 10h1.4v4h-1.4v-4z" fill="currentColor"/>',
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
 }
@@ -69,7 +94,7 @@ function duetCueLine(phase: string, progress: number): string {
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
-  <div class="stage" id="stage">
+  <div class="stage am" id="stage">
     <div class="ambient" id="ambient" aria-hidden="true">
       <span class="amb-veil"></span>
       <span class="amb-pulse"></span>
@@ -77,10 +102,7 @@ app.innerHTML = `
     <div class="specular" id="specular" aria-hidden="true"></div>
 
     <header class="chrome">
-      <div class="brand-row">
-        <div class="brand">Sonivo <em>Automix</em></div>
-        <div class="pill glass-soft" id="queuePill"><span class="dot"></span><span id="queueLabel">Моя волна</span></div>
-      </div>
+      <div class="grabber" aria-hidden="true"></div>
       <div class="island" id="island" aria-live="polite">
         <span class="label" id="islandLabel">Ready</span>
         <span class="phase" id="islandPhase"></span>
@@ -100,18 +122,24 @@ app.innerHTML = `
         </div>
       </div>
 
-      <div class="kill-strip" id="killStrip" hidden aria-label="Активные киллы"></div>
-
       <div class="meta" id="metaBlock">
-        <div class="title-mask">
-          <h1 id="title">Моя волна</h1>
+        <div class="meta-copy">
+          <div class="title-mask">
+            <h1 id="title">Моя волна</h1>
+          </div>
+          <div class="artist-mask">
+            <div class="artist" id="artist">Яндекс Музыка</div>
+          </div>
+          <div class="next" id="nextLine">Подключи Яндекс — дальше играет плеер</div>
+          <div class="mode-chip glass-soft" id="modeChip" hidden></div>
         </div>
-        <div class="artist-mask">
-          <div class="artist" id="artist">Яндекс Музыка · live mashup</div>
+        <div class="meta-actions">
+          <button class="icon-plain" id="btnStar" type="button" aria-label="В избранное" aria-pressed="false">${icon("star")}</button>
+          <button class="icon-plain action" id="btnMore" type="button" aria-label="Ещё">${icon("more")}</button>
         </div>
-        <div class="next" id="nextLine">Подключи Яндекс — дальше играет плеер</div>
-        <div class="mode-chip glass-soft" id="modeChip" hidden></div>
       </div>
+
+      <div class="kill-strip" id="killStrip" hidden aria-label="Активные киллы"></div>
 
       <div class="timeline">
         <div class="scrub" id="scrub" role="slider" aria-label="Перемотка" tabindex="0">
@@ -123,6 +151,7 @@ app.innerHTML = `
         </div>
         <div class="times">
           <span id="tLeft">0:00</span>
+          <span class="format-pill" id="qualityBadge" hidden>${icon("fmt")}<span id="qualityText"></span></span>
           <span id="tRight">-0:00</span>
         </div>
         <div class="cue-line" id="cueLine">
@@ -132,25 +161,31 @@ app.innerHTML = `
       </div>
 
       <div class="transport">
-        <div class="side-group">
-          <button class="icon-btn" id="btnStop" type="button" aria-label="Stop">${icon("stop")}</button>
-        </div>
+        <button class="icon-plain xl" id="btnPrev" type="button" aria-label="В начало">${icon("prev")}</button>
         <button class="play" id="btnPlay" type="button" aria-label="Play">${icon("play")}</button>
-        <div class="side-group">
-          <button class="icon-btn" id="btnSkip" type="button" aria-label="Next">${icon("skip")}</button>
-        </div>
+        <button class="icon-plain xl" id="btnSkip" type="button" aria-label="Next">${icon("skip")}</button>
       </div>
 
-      <div class="action-row">
-        <button class="action glass-soft" id="btnLyrics" type="button">${icon("lyrics")} Текст</button>
-        <button class="action glass-soft" id="btnQueue" type="button">${icon("queue")} Очередь</button>
-        <button class="action glass-soft" id="btnMore" type="button">${icon("more")} Ещё</button>
-        <button class="action glass-soft" id="btnAuth" type="button">${icon("link")} Яндекс</button>
+      <div class="volume">
+        <span class="vol-ico" aria-hidden="true">${icon("volLow")}</span>
+        <input id="volume" type="range" min="0" max="100" value="80" aria-label="Громкость" />
+        <span class="vol-ico loud" aria-hidden="true">${icon("volHigh")}</span>
       </div>
-      <button class="log-btn glass-soft" id="btnLog" type="button">Лог AutoMix</button>
 
-      <div class="status-line" id="status">Premium AutoMix · LOCK → MASHUP → LAND</div>
-      <div class="quality glass-soft" id="qualityBadge" hidden></div>
+      <div class="status-line" id="status"></div>
+
+      <nav class="dock" aria-label="Плеер">
+        <button class="dock-btn action" id="btnLyrics" type="button" aria-label="Текст">${icon("lyrics")}</button>
+        <button class="dock-btn wave" id="btnWave" type="button" aria-label="Моя волна">${icon("wave")}</button>
+        <button class="dock-btn action" id="btnQueue" type="button" aria-label="Очередь">${icon("queue")}</button>
+      </nav>
+
+      <div class="sr-keep">
+        <span class="pill" id="queuePill"><span class="dot"></span><span id="queueLabel">Моя волна</span></span>
+        <button id="btnStop" type="button" aria-label="Stop">Stop</button>
+        <button id="btnAuth" type="button">Яндекс</button>
+        <button class="log-btn" id="btnLog" type="button">Лог AutoMix</button>
+      </div>
     </main>
 
     <div class="sheet-host" id="sheetHost" data-sheet="">
@@ -223,6 +258,11 @@ const sheetBodies = {
     </div>
   `,
   more: () => `
+    <div class="more-actions">
+      <button class="btn ghost" id="openAuth" type="button">Яндекс</button>
+      <button class="btn ghost" id="openLog" type="button">Лог AutoMix</button>
+      <button class="btn ghost" id="openStop" type="button">Стоп</button>
+    </div>
     <div class="coach-block">
       <div class="sheet-head" style="padding:0"><strong>Transition Coach</strong></div>
       <div class="coach-score" id="coachScore">—</div>
@@ -292,6 +332,18 @@ function setSheet(kind: typeof openSheet) {
 
   if (kind === "auth") wireAuthButtons();
   if (kind === "queue") wireTransitionControls();
+  if (kind === "more") {
+    document.querySelector("#openAuth")?.addEventListener("click", () => {
+      document.querySelector<HTMLButtonElement>("#btnAuth")?.click();
+    });
+    document.querySelector("#openLog")?.addEventListener("click", () => {
+      document.querySelector<HTMLButtonElement>("#btnLog")?.click();
+    });
+    document.querySelector("#openStop")?.addEventListener("click", () => {
+      document.querySelector<HTMLButtonElement>("#btnStop")?.click();
+      setSheet(null);
+    });
+  }
   render(radio.snapshot());
 }
 
@@ -660,27 +712,29 @@ function render(s: WaveRadioSnapshot) {
   }
 
   const q = document.querySelector<HTMLElement>("#qualityBadge")!;
-  if (s.quality) {
-    q.hidden = false;
-    q.textContent = s.quality;
-    q.dataset.q = s.quality.startsWith("FLAC")
-      ? "lossless"
-      : s.quality.startsWith("HQ")
-        ? "hq"
-        : "nq";
-    q.title = s.qualityNote || s.quality;
-  } else {
-    q.hidden = true;
-  }
+  const qText = document.querySelector("#qualityText")!;
+  const label = s.mixing
+    ? duet
+      ? "Duet"
+      : "AutoMix"
+    : s.quality
+      ? s.quality.replace(/^HQ\s+/i, "")
+      : "Моя волна";
+  q.hidden = false;
+  qText.textContent = label;
+  q.dataset.q = s.quality?.startsWith("HQ") ? "hq" : "nq";
+  q.title = s.qualityNote || s.quality || label;
 
   const cur = s.current;
   if (cur) {
     swapMetaText(title, artist, cur.title, cur.artists);
+    paintStar(cur.id);
     setCover(coverA, cur.coverUrl, fallback);
     fallback.textContent = (cur.title[0] || "S").toUpperCase();
     sampleArtColor(cur.coverUrl);
   } else {
-    swapMetaText(title, artist, "Моя волна", "Яндекс Музыка · live mashup");
+    swapMetaText(title, artist, "Моя волна", "Яндекс Музыка");
+    paintStar(null);
     sampleArtColor(null);
   }
 
@@ -981,7 +1035,8 @@ function seekFromClientX(clientX: number) {
     raf = requestAnimationFrame(tick);
   };
 
-  if (!reduce) {
+  const flatCover = document.querySelector("#stage")?.classList.contains("am");
+  if (!reduce && !flatCover) {
     raf = requestAnimationFrame(tick);
     wrap.addEventListener("pointermove", (e) => {
       const r = wrap.getBoundingClientRect();
@@ -1152,6 +1207,55 @@ async function connectYm(opts?: { autoPlay?: boolean }) {
       }
     })();
   }, interval);
+}
+
+const STAR_KEY = "sonivo-stars";
+
+function readStars(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STAR_KEY) || "[]");
+    return Array.isArray(raw) ? raw.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function paintStar(trackId: string | null) {
+  const btn = document.querySelector<HTMLButtonElement>("#btnStar");
+  if (!btn) return;
+  const on = Boolean(trackId && readStars().includes(trackId));
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.innerHTML = icon(on ? "starOn" : "star");
+}
+
+document.querySelector("#btnStar")?.addEventListener("click", () => {
+  const id = radio.snapshot().current?.id;
+  if (!id) return;
+  const stars = readStars();
+  const next = stars.includes(id) ? stars.filter((x) => x !== id) : [...stars, id];
+  localStorage.setItem(STAR_KEY, JSON.stringify(next));
+  paintStar(id);
+});
+
+document.querySelector("#btnPrev")?.addEventListener("click", () => {
+  radio.seekTo(0);
+});
+
+document.querySelector("#btnWave")?.addEventListener("click", () => setSheet(null));
+
+{
+  const vol = document.querySelector<HTMLInputElement>("#volume");
+  if (vol) {
+    const saved = localStorage.getItem("sonivo-volume");
+    if (saved != null && saved !== "") vol.value = saved;
+    const apply = () => {
+      vol.style.setProperty("--vol", `${vol.value}%`);
+      radio.setOutputVolume(Number(vol.value) / 100);
+      localStorage.setItem("sonivo-volume", vol.value);
+    };
+    vol.addEventListener("input", apply);
+    apply();
+  }
 }
 
 document.querySelector("#btnPlay")?.addEventListener("click", () => {
