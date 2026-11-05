@@ -1166,6 +1166,24 @@ a {
   margin-top: 4px;
 }
 
+.log-btn {
+  width: 100%;
+  margin-top: 8px;
+  min-height: 40px;
+  border-radius: 999px;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.log-btn.on {
+  color: #7dffb3;
+}
+
 .action {
   min-height: 44px;
   border-radius: 999px;

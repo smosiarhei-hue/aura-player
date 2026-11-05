@@ -24,6 +24,7 @@ public/samples/*.mp3
 # Transition coach learning (local)
 .mix-coach.json
 .mix-log.jsonl
+.automix-session.json
 
 # Offline Whisper model + transcript cache
 .whisper-cache/

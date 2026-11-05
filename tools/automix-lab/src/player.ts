@@ -147,6 +147,7 @@ app.innerHTML = `
         <button class="action glass-soft" id="btnMore" type="button">${icon("more")} Ещё</button>
         <button class="action glass-soft" id="btnAuth" type="button">${icon("link")} Яндекс</button>
       </div>
+      <button class="log-btn glass-soft" id="btnLog" type="button">Лог AutoMix</button>
 
       <div class="status-line" id="status">Premium AutoMix · LOCK → MASHUP → LAND</div>
       <div class="quality glass-soft" id="qualityBadge" hidden></div>
@@ -1010,6 +1011,31 @@ document.querySelector("#btnQueue")?.addEventListener("click", () => {
 });
 document.querySelector("#btnMore")?.addEventListener("click", () => {
   setSheet(openSheet === "more" ? null : "more");
+});
+document.querySelector("#btnLog")?.addEventListener("click", () => {
+  const btn = document.querySelector<HTMLButtonElement>("#btnLog");
+  const status = document.querySelector("#status");
+  if (btn) btn.disabled = true;
+  void radio
+    .saveSessionLog()
+    .then(async (res) => {
+      if (!res.ok) throw new Error(res.error || "log failed");
+      const text = JSON.stringify(radio.sessionLog(), null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        /* clipboard optional */
+      }
+      if (status) status.textContent = "Лог записан · .automix-session.json";
+      btn?.classList.add("on");
+      window.setTimeout(() => btn?.classList.remove("on"), 1600);
+    })
+    .catch((e) => {
+      if (status) status.textContent = e instanceof Error ? e.message : String(e);
+    })
+    .finally(() => {
+      if (btn) btn.disabled = false;
+    });
 });
 document.querySelector("#btnAuth")?.addEventListener("click", () => {
   setSheet(openSheet === "auth" ? null : "auth");

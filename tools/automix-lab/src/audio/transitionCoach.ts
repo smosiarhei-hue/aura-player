@@ -69,6 +69,8 @@ export type MeterPoint = {
   bassB: number;
   hpfA?: number;
   echoA?: number;
+  reverbA?: number;
+  stutterA?: number;
   rateB?: number;
   pitchB?: number;
 };

@@ -176,6 +176,8 @@ export class WaveRadio {
           bassB: snap.bassB,
           hpfA: snap.hpfA,
           echoA: snap.echoA,
+          reverbA: snap.reverbA,
+          stutterA: snap.stutterA,
           rateB: snap.rateB,
           pitchB: snap.pitchB,
         });
@@ -199,6 +201,99 @@ export class WaveRadio {
     this.listeners.add(cb);
     cb(this.snapshot());
     return () => this.listeners.delete(cb);
+  }
+
+  /**
+   * Compact session dump for debugging how AutoMix actually ran.
+   * Samples the live mashup trail (~48 points) plus the plan FX recipe.
+   */
+  sessionLog(): Record<string, unknown> {
+    const p = this.plan?.params;
+    const dsp = p?.dsp;
+    const step = Math.max(1, Math.ceil(this.mashupTrail.length / 48));
+    const trail = this.mashupTrail.filter((_, i) => i % step === 0).map((m) => ({
+      p: Number(m.p.toFixed(3)),
+      phase: m.phase,
+      volA: Number(m.volA.toFixed(3)),
+      volB: Number(m.volB.toFixed(3)),
+      instrA: Number(m.instrA.toFixed(3)),
+      instrB: Number(m.instrB.toFixed(3)),
+      bassA: Number(m.bassA.toFixed(2)),
+      bassB: Number(m.bassB.toFixed(2)),
+      hpfA: Number((m.hpfA ?? 0).toFixed(3)),
+      echoA: Number((m.echoA ?? 0).toFixed(3)),
+      reverbA: Number((m.reverbA ?? 0).toFixed(3)),
+      stutterA: Number((m.stutterA ?? 0).toFixed(3)),
+      rateB: Number((m.rateB ?? 1).toFixed(3)),
+      pitchB: Number((m.pitchB ?? 0).toFixed(1)),
+    }));
+    return {
+      at: new Date().toISOString(),
+      state: this.state,
+      status: this.status,
+      transitionMode: this.transitionMode,
+      brain: this.brainStatus,
+      pair: {
+        a: this.current
+          ? `${this.current.artists} — ${this.current.title}`
+          : null,
+        b: this.next ? `${this.next.artists} — ${this.next.title}` : null,
+      },
+      plan: p
+        ? {
+            story: this.plan?.story ?? null,
+            archetype: p.archetype,
+            mode: dsp?.mashupMode ?? null,
+            blendSec: Number(p.blendDurationSec.toFixed(2)),
+            cueASec: Number(p.cueASec.toFixed(2)),
+            cueBSec: Number(p.cueBSec.toFixed(2)),
+            bpm: p.targetBPM,
+            rateA: p.rateA,
+            rateB: p.rateB,
+            pitchCentsB: p.pitchCentsB,
+            handoffAt: Number(p.handoffAt.toFixed(3)),
+            bassSwapAt: Number(p.bassSwapAt.toFixed(3)),
+            loopBarsA: dsp?.loopBarsA ?? 0,
+            echoAPeak: dsp?.echoAPeak ?? 0,
+            reverbAPeak: dsp?.reverbAPeak ?? 0,
+            stutterAPeak: dsp?.stutterAPeak ?? 0,
+            hpfAPeak: dsp?.hpfAPeak ?? 0,
+            decisions: dsp?.decisions ?? [],
+            critic: this.plan?.critic
+              ? {
+                  ok: this.plan.critic.ok,
+                  score: this.plan.critic.score,
+                  mode: this.plan.critic.mode,
+                  fixes: this.plan.critic.fixes,
+                }
+              : null,
+          }
+        : null,
+      coach: this.lastCoachReport
+        ? { score: this.lastCoachReport.score, story: this.lastCoachReport.story }
+        : null,
+      samples: this.mashupTrail.length,
+      trail,
+    };
+  }
+
+  /** Persist the session log on the lab server (`.automix-session.json`). */
+  async saveSessionLog(): Promise<{ ok: boolean; path?: string; error?: string }> {
+    const body = this.sessionLog();
+    const r = await fetch("/api/mix/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = (await r.json().catch(() => ({}))) as {
+      ok?: boolean;
+      path?: string;
+      error?: string;
+    };
+    if (!r.ok || !data.ok) {
+      return { ok: false, error: data.error || `HTTP ${r.status}` };
+    }
+    return { ok: true, path: data.path };
   }
 
   snapshot(): WaveRadioSnapshot {

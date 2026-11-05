@@ -11,6 +11,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const labRoot = join(root, "..");
 const coachPath = join(labRoot, ".mix-coach.json");
 const logPath = join(labRoot, ".mix-log.jsonl");
+const sessionPath = join(labRoot, ".automix-session.json");
 
 type CoachOffsets = {
   earlierCarve: number;
@@ -140,6 +141,20 @@ export function mixCoachPlugin(): Plugin {
           if (url === "/api/mix/coach/reset" && req.method === "POST") {
             writeCoach({ ...DEFAULT, updatedAt: new Date().toISOString() });
             return json(res, 200, readCoach());
+          }
+
+          if (url === "/api/mix/session" && req.method === "POST") {
+            const raw = await readBody(req);
+            const entry = JSON.parse(raw || "{}") as Record<string, unknown>;
+            const stamped = { ...entry, savedAt: new Date().toISOString() };
+            writeFileSync(sessionPath, JSON.stringify(stamped, null, 2), "utf8");
+            appendFileSync(logPath, JSON.stringify(stamped) + "\n", "utf8");
+            return json(res, 200, { ok: true, path: ".automix-session.json" });
+          }
+
+          if (url === "/api/mix/session" && req.method === "GET") {
+            if (!existsSync(sessionPath)) return json(res, 200, { session: null });
+            return json(res, 200, { session: JSON.parse(readFileSync(sessionPath, "utf8")) });
           }
 
           if (url === "/api/mix/log" && req.method === "POST") {
