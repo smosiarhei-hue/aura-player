@@ -329,7 +329,11 @@ class AutoMixMashupTests(unittest.TestCase):
         CAF playhead starts at t=0. Chrome must keep track A clock until LAND."""
         player = (ROOT / "Sonivo/playercore.swift").read_text()
         self.assertIn("mashupBakeOutgoingBaseCue", player)
-        self.assertIn("mashupBakeOutgoingBaseCue = cueA + bakeLag", player)
+        # Elapsed already includes bake lag because the mix clock starts early.
+        # Adding bakeLag on top of cueA skips the playhead and the next song.
+        self.assertIn("mashupBakeOutgoingBaseCue = cueA", player)
+        self.assertIn("addingTimeInterval(-bakeLag)", player)
+        self.assertNotIn("mashupBakeOutgoingBaseCue = cueA + bakeLag", player)
         self.assertIn("mashupBakeOutgoingBaseCue + elapsed", player)
         self.assertIn("Remount the chrome/playhead clock onto track A", player)
         self.assertIn("self.startTimer()", player)

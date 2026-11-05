@@ -1,8 +1,9 @@
 import Foundation
 
 /// Puts the next vocal in the same space as the ending instrumental.
-/// A crossfaded phrase holds the bed. Tempo echo and a short plate sit on
-/// both stems, lighter on the vocal so the words stay in front.
+/// The bed plays forward. A light tempo echo and a short plate sit on both
+/// stems, lighter on the vocal so the words stay in front.
+/// Repeating the outro as a phrase loop sounded like the next song stuttering.
 /// This is a musical send, not a room node and not system Spatial Audio.
 public enum StemMashupGlue {
     public static func shapeInstrumentalBed(
@@ -13,13 +14,13 @@ public enum StemMashupGlue {
         delaySec: Double
     ) {
         guard left.count == right.count, left.count > 8, rate > 8_000 else { return }
-        loopBed(&left, &right, rate: rate, loopSec: loopSec)
+        _ = loopSec
         wash(
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.44,
-            reverbWet: 0.52,
+            echoWet: 0.14,
+            reverbWet: 0.28,
             until: left.count
         )
     }
@@ -36,49 +37,17 @@ public enum StemMashupGlue {
         let until = min(max(0, untilFrame), left.count)
         guard until > 8 else { return }
         for i in 0..<until {
-            left[i] *= 1.35
-            right[i] *= 1.35
+            left[i] *= 1.12
+            right[i] *= 1.12
         }
         wash(
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.22,
-            reverbWet: 0.40,
+            echoWet: 0.06,
+            reverbWet: 0.20,
             until: until
         )
-    }
-
-    private static func loopBed(
-        _ left: inout [Float],
-        _ right: inout [Float],
-        rate: Double,
-        loopSec: Double
-    ) {
-        let n = left.count
-        let loopFrames = Int((loopSec * rate).rounded())
-        guard loopFrames > Int(rate * 0.45), loopFrames < n - 8 else { return }
-        let fade = min(Int(rate * 0.03), max(1, loopFrames / 5))
-        var outL = [Float](repeating: 0, count: n)
-        var outR = [Float](repeating: 0, count: n)
-        for i in 0..<n {
-            let pos = i % loopFrames
-            var sampleL = left[pos]
-            var sampleR = right[pos]
-            if fade > 1, i >= fade, pos < fade {
-                let tail = loopFrames - fade + pos
-                let t = Float(pos) / Float(fade)
-                let s = t * t * (3 - 2 * t)
-                let wa = cos(s * Float.pi * 0.5)
-                let wb = sin(s * Float.pi * 0.5)
-                sampleL = left[tail] * wa + sampleL * wb
-                sampleR = right[tail] * wa + sampleR * wb
-            }
-            outL[i] = sampleL
-            outR[i] = sampleR
-        }
-        left = outL
-        right = outR
     }
 
     private static func wash(
@@ -104,8 +73,8 @@ public enum StemMashupGlue {
         var stateR = combR.map { [Float](repeating: 0, count: $0) }
         var posL = [Int](repeating: 0, count: combL.count)
         var posR = [Int](repeating: 0, count: combR.count)
-        let echoFeedback: Float = 0.34
-        let combFeedback: Float = 0.40
+        let echoFeedback: Float = 0.16
+        let combFeedback: Float = 0.28
         let tail = Int(0.55 * rate)
         let wetUntil = min(max(0, until), n)
 

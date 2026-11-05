@@ -1124,9 +1124,10 @@ final class PlayerCore {
             bar = elapsed
         }
 
-        // The stem bed already loops inside the CAF. Seeking here stops the player
-        // and the vocal loses the instrumental under it.
-        let loopBars = neuralAutomix ? 0 : max(0, plan.loopBarsA)
+        // A seek back to the phrase restarts the decoder and the next song stutters.
+        // The bed plays forward; echo and plate are already in the stem slice.
+        let loopBars = 0
+        _ = neuralAutomix
         let barSec = 4 * 60 / Double(safeBPM)
         let barFrac = barSec / max(4, transitionDuration)
         let loopUntil = neuralAutomix ? activeMashupStyle.automixLandProgress - barFrac : 0.72
@@ -1175,12 +1176,9 @@ final class PlayerCore {
             reverbWet: reverbWet / 55
         )
 
-        guard stutterIntensity >= 0.04 else { return outgoingVolume }
-        let sixteenth = max(0.03, 60.0 / Double(safeBPM) / 4.0)
-        let phase = CACurrentMediaTime().truncatingRemainder(dividingBy: sixteenth) / sixteenth
-        let duty = max(0.12, 0.88 - Double(stutterIntensity) * 0.72)
-        let floor = neuralAutomix ? Float(0.28) : 0
-        return phase < duty ? outgoingVolume : outgoingVolume * floor
+        // Chopping the bed to silence is the stutter at the start of the next song.
+        _ = stutterIntensity
+        return outgoingVolume
     }
 
     private func publishLiveMixFX(echoWet: Float, echoFeedback: Float, delaySec: Float, reverbWet: Float) {
@@ -2949,11 +2947,12 @@ final class PlayerCore {
                     let cueB = max(0, startAt)
                     // Extra tail so stems outlive bake lag + LAND handoff (short stems
                     // ending mid-window previously froze B after a stop/reload race).
-                    let stemPadSec = 4.0
+                    // Tail must outlive bake lag. A short slice used to end, fire
+                    // track-finish, and restart the next song from the top.
+                    let stemPadSec = 8.0
                     let barSec = (4 * 60) / max(30, Double(style.targetBPM))
-                    let loopBars = max(2, self.activeTransitionPlan?.loopBarsA ?? 2)
-                    let loopSec = duetBake ? 0 : barSec * Double(loopBars)
-                    let echoDelaySec = duetBake ? 0 : min(0.7, max(0.12, 60 / max(30, Double(style.targetBPM)) * 0.75))
+                    let loopSec = 0.0
+                    let echoDelaySec = duetBake ? 0 : min(0.5, max(0.18, 60 / max(30, Double(style.targetBPM)) * 0.5))
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
                     let bakeStartedAt = Date()
                     let neuralPair: (outgoing: URL, incoming: URL)?
@@ -3036,11 +3035,28 @@ final class PlayerCore {
                         )
                     }
                     if case .success(let stemPair) = bakeResult {
+                        let landAtSec = blend * (duetBake ? style.handoffAt : style.automixLandProgress)
+                        // Separation finished after the downbeat. Playing the slice now
+                        // runs it off the end and the next song restarts in pieces.
+                        if bakeLag >= landAtSec - 1.2 {
+                            MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                            self.mashupBakeFailedUseCrossfade = true
+                            self.transitionDuration = min(self.transitionDuration, 4)
+                            SonivoDiagnostics.log(
+                                "[Mashup] stems ready after LAND (\(String(format: "%.1f", bakeLag))s) — clean incoming",
+                                tag: "AUDIO"
+                            )
+                            AutoMixSessionLog.shared.event(
+                                String(format: "bake.late lag=%.2fs land=%.2fs", bakeLag, landAtSec)
+                            )
+                        } else {
                         self.clearMashupBakeTemps()
                         self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
                         self.mashupBakeRealIncomingURL = inURL
-                        self.mashupBakeIncomingBaseCue = cueB + bakeLag
-                        self.mashupBakeOutgoingBaseCue = cueA + bakeLag
+                        // Elapsed is measured from before the bake, so the cues stay
+                        // the musical ones. Adding bakeLag here would skip ahead.
+                        self.mashupBakeIncomingBaseCue = cueB
+                        self.mashupBakeOutgoingBaseCue = cueA
                         self.mashupIncomingCueSec = cueB
                         // Keep musical cue B for timeline math; schedule offset is bakeLag only.
                         self.incomingStartPosition = cueB
@@ -3050,14 +3066,18 @@ final class PlayerCore {
                             startOffsetSec: bakeLag
                         )
                         self.incomingLaneReady = true
-                        self.transitionStartTime = Date()
+                        let mixClock = Date()
+                        // File position is already bakeLag into the slice. The fader
+                        // must use that same clock or LAND fires after the slice ends.
+                        self.transitionStartTime = mixClock.addingTimeInterval(-bakeLag)
                         // Remount the chrome/playhead clock onto track A (not bake file t=0).
                         // Stream observers stop after isUsingStreamPlayer flips false — start the
                         // native progress timer so NP/checkpoint keep advancing during MIXING.
-                        self.anchorDate = self.transitionStartTime
-                        self.anchorOffset = self.mashupBakeOutgoingBaseCue
-                        self.pausedProgress = self.mashupBakeOutgoingBaseCue
-                        self.progress = self.mashupBakeOutgoingBaseCue
+                        self.anchorDate = mixClock
+                        let heardA = cueA + bakeLag
+                        self.anchorOffset = heardA
+                        self.pausedProgress = heardA
+                        self.progress = heardA
                         self.streamDuration = current.duration
                         self.startTimer()
                         // Stems already carved; volumes + rates stay live on the dual decks.
@@ -3097,6 +3117,7 @@ final class PlayerCore {
                         self.startTransitionTimer()
                         self.transitionPreparationTask = nil
                         return
+                        }
                     }
                 }
 
@@ -4054,6 +4075,21 @@ final class PlayerCore {
             suppressTrackFinishUntil = nil
         }
         if isTransitioning || transitionScheduled {
+            if let start = transitionStartTime, isMashupTransitionMode {
+                let elapsed = -start.timeIntervalSinceNow
+                let p = elapsed / max(0.001, transitionDuration)
+                let land = activeMashupStyle.isDuet ? activeMashupStyle.handoffAt : activeMashupStyle.automixLandProgress
+                if p < land - 0.04 {
+                    // The stem slice ran out before the downbeat. Landing here
+                    // restarts the next song while the fader is still moving.
+                    SonivoDiagnostics.log("[AutoMix] Ignoring early segment end at \(String(format: "%.2f", p))", tag: "AUTOMIX")
+                    return
+                }
+            }
+            if transitionPreparationTask != nil, !incomingLaneReady {
+                SonivoDiagnostics.log("[AutoMix] Track ended while the mix is still preparing", tag: "AUTOMIX")
+                return
+            }
             if let target = incomingTrack, (incomingLaneReady || idleStreamingPlayer.currentItem != nil || incomingAudioFile != nil) {
                 SonivoDiagnostics.log("[AutoMix] Track finished during transition: completing immediately to \(target.title)", tag: "AUTOMIX")
                 completeTransition(to: target)
